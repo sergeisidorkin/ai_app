@@ -1,0 +1,12 @@
+ai_appenv/
+*.pyc
+__pycache__/
+static/
+media/
+.env
+*.sqlite3
+.DS_Store
+.idea/
+.vscode/
+*/migrations/__pycache__/
+
