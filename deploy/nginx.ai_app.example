@@ -1,0 +1,15 @@
+server {
+    listen 80;
+    server_name 130.193.53.106;  # можно добавить домен, если появится
+
+    # статика, которую собирает Django
+    location /static/ {
+        alias /var/www/ai_app/static/;
+    }
+
+    location / {
+        include proxy_params;
+        # ВАЖНО: путь к вашему сокету и двоеточие в конце
+        proxy_pass http://unix:/run/ai_app/ai_app.sock:;
+    }
+}

@@ -29,10 +29,10 @@ SECRET_KEY = env("SECRET_KEY")
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env.bool("DEBUG", False)
 
-ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["localhost"])
+ALLOWED_HOSTS = ["130.193.53.106", "127.0.0.1", "localhost"]
 CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
 DATABASES = {"default": env.db()}
-STATIC_ROOT = env("STATIC_ROOT", default="/home/sergei/ai_appdir/static")
+STATIC_ROOT = "/var/www/ai_app/static"
 
 # Application definition
 
@@ -55,7 +55,7 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-ROOT_URLCONF = 'ai_app.urls'
+ROOT_URLCONF = "urls"
 
 TEMPLATES = [
     {
@@ -72,7 +72,7 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'ai_app.wsgi.application'
+WSGI_APPLICATION = "wsgi.application"
 
 
 # Database
@@ -118,7 +118,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
-STATIC_ROOT = env("STATIC_ROOT", default="/home/sergei/ai_appdir/static")
+STATIC_ROOT = "/var/www/ai_app/static"
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
