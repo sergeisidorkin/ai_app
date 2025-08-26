@@ -1,0 +1,70 @@
+name: Deploy
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Rsync sources to server (new release)
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+        run: |
+          RELEASE=$(date +"%Y%m%d%H%M%S")
+          echo "RELEASE=$RELEASE" >> $GITHUB_ENV
+          EXCLUDES="--exclude .git --exclude .github --exclude ai_appenv --exclude static --exclude media --exclude .env"
+          rsync -az $EXCLUDES -e "ssh -p $PORT" ./ \
+            $USER@$HOST:/home/sergei/ai_appdir/releases/$RELEASE/
+
+	  - name: Build & switch on server
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+        run: |
+          ssh -p $PORT $USER@$HOST << 'EOF'
+          set -e
+          APP=/home/sergei/ai_appdir
+          RELEASE_DIR=$(ls -1dt $APP/releases/* | head -n1)
+
+          # venv (общая)
+          if [ ! -d "$APP/ai_appenv" ]; then
+            python3 -m venv $APP/ai_appenv
+          fi
+          . $APP/ai_appenv/bin/activate
+          pip install --upgrade pip
+          pip install -r $RELEASE_DIR/requirements.txt
+
+          # окружение
+          export $(grep -v '^#' $APP/env/.env | xargs)
+
+          # миграции и статика
+          cd $RELEASE_DIR
+          python manage.py migrate --noinput
+          python manage.py collectstatic --noinput
+
+          # переключаем current
+          ln -sfn $RELEASE_DIR $APP/ai_app
+
+          # перезапуск сервисов (ИМЯ ЮНИТА ОБНОВЛЕНО)
+          sudo systemctl restart gunicorn.service
+          sudo systemctl reload nginx
+
+          # чистка старых релизов
+          ls -1dt $APP/releases/* | tail -n +6 | xargs -r rm -rf
+          EOF
