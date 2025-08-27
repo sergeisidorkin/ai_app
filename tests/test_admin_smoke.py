@@ -12,4 +12,4 @@ def test_admin_redirects_to_login(client):
 def test_root_returns_hello_world(client):
     r = client.get("/")
     assert r.status_code == 200
-    assert b"Test" in r.content
+    assert b"Hello all!" in r.content
