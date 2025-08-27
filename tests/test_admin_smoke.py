@@ -8,3 +8,8 @@ def test_admin_redirects_to_login(client):
     url = reverse("admin:index")
     resp = client.get(url)
     assert resp.status_code in (200, 302)
+
+def test_root_returns_hello_world(client):
+    r = client.get("/")
+    assert r.status_code == 200
+    assert b"Hello world" in r.content

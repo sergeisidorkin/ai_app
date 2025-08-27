@@ -18,10 +18,10 @@ from django.contrib import admin
 from django.http import HttpResponse
 from django.urls import path
 
-def ok(request):
-    return HttpResponse("OK")
+def index(request):
+    return HttpResponse("Hello world")
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path("", ok, name="root"),
+    path("", index, name="index"),
 ]
