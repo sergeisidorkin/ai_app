@@ -21,7 +21,7 @@ jobs:
           --health-interval=5s --health-timeout=5s --health-retries=10
 
     env:
-      DJANGO_SETTINGS_MODULE: ai_app.settings
+      DJANGO_SETTINGS_MODULE: settings
       SECRET_KEY: dummy
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_ai_app
 
