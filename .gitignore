@@ -10,3 +10,7 @@ media/
 .vscode/
 */migrations/__pycache__/
 
+
+# Local env
+.env
+*.env

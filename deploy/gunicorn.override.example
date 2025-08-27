@@ -1,0 +1,20 @@
+[Unit]
+Requires=
+After=network.target
+
+[Service]
+WorkingDirectory=/home/sergei/ai_appdir/ai_app
+
+ExecStartPre=/bin/mkdir -p /home/sergei/ai_appdir/run
+ExecStartPre=/bin/chown sergei:www-data /home/sergei/ai_appdir/run
+
+# Полностью переопределяем команду запуска
+ExecStart=
+ExecStart=/home/sergei/ai_appdir/ai_appenv/bin/gunicorn wsgi:application --workers 3 --bind unix:/run/ai_app/ai_app.sock
+
+# права на сокет для nginx
+Group=www-data
+UMask=007
+
+# если используете .env
+EnvironmentFile=/home/sergei/ai_appdir/env/.env
