@@ -3,6 +3,11 @@ name: CI + Deploy
 on:
   push:
     branches: [ "main" ]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -23,25 +28,51 @@ jobs:
 
   deploy:
     needs: test
-    if: ${{ success() }}
     runs-on: ubuntu-latest
+    if: ${{ success() }}
     steps:
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.SSH_HOST }}      # 130.193.53.106
+          host: ${{ secrets.SSH_HOST }}      # напр. 130.193.53.106
           username: ${{ secrets.SSH_USER }}  # sergei
-          key: ${{ secrets.SSH_KEY }}        # приватный ключ
+          key: ${{ secrets.SSH_KEY }}        # приватный ключ пользователя sergei на сервере
+          # port: ${{ secrets.SSH_PORT }}    # раскомментируйте и добавьте секрет, если порт не 22
           script: |
-            set -e
-            cd ~/ai_appdir/ai_app
+            set -euo pipefail
+
+            APP_DIR="$HOME/ai_appdir"
+            REPO_DIR="$APP_DIR/ai_app"
+            VENV="$APP_DIR/ai_appenv/bin/activate"
+
+            # 1) Bootstrap: если нет репозитория — клонируем
+            if [ ! -d "$REPO_DIR/.git" ]; then
+              mkdir -p "$APP_DIR"
+              git clone git@github.com:sergeisidorkin/ai_app.git "$REPO_DIR"
+            fi
+
+            cd "$REPO_DIR"
+
+            # Убедимся, что origin указывает на GitHub по SSH (чтобы не спрашивал пароль)
+            if ! git remote -v | grep -q 'git@github.com:sergeisidorkin/ai_app.git'; then
+              git remote set-url origin git@github.com:sergeisidorkin/ai_app.git
+            fi
+
+            # 2) Обновляем код
             git fetch origin
             git switch main
             git pull --ff-only
-            source ~/ai_appdir/ai_appenv/bin/activate
+
+            # 3) Обновляем зависимости
+            source "$VENV"
             pip install -r requirements.txt
+
+            # 4) Миграции/статика (settings сам подтянет переменные из .env сервера)
             export DJANGO_SETTINGS_MODULE=settings
             python -m django migrate --noinput
             python -m django collectstatic --noinput
+
+            # 5) Перезапускаем gunicorn (нужен NOPASSWD в sudoers для sergei)
             sudo systemctl restart gunicorn
+
             echo "Deploy OK"
