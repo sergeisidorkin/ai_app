@@ -1,2 +1,11 @@
-pytest>=8.0,<9
-pytest-django>=4.8
+# === Tests ===
+pytest>=8,<9
+pytest-django>=4.9,<5
+
+# === покрытие ===
+pytest-cov>=5,<6
+
+# === стиль/линтинг для локалки ===
+black>=24,<25
+isort>=5,<6
+flake8>=7,<8
