@@ -39,13 +39,16 @@ jobs:
 
             cd "$REPO_DIR"
 
-            # 2) Обновляем код
-            if ! git remote -v | grep -q 'git@github.com:sergeisidorkin/ai_app.git'; then
-              git remote set-url origin git@github.com:sergeisidorkin/ai_app.git
+            # 2) Обновляем код (жёстко выравниваемся на origin/main, чтобы локальные правки не мешали)
+            if ! git remote -v | grep -q 'git@github.com:***sidorkin/ai_app.git'; then
+            git remote set-url origin git@github.com:***sidorkin/ai_app.git
             fi
-            git fetch origin
-            git switch main
-            git pull --ff-only
+            git fetch --all --prune
+            # создадим/перепривяжем ветку main к origin/main и гарантированно очистим рабочее дерево
+            git checkout -B main origin/main
+            git reset --hard origin/main
+            git clean -fd
+            echo "Deploying commit: $(git rev-parse --short HEAD)"
 
             # 3) Зависимости
             source "$VENV"
