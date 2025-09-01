@@ -28,6 +28,7 @@ jobs:
       DJANGO_SETTINGS_MODULE: ai_app.settings
       SECRET_KEY: dummy
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/test_ai_app
+      PYTHONPATH: .:${PYTHONPATH}
 
     steps:
       - uses: actions/checkout@v4
@@ -74,10 +75,14 @@ jobs:
       
       - name: Django check & migrate
         env:
+          DJANGO_SETTINGS_MODULE: ai_app.settings
           PYTHONPATH: .:${PYTHONPATH}
         run: |
           python -m django check
           python -m django migrate --noinput
 
       - name: Run tests
+        env:
+          DJANGO_SETTINGS_MODULE: ai_app.settings
+          PYTHONPATH: .:${PYTHONPATH}
         run: pytest -q
