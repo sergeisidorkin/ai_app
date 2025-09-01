@@ -54,24 +54,24 @@ jobs:
             # 3) deps
             source "$VENV"
             pip install -r requirements.txt
-
-            # 4) Django из корня APP_DIR
-            cd "$APP_DIR"
-            export DJANGO_SETTINGS_MODULE=ai_app.settings
+            
+            # 4) Django команды ИЗ каталога репозитория
+            cd "$REPO_DIR"
+            export DJANGO_SETTINGS_MODULE=settings
             export ENV_PATH="$ENV_PATH_FILE"
-            export PYTHONPATH="$APP_DIR:${PYTHONPATH:-}"
+            export PYTHONPATH="$REPO_DIR:${PYTHONPATH:-}"
             test -f "$ENV_PATH_FILE" || { echo "prod.env not found: $ENV_PATH_FILE" >&2; exit 1; }
-
+            
             python -m django check
             python -m django migrate --noinput
             python -m django collectstatic --noinput
-
+            
             # 5) restart
             sudo systemctl restart ai_app
-
+            
             # 6) health
             for i in {1..20}; do [ -S "$APP_DIR/run/gunicorn.sock" ] && break; sleep 0.5; done
             curl --fail --unix-socket "$APP_DIR/run/gunicorn.sock" -H "Host: imcmontanai.ru" http://unix/health/
             curl --fail -I https://imcmontanai.ru/health/ | grep -q "200 OK"
-
+            
             echo "Deploy OK"
