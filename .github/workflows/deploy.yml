@@ -21,7 +21,6 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          port: 22
           command_timeout: 10m
           script: |
             set -euo pipefail
@@ -30,52 +29,49 @@ jobs:
             REPO_DIR="$APP_DIR/ai_app"
             VENV="$APP_DIR/ai_appenv/bin/activate"
             ENV_PATH_FILE="$APP_DIR/env/prod.env"
+            REPO_SSH="git@github.com:sergeisidorkin/ai_app.git"   # <-- ВАЖНО: правильный URL
 
-            # 1) Первый деплой/Bootstrap
+            # 1) Bootstrap
             if [ ! -d "$REPO_DIR/.git" ]; then
               mkdir -p "$APP_DIR"
-              git clone git@github.com:sergeisidorkin/ai_app.git "$REPO_DIR"
+              git clone "$REPO_SSH" "$REPO_DIR"
             fi
 
             cd "$REPO_DIR"
 
-            # 2) Обновляем код (жёстко выравниваемся на origin/main, чтобы локальные правки не мешали)
-            if ! git remote -v | grep -q 'git@github.com:***sidorkin/ai_app.git'; then
-            git remote set-url origin git@github.com:***sidorkin/ai_app.git
+            # 2) Обновляем код (жёстко выравниваемся на origin/main)
+            if ! git remote -v | grep -q "$REPO_SSH"; then
+              git remote set-url origin "$REPO_SSH"
             fi
             git fetch --all --prune
-            # создадим/перепривяжем ветку main к origin/main и гарантированно очистим рабочее дерево
             git checkout -B main origin/main
             git reset --hard origin/main
             git clean -fd
             echo "Deploying commit: $(git rev-parse --short HEAD)"
 
-            # 3) Зависимости
+            # (необяз.) первый контакт с github.com — чтобы known_hosts не стопорил
+            ssh -o StrictHostKeyChecking=no -T git@github.com || true
+
+            # 3) deps
             source "$VENV"
             pip install -r requirements.txt
 
-            # 4) Команды Django от лица prod-окружения
-            # Рабочая директория должна быть родительской, чтобы пакет ai_app был импортируем
+            # 4) Django команды из корня APP_DIR
             cd "$APP_DIR"
             export DJANGO_SETTINGS_MODULE=ai_app.settings
             export ENV_PATH="$ENV_PATH_FILE"
             export PYTHONPATH="$APP_DIR:${PYTHONPATH:-}"
-
-            # sanity check: prod.env должен существовать
             test -f "$ENV_PATH_FILE" || { echo "prod.env not found: $ENV_PATH_FILE" >&2; exit 1; }
 
             python -m django check
             python -m django migrate --noinput
             python -m django collectstatic --noinput
 
-            # 5) Перезапуск правильного юнита
+            # 5) restart
             sudo systemctl restart ai_app
 
-            # 6) Здоровье
-            for i in {1..20}; do
-              [ -S "$APP_DIR/run/gunicorn.sock" ] && break
-              sleep 0.5
-            done
+            # 6) health
+            for i in {1..20}; do [ -S "$APP_DIR/run/gunicorn.sock" ] && break; sleep 0.5; done
             curl --fail --unix-socket "$APP_DIR/run/gunicorn.sock" -H "Host: imcmontanai.ru" http://unix/health/
             curl --fail -I https://imcmontanai.ru/health/ | grep -q "200 OK"
 
