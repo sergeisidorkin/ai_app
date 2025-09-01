@@ -18,18 +18,18 @@ jobs:
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.SSH_HOST }}      # напр. 130.193.53.106
-          username: ${{ secrets.SSH_USER }}  # sergei
-          key: ${{ secrets.SSH_KEY }}        # приватный ключ пользователя sergei на сервере
-          # port: ${{ secrets.SSH_PORT }}    # раскомментируйте и добавьте секрет, если порт не 22
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
           script: |
             set -euo pipefail
 
             APP_DIR="$HOME/ai_appdir"
             REPO_DIR="$APP_DIR/ai_app"
             VENV="$APP_DIR/ai_appenv/bin/activate"
+            ENV_PATH_FILE="$APP_DIR/env/prod.env"
 
-            # 1) Bootstrap: если нет репозитория — клонируем
+            # 1) Первый деплой/Bootstrap
             if [ ! -d "$REPO_DIR/.git" ]; then
               mkdir -p "$APP_DIR"
               git clone git@github.com:sergeisidorkin/ai_app.git "$REPO_DIR"
@@ -37,26 +37,39 @@ jobs:
 
             cd "$REPO_DIR"
 
-            # Убедимся, что origin указывает на GitHub по SSH (чтобы не спрашивал пароль)
+            # 2) Обновляем код
             if ! git remote -v | grep -q 'git@github.com:sergeisidorkin/ai_app.git'; then
               git remote set-url origin git@github.com:sergeisidorkin/ai_app.git
             fi
-
-            # 2) Обновляем код
             git fetch origin
             git switch main
             git pull --ff-only
 
-            # 3) Обновляем зависимости
+            # 3) Зависимости
             source "$VENV"
             pip install -r requirements.txt
 
-            # 4) Миграции/статика (settings сам подтянет переменные из .env сервера)
-            export DJANGO_SETTINGS_MODULE=settings
+            # 4) Команды Django от лица prod-окружения
+            export DJANGO_SETTINGS_MODULE=ai_app.settings     # <-- было settings
+            export ENV_PATH="$ENV_PATH_FILE"                  # чтобы settings прочитал prod.env
+
+            python -m django check
             python -m django migrate --noinput
             python -m django collectstatic --noinput
 
-            # 5) Перезапускаем gunicorn (нужен NOPASSWD в sudoers для sergei)
-            sudo systemctl restart gunicorn
+            # 5) Перезапуск правильного юнита
+            sudo systemctl restart ai_app    # <-- было gunicorn
+
+            # 6) Здоровье: ждём сокет и проверяем HTTPS
+            for i in {1..20}; do
+              [ -S "$APP_DIR/run/gunicorn.sock" ] && break
+              sleep 0.5
+            done
+
+            # локально через сокет
+            curl --fail --unix-socket "$APP_DIR/run/gunicorn.sock" -H "Host: imcmontanai.ru" http://unix/health/
+
+            # снаружи через Nginx/HTTPS (код 200)
+            curl --fail -I https://imcmontanai.ru/health/ | grep "200 OK" >/dev/null
 
             echo "Deploy OK"
