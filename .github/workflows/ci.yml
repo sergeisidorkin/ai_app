@@ -25,7 +25,7 @@ jobs:
           --health-retries=5
 
     env:
-      DJANGO_SETTINGS_MODULE: ai_app.settings
+      # ВАЖНО: здесь больше НЕ задаём DJANGO_SETTINGS_MODULE
       SECRET_KEY: dummy
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/test_ai_app
 
@@ -45,10 +45,25 @@ jobs:
           pip install -r requirements.txt
           pip install -r dev-requirements.txt
 
+      - name: Detect settings module
+        run: |
+          set -e
+          if [ -f ai_app/settings.py ]; then
+            echo "DJANGO_SETTINGS_MODULE=ai_app.settings" >> $GITHUB_ENV
+            echo "Using ai_app.settings"
+          elif [ -f settings.py ]; then
+            echo "DJANGO_SETTINGS_MODULE=settings" >> $GITHUB_ENV
+            echo "Using settings"
+          else
+            echo "Could not find settings module" >&2
+            ls -la
+            exit 1
+          fi
+
       - name: Wait for Postgres
         run: |
           for i in {1..30}; do
-            pg_isready -h localhost -p 5432 -U postgres && break
+            pg_isready -h localhost -p 5432 -U postgres && break || true
             sleep 1
           done
 
