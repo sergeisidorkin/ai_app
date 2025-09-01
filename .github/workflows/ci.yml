@@ -68,6 +68,8 @@ jobs:
           done
 
       - name: Django check & migrate
+        env:
+          PYTHONPATH: .:${PYTHONPATH}
         run: |
           python -m django check
           python -m django migrate --noinput
