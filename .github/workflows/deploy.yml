@@ -29,7 +29,7 @@ jobs:
             REPO_DIR="$APP_DIR/ai_app"
             VENV="$APP_DIR/ai_appenv/bin/activate"
             ENV_PATH_FILE="$APP_DIR/env/prod.env"
-            REPO_SSH="git@github.com:sergeisidorkin/ai_app.git"   # <-- ВАЖНО: правильный URL
+            REPO_SSH="git@github.com:sergeisidorkin/ai_app.git"  # <-- без звездочек
 
             # 1) Bootstrap
             if [ ! -d "$REPO_DIR/.git" ]; then
@@ -39,24 +39,23 @@ jobs:
 
             cd "$REPO_DIR"
 
-            # 2) Обновляем код (жёстко выравниваемся на origin/main)
+            # 2) Жёсткое выравнивание на origin/main (без падений из-за локальных правок)
             if ! git remote -v | grep -q "$REPO_SSH"; then
               git remote set-url origin "$REPO_SSH"
             fi
             git fetch --all --prune
-            git checkout -B main origin/main
+            git reset --hard            # сначала выбрасываем локальные изменения
+            git clean -fd
+            git checkout -f main || git checkout -f -B main origin/main
             git reset --hard origin/main
             git clean -fd
             echo "Deploying commit: $(git rev-parse --short HEAD)"
-
-            # (необяз.) первый контакт с github.com — чтобы known_hosts не стопорил
-            ssh -o StrictHostKeyChecking=no -T git@github.com || true
 
             # 3) deps
             source "$VENV"
             pip install -r requirements.txt
 
-            # 4) Django команды из корня APP_DIR
+            # 4) Django из корня APP_DIR
             cd "$APP_DIR"
             export DJANGO_SETTINGS_MODULE=ai_app.settings
             export ENV_PATH="$ENV_PATH_FILE"
