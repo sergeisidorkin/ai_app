@@ -25,7 +25,7 @@ jobs:
           --health-retries=5
 
     env:
-      # ВАЖНО: здесь больше НЕ задаём DJANGO_SETTINGS_MODULE
+      DJANGO_SETTINGS_MODULE: ai_app.settings
       SECRET_KEY: dummy
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/test_ai_app
 
