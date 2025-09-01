@@ -21,6 +21,8 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
+          port: 22
+          command_timeout: 10m
           script: |
             set -euo pipefail
 
@@ -50,26 +52,28 @@ jobs:
             pip install -r requirements.txt
 
             # 4) Команды Django от лица prod-окружения
-            export DJANGO_SETTINGS_MODULE=ai_app.settings     # <-- было settings
-            export ENV_PATH="$ENV_PATH_FILE"                  # чтобы settings прочитал prod.env
+            # Рабочая директория должна быть родительской, чтобы пакет ai_app был импортируем
+            cd "$APP_DIR"
+            export DJANGO_SETTINGS_MODULE=ai_app.settings
+            export ENV_PATH="$ENV_PATH_FILE"
+            export PYTHONPATH="$APP_DIR:${PYTHONPATH:-}"
+
+            # sanity check: prod.env должен существовать
+            test -f "$ENV_PATH_FILE" || { echo "prod.env not found: $ENV_PATH_FILE" >&2; exit 1; }
 
             python -m django check
             python -m django migrate --noinput
             python -m django collectstatic --noinput
 
             # 5) Перезапуск правильного юнита
-            sudo systemctl restart ai_app    # <-- было gunicorn
+            sudo systemctl restart ai_app
 
-            # 6) Здоровье: ждём сокет и проверяем HTTPS
+            # 6) Здоровье
             for i in {1..20}; do
               [ -S "$APP_DIR/run/gunicorn.sock" ] && break
               sleep 0.5
             done
-
-            # локально через сокет
             curl --fail --unix-socket "$APP_DIR/run/gunicorn.sock" -H "Host: imcmontanai.ru" http://unix/health/
-
-            # снаружи через Nginx/HTTPS (код 200)
-            curl --fail -I https://imcmontanai.ru/health/ | grep "200 OK" >/dev/null
+            curl --fail -I https://imcmontanai.ru/health/ | grep -q "200 OK"
 
             echo "Deploy OK"
