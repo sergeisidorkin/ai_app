@@ -31,42 +31,60 @@ jobs:
       PYTHONPATH: .:${PYTHONPATH}
 
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install system deps
-        run: sudo apt-get update && sudo apt-get install -y libpq-dev
-
-      - name: Install Python deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -r dev-requirements.txt
-
-      - name: Force settings module  # <— ДОБАВИЛИ
-        run: |
+    - uses: actions/checkout@v4
+  
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+  
+    - name: Install system deps
+      run: sudo apt-get update && sudo apt-get install -y libpq-dev
+  
+    - name: Install Python deps
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r dev-requirements.txt
+  
+    - name: Detect settings & set env
+      run: |
+        set -e
+        echo "PYTHONPATH=$GITHUB_WORKSPACE:${PYTHONPATH:-}" >> $GITHUB_ENV
+        if [ -f ai_app/settings.py ]; then
           echo "DJANGO_SETTINGS_MODULE=ai_app.settings" >> $GITHUB_ENV
-          echo "PYTHONPATH=.:${PYTHONPATH}" >> $GITHUB_ENV
-
-      - name: Wait for Postgres
-        run: |
-          for i in {1..30}; do
-            pg_isready -h localhost -p 5432 -U postgres && break || true
-            sleep 1
-          done
-
-      - name: Sanity env
-        run: |
-          echo "DJANGO_SETTINGS_MODULE=$DJANGO_SETTINGS_MODULE"
-          test "$DJANGO_SETTINGS_MODULE" = "ai_app.settings"
-
-      - name: Django check & migrate
-        run: |
-          python -m django check
-          python -m django migrate --noinput
-
-      - name: Run tests
-        run: pytest -q
+          echo "Using ai_app.settings"
+        elif [ -f settings.py ]; then
+          echo "DJANGO_SETTINGS_MODULE=settings" >> $GITHUB_ENV
+          echo "Using settings"
+        else
+          echo "Could not find settings module" >&2
+          find . -maxdepth 3 -name settings.py -print
+          exit 1
+        fi
+  
+    - name: Wait for Postgres
+      run: |
+        for i in {1..30}; do
+          pg_isready -h localhost -p 5432 -U postgres && break || true
+          sleep 1
+        done
+  
+    - name: Debug workspace (one-off, можно потом убрать)
+      run: |
+        pwd
+        ls -la
+        python - <<'PY'
+        import os, sys, glob
+        print("sys.path[0]:", sys.path[0])
+        print("Have ai_app? ", os.path.isdir("ai_app"))
+        print("settings.py here:", glob.glob("**/settings.py", recursive=True)[:10])
+        PY
+  
+    - name: Django check & migrate
+      run: |
+        echo "Using $DJANGO_SETTINGS_MODULE"
+        python -m django check
+        python -m django migrate --noinput
+  
+    - name: Run tests
+      run: pytest -q
