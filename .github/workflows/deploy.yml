@@ -69,9 +69,26 @@ jobs:
             # 5) restart
             sudo systemctl restart ai_app
             
-            # 6) health
-            for i in {1..20}; do [ -S "$APP_DIR/run/gunicorn.sock" ] && break; sleep 0.5; done
-            curl --fail --unix-socket "$APP_DIR/run/gunicorn.sock" -H "Host: imcmontanai.ru" http://unix/health/
-            curl --fail -I https://imcmontanai.ru/health/ | grep -q "200 OK"
+            # 6) Ждём, пока gunicorn реально начнёт отвечать (а не просто появится файл сокета)
+            ok=0
+            for i in {1..40}; do
+              if curl -sS --fail \
+                --unix-socket "$APP_DIR/run/gunicorn.sock" \
+                -H "Host: imcmontanai.ru" \
+                -H "X-Forwarded-Proto: https" \
+                http://unix/health/ >/dev/null; then
+                ok=1; break
+              fi
+              sleep 0.5
+            done
             
+            if [ "$ok" -ne 1 ]; then
+              echo "Gunicorn health failed — показываю логи:"
+              systemctl status --no-pager ai_app || true
+              journalctl -u ai_app -n 200 --no-pager || true
+              exit 1
+            fi
+            
+            # проверка внешнего HTTPS через Nginx
+            curl --fail -I https://imcmontanai.ru/health/ | grep -q "200 OK"
             echo "Deploy OK"
