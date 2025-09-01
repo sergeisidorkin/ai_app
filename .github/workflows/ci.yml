@@ -46,20 +46,10 @@ jobs:
           pip install -r requirements.txt
           pip install -r dev-requirements.txt
 
-      - name: Detect settings module
+      - name: Force settings module  # <— ДОБАВИЛИ
         run: |
-          set -e
-          if [ -f ai_app/settings.py ]; then
-            echo "DJANGO_SETTINGS_MODULE=ai_app.settings" >> $GITHUB_ENV
-            echo "Using ai_app.settings"
-          elif [ -f settings.py ]; then
-            echo "DJANGO_SETTINGS_MODULE=settings" >> $GITHUB_ENV
-            echo "Using settings"
-          else
-            echo "Could not find settings module" >&2
-            ls -la
-            exit 1
-          fi
+          echo "DJANGO_SETTINGS_MODULE=ai_app.settings" >> $GITHUB_ENV
+          echo "PYTHONPATH=.:${PYTHONPATH}" >> $GITHUB_ENV
 
       - name: Wait for Postgres
         run: |
@@ -67,22 +57,16 @@ jobs:
             pg_isready -h localhost -p 5432 -U postgres && break || true
             sleep 1
           done
-          
+
       - name: Sanity env
         run: |
           echo "DJANGO_SETTINGS_MODULE=$DJANGO_SETTINGS_MODULE"
           test "$DJANGO_SETTINGS_MODULE" = "ai_app.settings"
-      
+
       - name: Django check & migrate
-        env:
-          DJANGO_SETTINGS_MODULE: ai_app.settings
-          PYTHONPATH: .:${PYTHONPATH}
         run: |
           python -m django check
           python -m django migrate --noinput
 
       - name: Run tests
-        env:
-          DJANGO_SETTINGS_MODULE: ai_app.settings
-          PYTHONPATH: .:${PYTHONPATH}
         run: pytest -q
