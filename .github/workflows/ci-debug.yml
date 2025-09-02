@@ -1,0 +1,101 @@
+name: CI (debug)
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [ ci-* ]
+
+concurrency:
+  group: ci-debug-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: test_ai_app
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d test_ai_app"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=15
+
+    env:
+      DJANGO_SETTINGS_MODULE: settings
+      DJANGO_ENV: local
+      READ_DOTENV: "False"
+      SECRET_KEY: dummy
+      DEBUG: "False"
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/test_ai_app
+      PYTHONPATH: ${{ github.workspace }}:${{ env.PYTHONPATH }}
+      PYTHONWARNINGS: default
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            dev-requirements.txt
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpq-dev
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip wheel
+          pip install -r requirements.txt
+          if [ -f dev-requirements.txt ]; then pip install -r dev-requirements.txt; fi
+
+      - name: Wait for Postgres
+        run: |
+          for i in {1..60}; do
+            pg_isready -h localhost -p 5432 -U postgres && break || true
+            sleep 1
+          done
+          pg_isready -h localhost -p 5432 -U postgres
+
+      - name: Debug workspace
+        run: |
+          echo "PWD: $(pwd)"
+          echo "Python: $(python --version)"
+          echo "Django settings: $DJANGO_SETTINGS_MODULE"
+          ls -la
+          python - <<'PY'
+          import os, sys, glob
+          print("sys.path[0]:", sys.path[0])
+          print("Has 'settings' package?:", os.path.isdir("settings") and os.path.isfile("settings/__init__.py"))
+          print("settings.py files:", glob.glob("**/settings.py", recursive=True)[:10])
+          print("DJANGO_SETTINGS_MODULE:", os.getenv("DJANGO_SETTINGS_MODULE"))
+          PY
+
+      - name: Django check & migrations
+        run: |
+          python -m django check
+          python -m django showmigrations
+          python -m django migrate --noinput
+
+      - name: Run tests (verbose) + JUnit report
+        run: |
+          pytest -vv --maxfail=1 --durations=10 --junitxml=pytest-junit.xml
+
+      - name: Upload pytest report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-junit
+          path: pytest-junit.xml
+          if-no-files-found: warn
