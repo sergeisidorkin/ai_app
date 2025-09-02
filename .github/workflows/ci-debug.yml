@@ -1,17 +1,19 @@
-name: CI
+name: CI (debug)
 
 on:
+  workflow_dispatch: {}           # запуск вручную из Actions
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+    branches:
+      - 'ci-*'                    # только ветки для отладки, не main!
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-debug-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   test:
+    # дополнительная защита — откажет на main, даже если кто-то случайно изменит on:
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/heads/ci-') }}
     runs-on: ubuntu-latest
 
     services:
@@ -27,7 +29,7 @@ jobs:
           --health-cmd="pg_isready -U postgres -d test_ai_app"
           --health-interval=10s
           --health-timeout=5s
-          --health-retries=10
+          --health-retries=15
 
     env:
       DJANGO_SETTINGS_MODULE: settings
@@ -37,6 +39,7 @@ jobs:
       DEBUG: "False"
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/test_ai_app
       PYTHONPATH: ${{ github.workspace }}
+      PYTHONWARNINGS: default
 
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +47,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
+          cache: "pip"
           cache-dependency-path: |
             requirements.txt
             dev-requirements.txt
@@ -68,10 +71,20 @@ jobs:
           done
           pg_isready -h localhost -p 5432 -U postgres
 
-      - name: Django check & migrate
+      - name: Django check & migrations
         run: |
           python -m django check
+          python -m django showmigrations
           python -m django migrate --noinput
 
-      - name: Run tests
-        run: pytest -q
+      - name: Run tests (verbose) + JUnit report
+        run: |
+          pytest -vv --maxfail=1 --durations=10 --junitxml=pytest-junit.xml
+
+      - name: Upload pytest report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-junit
+          path: pytest-junit.xml
+          if-no-files-found: warn
