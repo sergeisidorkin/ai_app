@@ -1,0 +1,11 @@
+{# объединяем панели подключений #}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h1 class="h4 mb-0">Подключения</h1>
+</div>
+
+{% include "onedrive_app/panel.html" with selection=selection onedrive_connected=onedrive_connected %}
+
+{# если есть панель OpenAI — подключим тоже #}
+{% if openai is not None %}
+  {% include "openai_app/panel.html" with openai=openai %}
+{% endif %}

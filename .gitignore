@@ -13,4 +13,5 @@ media/
 
 # Local env
 .env
-*.env
+.env.*
+.env.example

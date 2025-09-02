@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Выбор файла{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-body">
+    <h5 class="card-title">Выбор файла (.docx) или переход в папку</h5>
+
+    <ul class="list-group list-group-flush">
+      {% for it in items %}
+        <li class="list-group-item d-flex justify-content-between align-items-center">
+          <div class="me-3">
+            {% if it.folder %}📁{% else %}📄{% endif %} {{ it.name }}
+          </div>
+
+          <div class="d-flex align-items-center gap-2">
+            {# Для папки показываем кнопку "Открыть" #}
+            {% if it.folder %}
+              <a class="btn btn-sm btn-outline-primary"
+                 href="?folder={{ it.id }}">
+                Открыть
+              </a>
+            {% endif %}
+
+            {# Форма выбора (и для файлов, и для папок) #}
+            <form method="post" action="{% url 'onedrive_select' %}" class="d-inline m-0">
+              {% csrf_token %}
+              <input type="hidden" name="item_id" value="{{ it.id }}">
+              <input type="hidden" name="item_name" value="{{ it.name }}">
+              <input type="hidden" name="item_path" value="{{ it.parentReference.path }}/{{ it.name }}">
+              <input type="hidden" name="web_url" value="{{ it.webUrl }}">
+              <input type="hidden" name="drive_id" value="{{ it.parentReference.driveId }}">
+              <input type="hidden" name="is_folder" value="{% if it.folder %}1{% else %}0{% endif %}">
+              <button type="submit" class="btn btn-primary btn-sm">Выбрать</button>
+            </form>
+          </div>
+        </li>
+      {% empty %}
+        <li class="list-group-item">Пусто</li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+{% endblock %}
