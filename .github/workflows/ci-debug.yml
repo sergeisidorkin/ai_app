@@ -1,12 +1,13 @@
-name: CI (debug)
+name: CI
 
 on:
-  workflow_dispatch: {}           # запуск вручную из Actions
   push:
-    branches: [ ci-* ]            # пуши в ветки для отладки
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 concurrency:
-  group: ci-debug-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -26,7 +27,7 @@ jobs:
           --health-cmd="pg_isready -U postgres -d test_ai_app"
           --health-interval=10s
           --health-timeout=5s
-          --health-retries=15
+          --health-retries=10
 
     env:
       DJANGO_SETTINGS_MODULE: settings
@@ -36,7 +37,6 @@ jobs:
       DEBUG: "False"
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/test_ai_app
       PYTHONPATH: ${{ github.workspace }}
-      PYTHONWARNINGS: default
 
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +44,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
+          cache: pip
           cache-dependency-path: |
             requirements.txt
             dev-requirements.txt
@@ -68,34 +68,10 @@ jobs:
           done
           pg_isready -h localhost -p 5432 -U postgres
 
-      - name: Debug workspace
-        run: |
-          echo "PWD: $(pwd)"
-          echo "Python: $(python --version)"
-          echo "Django settings: $DJANGO_SETTINGS_MODULE"
-          ls -la
-          python - <<'PY'
-          import os, sys, glob
-          print("sys.path[0]:", sys.path[0])
-          print("Has 'settings' package?:", os.path.isdir("settings") and os.path.isfile("settings/__init__.py"))
-          print("settings.py files:", glob.glob("**/settings.py", recursive=True)[:10])
-          print("DJANGO_SETTINGS_MODULE:", os.getenv("DJANGO_SETTINGS_MODULE"))
-          PY
-
-      - name: Django check & migrations
+      - name: Django check & migrate
         run: |
           python -m django check
-          python -m django showmigrations
           python -m django migrate --noinput
 
-      - name: Run tests (verbose) + JUnit report
-        run: |
-          pytest -vv --maxfail=1 --durations=10 --junitxml=pytest-junit.xml
-
-      - name: Upload pytest report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pytest-junit
-          path: pytest-junit.xml
-          if-no-files-found: warn
+      - name: Run tests
+        run: pytest -q

@@ -68,10 +68,14 @@ jobs:
           done
           pg_isready -h localhost -p 5432 -U postgres
 
-      - name: Django check & migrate
+      - name: Django sanity checks
         run: |
           python -m django check
-          python -m django migrate --noinput
+          # упадёт, если есть несозданные миграции
+          python -m django makemigrations --check --dry-run
+
+      - name: Migrate
+        run: python -m django migrate --noinput
 
       - name: Run tests
         run: pytest -q
