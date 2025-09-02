@@ -1,9 +1,9 @@
 name: CI (debug)
 
 on:
-  workflow_dispatch: {}         # запуск вручную из вкладки Actions
+  workflow_dispatch: {}           # запуск вручную из Actions
   push:
-    branches: [ ci-* ]          # пуши в ветки для отладки
+    branches: [ ci-* ]            # пуши в ветки для отладки
 
 concurrency:
   group: ci-debug-${{ github.ref }}
@@ -45,6 +45,9 @@ jobs:
         with:
           python-version: "3.11"
           cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            dev-requirements.txt
 
       - name: Install system deps
         run: |
@@ -69,16 +72,22 @@ jobs:
         run: |
           echo "PWD: $(pwd)"
           echo "Python: $(python --version)"
+          echo "Django settings: $DJANGO_SETTINGS_MODULE"
           ls -la
           python - <<'PY'
-          import os, sys, glob
+          import os, sys, glob, django
           print("sys.path[0]:", sys.path[0])
-          print("Have 'settings' package? ", os.path.isdir("settings"))
+          print("Has 'settings' package?:", os.path.isdir("settings") and os.path.isfile("settings/__init__.py"))
           print("settings.py files:", glob.glob("**/settings.py", recursive=True)[:10])
           print("DJANGO_SETTINGS_MODULE:", os.getenv("DJANGO_SETTINGS_MODULE"))
+          try:
+              import django
+              print("Django:", django.get_version())
+          except Exception as e:
+              print("Django import error:", e)
           PY
 
-      - name: Django check & migrations (plan)
+      - name: Django check & migrations
         run: |
           python -m django check
           python -m django showmigrations
