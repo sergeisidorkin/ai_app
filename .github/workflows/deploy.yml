@@ -2,9 +2,10 @@ name: Deploy
 
 on:
   workflow_run:
-    workflows: ["CI"]      # имя вашего CI workflow
+    workflows: ["CI"]          # запуск после успешного CI
     types: [completed]
     branches: [main]
+  workflow_dispatch: {}        # ручной запуск из Actions
 
 concurrency:
   group: deploy-main
@@ -12,8 +13,9 @@ concurrency:
 
 jobs:
   deploy:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
+
     steps:
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.0.3
@@ -21,55 +23,72 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          command_timeout: 10m
+          port: ${{ secrets.SSH_PORT || 22 }}
+          command_timeout: 15m
           script: |
             set -euo pipefail
 
             APP_DIR="$HOME/ai_appdir"
             REPO_DIR="$APP_DIR/ai_app"
-            VENV="$APP_DIR/ai_appenv/bin/activate"
+            VENV_DIR="$APP_DIR/ai_appenv"
+            VENV_ACT="$VENV_DIR/bin/activate"
             ENV_PATH_FILE="$APP_DIR/env/prod.env"
-            REPO_SSH="git@github.com:sergeisidorkin/ai_app.git"  # <-- без звездочек
+            REPO_SSH="git@github.com:sergeisidorkin/ai_app.git"
 
-            # 1) Bootstrap
+            echo "== Preflight =="
+            mkdir -p "$APP_DIR" "$APP_DIR/env" "$APP_DIR/run"
+
             if [ ! -d "$REPO_DIR/.git" ]; then
-              mkdir -p "$APP_DIR"
+              echo "Cloning repo..."
               git clone "$REPO_SSH" "$REPO_DIR"
             fi
 
-            cd "$REPO_DIR"
+            if [ ! -d "$VENV_DIR" ]; then
+              echo "Creating venv..."
+              python3 -m venv "$VENV_DIR"
+            fi
 
-            # 2) Жёсткое выравнивание на origin/main (без падений из-за локальных правок)
+            test -f "$ENV_PATH_FILE" || { echo "prod.env not found: $ENV_PATH_FILE" >&2; exit 1; }
+
+            echo "== Sync repo =="
+            cd "$REPO_DIR"
             if ! git remote -v | grep -q "$REPO_SSH"; then
               git remote set-url origin "$REPO_SSH"
             fi
             git fetch --all --prune
-            git reset --hard            # сначала выбрасываем локальные изменения
+            git reset --hard
             git clean -fd
             git checkout -f main || git checkout -f -B main origin/main
             git reset --hard origin/main
             git clean -fd
             echo "Deploying commit: $(git rev-parse --short HEAD)"
 
-            # 3) deps
-            source "$VENV"
-            pip install -r requirements.txt
-            
-            # 4) Django команды ИЗ каталога репозитория
-            cd "$REPO_DIR"
+            echo "== Python deps =="
+            . "$VENV_ACT"
+            python -m pip install --upgrade pip wheel
+            pip install --no-cache-dir -r requirements.txt
+
+            echo "== Export env from $ENV_PATH_FILE =="
+            # экспортируем все переменные из env.prod
+            set -a
+            . "$ENV_PATH_FILE"
+            set +a
+
+            # гарантируем правильные флаги прод-окружения
             export DJANGO_SETTINGS_MODULE=settings
-            export ENV_PATH="$ENV_PATH_FILE"
+            export DJANGO_ENV=${DJANGO_ENV:-prod}
+            export READ_DOTENV=${READ_DOTENV:-False}
             export PYTHONPATH="$REPO_DIR:${PYTHONPATH:-}"
-            test -f "$ENV_PATH_FILE" || { echo "prod.env not found: $ENV_PATH_FILE" >&2; exit 1; }
-            
-            python -m django check
+
+            echo "== Django checks & migrations =="
+            python -m django check --deploy
             python -m django migrate --noinput
             python -m django collectstatic --noinput
-            
-            # 5) restart
+
+            echo "== Restart gunicorn =="
             sudo systemctl restart ai_app
-            
-            # 6) Ждём, пока gunicorn реально начнёт отвечать (а не просто появится файл сокета)
+
+            echo "== Healthcheck (gunicorn socket) =="
             ok=0
             for i in {1..40}; do
               if curl -sS --fail \
@@ -81,14 +100,14 @@ jobs:
               fi
               sleep 0.5
             done
-            
+
             if [ "$ok" -ne 1 ]; then
-              echo "Gunicorn health failed — показываю логи:"
+              echo "Gunicorn health failed — showing logs:"
               systemctl status --no-pager ai_app || true
               journalctl -u ai_app -n 200 --no-pager || true
               exit 1
             fi
-            
-            # проверка внешнего HTTPS через Nginx
+
+            echo "== External HTTPS check =="
             curl --fail -I https://imcmontanai.ru/health/ | grep -q "200 OK"
             echo "Deploy OK"
