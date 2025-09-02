@@ -1,0 +1,38 @@
+<div class="card shadow-sm">
+  <div class="card-body">
+    <p class="mb-2 fw-semibold">OpenAI API</p>
+
+    {% if openai %}
+      <div class="mb-3">
+        <span class="badge text-bg-success">Ключ сохранён</span>
+        <span class="text-muted ms-2">(…{{ openai.api_key|slice:"-4:" }})</span>
+      </div>
+    {% else %}
+      <div class="mb-3">
+        <span class="badge text-bg-secondary">Ключ не задан</span>
+      </div>
+    {% endif %}
+
+    <div class="d-flex flex-wrap gap-2 align-items-center">
+      <form method="post" action="{% url 'openai_save' %}" class="d-flex flex-nowrap gap-2 mb-0">
+        {% csrf_token %}
+        <input type="password" name="openai_api_key" class="form-control" placeholder="sk-..." autocomplete="off" style="max-width: 360px;">
+        <button type="submit" class="btn btn-primary text-nowrap px-4">Сохранить ключ</button>
+      </form>
+
+      {% if openai %}
+        <form method="post" action="{% url 'openai_delete' %}">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-outline-danger"
+                  onclick="return confirm('Удалить сохранённый ключ?')">
+            Удалить ключ
+          </button>
+        </form>
+      {% endif %}
+    </div>
+
+    <p class="text-muted small mt-2 mb-0">
+      Для продакшена ключ лучше хранить в Secret Manager/ENV. Здесь — для локальной разработки.
+    </p>
+  </div>
+</div>

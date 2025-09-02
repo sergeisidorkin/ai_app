@@ -1,0 +1,228 @@
+{# blocks_app/templates/blocks_app/dashboard_partial.html #}
+{% load static %}
+
+<style>
+  .card-block { border: 1px solid #e5e7eb; border-radius: .75rem; }
+  .card-block + .card-block { margin-top: 1rem; }
+  .pre-wrap { white-space: pre-wrap; }
+</style>
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h1 class="h4 mb-0">Шаблоны</h1>
+  <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#blockModal" id="openCreateModal">
+    Добавить блок
+  </button>
+</div>
+
+{% if messages %}
+  <div class="container mb-3 px-0">
+    {% for message in messages %}
+      <div class="alert alert-{{ message.tags }} mb-2">{{ message }}</div>
+    {% endfor %}
+  </div>
+{% endif %}
+
+{% if blocks %}
+  <div class="row g-3">
+    {% for b in blocks %}
+      <div class="col-12">
+        <div class="card-block bg-white p-3 shadow-sm">
+          <div class="d-flex justify-content-between align-items-start">
+            <div>
+              <div class="fw-semibold">Код: {{ b.code }}</div>
+              <div class="text-muted">Наименование: {{ b.name }}</div>
+              {% if b.model %}
+                <span class="badge text-bg-light mt-2">Модель: {{ b.model }}</span>
+              {% endif %}
+            </div>
+
+            <button class="btn btn-sm btn-outline-secondary"
+                    data-bs-toggle="modal"
+                    data-bs-target="#blockModal"
+                    data-edit-url="{% url 'blocks_update' b.id %}"
+                    data-code="{{ b.code|escape }}"
+                    data-name="{{ b.name|escape }}"
+                    data-prompt="{{ b.prompt|escape }}"
+                    data-context="{{ b.context|escape }}"
+                    data-model="{{ b.model|default_if_none:''|escape }}">
+              Изменить
+            </button>
+          </div>
+
+          <hr class="my-3">
+
+          <div class="row">
+            <div class="col-md-6">
+              <div class="small text-muted mb-1">Промпт</div>
+              <div class="pre-wrap">{{ b.prompt }}</div>
+            </div>
+            <div class="col-md-6">
+              <div class="small text-muted mb-1">Контекст</div>
+              <div class="pre-wrap">{{ b.context }}</div>
+            </div>
+          </div>
+
+          <hr class="my-3">
+
+          <div class="d-flex justify-content-between align-items-center mt-3">
+            <!-- слева: выбор модели + запуск -->
+            <div class="d-flex align-items-center gap-2">
+              <!-- Модель — отдельная форма -->
+              <div class="btn-group">
+                <button type="button"
+                        class="btn btn-outline-secondary btn-sm dropdown-toggle"
+                        data-bs-toggle="dropdown" aria-expanded="false"
+                        id="model-label-{{ b.id }}">
+                  {% if b.model %}Модель: {{ b.model }}{% else %}Модель{% endif %}
+                </button>
+                <ul class="dropdown-menu">
+                  {% if llm_models %}
+                    {% for mid in llm_models %}
+                      <li>
+                        <form action="{% url 'blocks_set_model' b.id %}" method="post" class="m-0">
+                          {% csrf_token %}
+                          <input type="hidden" name="model" value="{{ mid }}">
+                          <button type="submit" class="dropdown-item">{{ mid }}</button>
+                        </form>
+                      </li>
+                    {% endfor %}
+                  {% else %}
+                    <li><span class="dropdown-item-text text-muted">Нет доступных моделей</span></li>
+                  {% endif %}
+                </ul>
+              </div>
+
+              <!-- Запуск — отдельная форма -->
+              <form action="{% url 'blocks_run' b.id %}" method="post" class="m-0">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-success btn-sm">Создать</button>
+              </form>
+            </div>
+
+            <!-- справа: удаление -->
+            <form action="{% url 'blocks_delete' b.id %}" method="post"
+                  onsubmit="return confirm('Удалить этот блок?');" class="m-0">
+              {% csrf_token %}
+              <button type="submit" class="btn btn-outline-danger btn-sm">Удалить</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="alert alert-info">Пока нет ни одного блока. Нажмите «Добавить блок».</div>
+{% endif %}
+
+<!-- Модалка: Создание/Редактирование блока -->
+<div class="modal fade" id="blockModal" tabindex="-1" aria-labelledby="blockModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <form id="blockForm" method="post">
+        {% csrf_token %}
+        <div class="modal-header">
+          <h5 class="modal-title" id="blockModalLabel">Добавить блок</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label">Код блока</label>
+            <input type="text" name="code" class="form-control" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Наименование блока</label>
+            <input type="text" name="name" class="form-control" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Промпт</label>
+            <textarea name="prompt" class="form-control" rows="6" placeholder="Введите промпт..." required></textarea>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Контекст</label>
+            <textarea name="context" class="form-control" rows="4" placeholder="Необязательно"></textarea>
+          </div>
+
+          <div class="mb-1">
+            <label class="form-label">Модель</label>
+            <select name="model" class="form-select">
+              <option value="">— Не выбрано —</option>
+              {% for mid in llm_models %}
+                <option value="{{ mid }}">{{ mid }}</option>
+              {% endfor %}
+            </select>
+            <div class="form-text">Можно также выбрать модель на карточке блока (кнопка «Модель»).</div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="submit" class="btn btn-primary" id="saveBtn" formaction="{% url 'blocks_create' %}">
+            Сохранить
+          </button>
+          <button type="submit" class="btn btn-warning" id="updateBtn" style="display:none;" formaction="#">
+            Изменить
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    const blockModal = document.getElementById('blockModal');
+    const form = document.getElementById('blockForm');
+    if (!blockModal || !form) return;
+
+    const title = document.getElementById('blockModalLabel');
+    const saveBtn = document.getElementById('saveBtn');
+    const updateBtn = document.getElementById('updateBtn');
+
+    const inputCode = () => form.querySelector('input[name="code"]');
+    const inputName = () => form.querySelector('input[name="name"]');
+    const inputPrompt = () => form.querySelector('textarea[name="prompt"]');
+    const inputContext = () => form.querySelector('textarea[name="context"]');
+    const inputModel = () => form.querySelector('select[name="model"]');
+
+    // Открытие модалки для создания
+    document.getElementById('openCreateModal')?.addEventListener('click', () => {
+      if (title) title.textContent = 'Добавить блок';
+      inputCode().value = '';
+      inputName().value = '';
+      inputPrompt().value = '';
+      inputContext().value = '';
+      if (inputModel()) inputModel().value = '';
+      if (saveBtn) saveBtn.style.display = '';
+      if (updateBtn) {
+        updateBtn.style.display = 'none';
+        updateBtn.formAction = '#';
+      }
+    });
+
+    // Открытие модалки для редактирования
+    blockModal.addEventListener('show.bs.modal', (event) => {
+      const btn = event.relatedTarget;
+      if (!btn || !btn.dataset) return;
+
+      const editUrl = btn.dataset.editUrl;
+      const code = btn.dataset.code;
+      const name = btn.dataset.name;
+      const prompt = btn.dataset.prompt;
+      const context = btn.dataset.context;
+      const model = btn.dataset.model || '';
+
+      if (editUrl) {
+        if (title) title.textContent = 'Изменить блок';
+        inputCode().value = code || '';
+        inputName().value = name || '';
+        inputPrompt().value = prompt || '';
+        inputContext().value = context || '';
+        if (inputModel()) inputModel().value = model;
+        if (saveBtn) saveBtn.style.display = 'none';
+        if (updateBtn) {
+          updateBtn.style.display = '';
+          updateBtn.formAction = editUrl;
+        }
+      }
+    });
+  })();
+</script>

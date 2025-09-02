@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Главная — ai_app{% endblock %}
+
+{% block content %}
+<div class="row">
+  <!-- Левое меню -->
+  <aside class="col-12 col-md-3 col-xl-2 border-end bg-white sidebar py-3">
+    <ul class="nav nav-pills flex-column gap-2">
+      <li class="nav-item">
+        <a class="nav-link active" aria-current="page" href="#templates" data-bs-toggle="tab">Шаблоны</a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link" href="#connections" data-bs-toggle="tab">Подключения</a>
+      </li>
+    </ul>
+  </aside>
+
+  <!-- Контент вкладок -->
+  <main class="col-12 col-md-9 col-xl-10 py-4">
+    <div class="tab-content">
+      <!-- Шаблоны -->
+      <section id="templates" class="tab-pane fade show active">
+        <div id="templates-pane"
+             hx-get="{% url 'blocks_dashboard_partial' %}"
+             hx-trigger="load"
+             hx-target="#templates-pane"
+             hx-swap="innerHTML">
+          <div class="text-muted">Загрузка шаблонов…</div>
+        </div>
+      </section>
+
+      <!-- Подключения -->
+      <section id="connections" class="tab-pane fade">
+        <div id="connections-pane"
+             hx-get="{% url 'onedrive_connections_partial' %}"
+             hx-trigger="load"
+             hx-target="#connections-pane"
+             hx-swap="innerHTML">
+          <div class="text-muted">Загрузка подключений…</div>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<script>
+  // Уважать #hash и обновлять адрес при переключении вкладок
+  document.addEventListener('DOMContentLoaded', () => {
+    const showFromHash = () => {
+      const hash = window.location.hash;
+      if (!hash) return;
+      const link = document.querySelector(`a[data-bs-toggle="tab"][href="${hash}"]`);
+      if (link) new bootstrap.Tab(link).show();
+    };
+    showFromHash();
+    document.querySelectorAll('a[data-bs-toggle="tab"]').forEach(el => {
+      el.addEventListener('shown.bs.tab', (e) => {
+        const target = e.target.getAttribute('href');
+        if (target) history.replaceState(null, '', target);
+      });
+    });
+    window.addEventListener('hashchange', showFromHash);
+  });
+</script>
+{% endblock %}
