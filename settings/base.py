@@ -7,9 +7,14 @@ env = environ.Env(
     READ_DOTENV=(bool, False),
 )
 
+LOGIN_URL = "/admin/login/"
+
 # В dev удобно читать .env
-if env.bool("READ_DOTENV", False):
-    environ.Env.read_env(os.path.join(BASE_DIR, ".env"))
+if env.bool("READ_DOTENV", False) or (
+    os.environ.get("DJANGO_ENV", "local") == "local" and (BASE_DIR / ".env").exists()
+):
+    environ.Env.read_env(BASE_DIR / ".env")
+
 
 SECRET_KEY = env("SECRET_KEY", default="dev-secret-please-change")
 DEBUG = env.bool("DEBUG", False)
