@@ -1,9 +1,9 @@
 name: CI (debug)
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch: {}           # запуск вручную из Actions
   push:
-    branches: [ ci-* ]
+    branches: [ ci-* ]            # пуши в ветки для отладки
 
 concurrency:
   group: ci-debug-${{ github.ref }}
@@ -35,7 +35,7 @@ jobs:
       SECRET_KEY: dummy
       DEBUG: "False"
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/test_ai_app
-      PYTHONPATH: ${{ github.workspace }}:${{ env.PYTHONPATH }}
+      PYTHONPATH: ${{ github.workspace }}
       PYTHONWARNINGS: default
 
     steps:
