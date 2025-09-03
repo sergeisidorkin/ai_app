@@ -114,3 +114,15 @@ def clear_selection(request):
     OneDriveSelection.objects.filter(user=request.user).delete()
     messages.success(request, "Выбор OneDrive файла/папки сброшен.")
     return redirect(_home_tab("connections"))
+
+@login_required
+@require_POST
+def disconnect(request):
+    """Удаляет подключение OneDrive и сбрасывает выбор."""
+    OneDriveAccount.objects.filter(user=request.user).delete()
+    OneDriveSelection.objects.filter(user=request.user).delete()
+    messages.success(request, "Подключение OneDrive удалено.")
+    # Если вызов из HTMX — вернём свежий partial, иначе редирект на главную
+    if request.headers.get("HX-Request") == "true":
+        return connections_partial(request)
+    return redirect("/")
