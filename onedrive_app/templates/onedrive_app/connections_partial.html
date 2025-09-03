@@ -6,6 +6,5 @@
 {% include "onedrive_app/panel.html" with selection=selection onedrive_connected=onedrive_connected %}
 
 {# если есть панель OpenAI — подключим тоже #}
-{% if openai is not None %}
-  {% include "openai_app/panel.html" with openai=openai %}
-{% endif %}
+{% include "onedrive_app/panel.html" with selection=selection onedrive_connected=onedrive_connected %}
+{% include "openai_app/panel.html" with openai=openai %}
