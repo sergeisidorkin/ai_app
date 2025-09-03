@@ -42,24 +42,4 @@
     </div>
   </main>
 </div>
-
-<script>
-  // Уважать #hash и обновлять адрес при переключении вкладок
-  document.addEventListener('DOMContentLoaded', () => {
-    const showFromHash = () => {
-      const hash = window.location.hash;
-      if (!hash) return;
-      const link = document.querySelector(`a[data-bs-toggle="tab"][href="${hash}"]`);
-      if (link) new bootstrap.Tab(link).show();
-    };
-    showFromHash();
-    document.querySelectorAll('a[data-bs-toggle="tab"]').forEach(el => {
-      el.addEventListener('shown.bs.tab', (e) => {
-        const target = e.target.getAttribute('href');
-        if (target) history.replaceState(null, '', target);
-      });
-    });
-    window.addEventListener('hashchange', showFromHash);
-  });
-</script>
 {% endblock %}
