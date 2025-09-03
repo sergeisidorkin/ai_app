@@ -77,3 +77,4 @@ MS_SCOPES = ["User.Read", "Files.ReadWrite"]
 
 # === OpenAI ===
 OPENAI_API_BASE = env("OPENAI_API_BASE", default="https://api.openai.com/v1")
+OPENAI_BASE_URL = env("OPENAI_BASE_URL", default=env("OPENAI_API_BASE", default="https://api.openai.com/v1"))
