@@ -17,11 +17,11 @@ def save_key(request):
             messages.warning(request, "Ключ не начинается с «sk-». Сохраняю (локальная разработка).")
         OpenAIAccount.objects.update_or_create(user=request.user, defaults={"api_key": key})
         messages.success(request, "OpenAI API-ключ сохранён.")
-    return redirect(f"{reverse('blocks_dashboard')}#connections")
+    return redirect("/#connections")
 
 @login_required
 @require_POST
 def delete_key(request):
     OpenAIAccount.objects.filter(user=request.user).delete()
     messages.success(request, "OpenAI API-ключ удалён.")
-    return redirect(f"{reverse('blocks_dashboard')}#connections")
+    return redirect("/#connections")
