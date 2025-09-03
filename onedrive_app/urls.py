@@ -8,4 +8,5 @@ urlpatterns = [
     path("pick/", views.pick, name="onedrive_pick"),
     path("select/", views.select, name="onedrive_select"),
     path("clear/", views.clear_selection, name="onedrive_clear"),
+    path("disconnect/", views.disconnect, name="onedrive_disconnect"),
 ]
