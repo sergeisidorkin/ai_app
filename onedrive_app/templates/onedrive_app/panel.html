@@ -1,4 +1,4 @@
-<div class="card shadow-sm mb-3">
+<div class="card shadow-sm mb-3" id="onedrive-panel">
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center mb-2">
       <p class="mb-0 fw-semibold">Microsoft OneDrive</p>
@@ -9,7 +9,7 @@
       {% endif %}
     </div>
 
-    {% if selection and selection.item_id %}
+    {% if onedrive_connected and selection and selection.item_id %}
       <div class="mb-3">
         <div class="small text-muted">Выбранный объект</div>
         <div class="d-flex flex-wrap align-items-center gap-2">
@@ -32,13 +32,33 @@
       </div>
     {% else %}
       <div class="mb-3">
-        <span class="text-muted">Файл/папка не выбран(а)</span>
+        {% if onedrive_connected %}
+            <span class="text-muted">Файл/папка не выбран(а)</span>
+        {% else %}
+            <span class="text-muted">Сначала подключите OneDrive, чтобы выбрать файл/папку.</span>
+        {% endif %}
       </div>
     {% endif %}
 
     <div class="d-flex gap-2">
-      <a class="btn btn-outline-primary" href="{% url 'onedrive_connect' %}">Подключить</a>
-      <a class="btn btn-outline-secondary" href="{% url 'onedrive_pick' %}">Выбрать файл/папку</a>
+      {% if onedrive_connected %}
+        <a class="btn btn-outline-secondary" href="{% url 'onedrive_pick' %}">Выбрать файл/папку</a>
+        <form method="post"
+              action="{% url 'onedrive_disconnect' %}"
+              hx-post="{% url 'onedrive_disconnect' %}"
+              hx-target="#connections-pane"
+              hx-swap="innerHTML"
+              class="d-inline">
+          {% csrf_token %}
+          <button type="submit"
+                  class="btn btn-outline-danger"
+                  onclick="return confirm('Отключить OneDrive для этого пользователя?')">
+            Удалить подключение
+          </button>
+        </form>
+      {% else %}
+        <a class="btn btn-outline-primary" href="{% url 'onedrive_connect' %}">Подключить</a>
+      {% endif %}
     </div>
 
     <p class="text-muted small mt-2 mb-0">
