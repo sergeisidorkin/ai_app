@@ -1,50 +1,40 @@
 name: Deploy
 
 on:
-  # как и раньше: запуск после успешного CI на main
+  # Запускаем деплой ТОЛЬКО когда CI завершился (на любой ветке/теге).
   workflow_run:
     workflows: ["CI"]
     types: [completed]
-    branches: [main]
 
-  # новый автозапуск при пуше релизных тегов вида v*
-  push:
-    tags: [ "v*" ]
-
-  # новый автозапуск при публикации релиза
-  release:
-    types: [ published ]
-
-  # ручной запуск из Actions
-  workflow_dispatch: {}
+  # Ручной запуск
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Ref (branch, tag, or SHA) to deploy (optional for manual runs)'
+        required: false
+        default: 'main'
 
 concurrency:
-  # отдельная «очередь» на каждый ref (ветка/тег), чтобы не было гонок
-  group: deploy-${{ github.ref || github.event.release.tag_name || 'main' }}
+  # отдельная очередь на каждый SHA (для workflow_run) или ref (для ручного)
+  group: deploy-${{ github.event.workflow_run.head_sha || github.event.inputs.ref || 'manual' }}
   cancel-in-progress: true
 
 jobs:
   deploy:
-    # когда запускаться:
-    #  - после успешного CI (workflow_run + success)
-    #  - при push тега v*
-    #  - при публикации релиза
-    #  - при ручном запуске
+    # Разрешаем:
+    #  - workflow_run: только если CI завершился success
+    #  - workflow_dispatch: всегда
     if: >
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
-      || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
-      || (github.event_name == 'release' && github.event.action == 'published')
-      || (github.event_name == 'workflow_dispatch')
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch')
 
     runs-on: ubuntu-latest
 
-    # эти переменные передадим на удалённый сервер (ssh-action умеет)
     env:
-      GITHUB_EVENT_NAME: ${{ github.event_name }}
-      GITHUB_REF_NAME:   ${{ github.ref_name }}                        # имя ветки/тега (без refs/…)
-      RELEASE_TAG:       ${{ github.event.release.tag_name || '' }}    # имя тега при release
-      # дефолтный реф для деплоя (если событие не даёт ref_name)
-      DEPLOY_REF:        ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name || 'main' }}
+      # Что деплоим:
+      #  - при workflow_run: ровно тот commit, который прошёл CI (head_sha)
+      #  - при ручном запуске: ref из inputs (или main)
+      DEPLOY_REF: ${{ github.event.workflow_run.head_sha || github.event.inputs.ref || 'main' }}
 
     steps:
       - name: Deploy over SSH
@@ -55,8 +45,7 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT || 22 }}
           command_timeout: 15m
-          # Передаём env в удалённый шелл
-          envs: GITHUB_EVENT_NAME,GITHUB_REF_NAME,RELEASE_TAG,DEPLOY_REF
+          envs: DEPLOY_REF
           script: |
             set -euo pipefail
 
@@ -90,28 +79,28 @@ jobs:
 
             git fetch --all --prune --tags
 
-            # Выберем, что деплоить:
-            # - release: опубликованный тег
-            # - push тегов: сам тег
-            # - workflow_run / ручной: ветка main по умолчанию
             REF="${DEPLOY_REF:-main}"
             echo "DEPLOY_REF=${REF}"
+
             git reset --hard
             git clean -fd
 
-            if [ "$REF" = "main" ]; then
-              git checkout -f -B main origin/main
-              TARGET_DESC="origin/main"
+            # 1) Если это валидный commit SHA — чекаутим его (гарантирует совпадение с тем, что прошёл CI)
+            if git cat-file -e "$REF^{commit}" 2>/dev/null; then
+              git checkout -f "$REF"
+              TARGET_DESC="sha:$REF"
+            # 2) Иначе тег
             elif git rev-parse -q --verify "refs/tags/$REF" >/dev/null; then
               git checkout -f "tags/$REF"
               TARGET_DESC="tag:$REF"
+            # 3) Иначе ветка (origin/<ref>)
             elif git rev-parse -q --verify "origin/$REF" >/dev/null; then
               git checkout -f -B "$REF" "origin/$REF"
               TARGET_DESC="origin/$REF"
             else
-              # как последний шанс — попробуем как SHA
-              git checkout -f "$REF" || true
-              TARGET_DESC="sha:$REF"
+              # 4) Последний шанс — main
+              git checkout -f -B main origin/main
+              TARGET_DESC="origin/main (fallback)"
             fi
 
             echo "Deploying commit: $(git rev-parse --short HEAD) ($TARGET_DESC)"
