@@ -33,16 +33,12 @@ except Exception:
 
 
 def _llm_choices_for(user):
-    """
-    Возвращает список доступных моделей для выпадающих списков.
-    Формат: [(value, label), ...]
-    Сейчас — только OpenAI, но легко расширяется под других провайдеров.
-    """
-    choices = []
-    if OpenAIAccount is not None and OpenAIAccount.objects.filter(user=user).exists():
-        for m in get_available_models(user) or []:
-            choices.append((m, m))
-    return choices
+    # Всегда пробуем получить список (service сам решит — ENV или БД)
+    try:
+        models = get_available_models(user) or []
+    except Exception:
+        models = []
+    return [(m, m) for m in models]
 
 
 def _redirect_to_templates():
@@ -56,7 +52,6 @@ def _iter_paragraphs(parent):
     """
     # абзацы на текущем уровне
     for p in getattr(parent, "paragraphs", []):
-        return_par = p  # noqa
         yield p
     # таблицы на текущем уровне
     for tbl in getattr(parent, "tables", []):
@@ -94,6 +89,36 @@ def _posted_model(request, form=None) -> str:
     # иначе — из POST
     return (request.POST.get("model") or "").strip()
 
+def _posted_temperature(request, form=None):
+    """
+    Возвращает float в диапазоне [0,2] или None, если поле пустое/некорректное.
+    Берём из form.cleaned_data, если поле объявлено в форме,
+    иначе — напрямую из POST.
+    """
+    # form.cleaned_data (если поле есть в форме)
+    try:
+        if form is not None and hasattr(form, "fields") and "temperature" in form.fields:
+            val = form.cleaned_data.get("temperature", None)
+            if val in ("", None):
+                return None
+            try:
+                f = float(val)
+                if 0.0 <= f <= 2.0:
+                    return f
+            except Exception:
+                return None
+    except Exception:
+        pass
+
+    # иначе — из POST
+    raw = (request.POST.get("temperature") or "").strip()
+    if raw == "":
+        return None
+    try:
+        f = float(raw.replace(",", "."))  # на всякий случай поддержим запятую
+        return f if 0.0 <= f <= 2.0 else None
+    except Exception:
+        return None
 
 @login_required
 def dashboard_partial(request):
@@ -147,6 +172,10 @@ def block_create(request):
         if hasattr(obj, "model"):
             obj.model = mdl
 
+        temp = _posted_temperature(request, form)
+        if hasattr(obj, "temperature"):
+            obj.temperature = temp
+
         obj.save()
         messages.success(request, "Блок сохранён.")
     else:
@@ -173,6 +202,10 @@ def block_update(request, pk: int):
         mdl = _posted_model(request, form)
         if hasattr(obj, "model"):
             obj.model = mdl
+
+        temp = _posted_temperature(request, form)
+        if hasattr(obj, "temperature"):
+            obj.temperature = temp
 
         obj.save()
         messages.success(request, "Изменения сохранены.")
@@ -245,11 +278,24 @@ def block_run(request, pk):
         client = get_openai_client_for(request.user)
         if client is None:
             raise RuntimeError("OpenAI не подключён.")
-        answer = (run_prompt(request.user, model_id, full_prompt) or "").strip()
+        answer = (run_prompt(
+            request.user,
+            model_id,
+            full_prompt,
+            temperature=getattr(block, "temperature", None),
+        ) or "").strip()
         if not answer:
             raise RuntimeError("Пустой ответ модели.")
     except Exception as e:
-        messages.error(request, f"Ошибка при обращении к LLM: {e}")
+        emsg = str(e).lower()
+        if ("temperature" in emsg) and ("unsupported" in emsg or "does not support" in emsg):
+            messages.error(
+                request,
+                "Выбранная температура не поддерживается этой моделью. "
+                "Оставьте поле пустым или укажите 1.0 и повторите."
+            )
+        else:
+            messages.error(request, f"Ошибка при обращении к LLM: {e}")
         return _redirect_to_templates()
 
     # 5) Вставляем ответ в .docx по маркеру или в конец
