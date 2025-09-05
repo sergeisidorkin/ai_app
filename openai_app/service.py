@@ -44,22 +44,28 @@ def _is_relay(url: str) -> bool:
     return host != "" and host != "api.openai.com"
 
 def get_client(user):
+    """
+    Возвращает OpenAI client, корректно выбирая ключ:
+    - если base_url указывает на релей — всегда используем RELAY_TOKEN из ENV (OPENAI_API_KEY);
+    - иначе: сначала ключ из БД, иначе из ENV (обычный sk-ключ).
+    """
     try:
         from openai import OpenAI
     except Exception:
         return None
 
-    api_key = _get_api_key_for(user)
-    if not api_key:
-        return None
-
     base_url = _base_url()
 
-    # ⬇️ Автопочинка: если идём в релей, но ключ похож на sk-..., подставляем RELAY_TOKEN из ENV
-    if _is_relay(base_url) and api_key.startswith("sk-"):
-        env_token = _env("OPENAI_API_KEY")
-        if env_token and not env_token.startswith("sk-"):
-            api_key = env_token.strip()
+    if _is_relay(base_url):
+        # Работает через релей — используем общий RELAY_TOKEN из ENV и игнорируем БД
+        api_key = (_env("OPENAI_API_KEY") or "").strip()
+        if not api_key:
+            return None
+    else:
+        # Прямое подключение к OpenAI — поддерживаем персональные ключи из БД
+        api_key = (_get_api_key_for(user) or _env("OPENAI_API_KEY") or "").strip()
+        if not api_key:
+            return None
 
     return OpenAI(api_key=api_key, base_url=base_url)
 
@@ -79,16 +85,13 @@ def get_available_models(user) -> List[str]:
         ids = [m.id for m in getattr(resp, "data", []) if getattr(m, "id", None)]
         if not ids:
             return _curated_fallback()
-        # Оставим «разумные» чатовые модели в приоритете
-        allow_prefixes = ("gpt-4", "gpt-4o", "o4")
-        filtered = [mid for mid in ids if mid.startswith(allow_prefixes)]
-        return filtered or ids
-    except Exception:
-        return _curated_fallback()
 
-# ---- Вызов модели ----
-
-_NEW_STYLE = {"o4", "o4-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini"}
+        # Переключаемая фильтрация (по умолчанию — БЕЗ фильтра)
+        if getattr(settings, "OPENAI_FILTER_MODELS", False):
+            allow_prefixes = getattr(settings, "OPENAI_ALLOWED_PREFIXES", ("gpt-4", "gpt-4o", "o4"))
+            filtered = [mid for mid in ids if mid.startswith(tuple(allow_prefixes))]
+            return filtered or ids
+        return ids
 
 def _use_responses_api(model: str) -> bool:
     """
