@@ -92,14 +92,27 @@ def get_available_models(user) -> List[str]:
             filtered = [mid for mid in ids if mid.startswith(tuple(allow_prefixes))]
             return filtered or ids
         return ids
+    except Exception:
+        return _curated_fallback()
+
+# ---- Новые модели, которые нужно вызывать через /v1/responses ----
+# Держим всё в нижнем регистре и проверяем как "равно" или "начинается с <prefix>-"
+_NEW_STYLE_PREFIXES = tuple(x.lower() for x in (
+    "o4", "o4-mini",
+    "o3", "o3-mini",
+    "gpt-4o", "gpt-4o-mini",
+    "gpt-4.1", "gpt-4.1-mini",
+))
 
 def _use_responses_api(model: str) -> bool:
     """
-    Новые модели (o4 / gpt-4o / gpt-4.1*) корректно работают через /v1/responses.
+    Новые модели (o4 / o3 / gpt-4o / gpt-4.1*) корректно работают через /v1/responses.
     Для старых (например, gpt-4-0613) безопаснее использовать /v1/chat/completions.
     """
-    m = (model or "").lower()
-    return any(m == x or m.startswith(x + "-") for x in (s.lower() for s in _NEW_STYLE))
+    m = (model or "").strip().lower()
+    if not m:
+        return False
+    return any(m == p or m.startswith(p + "-") for p in _NEW_STYLE_PREFIXES)
 
 def run_prompt(user, model: str, prompt: str) -> str:
     """
