@@ -3,8 +3,12 @@ name: CI
 on:
   push:
     branches: [ main ]
+    tags: [ 'v*' ]          # запуск CI при пуше тега релиза
   pull_request:
     branches: [ main ]
+  release:
+    types: [ published ]     # запуск CI при публикации релиза
+  workflow_dispatch: {}       # запуск вручную из Actions
 
 concurrency:
   group: ci-${{ github.ref }}
