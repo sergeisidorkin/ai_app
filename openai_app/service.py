@@ -114,10 +114,16 @@ def _use_responses_api(model: str) -> bool:
         return False
     return any(m == p or m.startswith(p + "-") for p in _NEW_STYLE_PREFIXES)
 
-def run_prompt(user, model: str, prompt: str) -> str:
+def _is_unsupported_temperature_error(err: Exception) -> bool:
+    s = str(err).lower()
+    return ("unsupported value" in s and "temperature" in s) or ("param': 'temperature" in s)
+
+def run_prompt(user, model: str, prompt: str, temperature: float | None = None) -> str:
     """
     Выполняет запрос к выбранной модели и возвращает текст ответа.
-    Бросает исключение, если клиент не настроен или вызов не удался.
+    temperature:
+      - None  → вообще не передавать параметр (значение по умолчанию модели);
+      - число → передать в вызов, при 400 (unsupported) ретраим без temperature.
     """
     client = get_client(user)
     if client is None:
@@ -126,13 +132,13 @@ def run_prompt(user, model: str, prompt: str) -> str:
     # 1) Новые модели — через /v1/responses
     if _use_responses_api(model):
         try:
-            resp = client.responses.create(model=model, input=prompt)
-            # Пытаемся взять output_text (новый SDK)
+            kwargs = {"model": model, "input": prompt}
+            if temperature is not None:
+                kwargs["temperature"] = temperature
+            resp = client.responses.create(**kwargs)
             text = getattr(resp, "output_text", None)
             if text:
                 return text.strip()
-
-            # Фоллбек-разбор структуры
             parts = []
             for item in getattr(resp, "output", []):
                 if getattr(item, "type", "") == "message":
@@ -141,21 +147,31 @@ def run_prompt(user, model: str, prompt: str) -> str:
                             parts.append(getattr(content, "text", ""))
             return "".join(parts).strip()
         except Exception as e:
+            if temperature is not None and _is_unsupported_temperature_error(e):
+                # повтор без temperature
+                resp = client.responses.create(model=model, input=prompt)
+                text = getattr(resp, "output_text", None)
+                return text.strip() if text else ""
             raise RuntimeError(f"Ошибка responses.create: {e}")
 
     # 2) Старые модели — через /v1/chat/completions
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+    }
     try:
-        chat = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-        )
-        msg = chat.choices[0].message
-        # У новых SDK message может быть объектом с .content
-        content = getattr(msg, "content", None)
-        if isinstance(content, list):
-            # когда content — массив частичных блоков
-            return "".join(part.get("text", "") for part in content if isinstance(part, dict)).strip()
-        return (content or "").strip()
+        if temperature is not None:
+            chat = client.chat.completions.create(temperature=temperature, **payload)
+        else:
+            chat = client.chat.completions.create(**payload)
     except Exception as e:
-        raise RuntimeError(f"Ошибка chat.completions.create: {e}")
+        if temperature is not None and _is_unsupported_temperature_error(e):
+            chat = client.chat.completions.create(**payload)
+        else:
+            raise RuntimeError(f"Ошибка chat.completions.create: {e}")
+
+    msg = chat.choices[0].message
+    content = getattr(msg, "content", None)
+    if isinstance(content, list):
+        return "".join(part.get("text", "") for part in content if isinstance(part, dict)).strip()
+    return (content or "").strip()
