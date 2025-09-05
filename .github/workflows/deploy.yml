@@ -1,20 +1,50 @@
 name: Deploy
 
 on:
+  # как и раньше: запуск после успешного CI на main
   workflow_run:
-    workflows: ["CI"]          # запуск после успешного CI
+    workflows: ["CI"]
     types: [completed]
     branches: [main]
-  workflow_dispatch: {}        # ручной запуск из Actions
+
+  # новый автозапуск при пуше релизных тегов вида v*
+  push:
+    tags: [ "v*" ]
+
+  # новый автозапуск при публикации релиза
+  release:
+    types: [ published ]
+
+  # ручной запуск из Actions
+  workflow_dispatch: {}
 
 concurrency:
-  group: deploy-main
+  # отдельная «очередь» на каждый ref (ветка/тег), чтобы не было гонок
+  group: deploy-${{ github.ref || github.event.release.tag_name || 'main' }}
   cancel-in-progress: true
 
 jobs:
   deploy:
-    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    # когда запускаться:
+    #  - после успешного CI (workflow_run + success)
+    #  - при push тега v*
+    #  - при публикации релиза
+    #  - при ручном запуске
+    if: >
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+      || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+      || (github.event_name == 'release' && github.event.action == 'published')
+      || (github.event_name == 'workflow_dispatch')
+
     runs-on: ubuntu-latest
+
+    # эти переменные передадим на удалённый сервер (ssh-action умеет)
+    env:
+      GITHUB_EVENT_NAME: ${{ github.event_name }}
+      GITHUB_REF_NAME:   ${{ github.ref_name }}                        # имя ветки/тега (без refs/…)
+      RELEASE_TAG:       ${{ github.event.release.tag_name || '' }}    # имя тега при release
+      # дефолтный реф для деплоя (если событие не даёт ref_name)
+      DEPLOY_REF:        ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name || 'main' }}
 
     steps:
       - name: Deploy over SSH
@@ -25,6 +55,8 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT || 22 }}
           command_timeout: 15m
+          # Передаём env в удалённый шелл
+          envs: GITHUB_EVENT_NAME,GITHUB_REF_NAME,RELEASE_TAG,DEPLOY_REF
           script: |
             set -euo pipefail
 
@@ -55,13 +87,34 @@ jobs:
             if ! git remote -v | grep -q "$REPO_SSH"; then
               git remote set-url origin "$REPO_SSH"
             fi
-            git fetch --all --prune
+
+            git fetch --all --prune --tags
+
+            # Выберем, что деплоить:
+            # - release: опубликованный тег
+            # - push тегов: сам тег
+            # - workflow_run / ручной: ветка main по умолчанию
+            REF="${DEPLOY_REF:-main}"
+            echo "DEPLOY_REF=${REF}"
             git reset --hard
             git clean -fd
-            git checkout -f main || git checkout -f -B main origin/main
-            git reset --hard origin/main
-            git clean -fd
-            echo "Deploying commit: $(git rev-parse --short HEAD)"
+
+            if [ "$REF" = "main" ]; then
+              git checkout -f -B main origin/main
+              TARGET_DESC="origin/main"
+            elif git rev-parse -q --verify "refs/tags/$REF" >/dev/null; then
+              git checkout -f "tags/$REF"
+              TARGET_DESC="tag:$REF"
+            elif git rev-parse -q --verify "origin/$REF" >/dev/null; then
+              git checkout -f -B "$REF" "origin/$REF"
+              TARGET_DESC="origin/$REF"
+            else
+              # как последний шанс — попробуем как SHA
+              git checkout -f "$REF" || true
+              TARGET_DESC="sha:$REF"
+            fi
+
+            echo "Deploying commit: $(git rev-parse --short HEAD) ($TARGET_DESC)"
 
             echo "== Python deps =="
             . "$VENV_ACT"
@@ -69,12 +122,10 @@ jobs:
             pip install --no-cache-dir -r requirements.txt
 
             echo "== Export env from $ENV_PATH_FILE =="
-            # экспортируем все переменные из env.prod
             set -a
             . "$ENV_PATH_FILE"
             set +a
 
-            # гарантируем правильные флаги прод-окружения
             export DJANGO_SETTINGS_MODULE=settings
             export DJANGO_ENV=${DJANGO_ENV:-prod}
             export READ_DOTENV=${READ_DOTENV:-False}
