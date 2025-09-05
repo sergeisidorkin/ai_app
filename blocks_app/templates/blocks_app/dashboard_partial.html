@@ -34,6 +34,9 @@
               {% if b.model %}
                 <span class="badge text-bg-light mt-2">Модель: {{ b.model }}</span>
               {% endif %}
+              {% if b.temperature is not None %}
+                <span class="badge text-bg-light mt-2">Темп.: {{ b.temperature|floatformat:1 }}</span>
+              {% endif %}
             </div>
 
             <button class="btn btn-sm btn-outline-secondary"
@@ -44,7 +47,8 @@
                     data-name="{{ b.name|escape }}"
                     data-prompt="{{ b.prompt|escape }}"
                     data-context="{{ b.context|escape }}"
-                    data-model="{{ b.model|default_if_none:''|escape }}">
+                    data-model="{{ b.model|default_if_none:''|escape }}"
+                    data-temperature="{{ b.temperature|default_if_none:'' }}">
               Изменить
             </button>
           </div>
@@ -152,6 +156,14 @@
             </select>
             <div class="form-text">Можно также выбрать модель на карточке блока (кнопка «Модель»).</div>
           </div>
+          <div class="mb-3">
+              <label class="form-label">Температура</label>
+              <input type="number" name="temperature" step="0.1" min="0" max="2"
+                     class="form-control" placeholder="Необязательно (по умолчанию модели)">
+              <div class="form-text">
+                При оставлении поля пустым используется значение температуры по умолчанию. Некоторые старые модели поддерживают только 1.0.
+              </div>
+          </div>
         </div>
 
         <div class="modal-footer">
@@ -182,6 +194,7 @@
     const inputPrompt = () => form.querySelector('textarea[name="prompt"]');
     const inputContext = () => form.querySelector('textarea[name="context"]');
     const inputModel = () => form.querySelector('select[name="model"]');
+    const inputTemperature = () => form.querySelector('input[name="temperature"]');
 
     // Открытие модалки для создания
     document.getElementById('openCreateModal')?.addEventListener('click', () => {
@@ -191,6 +204,7 @@
       inputPrompt().value = '';
       inputContext().value = '';
       if (inputModel()) inputModel().value = '';
+      if (inputTemperature()) inputTemperature().value = '';
       if (saveBtn) saveBtn.style.display = '';
       if (updateBtn) {
         updateBtn.style.display = 'none';
@@ -209,6 +223,7 @@
       const prompt = btn.dataset.prompt;
       const context = btn.dataset.context;
       const model = btn.dataset.model || '';
+      const temperature = btn.dataset.temperature || '';
 
       if (editUrl) {
         if (title) title.textContent = 'Изменить блок';
@@ -217,6 +232,7 @@
         inputPrompt().value = prompt || '';
         inputContext().value = context || '';
         if (inputModel()) inputModel().value = model;
+        if (inputTemperature()) inputTemperature().value = temperature;
         if (saveBtn) saveBtn.style.display = 'none';
         if (updateBtn) {
           updateBtn.style.display = '';
