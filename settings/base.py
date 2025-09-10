@@ -7,8 +7,6 @@ env = environ.Env(
     READ_DOTENV=(bool, False),
 )
 
-LOGIN_URL = "/admin/login/"
-
 # В dev удобно читать .env
 if env.bool("READ_DOTENV", False) or (
     os.environ.get("DJANGO_ENV", "local") == "local" and (BASE_DIR / ".env").exists()
@@ -21,9 +19,9 @@ DEBUG = env.bool("DEBUG", False)
 ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["127.0.0.1","localhost"])
 
 INSTALLED_APPS = [
-    "django.contrib.admin","django.contrib.auth","django.contrib.contenttypes",
+    "core","django.contrib.admin","django.contrib.auth","django.contrib.contenttypes",
     "django.contrib.sessions","django.contrib.messages","django.contrib.staticfiles",
-    "onedrive_app","blocks_app","openai_app",
+    "policy_app","onedrive_app","blocks_app","openai_app",
 ]
 
 MIDDLEWARE = [
@@ -32,9 +30,21 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "core.middleware.EnforceLoginMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
+
+# Аутентификация: куда редиректить после логина/логаута
+LOGIN_URL = "login"
+LOGIN_REDIRECT_URL = "/#policy"   # после входа — сразу на вкладку «Продукты»
+LOGOUT_REDIRECT_URL = "login"
+
+# Дополнительные разрешённые пути (префиксы), доступные без авторизации
+ENFORCE_LOGIN_EXEMPT = (
+    "/health/",
+)
+
 
 ROOT_URLCONF = "urls"
 WSGI_APPLICATION = "wsgi.application"
@@ -50,6 +60,9 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                "core.context_processors.nav_items",
+                "core.context_processors.templates_products",
+                "core.context_processors.templates_sections_map",
             ],
         },
     },

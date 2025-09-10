@@ -1,27 +1,42 @@
 <div class="card shadow-sm">
   <div class="card-body">
-    <p class="mb-2 fw-semibold">OpenAI API</p>
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        {% load ui %}
+        <p class="mb-0 fw-semibold d-flex align-items-center fs-6 lh-1">
+           {% svg_icon 'openai' 'me-2 icon-inline' %}
+           OpenAI API
+        </p>
+        {% if openai %}
+          <div class="mb-0">
+            <span class="badge text-bg-success">Ключ сохранён</span>
+          </div>
+        {% else %}
+          <div class="mb-3">
+            <span class="badge text-bg-secondary">Ключ не задан</span>
+          </div>
+        {% endif %}
+    </div>
+    <div class="d-flex flex-wrap gap-2 align-items-end">
 
-    {% if openai %}
-      <div class="mb-3">
-        <span class="badge text-bg-success">Ключ сохранён</span>
-        <span class="text-muted ms-2">(…{{ openai.api_key|slice:"-4:" }})</span>
-      </div>
-    {% else %}
-      <div class="mb-3">
-        <span class="badge text-bg-secondary">Ключ не задан</span>
-      </div>
-    {% endif %}
-
-    <div class="d-flex flex-wrap gap-2 align-items-center">
-      <form method="post" action="{% url 'openai_save' %}" class="d-flex flex-nowrap gap-2 mb-0">
-        {% csrf_token %}
-        <input type="password" name="openai_api_key" class="form-control" placeholder="sk-..." autocomplete="off" style="max-width: 360px;">
-        <button type="submit" class="btn btn-primary text-nowrap px-4">Сохранить ключ</button>
-      </form>
+       <form method="post" action="{% url 'openai_save_key' %}" class="d-flex align-items-end gap-2">
+          {% csrf_token %}
+          <div class="mb-0">
+            <input
+              id="openaiKey"
+              name="openai_api_key"
+              type="password"
+              class="form-control"
+              value=""
+              style="width: 320px;"
+              placeholder="{% if openai %}sk-...{{ openai.api_key|slice:'-4:' }}{% else %}sk-...{% endif %}">
+          </div>
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary">Сохранить ключ</button>
+          </div>
+       </form>
 
       {% if openai %}
-        <form method="post" action="{% url 'openai_delete' %}">
+        <form method="post" action="{% url 'openai_delete' %}" class="d-flex align-items-end">
           {% csrf_token %}
           <button type="submit" class="btn btn-outline-danger"
                   onclick="return confirm('Удалить сохранённый ключ?')">
@@ -30,9 +45,5 @@
         </form>
       {% endif %}
     </div>
-
-    <p class="text-muted small mt-2 mb-0">
-      Для продакшена ключ лучше хранить в Secret Manager/ENV. Здесь — для локальной разработки.
-    </p>
   </div>
 </div>

@@ -1,44 +1,280 @@
-{% extends "base.html" %}
-{% block title %}Главная — ai_app{% endblock %}
+{% extends "core/base.html" %}
+{% load static %}
+{% block title %}IMC Montan AI{% endblock %}
 
 {% block content %}
-<div class="row">
-  <!-- Левое меню -->
-  <aside class="col-12 col-md-3 col-xl-2 border-end bg-white sidebar py-3">
-    <ul class="nav nav-pills flex-column gap-2">
-      <li class="nav-item">
-        <a class="nav-link active" aria-current="page" href="#templates" data-bs-toggle="tab">Шаблоны</a>
+<div class="d-flex gap-0">
+  <!-- Сайдбар -->
+  <aside id="sidebar" class="sidebar bg-white border-end d-flex flex-column">
+    <!-- Верхняя часть: бренд + кнопка свернуть -->
+    <div class="sidebar-header d-flex align-items-center justify-content-between px-3 py-3">
+      <a href="{% url 'home' %}" class="d-flex align-items-center text-decoration-none">
+        <img src="{% static 'core/img/logo.png' %}" alt="Логотип" class="sidebar-logo me-2" height="28">
+        <img src="{% static 'core/img/logoicon.png' %}" alt="Лого (иконка)" class="sidebar-logo-collapsed me-2" height="28">
+      </a>
+      <a href="#" id="sidebarToggle" class="icon-btn" title="Свернуть сайдбар" aria-label="Свернуть сайдбар">
+        <i class="bi bi-chevron-left" data-chevron></i>
+      </a>
+    </div>
+    <hr class="my-0">
+
+    <!-- Навигация -->
+    <ul class="nav nav-pills flex-column gap-2 px-2 py-3">
+        <li class="nav-item">
+          <a class="nav-link active d-flex align-items-center" href="#policy" data-bs-toggle="tab">
+            <i class="bi bi-bag me-2"></i>
+            <span class="link-text">Продукты</span>
+          </a>
+        </li>
+        <li class="nav-item">
+        <a class="nav-link d-flex align-items-center" href="#templates" data-bs-toggle="tab">
+          <i class="bi bi-puzzle me-2"></i>
+          <span class="link-text">Шаблоны</span>
+        </a>
       </li>
       <li class="nav-item">
-        <a class="nav-link" href="#connections" data-bs-toggle="tab">Подключения</a>
+        <a class="nav-link d-flex align-items-center" href="#connections" data-bs-toggle="tab">
+          <i class="bi bi-hdd-network me-2"></i>
+          <span class="link-text">Подключения</span>
+        </a>
       </li>
     </ul>
+
+    <!-- Низ: профиль -->
+    <div class="mt-auto px-3 py-3">
+      {% if request.user.is_authenticated and request.user.is_staff %}
+      <a href="{% url 'admin:index' %}" class="d-flex align-items-center text-decoration-none">
+        <i class="bi bi-person-circle fs-4 me-2"></i>
+        <span class="link-text">Профиль</span>
+      </a>
+      {% endif %}
+    </div>
   </aside>
 
   <!-- Контент вкладок -->
-  <main class="col-12 col-md-9 col-xl-10 py-4">
+  <main class="flex-grow-1 py-4 px-3">
     <div class="tab-content">
-      <!-- Шаблоны -->
-      <section id="templates" class="tab-pane fade show active">
-        <div id="templates-pane"
-             hx-get="{% url 'blocks_dashboard_partial' %}"
-             hx-trigger="load"
-             hx-target="#templates-pane"
-             hx-swap="innerHTML">
-          <div class="text-muted">Загрузка шаблонов…</div>
+      <!-- Политика -->
+      <section id="policy" class="tab-pane fade show active">
+        <div class="templates-bleed">
+          <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
+            <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
+              <h5 class="mb-0 ps-3 fs-4 pt-2">Продукты</h5>
+            </div>
+          </div>
+          <div class="ps-3">
+            {% include "policy_app/panel.html" %}
+          </div>
         </div>
       </section>
 
-      <!-- Подключения -->
-      <section id="connections" class="tab-pane fade">
-        <div id="connections-pane"
-             hx-get="{% url 'onedrive_connections_partial' %}"
-             hx-trigger="load"
-             hx-target="#connections-pane"
-             hx-swap="innerHTML">
-          <div class="text-muted">Загрузка подключений…</div>
+      <!-- Шаблоны -->
+      <section id="templates" class="tab-pane fade">
+        <div class="d-flex templates-bleed">
+          <!-- Второй уровень сайдбара для раздела "Шаблоны" -->
+          <aside class="second-sidebar bg-body-tertiary border-end">
+            <!-- Спейсер для выравнивания уровня разделительной линии с основным сайдбаром -->
+            <div class="second-sidebar-header-spacer"></div>
+            <hr class="my-0">
+            <div class="list-group list-group-flush p-3 m-0" id="templates-second-sidebar-list">
+              {% if TEMPLATES_PRODUCTS %}
+                {% for p in TEMPLATES_PRODUCTS %}
+                  <a
+                    href="#product-{{ p.id }}"
+                    class="list-group-item list-group-item-action {% if forloop.first %}active{% endif %}"
+                    data-product="{{ p.short_name|default_if_none:''|upper }}"
+                    data-product-id="{{ p.id }}">
+                    {{ p.name_en }}
+                  </a>
+                {% endfor %}
+              {% else %}
+                <span class="list-group-item text-muted">Пока нет продуктов</span>
+              {% endif %}
+            </div>
+          </aside>
+        <!-- Контент "Шаблоны" -->
+        <div class="flex-grow-1 ps-3">
+
+          <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
+            <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
+            </div>
+              <ul class="nav nav-underline px-3" id="templates-tabs"></ul>
+              <!-- Сериализуем карту в HTML безопасно -->
+              {{ TEMPLATES_SECTIONS_MAP|json_script:"sections-map-json" }}
+          </div>
+
+            <div id="templates-pane"
+                 data-url="{% url 'blocks_dashboard_partial' %}"
+                 hx-get="{% url 'blocks_dashboard_partial' %}"
+                 hx-trigger="load"
+                 hx-target="#templates-pane"
+                 hx-swap="innerHTML"
+                 hx-indicator="#templates-loading">
+              <div id="templates-loading" class="text-muted htmx-indicator">Загрузка шаблонов…</div>
+            </div>
         </div>
       </section>
+
+    <!-- Подключения -->
+      <section id="connections" class="tab-pane fade">
+        <div class="templates-bleed">
+          <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
+            <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 36px;">
+              <h5 class="mb-0 ps-3 fs-4 pt-2">Подключения</h5>
+            </div>
+          </div>
+          <div class="ps-3">
+            <div id="connections-pane"
+                 hx-get="{% url 'onedrive_connections_partial' %}"
+                 hx-trigger="load"
+                 hx-target="#connections-pane"
+                 hx-swap="innerHTML"
+                 hx-indicator="#connections-loading">
+              <div id="connections-loading" class="text-muted htmx-indicator">Загрузка подключений…</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+        <script>
+            document.addEventListener('DOMContentLoaded', function () {
+                // Получаем карту разделов (продукт short_name -> список названий разделов на русском)
+                const sectionsMapElement = document.getElementById('sections-map-json');
+                let sectionsMap = {};
+                try {
+                    sectionsMap = sectionsMapElement ? JSON.parse(sectionsMapElement.textContent) : {};
+                } catch (e) {
+                    sectionsMap = {};
+                }
+
+                // Узлы
+                const sidebar = document.querySelector('.second-sidebar .list-group');
+                const sidebarList = document.getElementById('templates-second-sidebar-list');
+                const tabsUl = document.getElementById('templates-tabs');
+                const pane = document.getElementById('templates-pane');
+                const paneUrl = pane?.getAttribute('data-url');
+
+                function getActiveProductShort() {
+                    const active = sidebar?.querySelector('.list-group-item.active');
+                    return (active?.dataset?.product || '').toString().trim().toUpperCase();
+                }
+                function getActiveProductId() {
+                    const active = sidebar?.querySelector('.list-group-item.active');
+                    return active?.dataset?.productId || '';
+                }
+                function getActiveSectionId() {
+                    const active = tabsUl?.querySelector('.nav-link.active');
+                    return active?.dataset?.sectionId || '';
+                }
+
+                function reloadBlocks() {
+                    if (!pane || !paneUrl) return;
+                    const productShort = getActiveProductShort();
+                    const sectionId = getActiveSectionId();
+                    const url = paneUrl + `?product=${encodeURIComponent(productShort)}&section=${encodeURIComponent(sectionId)}`;
+                    htmx.ajax('GET', url, {target: '#templates-pane', swap: 'innerHTML'});
+                }
+
+                function renderTabs(productShort) {
+                    const items = sectionsMap[productShort] || [];
+                    tabsUl.innerHTML = '';
+                    if (!items.length) {
+                        tabsUl.innerHTML = '<li class="nav-item"><span class="nav-link text-muted">Нет разделов</span></li>';
+                        reloadBlocks(); // перерисуем список (попадут все/или пусто по фильтру)
+                        return;
+                    }
+                    items.forEach((item, idx) => {
+                        const li = document.createElement('li');
+                        li.className = 'nav-item';
+                        const a = document.createElement('a');
+                        a.className = 'nav-link' + (idx === 0 ? ' active' : '');
+                        a.href = '#';
+                        a.textContent = item.name_ru;
+                        a.dataset.sectionId = item.id;
+                        a.setAttribute('aria-current', idx === 0 ? 'page' : 'false');
+                        a.addEventListener('click', (e) => {
+                            e.preventDefault();
+                            tabsUl.querySelectorAll('.nav-link').forEach(x => x.classList.remove('active'));
+                            a.classList.add('active');
+                            reloadBlocks();
+                        });
+                        li.appendChild(a);
+                        tabsUl.appendChild(li);
+                    });
+                    // после построения — подгрузим список по первой активной вкладке
+                    reloadBlocks();
+                }
+
+                function readProductOrderFromPolicy() {
+                    const rows = document.querySelectorAll('#policy-pane tbody tr[data-product-id]');
+                    return Array.from(rows).map(tr => tr.getAttribute('data-product-id')).filter(Boolean);
+                }
+
+                function reorderSecondSidebar() {
+                    if (!sidebarList) return;
+                    const order = readProductOrderFromPolicy();
+                    if (!order.length) return;
+
+                const map = new Map();
+                Array.from(sidebarList.querySelectorAll('a.list-group-item[data-product-id]'))
+                  .forEach(a => map.set(a.getAttribute('data-product-id'), a));
+
+                const frag = document.createDocumentFragment();
+                order.forEach(id => {
+                  const node = map.get(id);
+                  if (node) frag.appendChild(node);
+                });
+                // добавим те, кто не попал в order (например, новые элементы)
+                Array.from(sidebarList.querySelectorAll('a.list-group-item[data-product-id]')).forEach(a => {
+                  if (!order.includes(a.getAttribute('data-product-id'))) {
+                    frag.appendChild(a);
+                  }
+                });
+                sidebarList.appendChild(frag);
+                }
+                // Синхронизируем при получении триггера от HTMX (после «Вверх/Вниз»)
+                document.body.addEventListener('products-reordered', reorderSecondSidebar);
+
+                // Синхронизируем при показе вкладки «Шаблоны»
+                const templatesTabLink = document.querySelector('a[href="#templates"][data-bs-toggle="tab"]') || document.querySelector('a[href="#templates"]');
+                if (templatesTabLink && window.bootstrap) {
+                    templatesTabLink.addEventListener('shown.bs.tab', reorderSecondSidebar);
+                } else {
+                // fallback: если нет bootstrap события — синхронизируем по клику
+                templatesTabLink?.addEventListener('click', function () {
+                      setTimeout(reorderSecondSidebar, 0);
+                    });
+                }
+                // На всякий случай — один запуск после загрузки
+                reorderSecondSidebar();
+
+
+                // Инициализация
+                renderTabs(getActiveProductShort());
+
+                // Переключение продукта в боковом меню
+                sidebar?.addEventListener('click', function(e) {
+                    const link = e.target.closest('.list-group-item');
+                    if (!link) return;
+                    e.preventDefault();
+
+                    // переключаем active
+                    sidebar.querySelectorAll('.list-group-item').forEach(a => a.classList.remove('active'));
+                    link.classList.add('active');
+
+                    // перерисовываем вкладки
+                    renderTabs(link.dataset.product || null);
+                    // Экспорт текущего выбора для модалки блока (через глобальные функции)
+                    window.__getCurrentBlockBinding = function () {
+                        return {
+                            productId: getActiveProductId(),
+                            productShort: getActiveProductShort(),
+                            sectionId: getActiveSectionId()
+                        };
+                    };
+                });
+            })
+        </script>
     </div>
   </main>
 </div>

@@ -11,6 +11,8 @@ from docx.text.paragraph import Paragraph
 from .forms import BlockForm
 from .models import Block
 
+from policy_app.models import Product, TypicalSection
+
 from onedrive_app.models import OneDriveSelection, OneDriveAccount
 from onedrive_app.graph import download_item_bytes, upload_item_bytes
 
@@ -124,6 +126,9 @@ def _posted_temperature(request, form=None):
 def dashboard_partial(request):
     """
     Фрагмент для вкладки «Шаблоны» на домашней странице.
+    Отображение списка блоков c фильтрами:
+    ?product=<SHORT_NAME in UPPER>  (необязателен)
+    ?section=<SECTION_ID>           (необязателен)
     """
     blocks = Block.objects.all()
 
@@ -134,6 +139,15 @@ def dashboard_partial(request):
         form = BlockForm()
 
     llm_models = [v for v, _ in _llm_choices_for(request.user)]
+    qs = Block.objects.all().select_related("product", "section").order_by("-id")
+
+    product_short = (request.GET.get("product") or "").strip().upper()
+    if product_short:
+        qs = qs.filter(product__short_name__iexact=product_short)
+
+    section_id = request.GET.get("section")
+    if section_id:
+        qs = qs.filter(section_id=section_id)
 
     selection = OneDriveSelection.objects.filter(user=request.user).first()
     onedrive_connected = OneDriveAccount.objects.filter(user=request.user).exists()
@@ -143,7 +157,7 @@ def dashboard_partial(request):
         request,
         "blocks_app/dashboard_partial.html",
         {
-            "blocks": blocks,
+            "blocks": qs,
             "form": form,
             "llm_models": llm_models,
             "selection": selection,
@@ -151,7 +165,6 @@ def dashboard_partial(request):
             "openai": openai,
         },
     )
-
 
 @login_required
 def block_create(request):
@@ -176,12 +189,25 @@ def block_create(request):
         if hasattr(obj, "temperature"):
             obj.temperature = temp
 
+        # Привязка к продукту и разделу (из скрытых полей)
+        try:
+            from policy_app.models import Product, TypicalSection
+        except Exception:
+            Product = TypicalSection = None
+
+        product_id = (request.POST.get("product_id") or "").strip()
+        section_id = (request.POST.get("section_id") or "").strip()
+
+        if Product and product_id:
+            obj.product = Product.objects.filter(id=product_id).first() or None
+        if TypicalSection and section_id:
+            obj.section = TypicalSection.objects.filter(id=section_id).first() or None
+
         obj.save()
         messages.success(request, "Блок сохранён.")
     else:
         messages.error(request, "Проверьте форму — есть ошибки.")
     return _redirect_to_templates()
-
 
 @login_required
 def block_update(request, pk: int):

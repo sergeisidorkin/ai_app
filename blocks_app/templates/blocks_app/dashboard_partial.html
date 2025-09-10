@@ -7,7 +7,7 @@
   .pre-wrap { white-space: pre-wrap; }
 </style>
 
-<div class="d-flex align-items-center justify-content-between mb-3">
+<div class="d-flex align-items-center justify-content-between mb-3" style="padding-left: 16px;">
   <h1 class="h4 mb-0">Шаблоны</h1>
   <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#blockModal" id="openCreateModal">
     Добавить блок
@@ -124,6 +124,9 @@
     <div class="modal-content">
       <form id="blockForm" method="post">
         {% csrf_token %}
+        <!-- скрытые поля привязки -->
+        <input type="hidden" name="product_id" id="blockProductId">
+        <input type="hidden" name="section_id" id="blockSectionId">
         <div class="modal-header">
           <h5 class="modal-title" id="blockModalLabel">Добавить блок</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
@@ -196,6 +199,9 @@
     const inputModel = () => form.querySelector('select[name="model"]');
     const inputTemperature = () => form.querySelector('input[name="temperature"]');
 
+    const inputProductId = () => form.querySelector('#blockProductId');
+    const inputSectionId = () => form.querySelector('#blockSectionId');
+
     // Открытие модалки для создания
     document.getElementById('openCreateModal')?.addEventListener('click', () => {
       if (title) title.textContent = 'Добавить блок';
@@ -205,6 +211,12 @@
       inputContext().value = '';
       if (inputModel()) inputModel().value = '';
       if (inputTemperature()) inputTemperature().value = '';
+
+      // выставляем привязку к текущему продукту и разделу
+      const binding = window.__getCurrentBlockBinding ? window.__getCurrentBlockBinding() : {};
+      if (inputProductId()) inputProductId().value = binding.productId || '';
+      if (inputSectionId()) inputSectionId().value = binding.sectionId || '';
+
       if (saveBtn) saveBtn.style.display = '';
       if (updateBtn) {
         updateBtn.style.display = 'none';
