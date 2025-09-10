@@ -1,7 +1,7 @@
 ai_appenv/
 *.pyc
 __pycache__/
-static/
+# static/
 media/
 .env
 *.sqlite3

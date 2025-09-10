@@ -1,0 +1,647 @@
+:root,
+.sidebar {
+  --bs-primary: #075D94;            /* sRGB(7,93,148) */
+  --bs-primary-rgb: 7, 93, 148;
+
+  /* Ссылки */
+  --bs-link-color: #075D94;
+  --bs-link-hover-color: #064f7e;
+
+  /* Ссылки в навигации */
+  --bs-nav-link-color: #075D94;
+  --bs-nav-link-hover-color: #064f7e;
+
+  /* Активный пункт nav-pills */
+  --bs-nav-pills-link-active-bg: #075D94;
+  --bs-nav-pills-link-active-color: #fff;
+
+  /* базовые ширины основного сайдбара */
+  --main-sidebar-width: 260px;
+  --main-sidebar-collapsed-width: 80px;
+
+  --second-sidebar-header-offset: 75px;
+}
+
+/* Сайдбар: базовая раскладка */
+.sidebar {
+  width: 260px;
+  min-height: 100vh;          /* на всю высоту окна */
+  position: sticky;
+  top: 0;                      /* прилипает под шапкой, так как шапка выше в DOM */
+  display: flex;
+  flex-direction: column;
+  padding-top: 11px; /* отступ сверху для логотипа и стрелки */
+}
+
+/* Зафиксировать ширину основного сайдбара вне зависимости от содержимого раздела "Шаблоны" */
+#sidebar.sidebar {
+  width: var(--main-sidebar-width) !important;
+  flex: 0 0 var(--main-sidebar-width) !important; /* не даём сжиматься */
+}
+
+/* Кнопка сворачивания всегда поверх второго сайдбара */
+#sidebar {
+  position: relative;
+  z-index: 1031; /* выше второго сайдбара */
+}
+
+.sidebar .sidebar-header .icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  color: var(--bs-nav-link-color, var(--bs-primary, #075D94));
+  border-radius: .375rem;
+}
+
+.sidebar .sidebar-header .icon-btn:hover {
+  background-color: rgba(var(--bs-primary-rgb, 7,93,148), .08);
+  color: var(--bs-primary, #075D94);
+}
+
+#sidebar .sidebar-header .icon-btn {
+  position: relative;
+  z-index: 1032; /* ещё на слой выше, чтобы иконка была кликабельна */
+}
+
+.sidebar-header .sidebar-logo {
+  transform: translateY(-3px); /* приподнять логотип на 3px */
+}
+
+.sidebar-header .sidebar-logo-collapsed {
+  display: none;
+  transform: translateY(-3px);
+}
+
+/* при сворачивании показываем иконку и скрываем основной логотип */
+.sidebar.is-collapsed .sidebar-logo {
+  display: none;
+}
+.sidebar.is-collapsed .sidebar-logo-collapsed {
+  display: inline-block;
+}
+
+.sidebar-header .sidebar-logo,
+.sidebar-header .sidebar-logo-collapsed {
+  height: 25px;      /* уменьшенный размер логотипов */
+  width: auto;       /* сохраняем пропорции */
+}
+
+.sidebar .brand-name {
+  font-weight: 600;
+  color: inherit;
+}
+
+/* Базовая кнопка: без рамки/фона */
+.sidebar .sidebar-header .icon-btn {
+  border: 1px solid transparent;
+  background-color: transparent;
+}
+
+/* Состояние: сайдбар свернут (стрелка смотрит вправо) */
+.sidebar.is-collapsed .sidebar-header .icon-btn {
+  background-color: #fff;                  /* белый фон */
+  border-color: var(--bs-border-color);    /* как у границы сайдбара */
+  border-width: 1px;                       /* такая же толщина */
+  border-style: solid;
+}
+
+/* Не менять фон при наведении в свернутом состоянии */
+.sidebar.is-collapsed .sidebar-header .icon-btn:hover {
+  background-color: #fff;
+  border-color: var(--bs-border-color);
+}
+
+.sidebar.is-collapsed {
+  width: 80px; /* было 72px */
+  flex: 0 0 80px; /* чтобы flex-раскладка учитывала новую ширину */
+}
+
+/* Ширина в свернутом состоянии также фиксирована */
+#sidebar.is-collapsed {
+  width: var(--main-sidebar-collapsed-width) !important;
+  flex: 0 0 var(--main-sidebar-collapsed-width) !important;
+}
+
+.sidebar.is-collapsed .brand-name,
+.sidebar.is-collapsed .link-text {
+  display: none !important;
+}
+
+.sidebar .nav .nav-link {
+  border-radius: .5rem;
+  padding: .5rem .75rem;
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+}
+
+.sidebar .nav .nav-link i {
+  font-size: 1.1rem;
+}
+
+/* Активный пункт меню — используем ваш основной цвет */
+.sidebar .nav .nav-link.active {
+  background-color: #075D94 !important;
+  color: #fff !important;
+  border-color: #075D94 !important;
+}
+
+/* Состояние наведения для неактивных */
+.sidebar .nav .nav-link:not(.active):hover {
+  background-color: rgba(var(--bs-primary-rgb, 7,93,148), .08);
+  color: var(--bs-primary, #075D94);
+}
+
+/* Низ: профиль — немного приглушить по умолчанию */
+.sidebar .mt-auto a {
+  color: inherit;
+  opacity: .9;
+}
+.sidebar .mt-auto a:hover {
+  opacity: 1;
+}
+
+/* Свернутый сайдбар */
+.sidebar.is-collapsed {
+  width: 72px; /* ширина под иконки */
+}
+
+.sidebar.is-collapsed .brand-name,
+.sidebar.is-collapsed .link-text {
+  display: none !important; /* скрываем текст */
+}
+
+.sidebar.is-collapsed .sidebar-header {
+  justify-content: center;
+}
+
+.sidebar.is-collapsed .nav .nav-link {
+  justify-content: center;   /* центрируем иконки */
+  padding-left: .5rem;
+  padding-right: .5rem;
+}
+
+.sidebar.is-collapsed .nav .nav-link i {
+  margin: 0; /* убираем отступы у иконок */
+}
+
+/* Поворот стрелки при сворачивании */
+.rotate-180 {
+  transform: rotate(180deg);
+  transition: transform .15s ease-in-out;
+}
+
+.sidebar .sidebar-header [data-chevron] {
+  transition: transform .15s ease-in-out;
+}
+
+/* Явные цвета для пунктов меню (увеличенная специфичность + !important) */
+.sidebar .nav.nav-pills .nav-link,
+.nav.nav-pills .nav-link,
+.nav .nav-link {
+  color: var(--bs-nav-link-color) !important;
+}
+
+.sidebar .nav.nav-pills .nav-link:hover,
+.sidebar .nav.nav-pills .nav-link:focus,
+.nav .nav-link:hover,
+.nav .nav-link:focus {
+  color: var(--bs-nav-link-hover-color) !important;
+}
+
+.sidebar .nav.nav-pills .nav-link.active,
+.sidebar .nav.nav-pills .show > .nav-link,
+.nav-pills .nav-link.active,
+.nav-pills .show > .nav-link {
+  background-color: var(--bs-nav-pills-link-active-bg) !important;
+  color: var(--bs-nav-pills-link-active-color) !important;
+  border-color: var(--bs-nav-pills-link-active-bg) !important;
+}
+
+/* Фон активного пункта меню (перекрытия) */
+.sidebar .nav.nav-pills .nav-link.active,
+.sidebar .nav.nav-pills .show > .nav-link,
+.nav.nav-pills .nav-link.active,
+.nav.nav-pills .show > .nav-link,
+.nav .nav-link.active {
+  background-color: #075D94 !important;
+  color: #fff !important;
+  border-color: #075D94 !important;
+}
+
+.sidebar .nav .nav-link.active[class*="bg-"],
+.nav .nav-link.active[class*="bg-"],
+.nav-pills .nav-link.active[class*="bg-"] {
+  background-color: #075D94 !important;
+  color: #fff !important;
+  border-color: #075D94 !important;
+}
+
+/* Основной сайдбар: фон пунктов без боковых отступов и без скруглений */
+#sidebar .nav {
+  padding-left: 0 !important;   /* убираем px-2 от <ul> */
+  padding-right: 0 !important;
+  gap: 0 !important;            /* игнорируем gap-2, чтобы фон не «рвался» */
+}
+
+#sidebar .nav .nav-item {
+  width: 100%;
+}
+
+#sidebar .nav .nav-link {
+  display: block;
+  width: 100%;
+  border-radius: 0 !important;  /* без скруглений */
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  padding-left: 1rem;           /* текстовые отступы */
+  padding-right: 1rem;
+}
+
+/* Активный пункт — без скруглений, фон на всю ширину */
+#sidebar .nav-pills .nav-link.active,
+#sidebar .nav-pills .show > .nav-link {
+  border-radius: 0 !important;
+}
+
+/* Hover — фон на всю ширину и без скруглений */
+#sidebar .nav .nav-link:hover,
+#sidebar .nav .nav-link:focus {
+  border-radius: 0 !important;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+/* Обёртка для секции "Шаблоны", чтобы второй сайдбар шёл от самого верха до низа экрана,
+   без зазоров, несмотря на внутренние отступы у <main> */
+.templates-full {
+  margin-top: -1.5rem;   /* компенсирует py-4 у <main> (1.5rem сверху) */
+  margin-bottom: -1.5rem;/* компенсирует py-4 у <main> (1.5rem снизу) */
+  margin-left: -1rem;    /* компенсирует px-3 у <main> слева (1rem) */
+}
+
+/* Растягиваем область "Шаблоны" на всю высоту/ширину, компенсируя отступы у <main> (py-4 px-3) */
+.templates-bleed {
+  margin-top: -1.5rem !important;   /* компенсирует py-4 сверху */
+  margin-bottom: -1.5rem !important;/* компенсирует py-4 снизу */
+  margin-left: -1rem !important;    /* компенсирует px-3 слева */
+}
+
+.second-sidebar .second-sidebar-header-spacer {
+  height: var(--second-sidebar-header-offset);
+}
+
+.second-sidebar {
+  width: 250px;               /* было 220px: шире на 30px */
+  background-color: #fcfcfd;  /* чуть светлее */
+  min-height: 100vh;          /* на всю высоту окна */
+  position: sticky;           /* прилипает к верху при скролле */
+  top: 0;                     /* от верхнего края страницы */
+  margin: 0;
+  padding: 0;
+  border-right: 1px solid var(--bs-border-color); /* сплошная серая граница справа */
+}
+
+/* Второй уровень сайдбара: без внешних отступов, светлее контента, темнее главного сайдбара */
+body .second-sidebar {
+  width: 320px !important;                 /* шире на 30px */
+  flex: 0 0 320px !important;
+  background-color: #f0f2f4 !important;    /* светлее, чем фон контента (#f8f9fa), но чуть темнее белого */
+  min-height: 100vh !important;            /* во всю высоту окна */
+  position: sticky !important;             /* прилипает к верху */
+  top: 0 !important;
+  z-index: 1029 !important; /* ниже основного сайдбара и кнопки */
+  margin: 0 !important;                    /* без внешних отступов слева/сверху/снизу */
+  padding: 0 !important;                   /* без внутренних отступов */
+  border-right: 1px solid #cfd4da !important; /* явная серая граница */
+  box-sizing: border-box !important;
+}
+
+/* Сброс возможных унаследованных рамок, кроме правой, чтобы линия не пропадала */
+body .second-sidebar.border-end {
+  border: none !important;
+  border-right: 1px solid #cfd4da !important;
+}
+
+/* На всякий случай уберём у списка потенциальные внешние отступы */
+body .second-sidebar .nav {
+  margin: 0 !important;
+}
+
+/* Контейнер рядом не должен перекрывать границу */
+body .second-sidebar + .flex-grow-1 {
+  background: transparent;
+}
+
+/* Для второго уровня: фон без отступов, но у текста — внутренние поля слева/справа */
+.second-sidebar .list-group {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+}
+
+.second-sidebar .list-group-item {
+  padding-left: 1rem !important;  /* отступ текста слева */
+  padding-right: 1rem !important; /* отступ текста справа */
+}
+
+/* Активный пункт — "secondary" стиль */
+.second-sidebar .list-group-item.active,
+.second-sidebar .list-group-item.active:hover,
+.second-sidebar .list-group-item.active:focus {
+  background-color: var(--bs-secondary-bg-subtle, #e9ecef) !important;
+  color: var(--bs-emphasis-color, #212529) !important;
+  border-color: var(--bs-secondary-border-subtle, #cbd2d9) !important;
+  box-shadow: none !important;
+}
+
+/* Базовый вид элементов + плавный hover */
+.second-sidebar .list-group-item {
+  background-color: transparent;
+  border-color: var(--bs-border-color, #cbd2d9);
+  padding-left: 1rem !important;
+  padding-right: 1rem !important;
+}
+
+.second-sidebar .list-group-item.list-group-item-action {
+  cursor: pointer;
+  transition: background-color .12s ease-in-out, color .12s ease-in-out;
+}
+
+/* Возвращаем затемнение при наведении для неактивных пунктов */
+.second-sidebar .list-group-item.list-group-item-action:not(.active):hover,
+.second-sidebar .list-group-item.list-group-item-action:not(.active):focus {
+  background-color: rgba(var(--bs-primary-rgb, 7,93,148), .08) !important; /* светло-голубой как у основного меню */
+  color: var(--bs-primary, #075D94) !important;
+}
+
+.second-sidebar .list-group-item {
+  padding-left: 1rem !important;
+  padding-right: 1rem !important;
+  padding-top: calc(.5rem + 1px) !important;    /* было .5rem — увеличили на ~1px */
+  padding-bottom: calc(.5rem + 1px) !important; /* суммарно +2px к высоте элемента */
+}
+
+.second-sidebar .list-group-item {
+  background-color: transparent;
+  border-color: var(--bs-border-color, #dee2e6);
+  padding-left: 1rem !important;
+  padding-right: 1rem !important;
+  /* Синий текст по умолчанию */
+  color: var(--bs-primary, #075D94) !important;
+}
+
+.second-sidebar .list-group-item.list-group-item-action {
+  cursor: pointer;
+  transition: background-color .12s ease-in-out, color .12s ease-in-out;
+}
+
+/* Активный пункт — светло-синий, чуть темнее hover */
+.second-sidebar .list-group-item.active,
+.second-sidebar .list-group-item.active:hover,
+.second-sidebar .list-group-item.active:focus {
+  background-color: rgba(var(--bs-primary-rgb, 7,93,148), .16) !important; /* темнее hover (.08) */
+  color: var(--bs-primary, #075D94) !important;                               /* синий текст */
+  border-color: rgba(var(--bs-primary-rgb, 7,93,148), .24) !important;        /* мягкая граница в тон */
+  box-shadow: none !important;
+}
+
+
+
+
+.templates-bleed {
+  margin-top: -1.5rem !important;   /* компенсирует py-4 сверху */
+  margin-bottom: -1.5rem !important;/* компенсирует py-4 снизу */
+  margin-left: -1rem !important;    /* компенсирует px-3 слева */
+}
+
+/* Горизонтальный «пролив» контента (убрать боковые отступы контейнера) */
+.content-bleed-x {
+  margin-left: -1rem !important;
+  margin-right: -1rem !important;
+}
+
+/* Фиксированная высота верхней панели раздела */
+.section-header {
+  min-height: 76px;                /* обеспечиваем нужную высоту */
+  height: auto;                     /* не фиксируем, чтобы содержимое не вылезало */
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  margin-bottom: 18px;              /* отступ снизу от панели */
+}
+
+.section-header .nav.nav-underline {
+  padding-left: 20px !important; /* левый отступ 20px для меню вкладок, 33px*/
+}
+
+/* Исправление для .nav-underline внутри панели "Шаблоны" */
+.section-header .nav.nav-underline .nav-link {
+  background: transparent !important;                       /* убираем фон */
+  color: var(--bs-primary, #075D94) !important;             /* синий текст */
+  border-bottom: 2px solid transparent;                     /* базовая линия */
+  padding-bottom: .5rem;                                     /* чуть больше места под линию */
+}
+
+.section-header .nav.nav-underline .nav-link:hover,
+.section-header .nav.nav-underline .nav-link:focus {
+  color: var(--bs-nav-link-hover-color, #064f7e) !important; /* ховер-цвет как в главном меню */
+  background: transparent !important;
+}
+
+.section-header .nav.nav-underline .nav-link.active,
+.section-header .nav.nav-underline .show > .nav-link {
+  background: transparent !important;                        /* перекрываем глобальное правило .nav .nav-link.active */
+  color: var(--bs-primary, #075D94) !important;
+  border-bottom-color: var(--bs-primary, #075D94) !important; /* подчёркивание для активной */
+}
+
+
+
+
+
+.table-section-header {
+  background-color: #ffffff;           /* единый фон для заголовков таблиц */
+  border-bottom: 0px solid #e9ecef;    /* тонкая линия снизу */
+  padding: 8px 0px;                   /* вертикальные отступы и базовый горизонтальный */
+}
+
+.table-section-header .table-section-title {
+  margin: 0;                           /* убираем стандартные отступы заголовка */
+  display: flex;
+  align-items: center;
+  padding-left: 5px;                  /* [+] единый увеличенный отступ слева */
+  font-weight: 600;                    /* чуть более заметный заголовок */
+  font-size: 1.3rem;
+}
+
+/* Чекбоксы в секции "Политика": точные отступы по 2px слева и справа */
+#policy-pane .form-check {
+  padding-left: 0 !important;            /* убрать стандартный отступ 1.5em у контейнера */
+}
+#policy-pane .form-check-input {
+  margin-left: 3px !important;           /* задать ровно +2px слева */
+  margin-right: 3px !important;          /* и +2px справа */
+}
+
+
+
+/* Цвета check-box */
+.form-check-input:checked {
+  background-color: var(--bs-primary, #075D94) !important;
+  border-color: var(--bs-primary, #075D94) !important;
+}
+
+.form-check-input:indeterminate {
+  background-color: var(--bs-primary, #075D94) !important;
+  border-color: var(--bs-primary, #075D94) !important;
+}
+
+.form-check-input:focus {
+  border-color: var(--bs-primary, #075D94);
+  box-shadow: 0 0 0 0.2rem rgba(var(--bs-primary-rgb, 7,93,148), .25);
+}
+
+/* убираем потемнение при активном нажатии */
+.form-check-input:active {
+  filter: none;
+}
+
+
+
+/* Отступ сверху для панели действий под таблицей "Продукты" */
+.products-actions-row {
+  margin-top: 30px !important;
+}
+/* Слойность для кнопок панели под таблицей "Продукты" */
+#policy-pane #products-actions .btn-group {
+  isolation: isolate;            /* создаём новый stacking context */
+}
+#policy-pane #products-actions .btn {
+  position: relative;            /* кнопки становятся позиционированными */
+  z-index: 1;                    /* базовый слой для всех */
+}
+#policy-pane #products-actions #products-actions-edit {
+  z-index: 2;                    /* [+] "Изменить" поверх "Удалить" */
+}
+/* Панель под таблицей "Продукты": светло‑красный фон у неактивной кнопки "Удалить" */
+#policy-pane #products-actions #products-actions-delete:not(:hover):not(:focus):not(.active):not(:disabled) {
+  /* используем переменную Bootstrap danger-rgb, делаем полупрозрачный фон */
+  background-color: rgba(var(--bs-danger-rgb, 220, 53, 69), 0.08);
+  color: var(--bs-danger);
+  border-color: var(--bs-danger);
+}
+/* Для disabled — ещё мягче */
+#policy-pane #products-actions #products-actions-delete:disabled {
+  background-color: rgba(var(--bs-danger-rgb, 220, 53, 69), 0.06);
+  color: var(--bs-danger);
+  border-color: var(--bs-danger);
+}
+/* Более светлый фон для выбранных строк (чекбокс включен) в #policy-pane */
+#policy-pane tr.table-active > th,
+#policy-pane tr.table-active > td {
+  background-color: rgba(0, 0, 0, 0.03) !important; /* светлее стандартного ~0.075 */
+}
+/* Слегка более светлый фон для активных строк (чекбокс включён) в таблицах "Политики" */
+#policy-pane .table {
+  --bs-table-active-bg: rgba(0, 0, 0, 0.03);     /* было ~0.075 у Bootstrap, делаем светлее */
+  --bs-table-active-color: inherit;              /* цвет текста не меняем */
+}
+
+
+
+
+
+
+
+/* Кнопка .btn-primary — все состояния */
+.btn-primary {
+  --bs-btn-color: #fff;
+  --bs-btn-bg: #075D94;
+  --bs-btn-border-color: #075D94;
+  --bs-btn-hover-color: #fff;
+  --bs-btn-hover-bg: #064f7e;        /* немного темнее для наведения */
+  --bs-btn-hover-border-color: #064a76;
+  --bs-btn-focus-shadow-rgb: 7, 93, 148;
+  --bs-btn-active-color: #fff;
+  --bs-btn-active-bg: #05466d;       /* ещё чуть темнее для active */
+  --bs-btn-active-border-color: #054166;
+  --bs-btn-disabled-color: #fff;
+  --bs-btn-disabled-bg: #075D94;
+  --bs-btn-disabled-border-color: #075D94;
+}
+
+
+/* Обводочная кнопка .btn-outline-primary */
+.btn-outline-primary {
+  --bs-btn-color: #075D94;
+  --bs-btn-border-color: #075D94;
+  --bs-btn-hover-color: #fff;
+  --bs-btn-hover-bg: #075D94;
+  --bs-btn-hover-border-color: #075D94;
+  --bs-btn-focus-shadow-rgb: 7, 93, 148;
+  --bs-btn-active-color: #fff;
+  --bs-btn-active-bg: #064f7e;
+  --bs-btn-active-border-color: #064a76;
+  --bs-btn-disabled-color: #075D94;
+  --bs-btn-disabled-bg: transparent;
+  --bs-btn-disabled-border-color: #075D94;
+}
+
+/* Отступ сверху для хедера */
+.site-header {
+  margin-top: 5px;
+}
+
+
+
+/* Палитра для «пустого» уведомления в разделе «Шаблоны» — теплее и чуть мягче */
+section#templates .alert.alert-info {
+  background-color: #eaf6ff; /* теплый голубовато-синий (больше зелёного) */
+  border-color: #c2def3;     /* граница теплее и контрастнее фона */
+  color: #0b4d78;            /* тёплый сине‑зелёный текст, без «фиолетового» оттенка */
+}
+
+section#templates .alert.alert-info .alert-link {
+  color: #0a3f62;            /* темнее и теплее для ссылки */
+  text-decoration: underline;
+}
+
+section#templates .alert.alert-info .alert-link:hover,
+section#templates .alert.alert-info .alert-link:focus {
+  color: #083754;
+}
+
+/* Если внутри alert попадётся .text-muted — делаем её согласованной по оттенку */
+section#templates .alert.alert-info .text-muted {
+  color: #0b4d78 !important;
+}
+
+
+
+/* Универсальный класс для инлайновых SVG-иконок в строке текста */
+.icon-inline {
+  height: 1em;           /* по высоте текущего шрифта/строки */
+  width: auto;           /* сохраняем пропорции */
+  vertical-align: -0.125em; /* лёгкая подстройка по базовой линии, как у Bootstrap Icons */
+  display: inline-block;
+  fill: currentColor;    /* наследуем цвет текста */
+}
+
+/* На случай, если в SVG нет fill на path — подхватим цвет через currentColor */
+.icon-inline path,
+.icon-inline use,
+.icon-inline g {
+  fill: currentColor;
+}
