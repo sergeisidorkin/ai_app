@@ -1,0 +1,58 @@
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    {% if action == "create" %}
+      hx-post="{% url 'section_form_create' %}"
+    {% else %}
+      hx-post="{% url 'section_form_edit' section.pk %}"
+    {% endif %}
+    hx-target="#policy-pane"
+    hx-swap="outerHTML">
+  <div class="modal-body">
+    {% csrf_token %}
+    <div class="mb-3">
+      <label class="form-label">Продукт</label>
+      {{ form.product }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Код</label>
+      {{ form.code }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Краткое имя</label>
+      {{ form.short_name }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Наименование раздела на английском языке</label>
+      {{ form.name_en }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Наименование раздела на русском языке</label>
+      {{ form.name_ru }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Тип учета</label>
+      {{ form.accounting_type }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Исполнитель</label>
+      {{ form.executor }}
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mb-0">
+        Проверьте введённые данные.
+      </div>
+    {% endif %}
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>

@@ -1,5 +1,6 @@
 from django.db import models
 from django.core.validators import MinValueValidator, MaxValueValidator
+from policy_app.models import Product, TypicalSection
 
 class Block(models.Model):
     code = models.CharField("Код блока", max_length=100, unique=True, db_index=True)
@@ -11,6 +12,22 @@ class Block(models.Model):
         "Температура", null=True, blank=True,
         validators=[MinValueValidator(0.0), MaxValueValidator(2.0)],
         help_text="Оставьте пустым — будет значение по умолчанию модели."
+    )
+    product = models.ForeignKey(
+        Product,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="blocks",
+        verbose_name="Продукт",
+    )
+    section = models.ForeignKey(
+        TypicalSection,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="blocks",
+        verbose_name="Раздел",
     )
 
     created_at = models.DateTimeField("Создано", auto_now_add=True)
