@@ -1,44 +1,87 @@
-{% extends "base.html" %}
-{% block title %}Выбор файла{% endblock %}
+{% extends "core/base.html" %}
+{% block title %}OneDrive — выбор{% endblock %}
 
 {% block content %}
-<div class="card">
-  <div class="card-body">
-    <h5 class="card-title">Выбор файла (.docx) или переход в папку</h5>
+<div class="row templates-bleed content-bleed-x">
+  {# ЛЕВАЯ УЗКАЯ КОЛОНКА: навигация и текущий выбор #}
+  <aside class="second-sidebar col-auto border-end">
+    <div class="second-sidebar-header-spacer"></div>
 
-    <ul class="list-group list-group-flush">
-      {% for it in items %}
-        <li class="list-group-item d-flex justify-content-between align-items-center">
-          <div class="me-3">
-            {% if it.folder %}📁{% else %}📄{% endif %} {{ it.name }}
+    <div class="list-group list-group-flush">
+      {% if parent %}
+        <a href="?folder=" class="list-group-item list-group-item-action">
+          ⤴︎ В корень
+        </a>
+      {% else %}
+        <div class="list-group-item text-muted">Корень диска</div>
+      {% endif %}
+
+      {% if current %}
+        <div class="list-group-item">
+          <div class="small text-muted mb-1">Текущий выбор</div>
+          <div class="text-truncate">
+            {% if current.is_folder %}📁 Папка{% else %}📄 Файл{% endif %}
+            <strong class="d-block text-truncate">{{ current.item_name }}</strong>
+            <span class="small text-muted d-block text-truncate">{{ current.item_path }}</span>
           </div>
+        </div>
+      {% endif %}
 
-          <div class="d-flex align-items-center gap-2">
-            {# Для папки показываем кнопку "Открыть" #}
-            {% if it.folder %}
-              <a class="btn btn-sm btn-outline-primary"
-                 href="?folder={{ it.id }}">
-                Открыть
-              </a>
-            {% endif %}
+      <a href="/#connections" class="list-group-item list-group-item-action">
+        ← Назад к подключениям
+      </a>
+    </div>
+  </aside>
 
-            {# Форма выбора (и для файлов, и для папок) #}
-            <form method="post" action="{% url 'onedrive_select' %}" class="d-inline m-0">
-              {% csrf_token %}
-              <input type="hidden" name="item_id" value="{{ it.id }}">
-              <input type="hidden" name="item_name" value="{{ it.name }}">
-              <input type="hidden" name="item_path" value="{{ it.parentReference.path }}/{{ it.name }}">
-              <input type="hidden" name="web_url" value="{{ it.webUrl }}">
-              <input type="hidden" name="drive_id" value="{{ it.parentReference.driveId }}">
-              <input type="hidden" name="is_folder" value="{% if it.folder %}1{% else %}0{% endif %}">
-              <button type="submit" class="btn btn-primary btn-sm">Выбрать</button>
-            </form>
-          </div>
-        </li>
-      {% empty %}
-        <li class="list-group-item">Пусто</li>
-      {% endfor %}
-    </ul>
+  {# ПРАВАЯ ШИРОКАЯ ПАНЕЛЬ: список файлов/папок #}
+  <div class="col p-3">
+    <div class="d-flex justify-content-between align-items-center table-section-header">
+      <h2 class="table-section-title mb-0">OneDrive: выбор файла/папки</h2>
+      <div class="btn-group">
+        {% if parent %}
+          <a href="?folder=" class="btn btn-sm btn-outline-secondary">В корень</a>
+        {% endif %}
+        <a href="/#connections" class="btn btn-sm btn-outline-secondary">Назад</a>
+      </div>
+    </div>
+
+    <div class="card shadow-sm">
+      <div class="card-body p-0">
+        <div class="list-group list-group-flush">
+          {% for it in items %}
+            <div class="list-group-item d-flex align-items-center justify-content-between">
+              <div class="d-flex align-items-center gap-2 flex-grow-1 overflow-hidden">
+                <span class="fs-5">{% if it.folder %}📁{% else %}📄{% endif %}</span>
+                <div class="text-truncate">
+                  <div class="fw-semibold text-truncate">{{ it.name }}</div>
+                  <div class="small text-muted text-truncate">
+                    {{ it.parentReference.path }}/{{ it.name }}
+                  </div>
+                </div>
+              </div>
+
+              <div class="d-flex gap-2 ms-3">
+                {% if it.folder %}
+                  <a class="btn btn-sm btn-outline-primary" href="?folder={{ it.id }}">Открыть</a>
+                {% endif %}
+                <form method="post" action="{% url 'onedrive_select' %}" class="m-0">
+                  {% csrf_token %}
+                  <input type="hidden" name="item_id" value="{{ it.id }}">
+                  <input type="hidden" name="item_name" value="{{ it.name }}">
+                  <input type="hidden" name="item_path" value="{{ it.parentReference.path }}/{{ it.name }}">
+                  <input type="hidden" name="web_url" value="{{ it.webUrl }}">
+                  <input type="hidden" name="drive_id" value="{{ it.parentReference.driveId }}">
+                  <input type="hidden" name="is_folder" value="{% if it.folder %}1{% else %}0{% endif %}">
+                  <button type="submit" class="btn btn-primary btn-sm">Выбрать</button>
+                </form>
+              </div>
+            </div>
+          {% empty %}
+            <div class="list-group-item text-muted py-4 text-center">Пусто</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 {% endblock %}
