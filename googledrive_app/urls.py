@@ -9,3 +9,4 @@ urlpatterns = [
     path("select/", views.select, name="gdrive_select"),
     path("disconnect/", views.disconnect, name="gdrive_disconnect"),
 ]
+
