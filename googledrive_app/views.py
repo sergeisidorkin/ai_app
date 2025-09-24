@@ -7,26 +7,29 @@ import os
 import urllib.parse
 import requests
 
+import settings
+
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_DRIVE_FILES_URL = "https://www.googleapis.com/drive/v3/files"
 GDRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 
+def _cfg(name, envname):
+    return (getattr(settings, name, "") or os.environ.get(envname, "")).strip()
+
 def _client_id() -> str:
-    return os.environ.get("GDRIVE_CLIENT_ID", "").strip()
+    return _cfg("GDRIVE_CLIENT_ID", "GDRIVE_CLIENT_ID")
 
 def _client_secret() -> str:
-    return os.environ.get("GDRIVE_CLIENT_SECRET", "").strip()
+    return _cfg("GDRIVE_CLIENT_SECRET", "GDRIVE_CLIENT_SECRET")
 
 def _api_key() -> str:
-    return os.environ.get("GDRIVE_API_KEY", "").strip()
+    return _cfg("GDRIVE_API_KEY", "GDRIVE_API_KEY")
 
 def _project_number() -> str:
-    """
-    Необязательно. Если зададите GDRIVE_PROJECT_NUMBER (числовой Project Number из GCP),
-    можно прокинуть его в Picker через setAppId — иногда это помогает.
-    """
-    return os.environ.get("GDRIVE_PROJECT_NUMBER", "").strip()
+    return _cfg("GDRIVE_PROJECT_NUMBER", "GDRIVE_PROJECT_NUMBER")
+
+
 
 def _callback_url(request) -> str:
     # абсолютный URL до /gdrive/callback
@@ -370,7 +373,7 @@ def pick(request):
         messages.error(request, "Нет действительного access_token. Подключите Google Drive заново.")
         return redirect("/#connections")
 
-    origin = f"{request.scheme}://{request.get_host()}"
+    origin = (getattr(settings, "PUBLIC_ORIGIN", "") or f"{request.scheme}://{request.get_host()}").rstrip("/")
     app_id = _project_number()  # можно оставить пустым
 
     # Рендерим страницу с кнопкой «Открыть Google Picker»

@@ -117,6 +117,12 @@ MSAL_AUTHORITY = f"https://login.microsoftonline.com/{MS_TENANT_ID}"
 MS_REDIRECT_URI = env("MS_REDIRECT_URI", default="http://localhost:8000/onedrive/callback")
 MS_SCOPES = ["User.Read", "Files.ReadWrite"]
 
+GDRIVE_CLIENT_ID     = env("GDRIVE_CLIENT_ID", default="")
+GDRIVE_CLIENT_SECRET = env("GDRIVE_CLIENT_SECRET", default="")
+GDRIVE_API_KEY       = env("GDRIVE_API_KEY", default="")
+GDRIVE_PROJECT_NUMBER = env("GDRIVE_PROJECT_NUMBER", default="")  # опционально
+PUBLIC_ORIGIN        = env("PUBLIC_ORIGIN", default="")            # опционально для Picker
+
 # === OpenAI ===
 OPENAI_API_BASE = env("OPENAI_API_BASE", default="https://api.openai.com/v1")
 OPENAI_BASE_URL = env("OPENAI_BASE_URL", default=env("OPENAI_API_BASE", default="https://api.openai.com/v1"))
