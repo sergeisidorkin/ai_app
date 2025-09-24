@@ -1,0 +1,138 @@
+<div class="modal-header" data-modal-size="xl">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+  method="post"
+  {% if action == "create" %}
+    hx-post="{% url 'registration_form_create' %}"
+  {% else %}
+    hx-post="{% url 'registration_form_edit' registration.pk %}"
+  {% endif %}
+  hx-target="#projects-pane"
+  hx-swap="outerHTML">
+  <div class="modal-body">
+    {% csrf_token %}
+
+    <div class="row g-2">
+
+      <div class="col-4">
+        <label class="form-label">Номер</label>
+        {{ form.number }}
+      </div>
+
+      <div class="col-4">
+        <label class="form-label">Группа</label>
+        {{ form.group }}
+      </div>
+
+      <div class="col-4">
+        <label class="form-label">Тип</label>
+        {{ form.type }}
+      </div>
+
+      <div class="col-12">
+        <label class="form-label">Название</label>
+        {{ form.name }}
+      </div>
+
+      <div class="col-6">
+        <label class="form-label">Статус</label>
+        {{ form.status }}
+      </div>
+      <div class="col-6">
+        <label class="form-label">Год</label>
+        {{ form.year }}
+      </div>
+
+      <div class="col-4">
+        <label class="form-label">Начало контракта</label>
+        {{ form.contract_start }}
+      </div>
+      <div class="col-4">
+        <label class="form-label">Оконч. контракта</label>
+        {{ form.contract_end }}
+      </div>
+      <div class="col-4">
+        <label class="form-label">Оконч., расчет</label>
+        {{ form.completion_calc }}
+      </div>
+
+      <div class="col-12">
+        <label class="form-label">Исх. данные</label>
+        {{ form.input_data }}
+      </div>
+
+      <div class="col-4">
+        <label class="form-label">Этап 1, недель</label>
+        {{ form.stage1_weeks }}
+      </div>
+      <div class="col-4">
+        <label class="form-label">Этап 1, оконч.</label>
+        {{ form.stage1_end }}
+      </div>
+      <div class="col-4">
+        <label class="form-label">Этап 2, недель</label>
+        {{ form.stage2_weeks }}
+      </div>
+      <div class="col-4">
+        <label class="form-label">Этап 2, оконч.</label>
+        {{ form.stage2_end }}
+      </div>
+      <div class="col-4">
+        <label class="form-label">Этап 3, недель</label>
+        {{ form.stage3_weeks }}
+      </div>
+      <div class="col-4">
+        <label class="form-label">Срок, недель</label>
+        {{ form.term_weeks }}
+      </div>
+
+      <div class="col-4">
+        <label class="form-label">Дедлайн</label>
+        {{ form.deadline }}
+      </div>
+
+      <div class="col-6">
+        <label class="form-label">Заказчик</label>
+        {{ form.customer }}
+      </div>
+      <div class="col-6">
+        <label class="form-label">Регистрационный номер</label>
+        {{ form.registration_number }}
+      </div>
+
+      <div class="col-12">
+        <label class="form-label">Руководитель проекта</label>
+        {{ form.project_manager }}
+      </div>
+
+      <div class="col-12">
+        <label class="form-label">Предмет договора</label>
+        {{ form.contract_subject }}
+      </div>
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mt-3 mb-0">
+        <div class="fw-semibold mb-1">Проверьте введённые данные:</div>
+        <ul class="mb-0">
+          {% for field, errors in form.errors.items %}
+            {% for err in errors %}
+              <li>{{ field }}: {{ err }}</li>
+            {% endfor %}
+          {% endfor %}
+          {% for err in form.non_field_errors %}<li>{{ err }}</li>{% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
+  <div class="modal-footer pb-3">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+  <div> </div>
+</form>

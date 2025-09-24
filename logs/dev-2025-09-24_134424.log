@@ -1,0 +1,159 @@
+Watching for file changes with StatReloader
+Performing system checks...
+
+Exception in thread django-main-thread:
+Traceback (most recent call last):
+  File "/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/threading.py", line 982, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/sergei/PycharmProjects/ai_app/.venv/lib/python3.11/site-packages/django/utils/autoreload.py", line 64, in wrapper
+    fn(*args, **kwargs)
+  File "/Users/sergei/PycharmProjects/ai_app/.venv/lib/python3.11/site-packages/django/core/management/commands/runserver.py", line 134, in inner_run
+    self.check(**check_kwargs)
+  File "/Users/sergei/PycharmProjects/ai_app/.venv/lib/python3.11/site-packages/django/core/management/base.py", line 492, in check
+    all_issues = checks.run_checks(
+                 ^^^^^^^^^^^^^^^^^^
+  File "/Users/sergei/PycharmProjects/ai_app/.venv/lib/python3.11/site-packages/django/core/checks/registry.py", line 89, in run_checks
+    new_errors = check(app_configs=app_configs, databases=databases)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sergei/PycharmProjects/ai_app/.venv/lib/python3.11/site-packages/django/core/checks/urls.py", line 16, in check_url_config
+    return check_resolver(resolver)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sergei/PycharmProjects/ai_app/.venv/lib/python3.11/site-packages/django/core/checks/urls.py", line 26, in check_resolver
+    return check_method()
+           ^^^^^^^^^^^^^^
+  File "/Users/sergei/PycharmProjects/ai_app/.venv/lib/python3.11/site-packages/django/urls/resolvers.py", line 531, in check
+    for pattern in self.url_patterns:
+                   ^^^^^^^^^^^^^^^^^
+  File "/Users/sergei/PycharmProjects/ai_app/.venv/lib/python3.11/site-packages/django/utils/functional.py", line 47, in __get__
+    res = instance.__dict__[self.name] = self.func(instance)
+                                         ^^^^^^^^^^^^^^^^^^^
+  File "/Users/sergei/PycharmProjects/ai_app/.venv/lib/python3.11/site-packages/django/urls/resolvers.py", line 718, in url_patterns
+    patterns = getattr(self.urlconf_module, "urlpatterns", self.urlconf_module)
+                       ^^^^^^^^^^^^^^^^^^^
+  File "/Users/sergei/PycharmProjects/ai_app/.venv/lib/python3.11/site-packages/django/utils/functional.py", line 47, in __get__
+    res = instance.__dict__[self.name] = self.func(instance)
+                                         ^^^^^^^^^^^^^^^^^^^
+  File "/Users/sergei/PycharmProjects/ai_app/.venv/lib/python3.11/site-packages/django/urls/resolvers.py", line 711, in urlconf_module
+    return import_module(self.urlconf_name)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/importlib/__init__.py", line 126, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1204, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1176, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1147, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 690, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 940, in exec_module
+  File "<frozen importlib._bootstrap>", line 241, in _call_with_frames_removed
+  File "/Users/sergei/PycharmProjects/ai_app/urls.py", line 18, in <module>
+    path("debugger/", include("debugger_app.urls", namespace="debugger_app")),
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sergei/PycharmProjects/ai_app/.venv/lib/python3.11/site-packages/django/urls/conf.py", line 39, in include
+    urlconf_module = import_module(urlconf_module)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/importlib/__init__.py", line 126, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1204, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1176, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1147, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 690, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 940, in exec_module
+  File "<frozen importlib._bootstrap>", line 241, in _call_with_frames_removed
+  File "/Users/sergei/PycharmProjects/ai_app/debugger_app/urls.py", line 2, in <module>
+    from . import views
+  File "/Users/sergei/PycharmProjects/ai_app/debugger_app/views.py", line 9, in <module>
+    from projects_app.models import Project
+ImportError: cannot import name 'Project' from 'projects_app.models' (/Users/sergei/PycharmProjects/ai_app/projects_app/models.py)
+/Users/sergei/PycharmProjects/ai_app/debugger_app/views.py changed, reloading.
+Watching for file changes with StatReloader
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 24, 2025 - 10:52:15
+Django version 5.2.5, using settings 'settings'
+Starting development server at http://127.0.0.1:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+/Users/sergei/PycharmProjects/ai_app/blocks_app/views.py changed, reloading.
+Watching for file changes with StatReloader
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 24, 2025 - 10:53:13
+Django version 5.2.5, using settings 'settings'
+Starting development server at http://127.0.0.1:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+[24/Sep/2025 10:55:49] "GET / HTTP/1.1" 200 71632
+[24/Sep/2025 10:55:49] "GET /policy/policy/partial/ HTTP/1.1" 200 18425
+[24/Sep/2025 10:55:49] "GET /onedrive/connections/partial/ HTTP/1.1" 200 10563
+[24/Sep/2025 10:55:49] "GET /projects/performers/partial/ HTTP/1.1" 200 10153
+[24/Sep/2025 10:55:49] "GET /projects/partial/ HTTP/1.1" 200 22372
+[24/Sep/2025 10:55:49] "GET /debugger/partial/panel/ HTTP/1.1" 200 32732
+[24/Sep/2025 10:55:49] "GET /debugger/project-meta/13/ HTTP/1.1" 200 227
+[24/Sep/2025 10:55:49] "GET /requests/partial/?product=DD&section=1 HTTP/1.1" 200 8799
+Not Found: /.well-known/appspecific/com.chrome.devtools.json
+[24/Sep/2025 10:55:53] "GET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1" 404 10888
+[24/Sep/2025 10:55:56] "GET /blocks/?tab=debugger&product=DD&section=4 HTTP/1.1" 200 128390
+[24/Sep/2025 10:55:56] "GET /blocks/?tab=templates&product=DD&section=1 HTTP/1.1" 200 71946
+RUNPROBE {"stage": "pre-view", "method": "POST", "path": "/blocks/blocks/12/run/", "qs": "project_code=4444RU&project_label=4444RU+DD+%D0%9F%D1%80%D0%B8%D0%BC%D0%B5%D1%80+%D0%BF%D1%80%D0%BE%D0%B5%D0%BA%D1%82%D0%B0&project_id=13&asset_name=%D0%90%D0%BA%D1%82%D0%B8%D0%B2+1&product_short=DD&section_id=4", "content_type": "application/x-www-form-urlencoded", "hx": {"HX-Request": null, "HX-Trigger": null, "HX-Target": null, "HX-Boosted": null}, "raw_body_prefix": "csrfmiddlewaretoken=qymV1w4kJ1mmjOJRVnNFZWdpF0gDOvKIHKhXnjviqfcC69t0qi58S8K9OJIYnQum&next=%2F%23debugger&product_id=&section_id=4&project_code=4444RU&asset_name=%D0%90%D0%BA%D1%82%D0%B8%D0%B2+1&project_label=4444RU+DD+%D0%9F%D1%80%D0%B8%D0%BC%D0%B5%D1%80+%D0%BF%D1%80%D0%BE%D0%B5%D0%BA%D1%82%D0%B0&product_short=DD&project_id=13", "GET": {"project_code": "4444RU", "project_label": "4444RU DD Пример проекта", "project_id": "13", "asset_name": "Актив 1", "product_short": "DD", "section_id": "4"}, "POST": {"csrfmiddlewaretoken": "qymV1w4kJ1mmjOJRVnNFZWdpF0gDOvKIHKhXnjviqfcC69t0qi58S8K9OJIYnQum", "next": "/#debugger", "product_id": "", "section_id": "4", "project_code": "4444RU", "asset_name": "Актив 1", "project_label": "4444RU DD Пример проекта", "product_short": "DD", "project_id": "13"}, "get_keys": ["project_code", "project_label", "project_id", "asset_name", "product_short", "section_id"], "post_keys": ["csrfmiddlewaretoken", "next", "product_id", "section_id", "project_code", "asset_name", "project_label", "product_short", "project_id"]}
+block_run path=/blocks/blocks/12/run/ qs=project_code=4444RU&project_label=4444RU+DD+%D0%9F%D1%80%D0%B8%D0%BC%D0%B5%D1%80+%D0%BF%D1%80%D0%BE%D0%B5%D0%BA%D1%82%D0%B0&project_id=13&asset_name=%D0%90%D0%BA%D1%82%D0%B8%D0%B2+1&product_short=DD&section_id=4 ctype=application/x-www-form-urlencoded raw_prefix='csrfmiddlewaretoken=qymV1w4kJ1mmjOJRVnNFZWdpF0gDOvKIHKhXnjviqfcC69t0qi58S8K9OJIYnQum&next=%2F%23debugger&product_id=&section_id=4&project_code=4444RU&asset_name=%D0%90%D0%BA%D1%82%D0%B8%D0%B2+1&project_label=4444RU+DD+%D0%9F%D1%80%D0%B8%D0%BC%D0%B5%D1%80+%D0%BF%D1%80%D0%BE%D0%B5%D0%BA%D1%82%D0%B0&product_short=DD&project_id=13'
+block_run recv debug: {'method': 'POST', 'path': '/blocks/blocks/12/run/', 'content_type': 'application/x-www-form-urlencoded', 'post_keys': ['csrfmiddlewaretoken', 'next', 'product_id', 'section_id', 'project_code', 'asset_name', 'project_label', 'product_short', 'project_id'], 'get_keys': ['project_code', 'project_label', 'project_id', 'asset_name', 'product_short', 'section_id'], 'recv_project_code': '4444RU', 'recv_project_label': '4444RU DD Пример проекта', 'recv_project_id': '13', 'computed_code_from_label': '', 'computed_code_from_project_id': '', 'POST_snapshot': {'csrfmiddlewaretoken': 'qymV1w4kJ1mmjOJRVnNFZWdpF0gDOvKIHKhXnjviqfcC69t0qi58S8K9OJIYnQum', 'next': '/#debugger', 'product_id': '', 'section_id': '4', 'project_code': '4444RU', 'asset_name': 'Актив 1', 'project_label': '4444RU DD Пример проекта', 'product_short': 'DD', 'project_id': '13'}, 'GET_snapshot': {'project_code': '4444RU', 'project_label': '4444RU DD Пример проекта', 'project_id': '13', 'asset_name': 'Актив 1', 'product_short': 'DD', 'section_id': '4'}, 'raw_body_2k': 'csrfmiddlewaretoken=qymV1w4kJ1mmjOJRVnNFZWdpF0gDOvKIHKhXnjviqfcC69t0qi58S8K9OJIYnQum&next=%2F%23debugger&product_id=&section_id=4&project_code=4444RU&asset_name=%D0%90%D0%BA%D1%82%D0%B8%D0%B2+1&project_label=4444RU+DD+%D0%9F%D1%80%D0%B8%D0%BC%D0%B5%D1%80+%D0%BF%D1%80%D0%BE%D0%B5%D0%BA%D1%82%D0%B0&product_short=DD&project_id=13'}
+[24/Sep/2025 10:56:54] "POST /blocks/blocks/12/run/?project_code=4444RU&project_label=4444RU+DD+%D0%9F%D1%80%D0%B8%D0%BC%D0%B5%D1%80+%D0%BF%D1%80%D0%BE%D0%B5%D0%BA%D1%82%D0%B0&project_id=13&asset_name=%D0%90%D0%BA%D1%82%D0%B8%D0%B2+1&product_short=DD&section_id=4 HTTP/1.1" 302 0
+[24/Sep/2025 10:56:54] "GET / HTTP/1.1" 200 71869
+[24/Sep/2025 10:56:54] "GET /static/core/img/logo.png HTTP/1.1" 200 13772
+[24/Sep/2025 10:56:54] "GET /static/core/img/logoicon.png HTTP/1.1" 200 8404
+[24/Sep/2025 10:56:54] "GET /static/core/css/site.css HTTP/1.1" 200 34164
+Not Found: /.well-known/appspecific/com.chrome.devtools.json
+[24/Sep/2025 10:56:54] "GET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1" 404 10888
+[24/Sep/2025 10:56:54] "GET /static/core/js/datepickers.js HTTP/1.1" 200 1618
+[24/Sep/2025 10:56:54] "GET /static/core/js/requests-panels.js HTTP/1.1" 200 8473
+[24/Sep/2025 10:56:55] "GET /static/core/js/performers-panels.js HTTP/1.1" 200 5074
+[24/Sep/2025 10:56:55] "GET /static/core/js/selectable-tables.js HTTP/1.1" 200 2624
+[24/Sep/2025 10:56:55] "GET /static/core/js/policy-panels.js HTTP/1.1" 200 7106
+[24/Sep/2025 10:56:55] "GET /static/core/js/projects-panels.js HTTP/1.1" 200 6976
+[24/Sep/2025 10:56:55] "GET /static/core/js/selectable-tables-projects.js HTTP/1.1" 200 2646
+[24/Sep/2025 10:56:55] "GET /projects/performers/partial/ HTTP/1.1" 200 10153
+[24/Sep/2025 10:56:55] "GET /policy/policy/partial/ HTTP/1.1" 200 18425
+[24/Sep/2025 10:56:55] "GET /projects/partial/ HTTP/1.1" 200 22372
+[24/Sep/2025 10:56:55] "GET /onedrive/connections/partial/ HTTP/1.1" 200 10563
+[24/Sep/2025 10:56:55] "GET /debugger/partial/panel/ HTTP/1.1" 200 32732
+[24/Sep/2025 10:56:55] "GET /requests/partial/?product=DD&section=1 HTTP/1.1" 200 8799
+[24/Sep/2025 10:56:55] "GET /debugger/project-meta/13/ HTTP/1.1" 200 227
+[24/Sep/2025 10:57:00] "GET /blocks/?tab=debugger&product=DD&section=4 HTTP/1.1" 200 128390
+[24/Sep/2025 10:57:00] "GET /blocks/?tab=templates&product=DD&section=1 HTTP/1.1" 200 71946
+[24/Sep/2025 11:10:34] "GET /debugger/project-meta/16/ HTTP/1.1" 200 43
+[24/Sep/2025 11:10:37] "GET /blocks/?tab=debugger&product=DD&section= HTTP/1.1" 200 408461
+RUNPROBE {"stage": "pre-view", "method": "POST", "path": "/blocks/blocks/24/run/", "qs": "project_code=3567RU&project_label=3567RU+DD+%D0%9F%D1%80%D0%B8%D0%BC%D0%B5%D1%80+ghjtr&project_id=16&product_short=DD", "content_type": "application/x-www-form-urlencoded", "hx": {"HX-Request": null, "HX-Trigger": null, "HX-Target": null, "HX-Boosted": null}, "raw_body_prefix": "csrfmiddlewaretoken=xfd72RHGUVr9fdoEZ0Ze5S26d708VfyNOr89oE8EB9hp2y8NuVhHY4zQmQstuAir&next=%2F%23debugger&product_id=&section_id=&project_code=3567RU&asset_name=&project_label=3567RU+DD+%D0%9F%D1%80%D0%B8%D0%BC%D0%B5%D1%80+ghjtr&product_short=DD&project_id=16", "GET": {"project_code": "3567RU", "project_label": "3567RU DD Пример ghjtr", "project_id": "16", "product_short": "DD"}, "POST": {"csrfmiddlewaretoken": "xfd72RHGUVr9fdoEZ0Ze5S26d708VfyNOr89oE8EB9hp2y8NuVhHY4zQmQstuAir", "next": "/#debugger", "product_id": "", "section_id": "", "project_code": "3567RU", "asset_name": "", "project_label": "3567RU DD Пример ghjtr", "product_short": "DD", "project_id": "16"}, "get_keys": ["project_code", "project_label", "project_id", "product_short"], "post_keys": ["csrfmiddlewaretoken", "next", "product_id", "section_id", "project_code", "asset_name", "project_label", "product_short", "project_id"]}
+block_run path=/blocks/blocks/24/run/ qs=project_code=3567RU&project_label=3567RU+DD+%D0%9F%D1%80%D0%B8%D0%BC%D0%B5%D1%80+ghjtr&project_id=16&product_short=DD ctype=application/x-www-form-urlencoded raw_prefix='csrfmiddlewaretoken=xfd72RHGUVr9fdoEZ0Ze5S26d708VfyNOr89oE8EB9hp2y8NuVhHY4zQmQstuAir&next=%2F%23debugger&product_id=&section_id=&project_code=3567RU&asset_name=&project_label=3567RU+DD+%D0%9F%D1%80%D0%B8%D0%BC%D0%B5%D1%80+ghjtr&product_short=DD&project_id=16'
+block_run recv debug: {'method': 'POST', 'path': '/blocks/blocks/24/run/', 'content_type': 'application/x-www-form-urlencoded', 'post_keys': ['csrfmiddlewaretoken', 'next', 'product_id', 'section_id', 'project_code', 'asset_name', 'project_label', 'product_short', 'project_id'], 'get_keys': ['project_code', 'project_label', 'project_id', 'product_short'], 'recv_project_code': '3567RU', 'recv_project_label': '3567RU DD Пример ghjtr', 'recv_project_id': '16', 'computed_code_from_label': '', 'computed_code_from_project_id': '', 'POST_snapshot': {'csrfmiddlewaretoken': 'xfd72RHGUVr9fdoEZ0Ze5S26d708VfyNOr89oE8EB9hp2y8NuVhHY4zQmQstuAir', 'next': '/#debugger', 'product_id': '', 'section_id': '', 'project_code': '3567RU', 'asset_name': '', 'project_label': '3567RU DD Пример ghjtr', 'product_short': 'DD', 'project_id': '16'}, 'GET_snapshot': {'project_code': '3567RU', 'project_label': '3567RU DD Пример ghjtr', 'project_id': '16', 'product_short': 'DD'}, 'raw_body_2k': 'csrfmiddlewaretoken=xfd72RHGUVr9fdoEZ0Ze5S26d708VfyNOr89oE8EB9hp2y8NuVhHY4zQmQstuAir&next=%2F%23debugger&product_id=&section_id=&project_code=3567RU&asset_name=&project_label=3567RU+DD+%D0%9F%D1%80%D0%B8%D0%BC%D0%B5%D1%80+ghjtr&product_short=DD&project_id=16'}
+[24/Sep/2025 11:10:43] "POST /blocks/blocks/24/run/?project_code=3567RU&project_label=3567RU+DD+%D0%9F%D1%80%D0%B8%D0%BC%D0%B5%D1%80+ghjtr&project_id=16&product_short=DD HTTP/1.1" 302 0
+[24/Sep/2025 11:10:43] "GET / HTTP/1.1" 200 71788
+[24/Sep/2025 11:10:43] "GET /static/core/img/logo.png HTTP/1.1" 200 13772
+[24/Sep/2025 11:10:43] "GET /static/core/img/logoicon.png HTTP/1.1" 200 8404
+[24/Sep/2025 11:10:43] "GET /static/core/css/site.css HTTP/1.1" 200 34164
+Not Found: /.well-known/appspecific/com.chrome.devtools.json
+[24/Sep/2025 11:10:44] "GET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1" 404 10888
+[24/Sep/2025 11:10:44] "GET /static/core/js/datepickers.js HTTP/1.1" 200 1618
+[24/Sep/2025 11:10:44] "GET /static/core/js/requests-panels.js HTTP/1.1" 200 8473
+[24/Sep/2025 11:10:47] "GET /static/core/js/performers-panels.js HTTP/1.1" 200 5074
+[24/Sep/2025 11:10:47] "GET /static/core/js/selectable-tables.js HTTP/1.1" 200 2624
+[24/Sep/2025 11:10:47] "GET /static/core/js/policy-panels.js HTTP/1.1" 200 7106
+[24/Sep/2025 11:10:47] "GET /static/core/js/projects-panels.js HTTP/1.1" 200 6976
+[24/Sep/2025 11:10:47] "GET /static/core/js/selectable-tables-projects.js HTTP/1.1" 200 2646
+[24/Sep/2025 11:10:47] "GET /policy/policy/partial/ HTTP/1.1" 200 18425
+[24/Sep/2025 11:10:47] "GET /projects/performers/partial/ HTTP/1.1" 200 10153
+[24/Sep/2025 11:10:47] "GET /debugger/partial/panel/ HTTP/1.1" 200 32732
+[24/Sep/2025 11:10:47] "GET /onedrive/connections/partial/ HTTP/1.1" 200 10563
+[24/Sep/2025 11:10:47] "GET /projects/partial/ HTTP/1.1" 200 22372
+[24/Sep/2025 11:10:47] "GET /requests/partial/?product=DD&section=1 HTTP/1.1" 200 8799
+[24/Sep/2025 11:10:47] "GET /debugger/project-meta/13/ HTTP/1.1" 200 227
+[24/Sep/2025 11:10:49] "GET /blocks/?tab=debugger&product=DD&section=4 HTTP/1.1" 200 128390
+[24/Sep/2025 11:10:49] "GET /blocks/?tab=templates&product=DD&section=1 HTTP/1.1" 200 71946

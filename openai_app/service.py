@@ -3,8 +3,10 @@ from typing import List, Optional, Tuple
 import os
 
 from urllib.parse import urlparse
-
 from django.conf import settings
+
+import io, mimetypes
+
 
 # ---- Вспомогательные настройки из ENV/Django settings ----
 
@@ -175,3 +177,154 @@ def run_prompt(user, model: str, prompt: str, temperature: float | None = None) 
     if isinstance(content, list):
         return "".join(part.get("text", "") for part in content if isinstance(part, dict)).strip()
     return (content or "").strip()
+
+
+import io
+from typing import List, Tuple, Optional
+from openai import OpenAI
+
+
+def _guess_mime(name: str | None, default: str = "application/octet-stream") -> str:
+    if not name:
+        return default
+    mt, _ = mimetypes.guess_type(name)
+    return mt or default
+
+
+def run_prompt_with_files(user, model: str, prompt: str,
+                          attachments: List[Tuple] | None,
+                          temperature: float | None = None) -> str:
+    """
+    Отправляет промпт + файлы в OpenAI Responses:
+    - PDF -> input_file
+    - image/* -> input_image
+    - docx/txt/csv/md/json -> как input_text (извлекаем / декодируем)
+    attachments: [(name, bytes)] или [(name, bytes, mime)]
+    """
+    client = get_client(user)
+    if client is None:
+        raise RuntimeError("OpenAI не подключён.")
+
+    # Нет Responses API? Фолбэк — просто текст.
+    if not hasattr(client, "responses"):
+        return run_prompt(user, model, prompt, temperature=temperature)
+
+    # Нормализуем список вложений
+    norm = []
+    for a in (attachments or []):
+        if isinstance(a, dict):
+            name = a.get("name") or "file"
+            data = a.get("data") or a.get("bytes")
+            mime = a.get("mime") or _guess_mime(name)
+        else:
+            # tuple формы: (name, bytes) ИЛИ (name, bytes, mime)
+            if len(a) >= 3:
+                name, data, mime = a[0], a[1], a[2]
+            else:
+                name, data = a[0], a[1]
+                mime = _guess_mime(name)
+        if not data:
+            continue
+        norm.append((name, data, mime))
+
+    pdf_ids: list[str] = []
+    image_ids: list[str] = []
+    text_chunks: list[str] = []
+
+    # Перебор вложений
+    for name, data, mime in norm:
+        mt = (mime or "").lower()
+        # PDF -> input_file
+        if mt == "application/pdf" or (name or "").lower().endswith(".pdf"):
+            try:
+                up = client.files.create(file=(name or "file.pdf", io.BytesIO(data)), purpose="assistants")
+                pdf_ids.append(up.id)
+            except Exception:
+                continue
+            continue
+
+        # Картинки -> input_image
+        if mt.startswith("image/"):
+            try:
+                up = client.files.create(file=(name or "image", io.BytesIO(data)), purpose="assistants")
+                image_ids.append(up.id)
+            except Exception:
+                continue
+            continue
+
+        # DOCX -> извлечь текст
+        if (name or "").lower().endswith(".docx") or mt == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            try:
+                from docx import Document  # python-docx
+                from io import BytesIO
+                doc = Document(BytesIO(data))
+                txt = []
+                for p in doc.paragraphs:
+                    if p.text:
+                        txt.append(p.text)
+                text = "\n".join(txt).strip()
+                if text:
+                    text_chunks.append(f"----- {name} -----\n{text}")
+            except Exception:
+                # если не вышло — пропускаем
+                pass
+            continue
+
+        # Текстовые форматы -> input_text
+        if mt.startswith("text/") or (name or "").lower().endswith((".txt", ".md", ".csv", ".json")):
+            try:
+                # ограничим объём, чтобы не упереться в лимиты модели
+                text = (data.decode("utf-8", errors="replace"))[:200_000]
+                if text.strip():
+                    text_chunks.append(f"----- {name} -----\n{text}")
+            except Exception:
+                pass
+            continue
+
+        # Прочее (xls, ppt, zip и т.п.) — пропускаем
+        # при необходимости добавьте конвертацию в PDF на вашей стороне
+        continue
+
+    # Формируем parts
+    parts = [{"type": "input_text", "text": prompt}]
+    for t in text_chunks:
+        parts.append({"type": "input_text", "text": t})
+    for fid in pdf_ids:
+        parts.append({"type": "input_file", "file_id": fid})
+    for fid in image_ids:
+        parts.append({"type": "input_image", "image_file": {"file_id": fid}})
+
+    req = {
+        "model": model,
+        "input": [{
+            "role": "user",
+            "content": parts,
+        }],
+    }
+    if temperature is not None:
+        req["temperature"] = float(temperature)
+
+    try:
+        resp = client.responses.create(**req)
+    except TypeError:
+        # очень старый SDK — фолбэк: только текст
+        return run_prompt(user, model, prompt, temperature=temperature)
+
+    text = getattr(resp, "output_text", None)
+    if text:
+        return text.strip()
+
+    # универсальный парс
+    try:
+        chunks = []
+        for item in getattr(resp, "output", []) or []:
+            for c in getattr(item, "content", []) or []:
+                t = getattr(getattr(c, "text", None), "value", None)
+                if t:
+                    chunks.append(t)
+        if chunks:
+            return "\n".join(chunks).strip()
+    except Exception:
+        pass
+
+    return str(resp)

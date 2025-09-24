@@ -1,0 +1,33 @@
+Watching for file changes with StatReloader
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 23, 2025 - 22:40:10
+Django version 5.2.5, using settings 'settings'
+Starting development server at http://127.0.0.1:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+[23/Sep/2025 22:40:17] "GET / HTTP/1.1" 200 71632
+[23/Sep/2025 22:40:17] "GET /policy/policy/partial/ HTTP/1.1" 200 18425
+[23/Sep/2025 22:40:17] "GET /projects/performers/partial/ HTTP/1.1" 200 10153
+[23/Sep/2025 22:40:17] "GET /debugger/partial/panel/ HTTP/1.1" 200 25933
+[23/Sep/2025 22:40:17] "GET /onedrive/connections/partial/ HTTP/1.1" 200 10563
+[23/Sep/2025 22:40:17] "GET /projects/partial/ HTTP/1.1" 200 22372
+[23/Sep/2025 22:40:18] "GET /requests/partial/?product=DD&section=1 HTTP/1.1" 200 8799
+[23/Sep/2025 22:40:18] "GET /debugger/project-meta/13/ HTTP/1.1" 200 227
+[23/Sep/2025 22:40:25] "GET /blocks/?tab=debugger&product=DD&section=4 HTTP/1.1" 200 128390
+[23/Sep/2025 22:40:25] "GET /blocks/?tab=templates&product=DD&section=1 HTTP/1.1" 200 71946
+PROJECT CODE MISSING/INVALID in block_run: {'method': 'POST', 'content_type': 'application/x-www-form-urlencoded', 'post_keys': ['csrfmiddlewaretoken', 'next', 'product_id', 'section_id', 'project_code', 'asset_name'], 'get_keys': [], 'recv_project_code': '', 'recv_project_label': '', 'computed_code_from_label': '', 'POST_snapshot': {'csrfmiddlewaretoken': '0Kl4yjug544SJOK67rxrKgN1adYfzYbUhWg6U6VeMiU8w9ufCmPUDskLjWqA8jVy', 'next': '/#debugger', 'product_id': '', 'section_id': '', 'project_code': '', 'asset_name': ''}, 'GET_snapshot': {}}
+[23/Sep/2025 22:40:29] "POST /blocks/blocks/12/run/ HTTP/1.1" 302 0
+[23/Sep/2025 22:40:29] "GET / HTTP/1.1" 200 71854
+[23/Sep/2025 22:40:30] "GET /projects/performers/partial/ HTTP/1.1" 200 10153
+[23/Sep/2025 22:40:30] "GET /policy/policy/partial/ HTTP/1.1" 200 18425
+[23/Sep/2025 22:40:30] "GET /projects/partial/ HTTP/1.1" 200 22372
+[23/Sep/2025 22:40:30] "GET /debugger/partial/panel/ HTTP/1.1" 200 25933
+[23/Sep/2025 22:40:30] "GET /onedrive/connections/partial/ HTTP/1.1" 200 10563
+[23/Sep/2025 22:40:30] "GET /requests/partial/?product=DD&section=1 HTTP/1.1" 200 8799
+[23/Sep/2025 22:40:30] "GET /debugger/project-meta/13/ HTTP/1.1" 200 227
+[23/Sep/2025 22:40:31] "GET /blocks/?tab=debugger&product=DD&section=4 HTTP/1.1" 200 128390
+[23/Sep/2025 22:40:32] "GET /blocks/?tab=templates&product=DD&section=1 HTTP/1.1" 200 71946

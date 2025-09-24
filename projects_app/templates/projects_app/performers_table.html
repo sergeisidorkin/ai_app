@@ -1,0 +1,100 @@
+<div class="table-responsive">
+  <table class="table table-sm align-middle">
+    <thead>
+      <tr>
+        <th style="width:1%">
+          <div class="form-check m-0">
+            <input class="form-check-input" type="checkbox"
+                   data-target-name="performer-select" data-actions-id="performers-actions"
+                   aria-label="Выделить все строки">
+          </div>
+        </th>
+        <th>Номер</th>
+        <th>Группа</th>
+        <th>Тип</th>
+        <th>Название</th>
+        <th>Актив</th>
+        <th>Исполнитель</th>
+        <th>Грейд</th>
+        <th>Типовые разделы</th>
+        <th class="text-end">Факт</th>
+        <th class="text-end">Расчёт</th>
+        <th class="text-end">Соглас.</th>
+        <th class="text-end">Аванс</th>
+        <th class="text-end">Окон. плат.</th>
+        <th>№ договора</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if items %}
+        {% for it in items %}
+          {% with reg=it.registration %}
+          <tr
+            data-id="{{ it.id }}"
+            data-edit-url="{% url 'performer_form_edit' it.id %}"
+            data-delete-url="{% url 'performer_delete' it.id %}"
+            data-move-up-url="{% url 'performer_move_up' it.id %}"
+            data-move-down-url="{% url 'performer_move_down' it.id %}">
+            <td>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="performer-select" value="{{ it.id }}">
+              </div>
+            </td>
+            <td class="text-nowrap">{{ reg.number }} {{ reg.group }}</td>
+            <td class="text-nowrap">{{ reg.group }}</td>
+            <td class="text-nowrap">{{ reg.product.short_name|default:reg.type|default:"" }}</td>
+            <td class="text-nowrap">{{ reg.name|default:reg.title }}</td>
+            <td class="text-nowrap">{{ it.asset_name }}</td>
+            <td class="text-nowrap">{{ it.executor }}</td>
+            <td class="text-nowrap">{{ it.grade }}</td>
+            <td class="text-nowrap">{{ it.typical_section.code if it.typical_section }}</td>
+            <td class="text-end">{{ it.actual_costs }}</td>
+            <td class="text-end">{{ it.estimated_costs }}</td>
+            <td class="text-end">{{ it.agreed_amount }}</td>
+            <td class="text-end">{{ it.prepayment }}</td>
+            <td class="text-end">{{ it.final_payment }}</td>
+            <td class="text-nowrap">{{ it.contract_number }}</td>
+          </tr>
+          {% endwith %}
+        {% endfor %}
+      {% else %}
+        <tr>
+          <td colspan="15" class="text-muted ps-5">Пока здесь пусто.</td>
+        </tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+<div class="d-flex align-items-stretch gap-2 mt-2">
+  <button
+    class="btn btn-primary btn-sm d-flex align-items-center"
+    hx-get="{% url 'performer_form_create' %}"
+    hx-target="#performers-modal .modal-content"
+    hx-swap="innerHTML"
+    data-bs-toggle="modal"
+    data-bs-target="#performers-modal">
+    <i class="bi bi-plus-circle me-2"></i>Добавить строку
+  </button>
+
+  <div id="performers-actions" class="d-none d-flex">
+    <div class="btn-group">
+      <button type="button" data-panel-action="up"
+              class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх">
+        <i class="bi bi-arrow-up-square"></i>
+      </button>
+      <button type="button" data-panel-action="down"
+              class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз">
+        <i class="bi bi-arrow-down-square"></i>
+      </button>
+      <button type="button" data-panel-action="edit"
+              class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить">
+        <i class="bi bi-pencil-square"></i>
+      </button>
+      <button type="button" data-panel-action="delete"
+              class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить">
+        <i class="bi bi-x-square"></i>
+      </button>
+    </div>
+  </div>
+</div>

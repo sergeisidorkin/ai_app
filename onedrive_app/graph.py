@@ -28,25 +28,48 @@ def _app(cache=None):
         token_cache=cache,
     )
 
-def get_auth_url(state="connect"):
+# def get_auth_url(state="connect"):
+#     app = _app()
+#     return app.get_authorization_request_url(
+#         scopes=settings.MS_SCOPES,
+#         redirect_uri=settings.MS_REDIRECT_URI,
+#         state=state,
+#         prompt="select_account",
+#     )
+#
+# def exchange_code(user, code: str):
+#     od, _ = OneDriveAccount.objects.get_or_create(user=user)
+#     cache = _load_cache(od)
+#     app = _app(cache)
+#     res = app.acquire_token_by_authorization_code(
+#         code=code, scopes=settings.MS_SCOPES, redirect_uri=settings.MS_REDIRECT_URI
+#     )
+#     if "access_token" not in res:
+#         raise RuntimeError(res.get("error_description", "Token error"))
+#     _save_cache(od, cache)
+
+def get_auth_url(state="connect", redirect_uri: str | None = None):
     app = _app()
+    ru = redirect_uri or settings.MS_REDIRECT_URI
     return app.get_authorization_request_url(
         scopes=settings.MS_SCOPES,
-        redirect_uri=settings.MS_REDIRECT_URI,
+        redirect_uri=ru,
         state=state,
         prompt="select_account",
     )
 
-def exchange_code(user, code: str):
+def exchange_code(user, code: str, redirect_uri: str | None = None):
     od, _ = OneDriveAccount.objects.get_or_create(user=user)
     cache = _load_cache(od)
     app = _app(cache)
+    ru = redirect_uri or settings.MS_REDIRECT_URI
     res = app.acquire_token_by_authorization_code(
-        code=code, scopes=settings.MS_SCOPES, redirect_uri=settings.MS_REDIRECT_URI
+        code=code, scopes=settings.MS_SCOPES, redirect_uri=ru
     )
     if "access_token" not in res:
         raise RuntimeError(res.get("error_description", "Token error"))
     _save_cache(od, cache)
+
 
 def _access_token(user):
     od = OneDriveAccount.objects.filter(user=user).first()
@@ -115,6 +138,22 @@ def _insert_paragraph_after(paragraph, text="", copy_style=True):
     if text:
         new_para.add_run(text)
     return new_para
+
+def upload_new_file_in_folder(user, folder_id: str, name: str, data: bytes):
+    """
+    Создать НОВЫЙ файл в указанной папке OneDrive и залить содержимое.
+    Для небольших файлов (<4 МБ) достаточно простого PUT:
+    PUT /me/drive/items/{folder_id}:/{name}:/content
+    """
+    token = _access_token(user)
+    if not token:
+        raise RuntimeError("No token")
+
+    # безопасно экранировать имя (Graph сам обработает запрещённые символы)
+    url = f"{GRAPH_API}/me/drive/items/{folder_id}:/{name}:/content"
+    r = requests.put(url, headers={"Authorization": f"Bearer {token}"}, data=data)
+    r.raise_for_status()
+    return r.json()
 
 def append_text_after_marker(user, item_id: str, marker: str, text: str, insert_after_all=False):
     """

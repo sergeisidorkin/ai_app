@@ -1,0 +1,73 @@
+<div class="table-responsive">
+  <table class="table table-sm align-middle">
+    <thead>
+      <tr>
+        <th style="width:1%">
+          <div class="form-check m-0">
+            <input class="form-check-input" type="checkbox" id="req-master"
+                   data-target-name="req-select" data-actions-id="req-actions"
+                   aria-label="Выделить все строки">
+          </div>
+        </th>
+        <th>Код</th>
+        <th>№</th>
+        <th>Наименование запроса</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for it in items %}
+        <tr
+          data-edit-url="{% url 'request_form_edit' it.pk %}"
+          data-delete-url="{% url 'request_delete' it.pk %}"
+          data-move-up-url="{% url 'request_move_up' it.pk %}"
+          data-move-down-url="{% url 'request_move_down' it.pk %}">
+          <td class="text-nowrap">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="req-select" value="{{ it.id }}">
+            </div>
+          </td>
+          <td class="text-nowrap">{{ it.code }}</td>
+          <td class="text-nowrap">{{ it.number }}</td>
+          <td>{{ it.name }}</td>
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="4" class="text-muted">Пока нет данных.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="d-flex align-items-stretch gap-2 products-actions-row">
+    <button
+      class="btn btn-primary btn-sm d-flex align-items-center"
+      {% if product and section %}
+        hx-get="{% url 'request_form_create' %}?product={{ product.short_name|upper }}&section={{ section.id }}"
+      {% else %}
+        hx-get="{% url 'request_form_create' %}"
+      {% endif %}
+      hx-target="#requests-modal .modal-content"
+      hx-swap="innerHTML"
+      data-bs-toggle="modal"
+      data-bs-target="#requests-modal">
+      <i class="bi bi-plus-circle me-2"></i>Добавить запрос
+    </button>
+
+    <div id="req-actions" class="d-none d-flex">
+      <div class="btn-group">
+        <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Вверх">
+          <i class="bi bi-arrow-up-square"></i>
+        </button>
+        <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Вниз">
+          <i class="bi bi-arrow-down-square"></i>
+        </button>
+        <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить">
+          <i class="bi bi-pencil-square"></i>
+        </button>
+        <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить">
+          <i class="bi bi-x-square"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

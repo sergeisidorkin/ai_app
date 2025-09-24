@@ -1,0 +1,91 @@
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    {% if action == "create" %}
+      hx-post="{% url 'work_form_create' %}"
+    {% else %}
+      hx-post="{% url 'work_form_edit' work.pk %}"
+    {% endif %}
+    hx-target="#projects-pane"
+    hx-swap="outerHTML">
+  <div class="modal-body">
+    {% csrf_token %}
+
+    <div class="mb-3">
+      <label class="form-label">Номер проекта</label>
+      {{ form.project }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Тип</label>
+      {{ form.type }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Название</label>
+      {{ form.name }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Наименование актива</label>
+      {{ form.asset_name }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Регистрационный номер</label>
+      {{ form.registration_number }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Менеджер</label>
+      {{ form.manager }}
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mb-0">Проверьте введённые данные.</div>
+    {% endif %}
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>
+<script>
+(function(){
+  const modal = document.currentScript.closest('.modal-content');
+  const form  = modal?.querySelector('form');
+  if (!form) return;
+
+  const projectSel = form.querySelector('select[name="project"]');
+  const typeInput  = form.querySelector('input[name="type"]');
+  const nameInput  = form.querySelector('input[name="name"]');
+
+  async function refillByProject() {
+    const id = projectSel?.value;
+    if (!id) return;
+    try {
+      const r = await fetch("{% url 'work_deps' %}?project=" + encodeURIComponent(id), {
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+      });
+      const j = await r.json();
+      if (!j.ok) return;
+
+      // «Тип»: предпочитаем короткое имя продукта, иначе строковое представление
+      if (typeInput) typeInput.value = j.type_short || j.type || typeInput.value || "";
+
+      // «Название»: берём из регистрации
+      if (nameInput) nameInput.value = j.name || nameInput.value || "";
+    } catch(e) {
+      console.error(e);
+    }
+  }
+
+  projectSel?.addEventListener('change', refillByProject);
+
+  // На открытии модалки: если редактирование и поля пустые — тоже подтянем
+  if (projectSel?.value && (!typeInput?.value || !nameInput?.value)) {
+    refillByProject();
+  }
+})();
+</script>

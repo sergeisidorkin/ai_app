@@ -65,22 +65,20 @@
   </head>
   <body class="d-flex align-items-center bg-body-tertiary" style="min-height: 100%;">
     <main class="form-signin w-100 m-auto bg-white border rounded shadow-sm">
+
+
       <form method="post" action="{% url 'login' %}">
         {% csrf_token %}
-        {% if messages %}
-          <div class="mb-2">
-            {% for m in messages %}
-              <div class="alert alert-{{ m.tags|default:'info' }} py-1 mb-2">{{ m }}</div>
-            {% endfor %}
+
+        {% if form.non_field_errors %}
+          <div class="alert alert-danger py-2">
+            {% for err in form.non_field_errors %}{{ err }}<br>{% endfor %}
           </div>
         {% endif %}
 
+
         <div class="text-center mb-3">
             <img class="brand-banner mb-2" src="{% static 'core/img/imcmontanai.png' %}" alt="IMC Montan AI">
-{#          <div class="brand-line mb-2">#}
-{#            <img class="brand-logo" src="{% static 'core/img/logoicon.png' %}" alt="Логотип">#}
-{#            <h1 class="brand-title">IMC Montan AI</h1>#}
-{#          </div>#}
           <small class="text-muted">Войдите в аккаунт</small>
         </div>
 
@@ -93,8 +91,8 @@
           <label for="floatingPassword">Пароль</label>
         </div>
 
-        {% if request.GET.next %}
-          <input type="hidden" name="next" value="{{ request.GET.next }}">
+        {% if redirect_field_value %}
+          <input type="hidden" name="{{ redirect_field_name }}" value="{{ redirect_field_value }}">
         {% endif %}
 
         <div class="d-flex justify-content-between align-items-center mb-3">

@@ -1,0 +1,49 @@
+{% load ui %}
+<div class="card shadow-sm mb-3 mt-3" id="gdrive-panel">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <p class="mb-0 fw-semibold d-flex align-items-center">
+        {% svg_icon 'googledrive' 'me-2 icon-inline' %}
+        Google Drive
+      </p>
+      {% if gdrive_connected %}
+        <span class="badge text-bg-success">Подключено</span>
+      {% else %}
+        <span class="badge text-bg-secondary">Не подключено</span>
+      {% endif %}
+    </div>
+
+    {% if gdrive_connected and selection %}
+      <div class="mb-3">
+        <div class="small text-muted">Выбранный объект</div>
+        <div>
+          <span class="fw-semibold">{{ selection.name }}</span>
+          <span class="text-muted">({{ selection.path }})</span>
+        </div>
+      </div>
+    {% else %}
+      <div class="mb-3">
+        <span class="text-muted">Google Drive не подключен или не выбран файл/папка.</span>
+      </div>
+    {% endif %}
+
+    <div class="d-flex gap-2">
+      {% if gdrive_connected %}
+        <a class="btn btn-outline-secondary" href="{% url 'gdrive_pick' %}">Выбрать файл/папку</a>
+        <form method="post" action="{% url 'gdrive_disconnect' %}">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-outline-danger"
+                  onclick="return confirm('Отключить Google Drive?')">
+            Удалить подключение
+          </button>
+        </form>
+      {% else %}
+        <a class="btn btn-outline-primary" href="{% url 'gdrive_connect' %}">Подключить</a>
+      {% endif %}
+    </div>
+
+    <p class="text-muted small mt-2 mb-0">
+      После реальной интеграции выбранный документ будет использоваться для записи/чтения.
+    </p>
+  </div>
+</div>

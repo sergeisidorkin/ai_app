@@ -10,14 +10,18 @@ from core.views import home_entry
 urlpatterns = [
     path("", home_entry, name="home"),
 #   path("", TemplateView.as_view(template_name="index.html"), name="home"),
-    path("policy/", include("policy_app.urls")),
-    path("blocks/", include("blocks_app.urls")),
+    path("policy/",   include("policy_app.urls")),
+    path("blocks/",   include(("blocks_app.urls", "blocks_app"),   namespace="blocks_app")),
     path("onedrive/", include("onedrive_app.urls")),
-    path("openai/", include("openai_app.urls")),
+    path("openai/",   include("openai_app.urls")),
+    path("gdrive/",   include("googledrive_app.urls")),
+    path("debugger/", include("debugger_app.urls", namespace="debugger_app")),
     # Auth
     path("accounts/login/", LoginView.as_view(template_name="core/signin.html", redirect_authenticated_user=True),
          name="login"),
     path("accounts/logout/", LogoutView.as_view(next_page="home"), name="logout"),
     path("admin/", admin.site.urls),
     path("health/", lambda r: HttpResponse("OK")),
+    path("", include("projects_app.urls")),
+    path("", include("requests_app.urls")),
 ]
