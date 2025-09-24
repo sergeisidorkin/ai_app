@@ -1,7 +1,11 @@
 <div class="card shadow-sm mb-3" id="onedrive-panel">
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center mb-2">
-      <p class="mb-0 fw-semibold">Microsoft OneDrive</p>
+      {% load ui %}
+      <p class="mb-0 fw-semibold d-flex align-items-center fs-6 lh-1">
+         {% svg_icon 'onedrive' 'me-2 icon-inline' %}
+         Microsoft OneDrive
+      </p>
       {% if onedrive_connected %}
         <span class="badge text-bg-success">Подключено</span>
       {% else %}
@@ -11,10 +15,10 @@
 
     {% if onedrive_connected and selection and selection.item_id %}
       <div class="mb-3">
-        <div class="small text-muted">Выбранный объект</div>
+        <div class="small text-muted">Выбранная папка</div>
         <div class="d-flex flex-wrap align-items-center gap-2">
           <div>
-            {% if selection.is_folder %}📁 Папка{% else %}📄 Файл{% endif %}:
+            <i class="bi bi-folder2 me-1 align-auto"></i>
             <span class="fw-semibold">{{ selection.item_name }}</span>
             <span class="text-muted">({{ selection.item_path }})</span>
           </div>
@@ -24,7 +28,7 @@
           <form method="post" action="{% url 'onedrive_clear' %}">
             {% csrf_token %}
             <button type="submit" class="btn btn-sm btn-outline-danger"
-                    onclick="return confirm('Сбросить выбор файла/папки?')">
+                    onclick="return confirm('Сбросить выбор папки?')">
               Сбросить выбор
             </button>
           </form>
@@ -33,16 +37,16 @@
     {% else %}
       <div class="mb-3">
         {% if onedrive_connected %}
-            <span class="text-muted">Файл/папка не выбран(а)</span>
+            <span class="text-muted">Папка не выбрана</span>
         {% else %}
-            <span class="text-muted">Сначала подключите OneDrive, чтобы выбрать файл/папку.</span>
+            <span class="text-muted">Сначала подключите OneDrive, чтобы выбрать папку.</span>
         {% endif %}
       </div>
     {% endif %}
 
     <div class="d-flex gap-2">
       {% if onedrive_connected %}
-        <a class="btn btn-outline-secondary" href="{% url 'onedrive_pick' %}">Выбрать файл/папку</a>
+        <a class="btn btn-outline-secondary" href="{% url 'onedrive_pick' %}">Выбрать папку</a>
         <form method="post"
               action="{% url 'onedrive_disconnect' %}"
               hx-post="{% url 'onedrive_disconnect' %}"
@@ -62,7 +66,7 @@
     </div>
 
     <p class="text-muted small mt-2 mb-0">
-      После выбора .docx «Создать» в блоках будет писать в этот документ.
+      После выбора папки блоки «Создать» будут сохранять документы внутрь этой папки.
     </p>
   </div>
 </div>

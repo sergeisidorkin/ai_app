@@ -4,10 +4,11 @@
 <style>
   .card-block { border: 1px solid #e5e7eb; border-radius: .75rem; }
   .card-block + .card-block { margin-top: 1rem; }
+  .card-block + .card-block { margin-bottom: 15px !important; }
   .pre-wrap { white-space: pre-wrap; }
 </style>
 
-<div class="d-flex align-items-center justify-content-between mb-3">
+<div class="d-flex align-items-center justify-content-between mb-3" style="padding-left: 16px;">
   <h1 class="h4 mb-0">Шаблоны</h1>
   <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#blockModal" id="openCreateModal">
     Добавить блок
@@ -42,11 +43,13 @@
             <button class="btn btn-sm btn-outline-secondary"
                     data-bs-toggle="modal"
                     data-bs-target="#blockModal"
-                    data-edit-url="{% url 'blocks_update' b.id %}"
+                    data-edit-url="{% url 'blocks_app:blocks_update' b.id %}"
                     data-code="{{ b.code|escape }}"
                     data-name="{{ b.name|escape }}"
                     data-prompt="{{ b.prompt|escape }}"
-                    data-context="{{ b.context|escape }}"
+
+                    data-context-ids="{{ b.context_ids_for_edit|join:',' }}"
+
                     data-model="{{ b.model|default_if_none:''|escape }}"
                     data-temperature="{{ b.temperature|default_if_none:'' }}">
               Изменить
@@ -62,54 +65,66 @@
             </div>
             <div class="col-md-6">
               <div class="small text-muted mb-1">Контекст</div>
-              <div class="pre-wrap">{{ b.context }}</div>
+              <div class="pre-wrap">{{ b.context_display|default:"— Не выбрано —" }}</div>
             </div>
+
           </div>
 
           <hr class="my-3">
 
-          <div class="d-flex justify-content-between align-items-center mt-3">
-            <!-- слева: выбор модели + запуск -->
-            <div class="d-flex align-items-center gap-2">
-              <!-- Модель — отдельная форма -->
-              <div class="btn-group">
-                <button type="button"
-                        class="btn btn-outline-secondary btn-sm dropdown-toggle"
-                        data-bs-toggle="dropdown" aria-expanded="false"
-                        id="model-label-{{ b.id }}">
-                  {% if b.model %}Модель: {{ b.model }}{% else %}Модель{% endif %}
-                </button>
-                <ul class="dropdown-menu">
-                  {% if llm_models %}
-                    {% for mid in llm_models %}
-                      <li>
-                        <form action="{% url 'blocks_set_model' b.id %}" method="post" class="m-0">
-                          {% csrf_token %}
-                          <input type="hidden" name="model" value="{{ mid }}">
-                          <button type="submit" class="dropdown-item">{{ mid }}</button>
-                        </form>
-                      </li>
-                    {% endfor %}
-                  {% else %}
-                    <li><span class="dropdown-item-text text-muted">Нет доступных моделей</span></li>
-                  {% endif %}
-                </ul>
+          <div class="d-flex align-items-center mt-3">
+              <!-- слева: модель + (опц.) запуск -->
+              <div class="d-flex align-items-center gap-2 flex-wrap">
+                <!-- Модель — отдельная форма -->
+                <div class="btn-group">
+                  <button type="button"
+                          class="btn btn-outline-secondary btn-sm dropdown-toggle"
+                          data-bs-toggle="dropdown" aria-expanded="false"
+                          id="model-label-{{ b.id }}">
+                    {% if b.model %}Модель: {{ b.model }}{% else %}Модель{% endif %}
+                  </button>
+                  <ul class="dropdown-menu">
+                    {% if llm_models %}
+                      {% for mid in llm_models %}
+                        <li>
+                          <form action="{% url 'blocks_app:blocks_set_model' b.id %}" method="post" class="m-0">
+                            {% csrf_token %}
+                            <input type="hidden" name="model" value="{{ mid }}">
+                            <input type="hidden" name="next" value="{{ next_url }}">
+                            <button type="submit" class="dropdown-item">{{ mid }}</button>
+                          </form>
+                        </li>
+                      {% endfor %}
+                    {% else %}
+                      <li><span class="dropdown-item-text text-muted">Нет доступных моделей</span></li>
+                    {% endif %}
+                  </ul>
+                </div>
+
+                {% if is_debugger %}
+                  <form action="{% url 'blocks_app:blocks_run' b.id %}" method="post" class="m-0" data-role="block-run-form">
+                    {% csrf_token %}
+                    <input type="hidden" name="next" value="{{ next_url }}">
+                    <input type="hidden" name="product_id" value="">
+                    <input type="hidden" name="section_id" value="">
+                    <input type="hidden" name="project_code" value="">
+                    <input type="hidden" name="asset_name" value="">
+                    <button type="submit" class="btn btn-success btn-sm">Создать</button>
+                  </form>
+                {% endif %}
               </div>
 
-              <!-- Запуск — отдельная форма -->
-              <form action="{% url 'blocks_run' b.id %}" method="post" class="m-0">
+              <!-- справа: удаление -->
+              <form action="{% url 'blocks_app:blocks_delete' b.id %}" method="post"
+                    class="ms-auto m-0"
+                    onsubmit="return confirm('Удалить этот блок?');">
                 {% csrf_token %}
-                <button type="submit" class="btn btn-success btn-sm">Создать</button>
+                <input type="hidden" name="next" value="{{ next_url }}">
+                <input type="hidden" name="model" value="{{ mid }}">
+                <button type="submit" class="btn btn-outline-danger btn-sm">Удалить</button>
               </form>
-            </div>
-
-            <!-- справа: удаление -->
-            <form action="{% url 'blocks_delete' b.id %}" method="post"
-                  onsubmit="return confirm('Удалить этот блок?');" class="m-0">
-              {% csrf_token %}
-              <button type="submit" class="btn btn-outline-danger btn-sm">Удалить</button>
-            </form>
           </div>
+
         </div>
       </div>
     {% endfor %}
@@ -122,8 +137,13 @@
 <div class="modal fade" id="blockModal" tabindex="-1" aria-labelledby="blockModalLabel" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
     <div class="modal-content">
-      <form id="blockForm" method="post">
+      <form id="blockForm" method="post" action="{% url 'blocks_app:blocks_create' %}">
         {% csrf_token %}
+        <!-- скрытые поля привязки -->
+        <input type="hidden" name="product_id"  id="blockProductId"  value="">
+        <input type="hidden" name="section_id"  id="blockSectionId"  value="">
+        <input type="hidden" name="next" value="{{ next_url|default:request.get_full_path }}">
+
         <div class="modal-header">
           <h5 class="modal-title" id="blockModalLabel">Добавить блок</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
@@ -141,9 +161,17 @@
             <label class="form-label">Промпт</label>
             <textarea name="prompt" class="form-control" rows="6" placeholder="Введите промпт..." required></textarea>
           </div>
-          <div class="mb-3">
-            <label class="form-label">Контекст</label>
-            <textarea name="context" class="form-control" rows="4" placeholder="Необязательно"></textarea>
+
+          <div class="mb-3" id="context-field">
+              <label class="form-label">Контекст</label>
+              <select name="context" class="form-select" id="blockContext" multiple size="8">
+                {% for value, label in context_options %}
+                  <option value="{{ value }}">{{ label }}</option>
+                {% endfor %}
+              </select>
+              <div class="form-text">
+                Можно выбрать несколько строк из таблицы «Запросы» текущего продукта/раздела.
+              </div>
           </div>
 
           <div class="mb-1">
@@ -167,7 +195,8 @@
         </div>
 
         <div class="modal-footer">
-          <button type="submit" class="btn btn-primary" id="saveBtn" formaction="{% url 'blocks_create' %}">
+          <button type="submit" class="btn btn-primary" id="saveBtn"
+                  formaction="{% url 'blocks_app:blocks_create' %}">
             Сохранить
           </button>
           <button type="submit" class="btn btn-warning" id="updateBtn" style="display:none;" formaction="#">
@@ -180,65 +209,96 @@
 </div>
 
 <script>
-  (function () {
-    const blockModal = document.getElementById('blockModal');
-    const form = document.getElementById('blockForm');
-    if (!blockModal || !form) return;
+(function () {
+  const blockModal = document.getElementById('blockModal');
+  const form = document.getElementById('blockForm');
+  if (!blockModal || !form) return;
 
-    const title = document.getElementById('blockModalLabel');
-    const saveBtn = document.getElementById('saveBtn');
-    const updateBtn = document.getElementById('updateBtn');
+  const title = document.getElementById('blockModalLabel');
+  const saveBtn = document.getElementById('saveBtn');
+  const updateBtn = document.getElementById('updateBtn');
 
-    const inputCode = () => form.querySelector('input[name="code"]');
-    const inputName = () => form.querySelector('input[name="name"]');
-    const inputPrompt = () => form.querySelector('textarea[name="prompt"]');
-    const inputContext = () => form.querySelector('textarea[name="context"]');
-    const inputModel = () => form.querySelector('select[name="model"]');
-    const inputTemperature = () => form.querySelector('input[name="temperature"]');
+  const inputCode = () => form.querySelector('input[name="code"]');
+  const inputName = () => form.querySelector('input[name="name"]');
+  const inputPrompt = () => form.querySelector('textarea[name="prompt"]');
+  const inputContextSelect = () => form.querySelector('select[name="context"]');
+  const inputModel = () => form.querySelector('select[name="model"]');
+  const inputTemperature = () => form.querySelector('input[name="temperature"]');
 
-    // Открытие модалки для создания
-    document.getElementById('openCreateModal')?.addEventListener('click', () => {
-      if (title) title.textContent = 'Добавить блок';
-      inputCode().value = '';
-      inputName().value = '';
-      inputPrompt().value = '';
-      inputContext().value = '';
-      if (inputModel()) inputModel().value = '';
-      if (inputTemperature()) inputTemperature().value = '';
-      if (saveBtn) saveBtn.style.display = '';
+  const inputProductId = () => form.querySelector('#blockProductId');
+  const inputSectionId = () => form.querySelector('#blockSectionId');
+
+  function getCurrentBindingFromDOM() {
+    const sidebar = document.getElementById('templates-second-sidebar-list');
+    const tabsUl  = document.getElementById('templates-tabs');
+    const activeProd = sidebar?.querySelector('.list-group-item.active');
+    const activeTab  = tabsUl?.querySelector('.nav-link.active');
+    return {
+      productId:  activeProd?.dataset?.productId || '',
+      sectionId:  activeTab?.dataset?.sectionId  || ''
+    };
+  }
+  window.__getCurrentBlockBinding = () => getCurrentBindingFromDOM();
+  function fillHiddenBindings() {
+    const b = window.__getCurrentBlockBinding();
+    if (inputProductId()) inputProductId().value = b.productId || '';
+    if (inputSectionId()) inputSectionId().value = b.sectionId || '';
+  }
+
+  // Создание
+  document.getElementById('openCreateModal')?.addEventListener('click', () => {
+    if (title) title.textContent = 'Добавить блок';
+    if (inputCode())    inputCode().value = '';
+    if (inputName())    inputName().value = '';
+    if (inputPrompt())  inputPrompt().value = '';
+    if (inputModel())   inputModel().value = '';
+    if (inputTemperature()) inputTemperature().value = '';
+
+    // Сбрасываем мультиселект
+    const sel = inputContextSelect();
+    if (sel) Array.from(sel.options).forEach(o => o.selected = false);
+
+    fillHiddenBindings();
+
+    if (saveBtn) saveBtn.style.display = '';
+    if (updateBtn) {
+      updateBtn.style.display = 'none';
+      updateBtn.formAction = '#';
+    }
+  });
+
+  // Редактирование
+  blockModal.addEventListener('show.bs.modal', (event) => {
+    const btn = event.relatedTarget;
+    if (!btn || !btn.dataset) return;
+
+    const editUrl = btn.dataset.editUrl;
+    if (editUrl) {
+      if (title) title.textContent = 'Изменить блок';
+      if (inputCode())    inputCode().value    = btn.dataset.code   || '';
+      if (inputName())    inputName().value    = btn.dataset.name   || '';
+      if (inputPrompt())  inputPrompt().value  = btn.dataset.prompt || '';
+
+      // Контекст: список id через запятую
+      const sel = inputContextSelect();
+      if (sel) {
+        const ids = (btn.dataset.contextIds || '').split(',').map(s => s.trim()).filter(Boolean);
+        const set = new Set(ids);
+        Array.from(sel.options).forEach(o => { o.selected = set.has(o.value); });
+      }
+
+      if (inputModel())        inputModel().value        = btn.dataset.model || '';
+      if (inputTemperature())  inputTemperature().value  = btn.dataset.temperature || '';
+
+      if (saveBtn) saveBtn.style.display = 'none';
       if (updateBtn) {
-        updateBtn.style.display = 'none';
-        updateBtn.formAction = '#';
+        updateBtn.style.display = '';
+        updateBtn.formAction = editUrl;
       }
-    });
+    }
+  });
 
-    // Открытие модалки для редактирования
-    blockModal.addEventListener('show.bs.modal', (event) => {
-      const btn = event.relatedTarget;
-      if (!btn || !btn.dataset) return;
-
-      const editUrl = btn.dataset.editUrl;
-      const code = btn.dataset.code;
-      const name = btn.dataset.name;
-      const prompt = btn.dataset.prompt;
-      const context = btn.dataset.context;
-      const model = btn.dataset.model || '';
-      const temperature = btn.dataset.temperature || '';
-
-      if (editUrl) {
-        if (title) title.textContent = 'Изменить блок';
-        inputCode().value = code || '';
-        inputName().value = name || '';
-        inputPrompt().value = prompt || '';
-        inputContext().value = context || '';
-        if (inputModel()) inputModel().value = model;
-        if (inputTemperature()) inputTemperature().value = temperature;
-        if (saveBtn) saveBtn.style.display = 'none';
-        if (updateBtn) {
-          updateBtn.style.display = '';
-          updateBtn.formAction = editUrl;
-        }
-      }
-    });
-  })();
+  // Перед любым сабмитом — привязки
+  form.addEventListener('submit', () => { fillHiddenBindings(); });
+})();
 </script>

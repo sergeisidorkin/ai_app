@@ -1,44 +1,1217 @@
-{% extends "base.html" %}
-{% block title %}Главная — ai_app{% endblock %}
+{% extends "core/base.html" %}
+{% load static %}
+{% block title %}IMC Montan AI{% endblock %}
 
 {% block content %}
-<div class="row">
-  <!-- Левое меню -->
-  <aside class="col-12 col-md-3 col-xl-2 border-end bg-white sidebar py-3">
-    <ul class="nav nav-pills flex-column gap-2">
-      <li class="nav-item">
-        <a class="nav-link active" aria-current="page" href="#templates" data-bs-toggle="tab">Шаблоны</a>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link" href="#connections" data-bs-toggle="tab">Подключения</a>
-      </li>
+<div class="d-flex gap-0">
+  <!-- Сайдбар -->
+  <aside id="sidebar" class="sidebar bg-white border-end d-flex flex-column">
+    <!-- Верхняя часть: бренд + кнопка свернуть -->
+    <div class="sidebar-header d-flex align-items-center justify-content-between px-3 py-3">
+      <a href="{% url 'home' %}" class="d-flex align-items-center text-decoration-none">
+        <img src="{% static 'core/img/logo.png' %}" alt="Логотип" class="sidebar-logo me-2" height="28">
+        <img src="{% static 'core/img/logoicon.png' %}" alt="Лого (иконка)" class="sidebar-logo-collapsed me-2" height="28">
+      </a>
+      <a href="#" id="sidebarToggle" class="icon-btn" title="Свернуть сайдбар" aria-label="Свернуть сайдбар">
+        <i class="bi bi-chevron-left" data-chevron></i>
+      </a>
+    </div>
+    <hr class="my-0">
+
+    <!-- Навигация -->
+    <ul class="nav nav-pills flex-column gap-2 px-2 py-3">
+        <!-- Вкладка "Продукты" -->
+        <li class="nav-item">
+          <a class="nav-link active d-flex align-items-center" href="#policy" data-bs-toggle="tab">
+            <i class="bi bi-bag me-2"></i>
+            <span class="link-text">Продукты</span>
+          </a>
+        </li>
+        <!-- Вкладка "Проекты" -->
+        <li class="nav-item">
+          <a class="nav-link d-flex align-items-center" href="#projects" data-bs-toggle="tab">
+            <i class="bi bi-kanban me-2"></i>
+            <span class="link-text">Проекты</span>
+          </a>
+        </li>
+        <!-- Вкладка "Запросы" -->
+        <li class="nav-item">
+          <a class="nav-link d-flex align-items-center" href="#requests" data-bs-toggle="tab">
+            <i class="bi bi-chat-left-text me-2"></i>
+            <span class="link-text">Запросы</span>
+          </a>
+        </li>
+        <!-- Вкладка "Шаблоны" -->
+        <li class="nav-item">
+          <a class="nav-link d-flex align-items-center" href="#templates" data-bs-toggle="tab">
+            <i class="bi bi-puzzle me-2"></i>
+            <span class="link-text">Шаблоны</span>
+          </a>
+        </li>
+        <!-- Вкладка "Подключения" -->
+        <li class="nav-item">
+          <a class="nav-link d-flex align-items-center" href="#connections" data-bs-toggle="tab">
+            <i class="bi bi-hdd-network me-2"></i>
+            <span class="link-text">Подключения</span>
+          </a>
+        </li>
+        <!-- Вкладка "Отладка" -->
+        <li class="nav-item">
+          <a class="nav-link d-flex align-items-center" href="#debugger" data-bs-toggle="tab">
+            <i class="bi bi-sliders me-2"></i>
+            <span class="link-text">Отладка</span>
+          </a>
+        </li>
     </ul>
+
+    <!-- Низ: профиль -->
+    <div class="mt-auto px-3 py-3">
+      {% if request.user.is_authenticated and request.user.is_staff %}
+      <a href="{% url 'admin:index' %}" class="d-flex align-items-center text-decoration-none">
+        <i class="bi bi-person-circle fs-4 me-2"></i>
+        <span class="link-text">Профиль</span>
+      </a>
+      {% endif %}
+    </div>
   </aside>
 
   <!-- Контент вкладок -->
-  <main class="col-12 col-md-9 col-xl-10 py-4">
+  <main class="flex-grow-1 py-4 px-3">
     <div class="tab-content">
+      <!-- Продукты -->
+      <section id="policy" class="tab-pane fade show active">
+        <div class="templates-bleed">
+          <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
+            <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
+              <h5 class="mb-0 ps-3 fs-4 pt-2">Продукты</h5>
+            </div>
+          </div>
+          <div class="ps-3">
+            {% include "policy_app/panel.html" %}
+          </div>
+        </div>
+      </section>
+      <!-- Проекты -->
+      <section id="projects" class="tab-pane fade">
+        <div class="templates-bleed">
+          <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
+            <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
+              <h5 class="mb-0 ps-3 fs-4 pt-2">Проекты</h5>
+            </div>
+          </div>
+          <div class="ps-3">
+            {% include "projects_app/panel.html" %}
+          </div>
+        </div>
+      </section>
+      <!-- Запросы -->
+      <section id="requests" class="tab-pane fade">
+          <div class="d-flex templates-bleed">
+            <!-- Второй уровень сайдбара -->
+            <aside class="second-sidebar bg-body-tertiary border-end">
+              <div class="second-sidebar-header-spacer"></div>
+              <hr class="my-0">
+              <div class="list-group list-group-flush p-3 m-0" id="requests-second-sidebar-list">
+                {% if TEMPLATES_PRODUCTS %}
+                  {% for p in TEMPLATES_PRODUCTS %}
+                    <a
+                      href="#req-product-{{ p.id }}"
+                      class="list-group-item list-group-item-action {% if forloop.first %}active{% endif %}"
+                      data-product="{{ p.short_name|default_if_none:''|upper }}"
+                      data-product-id="{{ p.id }}">
+                      {{ p.name_en }}
+                    </a>
+                  {% endfor %}
+                {% else %}
+                  <span class="list-group-item text-muted">Пока нет продуктов</span>
+                {% endif %}
+              </div>
+            </aside>
+
+            <!-- Контент справа -->
+            <div class="flex-grow-1 ps-3">
+              <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
+                <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height:30px;"></div>
+                <ul class="nav nav-underline px-3" id="requests-tabs"></ul>
+                {{ TEMPLATES_SECTIONS_MAP|json_script:"requests-sections-map-json" }}
+              </div>
+
+              <!-- Панель/таблица будет подгружаться сюда -->
+              <div class="position-relative" id="requests-pane-wrap">
+                  <div id="requests-pane" data-url="{% url 'requests_partial' %}"></div>
+                  <div id="requests-loading" class="loading-overlay d-none">
+                    <div class="bg-white border rounded-3 shadow-sm px-3 py-2 d-flex align-items-center gap-2">
+                      <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+                      <span class="small">Загрузка запросов…</span>
+                    </div>
+                  </div>
+              </div>
+            </div><!-- /.flex-grow-1 -->
+          </div><!-- /.d-flex -->
+
+          <!-- Постоянная модалка (вне flex-контейнера!) -->
+          <div class="modal fade" id="requests-modal" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog modal-md modal-dialog-scrollable">
+              <div class="modal-content">
+                <div class="p-5 text-center">
+                  <div class="__spinner spinner-border" role="status">
+                    <span class="visually-hidden">Загрузка…</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+      </section>
       <!-- Шаблоны -->
-      <section id="templates" class="tab-pane fade show active">
-        <div id="templates-pane"
-             hx-get="{% url 'blocks_dashboard_partial' %}"
-             hx-trigger="load"
-             hx-target="#templates-pane"
-             hx-swap="innerHTML">
-          <div class="text-muted">Загрузка шаблонов…</div>
+      <section id="templates" class="tab-pane fade">
+        <div class="d-flex templates-bleed">
+          <!-- Второй уровень сайдбара для раздела "Шаблоны" -->
+          <aside class="second-sidebar bg-body-tertiary border-end">
+            <!-- Спейсер для выравнивания уровня разделительной линии с основным сайдбаром -->
+            <div class="second-sidebar-header-spacer"></div>
+            <hr class="my-0">
+            <div class="list-group list-group-flush p-3 m-0" id="templates-second-sidebar-list">
+              {% if TEMPLATES_PRODUCTS %}
+                {% for p in TEMPLATES_PRODUCTS %}
+                  <a
+                    href="#product-{{ p.id }}"
+                    class="list-group-item list-group-item-action {% if forloop.first %}active{% endif %}"
+                    data-product="{{ p.short_name|default_if_none:''|upper }}"
+                    data-product-id="{{ p.id }}">
+                    {{ p.name_en }}
+                  </a>
+                {% endfor %}
+              {% else %}
+                <span class="list-group-item text-muted">Пока нет продуктов</span>
+              {% endif %}
+            </div>
+          </aside>
+        <!-- Контент "Шаблоны" -->
+        <div class="flex-grow-1 ps-3">
+
+          <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
+            <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
+            </div>
+              <ul class="nav nav-underline px-3" id="templates-tabs"></ul>
+              <!-- Сериализуем карту в HTML безопасно -->
+              {{ TEMPLATES_SECTIONS_MAP|json_script:"sections-map-json" }}
+          </div>
+
+            <div class="position-relative" id="templates-pane-wrap">
+              <div id="templates-pane"
+                   data-url="{% url 'blocks_app:dashboard_partial' %}">
+              </div>
+
+              <div id="templates-loading" class="loading-overlay d-none"
+                   style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;">
+                <div class="bg-white border rounded-3 shadow-sm px-3 py-2 d-flex align-items-center gap-2">
+                  <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+                  <span class="small">Загрузка шаблонов…</span>
+                </div>
+              </div>
+            </div>
+
         </div>
       </section>
 
       <!-- Подключения -->
       <section id="connections" class="tab-pane fade">
-        <div id="connections-pane"
-             hx-get="{% url 'onedrive_connections_partial' %}"
-             hx-trigger="load"
-             hx-target="#connections-pane"
-             hx-swap="innerHTML">
-          <div class="text-muted">Загрузка подключений…</div>
+        <div class="templates-bleed">
+          <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
+            <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 36px;">
+              <h5 class="mb-0 ps-3 fs-4 pt-2">Подключения</h5>
+            </div>
+          </div>
+          <div class="ps-3">
+            <div id="connections-pane"
+                 hx-get="{% url 'onedrive_connections_partial' %}"
+                 hx-trigger="load"
+                 hx-target="#connections-pane"
+                 hx-swap="innerHTML"
+                 hx-indicator="#connections-loading">
+              <div id="connections-loading" class="text-muted htmx-indicator">Загрузка подключений…</div>
+            </div>
+          </div>
         </div>
       </section>
+
+      <!-- Отладка -->
+      <section id="debugger" class="tab-pane fade">
+          <div class="templates-bleed">
+            <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
+              <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 36px;">
+                <h5 class="mb-0 ps-3 fs-4 pt-2">Отладка</h5>
+              </div>
+            </div>
+
+            <div class="ps-3">
+
+                <div id="debugger-pane"
+                     hx-get="{% url 'debugger_app:panel_partial' %}"
+                     hx-trigger="load"
+                     hx-target="#debugger-pane"
+                     hx-swap="innerHTML">
+                  <div class="text-muted htmx-indicator">Загрузка…</div>
+                </div>
+
+            </div>
+            <!-- /ps-3 -->
+          </div>
+      </section>
+
+        <script>
+        document.addEventListener('DOMContentLoaded', function () {
+          const sectionsMapElement = document.getElementById('sections-map-json');
+          let sectionsMap = {};
+          try { sectionsMap = sectionsMapElement ? JSON.parse(sectionsMapElement.textContent) : {}; } catch { sectionsMap = {}; }
+
+          const sidebar     = document.querySelector('#templates .second-sidebar .list-group');
+          const sidebarList = document.getElementById('templates-second-sidebar-list');
+          const tabsUl      = document.getElementById('templates-tabs');
+          const pane        = document.getElementById('templates-pane');
+          const paneUrl     = pane?.getAttribute('data-url');
+          const loadingElTpl = document.getElementById('templates-loading');
+          const showTplLoading = (show) => loadingElTpl && loadingElTpl.classList.toggle('d-none', !show);
+
+          function getActiveProductShort() {
+            const a = sidebar?.querySelector('.list-group-item.active');
+            return (a?.dataset?.product || '').toString().trim().toUpperCase();
+          }
+          function firstProductShort() {
+            const a = sidebar?.querySelector('.list-group-item[data-product]');
+            return (a?.dataset?.product || '').toString().trim().toUpperCase();
+          }
+          function getActiveProductId() {
+            const a = sidebar?.querySelector('.list-group-item.active');
+            return a?.dataset?.productId || '';
+          }
+          function getActiveSectionId() {
+            const a = tabsUl?.querySelector('.nav-link.active');
+            return a?.dataset?.sectionId || '';
+          }
+
+        function modalIsOpenInTemplates() {
+          return !!document.querySelector('#templates-pane .modal.show');
+        }
+
+        let templatesReloadInFlight = false;
+
+        async function reloadBlocks() {
+          if (!pane || !paneUrl) return;
+          if (templatesReloadInFlight) return;
+          if (modalIsOpenInTemplates()) return; // не перерисовываем, пока открыта модалка
+
+          const productShort = getActiveProductShort() || firstProductShort();
+          const sectionId    = getActiveSectionId();
+          const url = paneUrl + `?tab=templates&product=${encodeURIComponent(productShort)}&section=${encodeURIComponent(sectionId)}`;
+
+          templatesReloadInFlight = true;
+          showTplLoading(true);
+          try {
+            const r = await fetch(url, { headers: { 'X-Requested-With': 'fetch' } });
+            const html = await r.text();
+            pane.innerHTML = html;
+
+            // Перенаправляем кнопки модалки на локальный экземпляр
+            pane.querySelectorAll('[data-bs-toggle="modal"][data-bs-target="#blockModal"]')
+                .forEach(btn => btn.setAttribute('data-bs-target', '#templates-pane #blockModal'));
+
+            // Сохраняем «куда редиректить» после POST
+            pane.querySelectorAll('form input[name="next"]')
+                .forEach(i => { i.value = window.location.pathname + '#templates'; });
+
+            // Прокидываем привязки product/section в скрытые поля модалки перед submit
+            const form = pane.querySelector('#blockForm');
+            if (form) {
+              const inputProductId = () => form.querySelector('#blockProductId');
+              const inputSectionId = () => form.querySelector('#blockSectionId');
+
+              window.__getCurrentBlockBinding = function () {
+                const a = document.querySelector('#templates-second-sidebar-list .list-group-item.active');
+                const s = document.querySelector('#templates-tabs .nav-link.active');
+                return {
+                  productId:   a?.dataset?.productId || '',
+                  productShort:a?.dataset?.product || '',
+                  sectionId:   s?.dataset?.sectionId || ''
+                };
+              };
+
+              function fillHidden() {
+                const b = (window.__getCurrentBlockBinding && window.__getCurrentBlockBinding()) || {};
+                const pid = inputProductId(); if (pid) pid.value = b.productId || '';
+                const sid = inputSectionId(); if (sid) sid.value = b.sectionId || '';
+              }
+
+              // При открытии модалки и перед сабмитом — проставляем поля
+              const modal = pane.querySelector('#blockModal');
+              modal?.addEventListener('show.bs.modal', fillHidden, { once: true });
+              form.addEventListener('submit', fillHidden, { once: true });
+            }
+          } catch (e) {
+            console.error('templates reload error:', e);
+          } finally {
+            showTplLoading(false);
+            templatesReloadInFlight = false;
+          }
+        }
+
+          // скрываем лоадер после успешной подмены содержимого именно в templates-pane
+          document.body.addEventListener('htmx:afterSwap', (e) => {
+              const t = e.target;
+              if (t && (t.id === 'templates-pane' || t.closest?.('#templates-pane'))) {
+                showTplLoading(false);
+              }
+          });
+
+          // на ошибки — тоже прячем
+          document.body.addEventListener('htmx:responseError', () => showTplLoading(false));
+
+          // и если запрос целится в templates-pane (переменные перерисовки) — включаем лоадер заранее
+          document.body.addEventListener('htmx:beforeRequest', (e) => {
+              const tgt = e.detail && e.detail.target;
+              const el = typeof tgt === 'string' ? document.querySelector(tgt) : tgt;
+              if (el && (el.id === 'templates-pane' || el.closest?.('#templates-pane'))) {
+                showTplLoading(true);
+              }
+          });
+
+
+          function renderTabs(productShort) {
+            const ps = productShort || firstProductShort();
+            const items = sectionsMap[ps] || [];
+            tabsUl.innerHTML = '';
+            if (!items.length) {
+              tabsUl.innerHTML = '<li class="nav-item"><span class="nav-link text-muted">Нет разделов</span></li>';
+              reloadBlocks();
+              return;
+            }
+            items.forEach((item, idx) => {
+              const li = document.createElement('li');
+              li.className = 'nav-item';
+              const a = document.createElement('a');
+              a.className = 'nav-link' + (idx === 0 ? ' active' : '');
+              a.href = '#';
+              a.textContent = item.name_ru;
+              a.dataset.sectionId = item.id;
+              a.addEventListener('click', (e) => {
+                e.preventDefault();
+                tabsUl.querySelectorAll('.nav-link').forEach(x => x.classList.remove('active'));
+                a.classList.add('active');
+                reloadBlocks();
+              });
+              li.appendChild(a);
+              tabsUl.appendChild(li);
+            });
+            reloadBlocks();
+          }
+
+          function readProductOrderFromPolicy() {
+            const rows = document.querySelectorAll('#policy-pane tbody tr[data-product-id]');
+            return Array.from(rows).map(tr => tr.getAttribute('data-product-id')).filter(Boolean);
+          }
+          function reorderSecondSidebar() {
+            if (!sidebarList) return;
+            const order = readProductOrderFromPolicy();
+            if (!order.length) return;
+
+            const map = new Map();
+            Array.from(sidebarList.querySelectorAll('a.list-group-item[data-product-id]'))
+              .forEach(a => map.set(a.getAttribute('data-product-id'), a));
+
+            const frag = document.createDocumentFragment();
+            order.forEach(id => { const node = map.get(id); if (node) frag.appendChild(node); });
+            Array.from(sidebarList.querySelectorAll('a.list-group-item[data-product-id]')).forEach(a => {
+              if (!order.includes(a.getAttribute('data-product-id'))) frag.appendChild(a);
+            });
+            sidebarList.appendChild(frag);
+          }
+          document.body.addEventListener('products-reordered', reorderSecondSidebar);
+
+          const templatesTabLink = document.querySelector('a[href="#templates"][data-bs-toggle="tab"]') || document.querySelector('a[href="#templates"]');
+          if (templatesTabLink && window.bootstrap) {
+            templatesTabLink.addEventListener('shown.bs.tab', () => {
+              reorderSecondSidebar();
+              renderTabs(getActiveProductShort() || firstProductShort());
+            });
+          } else {
+            templatesTabLink?.addEventListener('click', () => {
+              setTimeout(() => {
+                reorderSecondSidebar();
+                renderTabs(getActiveProductShort() || firstProductShort());
+              }, 0);
+            });
+          }
+          reorderSecondSidebar();
+          renderTabs(getActiveProductShort() || firstProductShort());
+
+          sidebar?.addEventListener('click', function(e) {
+            const link = e.target.closest('.list-group-item'); if (!link) return;
+            e.preventDefault();
+            sidebar.querySelectorAll('.list-group-item').forEach(a => a.classList.remove('active'));
+            link.classList.add('active');
+            renderTabs(link.dataset.product || firstProductShort());
+            window.__getCurrentBlockBinding = function () {
+              return { productId: getActiveProductId(), productShort: getActiveProductShort() || firstProductShort(), sectionId: getActiveSectionId() };
+            };
+          });
+        });
+        </script>
+
+        <script>
+        document.addEventListener('DOMContentLoaded', function () {
+          function qs(sel, root){ return (root||document).querySelector(sel); }
+
+          const sectionsEl = document.getElementById('requests-sections-map-json');
+          let sectionsMap = {};
+          try { sectionsMap = sectionsEl ? JSON.parse(sectionsEl.textContent) : {}; } catch(_) {}
+
+          const sidebar = document.getElementById('requests-second-sidebar-list');
+          const tabsUl = document.getElementById('requests-tabs');
+          const pane = document.getElementById('requests-pane');
+          const paneUrl = pane?.getAttribute('data-url');
+          const loadingEl = document.getElementById('requests-loading');
+          const showReqLoading = (show) => loadingEl && loadingEl.classList.toggle('d-none', !show);
+
+          function getActiveProductShort() {
+            const a = sidebar?.querySelector('.list-group-item.active');
+            return (a?.dataset?.product || '').toString().trim().toUpperCase();
+          }
+          function getActiveProductId() {
+            const a = sidebar?.querySelector('.list-group-item.active');
+            return a?.dataset?.productId || '';
+          }
+          function getActiveSectionId() {
+            const a = tabsUl?.querySelector('.nav-link.active');
+            return a?.dataset?.sectionId || '';
+          }
+
+          function reloadTable() {
+              if (!pane || !paneUrl) return;
+              const productShort = getActiveProductShort();
+              const sectionId = getActiveSectionId();
+              const url = paneUrl + `?product=${encodeURIComponent(productShort)}&section=${encodeURIComponent(sectionId)}`;
+              showReqLoading(true);
+              htmx.ajax('GET', url, { target: '#requests-pane', swap: 'innerHTML' });
+          }
+
+          // универсально скрываем лоадер после любых HTMX-обновлений requests-pane
+          document.body.addEventListener('htmx:afterSwap', (e) => {
+              const t = e.target;
+              if (t && (t.id === 'requests-pane' || t.closest?.('#requests-pane'))) {
+                showReqLoading(false);
+              }
+          });
+          // и на ошибки — тоже прячем
+          document.body.addEventListener('htmx:responseError', () => showReqLoading(false));
+
+          // чтобы лоадер показывался и при перемещениях/удалениях (они тоже целятся в #requests-pane)
+          document.body.addEventListener('htmx:beforeRequest', (e) => {
+              const tgt = e.detail && e.detail.target;
+              if (!tgt) return;
+              // target может быть CSS-селектором или DOM-элементом
+              const el = typeof tgt === 'string' ? document.querySelector(tgt) : tgt;
+              if (el && (el.id === 'requests-pane' || el.closest?.('#requests-pane'))) {
+                showReqLoading(true);
+              }
+          });
+
+
+          function renderTabs(productShort) {
+            const items = sectionsMap[productShort] || [];
+            tabsUl.innerHTML = '';
+            if (!items.length) {
+              tabsUl.innerHTML = '<li class="nav-item"><span class="nav-link text-muted">Нет разделов</span></li>';
+              reloadTable();
+              return;
+            }
+            items.forEach((item, idx) => {
+              const li = document.createElement('li');
+              li.className = 'nav-item';
+              const a = document.createElement('a');
+              a.className = 'nav-link' + (idx === 0 ? ' active' : '');
+              a.href = '#';
+              a.textContent = item.name_ru;
+              a.dataset.sectionId = item.id;
+              a.addEventListener('click', (e) => {
+                e.preventDefault();
+                tabsUl.querySelectorAll('.nav-link').forEach(x => x.classList.remove('active'));
+                a.classList.add('active');
+                reloadTable();
+              });
+              li.appendChild(a);
+              tabsUl.appendChild(li);
+            });
+            reloadTable();
+          }
+
+          function firstProductShort() {
+              const a = document.querySelector('#requests-second-sidebar-list .list-group-item[data-product]');
+              return (a?.dataset?.product || '').toString().trim().toUpperCase();
+          }
+
+          // порядок продуктов синхронизируем с таблицей «Продукты» (как в «Шаблоны»)
+          function readProductOrderFromPolicy() {
+            const rows = document.querySelectorAll('#policy-pane tbody tr[data-product-id]');
+            return Array.from(rows).map(tr => tr.getAttribute('data-product-id')).filter(Boolean);
+          }
+          function reorderSecondSidebar() {
+            const order = readProductOrderFromPolicy();
+            if (!order.length || !sidebar) return;
+
+            const map = new Map();
+            Array.from(sidebar.querySelectorAll('a.list-group-item[data-product-id]'))
+              .forEach(a => map.set(a.getAttribute('data-product-id'), a));
+
+            const frag = document.createDocumentFragment();
+            order.forEach(id => { const node = map.get(id); if (node) frag.appendChild(node); });
+            Array.from(sidebar.querySelectorAll('a.list-group-item[data-product-id]')).forEach(a => {
+              if (!order.includes(a.getAttribute('data-product-id'))) frag.appendChild(a);
+            });
+            sidebar.appendChild(frag);
+          }
+          document.body.addEventListener('products-reordered', reorderSecondSidebar);
+          const reqTabLink = document.querySelector('a[href="#requests"][data-bs-toggle="tab"]') || document.querySelector('a[href="#requests"]');
+          if (reqTabLink && window.bootstrap) {
+            reqTabLink.addEventListener('shown.bs.tab', reorderSecondSidebar);
+          } else {
+            reqTabLink?.addEventListener('click', () => setTimeout(reorderSecondSidebar, 0));
+          }
+          reorderSecondSidebar();
+
+          // init
+          renderTabs(getActiveProductShort() || firstProductShort());
+
+          // переключение продукта
+          sidebar?.addEventListener('click', function(e) {
+            const link = e.target.closest('.list-group-item');
+            if (!link) return;
+            e.preventDefault();
+            sidebar.querySelectorAll('.list-group-item').forEach(a => a.classList.remove('active'));
+            link.classList.add('active');
+            renderTabs(link.dataset.product || null);
+
+            // экспорт текущего выбора (если пригодится где-то ещё)
+            window.__getCurrentRequestBinding = function () {
+              return {
+                productId: getActiveProductId(),
+                productShort: getActiveProductShort(),
+                sectionId: getActiveSectionId()
+              };
+            };
+          });
+        });
+        </script>
+
+        <script>
+        document.addEventListener('htmx:afterSwap', function (e) {
+          if (e.target && e.target.matches('#requests-modal .modal-content')) {
+            const m = bootstrap.Modal.getOrCreateInstance(document.getElementById('requests-modal'));
+            m.show();
+          }
+        });
+        document.addEventListener('htmx:responseError', function (e) {
+          try {
+            console.error('HTMX error', e.detail.xhr.status, (e.detail.xhr.responseText || '').slice(0,300));
+          } catch {}
+        });
+        </script>
+
+        <script>
+        document.addEventListener('htmx:responseError', function (e) {
+          console.error('HTMX error', e.detail.xhr.status, (e.detail.xhr.responseText || '').slice(0, 300));
+        });
+        </script>
+        <script>
+          document.body.addEventListener('requests:saved', function () {
+            const el = document.getElementById('requests-modal');
+            if (el && window.bootstrap) {
+              window.bootstrap.Modal.getOrCreateInstance(el).hide();
+            }
+          });
+        </script>
+        <script>
+          document.body.addEventListener('htmx:afterSwap', (e) => {
+            const t = e.target;
+            if (t && t.id === 'debugger-pane') {
+              if (window.__initDebuggerPanel) { try { window.__initDebuggerPanel(); } catch(_) {} }
+            }
+          });
+        </script>
+        <script>
+        document.addEventListener('DOMContentLoaded', function () {
+          function showTabFromHash() {
+            var hash = window.location.hash;
+            if (!hash) return;
+            var link = document.querySelector('a[href="' + hash + '"][data-bs-toggle="tab"]');
+            if (link && window.bootstrap) {
+              window.bootstrap.Tab.getOrCreateInstance(link).show();
+            }
+          }
+          showTabFromHash();
+          window.addEventListener('hashchange', showTabFromHash);
+        });
+        </script>
+        <script>
+          (function () {
+            function tryInitDebugger() {
+              if (window.__initDebuggerPanel && !window.__debuggerPanelReady) {
+                try { window.__initDebuggerPanel(); } catch (e) { console.error('init failed:', e); }
+              }
+            }
+
+            // 1) если уже есть узел-хост
+            if (document.getElementById('debugger-pane')) {
+              // чуть отложим, чтобы HTMX успел дорендерить содержимое
+              setTimeout(tryInitDebugger, 0);
+            }
+
+            // 2) гарантированно инициализируем после любой подмены контента панели
+            document.body.addEventListener('htmx:afterSwap', function (e) {
+              const t = e.target;
+              if (t && (t.id === 'debugger-pane' || (t.closest && t.closest('#debugger-pane')))) {
+                tryInitDebugger();
+              }
+            });
+          })();
+        </script>
+
+        <script>
+        document.body.addEventListener('htmx:afterSwap', function (e) {
+          if (e.target && e.target.id === 'debugger-pane') {
+            if (window.__initDebuggerPanel && !window.__debuggerPanelReady) {
+              try { window.__initDebuggerPanel(); } catch (_) {}
+            }
+          }
+        });
+        </script>
+
+
+        <script>
+        (function(){
+          // =========================================================
+          // Глобальный инит панели Отладки (вне паршиалов!)
+          // =========================================================
+          if (window.__initDebuggerPanel) return; // уже есть
+
+          window.__initDebuggerPanel = async function initDebuggerPanel(){
+            // чтобы не гонять несколько параллельных запусков
+            if (window.__debuggerPanelReady) return;
+            var pane = document.getElementById('dbg-blocks-pane');
+            var projSel = document.getElementById('dbg-project');
+            var sectSel = document.getElementById('dbg-section');
+            var assetSel= document.getElementById('dbg-asset');
+
+            if (!pane || !projSel || !sectSel) return; // паршиал ещё не дорисовался
+            if (pane.dataset.inited === '1') return;   // уже инициализирован
+
+            window.__debuggerPanelReady = true;
+            pane.dataset.inited = '1';
+
+            function showLoading(on){
+              var el = document.getElementById('dbg-blocks-loading');
+              if (!el) return;
+              if (on) el.classList.remove('d-none'); else el.classList.add('d-none');
+            }
+            function getProductShort(){
+              var opt = projSel.selectedOptions && projSel.selectedOptions[0];
+              var s = (opt && opt.getAttribute('data-product-short')) || '';
+              return String(s).trim().toUpperCase();
+            }
+            function getProductId(){
+              var opt = projSel.selectedOptions && projSel.selectedOptions[0];
+              return (opt && opt.getAttribute('data-product-id')) || '';
+            }
+            function getBinding(){
+              return {
+                productId:   getProductId(),
+                productShort:getProductShort(),
+                sectionId:   (sectSel.value || '').trim()
+              };
+            }
+            // Делаем глобально доступным корректный биндинг (именно отладки)
+            function setGlobalBinding(){ window.__getCurrentBlockBinding = getBinding; }
+
+            function buildBlocksUrl(){
+              var base = pane.getAttribute('data-url') || '';
+              if (!base) return '';
+              var b = getBinding();
+              var sep = base.indexOf('?') >= 0 ? '&' : '?';
+              return base + sep + 'product=' + encodeURIComponent(b.productShort) +
+                     '&section=' + encodeURIComponent(b.sectionId);
+            }
+
+            function fillHiddenAndQS(form){
+              form = form || pane.querySelector('#blockForm');
+              if (!form) return;
+              var b = getBinding();
+
+              // hidden product_id
+              var hidP = form.querySelector('#blockProductId');
+              if (!hidP){
+                hidP = document.createElement('input');
+                hidP.type='hidden'; hidP.id='blockProductId'; hidP.name='product_id';
+                form.appendChild(hidP);
+              }
+              hidP.value = b.productId || '';
+
+              // hidden section_id
+              var hidS = form.querySelector('#blockSectionId');
+              if (!hidS){
+                hidS = document.createElement('input');
+                hidS.type='hidden'; hidS.id='blockSectionId'; hidS.name='section_id';
+                form.appendChild(hidS);
+              }
+              hidS.value = b.sectionId || '';
+
+              // QS на кнопках
+              var qs = new URLSearchParams({ product:b.productShort||'', section:b.sectionId||'', tab:'debugger' }).toString();
+              var save = form.querySelector('#saveBtn');
+              if (save){
+                var base = (save.getAttribute('formaction') || save.formAction || '').split('?')[0];
+                if (base) save.formAction = base + '?' + qs;
+              }
+              var upd = form.querySelector('#updateBtn');
+              if (upd){
+                var raw  = (upd.getAttribute('formaction') || upd.formAction || '');
+                var base = raw && raw !== '#' ? raw.split('?')[0] : '';
+                if (base) upd.formAction = base + '?' + qs;
+              }
+            }
+
+            function wireModal(){
+              if (pane.dataset.modalWired === '1') return; // уже навешивали
+              pane.dataset.modalWired = '1';
+
+              // Открытие «Создать»
+              var createBtn = pane.querySelector('#openCreateModal');
+              if (createBtn){
+                createBtn.addEventListener('click', function(ev){
+                  ev.preventDefault();
+                  var form = pane.querySelector('#blockForm');
+                  if (!form) return;
+
+                  var title = pane.querySelector('#blockModalLabel');
+                  if (title) title.textContent = 'Добавить блок';
+
+                  var code   = form.querySelector('input[name="code"]');
+                  var name   = form.querySelector('input[name="name"]');
+                  var prompt = form.querySelector('textarea[name="prompt"]');
+                  var model  = form.querySelector('select[name="model"]');
+                  var temp   = form.querySelector('input[name="temperature"]');
+                  var ctxSel = form.querySelector('select[name="context"]');
+
+                  if (code) code.value = '';
+                  if (name) name.value = '';
+                  if (prompt) prompt.value = '';
+                  if (model) model.value = '';
+                  if (temp) temp.value = '';
+                  if (ctxSel) Array.prototype.forEach.call(ctxSel.options, function(o){ o.selected = false; });
+
+                  var save = form.querySelector('#saveBtn');
+                  var upd  = form.querySelector('#updateBtn');
+                  if (save) save.style.display = '';
+                  if (upd)  { upd.style.display = 'none'; upd.formAction = '#'; }
+
+                  setGlobalBinding();
+                  fillHiddenAndQS(form);
+
+                  var modal = pane.querySelector('#blockModal');
+                  if (window.bootstrap && modal) window.bootstrap.Modal.getOrCreateInstance(modal).show();
+                });
+              }
+
+              // Делегирование для «Изменить»
+              pane.addEventListener('click', function(e){
+                var editBtn = e.target && e.target.closest && e.target.closest('button[data-edit-url]');
+                if (!editBtn) return;
+
+                e.preventDefault();
+                var form = pane.querySelector('#blockForm');
+                if (!form) return;
+
+                var title = pane.querySelector('#blockModalLabel');
+                if (title) title.textContent = 'Изменить блок';
+
+                var code   = form.querySelector('input[name="code"]');
+                var name   = form.querySelector('input[name="name"]');
+                var prompt = form.querySelector('textarea[name="prompt"]');
+                var model  = form.querySelector('select[name="model"]');
+                var temp   = form.querySelector('input[name="temperature"]');
+                var ctxSel = form.querySelector('select[name="context"]');
+
+                if (code)   code.value   = editBtn.getAttribute('data-code')   || '';
+                if (name)   name.value   = editBtn.getAttribute('data-name')   || '';
+                if (prompt) prompt.value = editBtn.getAttribute('data-prompt') || '';
+                if (model)  model.value  = editBtn.getAttribute('data-model')  || '';
+                if (temp)   temp.value   = editBtn.getAttribute('data-temperature') || '';
+
+                if (ctxSel){
+                  var ids = (editBtn.getAttribute('data-context-ids') || '')
+                    .split(',').map(function(s){return s.trim();}).filter(Boolean);
+                  var set = Object.create(null);
+                  ids.forEach(function(id){ set[id] = true; });
+                  Array.prototype.forEach.call(ctxSel.options, function(o){ o.selected = !!set[o.value]; });
+                }
+
+                var save = form.querySelector('#saveBtn');
+                var upd  = form.querySelector('#updateBtn');
+                if (save) save.style.display = 'none';
+                if (upd){
+                  upd.style.display = '';
+                  var base = (editBtn.getAttribute('data-edit-url') || '').split('?')[0];
+                  if (base) upd.formAction = base; // QS добавим ниже
+                }
+
+                setGlobalBinding();
+                fillHiddenAndQS(form);
+
+                var modal = pane.querySelector('#blockModal');
+                if (window.bootstrap && modal) window.bootstrap.Modal.getOrCreateInstance(modal).show();
+              });
+
+              // Подстраховка на показ/submit
+              var modal = pane.querySelector('#blockModal');
+              var form  = pane.querySelector('#blockForm');
+              if (modal && form){
+                modal.addEventListener('show.bs.modal', function(){ setGlobalBinding(); fillHiddenAndQS(form); });
+                form.addEventListener('submit', function(){ setGlobalBinding(); fillHiddenAndQS(form); }, { capture:true });
+                // клики по submit-кнопкам
+                Array.prototype.forEach.call(form.querySelectorAll('button[type="submit"]'), function(btn){
+                  btn.addEventListener('click', function(){ setGlobalBinding(); fillHiddenAndQS(form); }, { capture:true });
+                });
+                // косметика на закрытие
+                modal.addEventListener('hidden.bs.modal', function(){
+                  document.body.classList.remove('modal-open');
+                  var bd = document.querySelector('.modal-backdrop.show'); if (bd) bd.remove();
+                });
+              }
+            }
+
+            async function loadProjectMeta(){
+              var base = pane.getAttribute('data-meta-url-base') || '';
+              var pid  = projSel.value;
+              if (!base || !pid) return;
+
+              var url = base.replace(/0\/?$/, String(pid).replace(/\/?$/, '/'));
+              try{
+                var r = await fetch(url);
+                var j = await r.json();
+
+                // активы
+                if (assetSel && Array.isArray(j.assets)){
+                  assetSel.innerHTML = '';
+                  if (j.assets.length){
+                    assetSel.removeAttribute('disabled');
+                    j.assets.forEach(function(a){
+                      var o = document.createElement('option'); o.value=a; o.textContent=a;
+                      if (a === j.asset) o.selected = true;
+                      assetSel.appendChild(o);
+                    });
+                  } else {
+                    assetSel.setAttribute('disabled','disabled');
+                    assetSel.innerHTML = '<option value="">Нет данных</option>';
+                  }
+                }
+
+                // разделы
+                if (Array.isArray(j.sections)){
+                  var prev = sectSel.value;
+                  sectSel.innerHTML = '';
+                  if (j.sections.length){
+                    j.sections.forEach(function(s){
+                      var o = document.createElement('option'); o.value = s.id; o.textContent = s.name;
+                      sectSel.appendChild(o);
+                    });
+                    // сохранить предыдущий выбор, если ещё существует
+                    var hasPrev = Array.prototype.some.call(sectSel.options, function(o){ return o.value == prev; });
+                    if (hasPrev) sectSel.value = prev;
+                  } else {
+                    sectSel.innerHTML = '<option value="">Нет данных</option>';
+                  }
+                }
+              } catch(e){
+                console.error('[debugger] project_meta error:', e);
+              }
+            }
+
+            async function reloadBlocks(){
+              if (pane.querySelector('.modal.show')) return; // не перерисовываем во время модалки
+
+              var url = buildBlocksUrl();
+              if (!url) return;
+
+              // запомним текущий выбор
+              pane.dataset.currentProduct = getProductShort();
+              pane.dataset.currentSection = (sectSel.value || '').trim();
+
+              showLoading(true);
+              try{
+                var r = await fetch(url, { headers:{'X-Requested-With':'fetch'} });
+                var html = await r.text();
+
+                var tmp = document.createElement('div');
+                tmp.innerHTML = html;
+                // Не исполняем скрипты из паршиала
+                Array.prototype.forEach.call(tmp.querySelectorAll('script'), function(s){ s.remove(); });
+
+                pane.innerHTML = tmp.innerHTML;
+
+                setGlobalBinding();
+                fillHiddenAndQS(); // сразу поправим скрытые/qs
+                wireModal();
+              } catch(e){
+                console.error('[debugger] render blocks error:', e);
+              } finally {
+                showLoading(false);
+              }
+            }
+
+            // события селектов
+            projSel.addEventListener('change', async function(){ await loadProjectMeta(); setGlobalBinding(); reloadBlocks(); });
+            if (assetSel) assetSel.addEventListener('change', function(){ setGlobalBinding(); reloadBlocks(); });
+            sectSel.addEventListener('change', function(){ setGlobalBinding(); reloadBlocks(); });
+
+            // первый старт
+            try { await loadProjectMeta(); } finally { await reloadBlocks(); }
+          };
+
+          // Гарантированно дергаем инит в трёх местах:
+          document.addEventListener('DOMContentLoaded', function(){
+            if (document.getElementById('dbg-blocks-pane')) window.__initDebuggerPanel();
+          });
+          document.addEventListener('htmx:afterSwap', function(e){
+            var t = e.target;
+            if (t && (t.id === 'debugger-pane' || (t.closest && t.closest('#debugger-pane')))){
+              window.__initDebuggerPanel();
+            }
+          });
+          // Страховочный таймер: если вкладка активна и карточек нет — пробуем ещё раз
+          setInterval(function(){
+            var host = document.getElementById('debugger-pane');
+            var pane = document.getElementById('dbg-blocks-pane');
+            if (!host || !pane) return;
+            // вкладка видима?
+            var tabLink = document.querySelector('a[href="#debugger"][data-bs-toggle="tab"]');
+            var tabShown = !tabLink || tabLink.classList.contains('active') || location.hash === '#debugger';
+            if (!tabShown) return;
+            var hasCards = pane.querySelector('.card-block');
+            var loader   = document.getElementById('dbg-blocks-loading');
+            if (!hasCards && loader) window.__initDebuggerPanel();
+          }, 1200);
+        })();
+        </script>
+
+
+        <script>
+        (function(){
+          const PANE_ID = 'dbg-blocks-pane';
+          const HOST_ID = 'blockModalHost';
+
+          // ---- утилиты -------------------------------------------------------------
+          function cleanupBackdrops(){
+            document.querySelectorAll('.modal-backdrop').forEach(b=>b.remove());
+            document.body.classList.remove('modal-open');
+            document.body.style.removeProperty('padding-right');
+          }
+
+          function getPane(){ return document.getElementById(PANE_ID); }
+          function getBinding(){
+            const p = document.getElementById('dbg-project')?.selectedOptions?.[0];
+            return {
+              productId: p?.dataset?.productId || '',
+              productShort: (p?.dataset?.productShort || '').toUpperCase(),
+              sectionId: document.getElementById('dbg-section')?.value || ''
+            };
+          }
+          function extractTemplateHTML(){
+            const src = document.querySelector('#'+PANE_ID+' #blockModal .modal-content');
+            return src ? src.innerHTML : '';
+          }
+          function ensureHost(){
+            let host = document.getElementById(HOST_ID);
+            if (!host){
+              host = document.createElement('div');
+              host.id = HOST_ID;
+              host.className = 'modal fade';
+              host.innerHTML = `
+                <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                  <div class="modal-content"></div>
+                </div>`;
+              document.body.appendChild(host);
+              // страховки
+              host.addEventListener('hidden.bs.modal', cleanupBackdrops);
+            }
+            return host;
+          }
+          function fillHiddenAndQS(form){
+            if (!form) return;
+            const b = getBinding();
+
+            let hidP = form.querySelector('#blockProductId');
+            if (!hidP){ hidP = document.createElement('input'); hidP.type='hidden'; hidP.id='blockProductId'; hidP.name='product_id'; form.appendChild(hidP); }
+            hidP.value = b.productId || '';
+
+            let hidS = form.querySelector('#blockSectionId');
+            if (!hidS){ hidS = document.createElement('input'); hidS.type='hidden'; hidS.id='blockSectionId'; hidS.name='section_id'; form.appendChild(hidS); }
+            hidS.value = b.sectionId || '';
+
+            const qs = new URLSearchParams({ product:b.productShort||'', section:b.sectionId||'', tab:'debugger' }).toString();
+            const save = form.querySelector('#saveBtn');
+            if (save){
+              const base = (save.getAttribute('formaction') || save.formAction || '').split('?')[0];
+              if (base) save.formAction = base + '?' + qs;
+            }
+            const upd = form.querySelector('#updateBtn');
+            if (upd){
+              const raw  = (upd.getAttribute('formaction') || upd.formAction || '');
+              const base = raw && raw !== '#' ? raw.split('?')[0] : '';
+              if (base) upd.formAction = base + '?' + qs;
+            }
+            // возвращаемся всегда на Отладку
+            form.querySelector('input[name="next"]')?.setAttribute('value', window.location.pathname + '#debugger');
+          }
+          function armFormGuards(form){
+            if (!form || form.dataset.bound) return;
+            form.dataset.bound = '1';
+            const ensure = () => fillHiddenAndQS(form);
+            form.addEventListener('submit', ensure, { capture:true });
+            form.querySelectorAll('button[type="submit"]').forEach(b => b.addEventListener('click', ensure, { capture:true }));
+          }
+
+          // ---- показ модалки -------------------------------------------------------
+          function openCreate(){
+            const host = ensureHost();
+            const mc = host.querySelector('.modal-content');
+            mc.innerHTML = extractTemplateHTML() || '<div class="p-4 text-muted">no template</div>';
+
+            const form = mc.querySelector('#blockForm');
+            // очистка как для "Добавить"
+            form?.querySelector('input[name="code"]')?.setAttribute('value','');
+            form?.querySelector('input[name="name"]')?.setAttribute('value','');
+            const pr = form?.querySelector('textarea[name="prompt"]'); if (pr) pr.value = '';
+            const md = form?.querySelector('select[name="model"]');   if (md) md.value = '';
+            const tp = form?.querySelector('input[name="temperature"]'); if (tp) tp.value = '';
+            const ctx= form?.querySelector('select[name="context"]'); if (ctx) [...ctx.options].forEach(o=>o.selected=false);
+            const save = form?.querySelector('#saveBtn'); const upd = form?.querySelector('#updateBtn');
+            if (save) save.style.display = '';
+            if (upd)  { upd.style.display = 'none'; upd.formAction = '#'; }
+            mc.querySelector('#blockModalLabel')?.replaceChildren(document.createTextNode('Добавить блок'));
+
+            fillHiddenAndQS(form);
+            armFormGuards(form);
+            bootstrap.Modal.getOrCreateInstance(host).show();
+          }
+
+          function openEdit(btn){
+            const host = ensureHost();
+            const mc = host.querySelector('.modal-content');
+            mc.innerHTML = extractTemplateHTML() || '<div class="p-4 text-muted">no template</div>';
+
+            const form = mc.querySelector('#blockForm');
+            const code   = form?.querySelector('input[name="code"]');
+            const name   = form?.querySelector('input[name="name"]');
+            const prompt = form?.querySelector('textarea[name="prompt"]');
+            const model  = form?.querySelector('select[name="model"]');
+            const temp   = form?.querySelector('input[name="temperature"]');
+            const ctxSel = form?.querySelector('select[name="context"]');
+
+            if (code)   code.value   = btn.dataset.code   || '';
+            if (name)   name.value   = btn.dataset.name   || '';
+            if (prompt) prompt.value = btn.dataset.prompt || '';
+            if (model)  model.value  = btn.dataset.model  || '';
+            if (temp)   temp.value   = btn.dataset.temperature || '';
+
+            if (ctxSel){
+              const ids = (btn.dataset.contextIds || '').split(',').map(s=>s.trim()).filter(Boolean);
+              const set = new Set(ids);
+              [...ctxSel.options].forEach(o => o.selected = set.has(o.value));
+            }
+
+            const save = form?.querySelector('#saveBtn'); const upd = form?.querySelector('#updateBtn');
+            if (save) save.style.display = 'none';
+            if (upd)  {
+              upd.style.display = '';
+              const base = (btn.getAttribute('data-edit-url') || '').split('?')[0];
+              if (base) upd.formAction = base;
+            }
+            mc.querySelector('#blockModalLabel')?.replaceChildren(document.createTextNode('Изменить блок'));
+
+            fillHiddenAndQS(form);
+            armFormGuards(form);
+            bootstrap.Modal.getOrCreateInstance(host).show();
+          }
+
+          function forceClose(){
+            const host = document.getElementById(HOST_ID);
+            try { if (host) bootstrap.Modal.getOrCreateInstance(host).hide(); } catch {}
+            cleanupBackdrops();
+          }
+
+          // ---- мост кликов + авто-восстановление ----------------------------------
+          function attachBridge(){
+            const pane = getPane();
+            if (!pane) return;
+            // убрать остаточные data-bs-атрибуты
+            pane.querySelectorAll('[data-bs-toggle="modal"]').forEach(el=>{
+              el.removeAttribute('data-bs-toggle');
+              el.removeAttribute('data-bs-target');
+            });
+            if (pane.__bridgeBound) return;
+            pane.__bridgeBound = true;
+
+            pane.addEventListener('click', (e)=>{
+              const createBtn = e.target.closest?.('#openCreateModal');
+              if (createBtn){
+                e.preventDefault(); e.stopPropagation();
+                forceClose();            // на всякий — гасим хвосты
+                openCreate();            // и показываем из свежего шаблона
+                return;
+              }
+              const editBtn = e.target.closest?.('button[data-edit-url]');
+              if (editBtn){
+                e.preventDefault(); e.stopPropagation();
+                forceClose();
+                openEdit(editBtn);
+              }
+            }, { capture:true });
+
+            // если содержимое панели перерисовано — обновлять мост не нужно (висит на самом #dbg-blocks-pane),
+            // но при изменениях гасим возможные хвосты/перехватываем шаблон свежим.
+            const mo = new MutationObserver(() => { /* просто страховка: если модалка открыта — закрыть */ forceClose(); });
+            mo.observe(pane, { childList:true, subtree:true });
+
+            // watchdog: если остался бэкдроп без модалки > 400ms
+            let watchdog;
+            document.addEventListener('click', () => {
+              clearTimeout(watchdog);
+              watchdog = setTimeout(() => {
+                const hasBackdrop = !!document.querySelector('.modal-backdrop.show');
+                const anyShown = !!document.querySelector('.modal.show');
+                if (hasBackdrop && !anyShown) cleanupBackdrops();
+              }, 400);
+            });
+          }
+
+          // ---- инициализация -------------------------------------------------------
+          function init(){
+            attachBridge();
+          }
+
+          // первый запуск
+          document.addEventListener('DOMContentLoaded', init);
+          // инициализация после HTMX-подмен (если панель приходит HTMX’ом)
+          document.addEventListener('htmx:afterSwap', (e)=>{
+            const t = e.target;
+            if (t && (t.id === 'debugger-pane' || t.closest?.('#debugger-pane'))) init();
+          });
+
+          // экспорт принудительного закрытия (если захочешь дергать при смене фильтра)
+          window.__DbgBlocksModal = { forceClose, init };
+        })();
+        </script>
+
+
+
     </div>
   </main>
 </div>

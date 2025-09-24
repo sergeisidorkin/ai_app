@@ -7,8 +7,6 @@ env = environ.Env(
     READ_DOTENV=(bool, False),
 )
 
-LOGIN_URL = "/admin/login/"
-
 # В dev удобно читать .env
 if env.bool("READ_DOTENV", False) or (
     os.environ.get("DJANGO_ENV", "local") == "local" and (BASE_DIR / ".env").exists()
@@ -21,9 +19,10 @@ DEBUG = env.bool("DEBUG", False)
 ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["127.0.0.1","localhost"])
 
 INSTALLED_APPS = [
-    "django.contrib.admin","django.contrib.auth","django.contrib.contenttypes",
+    "core","django.contrib.admin","django.contrib.auth","django.contrib.contenttypes",
     "django.contrib.sessions","django.contrib.messages","django.contrib.staticfiles",
-    "onedrive_app","blocks_app","openai_app",
+    "policy_app","onedrive_app","blocks_app","openai_app","googledrive_app","projects_app",
+    'requests_app','debugger_app',
 ]
 
 MIDDLEWARE = [
@@ -32,8 +31,48 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "core.middleware.EnforceLoginMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+]
+
+# Включаем пробник только в debug или по флагу окружения
+if DEBUG or os.environ.get("RUN_PROBE") == "1":
+    MIDDLEWARE.insert(0, "core.runprobe.RunProbeMiddleware")
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "loggers": {
+        "runprobe":   {"handlers": ["console"], "level": "WARNING"},
+        "blocks_app": {"handlers": ["console"], "level": "WARNING"},
+    },
+}
+
+
+# Аутентификация: куда редиректить после логина/логаута
+LOGIN_URL = "login"
+LOGIN_REDIRECT_URL = "/#policy"   # после входа — сразу на вкладку «Продукты»
+LOGOUT_REDIRECT_URL = "login"
+
+
+
+
+
+# Дополнительные разрешённые пути (префиксы), доступные без авторизации
+ENFORCE_LOGIN_EXEMPT = (
+    "/health/",
+    "/gdrive/",
+    "/onedrive/",
+    "/onedrive/callback", # ← коллбэк OAuth не должен требовать авторизации
+    "/accounts/",  # ← сама страница логина тоже в белом списке
+    "/static/",
+)
+
+CSRF_TRUSTED_ORIGINS = [
+    "https://imcmontanai.ru",
+    "http://localhost:8000",
 ]
 
 ROOT_URLCONF = "urls"
@@ -50,6 +89,9 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                "core.context_processors.nav_items",
+                "core.context_processors.templates_products",
+                "core.context_processors.templates_sections_map",
             ],
         },
     },

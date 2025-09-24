@@ -1,0 +1,255 @@
+<div id="projects-pane">
+  <!-- Индикатор, чтобы наследование hx-indicator не ругалось -->
+  <div id="projects-loading" class="text-muted htmx-indicator d-none">Загрузка…</div>
+  <!-- Регистрация проекта -->
+  <div class="d-flex justify-content-between align-items-center mb-3 table-section-header">
+    <h5 class="table-section-title">
+      <i class="bi bi-table me-2"></i> Регистрация проекта
+    </h5>
+  </div>
+
+  <div class="table-responsive">
+
+    <table class="table table-sm align-middle reg-table">
+        <colgroup>
+          <col class="checkbox">     <!-- 1: чекбокс -->
+          <col class="group">        <!-- 2: Номер -->
+          <col class="group">        <!-- 3: Группа -->
+          <col class="group">        <!-- 4: Тип -->
+          <col>                      <!-- 5: Название -->
+          <col class="status">       <!-- 6: Статус -->
+          <col class="narrow">       <!-- 7: Начало контракта -->
+          <col class="narrow">       <!-- 8: Оконч. контракта -->
+          <col class="narrow">       <!-- 9: Оконч., расчет -->
+          <col class="narrow">       <!-- 10: Исх. данные -->
+          <col class="narrow">       <!-- 11: Этап 1, недель -->
+          <col class="narrow">       <!-- 12: Этап 1, оконч. -->
+          <col class="narrow">       <!-- 13: Этап 2, недель -->
+          <col class="narrow">       <!-- 14: Этап 2, оконч. -->
+          <col class="narrow">       <!-- 15: Этап 3, недель -->
+          <col class="narrow">       <!-- 16: Срок, недель -->
+          <col class="narrow">       <!-- 17: Дедлайн -->
+          <col class="narrow">       <!-- 18: Год -->
+          <col>                      <!-- 19: Заказчик -->
+          <col>                      <!-- 20: Регистр. номер -->
+          <col>                      <!-- 21: Руководитель проекта -->
+          <col>                      <!-- 22: Предмет договора -->
+        </colgroup>
+      <thead>
+      <tr>
+        <th style="width:1%">
+          {% if request.user.is_authenticated and request.user.is_staff %}
+            <div class="form-check m-0">
+                <input class="form-check-input"
+                       type="checkbox"
+                       id="registrations-master"
+                       data-target-name="registration-select"
+                       data-actions-id="registrations-actions"
+                       aria-label="Выделить все строки регистрации">
+            </div>
+          {% endif %}
+        </th>
+        <th>Номер</th>
+        <th>Группа</th>
+        <th>Тип</th>
+        <th>Название</th>
+        <th>Статус</th>
+        <th class="wrap">Начало контр.</th>
+        <th>Оконч. контр.</th>
+        <th>Оконч., расчет</th>
+        <th>Исх. данные</th>
+        <th>Этап 1, недель</th>
+        <th>Этап 1, оконч.</th>
+        <th>Этап 2, недель</th>
+        <th>Этап 2, оконч.</th>
+        <th>Этап 3, недель</th>
+        <th>Срок, недель</th>
+        <th>Дедлайн</th>
+        <th>Год</th>
+        <th>Заказчик</th>
+        <th>Регистр. номер</th>
+        <th>Руководитель проекта</th>
+        <th>Предмет договора</th>
+      </tr>
+      </thead>
+      <tbody>
+      {% for r in registrations %}
+        <tr
+          data-edit-url="{% url 'registration_form_edit' r.pk %}"
+          data-delete-url="{% url 'registration_delete' r.pk %}"
+          data-move-up-url="{% url 'registration_move_up' r.pk %}"
+          data-move-down-url="{% url 'registration_move_down' r.pk %}">
+          <td class="text-nowrap">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+              <div class="form-check">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           id="reg-sel-{{ r.id }}"
+                           name="registration-select"
+                           value="{{ r.id }}"
+                           aria-label="Выделить строку регистрации">
+              </div>
+            {% endif %}
+          </td>
+          <td>{{ r.number }}</td>
+          <td>{{ r.group }}</td>
+          <td>{{ r.type }}</td>
+          <td>{{ r.name }}</td>
+          <td>{{ r.status }}</td>
+          <td>{{ r.contract_start|date:"d.m.y" }}</td>
+          <td>{{ r.contract_end|date:"d.m.y" }}</td>
+          <td>{{ r.completion_calc|date:"d.m.y" }}</td>
+          <td>{{ r.input_data }}</td>
+          <td>{{ r.stage1_weeks }}</td>
+          <td>{{ r.stage1_end|date:"d.m.y" }}</td>
+          <td>{{ r.stage2_weeks }}</td>
+          <td>{{ r.stage2_end|date:"d.m.y" }}</td>
+          <td>{{ r.stage3_weeks }}</td>
+          <td>{{ r.term_weeks }}</td>
+          <td>{{ r.deadline|date:"d.m.y" }}</td>
+          <td>{{ r.year }}</td>
+          <td>{{ r.customer }}</td>
+          <td>{{ r.registration_number }}</td>
+          <td>{{ r.project_manager }}</td>
+          <td>{{ r.contract_subject|truncatechars:60 }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="22" class="text-muted">Пока нет данных.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+
+    {% if request.user.is_authenticated and request.user.is_staff %}
+      <div class="d-flex align-items-stretch gap-2 products-actions-row">
+        <button
+          class="btn btn-primary btn-sm d-flex align-items-center"
+          hx-get="{% url 'registration_form_create' %}"
+          hx-target="#projects-modal .modal-content"
+          hx-swap="innerHTML"
+          data-bs-toggle="modal"
+          data-bs-target="#projects-modal">
+          <i class="bi bi-plus-circle me-2"></i>Добавить строку
+        </button>
+        <div id="registrations-actions" class="d-none d-flex">
+          <div class="btn-group">
+            <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+              <i class="bi bi-arrow-up-square"></i>
+            </button>
+            <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+              <i class="bi bi-arrow-down-square"></i>
+            </button>
+            <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+              <i class="bi bi-pencil-square"></i>
+            </button>
+            <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+              <i class="bi bi-x-square"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+
+  <!-- Объем работ -->
+  <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 50px;">
+    <h5 class="table-section-title">
+      <i class="bi bi-table me-2"></i> Объем работ
+    </h5>
+  </div>
+
+  <div class="table-responsive">
+    <table class="table table-sm align-middle work-table">
+      <colgroup>
+          <col class="col-checkbox">    <!-- чекбокс -->
+          <col class="col-project">     <!-- Номер проекта -->
+          <col class="col-type">        <!-- Тип -->
+          <col class="col-name">        <!-- Название -->
+          <col>                         <!-- Наименование актива -->
+          <col>                         <!-- Регистрационный номер -->
+          <col>                         <!-- Менеджер -->
+      </colgroup>
+      <thead>
+      <tr>
+        <th style="width:1%">
+          {% if request.user.is_authenticated and request.user.is_staff %}
+            <div class="form-check m-0">
+              <input class="form-check-input"
+                     type="checkbox"
+                     id="work-master"
+                     data-target-name="work-select"
+                     data-actions-id="work-actions"
+                     aria-label="Выделить все строки объема работ">
+            </div>
+          {% endif %}
+        </th>
+        <th>Проект</th>
+        <th>Тип</th>
+        <th>Название</th>
+        <th>Наименование актива</th>
+        <th>Регистрационный номер</th>
+        <th>Менеджер</th>
+      </tr>
+      </thead>
+      <tbody>
+      {% for w in work_items %}
+        <tr
+          data-edit-url="{% url 'work_form_edit' w.pk %}"
+          data-delete-url="{% url 'work_delete' w.pk %}"
+          data-move-up-url="{% url 'work_move_up' w.pk %}"
+          data-move-down-url="{% url 'work_move_down' w.pk %}">
+          <td class="text-nowrap">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+              <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       id="work-sel-{{ w.id }}"
+                       name="work-select"
+                       value="{{ w.id }}"
+                       aria-label="Выделить строку объема работ">
+              </div>
+            {% endif %}
+          </td>
+          <td class="text-nowrap">{{ w.project.number }}{{ w.project.group }}</td>
+          <td class="text-nowrap">{{ w.type }}</td>
+          <td>{{ w.name }}</td>
+          <td class="text-nowrap">{{ w.asset_name }}</td>
+          <td class="text-nowrap">{{ w.registration_number }}</td>
+          <td class="text-nowrap">{{ w.manager }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="7" class="text-muted">Пока нет данных.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+
+    {% if request.user.is_authenticated and request.user.is_staff %}
+      <div class="d-flex align-items-stretch gap-2 products-actions-row">
+        <button
+          class="btn btn-primary btn-sm d-flex align-items-center"
+          hx-get="{% url 'work_form_create' %}"
+          hx-target="#projects-modal .modal-content"
+          hx-swap="innerHTML"
+          data-bs-toggle="modal"
+          data-bs-target="#projects-modal">
+          <i class="bi bi-plus-circle me-2"></i>Добавить строку
+        </button>
+        <div id="work-actions" class="d-none d-flex">
+          <div class="btn-group">
+            <button type="button" id="work-actions-up"   data-panel-action="up"   class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+              <i class="bi bi-arrow-up-square"></i>
+            </button>
+            <button type="button" id="work-actions-down" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+              <i class="bi bi-arrow-down-square"></i>
+            </button>
+            <button type="button" id="work-actions-edit" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+              <i class="bi bi-pencil-square"></i>
+            </button>
+            <button type="button" id="work-actions-delete" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+              <i class="bi bi-x-square"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+</div>

@@ -1,10 +1,8 @@
-{# заголовок «Подключения» #}
-<div class="d-flex align-items-center justify-content-between mb-3">
-  <h1 class="h4 mb-0">Подключения</h1>
-</div>
-
 {# Панель OneDrive — ровно один include #}
 {% include "onedrive_app/panel.html" with selection=selection onedrive_connected=onedrive_connected %}
 
 {# Панель OpenAI — всегда подключаем, внутри покажется “не подключено” #}
 {% include "openai_app/panel.html" with openai=openai %}
+
+{# Панель Google Drive — добавляем панель интеграции #}
+{% include "googledrive_app/connections_partial.html" with selection=gdrive_selection gdrive_connected=gdrive_connected %}

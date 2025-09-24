@@ -1,0 +1,33 @@
+{% load static %}
+<div class="card shadow-sm">
+  <div class="card-body">
+
+    <div id="policy-pane"
+         hx-get="{% url 'policy_partial' %}"
+         hx-trigger="load"
+         hx-target="#policy-pane"
+         hx-swap="innerHTML"
+         hx-indicator="#policy-loading">
+      <div id="policy-loading" class="text-muted htmx-indicator">Загрузка политики…</div>
+    </div>
+
+    <!-- Постоянная модалка (вынесена за пределы policy-pane) -->
+    <div class="modal fade" id="policy-modal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-scrollable">
+        <div class="modal-content">
+          <!-- сюда HTMX подгрузит форму -->
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Закрываем модалку при успешном обновлении (событие от сервера через HX-Trigger)
+      document.body.addEventListener('policy-updated', function () {
+        const el = document.getElementById('policy-modal');
+        if (!el) return;
+        const modal = bootstrap.Modal.getInstance(el) || bootstrap.Modal.getOrCreateInstance(el);
+        modal.hide();
+      });
+    </script>
+  </div>
+</div>

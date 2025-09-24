@@ -1,0 +1,116 @@
+{% load static %}
+<!doctype html>
+<html lang="ru" data-bs-theme="light">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Вход | IMC Montan AI</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{% static 'core/css/site.css' %}">
+    <style>
+      /* Подключаем фирменную гарнитуру, если файлы размещены в static */
+      @font-face {
+        font-family: 'Garamond Premr Pro Smbd';
+        src:
+          url("{% static 'core/fonts/GaramondPremrProSmbd.woff2' %}") format('woff2'),
+          url("{% static 'core/fonts/GaramondPremrProSmbd.woff' %}") format('woff');
+        font-weight: 600;
+        font-style: normal;
+        font-display: swap;
+      }
+
+      html, body { height: 100%; }
+      .form-signin {
+        max-width: 360px;
+        padding: 1.5rem;
+        border-radius: 1rem !important;   /* более сильное скругление углов */
+        overflow: hidden;                  /* чтобы внутренние элементы не выходили за радиус */
+      }
+
+      /* Шапка: логотип + текст */
+      .brand-line {
+        display: flex;
+        align-items: center; /* по вертикали — по центру */
+        gap: .5rem;
+        justify-content: center;
+      }
+      .brand-logo {
+        display: inline-block;
+        height: auto;        /* сохраняем пропорции */
+        width: auto;
+        max-height: 32px;    /* ограничение по высоте для аккуратности */
+        flex-shrink: 0;      /* не сжимать картинку во флексе */
+      }
+      .brand-title {
+        margin: 0;
+        line-height: 1.1;
+        font-size: 1.9rem; /* немного больше обычного */
+        font-family: "Garamond Premr Pro Smbd", Garamond, "Times New Roman", serif;
+        letter-spacing: .2px;
+        white-space: nowrap;
+        color: var(--bs-primary); /* тот же цвет, что у основного цвета кнопок/бренда */
+        transform: translateY(2px); /* легкий сдвиг вниз относительно логотипа */
+      }
+
+      /* Баннер-изображение бренда на странице входа */
+      .brand-banner {
+        display: block;
+        height: 66px !important;     /* фиксируем высоту 35px */
+        width: auto !important;      /* сохраняем пропорции */
+        max-width: none !important;  /* исключаем сжатие из глобальных правил */
+        margin: 0 auto 0 13px;        /* был 0 auto; добавили отступ слева 5px */
+      }
+
+    </style>
+  </head>
+  <body class="d-flex align-items-center bg-body-tertiary" style="min-height: 100%;">
+    <main class="form-signin w-100 m-auto bg-white border rounded shadow-sm">
+
+
+      <form method="post" action="{% url 'login' %}">
+        {% csrf_token %}
+
+        {% if form.non_field_errors %}
+          <div class="alert alert-danger py-2">
+            {% for err in form.non_field_errors %}{{ err }}<br>{% endfor %}
+          </div>
+        {% endif %}
+
+
+        <div class="text-center mb-3">
+            <img class="brand-banner mb-2" src="{% static 'core/img/imcmontanai.png' %}" alt="IMC Montan AI">
+          <small class="text-muted">Войдите в аккаунт</small>
+        </div>
+
+        <div class="form-floating mb-2">
+          <input type="text" class="form-control" id="floatingUsername" name="username" placeholder="username" required autofocus>
+          <label for="floatingUsername">Имя пользователя</label>
+        </div>
+        <div class="form-floating mb-2">
+          <input type="password" class="form-control" id="floatingPassword" name="password" placeholder="Password" required>
+          <label for="floatingPassword">Пароль</label>
+        </div>
+
+        {% if redirect_field_value %}
+          <input type="hidden" name="{{ redirect_field_name }}" value="{{ redirect_field_value }}">
+        {% endif %}
+
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" value="1" id="rememberMe">
+            <label class="form-check-label" for="rememberMe">
+              Запомнить меня
+            </label>
+          </div>
+          <a class="text-decoration-none" href="#"
+             style="color: var(--bs-primary); margin-right: 14px;"
+             onclick="alert('Регистрация будет добавлена позже.'); return false;">Регистрация</a>
+        </div>
+
+        <button class="btn btn-primary w-100 py-2" type="submit">Войти</button>
+        <p class="text-center text-muted mt-3 mb-0 small">© {{ now|default:2025 }}</p>
+      </form>
+    </main>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  </body>
+</html>
