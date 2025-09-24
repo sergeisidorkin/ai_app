@@ -645,3 +645,248 @@ section#templates .alert.alert-info .text-muted {
 .icon-inline g {
   fill: currentColor;
 }
+
+
+
+
+
+
+/* Фикс-лэйаут, чтобы <colgroup> реально управлял ширинами */
+#projects-pane table.reg-table {
+  table-layout: fixed;
+  width: 100%;
+}
+/* Обрезка содержимого с троеточием в ячейках */
+#projects-pane table.reg-table th,
+#projects-pane table.reg-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Ширины колонок из <colgroup> */
+#projects-pane table.reg-table col.checkbox { width: 2rem; }
+#projects-pane table.reg-table col.narrow   { width: 8ch; }  /* под "25.09.25" */
+#projects-pane table.reg-table col.group    { width: 7ch; }  /* RU/KZ/AM */
+#projects-pane table.reg-table col.status    { width: 12ch; }  /* В работе */
+/* Разрешаем переносы только в заголовках таблицы регистрации */
+#projects-pane table.reg-table thead th {
+  white-space: normal !important;   /* вместо nowrap */
+  overflow: visible !important;      /* убираем обрезку */
+  text-overflow: clip !important;    /* убираем троеточие */
+  word-break: break-word;            /* переносим длинные слова */
+  hyphens: auto;                     /* автоматические переносы (если указан lang="ru") */
+  line-height: 1.2;                  /* чуть плотнее строки, чтобы влезало */
+  vertical-align: top;               /* верхняя выравнивание — удобнее при 2–3 строках */
+}
+
+
+
+
+
+/* СТИЛЬ КНОПОК ПАНЕЛИ РАЗДЕЛА ЗАПРОСЫ */
+
+/* Отступ сверху для кнопки "Добавить запрос" и панели действий */
+.requests-actions-row {
+  margin-top: 15px !important;
+}
+
+/* Всегда синий кант для up/down/edit */
+#requests-actions [data-panel-action="up"].btn,
+#requests-actions [data-panel-action="down"].btn,
+#requests-actions [data-panel-action="edit"].btn {
+  border-color: var(--bs-primary) !important;
+  color: var(--bs-primary);
+  --bs-btn-border-color: var(--bs-primary);
+  --bs-btn-hover-border-color: var(--bs-primary);
+  --bs-btn-active-border-color: var(--bs-primary);
+  --bs-btn-focus-border-color: var(--bs-primary);
+}
+#requests-actions [data-panel-action="up"].btn:hover,
+#requests-actions [data-panel-action="down"].btn:hover,
+#requests-actions [data-panel-action="edit"].btn:hover,
+#requests-actions [data-panel-action="up"].btn:focus,
+#requests-actions [data-panel-action="down"].btn:focus,
+#requests-actions [data-panel-action="edit"].btn:focus,
+#requests-actions [data-panel-action="up"].btn:active,
+#requests-actions [data-panel-action="down"].btn:active,
+#requests-actions [data-panel-action="edit"].btn:active {
+  background-color: var(--bs-primary);
+  color: #fff;
+}
+
+/* Всегда красный кант для Delete */
+#requests-actions #requests-actions-delete.btn {
+  border-color: var(--bs-danger) !important;
+  color: var(--bs-danger);
+  --bs-btn-border-color: var(--bs-danger);
+  --bs-btn-hover-border-color: var(--bs-danger);
+  --bs-btn-active-border-color: var(--bs-danger);
+  --bs-btn-focus-border-color: var(--bs-danger);
+}
+#requests-actions #requests-actions-delete.btn:hover,
+#requests-actions #requests-actions-delete.btn:focus,
+#requests-actions #requests-actions-delete.btn:active {
+  background-color: var(--bs-danger);
+  color: #fff;
+}
+
+/* Светло-красный фон у "Удалить", когда она не активна и не в ховере */
+#requests-pane #requests-actions #requests-actions-delete:not(:hover):not(:focus):not(.active):not(:disabled) {
+  background-color: rgba(var(--bs-danger-rgb, 220, 53, 69), 0.08);
+  color: var(--bs-danger);
+  border-color: var(--bs-danger);
+}
+/* Для disabled — ещё мягче */
+#requests-pane #requests-actions #requests-actions-delete:disabled {
+  background-color: rgba(var(--bs-danger-rgb, 220, 53, 69), 0.06);
+  color: var(--bs-danger);
+  border-color: var(--bs-danger);
+}
+
+/* Слойность: "Изменить" над "Удалить" */
+#requests-pane #requests-actions .btn-group { isolation: isolate; }
+#requests-pane #requests-actions .btn { position: relative; z-index: 1; }
+#requests-pane #requests-actions #requests-actions-edit { z-index: 2; }
+
+/* Мягче активные строки в таблице «Запросы» */
+#requests-pane tr.table-active > th,
+#requests-pane tr.table-active > td {
+  background-color: rgba(0, 0, 0, 0.03) !important;
+}
+#requests-pane .table {
+  --bs-table-active-bg: rgba(0, 0, 0, 0.03);
+  --bs-table-active-color: inherit;
+}
+
+/* Чекбоксы в шапке и строках — одинаковый отступ слева */
+#requests-pane .table thead .form-check,
+#requests-pane .table tbody .form-check {
+  margin-left: 5px !important;
+}
+
+/* Фикс-ширина колонок "Код" и "№" */
+#requests-pane .table th.col-code,
+#requests-pane .table td.col-code {
+  width: 40px; max-width: 40px; white-space: nowrap;
+}
+#requests-pane .table th.col-num,
+#requests-pane .table td.col-num {
+  width: 30px; max-width: 30px; white-space: nowrap;
+}
+
+#requests-pane .table td:nth-child(4) { /* 4-й столбец – "Краткое наименование" */
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+/* В модалке все поля — со светло-серыми бордерами Bootstrap */
+#requests-modal .form-control {
+  border-color: var(--bs-border-color, #ced4da) !important;
+}
+/* На всякий случай — отдельно тип number */
+#requests-modal input[type="number"] {
+  border-color: var(--bs-border-color, #ced4da) !important;
+}
+
+/* Бóльший отступ слева у подсказки «Пока здесь пусто.» в разделе Запросы */
+#requests-pane .requests-empty-hint {
+  padding-left: 41px !important;
+}
+
+/* Лоадер поверх #requests-pane */
+#requests-pane-wrap { min-height: 140px; } /* чтобы лоадер не схлопывался */
+.loading-overlay{
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255,255,255,.6);
+  z-index: 10;
+}
+
+/* Лоадер поверх #templates-pane */
+#templates-pane-wrap { min-height: 140px; }
+/* .loading-overlay уже есть — переиспользуем */
+
+
+
+/* Выравниваем размеры кнопок действий под таблицами */
+.products-actions-row .btn.btn-sm {
+    font-size: .875rem;      /* как у .btn-sm */
+    padding: .25rem .5rem;   /* как у .btn-sm */
+    line-height: 1.5;
+}
+
+
+/* ==== Work Volume table (Объем работ) ==== */
+.work-table { table-layout: fixed; } /* точно соблюдает ширины колонок */
+.work-table col.col-checkbox { width: 30px !important; }
+.work-table col.col-project  { width: 80px !important; } /* Номер проекта, 4444RU */
+.work-table col.col-type     { width: 50px !important; } /* Тип (short_name) */
+.work-table col.col-name     { width: 220px !important; } /* Название */
+
+/* Fallback на случай, если colgroup переопределяется */
+.work-table th:nth-child(2),
+.work-table td:nth-child(2) { width: 110px !important; }
+.work-table th:nth-child(3),
+.work-table td:nth-child(3) { width: 120px !important; }
+.work-table th:nth-child(4),
+.work-table td:nth-child(4) { width: 280px !important; }
+
+/* Чтобы текст не рвал ширину, аккуратно подрезаем */
+.work-table td:nth-child(2),
+.work-table td:nth-child(3),
+.work-table td:nth-child(4) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 992px) {
+  .work-table col.col-name { width: 220px !important; }
+  .work-table th:nth-child(4),
+  .work-table td:nth-child(4) { width: 220px !important; }
+}
+
+
+
+/* ==== Performers table ==== */
+.performers-table { table-layout: fixed; }
+
+.performers-table col.col-checkbox { width: 30px !important; }
+.performers-table col.col-number   { width: 80px !important; } /* 4444RU */
+.performers-table col.col-type     { width: 50px !important; } /* Тип */
+.performers-table col.col-name     { width: 220px !important; } /* Название */
+.performers-table col.col-active   { width: 350px !important; } /* Актив */
+
+
+.performers-table th:nth-child(2),
+.performers-table td:nth-child(2) { width: 110px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.performers-table th:nth-child(3),
+.performers-table td:nth-child(3) { width: 120px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.performers-table th:nth-child(4),
+.performers-table td:nth-child(4) { width: 280px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+@media (max-width: 992px) {
+  .performers-table col.col-name { width: 220px !important; }
+  .performers-table th:nth-child(4),
+  .performers-table td:nth-child(4) { width: 220px !important; }
+}
+
+/* +0px слева у колонки с чекбоксами во всех 3 таблицах раздела "Проекты" */
+#projects-pane table.table > thead tr > :first-child,
+#projects-pane table.table > tbody tr > :first-child,
+#performers-pane table.table > thead tr > :first-child,
+#performers-pane table.table > tbody tr > :first-child {
+  padding-left: calc(var(--bs-table-cell-padding-x, .4rem) + 0px);
+}
+
+/* На всякий случай убираем внешние отступы у .form-check внутри первой колонки */
+#projects-pane table.table > thead tr > :first-child .form-check,
+#projects-pane table.table > tbody tr > :first-child .form-check,
+#performers-pane table.table > thead tr > :first-child .form-check,
+#performers-pane table.table > tbody tr > :first-child .form-check {
+  margin-left: 0;
+}

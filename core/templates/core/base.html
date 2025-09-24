@@ -75,6 +75,64 @@
         {% load static %}
         <script defer src="{% static 'core/js/selectable-tables.js' %}"></script>
         <script defer src="{% static 'core/js/policy-panels.js' %}"></script>
+        <script defer src="{% static 'core/js/projects-panels.js' %}"></script>
+        <script defer src="{% static 'core/js/selectable-tables-projects.js' %}"></script>
+        <script src="{% static 'core/js/datepickers.js' %}"></script>
+        <script src="{% static 'core/js/requests-panels.js' %}"></script>
+        <!-- Глобальный контейнер для тостов (если уже есть — можно не добавлять) -->
+        <div id="toast-root" class="toast-container position-fixed top-0 end-0 p-3" style="z-index: 1080;"></div>
 
+        <script>
+        (function () {
+          // Настройка автозакрытия: в "Отладка" = без автозакрытия; в остальных = 12 сек
+          function inDebuggerTab() {
+            // либо хэш #debugger активен, либо вкладка реально показана
+            return location.hash === '#debugger' ||
+                   !!document.querySelector('#debugger.tab-pane.show');
+          }
+
+          function initToastsAndAlerts() {
+            const inDbg = inDebuggerTab();
+
+            // -------- Bootstrap Toasts --------
+            // переносим тосты в общий контейнер (если они не там), чтобы не прятались под overlay
+            const root = document.getElementById('toast-root');
+            document.querySelectorAll('.toast').forEach(el => {
+              try { bootstrap.Toast.getInstance(el)?.dispose?.(); } catch {}
+              if (root && el.parentElement !== root) root.appendChild(el);
+
+              const opts = inDbg ? { autohide: false } : { autohide: true, delay: 12000 };
+              const t = bootstrap.Toast.getOrCreateInstance(el, opts);
+              t.show();
+            });
+
+            // -------- Alerts (если используете messages как .alert-*) --------
+            // Правило: автозакрываем ТОЛЬКО вне «Отладки», и то не сразу (10 сек).
+            // Хотите управлять индивидуально — навешивайте data-autoclose="15" на alert.
+            document.querySelectorAll('.alert').forEach(el => {
+              // уже закрывается? оставим в покое
+              if (el.__autoCloseBound) return;
+              el.__autoCloseBound = true;
+
+              // если в Отладке — НЕ трогаем (пусть будет только вручную по кресту)
+              if (inDbg) return;
+
+              const delaySec = parseInt(el.getAttribute('data-autoclose') || '10', 10);
+              const close = () => { try { bootstrap.Alert.getOrCreateInstance(el).close(); } catch {} };
+              setTimeout(close, Math.max(1, delaySec) * 1000);
+            });
+          }
+
+          // Инициируем:
+          document.addEventListener('DOMContentLoaded', initToastsAndAlerts);
+          window.addEventListener('hashchange', initToastsAndAlerts);
+
+          // После любых HTMX-подмен (сообщения могли приехать заново)
+          document.body.addEventListener('htmx:afterSwap', initToastsAndAlerts);
+
+          // Иногда тосты рендерятся сразу после редиректа — уменьшим шанс «мерцания»
+          setTimeout(initToastsAndAlerts, 250);
+        })();
+        </script>
   </body>
 </html>

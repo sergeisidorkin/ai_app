@@ -1,0 +1,122 @@
+<div class="table-responsive">
+  <table class="table table-sm align-middle performers-table">
+    <colgroup>
+      <col class="col-checkbox">  <!-- чекбокс -->
+      <col class="col-number">    <!-- Номер (4444RU) -->
+      <col class="col-type">      <!-- Тип -->
+      <col class="col-name">      <!-- Название -->
+      <col class="col-active">    <!-- Актив -->
+      <col>                       <!-- Исполнитель -->
+      <col>                       <!-- Грейд -->
+      <col>                       <!-- Типовой раздел -->
+      <col>                       <!-- Факт. затраты -->
+      <col>                       <!-- Расч. затраты -->
+      <col>                       <!-- Согласованная -->
+      <col>                       <!-- Аванс -->
+      <col>                       <!-- Окон. платёж -->
+      <col>                       <!-- № договора -->
+    </colgroup>
+    <thead>
+    <tr>
+      <th class="col-checkbox">
+        {% if request.user.is_authenticated and request.user.is_staff %}
+          <div class="form-check m-0">
+            <input class="form-check-input"
+                   type="checkbox"
+                   id="performers-master"
+                   data-target-name="performer-select"
+                   data-actions-id="performers-actions"
+                   aria-label="Выделить все строки исполнителей">
+          </div>
+        {% endif %}
+      </th>
+      <th class="text-nowrap">Проект</th>
+      <th class="text-nowrap">Тип</th>
+      <th class="text-nowrap">Название</th>
+      <th>Наименование актива</th>
+      <th>Исполнитель</th>
+      <th>Грейд</th>
+      <th>Типовой раздел</th>
+      <th>Факт. затраты</th>
+      <th>Расч. затраты</th>
+      <th>Согласовано</th>
+      <th>Аванс</th>
+      <th>Окон. платёж</th>
+      <th>№ договора</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for p in performers %}
+      <tr
+        data-edit-url="{% url 'performer_form_edit' p.pk %}"
+        data-delete-url="{% url 'performer_delete' p.pk %}"
+        data-move-up-url="{% url 'performer_move_up' p.pk %}"
+        data-move-down-url="{% url 'performer_move_down' p.pk %}">
+        <td class="text-nowrap">
+          {% if request.user.is_authenticated and request.user.is_staff %}
+            <div class="form-check m-0">
+              <input class="form-check-input"
+                     type="checkbox"
+                     id="perf-sel-{{ p.id }}"
+                     name="performer-select"
+                     value="{{ p.id }}"
+                     aria-label="Выделить строку исполнителя">
+            </div>
+          {% endif %}
+        </td>
+        <td class="text-nowrap">
+          {% if p.registration %}{{ p.registration.number }}{{ p.registration.group }}{% endif %}
+        </td>
+        <td class="text-nowrap">
+          {% if p.registration.type %}{{ p.registration.type.short_name|default:p.registration.type }}{% endif %}
+        </td>
+        <td class="text-truncate">{{ p.registration.name }}</td>
+        <td class="text-nowrap">{{ p.asset_name }}</td>
+        <td class="text-nowrap">{{ p.executor }}</td>
+        <td class="text-nowrap">{{ p.grade }}</td>
+        <td class="text-nowrap">
+          {% if p.typical_section %}{{ p.typical_section.code }}{% else %}&mdash;{% endif %}
+        </td>
+        <td class="text-nowrap">{{ p.actual_costs }}</td>
+        <td class="text-nowrap">{{ p.estimated_costs }}</td>
+        <td class="text-nowrap">{{ p.agreed_amount }}</td>
+        <td class="text-nowrap">{{ p.prepayment }}</td>
+        <td class="text-nowrap">{{ p.final_payment }}</td>
+        <td class="text-nowrap">{{ p.contract_number }}</td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="14" class="text-muted">Пока нет данных.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  {% if request.user.is_authenticated and request.user.is_staff %}
+    <div class="d-flex align-items-stretch gap-2 products-actions-row">
+      <button
+        class="btn btn-primary btn-sm d-flex align-items-center"
+        hx-get="{% url 'performer_form_create' %}"
+        hx-target="#performers-modal .modal-content"
+        hx-swap="innerHTML"
+        data-bs-toggle="modal"
+        data-bs-target="#performers-modal">
+        <i class="bi bi-plus-circle me-2"></i>Добавить строку
+      </button>
+      <div id="performers-actions" class="d-none d-flex">
+        <div class="btn-group">
+          <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх">
+            <i class="bi bi-arrow-up-square"></i>
+          </button>
+          <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз">
+            <i class="bi bi-arrow-down-square"></i>
+          </button>
+          <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить">
+            <i class="bi bi-pencil-square"></i>
+          </button>
+          <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить">
+            <i class="bi bi-x-square"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+  {% endif %}
+</div>

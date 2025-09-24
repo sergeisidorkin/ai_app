@@ -1,10 +1,198 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>$Title$</title>
-</head>
-<body>
-$END$
-</body>
-</html>
+{% load static %}
+<div class="card shadow-sm">
+  <div class="card-body">
+    <h6 class="mb-3">Выберите файл из Google Drive</h6>
+
+    <div class="d-flex gap-2">
+      <button id="openPicker" class="btn btn-primary">Открыть Google Picker</button>
+      <a href="/#connections" class="btn btn-outline-secondary">Назад</a>
+    </div>
+
+    <form id="pickSubmitForm" action="{% url 'gdrive_select' %}" method="post" class="d-none" hx-disable="true">
+      {% csrf_token %}
+      <input type="hidden" name="file_id" id="pickedFileId">
+      <input type="hidden" name="file_name" id="pickedFileName">
+      <input type="hidden" name="file_path" id="pickedFilePath">
+      <input type="hidden" name="file_resource_key" id="pickedFileResKey">
+    </form>
+
+    <p class="text-muted small mt-3 mb-0">
+      Примечание: доступ выдаётся только к выбранным файлам (scope drive.file).
+    </p>
+  </div>
+</div>
+
+<script>
+  (function () {
+    const API_KEY = "{{ api_key|escapejs }}";
+    const OAUTH_TOKEN = "{{ access_token|escapejs }}";
+    const ORIGIN = "{{ origin|escapejs }}";   // например, http://127.0.0.1:8000
+    const APP_ID = "{{ app_id|escapejs }}";   // может быть пустым
+
+    const btn = document.getElementById('openPicker');
+    const form = document.getElementById('pickSubmitForm');
+    const inpId = document.getElementById('pickedFileId');
+    const inpName = document.getElementById('pickedFileName');
+    const inpPath = document.getElementById('pickedFilePath');
+    const inpResKey = document.getElementById('pickedFileResKey');
+
+    let pickerApiLoaded = false;
+    let __resKey = ""; // resourceKey выбранного файла, если есть
+
+    async function driveGet(fileId, fields="id,name,parents,shortcutDetails,driveId") {
+      // Ключ ресурса — только для самого файла (НЕ для родителей)
+      const headers = { Authorization: `Bearer ${OAUTH_TOKEN}` };
+      const selectedId = document.getElementById('pickedFileId')?.value || "";
+      if (__resKey && fileId === selectedId) {
+        headers["X-Goog-Drive-Resource-Keys"] = `${fileId}/${__resKey}`;
+      }
+      const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=${encodeURIComponent(fields)}&supportsAllDrives=true`;
+      let r = await fetch(url, { headers });
+      if (!r.ok && fileId === selectedId && headers["X-Goog-Drive-Resource-Keys"]) {
+        delete headers["X-Goog-Drive-Resource-Keys"];
+        r = await fetch(url, { headers });
+      }
+      if (!r.ok) return null;
+      try { return await r.json(); } catch { return null; }
+    }
+
+    async function driveGetDriveName(driveId) {
+      if (!driveId) return null;
+      const headers = { Authorization: `Bearer ${OAUTH_TOKEN}` };
+      const url = `https://www.googleapis.com/drive/v3/drives/${encodeURIComponent(driveId)}?fields=id,name`;
+      const r = await fetch(url, { headers });
+      if (!r.ok) return null;
+      try { const j = await r.json(); return j?.name || null; } catch { return null; }
+    }
+
+    // ✅ resolvePath теперь только про сбор пути, без функций Picker внутри
+    async function resolvePath(fileId, { includeSelfName = false } = {}) {
+      try {
+        let cur = await driveGet(fileId, "id,name,parents,shortcutDetails,driveId");
+        if (!cur) return "";
+
+        // Разворачиваем ярлык
+        if (cur.shortcutDetails?.targetId) {
+          const tgtId = cur.shortcutDetails.targetId;
+          cur = await driveGet(tgtId, "id,name,parents,driveId");
+          if (!cur) return "";
+        }
+
+        const selfName = cur.name || "";        // ← имя выбранного объекта (папки)
+        const topDriveId = cur.driveId || null;
+
+        // строим путь из РОДИТЕЛЕЙ
+        const chain = [];
+        const seen = new Set();
+        while (cur?.parents?.length) {
+          const pid = cur.parents[0];
+          if (!pid || pid === 'root' || seen.has(pid)) break;
+          seen.add(pid);
+          cur = await driveGet(pid, "id,name,parents,driveId");
+          if (!cur) break;
+          chain.push(cur.name || "");
+        }
+
+        // если надо — добавим САМОГО выбранного «узла» в конец
+        if (includeSelfName && selfName) chain.push(selfName);
+
+        chain.reverse();
+        const core = chain.length ? "/" + chain.filter(Boolean).join("/") : "";
+
+        if (topDriveId) {
+          const dname = await driveGetDriveName(topDriveId);
+          return `/${dname || "Shared drive"}${core}`;
+        } else {
+          const res = `/Мой диск${core}`;
+          return res.startsWith("/Мой диск/Мой диск") ? res.replace("/Мой диск/Мой диск", "/Мой диск") : res;
+        }
+      } catch (e) {
+        console.error("resolvePath error", e);
+        return "";
+      }
+    }
+
+    // ✅ Функции Picker — снаружи resolvePath
+    function createPicker() {
+      if (!pickerApiLoaded || !OAUTH_TOKEN) {
+        console.warn('Picker not ready:', { pickerApiLoaded, hasToken: !!OAUTH_TOKEN });
+        return;
+      }
+        const view = new google.picker.DocsView(google.picker.ViewId.FOLDERS)
+          .setIncludeFolders(true)         // показывать папки
+          .setOwnedByMe(true)              // по желанию
+          .setSelectFolderEnabled(true);   // разрешить выбор ПАПКИ
+
+        const builder = new google.picker.PickerBuilder()
+          .addView(view)
+          .enableFeature(google.picker.Feature.SUPPORT_DRIVES)
+          .setOAuthToken(OAUTH_TOKEN)
+          .setDeveloperKey(API_KEY)
+          .setOrigin(ORIGIN)
+          .setTitle('Выбор папки Google Drive')   // поменяли заголовок
+          .setCallback(pickerCallback);
+
+      if (APP_ID) {
+        try { builder.setAppId(APP_ID); } catch (e) { console.debug('setAppId skipped', e); }
+      }
+
+      const picker = builder.build();
+      picker.setVisible(true);
+    }
+
+    async function pickerCallback(data) {
+      if (data.action === google.picker.Action.PICKED && data.docs && data.docs.length) {
+        const doc = data.docs[0];
+        inpId.value = doc.id || '';
+        inpName.value = doc.name || '';
+        __resKey =
+          (doc.resourceKey || doc.resourcekey) ||
+          (function () {
+            try {
+              const u = new URL(doc.url || "");
+              return u.searchParams.get('resourcekey') || u.searchParams.get('resourceKey') || "";
+            } catch { return ""; }
+          })();
+        inpResKey.value = __resKey || "";
+        const isFolder = (doc.mimeType === 'application/vnd.google-apps.folder');
+        inpPath.value = await resolvePath(doc.id, { includeSelfName: isFolder }) || "";
+        form.submit();
+      } else if (data.action === google.picker.Action.CANCEL) {
+        console.log('Picker cancelled');
+      }
+    }
+
+    function onPickerApiLoad() {
+      pickerApiLoaded = true;
+      console.debug('Picker API loaded');
+    }
+
+    function loadPicker() {
+      if (!API_KEY) {
+        console.error('GDRIVE_API_KEY is empty');
+        return;
+      }
+      const s = document.createElement('script');
+      s.src = 'https://apis.google.com/js/api.js';
+      s.onload = function() {
+        if (!window.gapi) return;
+        window.gapi.load('picker', {'callback': onPickerApiLoad});
+      };
+      document.head.appendChild(s);
+    }
+
+    btn?.addEventListener('click', function () {
+      if (!pickerApiLoaded) {
+        const waitAndOpen = () => {
+          if (pickerApiLoaded) createPicker();
+          else setTimeout(waitAndOpen, 100);
+        };
+        waitAndOpen();
+      } else {
+        createPicker();
+      }
+    });
+
+    loadPicker();
+  })();
+</script>

@@ -3,3 +3,6 @@
 
 {# Панель OpenAI — всегда подключаем, внутри покажется “не подключено” #}
 {% include "openai_app/panel.html" with openai=openai %}
+
+{# Панель Google Drive — добавляем панель интеграции #}
+{% include "googledrive_app/connections_partial.html" with selection=gdrive_selection gdrive_connected=gdrive_connected %}

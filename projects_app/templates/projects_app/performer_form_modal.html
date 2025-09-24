@@ -1,0 +1,143 @@
+<div class="modal-header">
+  <h5 class="modal-title">{{ title }}</h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+</div>
+
+<form
+  method="post"
+  hx-post="{% if action == 'edit' %}{% url 'performer_form_edit' performer.id %}{% else %}{% url 'performer_form_create' %}{% endif %}"
+  hx-target="#performers-modal .modal-content"
+  hx-swap="innerHTML"
+  hx-indicator="#performers-modal .__spinner"
+  hx-on::after-request="if (event.detail.xhr.status === 204) { window.bootstrap?.Modal.getOrCreateInstance(document.getElementById('performers-modal'))?.hide(); }"
+>
+  {% csrf_token %}
+  <div class="modal-body">
+
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label">Номер (регистрация)</label>
+        {{ form.registration }}
+        <div class="form-text">Выбор из «Регистрация проектов» (подпись: «Номер Группа»).</div>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">Актив</label>
+        {{ form.asset_name }}
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label">Группа</label>
+        <input type="text" class="form-control" id="perf-group" readonly>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Тип (продукт)</label>
+        <input type="text" class="form-control" id="perf-type" readonly>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Название</label>
+        <input type="text" class="form-control" id="perf-name" readonly>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">Исполнитель</label>
+        {{ form.executor }}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Грейд</label>
+        {{ form.grade }}
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">Типовые разделы</label>
+        {{ form.typical_section }}
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">№ договора</label>
+        {{ form.contract_number }}
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label">Фактические затраты</label>
+        {{ form.actual_costs }}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Расчётные затраты</label>
+        {{ form.estimated_costs }}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Согласованная сумма</label>
+        {{ form.agreed_amount }}
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">Аванс</label>
+        {{ form.prepayment }}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Окон. платеж</label>
+        {{ form.final_payment }}
+      </div>
+    </div>
+
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+  {% if form.errors %}
+    <div class="alert alert-danger mt-3 mb-0">Проверьте форму — есть ошибки.</div>
+  {% endif %}
+</form>
+
+<script>
+(function(){
+  const form = document.currentScript.closest('.modal-content')?.querySelector('form');
+  if (!form) return;
+  const regSel = form.querySelector('select[name="registration"]');
+  const assetSel = form.querySelector('select[name="asset_name"]');
+  const sectSel = form.querySelector('select[name="typical_section"]');
+
+  const groupEl = form.querySelector('#perf-group');
+  const typeEl  = form.querySelector('#perf-type');
+  const nameEl  = form.querySelector('#perf-name');
+
+  async function refreshDeps() {
+    const val = regSel?.value || '';
+    if (!val) {
+      groupEl.value = ''; typeEl.value = ''; nameEl.value = '';
+      if (assetSel) assetSel.innerHTML = '';
+      if (sectSel)  sectSel.innerHTML  = '';
+      return;
+    }
+    try {
+      const url = "{% url 'performer_deps' %}" + "?reg=" + encodeURIComponent(val);
+      const r = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' }});
+      const j = await r.json();
+
+      groupEl.value = j.group || '';
+      typeEl.value  = j.type_short || '';
+      nameEl.value  = j.name || '';
+
+      if (assetSel) {
+        const cur = assetSel.value;
+        assetSel.innerHTML = '<option value=""></option>' + (j.asset_options_html || '');
+        if (cur) assetSel.value = cur;
+      }
+      if (sectSel) {
+        const curS = sectSel.value;
+        sectSel.innerHTML = '<option value=""></option>' + (j.section_options_html || '');
+        if (curS) sectSel.value = curS;
+      }
+    } catch(e) {
+      console.error(e);
+    }
+  }
+
+  regSel?.addEventListener('change', refreshDeps);
+
+  // Инициализация при открытии (для edit)
+  refreshDeps();
+})();
+</script>

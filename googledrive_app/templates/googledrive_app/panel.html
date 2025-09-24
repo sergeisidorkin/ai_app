@@ -1,8 +1,9 @@
-<div class="card shadow-sm mb-3" id="gdrive-panel">
+{% load ui %}
+<div class="card shadow-sm mb-3 mt-3" id="gdrive-panel">
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center mb-2">
       <p class="mb-0 fw-semibold d-flex align-items-center">
-        <i class="bi bi-cloud-plus me-2 text-primary"></i>
+        {% svg_icon 'googledrive' 'me-2 icon-inline' %}
         Google Drive
       </p>
       {% if gdrive_connected %}

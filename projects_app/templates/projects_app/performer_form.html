@@ -1,0 +1,137 @@
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if action == "edit" %}Изменить исполнителя{% else %}Добавить исполнителя{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+</div>
+
+<form
+  method="post"
+  hx-post="{% if action == 'edit' %}{% url 'performer_form_edit' performer.id %}{% else %}{% url 'performer_form_create' %}{% endif %}"
+  hx-target="#performers-pane"
+  hx-swap="innerHTML"
+  hx-on::after-request="window.bootstrap?.Modal.getOrCreateInstance(document.getElementById('performers-modal'))?.hide()"
+>
+  {% csrf_token %}
+  <div class="modal-body" data-modal-size="xl">
+    {{ form.non_field_errors }}
+
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label">Номер</label>
+        {{ form.registration }}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Тип</label>
+        <input type="text" class="form-control" id="perf-type" value="" readonly>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Название</label>
+        <input type="text" class="form-control" id="perf-name" value="" readonly>
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label">Актив</label>
+        {{ form.asset_name }}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Типовой раздел</label>
+        {{ form.typical_section }}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Исполнитель</label>
+        {{ form.executor }}
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">Грейд</label>
+        {{ form.grade }}
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Фактические затраты</label>
+        {{ form.actual_costs }}
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Расчетные затраты</label>
+        {{ form.estimated_costs }}
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Согласованная сумма</label>
+        {{ form.agreed_amount }}
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Аванс</label>
+        {{ form.prepayment }}
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Окон. платеж</label>
+        {{ form.final_payment }}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Номер договора</label>
+        {{ form.contract_number }}
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>
+
+<script id="perf-reg-map" type="application/json">{{ reg_map_json|safe }}</script>
+<script id="perf-assets-map" type="application/json">{{ assets_map_json|safe }}</script>
+<script id="perf-sections-map" type="application/json">{{ sections_map_json|safe }}</script>
+
+<script>
+(function(){
+  const formEl  = document.currentScript.closest('.modal-content');
+  const regSel  = formEl.querySelector('select[name="registration"]');
+  const typeEl  = formEl.querySelector('#perf-type');
+  const nameEl  = formEl.querySelector('#perf-name');
+  const assetSel= formEl.querySelector('select[name="asset_name"]');
+  const sectSel = formEl.querySelector('select[name="typical_section"]');
+
+  const regMap   = JSON.parse(document.getElementById('perf-reg-map').textContent || '{}');
+  const assetsMap= JSON.parse(document.getElementById('perf-assets-map').textContent || '{}');
+  const sectMap  = JSON.parse(document.getElementById('perf-sections-map').textContent || '{}');
+
+  function refillAssets(regId) {
+    if (!assetSel) return;
+    const list = assetsMap[regId] || [];
+    assetSel.innerHTML = '';
+    const opt0 = document.createElement('option');
+    opt0.value = ''; opt0.textContent = '— Не выбрано —';
+    assetSel.appendChild(opt0);
+    list.forEach(v => {
+      const o = document.createElement('option'); o.value = v; o.textContent = v;
+      assetSel.appendChild(o);
+    });
+  }
+
+  function refillSections(regId) {
+    if (!sectSel) return;
+    const list = sectMap[regId] || [];
+    sectSel.innerHTML = '';
+    const opt0 = document.createElement('option');
+    opt0.value = ''; opt0.textContent = '— Не выбрано —';
+    sectSel.appendChild(opt0);
+    list.forEach(it => {
+      const o = document.createElement('option'); o.value = it.id; o.textContent = it.code || it.id;
+      sectSel.appendChild(o);
+    });
+  }
+
+  function applyReg(regId) {
+    const info = regMap[regId] || {};
+    if (typeEl) typeEl.value = info.type_short || '';
+    if (nameEl) nameEl.value = info.name || '';
+    refillAssets(regId);
+    refillSections(regId);
+  }
+
+  regSel?.addEventListener('change', () => applyReg(regSel.value));
+  if (regSel?.value) applyReg(regSel.value);
+})();
+</script>

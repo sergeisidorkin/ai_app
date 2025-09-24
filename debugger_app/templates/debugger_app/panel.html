@@ -1,0 +1,359 @@
+<div class="debugger-gap" aria-hidden="true"></div>
+
+<!-- Панель выбора рабочей области -->
+<div class="card shadow-sm chooser-card w-100 mb-3">
+    <div class="card-body">
+        <h6 class="card-title mb-3">Выбор рабочей области</h6>
+
+        <div class="d-flex flex-wrap align-items-center gap-2">
+            <span class="small text-muted">Проект:</span>
+            <select id="dbg-project" class="form-select form-select-sm">
+                {% if project_options %}
+                    {% for opt in project_options %}
+
+                        <option
+                          value="{{ opt.id }}"
+                          data-project-code="{{ opt.code }}"
+                          data-product-short="{{ opt.product_short }}"
+                          data-product-id="{{ opt.product_id }}"
+                          {% if opt.id == selected_project_id %}selected{% endif %}
+                        >{{ opt.label }}</option>
+
+                    {% endfor %}
+                {% else %}
+                    <option value="">Нет проектов</option>
+                {% endif %}
+            </select>
+
+            <span class="small text-muted ms-2">Актив:</span>
+            <select id="dbg-asset" class="form-select form-select-sm" {% if not asset_options %}disabled{% endif %}>
+                {% if asset_options %}
+                    {% for a in asset_options %}
+                        <option value="{{ a }}" {% if a == selected_asset %}selected{% endif %}>{{ a }}</option>
+                    {% endfor %}
+                {% else %}
+                    <option value="">Нет данных</option>
+                {% endif %}
+            </select>
+
+            <span class="small text-muted ms-2">Раздел:</span>
+            <select id="dbg-section" class="form-select form-select-sm">
+                {% if section_options and section_options|length > 0 %}
+                    {% for s in section_options %}
+                        <option value="{{ s.id }}">{{ s.name }}</option>
+                    {% endfor %}
+                {% else %}
+                    <option value="">Нет данных</option>
+                {% endif %}
+            </select>
+        </div>
+    </div>
+</div>
+
+<!-- Контейнер блоков -->
+<div class="position-relative">
+    <div
+            id="dbg-blocks-pane"
+            data-url="{{ blocks_dashboard_url }}?tab=debugger"
+            data-meta-url-base="{% url 'debugger_app:project_meta' 0 %}">
+        <div id="dbg-blocks-loading" class="text-muted d-none"></div>
+    </div>
+
+    <!-- Оверлей загрузки -->
+    <div id="debugger-loading" class="d-none">
+        <div class="bg-white border rounded-3 shadow-sm px-3 py-2 d-flex align-items-center gap-2">
+            <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+            <span class="small">Загрузка блоков…</span>
+        </div>
+    </div>
+</div>
+
+<script>
+(() => {
+  const RUN_RX = /\/blocks\/.*\/run(?:\/|\?|$)/;
+  const DEBUG = false;
+
+  function getBinding(){
+    const projSel  = document.getElementById('dbg-project');
+    const sectSel  = document.getElementById('dbg-section');
+    const assetSel = document.getElementById('dbg-asset');
+    const opt      = projSel?.selectedOptions?.[0];
+
+    const label        = (opt?.textContent || '').replace(/\s+/g,' ').trim();
+    const productShort = (opt?.dataset?.productShort || '').toUpperCase();
+    const sectionId    = sectSel?.value || '';
+    const assetName    = assetSel?.value || '';
+    const projectId    = projSel?.value || '';
+
+    // 1) сначала берём из data-атрибута
+    let code = (opt?.dataset?.projectCode || '').toUpperCase();
+
+    // 2) фолбэк — пытаемся вытащить из label (на случай если где-то забыли положить data-project-code)
+    if (!code) {
+      const U = label.toUpperCase();
+      let m = U.match(/\b(\d{4}[A-Z]{2})\b/) || U.match(/\b(\d{4})\s*[-_. ]\s*([A-Z]{2})\b/);
+      if (m) code = (m[1] + (m[2] || '')).toUpperCase();
+      else {
+        const f6 = U.replace(/[^0-9A-Z]+/g,'').slice(0,6);
+        if (/^\d{4}[A-Z]{2}$/.test(f6)) code = f6;
+      }
+    }
+    return { code, label, projectId, productShort, sectionId, assetName };
+  }
+
+  function ensureHidden(form, name, value){
+    let el = form.querySelector(`[name="${name}"]`);
+    if (!el) { el = document.createElement('input'); el.type='hidden'; el.name=name; form.appendChild(el); }
+    el.value = value ?? '';
+  }
+
+  function addQS(url, params){
+    try {
+      const u = new URL(url, location.origin);
+      for (const [k,v] of Object.entries(params || {})) {
+        if (v !== '' && v != null) u.searchParams.set(k, String(v));
+      }
+      return u.pathname + (u.search || '') + (u.hash || '');
+    } catch { return url; }
+  }
+
+  function fill(form){
+    const act = form.getAttribute('action') || form.action || '';
+    if (!RUN_RX.test(act)) return false;
+
+    const b = getBinding();
+    ensureHidden(form, 'project_code',  b.code || '');
+    ensureHidden(form, 'project_label', b.label || '');
+    ensureHidden(form, 'project_id',    b.projectId || '');
+    ensureHidden(form, 'asset_name',    b.assetName || '');
+    ensureHidden(form, 'product_short', b.productShort || '');
+    ensureHidden(form, 'section_id',    b.sectionId || '');
+
+    form.setAttribute('action', addQS(act, {
+      project_code:  b.code || '',
+      project_label: b.label || '',
+      project_id:    b.projectId || '',
+      asset_name:    b.assetName || '',
+      product_short: b.productShort || '',
+      section_id:    b.sectionId || '',
+    }));
+
+    if (DEBUG) {
+      const snap = {};
+      try { new FormData(form).forEach((v,k)=>snap[k]=v); } catch {}
+      console.log('[RUN-SAFETY] filled', { action: form.getAttribute('action'), fields: snap });
+    }
+    return true;
+  }
+
+  // Клик по кнопке/ссылке внутри формы
+  document.addEventListener('click', (e)=>{
+    const btn = e.target.closest?.('button, a');
+    if (!btn) return;
+    const form = btn.closest?.('form');
+    if (form) fill(form);
+  }, { capture:true });
+
+  // Любой submit
+  document.addEventListener('submit', (e)=>{
+    const form = e.target;
+    if (form instanceof HTMLFormElement) fill(form);
+  }, { capture:true });
+
+  // Программный submit()
+  if (!window.__RUN_SAFE_SUBMIT_PATCHED__){
+    const orig = HTMLFormElement.prototype.submit;
+    HTMLFormElement.prototype.submit = function(){
+      try { fill(this); } catch {}
+      return orig.apply(this, arguments);
+    };
+    window.__RUN_SAFE_SUBMIT_PATCHED__ = true;
+  }
+
+  // HTMX
+  if (window.htmx && !window.__RUN_SAFE_HTMX__){
+    document.body.addEventListener('htmx:configRequest', (ev)=>{
+      const d = ev.detail || {}; const path = d.path || '';
+      if (!RUN_RX.test(path)) return;
+      const b = getBinding();
+      d.parameters = d.parameters || {};
+      d.parameters.project_code  ??= b.code || '';
+      d.parameters.project_label ??= b.label || '';
+      d.parameters.project_id    ??= b.projectId || '';
+      d.parameters.asset_name    ??= b.assetName || '';
+      d.parameters.product_short ??= b.productShort || '';
+      d.parameters.section_id    ??= b.sectionId || '';
+      d.path = addQS(path, {
+        project_code:  b.code || '',
+        project_label: b.label || '',
+        project_id:    b.projectId || '',
+        asset_name:    b.assetName || '',
+        product_short: b.productShort || '',
+        section_id:    b.sectionId || '',
+      });
+    });
+    window.__RUN_SAFE_HTMX__ = true;
+  }
+
+  if (DEBUG) console.log('[RUN-SAFETY] armed');
+})();
+</script>
+
+
+
+
+
+
+
+
+
+<script>
+(function(){
+  const pane = document.getElementById('dbg-blocks-pane');
+  if (!pane) return;
+
+  const projSel  = document.getElementById('dbg-project');
+  const sectSel  = document.getElementById('dbg-section');
+  const assetSel = document.getElementById('dbg-asset');
+
+  // простой оверлей
+  const host = pane.closest('.position-relative') || pane.parentElement || document.body;
+  const ov = document.getElementById('debugger-loading');
+  const show = ()=>{ ov?.classList.remove('d-none'); host?.classList.add('cursor-wait'); };
+  const hide = ()=>{ ov?.classList.add('d-none');   host?.classList.remove('cursor-wait'); };
+
+  function binding(){
+    const opt = projSel?.selectedOptions?.[0];
+    return {
+      productShort: (opt?.dataset?.productShort || '').toUpperCase(),
+      sectionId:    sectSel?.value || '',
+      projectId:    projSel?.value || '',
+      assetName:    assetSel?.value || '',
+    };
+  }
+
+  function blocksUrl(){
+    const base = pane.getAttribute('data-url') || '/blocks/?tab=debugger';
+    const b = binding();
+    const u = new URL(base, location.origin);
+    u.searchParams.set('product', b.productShort || '');
+    u.searchParams.set('section', b.sectionId || '');
+    return u.pathname + u.search;
+  }
+
+  async function reloadBlocks(){
+    show();
+    try{
+      const r = await fetch(blocksUrl(), {headers:{'X-Requested-With':'fetch'}});
+      const html = await r.text();
+      // выкидываем <script> из фрагмента, чтобы не дублировать обработчики
+      const tmp = document.createElement('div'); tmp.innerHTML = html;
+      tmp.querySelectorAll('script').forEach(s=>s.remove());
+      pane.innerHTML = tmp.innerHTML;
+    } finally { hide(); }
+  }
+
+  async function loadProjectMeta(){
+    const base = pane.getAttribute('data-meta-url-base'); // вида /debugger/project-meta/0/
+    const pid  = projSel?.value;
+    if (!base || !pid) return;
+    try{
+      const url = base.replace(/0\/?$/, String(pid).replace(/\/?$/,'/'));
+      const r = await fetch(url, {headers:{'X-Requested-With':'fetch'}});
+      const j = await r.json();
+
+      // Активы
+      if (assetSel){
+        assetSel.innerHTML = '';
+        const assets = Array.isArray(j.assets) ? j.assets : [];
+        if (assets.length){
+          assetSel.removeAttribute('disabled');
+          for (const a of assets){
+            const o = document.createElement('option');
+            o.value = a; o.textContent = a;
+            if (a === j.asset) o.selected = true;
+            assetSel.appendChild(o);
+          }
+        } else {
+          assetSel.setAttribute('disabled','disabled');
+          assetSel.innerHTML = '<option value="">Нет данных</option>';
+        }
+      }
+
+      // Разделы
+      if (sectSel){
+        const prev = sectSel.value;
+        sectSel.innerHTML = '';
+        const secs = Array.isArray(j.sections) ? j.sections : [];
+        if (secs.length){
+          for (const s of secs){
+            const o = document.createElement('option');
+            o.value = s.id; o.textContent = s.name;
+            sectSel.appendChild(o);
+          }
+          // если прежнее значение ещё есть — оставим
+          if ([...sectSel.options].some(o=>o.value==prev)) sectSel.value = prev;
+        } else {
+          sectSel.innerHTML = '<option value="">Нет данных</option>';
+        }
+      }
+    } catch(e){
+      console.error('project_meta error', e);
+    }
+  }
+
+  async function init(){
+    await loadProjectMeta();
+    await reloadBlocks();
+  }
+
+  projSel?.addEventListener('change', async ()=>{ show(); await loadProjectMeta(); await reloadBlocks(); });
+  sectSel?.addEventListener('change', reloadBlocks);
+  assetSel?.addEventListener('change', reloadBlocks);
+
+  document.addEventListener('DOMContentLoaded', init);
+})();
+</script>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<style>
+    #debugger .section-header .d-flex { justify-content: flex-start !important; }
+    #debugger .section-header .px-3 { padding-top: 15px !important; }
+    #debugger .section-header h5   { margin-top: 0 !important; padding-top: 0 !important; }
+
+    #debugger .chooser-card .card-body { padding: 15px !important; }
+
+    #debugger #dbg-project { width: 30ch; max-width: 60vw; }
+    #debugger #dbg-asset   { width: 40ch; max-width: 60vw; }
+    #debugger #dbg-section { width: 25ch; max-width: 60vw; }
+
+    @media (max-width: 992px) {
+        #debugger #dbg-project,
+        #debugger #dbg-asset,
+        #debugger #dbg-section { width: 100%; max-width: 100%; }
+    }
+
+    /* Надёжный оверлей для Отладки */
+    #dbg-blocks-host { position: relative; }
+    #debugger-loading{
+        position:absolute; inset:0;
+        display:flex; align-items:center; justify-content:center;
+        background:rgba(255,255,255,.66);
+        z-index:1051;
+    }
+    .d-none{ display:none !important; }
+    .cursor-wait{ cursor: progress !important; }
+
+</style>

@@ -1,8 +1,10 @@
 from django.urls import path
 from . import views
 
+app_name = "blocks_app"
+
 urlpatterns = [
-    path("", views.dashboard_partial, name="blocks_dashboard_partial"),
+    path("", views.dashboard_partial, name="dashboard_partial"),
     path("blocks/create/", views.block_create, name="blocks_create"),
     path("blocks/<int:pk>/update/", views.block_update, name="blocks_update"),
     path("blocks/<int:pk>/set-model/", views.block_set_model, name="blocks_set_model"),

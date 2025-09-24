@@ -21,7 +21,8 @@ ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["127.0.0.1","localhost"])
 INSTALLED_APPS = [
     "core","django.contrib.admin","django.contrib.auth","django.contrib.contenttypes",
     "django.contrib.sessions","django.contrib.messages","django.contrib.staticfiles",
-    "policy_app","onedrive_app","blocks_app","openai_app",
+    "policy_app","onedrive_app","blocks_app","openai_app","googledrive_app","projects_app",
+    'requests_app','debugger_app',
 ]
 
 MIDDLEWARE = [
@@ -35,16 +36,44 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
+# Включаем пробник только в debug или по флагу окружения
+if DEBUG or os.environ.get("RUN_PROBE") == "1":
+    MIDDLEWARE.insert(0, "core.runprobe.RunProbeMiddleware")
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "loggers": {
+        "runprobe":   {"handlers": ["console"], "level": "WARNING"},
+        "blocks_app": {"handlers": ["console"], "level": "WARNING"},
+    },
+}
+
+
 # Аутентификация: куда редиректить после логина/логаута
 LOGIN_URL = "login"
 LOGIN_REDIRECT_URL = "/#policy"   # после входа — сразу на вкладку «Продукты»
 LOGOUT_REDIRECT_URL = "login"
 
+
+
+
+
 # Дополнительные разрешённые пути (префиксы), доступные без авторизации
 ENFORCE_LOGIN_EXEMPT = (
     "/health/",
+    "/gdrive/",
+    "/onedrive/",
+    "/onedrive/callback", # ← коллбэк OAuth не должен требовать авторизации
+    "/accounts/",  # ← сама страница логина тоже в белом списке
+    "/static/",
 )
 
+CSRF_TRUSTED_ORIGINS = [
+    "https://imcmontanai.ru",
+    "http://localhost:8000",
+]
 
 ROOT_URLCONF = "urls"
 WSGI_APPLICATION = "wsgi.application"
