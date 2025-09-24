@@ -427,3 +427,5 @@ def disconnect(request):
     except Exception:
         messages.info(request, "Подключение Google Drive уже отсутствовало.")
     return redirect("/#connections")
+
+

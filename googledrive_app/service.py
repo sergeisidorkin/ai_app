@@ -298,3 +298,4 @@ def download_file(request, file_id: str, mime_type: str, res_key: str = "", rk_m
     # MIME нам неизвестен точно (Google его не возвращает в этом запросе),
     # но для Files API это не критично — можно отдать исходный mime_type.
     return mime_type, r.content
+
