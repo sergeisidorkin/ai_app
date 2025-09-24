@@ -7,6 +7,17 @@ env = environ.Env(
     READ_DOTENV=(bool, False),
 )
 
+ENV_FILE = os.environ.get("ENV_FILE")  # абсолютный путь до .env
+
+# если явно указали ENV_FILE — читаем его
+if ENV_FILE and os.path.exists(ENV_FILE):
+    environ.Env.read_env(ENV_FILE)
+# иначе как раньше: локально читаем ai_app/.env
+elif env.bool("READ_DOTENV", False) or (
+    os.environ.get("DJANGO_ENV", "local") == "local" and (BASE_DIR / ".env").exists()
+):
+    environ.Env.read_env(BASE_DIR / ".env")
+
 # В dev удобно читать .env
 if env.bool("READ_DOTENV", False) or (
     os.environ.get("DJANGO_ENV", "local") == "local" and (BASE_DIR / ".env").exists()

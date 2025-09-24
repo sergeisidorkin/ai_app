@@ -7,7 +7,7 @@ import os
 import urllib.parse
 import requests
 
-import settings
+from django.conf import settings
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -18,16 +18,16 @@ def _cfg(name, envname):
     return (getattr(settings, name, "") or os.environ.get(envname, "")).strip()
 
 def _client_id() -> str:
-    return _cfg("GDRIVE_CLIENT_ID", "GDRIVE_CLIENT_ID")
+    return getattr(settings, "GDRIVE_CLIENT_ID", "").strip()
 
 def _client_secret() -> str:
-    return _cfg("GDRIVE_CLIENT_SECRET", "GDRIVE_CLIENT_SECRET")
+    return getattr(settings, "GDRIVE_CLIENT_SECRET", "").strip()
 
 def _api_key() -> str:
-    return _cfg("GDRIVE_API_KEY", "GDRIVE_API_KEY")
+    return getattr(settings, "GDRIVE_API_KEY", "").strip()
 
 def _project_number() -> str:
-    return _cfg("GDRIVE_PROJECT_NUMBER", "GDRIVE_PROJECT_NUMBER")
+    return getattr(settings, "GDRIVE_PROJECT_NUMBER", "").strip()
 
 
 
