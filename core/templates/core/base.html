@@ -17,6 +17,22 @@
     <!-- ваши глобальные стили -->
     <link rel="stylesheet" href="{% static 'core/css/site.css' %}">
 
+    {# ---------- FAVICONS (под твои имена файлов) ---------- #}
+    <link rel="icon" type="image/svg+xml" href="{% static 'core/icons/favicon.svg' %}">
+    <link rel="icon" href="{% static 'core/icons/favicon.ico' %}" sizes="any">
+
+    <link rel="icon" type="image/png" sizes="96x96"  href="{% static 'core/icons/favicon-96x96.png' %}">
+    <link rel="icon" type="image/png" sizes="32x32" href="{% static 'core/icons/favicon-32x32.png' %}">
+    <link rel="icon" type="image/png" sizes="16x16" href="{% static 'core/icons/favicon-16x16.png' %}">
+
+    <link rel="apple-touch-icon" sizes="180x180" href="{% static 'core/icons/apple-touch-icon.png' %}">
+    <link rel="mask-icon" href="{% static 'core/icons/safari-pinned-tab.svg' %}" color="#0d6efd">
+
+    {# Android/Chrome PWA размеры (если ставят на домашний экран) #}
+    <link rel="manifest" href="{% static 'core/icons/site.webmanifest' %}">
+    <meta name="theme-color" content="#ffffff">
+    {# ------------------------------------------------------- #}
+
   </head>
   <body class="bg-light m-0">
     {% include "core/_nav.html" %}
