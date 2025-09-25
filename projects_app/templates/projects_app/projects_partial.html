@@ -16,7 +16,7 @@
           <col class="group">        <!-- 2: Номер -->
           <col class="group">        <!-- 3: Группа -->
           <col class="group">        <!-- 4: Тип -->
-          <col>                      <!-- 5: Название -->
+          <col class="name">         <!-- 5: Название -->
           <col class="status">       <!-- 6: Статус -->
           <col class="narrow">       <!-- 7: Начало контракта -->
           <col class="narrow">       <!-- 8: Оконч. контракта -->
@@ -37,7 +37,7 @@
         </colgroup>
       <thead>
       <tr>
-        <th style="width:1%">
+        <th class="w-checkbox">
           {% if request.user.is_authenticated and request.user.is_staff %}
             <div class="form-check m-0">
                 <input class="form-check-input"
@@ -52,7 +52,7 @@
         <th>Номер</th>
         <th>Группа</th>
         <th>Тип</th>
-        <th>Название</th>
+        <th class="nowrap">Название</th>
         <th>Статус</th>
         <th class="wrap">Начало контр.</th>
         <th>Оконч. контр.</th>
@@ -111,7 +111,7 @@
           <td>{{ r.customer }}</td>
           <td>{{ r.registration_number }}</td>
           <td>{{ r.project_manager }}</td>
-          <td>{{ r.contract_subject|truncatechars:60 }}</td>
+          <td>{{ r.contract_subject|truncatechars:15 }}</td>
         </tr>
       {% empty %}
         <tr><td colspan="22" class="text-muted">Пока нет данных.</td></tr>
