@@ -1,5 +1,6 @@
 from pathlib import Path
 import environ, os
+from urllib.parse import urlparse
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 env = environ.Env(
@@ -8,6 +9,12 @@ env = environ.Env(
 )
 
 ENV_FILE = os.environ.get("ENV_FILE")  # абсолютный путь до .env
+
+BASE_URL = env("BASE_URL", default="http://localhost:8000")
+_u = urlparse(BASE_URL)
+
+# Если хотите — можете переиспользовать BASE_URL для дефолтов ниже.
+MS_REDIRECT_URI = env("MS_REDIRECT_URI", default=f"{BASE_URL}/onedrive/callback")
 
 # если явно указали ENV_FILE — читаем его
 if ENV_FILE and os.path.exists(ENV_FILE):
@@ -27,19 +34,30 @@ if env.bool("READ_DOTENV", False) or (
 
 SECRET_KEY = env("SECRET_KEY", default="dev-secret-please-change")
 DEBUG = env.bool("DEBUG", False)
-ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["127.0.0.1","localhost"])
+ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=[
+    "127.0.0.1",
+    "0.0.0.0",
+    "localhost",
+    "testserver",
+    "nonmagnetical-alanna-festive.ngrok-free.dev",
+    ".ngrok-free.dev",
+    "imcmontanai.ru",
+])
 
 INSTALLED_APPS = [
     "core","django.contrib.admin","django.contrib.auth","django.contrib.contenttypes",
     "django.contrib.sessions","django.contrib.messages","django.contrib.staticfiles",
     "policy_app","onedrive_app","blocks_app","openai_app","googledrive_app","projects_app",
-    'requests_app','debugger_app',
+    "requests_app","debugger_app","office_addin","corsheaders","channels","docops_app",
+    "docops_queue","macroops_app","logs_app.apps.LogsAppConfig",
 ]
 
 MIDDLEWARE = [
-    "django.middleware.security.SecurityMiddleware",
-    "django.contrib.sessions.middleware.SessionMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "core.middleware.EnforceLoginMiddleware",
@@ -51,6 +69,16 @@ MIDDLEWARE = [
 if DEBUG or os.environ.get("RUN_PROBE") == "1":
     MIDDLEWARE.insert(0, "core.runprobe.RunProbeMiddleware")
 
+# В dev Whitenoise будет читать из app static finders, без manifest:
+WHITENOISE_AUTOREFRESH = DEBUG
+WHITENOISE_USE_FINDERS = DEBUG
+
+# Хранилище статики:
+if DEBUG:
+    STATICFILES_STORAGE = "whitenoise.storage.CompressedStaticFilesStorage"
+else:
+    STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -61,15 +89,13 @@ LOGGING = {
     },
 }
 
+LOGGING["loggers"]["office_addin"] = {"handlers": ["console"], "level": "DEBUG"}
+LOGGING["loggers"]["office_addin.consumers"] = {"handlers": ["console"], "level": "DEBUG"}
 
 # Аутентификация: куда редиректить после логина/логаута
 LOGIN_URL = "login"
 LOGIN_REDIRECT_URL = "/#policy"   # после входа — сразу на вкладку «Продукты»
 LOGOUT_REDIRECT_URL = "login"
-
-
-
-
 
 # Дополнительные разрешённые пути (префиксы), доступные без авторизации
 ENFORCE_LOGIN_EXEMPT = (
@@ -79,15 +105,70 @@ ENFORCE_LOGIN_EXEMPT = (
     "/onedrive/callback", # ← коллбэк OAuth не должен требовать авторизации
     "/accounts/",  # ← сама страница логина тоже в белом списке
     "/static/",
+    "/taskpane.html",
+    "/addin/commands.html",
+    "/addin/manifest.xml",
+    "/api/addin/",  # API надстройки
+    "/api/macroops/",
+    "/api/macroops/ping",
+    "/api/macroops/compile",
+    # ---- API для агента и рантайма (фоновая вставка) ----
+    "/api/docs/",
+    "/api/jobs/",
+    "/api/agents/",
+    "/logs/api/logs/ingest",  # фактический путь сейчас
+    "/logs/api/",              # на будущее, шире
+    "/api/logs/ingest",        # если решите дать синоним без /logs/
+    "/api/logs/",              # шире
+
+    "/ws/",  # на всякий случай для WS-рутов
+    "/favicon.ico",
+    "/site.webmanifest",
 )
+
+CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[
+    "https://localhost",
+    "https://localhost:3000",
+    "https://localhost:8001",
+    "https://word-edit.officeapps.live.com",
+    "https://nonmagnetical-alanna-festive.ngrok-free.dev",
+    "https://*.ngrok-free.dev",
+    "https://imcmontanai.ru",
+])
+
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https://.*\.officeapps\.live\.com$",
+    r"^https://.*\.sharepoint\.com$",
+    r"^https://.*\.ngrok-free\.dev$",
+]
+
+CORS_ALLOW_METHODS = ["GET", "POST", "OPTIONS"]
+CORS_ALLOW_HEADERS = ["content-type", "authorization", "x-requested-with", "ngrok-skip-browser-warning"]
+CORS_EXPOSE_HEADERS = []
+CORS_ALLOW_CREDENTIALS = False
 
 CSRF_TRUSTED_ORIGINS = [
     "https://imcmontanai.ru",
     "http://localhost:8000",
+    "https://localhost:8001",
+    "https://localhost:3000",
+    "https://nonmagnetical-alanna-festive.ngrok-free.dev",
 ]
+
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 ROOT_URLCONF = "urls"
 WSGI_APPLICATION = "wsgi.application"
+
+ASGI_APPLICATION = "asgi.application"
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [os.environ.get("REDIS_URL", "redis://127.0.0.1:6379")],
+        },
+    }
+}
 
 TEMPLATES = [
     {
@@ -120,6 +201,15 @@ USE_TZ = True
 STATIC_URL = "/static/"
 STATIC_ROOT = env("STATIC_ROOT", default=str(BASE_DIR / "staticfiles"))
 
+REDIS_URL = os.environ.get("REDIS_URL", "")
+if REDIS_URL:
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {"hosts": [REDIS_URL]},
+        }
+    }
+
 # === Azure / Graph ===
 MS_CLIENT_ID = env("MS_CLIENT_ID", default="")
 MS_CLIENT_SECRET = env("MS_CLIENT_SECRET", default="")
@@ -137,3 +227,17 @@ PUBLIC_ORIGIN        = env("PUBLIC_ORIGIN", default="")            # опцио�
 # === OpenAI ===
 OPENAI_API_BASE = env("OPENAI_API_BASE", default="https://api.openai.com/v1")
 OPENAI_BASE_URL = env("OPENAI_BASE_URL", default=env("OPENAI_API_BASE", default="https://api.openai.com/v1"))
+
+# === DocOpsAgent ===
+BASE_PUBLIC_URL = os.getenv("BASE_PUBLIC_URL", "https://localhost:8001")
+ADDIN_TASKPANE_URL = os.getenv("ADDIN_TASKPANE_URL", "https://localhost:3000/taskpane.html")
+ADDIN_COMMANDS_URL = os.getenv("ADDIN_COMMANDS_URL", f"{BASE_PUBLIC_URL}/addin/commands.html")
+X_FRAME_OPTIONS = "ALLOWALL"
+
+# === Queue (docops_queue) ===
+QUEUE_API_BASE   = env("QUEUE_API_BASE", default="")
+ADDIN_AGENT_ID   = env("ADDIN_AGENT_ID", default="addin-auto")
+ADDIN_AGENT_ROLE = env("ADDIN_AGENT_ROLE", default="addin")
+
+LOGS_INGEST_TOKEN = env("LOGS_INGEST_TOKEN", default="")
+

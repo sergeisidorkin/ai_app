@@ -193,3 +193,70 @@ def append_text_after_marker(user, item_id: str, marker: str, text: str, insert_
     doc.save(buf)
     buf.seek(0)
     return upload_item_bytes(user, item_id, buf.read())
+
+def get_access_token_for_user(user):
+    """Публичный враппер, чтобы _auth_headers не падал."""
+    return _access_token(user)
+
+def list_permissions(user, drive_id, item_id):
+    """GET /drives/{drive-id}/items/{item-id}/permissions"""
+    token = get_access_token_for_user(user)
+    if not token:
+        raise RuntimeError("No token")
+    url = f"{GRAPH_API}/drives/{drive_id}/items/{item_id}/permissions"
+    r = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
+    r.raise_for_status()
+    return r.json()
+
+def search_in_folder(user, folder_id, query):
+    """GET /me/drive/items/{folder_id}/search(q='...')"""
+    token = _access_token(user)
+    if not token:
+        raise RuntimeError("No token")
+    url = f"{GRAPH_API}/me/drive/items/{folder_id}/search(q='{query}')"
+    r = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
+    r.raise_for_status()
+    return r.json()
+
+def _auth_headers(user):
+    # у тебя уже должен быть хелпер получения токена Microsoft Graph.
+    # Используй тот же, что в list_children (достаёт access_token для user).
+    token = get_access_token_for_user(user)  # твоя существующая функция
+    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+def create_link(user, drive_id, item_id, link_type="edit", scope="organization"):
+    """
+    POST /drives/{drive-id}/items/{item-id}/createLink
+    body: {"type": "edit"|"view", "scope": "anonymous"|"organization"|"users"}
+    """
+    url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{item_id}/createLink"
+    payload = {"type": link_type, "scope": scope}
+    r = requests.post(url, headers=_auth_headers(user), json=payload, timeout=30)
+    r.raise_for_status()
+    return r.json()  # {"link": {"webUrl": "...", "type": "...", ...}, ...}
+
+def invite_recipients(user, drive_id, item_id, emails, role="write", send_invitation=False, message=None):
+    """
+    POST /drives/{drive-id}/items/{item-id}/invite
+    Даст прямые права конкретным людям.
+    """
+    url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{item_id}/invite"
+    recipients = [{"email": e} for e in emails]
+    body = {
+        "recipients": recipients,
+        "requireSignIn": True,
+        "sendInvitation": bool(send_invitation),
+        "message": message or "",
+        "roles": ["write" if role == "write" else "read"],
+    }
+    r = requests.post(url, headers=_auth_headers(user), json=body, timeout=30)
+    try:
+        r.raise_for_status()
+    except requests.HTTPError as e:
+        # полезная диагностика в консоли
+        try:
+            print("Graph invite error:", r.status_code, r.text[:2000])
+        except Exception:
+            pass
+        raise
+    return r.json()

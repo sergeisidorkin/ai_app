@@ -1,0 +1,17 @@
+version: 1
+styles:
+  ListBullet:
+    - "маркированный список"
+    - "список с маркерами"
+    - "bulleted list"
+  ListNumber:
+    - "нумерованный список"
+    - "пронумерованный список"
+    - "numbered list"
+  style_aliases:
+    "маркированный список":
+      canonical: "ListBullet"
+      style_id: "a"   # ← это из инспектора
+    "нумерованный список":
+      canonical: "ListNumber"
+phrases: {}

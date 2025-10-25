@@ -1,0 +1,10 @@
+api:    bash -lc 'exec python manage.py runserver 0.0.0.0:8000'
+
+daphne: DJANGO_SETTINGS_MODULE=settings PYTHONPATH=. daphne -e ssl:8001:privateKey=$HOME/.office-addin-dev-certs/localhost.key:certKey=$HOME/.office-addin-dev-certs/localhost.crt asgi:application
+
+redis:  bash -lc 'exec redis-server --port ${REDIS_PORT:-6380} --save "" --appendonly no --daemonize no'
+
+addin:  bash -lc 'exec ./scripts/dev_addin.sh'
+
+# ngrok: не валим стенд, если USE_NGROK!=1
+ngrok: bash -lc 'if [[ "${NGROK_ENABLED:-0}" = "1" ]]; then ./scripts/dev_ngrok.sh; else echo "[ngrok] disabled"; sleep infinity; fi'

@@ -22,13 +22,23 @@ def _home_tab(tab: str) -> str:
 
 def _onedrive_redirect_uri_for(request) -> str:
     """
-    На локали принудительно используем localhost (Azure не принимает 127.0.0.1).
-    В остальных случаях — берём из настроек (продовый https).
+    Локально возвращаем http://localhost:{порт}/onedrive/callback
+    (порт берём из текущего запроса), чтобы не привязываться к 8000.
+    В проде — settings.MS_REDIRECT_URI.
     """
-    host = (request.get_host() or "").split(":")[0].lower()
-    if host in ("localhost", "127.0.0.1"):
-        return "http://localhost:8000/onedrive/callback"
-    # можно вернуть settings.MS_REDIRECT_URI, где у вас продовый https
+    scheme = "https" if request.is_secure() else "http"
+    host = (request.get_host() or "").lower()       # напр. "localhost:8001" | "127.0.0.1:8001" | "imcmontan.ai"
+    hostname, _, port = host.partition(":")
+    port = port or ("443" if request.is_secure() else "80")
+
+    if hostname in ("localhost", "127.0.0.1"):
+        # На локали жёстко используем localhost, но сохраняем порт текущего запроса
+        # (Azure любит localhost, а не 127.0.0.1).
+        default_port = "443" if request.is_secure() else "80"
+        port_part = "" if port == default_port else f":{port}"
+        return f"{scheme}://localhost{port_part}/onedrive/callback"
+
+    # Продовый случай — как было
     return settings.MS_REDIRECT_URI
 
 @login_required

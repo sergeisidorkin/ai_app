@@ -1,0 +1,13 @@
+{
+  "name": "IMC Montan AI",
+  "short_name": "IMCAI",
+  "icons": [
+    { "src": "/static/core/icons/android-chrome-192x192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/static/core/icons/android-chrome-512x512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/static/core/icons/web-app-manifest-192x192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/static/core/icons/web-app-manifest-512x512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ],
+  "theme_color": "#ffffff",
+  "background_color": "#ffffff",
+  "display": "standalone"
+}
