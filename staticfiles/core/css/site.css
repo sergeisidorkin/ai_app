@@ -645,3 +645,389 @@ section#templates .alert.alert-info .text-muted {
 .icon-inline g {
   fill: currentColor;
 }
+
+
+
+
+
+
+
+
+
+
+
+
+/* СТИЛЬ КНОПОК ПАНЕЛИ РАЗДЕЛА ЗАПРОСЫ */
+
+/* Отступ сверху для кнопки "Добавить запрос" и панели действий */
+.requests-actions-row {
+  margin-top: 15px !important;
+}
+
+/* Всегда синий кант для up/down/edit */
+#requests-actions [data-panel-action="up"].btn,
+#requests-actions [data-panel-action="down"].btn,
+#requests-actions [data-panel-action="edit"].btn {
+  border-color: var(--bs-primary) !important;
+  color: var(--bs-primary);
+  --bs-btn-border-color: var(--bs-primary);
+  --bs-btn-hover-border-color: var(--bs-primary);
+  --bs-btn-active-border-color: var(--bs-primary);
+  --bs-btn-focus-border-color: var(--bs-primary);
+}
+#requests-actions [data-panel-action="up"].btn:hover,
+#requests-actions [data-panel-action="down"].btn:hover,
+#requests-actions [data-panel-action="edit"].btn:hover,
+#requests-actions [data-panel-action="up"].btn:focus,
+#requests-actions [data-panel-action="down"].btn:focus,
+#requests-actions [data-panel-action="edit"].btn:focus,
+#requests-actions [data-panel-action="up"].btn:active,
+#requests-actions [data-panel-action="down"].btn:active,
+#requests-actions [data-panel-action="edit"].btn:active {
+  background-color: var(--bs-primary);
+  color: #fff;
+}
+
+/* Всегда красный кант для Delete */
+#requests-actions #requests-actions-delete.btn {
+  border-color: var(--bs-danger) !important;
+  color: var(--bs-danger);
+  --bs-btn-border-color: var(--bs-danger);
+  --bs-btn-hover-border-color: var(--bs-danger);
+  --bs-btn-active-border-color: var(--bs-danger);
+  --bs-btn-focus-border-color: var(--bs-danger);
+}
+#requests-actions #requests-actions-delete.btn:hover,
+#requests-actions #requests-actions-delete.btn:focus,
+#requests-actions #requests-actions-delete.btn:active {
+  background-color: var(--bs-danger);
+  color: #fff;
+}
+
+/* Светло-красный фон у "Удалить", когда она не активна и не в ховере */
+#requests-pane #requests-actions #requests-actions-delete:not(:hover):not(:focus):not(.active):not(:disabled) {
+  background-color: rgba(var(--bs-danger-rgb, 220, 53, 69), 0.08);
+  color: var(--bs-danger);
+  border-color: var(--bs-danger);
+}
+/* Для disabled — ещё мягче */
+#requests-pane #requests-actions #requests-actions-delete:disabled {
+  background-color: rgba(var(--bs-danger-rgb, 220, 53, 69), 0.06);
+  color: var(--bs-danger);
+  border-color: var(--bs-danger);
+}
+
+/* Слойность: "Изменить" над "Удалить" */
+#requests-pane #requests-actions .btn-group { isolation: isolate; }
+#requests-pane #requests-actions .btn { position: relative; z-index: 1; }
+#requests-pane #requests-actions #requests-actions-edit { z-index: 2; }
+
+/* Мягче активные строки в таблице «Запросы» */
+#requests-pane tr.table-active > th,
+#requests-pane tr.table-active > td {
+  background-color: rgba(0, 0, 0, 0.03) !important;
+}
+#requests-pane .table {
+  --bs-table-active-bg: rgba(0, 0, 0, 0.03);
+  --bs-table-active-color: inherit;
+}
+
+/* Чекбоксы в шапке и строках — одинаковый отступ слева */
+#requests-pane .table thead .form-check,
+#requests-pane .table tbody .form-check {
+  margin-left: 5px !important;
+}
+
+/* Фикс-ширина колонок "Код" и "№" */
+#requests-pane .table th.col-code,
+#requests-pane .table td.col-code {
+  width: 40px; max-width: 40px; white-space: nowrap;
+}
+#requests-pane .table th.col-num,
+#requests-pane .table td.col-num {
+  width: 30px; max-width: 30px; white-space: nowrap;
+}
+
+#requests-pane .table td:nth-child(4) { /* 4-й столбец – "Краткое наименование" */
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+/* В модалке все поля — со светло-серыми бордерами Bootstrap */
+#requests-modal .form-control {
+  border-color: var(--bs-border-color, #ced4da) !important;
+}
+/* На всякий случай — отдельно тип number */
+#requests-modal input[type="number"] {
+  border-color: var(--bs-border-color, #ced4da) !important;
+}
+
+/* Бóльший отступ слева у подсказки «Пока здесь пусто.» в разделе Запросы */
+#requests-pane .requests-empty-hint {
+  padding-left: 41px !important;
+}
+
+/* Лоадер поверх #requests-pane */
+#requests-pane-wrap { min-height: 140px; } /* чтобы лоадер не схлопывался */
+.loading-overlay{
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255,255,255,.6);
+  z-index: 10;
+}
+
+/* Лоадер поверх #templates-pane */
+#templates-pane-wrap { min-height: 140px; }
+/* .loading-overlay уже есть — переиспользуем */
+
+
+
+/* Выравниваем размеры кнопок действий под таблицами */
+.products-actions-row .btn.btn-sm {
+    font-size: .875rem;      /* как у .btn-sm */
+    padding: .25rem .5rem;   /* как у .btn-sm */
+    line-height: 1.5;
+}
+
+
+
+
+
+
+
+
+/* =========================
+   REG TABLE (Регистрация проекта)
+   ========================= */
+
+/* 0) Сброс ширин у <col>, кроме 1-й и 2-й */
+#projects-pane table.reg-table col { width: auto !important; }
+#projects-pane table.reg-table col.checkbox    { width: 36px !important; }  /* 1: чекбокс */
+#projects-pane table.reg-table col:nth-child(2){ width: 90px !important; }  /* 2: номер */
+
+/* 1) Таблица заполняет контейнер */
+#projects-pane table.reg-table{
+  table-layout: auto !important;
+  width: 100%;
+  max-width: 100%;
+  --bs-table-cell-padding-y: .5rem;  /* для расчётов в шапке */
+  --reg-first-col-pr: .8rem;         /* правый padding 1-го столбца */
+}
+#projects-pane table.reg-table.table-sm { --bs-table-cell-padding-y: .25rem; }
+
+/* 2) Заголовки: переносы разрешены, прижаты к НИЗУ,
+      с небольшим «воздухом» снизу */
+#projects-pane table.reg-table thead th{
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  vertical-align: bottom !important;
+  line-height: 1.2;
+  padding-top: var(--bs-table-cell-padding-y) !important;
+  padding-bottom: calc(var(--bs-table-cell-padding-y) + 3px) !important; /* базово */
+}
+
+/* ↑ Поднять текст всех заголовков на 1px, КРОМЕ первого столбца (мастер-чекбокс) */
+#projects-pane table.reg-table thead th:not(:first-child){
+  padding-bottom: calc(var(--bs-table-cell-padding-y) + 2px) !important;
+}
+
+/* 3) Тело таблицы: всегда одна строка, с многоточием */
+#projects-pane table.reg-table tbody th,
+#projects-pane table.reg-table tbody td{
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+/* 4) Жёстко фиксируем 1-ю и 2-ю колонки */
+#projects-pane table.reg-table th:nth-child(1),
+#projects-pane table.reg-table td:nth-child(1){
+  width: 36px !important;
+  min-width: 36px !important;
+  max-width: 36px !important;
+  box-sizing: border-box;
+}
+#projects-pane table.reg-table th:nth-child(2),
+#projects-pane table.reg-table td:nth-child(2){
+  width: 90px !important;
+  min-width: 90px !important;
+  max-width: 90px !important;
+  box-sizing: border-box;
+}
+
+/* 5) Минимумы по остальным */
+#projects-pane table.reg-table th:nth-child(3),
+#projects-pane table.reg-table td:nth-child(3){ min-width: 72px !important; }   /* Группа */
+#projects-pane table.reg-table th:nth-child(4),
+#projects-pane table.reg-table td:nth-child(4){ min-width: 80px !important; }   /* Тип   */
+#projects-pane table.reg-table th:nth-child(6),
+#projects-pane table.reg-table td:nth-child(6){ min-width: 120px !important; }  /* Статус */
+
+#projects-pane table.reg-table th:nth-child(7),  #projects-pane table.reg-table td:nth-child(7),
+#projects-pane table.reg-table th:nth-child(8),  #projects-pane table.reg-table td:nth-child(8),
+#projects-pane table.reg-table th:nth-child(9),  #projects-pane table.reg-table td:nth-child(9),
+#projects-pane table.reg-table th:nth-child(10), #projects-pane table.reg-table td:nth-child(10),
+#projects-pane table.reg-table th:nth-child(11), #projects-pane table.reg-table td:nth-child(11),
+#projects-pane table.reg-table th:nth-child(12), #projects-pane table.reg-table td:nth-child(12),
+#projects-pane table.reg-table th:nth-child(13), #projects-pane table.reg-table td:nth-child(13),
+#projects-pane table.reg-table th:nth-child(14), #projects-pane table.reg-table td:nth-child(14),
+#projects-pane table.reg-table th:nth-child(15), #projects-pane table.reg-table td:nth-child(15),
+#projects-pane table.reg-table th:nth-child(16), #projects-pane table.reg-table td:nth-child(16),
+#projects-pane table.reg-table th:nth-child(17), #projects-pane table.reg-table td:nth-child(17),
+#projects-pane table.reg-table th:nth-child(18), #projects-pane table.reg-table td:nth-child(18){
+  min-width: 92px !important;
+}
+
+#projects-pane table.reg-table th:nth-child(5),  #projects-pane table.reg-table td:nth-child(5){   min-width: 200px !important; } /* Название */
+#projects-pane table.reg-table th:nth-child(19), #projects-pane table.reg-table td:nth-child(19){  min-width: 160px !important; } /* Заказчик */
+#projects-pane table.reg-table th:nth-child(20), #projects-pane table.reg-table td:nth-child(20){  min-width: 140px !important; } /* Рег. номер */
+#projects-pane table.reg-table th:nth-child(21), #projects-pane table.reg-table td:nth-child(21){  min-width: 160px !important; } /* Руководитель */
+#projects-pane table.reg-table th:nth-child(22), #projects-pane table.reg-table td:nth-child(22){  min-width: 120px !important; } /* Предмет договора */
+
+/* 6) Единый padding по краям 1-го столбца (и в шапке, и в теле) */
+#projects-pane table.reg-table > thead tr > :first-child,
+#projects-pane table.reg-table > tbody tr > :first-child{
+  padding-left: .4rem;
+  padding-right: var(--reg-first-col-pr);
+}
+
+/* 7) Чекбоксы в теле — по правому краю */
+#projects-pane table.reg-table tbody td:nth-child(1){
+  vertical-align: middle !important;
+}
+#projects-pane table.reg-table tbody td:nth-child(1) .form-check{
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important; /* → */
+  width: 100%;
+  height: 100%;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+#projects-pane table.reg-table tbody td:nth-child(1) .form-check-input{
+  margin: 0 !important;
+  position: static !important;
+  transform: none !important;
+}
+
+/* 8) Мастер-чекбокс: правый край и низ — как у строк (не меняем) */
+#projects-pane table.reg-table thead th:nth-child(1){
+  position: relative !important;
+}
+#projects-pane table.reg-table thead th:nth-child(1) .form-check{
+  position: absolute !important;
+  right: var(--reg-first-col-pr) !important;                 /* выравнивание по правому краю */
+  bottom: calc(var(--bs-table-cell-padding-y) + 3px) !important; /* у низа, как было */
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  height: auto !important;
+  width: auto !important;
+}
+#projects-pane table.reg-table thead th:nth-child(1) .form-check-input{
+  margin: 0 !important;
+  position: static !important;
+  transform: none !important;
+}
+
+/* Мастер-чекбокс в шапке: опустить на 1px */
+#projects-pane table.reg-table thead th:nth-child(1) .form-check{
+  bottom: calc(var(--bs-table-cell-padding-y) + 0px) !important; /* было + 3px */
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* ==== Work Volume table (Объем работ) ==== */
+.work-table { table-layout: fixed; } /* точно соблюдает ширины колонок */
+.work-table col.col-checkbox { width: 30px !important; }
+.work-table col.col-project  { width: 80px !important; } /* Номер проекта, 4444RU */
+.work-table col.col-type     { width: 50px !important; } /* Тип (short_name) */
+.work-table col.col-name     { width: 220px !important; } /* Название */
+
+/* Fallback на случай, если colgroup переопределяется */
+.work-table th:nth-child(2),
+.work-table td:nth-child(2) { width: 110px !important; }
+.work-table th:nth-child(3),
+.work-table td:nth-child(3) { width: 120px !important; }
+.work-table th:nth-child(4),
+.work-table td:nth-child(4) { width: 280px !important; }
+
+/* Чтобы текст не рвал ширину, аккуратно подрезаем */
+.work-table td:nth-child(2),
+.work-table td:nth-child(3),
+.work-table td:nth-child(4) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 992px) {
+  .work-table col.col-name { width: 220px !important; }
+  .work-table th:nth-child(4),
+  .work-table td:nth-child(4) { width: 220px !important; }
+}
+
+
+
+
+
+
+
+
+
+
+/* ==== Performers table ==== */
+.performers-table { table-layout: fixed; }
+
+.performers-table col.col-checkbox { width: 30px !important; }
+.performers-table col.col-number   { width: 80px !important; } /* 4444RU */
+.performers-table col.col-type     { width: 50px !important; } /* Тип */
+.performers-table col.col-name     { width: 220px !important; } /* Название */
+.performers-table col.col-active   { width: 350px !important; } /* Актив */
+
+
+.performers-table th:nth-child(2),
+.performers-table td:nth-child(2) { width: 110px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.performers-table th:nth-child(3),
+.performers-table td:nth-child(3) { width: 120px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.performers-table th:nth-child(4),
+.performers-table td:nth-child(4) { width: 280px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+@media (max-width: 992px) {
+  .performers-table col.col-name { width: 220px !important; }
+  .performers-table th:nth-child(4),
+  .performers-table td:nth-child(4) { width: 220px !important; }
+}
+
+/* +0px слева у колонки с чекбоксами во всех 3 таблицах раздела "Проекты" */
+#projects-pane table.table > thead tr > :first-child,
+#projects-pane table.table > tbody tr > :first-child,
+#performers-pane table.table > thead tr > :first-child,
+#performers-pane table.table > tbody tr > :first-child {
+  padding-left: calc(var(--bs-table-cell-padding-x, .4rem) + 0px);
+}
+
+/* На всякий случай убираем внешние отступы у .form-check внутри первой колонки */
+#projects-pane table.table > thead tr > :first-child .form-check,
+#projects-pane table.table > tbody tr > :first-child .form-check,
+#performers-pane table.table > thead tr > :first-child .form-check,
+#performers-pane table.table > tbody tr > :first-child .form-check {
+  margin-left: 0;
+}

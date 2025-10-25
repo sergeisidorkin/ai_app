@@ -1,0 +1,85 @@
+{% load static %}
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+
+  <!-- CSP достаточно либеральная для dev -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self' https: data: blob: 'unsafe-inline' 'unsafe-eval';
+                 script-src 'self' 'unsafe-inline' 'unsafe-eval';
+                 style-src 'self' 'unsafe-inline';
+                 img-src 'self' data: blob: https:;
+                 connect-src 'self' https://*.sharepoint.com https://*.officeapps.live.com https://*.ngrok-free.dev ws: wss:;
+                 frame-src https://*.officeapps.live.com https://*.sharepoint.com;
+                 font-src 'self' data: https:;
+                 frame-ancestors 'self' https://*.office.com https://*.office365.com https://*.office.live.com https://*.sharepoint.com;">
+
+  <!-- ВАЖНО: самый первый скрипт, абсолютный URL и параметр для обхода splash -->
+  <script src="/static/vendor/office.js?v=1&ngrok-skip-browser-warning=1"></script>
+
+  <script>
+  // Ничего Word-специфичного до onReady!
+  Office.onReady().then(async info => {
+    console.log('Office ready:', info && info.host);
+    if (info && info.host === Office.HostType.Word) {
+      // test: вставка абзаца
+      await Word.run(async ctx => {
+        ctx.document.body.insertParagraph("Ping from taskpane ✅", Word.InsertLocation.end);
+        await ctx.sync();
+      });
+    } else {
+      console.warn('Не Word-хост, Word API недоступен');
+    }
+  });
+  </script>
+</head>
+<body>
+  <!-- ...твой UI... -->
+
+  <script>
+    const BASE = window.location.origin;                   // твой ngrok-хост
+    const AGENT_ID = "word-remote-01";
+    const HDRS = { "Content-Type":"application/json", "ngrok-skip-browser-warning":"1" };
+
+    async function complete(jobId, ok, data) {
+      try {
+        await fetch(`${BASE}/api/jobs/${jobId}/complete`, {
+          method: "POST", headers: HDRS,
+          body: JSON.stringify(ok ? { ok:true, result:data } : { ok:false, error:String(data) })
+        });
+      } catch {}
+    }
+
+    async function handleJob(job){
+      const p = job.payload || {};
+      try{
+        if (p.kind === "paragraph.insert") {
+          await Word.run(async (ctx)=>{
+            ctx.document.body.insertParagraph(p.text || "", Word.InsertLocation.end);
+            await ctx.sync();
+          });
+          await complete(job.id, true, { inserted: 1 });
+        } else {
+          await complete(job.id, false, `Unsupported kind: ${p.kind}`);
+        }
+      } catch(e){
+        await complete(job.id, false, e.message || String(e));
+      }
+    }
+
+    async function pullOnce(){
+      try{
+        const r = await fetch(`${BASE}/api/agents/${AGENT_ID}/pull`, { method:"POST", headers: HDRS });
+        if (!r.ok) return;
+        const data = await r.json();
+        if (data?.ok && data.job) await handleJob(data.job);
+      } catch {}
+    }
+
+    Office.onReady(() => {
+      setInterval(pullOnce, 2000);
+    });
+  </script>
+</body>
+</html>

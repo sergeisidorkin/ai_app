@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<OfficeApp
+  xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+  xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
+  xsi:type="TaskPaneApp">
+
+  <!-- Identity -->
+  <Id>2345d8a2-df3a-416b-9179-42ec28d2b701</Id>
+  <Version>1.0.1.0</Version>
+  <ProviderName>IMC Montan</ProviderName>
+  <DefaultLocale>en-US</DefaultLocale>
+
+  <!-- Branding -->
+  <DisplayName DefaultValue="IMC Montan Office Add-in"/>
+  <Description DefaultValue="DocOps control pane"/>
+  <IconUrl DefaultValue="{{ taskpane_origin }}/assets/icon-32.png"/>
+  <HighResolutionIconUrl DefaultValue="{{ taskpane_origin }}/assets/icon-80.png"/>
+  <SupportUrl DefaultValue="{{ taskpane_origin }}/help"/>
+
+  <!-- Hosts -->
+  <Hosts><Host Name="Document"/></Hosts>
+
+  <!-- Панель (оставляем, как и раньше) -->
+  <DefaultSettings>
+    <SourceLocation DefaultValue="{{ taskpane_url }}"/>
+    <AutoOpenTaskpaneWithDocument>false</AutoOpenTaskpaneWithDocument>
+  </DefaultSettings>
+
+  <!-- Разрешённые источники -->
+  <AppDomains>
+    <AppDomain>{{ commands_origin }}</AppDomain>
+    <AppDomain>{{ taskpane_origin }}</AppDomain>
+    <!-- dev-помощники -->
+    <AppDomain>https://localhost:3000</AppDomain>
+    <AppDomain>https://localhost:8001</AppDomain>
+    <AppDomain>https://127.0.0.1:8001</AppDomain>
+  </AppDomains>
+
+  <Permissions>ReadWriteDocument</Permissions>
+
+  <!-- ========= V1_1: фоновые рантаймы + onDocOpen ========= -->
+  <VersionOverrides xsi:type="ov:VersionOverridesV1_1">
+    <Runtimes>
+      <Runtime resid="Commands.Url" lifetime="long" loadBehavior="load"/>
+    </Runtimes>
+
+    <Hosts>
+      <Host xsi:type="Document">
+        <DesktopFormFactor>
+
+          <!-- Функциональный файл рантайма -->
+          <FunctionFile resid="Commands.Url"/>
+
+          <!-- Кнопка на ленте (сохраняем) -->
+          <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <OfficeTab id="TabHome">
+              <Group id="CommandsGroup">
+                <Label resid="CommandsGroup.Label"/>
+                <Icon>
+                  <bt:Image size="16" resid="Icon.16x16"/>
+                  <bt:Image size="32" resid="Icon.32x32"/>
+                  <bt:Image size="80" resid="Icon.80x80"/>
+                </Icon>
+                <Control xsi:type="Button" id="TaskpaneButton">
+                  <Label resid="TaskpaneButton.Label"/>
+                  <Supertip>
+                    <Title resid="TaskpaneButton.Label"/>
+                    <Description resid="TaskpaneButton.Tooltip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16x16"/>
+                    <bt:Image size="32" resid="Icon.32x32"/>
+                    <bt:Image size="80" resid="Icon.80x80"/>
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <TaskpaneId>ButtonId1</TaskpaneId>
+                    <SourceLocation resid="Taskpane.Url"/>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+
+          <!-- Авто-запуск фоновой логики при открытии документа -->
+          <LaunchEvents>
+            <LaunchEvent Type="DocumentOpen" FunctionName="onDocOpen"/>
+          </LaunchEvents>
+
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+
+    <Resources>
+      <bt:Images>
+        <bt:Image id="Icon.16x16" DefaultValue="{{ taskpane_origin }}/assets/icon-16.png"/>
+        <bt:Image id="Icon.32x32" DefaultValue="{{ taskpane_origin }}/assets/icon-32.png"/>
+        <bt:Image id="Icon.80x80" DefaultValue="{{ taskpane_origin }}/assets/icon-80.png"/>
+      </bt:Images>
+
+      <bt:Urls>
+        <bt:Url id="Taskpane.Url" DefaultValue="{{ taskpane_url }}"/>
+        <bt:Url id="Commands.Url" DefaultValue="{{ commands_url }}"/>
+      </bt:Urls>
+
+      <bt:ShortStrings>
+        <bt:String id="CommandsGroup.Label" DefaultValue="DocOps"/>
+        <bt:String id="TaskpaneButton.Label" DefaultValue="Open DocOps"/>
+      </bt:ShortStrings>
+      <bt:LongStrings>
+        <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Open the DocOps task pane"/>
+      </bt:LongStrings>
+    </Resources>
+  </VersionOverrides>
+</OfficeApp>

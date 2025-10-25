@@ -1,6 +1,10 @@
 import json, re, logging
+import uuid
+
 from io import BytesIO
 from docx import Document
+from importlib import import_module
+from django.core.cache import cache
 from django.views.decorators.http import require_POST
 from django.contrib import messages
 from django.shortcuts import get_object_or_404, redirect, render
@@ -16,6 +20,26 @@ from googledrive_app.service import download_file as gdrive_download_file
 from .forms import BlockForm
 from .models import Block
 
+import office_addin.utils as addin_utils
+
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
+from office_addin.utils import group_for_email
+from office_addin.utils import send_text_as_paragraphs
+
+from docops_app.structured import extract_docops_control, synthesize_docops_from_text
+from docops_app.ir import program_from_dict
+from docops_app.compile_addin import compile_to_addin_blocks
+from docops_app.pipeline import process_answer_through_pipeline
+
+from macroops_app.service import (
+    docops_to_addin_job,
+    deliver_addin_job,
+    snapshot_for_log,
+    push_addin_job_via_ws,
+    enqueue_addin_job,
+)
+
 from policy_app.models import Product, TypicalSection
 from requests_app.models import RequestTable, RequestItem
 
@@ -24,8 +48,12 @@ from onedrive_app.graph import (
     download_item_bytes,
     upload_item_bytes,
     list_children as od_list_children,
-    upload_new_file_in_folder,     # ← добавим функцию в graph.py (см. п.2)
+    upload_new_file_in_folder,
 )
+from onedrive_app.service import resolve_doc_info, ensure_share_link_for_doc
+
+from logs_app.utils import new_trace_id
+from logs_app import utils as plog
 
 # === OpenAI service (импорт + надёжные заглушки) ===
 try:
@@ -151,27 +179,31 @@ def _project_label_by_id(pid: str) -> str:
     """
     if not pid:
         return ""
-    try:
-        # Попробуй сначала так (если у тебя есть такая модель):
-        from projects_app.models import Project  # поправь на свою
-        pr = Project.objects.filter(id=pid).first()
-        if not pr:
-            return ""
-        # Выбери поле, которое используется в option {{ opt.label }}
-        # Если там хранится "4444RU DD Пример проекта", то это что-то вроде pr.label или pr.name
-        # Ниже пробуем несколько вариантов:
-        for attr in ("label", "name", "title"):
-            if hasattr(pr, attr) and getattr(pr, attr):
-                return str(getattr(pr, attr))
-        return str(pr)
-    except Exception:
-        # Если другой модуль:
-        try:
-            from debugger_app.utils import get_project_label  # вдруг есть такой хелпер
-            return get_project_label(pid) or ""
-        except Exception:
-            return ""
 
+    # 1) Основной путь — модель Project
+    try:
+        from projects_app.models import Project  # мягкая зависимость
+        pr = Project.objects.filter(pk=pid).first()
+        if pr:
+            for attr in ("label", "name", "title"):
+                v = getattr(pr, attr, None)
+                if v:
+                    return str(v)
+            return str(pr)
+    except Exception:
+        pass  # модели может не быть — это ок
+
+    # 2) Фолбэк — динамический импорт утилиты (без жёсткой ссылки для IDE)
+    try:
+        mod = import_module("debugger_app.utils")
+        get_project_label = getattr(mod, "get_project_label", None)
+        if callable(get_project_label):
+            return get_project_label(pid) or ""
+    except Exception:
+        pass
+
+    # 3) Ничего не нашли
+    return ""
 
 def _get_last_nonempty(qd, key: str) -> str:
     try:
@@ -222,6 +254,7 @@ def _extract_project_code6_server(request) -> tuple[str, dict]:
     Не зависит жёстко от наличия модели Project.
     """
     # снимки POST/GET
+
     post = {k: (request.POST.getlist(k) if len(request.POST.getlist(k)) > 1 else request.POST.get(k))
             for k in request.POST.keys()}
     get_ = {k: (request.GET.getlist(k) if len(request.GET.getlist(k)) > 1 else request.GET.get(k))
@@ -291,7 +324,27 @@ def _extract_project_code6_server(request) -> tuple[str, dict]:
     }
     return code, dbg
 
+def _get_block_code(block) -> str:
+    """
+    Возвращает значение поля «Код» из блока.
+    Если поля нет/пусто — вернёт '' (без фолбэков).
+    """
+    try:
+        v = (getattr(block, "code", "") or "").strip()
+        return v
+    except Exception:
+        return ""
 
+def _anchor_for_block(block) -> dict | None:
+    """
+    Формирует anchor-объект для addin.job:
+      {"text": "< {Код}"}
+    Если «Код» пуст — вернёт None (якорь не добавляем).
+    """
+    code = _get_block_code(block)
+    if not code:
+        return None
+    return {"text": f"< {code}"}
 
 
 
@@ -857,10 +910,87 @@ def _collect_files_from_request_folders(request, root_folder_id: str, res_key: s
     return out
 
 
+def _group_for_email(email: str) -> str:
+    e = (email or "").strip().lower().replace("@", ".")
+    e = re.sub(r"[^0-9a-zA-Z_.-]+", "-", e)
+    return f"user_{e}"[:90]
+
+# Универсальная постановка addin.job в очередь с авто-адаптацией аргументов
+def _enqueue_addin_job_compat(email: str, job: dict, doc_url: str, priority: int = 10):
+    """
+    Пытается вызвать macroops_app.service.enqueue_addin_job с подходящими именами аргументов.
+    Передаёт ТОЛЬКО те ключи, которые есть у функции.
+    """
+    import inspect
+
+    try:
+        params = set(inspect.signature(enqueue_addin_job).parameters.keys())
+    except Exception:
+        params = set()
+
+    kwargs = {}
+
+    # получатель (если предусмотрен)
+    for name in ("email", "user_email", "recipient", "to", "group", "group_name", "channel"):
+        if name in params:
+            kwargs[name] = email
+            break
+
+    # контейнер задания
+    if "job" in params:
+        kwargs["job"] = job
+    elif "payload" in params:
+        kwargs["payload"] = job
+    elif "ops" in params:
+        kwargs["ops"] = job.get("ops", [])
+    else:
+        kwargs["job"] = job  # дефолт
+
+    # ссылка на документ
+    for name in ("doc_url", "docUrl", "url", "doc", "document_url"):
+        if name in params:
+            kwargs[name] = doc_url
+            break
+
+    # приоритет
+    for name in ("priority", "prio", "p"):
+        if name in params:
+            kwargs[name] = priority
+            break
+
+    return enqueue_addin_job(**kwargs)
+
+
+
+
+
+
+
+
 @require_POST
 @login_required
 def block_run(request, pk):
     block = get_object_or_404(Block, pk=pk)
+
+    trace_id = new_trace_id()
+    request_id = uuid.uuid4()
+
+    via = (request.POST.get("via") or request.GET.get("via") or "ws").lower()
+    if via not in ("ws", "queue"):
+        via = "ws"
+
+    plog.info(
+        request.user, phase="request", event="block_run.start",
+        message=f"Start block_run via={via}",
+        trace_id=trace_id, request_id=request_id, via=via,
+        data={
+            "block_id": pk,
+            "post_keys": list(request.POST.keys()),
+            "get_keys": list(request.GET.keys()),
+        }
+    )
+
+    anchor_obj = _anchor_for_block(block)  # {"text": "< HRM-1"} | None
 
     # Диагностика запроса
     try:
@@ -875,6 +1005,11 @@ def block_run(request, pk):
     # 1) Код проекта с полной серверной диагностикой
     code6, dbg = _extract_project_code6_server(request)
     logger.info("block_run recv debug: %s", dbg)
+    plog.info(request.user, phase="extract", event="project_code6",
+              message=f"code6={code6 or ''}",
+              trace_id=trace_id, request_id=request_id,
+              project_code6=code6 or "", data={"dbg": dbg})
+
 
     if not code6:
         # Фолбэк из сессии (если когда-то уже запускали)
@@ -890,8 +1025,17 @@ def block_run(request, pk):
     # 2) Проверка OneDrive выбора
     sel = OneDriveSelection.objects.filter(user=request.user).first()
     if not sel or not sel.item_id:
-        messages.error(request, "Сначала выберите файл или папку в OneDrive в разделе «Подключения».")
+        plog.warn(request.user, phase="onedrive", event="selection.missing",
+                  message="OneDrive not connected", trace_id=trace_id,
+                  request_id=request_id, project_code6=code6 or "")
+        messages.error(request, "Сначала выберите файл или папку …")
         return _redirect_after(request, default_tab="debugger")
+    else:
+        plog.info(request.user, phase="onedrive", event="selection.ok",
+                  message="OneDrive selection ok",
+                  trace_id=trace_id, request_id=request_id,
+                  project_code6=code6 or "",
+                  data={"item_id": sel.item_id, "item_name": sel.item_name})
 
     # 3) Модель
     model_id = (block.model or "").strip()
@@ -905,12 +1049,27 @@ def block_run(request, pk):
     if labels_for_prompt:
         full_prompt = "{}\n\n{}".format("\n".join(labels_for_prompt), full_prompt)
 
+    plog.debug(request.user, phase="prompt", event="compose",
+               message="Compose prompt + context",
+               trace_id=trace_id, request_id=request_id,
+               project_code6=code6 or "",
+               data={"context_labels": _extract_context_labels(block)})
+
     # 5) Проверка Google Drive подключения (корневая папка проектов)
+
     gsel = request.session.get("gdrive_selection") or {}
     base_folder_id = gsel.get("id") or ""
     res_key = gsel.get("res_key") or ""
     if not base_folder_id or not gdrive_get_access_token(request):
         messages.error(request, "Google Drive не подключён. Выберите папку в «Подключения».")
+        return _redirect_after(request, default_tab="debugger")
+
+    if not base_folder_id or not gdrive_get_access_token(request):
+        plog.error(request.user, phase="gdrive", event="not_connected",
+                   message="Google Drive not connected",
+                   trace_id=trace_id, request_id=request_id,
+                   project_code6=code6 or "")
+        messages.error(request, "Google Drive не подключён …")
         return _redirect_after(request, default_tab="debugger")
 
     # 6) Валидация кода проекта
@@ -934,6 +1093,13 @@ def block_run(request, pk):
         if found_asset:
             search_root = found_asset
 
+    plog.info(request.user, phase="gdrive", event="project_folder.ok",
+              message="Project folder resolved",
+              trace_id=trace_id, request_id=request_id,
+              project_code6=code6 or "",
+              data={"project_folder": project_folder.get("name"),
+                    "asset": asset_name or ""})
+
     # 9) Вложения из папок запросов (по именам из Block.context)
     request_names = _extract_context_labels(block)
     attachments = _collect_files_from_request_folders(
@@ -941,7 +1107,14 @@ def block_run(request, pk):
         max_files=120, max_each_bytes=25 * 1024 * 1024
     )
 
+    plog.info(request.user, phase="gdrive", event="attachments.collected",
+              message=f"Attachments={len(attachments)}",
+              trace_id=trace_id, request_id=request_id,
+              project_code6=code6 or "",
+              data={"count": len(attachments)})
+
     # 10) Вызов LLM
+
     try:
         client = get_openai_client_for(request.user)
         if client is None:
@@ -952,6 +1125,14 @@ def block_run(request, pk):
 
         FILE_MODELS = {"gpt-4o", "o4-mini", "o4"}
         model_for_files = model_id
+
+        plog.info(request.user, phase="llm", event="call.start",
+                  message=f"model={model_for_files}",
+                  trace_id=trace_id, request_id=request_id,
+                  project_code6=code6 or "",
+                  data={"temperature": getattr(block, "temperature", None),
+                        "attachments": len(attachments)})
+
         if attachments and model_id not in FILE_MODELS:
             messages.warning(request, f"Модель «{model_id}» может не поддерживать документы. Включаю «gpt-4o».")
             model_for_files = "gpt-4o"
@@ -975,42 +1156,532 @@ def block_run(request, pk):
             messages.error(request, f"Ошибка при обращении к LLM: {e}")
         return _redirect_after(request, default_tab="debugger")
 
-    # 11) Запись в OneDrive .docx
-    try:
-        if getattr(sel, "is_folder", False):
-            status, payload = _one_docx_in_folder_or_error(request.user, sel.item_id)
-            if status == "err":
-                messages.error(request, payload)
-                return _redirect_after(request, default_tab="debugger")
-            target_item_id = payload
-        else:
-            name_lc = (sel.item_name or "").lower()
-            if not name_lc.endswith(".docx"):
-                messages.error(request, "Выбранный объект OneDrive — не .docx.")
-                return _redirect_after(request, default_tab="debugger")
-            target_item_id = sel.item_id
+    plog.info(request.user, phase="llm", event="call.done",
+              message=f"answer_len={len(answer)}",
+              trace_id=trace_id, request_id=request_id,
+              project_code6=code6 or "")
 
-        src = download_item_bytes(request.user, target_item_id)
-        doc = Document(BytesIO(src))
-
-        marker = (block.code or "").strip()
-        inserted = False
-        if marker:
-            for paragraph in _iter_paragraphs(doc):
-                if marker in paragraph.text:
-                    _insert_paragraph_after(paragraph, answer)
-                    inserted = True
-                    break
-        if not inserted:
-            doc.add_paragraph(answer)
-
-        buf = BytesIO(); doc.save(buf); buf.seek(0)
-        upload_item_bytes(request.user, target_item_id, buf.read())
-    except Exception as e:
-        messages.error(request, f"Не удалось записать в документ: {e}")
+    # определяем email перед DocOps-втекой
+    target_email = (request.POST.get("email") or request.user.email or "").strip()
+    if not target_email:
+        messages.error(request, "У текущего пользователя не указан email — некуда «доставлять».")
         return _redirect_after(request, default_tab="debugger")
 
-    if marker and not inserted:
-        messages.warning(request, f"Якорь «{marker}» не найден — текст добавлен в конец документа.")
-    messages.success(request, f"Ответ модели «{model_id}» записан в документ. Вложений из Google Drive: {len(attachments)}.")
+    # --- 10.1 Привязка из панели «Отладка» + надёжные фолбэки ---
+
+    def _last(qd, name):  # берём последнее непустое из списка (и для POST, и для GET)
+        try:
+            vals = qd.getlist(name)
+        except Exception:
+            vals = []
+        for v in reversed(vals):
+            if v not in (None, "", []):
+                return str(v)
+        return ""
+
+    asset_name = (_last(request.POST, "asset_name") or _last(request.GET, "asset_name") or "").strip()
+    section_id = (_last(request.POST, "section_id") or _last(request.GET, "section_id") or "").strip()
+    section_code_param = (
+                _last(request.POST, "section_code") or _last(request.GET, "section_code") or "").strip().upper()
+
+    # фолбэк из сессии
+    if not asset_name:
+        asset_name = (request.session.get("dbg_asset_name") or "").strip()
+    if not section_id:
+        section_id = (request.session.get("dbg_section_id") or "").strip()
+    if not section_code_param:
+        section_code_param = (request.session.get("dbg_section_code") or "").strip().upper()
+
+    # приоритет: присланный section_code → из БД по section_id → из блока → ""
+    section_code = section_code_param
+    if not section_code and section_id:
+        try:
+            sec = TypicalSection.objects.filter(pk=section_id).only("code").first()
+            if sec and getattr(sec, "code", ""):
+                section_code = sec.code.strip().upper()
+        except Exception:
+            pass
+    if not section_code and getattr(block, "section_id", None):
+        try:
+            section_code = (getattr(block.section, "code", "") or "").strip().upper()
+        except Exception:
+            pass
+
+    # сохраняем в сессию для последующих запусков
+    if asset_name:
+        request.session["dbg_asset_name"] = asset_name
+    if section_id:
+        request.session["dbg_section_id"] = section_id
+    if section_code:
+        request.session["dbg_section_code"] = section_code
+
+    company = asset_name  # именно строка из «Актив:»
+
+    plog.info(
+        request.user, phase="extract", event="context.bound",
+        message=f"binding from panel company='{company}' section='{section_code}'",
+        trace_id=trace_id, request_id=request_id,
+        project_code6=code6 or "",
+        data={"asset_name": asset_name, "section_id": section_id, "section_code": section_code}
+    )
+
+    # section_code = код раздела (две буквы, например HR) по section_id
+    section_code = ""
+    if section_id:
+        try:
+            sec = TypicalSection.objects.filter(pk=section_id).only("code").first()
+            if sec and getattr(sec, "code", ""):
+                section_code = sec.code.strip()
+        except Exception:
+            section_code = ""
+
+    # Лог — что именно привязали из панели
+    plog.info(
+        request.user, phase="extract", event="context.bound",
+        message=f"binding from panel company='{company}' section='{section_code}'",
+        trace_id=trace_id, request_id=request_id,
+        project_code6=code6 or "",
+        data={"asset_name": asset_name, "section_id": section_id, "section_code": section_code}
+    )
+
+    # 1) Ищем документ и получаем раздаваемую ссылку редактирования (share_url)
+    try:
+        info = resolve_doc_info(
+            request.user, sel, code6,
+            company=(company or None),
+            section=(section_code or None),
+        )
+        share_url = ensure_share_link_for_doc(
+            request.user, info["driveId"], info["itemId"],
+            prefer="organization", grant_emails=None
+        )
+
+    except Exception as e1:
+        # Фолбэк (ровно один .docx в папке) + лог
+        plog.warn(
+            request.user, phase="onedrive", event="resolve.failed",
+            message=f"resolve_doc_info failed: {e1}",
+            trace_id=trace_id, request_id=request_id,
+            project_code6=code6 or "",
+            data={"company": company, "section_code": section_code}
+        )
+        status, item_id = _one_docx_in_folder_or_error(request.user, sel.item_id)
+        if status != "ok":
+            messages.error(request, f"Не удалось найти документ в OneDrive: {e1}")
+            return _redirect_after(request, default_tab="debugger")
+
+        drive_id = getattr(sel, "drive_id", "") or ""
+        if not drive_id:
+            try:
+                jd = od_list_children(request.user, sel.item_id)
+                for it in jd.get("value", []):
+                    if it.get("id") == item_id and it.get("parentReference", {}).get("driveId"):
+                        drive_id = it["parentReference"]["driveId"];
+                        break
+            except Exception:
+                drive_id = ""
+
+        if not drive_id:
+            messages.error(request, "Не удалось определить driveId для выбранного документа в OneDrive.")
+            return _redirect_after(request, default_tab="debugger")
+
+        share_url = ensure_share_link_for_doc(
+            request.user, drive_id, item_id,
+            prefer="organization", grant_emails=None
+        )
+
+    doc_url = share_url
+    if not doc_url:
+        messages.error(request, "Не удалось сформировать ссылку на документ в OneDrive.")
+        return _redirect_after(request, default_tab="debugger")
+
+    plog.info(
+        request.user, phase="onedrive", event="share_url.ok",
+        message="Share URL resolved",
+        trace_id=trace_id, request_id=request_id,
+        project_code6=code6 or "", doc_url=doc_url,
+        company=company or "", section=section_code or ""
+    )
+
+    pipe = process_answer_through_pipeline(
+        answer,
+        user=request.user,
+        trace_id=trace_id,
+        request_id=request_id,
+        project_code6=code6 or "",
+    )
+
+    plog.info(request.user, phase="pipeline", event="result",
+              message="pipeline result",
+              trace_id=trace_id, request_id=request_id,
+              project_code6=code6 or "",
+              data={"valid": pipe.get("valid"),
+                    "normalized": pipe.get("normalized"),
+                    "source": pipe.get("source"),
+                    "ops_count": len(pipe.get("docops", {}).get("ops", []))})
+
+    if not pipe.get("valid"):
+
+        plog.warn(request.user, phase="pipeline", event="invalid",
+                  message=str(pipe.get("error") or "invalid"),
+                  trace_id=trace_id, request_id=request_id,
+                  project_code6=code6 or "")
+
+        # если совсем не смогли привести к валидному DocOps — аккуратный фолбэк
+        if via == "ws":
+            # отправим как плоский текст (минимальная деградация)
+            sent = send_text_as_paragraphs(target_email, answer, styleBuiltIn="Normal")
+            messages.warning(request,
+                             f"DocOps/IR невалиден ({pipe.get('error')}). Через WS отправлен обычный текст ({sent} абз.).")
+            return _redirect_after(request, default_tab="debugger")
+        else:
+            messages.error(request, f"DocOps/IR невалиден ({pipe.get('error')}). В очередь положить нечего.")
+            return _redirect_after(request, default_tab="debugger")
+
+    docops_prog = pipe["program"]  # {type:"DocOps", version:"v1", ops:[...]}
+
+    # Сборка addin.job через macroops
+    job = docops_to_addin_job(docops_prog, meta={
+        "source": f"block_run/{pipe.get('source')}",
+        "normalized": bool(pipe.get("normalized")),
+        "blockId": block.id,
+        "model": model_id,
+    })
+
+    # якорь "< CODE" — если вы уже внедряли хелпер _make_anchor_for_block, просто используйте:
+    anchor_text = f"< {(block.code or '').strip()}" if getattr(block, "code", None) else None
+    if anchor_text:
+        job.setdefault("anchor", {"text": anchor_text})
+
+        plog.info(request.user, phase="job", event="build.ok",
+                  message="addin.job built",
+                  trace_id=trace_id, request_id=request_id,
+                  project_code6=code6 or "", anchor_text=anchor_text or "",
+                  data={"ops": len(job.get("ops", []))})
+
+    else:
+        # оставим как есть; якорь опционален
+        pass
+
+    try:
+        snap = snapshot_for_log(job, max_ops=12, max_chars_per_op=160)
+        plog.info(
+            request.user, phase="job", event="build.summary",
+            message=f"addin.job summary ops={snap['ops_count']}",
+            trace_id=trace_id, request_id=request_id, via=via,
+            project_code6=code6 or "", doc_url=doc_url,
+            anchor_text=(job.get("anchor") or {}).get("text", ""),
+            data=snap,
+        )
+    except Exception as e:
+        plog.warn(
+            request.user, phase="job", event="build.summary.failed",
+            message=str(e),
+            trace_id=trace_id, request_id=request_id, via=via,
+            project_code6=code6 or ""
+        )
+
+    # --- 3) Доставка: один вызов без дублирования ---
+    delivered_ok = False
+    try:
+        # Заполняем полезную мету — чтобы в очереди и на клиенте было видно «кто/что/куда»
+        job.setdefault("meta", {})
+        job["meta"].setdefault("doc_url", doc_url)
+        job["meta"].setdefault("trace_id", str(trace_id))
+        job["meta"].setdefault("requestedBy", {
+            "id": getattr(request.user, "id", None),
+            "username": getattr(request.user, "username", "") or "",
+            "email": getattr(request.user, "email", "") or "",
+        })
+        job["meta"].setdefault("job_id", str(request_id))
+
+        if via == "ws":
+            # Пытаемся отправить цельным addin.job по WS
+            try:
+                grp = group_for_email(target_email)
+                cache.set(f"ws:last_trace:{grp}", str(trace_id), 600)
+                cache.set(f"ws:last_job:{grp}", str(request_id), 600)
+                sent_ops = push_addin_job_via_ws(target_email, job, doc_url=doc_url,
+                                                 user=request.user, trace_id=trace_id)
+            except Exception:
+                # фолбэк: шлём напрямую через Channels один пакет addin.job
+                layer = get_channel_layer()
+                async_to_sync(layer.group_send)(
+                    group_for_email(target_email),
+                    {
+                        "type": "addin.job",
+                        "job": job,
+                        "docUrl": doc_url,
+                        "jobId": str(request_id),
+                        "traceId": str(trace_id),
+                    },
+                )
+                sent_ops = len(job.get("ops", []))
+
+            messages.success(request, f"Отправлено по WS как job (опс: {sent_ops}).")
+            delivered_ok = True
+
+        else:
+            try:
+                q_snap = snapshot_for_log(job, max_ops=8, max_chars_per_op=140)
+                plog.debug(
+                    request.user, phase="queue", event="payload",
+                    message="Queue payload snapshot",
+                    trace_id=trace_id, request_id=request_id, via="queue",
+                    project_code6=code6 or "", doc_url=doc_url,
+                    anchor_text=(job.get("anchor") or {}).get("text", ""),
+                    data=q_snap,
+                )
+            except Exception as e:
+                plog.warn(
+                    request.user, phase="queue", event="payload.snapshot.failed",
+                    message=str(e),
+                    trace_id=trace_id, request_id=request_id, via="queue",
+                    project_code6=code6 or ""
+                )
+            # queue: совместим разные версии enqueue_* (payload/job/ops)
+            res = _enqueue_addin_job_compat(
+                email=target_email,
+                job=job,
+                doc_url=doc_url,
+                priority=10,
+            )
+            messages.success(request, f"Положено в очередь: {res}")
+            delivered_ok = True
+
+    except Exception as e:
+        messages.error(request, f"Ошибка доставки ({via}): {e}")
+        plog.error(
+            request.user, phase="deliver", event="failed",
+            message=str(e),
+            trace_id=trace_id, request_id=request_id,
+            via=via, project_code6=code6 or "", doc_url=doc_url,
+            anchor_text=anchor_text or "", data={"exc": str(e)}
+        )
+
+    if delivered_ok:
+        plog.info(
+            request.user, phase="deliver", event="ok",
+            message="delivery finished",
+            trace_id=trace_id, request_id=request_id, via=via,
+            project_code6=code6 or "", doc_url=doc_url,
+            anchor_text=anchor_text or ""
+        )
+
     return _redirect_after(request, default_tab="debugger")
+
+
+
+
+
+
+    # # --- 1) Попробуем DocOps напрямую ---
+    # docops_obj = None
+    # try:
+    #     docops_obj = try_extract_docops_json(answer)
+    # except Exception:
+    #     docops_obj = None
+    #
+    # job = None
+    # if docops_obj and isinstance(docops_obj.get("ops"), list) and docops_obj.get("type") == "DocOps":
+    #     job = docops_to_addin_job(docops_obj, meta={
+    #         "source": "block_run",
+    #         "blockId": block.id,
+    #         "model": model_id,
+    #     })
+    #     # добавим anchor, если есть
+    #     if isinstance(job, dict) and anchor_obj:
+    #         job["anchor"] = anchor_obj
+    # else:
+    #     # --- 2) Фолбэк: старый pipeline → program → blocks → job ---
+    #     ctrl = None
+    #     try:
+    #         ctrl = extract_docops_control(answer)  # может вернуть {"program": {...}}
+    #     except Exception:
+    #         ctrl = None
+    #
+    #     program = None
+    #     if ctrl and ctrl.get("program"):
+    #         program = program_from_dict(ctrl["program"])
+    #     else:
+    #         tmp = synthesize_docops_from_text(answer)
+    #         if tmp:
+    #             program = program_from_dict(tmp)
+    #
+    #     if not program:
+    #         # если вообще ничего структурного — поведение зависит от канала:
+    #         if via == "ws":
+    #             sent = send_text_as_paragraphs(target_email, answer, styleBuiltIn="Normal")
+    #             messages.warning(request, f"DocOps не найден. Через WS отправлен обычный текст ({sent} абз.).")
+    #             return _redirect_after(request, default_tab="debugger")
+    #         else:
+    #             messages.error(request, "DocOps/Program не найден — через очередь класть нечего.")
+    #             return _redirect_after(request, default_tab="debugger")
+    #
+    #     blocks = compile_to_addin_blocks(program)
+    #
+    #     # фильтр пустых параграфов — как было
+    #     def _is_empty_par(b):
+    #         if (b.get("kind") or b.get("op") or b.get("type")) in ("paragraph.insert", "paragraph"):
+    #             txt = (b.get("text") or "").strip()
+    #             has_style = bool(b.get("styleId") or (b.get("styleBuiltIn") or "").strip()
+    #                              or (b.get("styleName") or "").strip() or (b.get("styleNameHint") or "").strip())
+    #             return (not txt) and (not has_style)
+    #         return False
+    #     blocks = [b for b in blocks if not _is_empty_par(b)]
+    #
+    #     if not blocks:
+    #         if via == "ws":
+    #             sent = send_text_as_paragraphs(target_email, answer, styleBuiltIn="Normal")
+    #             messages.warning(request, f"DocOps дал пустой вывод. Через WS отправлен обычный текст ({sent} абз.).")
+    #             return _redirect_after(request, default_tab="debugger")
+    #         else:
+    #             messages.error(request, "Пустой набор блоков — через очередь класть нечего.")
+    #             return _redirect_after(request, default_tab="debugger")
+    #
+    #     # оборачиваем blocks в один addin.job (универсально для queue/WS)
+    #     job = {
+    #         "kind": "addin.job",
+    #         "version": "v1",
+    #         "id": str(uuid.uuid4()),
+    #         "ops": blocks,
+    #         "meta": {"source": "block_run_fallback", "blockId": block.id, "model": model_id},
+    #     }
+    #     if anchor_obj:
+    #         job["anchor"] = anchor_obj
+    #
+    # # --- 3) Доставка: один вызов без дублирования ---
+    # try:
+    #     result = deliver_addin_job(via, email=target_email, job=job, doc_url=doc_url, priority=10)
+    #     if via == "ws":
+    #         messages.success(request, f"Отправлено по WS ({result} опс).")
+    #     else:
+    #         messages.success(request, f"Положено в очередь: {result}")
+    # except Exception as e:
+    #     messages.error(request, f"Ошибка доставки ({via}): {e}")
+    # return _redirect_after(request, default_tab="debugger")
+
+
+
+
+    # docops_obj = None
+    # try:
+    #     docops_obj = try_extract_docops_json(answer)
+    # except Exception:
+    #     docops_obj = None
+    #
+    # if docops_obj and isinstance(docops_obj.get("ops"), list) and docops_obj.get("type") == "DocOps":
+    #     # Новая ветка: отдать raw DocOps в macroops_app (без ломки старой логики)
+    #     try:
+    #         # импортируем лениво, чтобы отсутствие macroops_app не ломало рантайм
+    #         from macroops_app.service import docops_to_addin_job, push_addin_job_via_ws
+    #     except Exception as e:
+    #         messages.error(request, f"DocOps распознан, но macroops_app недоступен: {e}")
+    #         return _redirect_after(request, default_tab="debugger")
+    #
+    #     try:
+    #         # 1) Конвертация DocOps.ops -> addin.job (опсы addin.block внутри job)
+    #         job = docops_to_addin_job(docops_obj, meta={
+    #             "source": "block_run",
+    #             "blockId": block.id,
+    #             "model": model_id,
+    #         })
+    #         # 2) Отправка в панель по WS (как и раньше, но централизовано через macroops_app)
+    #         USE_WS_PUSH = False  # ← временно
+    #         if USE_WS_PUSH:
+    #             sent_ops = push_addin_job_via_ws(target_email, job)
+    #             messages.success(
+    #                 request,
+    #                 f"Сырые DocOps обработаны в macroops_app и отправлены в Word. Опса(ов): {sent_ops}."
+    #             )
+    #
+    #         try:
+    #             job_id = enqueue_addin_job(doc_url, job, priority=10)
+    #             messages.success(request, f"Также положили addin.job в очередь: {job_id}")
+    #         except Exception as e:
+    #             messages.warning(request, f"В очередь положить не удалось: {e}")
+    #
+    #         return _redirect_after(request, default_tab="debugger")
+    #     except Exception as e:
+    #         messages.error(request, f"Ошибка macroops_app (DocOps): {e}")
+    #         return _redirect_after(request, default_tab="debugger")
+
+    # from django.core.cache import cache  # можно потом убрать, если не будешь юзать кэш
+    #
+    # # 11) Отправка в Word Add-in (DocOps → addin.block), фолбэк — плоский текст
+    # try:
+    #     target_email = (request.POST.get("email") or request.user.email or "").strip()
+    #     if not target_email:
+    #         messages.error(request, "У текущего пользователя не указан email — некуда пушить в Add-in.")
+    #         return _redirect_after(request, default_tab="debugger")
+    #
+    #     group = group_for_email(target_email)
+    #
+    #     # 11.1 Распарсим ответ модели: явный DocOps или синтез из текста
+    #     ctrl = None
+    #     try:
+    #         ctrl = extract_docops_control(answer)  # теперь вернёт {"program": {...}}
+    #     except Exception:
+    #         ctrl = None
+    #
+    #     program = None
+    #     if ctrl and ctrl.get("program"):
+    #         program = program_from_dict(ctrl["program"])
+    #     else:
+    #         tmp = synthesize_docops_from_text(answer)
+    #         if tmp:
+    #             program = program_from_dict(tmp)
+    #
+    #     # если и после этого программы нет — честно падаем на плоский текст
+    #     if not program:
+    #         sent = send_text_as_paragraphs(target_email, answer, styleBuiltIn="Normal")
+    #         messages.warning(
+    #             request,
+    #             f"DocOps не найден. Отправлен обычный текст ({sent} абз.)."
+    #         )
+    #         return _redirect_after(request, default_tab="debugger")
+    #
+    #     # 11.2 Компиляция в addin.block'и (как было)
+    #     blocks = compile_to_addin_blocks(program)
+    #
+    #     # 11.3 Фильтр мусора: пустые paragraph.insert без текста и без стиля
+    #     def _is_empty_par(b):
+    #         if (b.get("kind") or b.get("op") or b.get("type")) in ("paragraph.insert", "paragraph"):
+    #             txt = (b.get("text") or "").strip()
+    #             has_style = bool(
+    #                 b.get("styleId") or (b.get("styleBuiltIn") or "").strip() or (b.get("styleName") or "").strip() or (
+    #                             b.get("styleNameHint") or "").strip())
+    #             return (not txt) and (not has_style)
+    #         return False
+    #
+    #     blocks = [b for b in blocks if not _is_empty_par(b)]
+    #
+    #     # 11.4 Если блоков нет — фолбэк на плоский текст
+    #     if not blocks:
+    #         sent = send_text_as_paragraphs(target_email, answer, styleBuiltIn="Normal")
+    #         messages.warning(
+    #             request,
+    #             f"DocOps дал пустой вывод. Отправлен обычный текст ({sent} абз.)."
+    #         )
+    #         return _redirect_after(request, default_tab="debugger")
+    #
+    #     # 11.5 Пуш блоков по WS
+    #     layer = get_channel_layer()
+    #     for b in blocks:
+    #         async_to_sync(layer.group_send)(group, {"type": "addin.block", "block": b})
+    #
+    #     messages.success(
+    #         request,
+    #         f"Ответ модели «{model_id}» отправлен в Word через DocOps ({target_email}). "
+    #         f"Блоков: {len(blocks)}; вложений из Google Drive: {len(attachments)}."
+    #     )
+    #     return _redirect_after(request, default_tab="debugger")
+    #
+    # except Exception as e:
+    #     logging.exception("DocOps pipeline failed in block_run")
+    #     try:
+    #         sent = send_text_as_paragraphs(target_email, answer, styleBuiltIn="Normal")
+    #         messages.warning(request, f"DocOps не сработал ({e}). Отправлен обычный текст ({sent} абз.).")
+    #     except Exception as e2:
+    #         messages.error(request, f"Не удалось отправить данные в Word Add-in: {e2}")
+    #     return _redirect_after(request, default_tab="debugger")

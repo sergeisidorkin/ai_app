@@ -1,12 +1,32 @@
 asgiref==3.9.1
 Django==5.2.5
 django-environ==0.12.0
-gunicorn==23.0.0
-packaging==25.0
-psycopg2-binary==2.9.10
-sqlparse==0.5.3
+whitenoise==6.7.0
+
+# WebSocket/ASGI
+channels==4.1.0
+daphne==4.1.2
+channels-redis==4.2.0
+redis==5.0.8
+
+# CORS для Word/Office Online
+django-cors-headers==4.4.0
+
+# Бэкенд-интеграции
 msal==1.31.0
 requests==2.32.3
-python-docx==1.1.2
 openai>=1.50.0,<2
-whitenoise==6.7.0
+
+# DOCX (серверный пайплайн/шаблоны)
+python-docx==1.1.2
+
+# Prod-сервер (если используете WSGI в каких-то сценариях)
+gunicorn==23.0.0
+
+# SQL
+psycopg2-binary==2.9.10
+sqlparse==0.5.3
+
+# Удобно для типизации, если понадобится
+typing_extensions==4.12.2
+PyYAML>=6.0.1,<7
