@@ -225,7 +225,7 @@ def enqueue_from_pipeline(request):
         job_id=j.id,
         doc_url=j.doc_url,
         message="Enqueued from pipeline",
-        trace_id=(str(j.trace_id) if j.trace_id else None),
+        trace_id=j.trace_id,
         data={"ops": len((payload or {}).get("ops") or []),
               "has_anchor": bool(marker)}
     )
@@ -278,7 +278,7 @@ def enqueue(request):
     plog.info(
         None, phase="queue", event="enqueue", message="Job enqueued",
         job_id=j.id, doc_url=j.doc_url, anchor_text=anchor_text,
-        trace_id=(str(j.trace_id) if j.trace_id else None),
+        trace_id=j.trace_id,
         data={
             "priority": j.priority,
             "ops": len((payload or {}).get("ops") or []),
@@ -336,7 +336,7 @@ def agent_pull(request, agent_id: str):
         plog.info(None, phase="agent", event="pull.assigned_existing",
                   message="Return already assigned to this agent",
                   job_id=j.id, doc_url=j.doc_url,
-                  trace_id=(str(j.trace_id) if j.trace_id else None),
+                  trace_id=j.trace_id,
                   data={"agent_id": agent_id, "status": j.status})
         return _job_payload(j)
 
@@ -352,7 +352,7 @@ def agent_pull(request, agent_id: str):
         plog.warn(None, phase="agent", event="pull.reclaim",
                   message=f"Reclaim ASSIGNED job from '{old_agent}'",
                   job_id=j.id, doc_url=j.doc_url,
-                  trace_id=(str(j.trace_id) if j.trace_id else None),
+                  trace_id=j.trace_id,
                   data={"agent_id": agent_id})
         return _job_payload(j)
 
@@ -371,7 +371,7 @@ def agent_pull(request, agent_id: str):
     plog.info(None, phase="agent", event="pull.assigned_new",
               message="Assigned QUEUED to agent",
               job_id=j.id, doc_url=j.doc_url,
-              trace_id=(str(j.trace_id) if j.trace_id else None),
+              trace_id=j.trace_id,
               data={"agent_id": agent_id})
     return _job_payload(j)
 
@@ -430,7 +430,7 @@ def docs_next(request):
     plog.info(
         None, phase="docs", event="next.found",
         job_id=job.id, doc_url=job.doc_url,
-        trace_id=(job.trace_id or None)
+        trace_id=job.trace_id,
     )
 
     return JsonResponse({

@@ -120,7 +120,7 @@ ENFORCE_LOGIN_EXEMPT = (
     "/logs/api/",              # на будущее, шире
     "/api/logs/ingest",        # если решите дать синоним без /logs/
     "/api/logs/",              # шире
-
+    "/queue/",
     "/ws/",  # на всякий случай для WS-рутов
     "/favicon.ico",
     "/site.webmanifest",
