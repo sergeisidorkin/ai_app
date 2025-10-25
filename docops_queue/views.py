@@ -3,7 +3,7 @@ import json
 
 from datetime import timedelta
 from urllib.parse import urlparse, urlunparse, unquote, quote
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from django.shortcuts import get_object_or_404
 from django.conf import settings
@@ -24,6 +24,26 @@ def _parse_uuid(v):
         return UUID(str(v))
     except Exception:
         return None
+
+def _resolve_trace(request, body: dict | None, payload: dict | None) -> UUID:
+    """
+    Единая точка: берём trace из body/payload/заголовков; если нет/невалидный — генерируем.
+    Порядок:
+      1) body.traceId
+      2) payload.meta.trace_id
+      3) payload.traceId
+      4) X-Trace-Id / X-Request-Id из заголовков
+      5) uuid4()
+    """
+    candidate = (
+        (body or {}).get("traceId")
+        or ((payload or {}).get("meta") or {}).get("trace_id")
+        or (payload or {}).get("traceId")
+        or (getattr(request, "headers", {}) or {}).get("X-Trace-Id")
+        or (getattr(request, "headers", {}) or {}).get("X-Request-Id")
+        or ""
+    )
+    return _parse_uuid(candidate) or uuid4()
 
 def _trace_from_payload_or_request(body: dict, payload: dict) -> str:
     # пробуем верхний уровень body.traceId (если будете слать),
@@ -190,14 +210,13 @@ def enqueue_from_pipeline(request):
 
     # приводим к payload, совместимому с /api/docs/next
     payload = _payload_from_blocks(blocks, marker)
-    trace_raw = _trace_from_payload_or_request(data, payload)
-    trace_uuid = _parse_uuid(trace_raw)
+    trace_uuid = _resolve_trace(request, data, payload)
 
     j = Job.objects.create(
         doc_url=doc_url,
         payload=payload,
         priority=priority,
-        trace_id=trace_uuid or None,
+        trace_id=trace_uuid,
     )
     plog.info(
         None,
@@ -206,7 +225,7 @@ def enqueue_from_pipeline(request):
         job_id=j.id,
         doc_url=j.doc_url,
         message="Enqueued from pipeline",
-        trace_id=(j.trace_id or None),
+        trace_id=(str(j.trace_id) if j.trace_id else None),
         data={"ops": len((payload or {}).get("ops") or []),
               "has_anchor": bool(marker)}
     )
@@ -225,23 +244,23 @@ def enqueue(request):
         return HttpResponseBadRequest(f"bad json: {e}")
 
     doc_url = _normalize_url(data.get("docUrl") or "")
-    payload = data.get("payload") or {}
-    trace_raw = _trace_from_payload_or_request(data, payload)
-    trace_uuid = _parse_uuid(trace_raw)
+    payload_in = data.get("payload", None)  # ← берём как есть, без or {}
+    trace_uuid = _resolve_trace(request, data, payload_in)
     job_obj = data.get("job")
     ops_arr = data.get("ops")
 
-    if payload is None:
-
+    if payload_in is None:
         if isinstance(job_obj, dict):
             payload = {"ops": list(job_obj.get("ops") or [])}
             a = (job_obj.get("anchor") or {})
             if isinstance(a, dict) and isinstance(a.get("text"), str) and a["text"].strip():
-                        payload["anchor"] = {"text": a["text"].strip()}
+                payload["anchor"] = {"text": a["text"].strip()}
         elif isinstance(ops_arr, list):
             payload = {"ops": list(ops_arr)}
         else:
             payload = {}
+    else:
+        payload = payload_in
 
     priority = int(data.get("priority") or 10)
 
@@ -252,14 +271,14 @@ def enqueue(request):
         doc_url=doc_url,
         payload=payload,
         priority=priority,
-        trace_id=trace_uuid or None,
+        trace_id=trace_uuid,
     )
 
     anchor_text = _payload_anchor_text(payload)
     plog.info(
         None, phase="queue", event="enqueue", message="Job enqueued",
         job_id=j.id, doc_url=j.doc_url, anchor_text=anchor_text,
-        trace_id=(j.trace_id or None),
+        trace_id=(str(j.trace_id) if j.trace_id else None),
         data={
             "priority": j.priority,
             "ops": len((payload or {}).get("ops") or []),
@@ -292,6 +311,11 @@ def agent_pull(request, agent_id: str):
     )
 
     def _job_payload(j: Job) -> JsonResponse:
+        # «Подлечиваем» старые задания без trace_id
+        if not j.trace_id:
+            j.trace_id = uuid4()
+            # updated_at обычно auto_now; если нет — добавьте в список полей
+            j.save(update_fields=["trace_id"])
         web_url = j.doc_url
         return JsonResponse({
             "ok": True,
@@ -312,7 +336,7 @@ def agent_pull(request, agent_id: str):
         plog.info(None, phase="agent", event="pull.assigned_existing",
                   message="Return already assigned to this agent",
                   job_id=j.id, doc_url=j.doc_url,
-                  trace_id=(j.trace_id or None),
+                  trace_id=(str(j.trace_id) if j.trace_id else None),
                   data={"agent_id": agent_id, "status": j.status})
         return _job_payload(j)
 
@@ -328,7 +352,7 @@ def agent_pull(request, agent_id: str):
         plog.warn(None, phase="agent", event="pull.reclaim",
                   message=f"Reclaim ASSIGNED job from '{old_agent}'",
                   job_id=j.id, doc_url=j.doc_url,
-                  trace_id=(j.trace_id or None),
+                  trace_id=(str(j.trace_id) if j.trace_id else None),
                   data={"agent_id": agent_id})
         return _job_payload(j)
 
@@ -347,7 +371,7 @@ def agent_pull(request, agent_id: str):
     plog.info(None, phase="agent", event="pull.assigned_new",
               message="Assigned QUEUED to agent",
               job_id=j.id, doc_url=j.doc_url,
-              trace_id=(j.trace_id or None),
+              trace_id=(str(j.trace_id) if j.trace_id else None),
               data={"agent_id": agent_id})
     return _job_payload(j)
 
@@ -393,6 +417,10 @@ def docs_next(request):
         job.save(update_fields=["status", "updated_at"])
 
     # ops → blocks (панель такое уже ест)
+    # Гарантируем trace_id для старых записей
+    if not job.trace_id:
+        job.trace_id = uuid4()
+        job.save(update_fields=["trace_id"])
     anchor_text = _payload_anchor_text(job.payload)
     blocks = (job.payload or {}).get("blocks") or _ops_to_blocks(job.payload)
     payload_out = {"blocks": blocks}
@@ -410,7 +438,7 @@ def docs_next(request):
         "job": {
             "id": str(job.id),
             "payload": payload_out,
-            "traceId": (str(job.trace_id) if job.trace_id else None),  # ← добавить
+            "traceId": str(job.trace_id),
         }
     })
 
@@ -438,10 +466,10 @@ def job_complete(request, job_id):
     if ok:
         plog.info(None, phase="queue", event="complete.ok",
                   job_id=j.id, doc_url=j.doc_url,
-                  trace_id=(j.trace_id or None), message=message or "")
+                  trace_id=(str(j.trace_id) if j.trace_id else None), message=message or "")
     else:
         plog.error(None, phase="queue", event="complete.failed",
-                   job_id=j.id, doc_url=j.doc_url, trace_id=(j.trace_id or None),
+                   job_id=j.id, doc_url=j.doc_url, trace_id=(str(j.trace_id) if j.trace_id else None),
                    message=message or "failed")
     return JsonResponse({"ok": True})
 
