@@ -15,3 +15,7 @@ media/
 .env
 .env.*
 .env.example
+
+.venv*
+.venv-ci/
+
