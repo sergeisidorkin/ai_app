@@ -1,223 +1,181 @@
 <!DOCTYPE html>
 <html>
-  <head>
+<head>
     <meta charset="UTF-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="imc-logs-url" content="https://localhost:8001">
+    <meta name="imc-logs-token" content="">
+    <meta name="imc-test-skip-docx" content="0">
+    <meta name="imc-test-ignore-anchor" content="0">
     <title>IMC Montan Add-in</title>
-
-    <!-- Office JS (без polyfill рядом) -->
+    <!-- Office.js CDN -->
     <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js" crossorigin="anonymous"></script>
-
+    <!-- Base URL для локалок -->
+    <meta name="addin-base-public" content="https://localhost:8001">
     <!-- Fluent UI CSS -->
-    <link
-      rel="stylesheet"
-      href="https://res-1.cdn.office.net/files/fabric-cdn-prod_20230815.002/office-ui-fabric-core/11.1.0/css/fabric.min.css"
-    />
+    <link rel="stylesheet" href="https://res-1.cdn.office.net/files/fabric-cdn-prod_20230815.002/office-ui-fabric-core/11.1.0/css/fabric.min.css" />
     <link href="./taskpane.css" rel="stylesheet" />
     <style>
-      /* Чуть-чуть базовой верстки, чтобы точно увидеть элементы */
-      .wrap { margin-top:1rem; padding:.5rem; border:1px solid #eee; border-radius:.5rem }
-      .row  { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap }
-      #log  { font:12px/1.35 monospace; margin-top:.5rem; max-height:160px; overflow:auto; background:#f7f7f7; padding:.5rem; border:1px solid #eee; border-radius:.25rem }
+        .wrap {
+            margin-top: 1rem;
+            padding: .5rem;
+            border: 1px solid #eee;
+            border-radius: .5rem
+        }
+        .row {
+            display: flex;
+            gap: .5rem;
+            align-items: center;
+            flex-wrap: wrap
+        }
+        #log {
+            font: 12px/1.35 monospace;
+            margin-top: .5rem;
+            max-height: 160px;
+            overflow: auto;
+            background: #f7f7f7;
+            padding: .5rem;
+            border: 1px solid #eee;
+            border-radius: .25rem
+        }
     </style>
-  </head>
-
-  <body class="ms-font-m ms-welcome ms-Fabric">
-    <header class="ms-welcome__header ms-bgColor-neutralLighter">
-      <img width="90" height="90" src="../../assets/logo-filled.png" alt="IMC" />
-      <h1 class="ms-font-su">IMC Montan</h1>
-    </header>
-
-    <section id="sideload-msg" class="ms-welcome__main">
-      <h2 class="ms-font-xl">
-        Please
-        <a target="_blank"
-           href="https://learn.microsoft.com/office/dev/add-ins/testing/test-debug-office-add-ins#sideload-an-office-add-in-for-testing">
-          sideload
-        </a>
-        your add-in to see app body.
-      </h2>
-    </section>
-
-    <!-- ВАЖНО: по умолчанию видимая (чтобы не зависеть от Office.onReady) -->
-    <main id="app-body" class="ms-welcome__main" style="display:flex">
-      <h2 class="ms-font-xl">Интеграция с Word</h2>
-      <div class="wrap">
+</head>
+<body class="ms-font-m ms-welcome ms-Fabric">
+<header class="ms-welcome__header ms-bgColor-neutralLighter">
+    <img width="90" height="90" src="../../assets/logo-filled.png" alt="IMC" />
+    <h1 class="ms-font-su">IMC Montan</h1>
+</header>
+<section id="sideload-msg" class="ms-welcome__main">
+    <h2 class="ms-font-xl">
+        Please <a target="_blank" href="https://learn.microsoft.com/office/dev/add-ins/testing/test-debug-office-add-ins#sideload-an-office-add-in-for-testing">sideload</a> your add-in to see app body.
+    </h2>
+</section>
+<main id="app-body" class="ms-welcome__main" style="display:flex">
+    <h2 class="ms-font-xl">Интеграция с Word</h2>
+    <div class="wrap">
         <div class="row">
-          <input id="email-input" type="email" placeholder="you@example.com" style="flex:1; min-width: 220px;" />
-          <button id="connect-btn">Подключить</button>
-          <button id="push-test-btn" title="Сервер → Word">Push test</button>
-          <button id="run" class="ms-Button ms-Button--hero">Insert Hello</button>
+            <input id="email-input" type="email" placeholder="you@example.com" style="flex:1; min-width: 220px;" />
+            <button id="connect-btn">Подключить</button>
+            <button id="push-test-btn" title="Сервер → Word">Push test</button>
+            <button id="run" class="ms-Button ms-Button--hero">Insert Hello</button>
         </div>
         <pre id="log"></pre>
-      </div>
-      <p><label id="item-subject"></label></p>
-    </main>
+    </div>
+    <p><label id="item-subject"></label></p>
+</main>
+<!-- ========================================================================
+     DOCOPS CORE ENGINE
+     ======================================================================== -->
+<script src="https://localhost:8001/static/core/js/docops-core.js"></script>
+<!-- ========================================================================
+     OFFICE AWAITING HELPER
+     ======================================================================== -->
+<script>
+    (function() {
+        function _resolve() {/* no-op */}
+        window.waitOfficeReady = function waitOfficeReady() {
+            if (window.__waitOfficeReadyPromise) return window.__waitOfficeReadyPromise;
 
-    <script>
-      // режим якоря: true → вставляем относительно selection, false → в конец документа
-      window.__addin_use_selection = false;
-
-      // Найти якорь, поставить каретку в КОНЕЦ ЕГО АБЗАЦА (а не в конец совпадения),
-      // чтобы последующая вставка шла с НОВОЙ строки
-      function gotoAnchor(anchorText) {
-          // Нормализуем «< HR-01.01 >», «<HR-01.01», «HR-01.01» и т.п.
-          anchorText = String(anchorText || '').trim();
-          if (!anchorText) return Promise.resolve(false);
-
-          // выдёргиваем код внутри угловых скобок (если есть)
-          var m = anchorText.match(/<\s*([^>]+?)\s*>?/);
-          var code = m ? m[1].trim() : anchorText.replace(/^<\s*|\s*>$/g, '').trim();
-          if (!code) return Promise.resolve(false);
-
-          // кандидаты для поиска (поиск без учёта регистра уже стоит)
-          var candidates = [
-            "< " + code + " >",    // с пробелами и закрывающей '>'
-            "< " + code + ">",     // без пробела перед '>'
-            "<"  + code + ">",     // плотно
-            "<"  + code,           // как в логах («< HR-01.01»)
-            code                    // просто код, на случай ручной вёрстки
-          ];
-
-          return Word.run(function(ctx) {
-            var body = ctx.document.body;
-            var found = null;
-
-            // последовательно пробуем варианты
-            var chain = Promise.resolve();
-            candidates.forEach(function(q){
-              chain = chain.then(function(){
-                if (found) return; // уже нашли
-                var results = body.search(q, { matchCase:false, matchWholeWord:false, matchWildcards:false });
-                ctx.load(results, "items");
-                return ctx.sync().then(function(){
-                  if (!found && results.items && results.items.length > 0) {
-                    found = results.items[0];
-                  }
-                });
-              });
-            });
-
-            return chain.then(function(){
-              if (!found) return false;
-              // ставим каретку в КОНЕЦ абзаца с якорем → дальнейшая вставка пойдёт с новой строки
-              var para = found.paragraphs.getFirst();
-              try { para.select("End"); } catch(_) { try { para.select(); } catch(_) {} }
-              return ctx.sync().then(function(){ return true; });
-            });
-          });
-      }
-
-      // Вставка абзаца в текущую «цель»
-      function insertParagraphAtTarget(ctx, text) {
-        var t = window.__addin_use_selection ? ctx.document.getSelection() : ctx.document.body;
-        return window.__addin_use_selection
-          ? t.insertParagraph(text, Word.InsertLocation.after) // ← после абзаца якоря = с новой строки
-          : t.insertParagraph(text, Word.InsertLocation.end);
-      }
-
-      function moveCaretAfterParagraph(ctx, p) {
-        try { p.select("End"); } catch(_) { try { p.select(); } catch(_) {} }
-        return ctx.sync().catch(function(){});
-      }
-
-      // Применение нужного стилЯ списка (с приоритетом на пользовательский «Маркированный список»)
-      function applyStyleSafeJS(ctx, p, preferredName){
-        try { p.style = preferredName; } catch(_) {}
-        // если именованного стиля нет — мягкие фолбэки
-        return ctx.sync().catch(function(){
-          try { p.styleBuiltIn = "ListBullet"; } catch(_) {}        // попытка «Маркированный» (если доступен)
-          return ctx.sync().catch(function(){
-            try { p.styleBuiltIn = "ListParagraph"; } catch(_) {}   // последний шанс — «Абзац списка»
-            return ctx.sync().catch(function(){});
-          });
-        });
-      }
-    </script>
-
-    <script>
-    (function () {
-      var __queue = Promise.resolve();
-      function enqueue(task){
-          __queue = __queue.then(task).catch(function(e){
-            try { console.log("[queue] task error:", e && (e.message || e)); } catch {}
-          });
-          return __queue;
-      }
-
-      var __list = { active:false, items:[], styleName:"Маркированный список" };
-
-      function flushList(){
-          if (!__list.active || !(__list.items && __list.items.length)) {
-            __list.active = false; __list.items = [];
-            return Promise.resolve();
-          }
-          var items = __list.items.slice();
-          __list.active = false; __list.items = [];
-
-          return Word.run(function(ctx){
-            // 1) первый пункт — сразу в «цель» (после абзаца якоря)
-            var p = insertParagraphAtTarget(ctx, items[0] || "");
-            return ctx.sync()
-              .then(function(){ p.startNewList(); return ctx.sync(); })
-              .then(function(){ return applyStyleSafeJS(ctx, p, __list.styleName); })
-              .then(function(){
-                // 2) остальные пункты — ПОСЛЕ предыдущего
-                var chain = Promise.resolve();
-                for (var i=1;i<items.length;i++){
-                  (function(txt){
-                    chain = chain.then(function(){
-                      p = p.insertParagraph(txt || "", Word.InsertLocation.after);
-                      return applyStyleSafeJS(ctx, p, __list.styleName);
-                    });
-                  })(items[i]);
+            window.__waitOfficeReadyPromise = new Promise(function(resolve) {
+                function done() {
+                    try {
+                        _resolve();
+                    } catch(e) {}
+                    resolve();
                 }
-                return chain;
-              })
-              .then(function(){ return moveCaretAfterParagraph(ctx, p); });
-          });
-      }
 
-      function isAnchorText(t){ return (/^\s*</).test(String(t||'').trim()); }
+                try {
+                    if (window.Office && typeof window.Office.onReady === "function") {
+                        try {
+                            window.Office.onReady().then(done).catch(done);
+                            return;
+                        } catch(_) {}
+                    }
+                } catch(_) {}
 
-      function applyOne(block){
-        return Office.onReady().then(function(){
-          var kind = String((block && (block.op || block.kind || block.type)) || "").toLowerCase();
-          var text = String((block && block.text) || "");
-
-          // Якорь — не вставляем, только двигаем каретку
-          if ((kind === "paragraph.insert" || kind === "paragraph") && isAnchorText(text)) {
-            return gotoAnchor(text).then(function(found){
-              window.__addin_use_selection = !!found;
-              try { console.log("[anchor] found=", !!found); } catch {}
+                var tries = 0, iv = setInterval(function() {
+                    tries++;
+                    if (window.Office && typeof window.Office.onReady === "function") {
+                        clearInterval(iv);
+                        try {
+                            window.Office.onReady().then(done).catch(done);
+                        } catch(_) {
+                            done();
+                        }
+                    } else if (tries > 200) {
+                        clearInterval(iv);
+                        done();
+                    }
+                }, 50);
             });
-          }
 
-          // Список
-          if (kind === "list.start") { __list.active = true; __list.items = []; __list.styleName = block.styleName || block.styleNameHint || "Маркированный список"; return; }
-          if (kind === "list.item")  { var t = String(block.text || ""); if (__list.active) { __list.items.push(t); return; } __list.active = true; __list.items = [t]; return flushList(); }
-          if (kind === "list.end")   { return flushList(); }
-
-          // Обычный абзац
-          return flushList().then(function(){
-            if (kind === "paragraph.insert" || kind === "paragraph") {
-              return Word.run(function(ctx){
-                var p = insertParagraphAtTarget(ctx, text);
-                return ctx.sync().then(function(){
-                  try { p.styleBuiltIn = "Normal"; } catch(_) {}
-                  return ctx.sync();
-                }).then(function(){ return moveCaretAfterParagraph(ctx, p); });
-              });
-            }
-          });
-        });
-      }
-
-      window.__addin_handle = function (block) { __queue = __queue.then(function(){ return applyOne(block); }).catch(function(e){ try { console.log("[queue] task error:", e && (e.message || e)); } catch {} }); return __queue; };
-      console.log("[inline] ready (handler=function)");
+            return window.__waitOfficeReadyPromise;
+        };
     }());
-    </script>
+</script>
+<!-- ========================================================================
+     LOGS CONFIG LOADER (загружает токен из Django)
+     ======================================================================== -->
+<script>
+    (function loadLogsConfig(){
+        try {
+            var baseMeta  = document.querySelector('meta[name="addin-base-public"]');
+            var tokenMeta = document.querySelector('meta[name="imc-logs-token"]');
+            var urlMeta   = document.querySelector('meta[name="imc-logs-url"]');
+            var base = (baseMeta && baseMeta.content) ? baseMeta.content : location.origin;
+            var cfgUrl = (base.replace(/\/$/,'') + '/logs/api/config');
 
-  </body>
+            // Важно: вызвать ЗАРАНЕЕ, чтобы meta заполнились до первого log/WS.
+            fetch(cfgUrl, { credentials: 'omit' })
+                .then(function(r){ return r.ok ? r.json() : Promise.reject(new Error('cfg http '+r.status)); })
+                .then(function(cfg){
+                    if (cfg && typeof cfg === 'object') {
+                        if (cfg.logs_token && tokenMeta) tokenMeta.content = String(cfg.logs_token);
+                        if (cfg.logs_url && urlMeta)     urlMeta.content   = String(cfg.logs_url);
+                        // Если DocOpsCore кэширует конфиг — дадим сигнал перечитать
+                        if (window.DocOpsCore && typeof window.DocOpsCore.refreshLoggingConfig === 'function') {
+                            try { window.DocOpsCore.refreshLoggingConfig(); } catch(_){}
+                        }
+                    }
+                })
+                .catch(function(_){ /* мягко молчим — останемся без токена */ });
+        } catch(_){}
+    })();
+</script>
+<!-- ========================================================================
+     WORD.RUN SERIALIZER (optional but recommended)
+     ======================================================================== -->
+<script>
+    (function installWordRunSerializer(){
+        try {
+            if (!window.Word || !Word.run || Word.run.__serialPatched) return;
+
+            const orig = Word.run.bind(Word);
+            let tail = Promise.resolve();
+
+            Word.run = function serial(fn){
+                tail = tail.then(() => orig(fn));
+                return tail;
+            };
+
+            Word.run.__serialPatched = true;
+            window.__wordRunTail = () => tail;
+
+            console.log('[word-serializer] installed');
+        } catch(_) {}
+    })();
+</script>
+<!-- ========================================================================
+     ADDITIONAL HELPERS (pickSafeInsertHost, etc.)
+     ======================================================================== -->
+<script>
+    // Extend DocOpsCore with custom pickSafeInsertHost if needed
+    (function() {
+        if (typeof DocOpsCore !== 'undefined' && typeof window.pickSafeInsertHost === 'function') {
+            DocOpsCore.pickSafeInsertHost = window.pickSafeInsertHost;
+        }
+    })();
+</script>
+</body>
 </html>

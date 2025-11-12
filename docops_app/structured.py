@@ -38,18 +38,40 @@ def extract_docops_control(text: str) -> Optional[Dict[str, Any]]:
         data = _try_json(body)
         if isinstance(data, dict):
             if data.get("type") == "DocOps" or "ops" in data:
-                return {"program": {"type":"DocOps","version":data.get("version","v1"),"ops":data.get("ops",[])}}
+                return {"program": {
+                    "type": "DocOps",
+                    "version": data.get("version", "v1"),
+                    "ops": data.get("ops", []),
+                    "options": data.get("options") or {}
+                }}
             if isinstance(data.get("docops"), dict):
                 d = data["docops"]
-                return {"program": {"type":"DocOps","version":d.get("version","v1"),"ops":d.get("ops",[])}}
+                return {"program": {
+                    "type": "DocOps",
+                    "version": d.get("version", "v1"),
+                    "ops": d.get("ops", []),
+                    "options": d.get("options") or {}
+                }}
+
     raw = _extract_first_json_object(text)
     data = _try_json(raw) if raw else None
     if isinstance(data, dict):
         if data.get("type") == "DocOps" or "ops" in data:
-            return {"program": {"type":"DocOps","version":data.get("version","v1"),"ops":data.get("ops",[])}}
+            return {"program": {
+                "type": "DocOps",
+                "version": data.get("version", "v1"),
+                "ops": data.get("ops", []),
+                "options": data.get("options") or {}
+            }}
         if isinstance(data.get("docops"), dict):
             d = data["docops"]
-            return {"program": {"type": "DocOps", "version": d.get("version", "v1"), "ops": d.get("ops", [])}}
+            return {"program": {
+                "type": "DocOps",
+                "version": d.get("version", "v1"),
+                "ops": d.get("ops", []),
+                "options": d.get("options") or {}
+            }}
+
     return None
 
 # ── ВАЖНО: синтезируем список из «- ...» / «• ...» внутри обычного текста

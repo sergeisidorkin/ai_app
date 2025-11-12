@@ -3,68 +3,9 @@ import json, re, logging
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from typing import Iterable
-
-try:
-    from docops_app.parsers import try_extract_docops_json
-except Exception:
-    # Фолбэк (на случай, если docops_app не установлен)
-    def try_extract_docops_json(_):  # type: ignore
-        return None
-
+from docops_app.parsers import try_extract_docops_json
 
 log = logging.getLogger(__name__)
-
-def try_extract_docops_json(raw: str):
-    if not raw:
-        return None
-    s = raw.strip()
-
-    # 1) Найти fenced-блок в любом месте (```docops ... ```)
-    fence_pat = re.compile(r"```(?:docops|json)?\s*([\s\S]*?)\s*```", re.IGNORECASE)
-    m = fence_pat.search(s)
-    if m:
-        s = m.group(1).strip()
-
-    # 2) Если это JSON-строковый литерал, попробуем "разэскейпить" один раз
-    #    Признак: начинается и заканчивается кавычкой И внутри есть экранированные поля DocOps
-    if (s.startswith('"') and s.endswith('"') and '\\"type\\":\\"DocOps\\"' in s):
-        try:
-            s = json.loads(s)  # теперь s — внутренняя строка с JSON
-        except Exception:
-            pass
-
-    # 3) Если уже словарь — хорошо; если строка — вырезаем от { ... } и парсим
-    if isinstance(s, dict):
-        obj = s
-    else:
-        # Вырезать подстроку от первого '{' до последней '}'
-        start = s.find("{"); end = s.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            return None
-        fragment = s[start:end+1]
-        try:
-            obj = json.loads(fragment)
-        except Exception:
-            return None
-
-    # 4) Валидация формы DocOps
-    if obj.get("type") != "DocOps" or obj.get("version") != "v1" or not isinstance(obj.get("ops"), list):
-        return None
-
-    allowed = {"paragraph.insert","list.start","list.item","list.end"}
-    for op in obj["ops"]:
-        if not isinstance(op, dict):
-            return None
-        if op.get("op") not in allowed:
-            return None
-    if isinstance(obj, dict) and "program" in obj and isinstance(obj["program"], dict):
-        obj = obj["program"]
-    if isinstance(obj, dict) and "docops" in obj and isinstance(obj["docops"], dict):
-        obj = obj["docops"]
-
-    return obj
-
-
 
 def text_to_ops_fallback(txt: str):
     """Преобразует чистый текст (абзац=строка; список начинается с '- ') в ops."""
@@ -167,7 +108,7 @@ def handle_llm_answer(raw_text: str, group: str) -> int:
     Возвращаем количество отправленных op'ов.
     """
 
-    log.warning("LLM RAW head=%s", (raw_text or "")[:160].replace("\n","⏎"))
+    log.warning("LLM RAW head=%s", (raw_text or "")[:160].replace("\n", "⏎"))
     docops = try_extract_docops_json(raw_text)
     used_fallback = False
     if not docops:
@@ -175,8 +116,10 @@ def handle_llm_answer(raw_text: str, group: str) -> int:
         docops = text_to_ops_fallback(raw_text or "")
 
     ops = docops.get("ops") or []
-    log.warning("DocOps parsed: ops=%d fallback=%s first_op_keys=%s",
-                len(ops), used_fallback, (list(ops[0].keys()) if ops else []))
+    log.warning(
+        "DocOps parsed: ops=%d fallback=%s first_op_keys=%s",
+        len(ops), used_fallback, (list(ops[0].keys()) if ops else []),
+    )
 
     sent = 0
     for op in ops:

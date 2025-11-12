@@ -33,7 +33,9 @@ if env.bool("READ_DOTENV", False) or (
 
 
 SECRET_KEY = env("SECRET_KEY", default="dev-secret-please-change")
+
 DEBUG = env.bool("DEBUG", False)
+
 ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=[
     "127.0.0.1",
     "0.0.0.0",
@@ -41,6 +43,8 @@ ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=[
     "testserver",
     "nonmagnetical-alanna-festive.ngrok-free.dev",
     ".ngrok-free.dev",
+    "adamantly-fluttering-worm.cloudpub.ru",
+    ".cloudpub.ru",
     "imcmontanai.ru",
 ])
 
@@ -116,9 +120,9 @@ ENFORCE_LOGIN_EXEMPT = (
     "/api/docs/",
     "/api/jobs/",
     "/api/agents/",
-    "/logs/api/logs/ingest",  # фактический путь сейчас
+    "/logs/api/logs/ingest/",  # фактический путь сейчас
     "/logs/api/",              # на будущее, шире
-    "/api/logs/ingest",        # если решите дать синоним без /logs/
+    "/api/logs/ingest/",        # если решите дать синоним без /logs/
     "/api/logs/",              # шире
     "/queue/",
     "/ws/",  # на всякий случай для WS-рутов
@@ -133,6 +137,7 @@ CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[
     "https://word-edit.officeapps.live.com",
     "https://nonmagnetical-alanna-festive.ngrok-free.dev",
     "https://*.ngrok-free.dev",
+    "https://adamantly-fluttering-worm.cloudpub.ru",
     "https://imcmontanai.ru",
 ])
 
@@ -140,10 +145,12 @@ CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^https://.*\.officeapps\.live\.com$",
     r"^https://.*\.sharepoint\.com$",
     r"^https://.*\.ngrok-free\.dev$",
+    r"^https://.*\.cloudpub\.ru$",
 ]
 
 CORS_ALLOW_METHODS = ["GET", "POST", "OPTIONS"]
-CORS_ALLOW_HEADERS = ["content-type", "authorization", "x-requested-with", "ngrok-skip-browser-warning"]
+CORS_ALLOW_HEADERS = ["content-type", "authorization", "x-requested-with", "ngrok-skip-browser-warning", "x-imc-logs-token"]
+
 CORS_EXPOSE_HEADERS = []
 CORS_ALLOW_CREDENTIALS = False
 
@@ -153,6 +160,8 @@ CSRF_TRUSTED_ORIGINS = [
     "https://localhost:8001",
     "https://localhost:3000",
     "https://nonmagnetical-alanna-festive.ngrok-free.dev",
+    "https://adamantly-fluttering-worm.cloudpub.ru",
+    "https://*.cloudpub.ru",
 ]
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
@@ -200,6 +209,7 @@ USE_TZ = True
 
 STATIC_URL = "/static/"
 STATIC_ROOT = env("STATIC_ROOT", default=str(BASE_DIR / "staticfiles"))
+STATICFILES_DIRS = [BASE_DIR / "static"]
 
 REDIS_URL = os.environ.get("REDIS_URL", "")
 if REDIS_URL:
@@ -227,6 +237,8 @@ PUBLIC_ORIGIN        = env("PUBLIC_ORIGIN", default="")            # опцио�
 # === OpenAI ===
 OPENAI_API_BASE = env("OPENAI_API_BASE", default="https://api.openai.com/v1")
 OPENAI_BASE_URL = env("OPENAI_BASE_URL", default=env("OPENAI_API_BASE", default="https://api.openai.com/v1"))
+OPENAI_ORG_ID   = env("OPENAI_ORG_ID", default="")
+OPENAI_PROJECT_ID=env("OPENAI_PROJECT_ID", default="")
 
 # === DocOpsAgent ===
 BASE_PUBLIC_URL = os.getenv("BASE_PUBLIC_URL", "https://localhost:8001")

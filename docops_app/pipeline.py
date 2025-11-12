@@ -49,6 +49,17 @@ def _validate_safe(prog: DocProgram) -> Tuple[bool, Optional[str]]:
         return False, str(e)
 
 
+def _should_skip_blocks(prog: DocProgram) -> bool:
+    """
+    Для render=docx не собираем add-in blocks превью, чтобы не падать на незнакомых опах
+    (table.* и т.п.). Далее по цепочке всё равно пойдём через macroops → docx.insert.
+    """
+    try:
+        return bool((prog.options or {}).get("render", "").lower() == "docx")
+    except Exception:
+        return False
+
+
 def _ops_preview(ops: list[dict[str, Any]] | list) -> list[str]:
     """Короткая сводка по операциям/блокам для логов: ['paragraph.insert','list.start',...]"""
     out: list[str] = []
@@ -77,6 +88,7 @@ def process_answer_through_pipeline(
     """
     Унифицированный пайплайн DocOps + подробное логирование.
     """
+
     def log(lev: str, phase: str, event: str, message: str = "", **data):
         fn = getattr(plog, lev, plog.info)
         try:
@@ -100,13 +112,28 @@ def process_answer_through_pipeline(
 
     try:
         # ── 1) Raw DocOps прямо в ответе ──────────────────────────────────────
-        raw = try_extract_docops_json(answer)
+        raw = None
+        try:
+            raw = try_extract_docops_json(answer)
+        except Exception as e:
+            log("error", "docops.parse", "raw_parser.error", message=str(e))
+            raw = None
+
         if raw:
             ops_cnt = len(raw.get("ops") or [])
-            log("info", "docops.parse", "raw_docops.detected", data={"ops": ops_cnt, "ops_preview": _ops_preview(raw.get("ops"))})
+            log(
+                "info",
+                "docops.parse",
+                "raw_docops.detected",
+                data={"ops": ops_cnt, "ops_preview": _ops_preview(raw.get("ops"))},
+            )
 
             prog = program_from_dict(raw)
-            log("debug", "docops.program", "from_raw", data={"ops": len(prog.ops), "ops_preview": _ops_preview(prog.ops)})
+            try:
+                if getattr(prog, "options", None) and (prog.options or {}).get("render") == "docx":
+                    log("info", "docops.options", "render.docx", message="flag seen in raw")
+            except Exception:
+                pass
 
             prog, norm_changed = _normalize_program_styles(prog, rules)
             if norm_changed:
@@ -114,11 +141,15 @@ def process_answer_through_pipeline(
 
             ok, err = _validate_safe(prog)
             if not ok:
-                log("warn", "docops.validate", "failed", message=str(err or "invalid"))
+                # invalid: без блоков, возвращаем ошибку
                 result = {
                     "kind": "docops",
                     "program": prog.to_dict(),
-                    "docops": {"type": "DocOps", "version": prog.version, "ops": [o.to_dict() for o in prog.ops]},
+                    "docops": {
+                        "type": "DocOps",
+                        "version": prog.version,
+                        "ops": [o.to_dict() for o in prog.ops],
+                    },
                     "blocks": [],
                     "normalized": bool(norm_changed),
                     "source": "raw_docops",
@@ -128,13 +159,27 @@ def process_answer_through_pipeline(
                 log("info", "docops", "done", data={"valid": False, "source": "raw_docops"})
                 return result
 
-            blocks = compile_to_addin_blocks(prog)
-            log("info", "docops.compile", "blocks", data={"count": len(blocks), "kinds": _ops_preview(blocks)})
+            # ok == True
+            if _should_skip_blocks(prog):
+                blocks: list[dict] = []
+                log("info", "docops.compile", "skipped", message="skip addin blocks for render=docx")
+            else:
+                blocks = compile_to_addin_blocks(prog)
+                log(
+                    "info",
+                    "docops.compile",
+                    "blocks",
+                    data={"count": len(blocks), "kinds": _ops_preview(blocks)},
+                )
 
             result = {
                 "kind": "docops",
                 "program": prog.to_dict(),
-                "docops": {"type": "DocOps", "version": prog.version, "ops": [o.to_dict() for o in prog.ops]},
+                "docops": {
+                    "type": "DocOps",
+                    "version": prog.version,
+                    "ops": [o.to_dict() for o in prog.ops],
+                },
                 "blocks": blocks,
                 "normalized": bool(norm_changed),
                 "source": "raw_docops",
@@ -143,14 +188,26 @@ def process_answer_through_pipeline(
             log("info", "docops", "done", data={"valid": True, "source": "raw_docops", "blocks": len(blocks)})
             return result
 
-        # ── 2) JSON program внутри текста ────────────────────────────────────
+        # ── 2) JSON program внутри текста (толерантный парсер) ───────────────
         ctrl = extract_docops_control(answer)
         if ctrl and ctrl.get("program"):
             ops_cnt = len((ctrl["program"] or {}).get("ops") or [])
-            log("info", "docops.parse", "json_in_text.detected", data={"ops": ops_cnt, "ops_preview": _ops_preview((ctrl["program"] or {}).get("ops"))})
+            log(
+                "info",
+                "docops.parse",
+                "json_in_text.detected",
+                data={
+                    "ops": ops_cnt,
+                    "ops_preview": _ops_preview((ctrl["program"] or {}).get("ops")),
+                },
+            )
 
             prog = program_from_dict(ctrl["program"])
-            log("debug", "docops.program", "from_json_in_text", data={"ops": len(prog.ops), "ops_preview": _ops_preview(prog.ops)})
+            try:
+                if getattr(prog, "options", None) and (prog.options or {}).get("render") == "docx":
+                    log("info", "docops.options", "render.docx", message="flag seen in text")
+            except Exception:
+                pass
 
             prog, norm_changed = _normalize_program_styles(prog, rules)
             if norm_changed:
@@ -158,11 +215,14 @@ def process_answer_through_pipeline(
 
             ok, err = _validate_safe(prog)
             if not ok:
-                log("warn", "docops.validate", "failed", message=str(err or "invalid"))
                 result = {
                     "kind": "docops",
                     "program": prog.to_dict(),
-                    "docops": {"type": "DocOps", "version": prog.version, "ops": [o.to_dict() for o in prog.ops]},
+                    "docops": {
+                        "type": "DocOps",
+                        "version": prog.version,
+                        "ops": [o.to_dict() for o in prog.ops],
+                    },
                     "blocks": [],
                     "normalized": bool(norm_changed),
                     "source": "json_in_text",
@@ -172,13 +232,26 @@ def process_answer_through_pipeline(
                 log("info", "docops", "done", data={"valid": False, "source": "json_in_text"})
                 return result
 
-            blocks = compile_to_addin_blocks(prog)
-            log("info", "docops.compile", "blocks", data={"count": len(blocks), "kinds": _ops_preview(blocks)})
+            if _should_skip_blocks(prog):
+                blocks: list[dict] = []
+                log("info", "docops.compile", "skipped", message="skip addin blocks for render=docx")
+            else:
+                blocks = compile_to_addin_blocks(prog)
+                log(
+                    "info",
+                    "docops.compile",
+                    "blocks",
+                    data={"count": len(blocks), "kinds": _ops_preview(blocks)},
+                )
 
             result = {
                 "kind": "docops",
                 "program": prog.to_dict(),
-                "docops": {"type": "DocOps", "version": prog.version, "ops": [o.to_dict() for o in prog.ops]},
+                "docops": {
+                    "type": "DocOps",
+                    "version": prog.version,
+                    "ops": [o.to_dict() for o in prog.ops],
+                },
                 "blocks": blocks,
                 "normalized": bool(norm_changed),
                 "source": "json_in_text",
@@ -205,13 +278,20 @@ def process_answer_through_pipeline(
             log("info", "docops", "done", data={"valid": False, "source": "plain_text_empty"})
             return result
 
-        log("info", "docops.parse", "synthesized", data={
-            "ops": len(synthesized.get("ops") or []),
-            "ops_preview": _ops_preview(synthesized.get("ops")),
-        })
+        log(
+            "info",
+            "docops.parse",
+            "synthesized",
+            data={"ops": len(synthesized.get("ops") or []), "ops_preview": _ops_preview(synthesized.get("ops"))},
+        )
 
         prog = program_from_dict(synthesized)
-        log("debug", "docops.program", "from_synthesized", data={"ops": len(prog.ops), "ops_preview": _ops_preview(prog.ops)})
+        log(
+            "debug",
+            "docops.program",
+            "from_synthesized",
+            data={"ops": len(prog.ops), "ops_preview": _ops_preview(prog.ops)},
+        )
 
         prog, norm_changed = _normalize_program_styles(prog, rules)
         if norm_changed:
@@ -219,11 +299,14 @@ def process_answer_through_pipeline(
 
         ok, err = _validate_safe(prog)
         if not ok:
-            log("warn", "docops.validate", "failed", message=str(err or "invalid"))
             result = {
                 "kind": "docops",
                 "program": prog.to_dict(),
-                "docops": {"type": "DocOps", "version": prog.version, "ops": [o.to_dict() for o in prog.ops]},
+                "docops": {
+                    "type": "DocOps",
+                    "version": prog.version,
+                    "ops": [o.to_dict() for o in prog.ops],
+                },
                 "blocks": [],
                 "normalized": bool(norm_changed),
                 "source": "synthesized",
@@ -233,13 +316,26 @@ def process_answer_through_pipeline(
             log("info", "docops", "done", data={"valid": False, "source": "synthesized"})
             return result
 
-        blocks = compile_to_addin_blocks(prog)
-        log("info", "docops.compile", "blocks", data={"count": len(blocks), "kinds": _ops_preview(blocks)})
+        if _should_skip_blocks(prog):
+            blocks: list[dict] = []
+            log("info", "docops.compile", "skipped", message="skip addin blocks for render=docx")
+        else:
+            blocks = compile_to_addin_blocks(prog)
+            log(
+                "info",
+                "docops.compile",
+                "blocks",
+                data={"count": len(blocks), "kinds": _ops_preview(blocks)},
+            )
 
         result = {
             "kind": "docops",
             "program": prog.to_dict(),
-            "docops": {"type": "DocOps", "version": prog.version, "ops": [o.to_dict() for o in prog.ops]},
+            "docops": {
+                "type": "DocOps",
+                "version": prog.version,
+                "ops": [o.to_dict() for o in prog.ops],
+            },
             "blocks": blocks,
             "normalized": bool(norm_changed),
             "source": "synthesized",

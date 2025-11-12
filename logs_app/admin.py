@@ -1,6 +1,7 @@
 # logs_app/admin.py
 from django.contrib import admin
 from .models import LogEvent
+from django.utils.translation import gettext_lazy as _
 
 @admin.register(LogEvent)
 class LogEventAdmin(admin.ModelAdmin):
@@ -9,6 +10,8 @@ class LogEventAdmin(admin.ModelAdmin):
     list_per_page = 50
     list_select_related = ("user",)
     raw_id_fields = ("user",)
+
+    actions = ["purge_selection", "purge_all"]
 
     # Колонки списка
     list_display = (
@@ -67,6 +70,17 @@ class LogEventAdmin(admin.ModelAdmin):
             "fields": ("data",),
         }),
     )
+
+    @admin.action(description=_("Удалить все события из текущей выборки"))
+    def purge_selection(self, request, queryset):
+        # queryset уже отражает фильтры + "Выбрать все N"
+        deleted, _ = queryset.delete()
+        self.message_user(request, f"Удалено {deleted} событий.")
+
+    @admin.action(description=_("Удалить вообще все события"))
+    def purge_all(self, request, queryset):
+        deleted, _ = LogEvent.objects.all().delete()
+        self.message_user(request, f"Удалено {deleted} событий.")
 
     # Короткая версия message в списке
     def short_message(self, obj):

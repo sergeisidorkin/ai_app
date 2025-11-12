@@ -10,5 +10,6 @@ def make_addin_job(ops, anchor=None, meta=None, job_id=None):
         "ops": list(ops or []),         # каждый элемент — наш «addin.block» (dict)
         "anchor": (anchor or {"at": "end"}),   # будущие варианты: {"at":"bookmark","name":"..."} и т.п.
         "meta": (meta or {}),
+        "options": (options or {}),
         "id": job_id or None,
     }

@@ -411,27 +411,41 @@ def docs_next(request):
         plog.debug(None, phase="docs", event="next.none")
         return JsonResponse({"ok": True, "job": None})
 
-    # Переводим QUEUED → IN_PROGRESS, чтобы не «моргало»
+    # Переводим QUEUED → IN_PROGRESS (как было)
     if job.status == Job.Status.QUEUED:
         job.status = Job.Status.IN_PROGRESS
         job.save(update_fields=["status", "updated_at"])
 
-    # ops → blocks (панель такое уже ест)
-    # Гарантируем trace_id для старых записей
+    # Гарантируем trace_id (как было)
     if not job.trace_id:
         job.trace_id = uuid4()
         job.save(update_fields=["trace_id"])
-    anchor_text = _payload_anchor_text(job.payload)
-    blocks = (job.payload or {}).get("blocks") or _ops_to_blocks(job.payload)
+
+    payload = job.payload or {}
+
+    # 🔁 NEW: если уже положили ГОТОВЫЙ addin.block — отдаем его как есть
+    if isinstance(payload, dict) and str(payload.get("type") or "").lower() == "addin.block":
+        plog.info(None, phase="docs", event="next.found",
+                  job_id=job.id, doc_url=job.doc_url, trace_id=job.trace_id,
+                  message="addin.block passthrough")
+        return JsonResponse({
+            "ok": True,
+            "job": {
+                "id": str(job.id),
+                "payload": payload,                 # ← уже {type:"addin.block",...}
+                "traceId": str(job.trace_id),
+            }
+        })
+
+    # ↓↓↓ СТАРЫЙ ПУТЬ (совместимость): ops → blocks + anchor → target
+    anchor_text = _payload_anchor_text(payload)
+    blocks = (payload.get("blocks") or _ops_to_blocks(payload)) if isinstance(payload, dict) else []
     payload_out = {"blocks": blocks}
     if anchor_text:
         payload_out["target"] = {"marker": anchor_text}
 
-    plog.info(
-        None, phase="docs", event="next.found",
-        job_id=job.id, doc_url=job.doc_url,
-        trace_id=job.trace_id,
-    )
+    plog.info(None, phase="docs", event="next.found",
+              job_id=job.id, doc_url=job.doc_url, trace_id=job.trace_id)
 
     return JsonResponse({
         "ok": True,
