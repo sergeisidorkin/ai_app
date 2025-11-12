@@ -7,4 +7,7 @@ redis:  bash -lc 'exec redis-server --port ${REDIS_PORT:-6380} --save "" --appen
 addin:  bash -lc 'exec ./scripts/dev_addin.sh'
 
 # ngrok: не валим стенд, если USE_NGROK!=1
-ngrok: bash -lc 'if [[ "${NGROK_ENABLED:-0}" = "1" ]]; then ./scripts/dev_ngrok.sh; else echo "[ngrok] disabled"; sleep infinity; fi'
+# ngrok: bash -lc 'if [[ "${NGROK_ENABLED:-0}" = "1" ]]; then ./scripts/dev_ngrok.sh; else echo "[ngrok] disabled"; sleep infinity; fi'
+
+# cloudpub: держим процесс, пока включен флаг
+cloudpub: bash -lc 'if [[ "${CLOUDPUB_ENABLED:-1}" = "1" ]]; then ./scripts/dev_cloudpub.sh; else echo "[cloudpub] disabled"; sleep infinity; fi'

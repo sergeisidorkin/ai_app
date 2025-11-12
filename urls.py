@@ -9,6 +9,8 @@ from core.views import home_entry
 
 from openai_app import views as openai_views
 from office_addin.views import manifest_xml
+from logs_app.views_ingest import api_logs_ingest
+from logs_app.views import logs_config
 
 urlpatterns = [
     path("taskpane.html", TemplateView.as_view(template_name="taskpane.html"), name="taskpane"),
@@ -26,6 +28,9 @@ path("", home_entry, name="home"),
     path("api/addin/", include("office_addin.urls")),
     path("", include("docops_queue.urls")),
     path("api/macroops/", include("macroops_app.urls")),
+    path("logs/api/logs/ingest/", api_logs_ingest, name="logs_ingest"),
+    path("logs/api/config", logs_config, name="logs_config"),
+    path("api/logs/ingest/", api_logs_ingest),
     path("logs/",      include(("logs_app.urls", "logs_app"), namespace="logs_app")),
     path(
         "addin/commands.html",

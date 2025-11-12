@@ -3,6 +3,7 @@ from django.shortcuts import get_object_or_404
 from django.views.decorators.http import require_GET
 from django.db.models import Q
 from .models import LogEvent
+from django.conf import settings
 
 def _event_to_dict(e: LogEvent) -> dict:
     return {
@@ -53,3 +54,14 @@ def logs_list(request):
 def log_detail(request, pk: int):
     e = get_object_or_404(LogEvent, pk=pk)
     return JsonResponse({"ok": True, "item": _event_to_dict(e)})
+
+@require_GET
+def logs_config(request):
+    """
+    Отдаёт параметры логирования для фронта.
+    Не требует аутентификации (раз у вас ingestion публичный).
+    """
+    return JsonResponse({
+        "logs_url": getattr(settings, "BASE_PUBLIC_URL", "https://localhost:8001"),
+        "logs_token": getattr(settings, "LOGS_INGEST_TOKEN", ""),
+    })

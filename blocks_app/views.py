@@ -1,4 +1,4 @@
-import json, re, logging
+import json, re, os, logging
 import uuid
 
 from io import BytesIO
@@ -12,6 +12,10 @@ from django.contrib.auth.decorators import login_required
 from django.urls import reverse
 from docx.oxml import OxmlElement
 from docx.text.paragraph import Paragraph
+
+from django.conf import settings
+from openai import OpenAI
+
 
 from googledrive_app.service import get_access_token as gdrive_get_access_token
 from googledrive_app.service import list_children as gdrive_list_children
@@ -75,9 +79,16 @@ except Exception:
     from openai import OpenAI
     import io
     def get_openai_client_for(user):
-        # Минимальный клиент из ENV; вернёт None, если ключей нет
         try:
-            return OpenAI()
+            org = getattr(settings, "OPENAI_ORG_ID", "") or os.environ.get("OPENAI_ORG_ID") or ""
+            kwargs = {}
+            if org:
+                kwargs["organization"] = org  # ← ключевой момент
+            # при необходимости можно также пробросить кастомный base_url
+            api_base = getattr(settings, "OPENAI_BASE_URL", "") or getattr(settings, "OPENAI_API_BASE", "")
+            if api_base:
+                kwargs["base_url"] = api_base
+            return OpenAI(**kwargs)
         except Exception:
             return None
     def get_available_models(user):
@@ -829,19 +840,50 @@ def _find_child_folder_by_name(request, parent_id: str, res_key: str, name: str)
             return ch
     return None
 
-def _collect_files_from_request_folders(request, root_folder_id: str, res_key: str, request_names: list[str],
-                                        max_files=80, max_each_bytes=25 * 1024 * 1024) -> list[tuple[str, bytes, str]]:
+def _collect_files_from_request_folders(
+    request,
+    root_folder_id: str,
+    res_key: str,
+    request_names: list[str],
+    max_files=80,
+    max_each_bytes=25 * 1024 * 1024,
+    *,
+    return_meta: bool = False,
+    root_folder_name: str = "",
+):
     """
-    На первом шаге: находим папки в root, названия которых совпадают с request_names (без регистра).
-    Затем для каждой найденной папки рекурсивно собираем все файлы.
-    Возвращает [(name, data, mime)], готовые для run_prompt_with_files.
+    Возвращает:
+      - если return_meta=False: [(name, data, mime)]
+      - если return_meta=True:  ([(name, data, mime)], meta_list)
+        где meta_list: [{"id","name","mime","web_link","gdrive_path"}]
     """
-    names_set = { (n or "").strip().lower() for n in (request_names or []) if str(n).strip() }
+    names_set = {(n or "").strip().lower() for n in (request_names or []) if str(n).strip()}
     if not names_set:
-        return []
+        return ([], []) if return_meta else []
 
     def list_children(fid):  # локальная обёртка
         return _gdrive_list_children_safe(request, fid, res_key)
+
+    # --- helpers -------------------------------------------------------------
+    def _join_path(parts: list[str]) -> str:
+        # унифицированный путь: всегда через '/'
+        return "/".join([ (p or "").strip("/\\") for p in parts if p ])
+
+    meta = []  # только если return_meta=True будем наполнять
+
+    def _push_meta(fid: str, orig_name: str, mime_hint: str, stack: list[str]):
+        if not return_meta:
+            return
+        gdrive_path = _join_path(stack + [orig_name])
+        web_link = f"https://drive.google.com/file/d/{fid}/view?usp=drive_link"
+        meta.append({
+            "id": fid,
+            "name": orig_name,
+            "mime": (mime_hint or ""),
+            "web_link": web_link,
+            "gdrive_path": gdrive_path,   # ← ВСЕГДА через '/'
+        })
+    # ------------------------------------------------------------------------
 
     # 1) найти папки запросов (только прямые дети)
     req_folders = []
@@ -853,28 +895,25 @@ def _collect_files_from_request_folders(request, root_folder_id: str, res_key: s
             req_folders.append(ch)
 
     if not req_folders:
-        return []
+        return ([], []) if return_meta else []
 
-    # 2) рекурсивно собрать файлы из каждой такой папки
-    out: list[tuple[str, bytes, str]] = []
+    files_out: list[tuple[str, bytes, str]] = []
 
-    def add_file(fid: str, name: str, mime_hint: str):
-        # правила скачивания (как в старом коде)
+    def add_file(fid: str, name: str, mime_hint: str, stack: list[str]):
         try:
             mt = (mime_hint or "").lower()
-            # Google-native или PDF → экспорт в PDF
             if mt == "application/pdf" or name.lower().endswith(".pdf") or mt.startswith("application/vnd.google-apps."):
                 _mt, data = gdrive_download_file(request, fid, "application/pdf", res_key)
                 if len(data) <= max_each_bytes:
-                    out.append((name if name.lower().endswith(".pdf") else f"{name}.pdf", data, "application/pdf"))
+                    files_out.append((name if name.lower().endswith(".pdf") else f"{name}.pdf", data, "application/pdf"))
+                    _push_meta(fid, name if name.lower().endswith(".pdf") else f"{name}.pdf", "application/pdf", stack)
                 return
-            # изображения
             if mt.startswith("image/"):
                 _mt, data = gdrive_download_file(request, fid, mt, res_key)
                 if len(data) <= max_each_bytes:
-                    out.append((name, data, mt))
+                    files_out.append((name, data, mt))
+                    _push_meta(fid, name, mt, stack)
                 return
-            # текст/документы
             if mt in (
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 "text/plain", "text/markdown", "text/csv", "application/json",
@@ -882,32 +921,40 @@ def _collect_files_from_request_folders(request, root_folder_id: str, res_key: s
                 prefer = mt or "application/octet-stream"
                 _mt, data = gdrive_download_file(request, fid, prefer, res_key)
                 if len(data) <= max_each_bytes:
-                    out.append((name, data, prefer))
+                    files_out.append((name, data, prefer))
+                    _push_meta(fid, name, prefer, stack)
                 return
-            # иное — пропускаем
         except Exception:
             pass
 
-    def walk(folder_id: str):
-        nonlocal out
-        if len(out) >= max_files:
+    def walk(folder_id: str, stack: list[str]):
+        if len(files_out) >= max_files:
             return
         for ch in list_children(folder_id):
             if _is_folder_mime(ch.get("mimeType")):
-                walk(ch.get("id"))
-                if len(out) >= max_files:
+                walk(ch.get("id"), stack + [(ch.get("name") or ch.get("id"))])
+                if len(files_out) >= max_files:
                     return
             else:
-                add_file(ch.get("id"), ch.get("name") or ch.get("id"), ch.get("mimeType") or "")
-                if len(out) >= max_files:
+                add_file(
+                    ch.get("id"),
+                    ch.get("name") or ch.get("id"),
+                    ch.get("mimeType") or "",
+                    stack
+                )
+                if len(files_out) >= max_files:
                     return
 
+    # стартовый стек: корень (опционально) + папка запроса
+    root_stack = [root_folder_name] if root_folder_name else []
     for rf in req_folders:
-        if len(out) >= max_files:
+        if len(files_out) >= max_files:
             break
-        walk(rf.get("id"))
+        walk(rf.get("id"), root_stack + [(rf.get("name") or rf.get("id"))])
 
-    return out
+    if return_meta:
+        return files_out, meta
+    return files_out
 
 
 def _group_for_email(email: str) -> str:
@@ -1050,10 +1097,22 @@ def block_run(request, pk):
         full_prompt = "{}\n\n{}".format("\n".join(labels_for_prompt), full_prompt)
 
     plog.debug(request.user, phase="prompt", event="compose",
-               message="Compose prompt + context",
-               trace_id=trace_id, request_id=request_id,
-               project_code6=code6 or "",
-               data={"context_labels": _extract_context_labels(block)})
+        message="Compose prompt + context",
+        trace_id=trace_id, request_id=request_id,
+        project_code6=code6 or "",
+        data={"context_labels": _extract_context_labels(block)})
+
+    # Лог с ПОЛНЫМ текстом промпта
+    plog.debug(
+        request.user, phase="prompt", event="compose.raw",
+        message=f"prompt_len={len(full_prompt)}",
+        trace_id=trace_id, request_id=request_id,
+        project_code6=code6 or "",
+        data={
+            "prompt": full_prompt,
+            "context_labels": labels_for_prompt,
+        }
+    )
 
     # 5) Проверка Google Drive подключения (корневая папка проектов)
 
@@ -1102,16 +1161,67 @@ def block_run(request, pk):
 
     # 9) Вложения из папок запросов (по именам из Block.context)
     request_names = _extract_context_labels(block)
-    attachments = _collect_files_from_request_folders(
+
+    # Подготовим «отображаемое имя корня» для путей:
+    #   <project_folder.name>\[asset]\...  → совпадает с тем, что ожидаем видеть в ссылках
+    root_display_name = (project_folder.get("name") or "")
+    if asset_name and search_root is not project_folder:
+        # если актив выбран и уже углубились в него — добавим сегмент актива
+        root_display_name = "/".join([p for p in (root_display_name, (search_root.get("name") or asset_name)) if p])
+
+    attachments, attachments_meta = _collect_files_from_request_folders(
         request, search_root.get("id"), res_key, request_names,
-        max_files=120, max_each_bytes=25 * 1024 * 1024
+        max_files=120, max_each_bytes=25 * 1024 * 1024,
+        return_meta=True,
+        root_folder_name=root_display_name,
     )
 
-    plog.info(request.user, phase="gdrive", event="attachments.collected",
-              message=f"Attachments={len(attachments)}",
-              trace_id=trace_id, request_id=request_id,
-              project_code6=code6 or "",
-              data={"count": len(attachments)})
+    # НОРМАЛИЗАЦИЯ ТОЛЬКО ДЛЯ ЛОГОВ: всегда одинарный '/' в пути
+    def _normalize_path_slashes(p: str) -> str:
+        return (p or "").replace("\\", "/")
+
+    sanitized_meta = []
+    for it in (attachments_meta or []):
+        gpath = _normalize_path_slashes(it.get("gdrive_path") or "")
+        sanitized_meta.append({**it, "gdrive_path": gpath})
+
+    plog.info(
+        request.user, phase="gdrive", event="attachments.meta",
+        message="Attachments metadata",
+        trace_id=trace_id, request_id=request_id,
+        project_code6=code6 or "",
+        data={"count": len(sanitized_meta), "samples": sanitized_meta[:10]}
+    )
+
+    # --- Каталог источников для промпта ---------------------------------
+    def _build_sources_catalog(meta: list[dict], max_items: int = 40) -> str:
+        items = sorted(meta, key=lambda x: ((x.get("gdrive_path") or ""), (x.get("name") or "")))
+        lines = []
+        for i, it in enumerate(items[:max_items], start=1):
+            name = it.get("name") or ""
+            path = it.get("gdrive_path") or ""
+            link = it.get("web_link") or ""
+            lines.append(f"[S{i}] {name} <{path} {link}>")
+        if not lines:
+            return ""
+        omitted = max(0, len(meta) - max_items)
+        tail = (f"\n… (ещё {omitted} не показаны)" if omitted else "")
+        header = "Каталог источников (справочно; не копируй этот блок в ответ):"
+        return header + "\n" + "\n".join(lines) + tail
+
+    if sanitized_meta:
+        sources_catalog = _build_sources_catalog(sanitized_meta, max_items=40)
+        footnote_rules = (
+            "\n\nПравила указания источников:\n"
+            "— Используй только сноски: сразу после абзаца/пункта/ячейки добавь операцию "
+            "{\"op\":\"footnote.add\",\"text\":\"{Наименование} <{Путь} {Ссылка}>\"}.\n"
+            "— Подставляй значения дословно из каталога (ничего не меняй).\n"
+            "— Не вставляй источники внутрь текстов операций. Максимум одна сноска на операцию и только при фактическом использовании источника.\n"
+            "— Каталог выше служебный, его не нужно копировать в ответ.\n"
+        )
+        # дополняем уже собранный full_prompt
+        full_prompt = f"{full_prompt}\n\n{sources_catalog}{footnote_rules}"
+    # --------------------------------------------------------------------
 
     # 10) Вызов LLM
 
@@ -1160,6 +1270,14 @@ def block_run(request, pk):
               message=f"answer_len={len(answer)}",
               trace_id=trace_id, request_id=request_id,
               project_code6=code6 or "")
+
+    plog.debug(
+        request.user, phase="llm", event="answer.raw",
+        message=f"model={(model_for_files or model_id)} answer_len={len(answer)}",
+        trace_id=trace_id, request_id=request_id,
+        project_code6=code6 or "",
+        data={"answer": answer}
+    )
 
     # определяем email перед DocOps-втекой
     target_email = (request.POST.get("email") or request.user.email or "").strip()
@@ -1216,14 +1334,6 @@ def block_run(request, pk):
         request.session["dbg_section_code"] = section_code
 
     company = asset_name  # именно строка из «Актив:»
-
-    plog.info(
-        request.user, phase="extract", event="context.bound",
-        message=f"binding from panel company='{company}' section='{section_code}'",
-        trace_id=trace_id, request_id=request_id,
-        project_code6=code6 or "",
-        data={"asset_name": asset_name, "section_id": section_id, "section_code": section_code}
-    )
 
     # section_code = код раздела (две буквы, например HR) по section_id
     section_code = ""
@@ -1340,13 +1450,21 @@ def block_run(request, pk):
 
     docops_prog = pipe["program"]  # {type:"DocOps", version:"v1", ops:[...]}
 
-    # Сборка addin.job через macroops
-    job = docops_to_addin_job(docops_prog, meta={
+    # Подготовим anchor сразу — чтобы компилятор знал о нём и отлогировал has_anchor
+    anchor_obj = _anchor_for_block(block)  # он у тебя уже есть выше; можно переиспользовать или пересчитать
+
+    # Передадим компилятору trace/email — тогда появятся логи compile/*
+    meta_for_compile = {
         "source": f"block_run/{pipe.get('source')}",
         "normalized": bool(pipe.get("normalized")),
         "blockId": block.id,
         "model": model_id,
-    })
+        "trace_id": str(trace_id),
+        "email": (request.POST.get("email") or request.user.email or "").strip(),
+    }
+
+    # Сборка addin.job через macroops
+    job = docops_to_addin_job(docops_prog, meta=meta_for_compile, anchor=anchor_obj)
 
     # якорь "< CODE" — если вы уже внедряли хелпер _make_anchor_for_block, просто используйте:
     anchor_text = f"< {(block.code or '').strip()}" if getattr(block, "code", None) else None
@@ -1469,219 +1587,3 @@ def block_run(request, pk):
         )
 
     return _redirect_after(request, default_tab="debugger")
-
-
-
-
-
-
-    # # --- 1) Попробуем DocOps напрямую ---
-    # docops_obj = None
-    # try:
-    #     docops_obj = try_extract_docops_json(answer)
-    # except Exception:
-    #     docops_obj = None
-    #
-    # job = None
-    # if docops_obj and isinstance(docops_obj.get("ops"), list) and docops_obj.get("type") == "DocOps":
-    #     job = docops_to_addin_job(docops_obj, meta={
-    #         "source": "block_run",
-    #         "blockId": block.id,
-    #         "model": model_id,
-    #     })
-    #     # добавим anchor, если есть
-    #     if isinstance(job, dict) and anchor_obj:
-    #         job["anchor"] = anchor_obj
-    # else:
-    #     # --- 2) Фолбэк: старый pipeline → program → blocks → job ---
-    #     ctrl = None
-    #     try:
-    #         ctrl = extract_docops_control(answer)  # может вернуть {"program": {...}}
-    #     except Exception:
-    #         ctrl = None
-    #
-    #     program = None
-    #     if ctrl and ctrl.get("program"):
-    #         program = program_from_dict(ctrl["program"])
-    #     else:
-    #         tmp = synthesize_docops_from_text(answer)
-    #         if tmp:
-    #             program = program_from_dict(tmp)
-    #
-    #     if not program:
-    #         # если вообще ничего структурного — поведение зависит от канала:
-    #         if via == "ws":
-    #             sent = send_text_as_paragraphs(target_email, answer, styleBuiltIn="Normal")
-    #             messages.warning(request, f"DocOps не найден. Через WS отправлен обычный текст ({sent} абз.).")
-    #             return _redirect_after(request, default_tab="debugger")
-    #         else:
-    #             messages.error(request, "DocOps/Program не найден — через очередь класть нечего.")
-    #             return _redirect_after(request, default_tab="debugger")
-    #
-    #     blocks = compile_to_addin_blocks(program)
-    #
-    #     # фильтр пустых параграфов — как было
-    #     def _is_empty_par(b):
-    #         if (b.get("kind") or b.get("op") or b.get("type")) in ("paragraph.insert", "paragraph"):
-    #             txt = (b.get("text") or "").strip()
-    #             has_style = bool(b.get("styleId") or (b.get("styleBuiltIn") or "").strip()
-    #                              or (b.get("styleName") or "").strip() or (b.get("styleNameHint") or "").strip())
-    #             return (not txt) and (not has_style)
-    #         return False
-    #     blocks = [b for b in blocks if not _is_empty_par(b)]
-    #
-    #     if not blocks:
-    #         if via == "ws":
-    #             sent = send_text_as_paragraphs(target_email, answer, styleBuiltIn="Normal")
-    #             messages.warning(request, f"DocOps дал пустой вывод. Через WS отправлен обычный текст ({sent} абз.).")
-    #             return _redirect_after(request, default_tab="debugger")
-    #         else:
-    #             messages.error(request, "Пустой набор блоков — через очередь класть нечего.")
-    #             return _redirect_after(request, default_tab="debugger")
-    #
-    #     # оборачиваем blocks в один addin.job (универсально для queue/WS)
-    #     job = {
-    #         "kind": "addin.job",
-    #         "version": "v1",
-    #         "id": str(uuid.uuid4()),
-    #         "ops": blocks,
-    #         "meta": {"source": "block_run_fallback", "blockId": block.id, "model": model_id},
-    #     }
-    #     if anchor_obj:
-    #         job["anchor"] = anchor_obj
-    #
-    # # --- 3) Доставка: один вызов без дублирования ---
-    # try:
-    #     result = deliver_addin_job(via, email=target_email, job=job, doc_url=doc_url, priority=10)
-    #     if via == "ws":
-    #         messages.success(request, f"Отправлено по WS ({result} опс).")
-    #     else:
-    #         messages.success(request, f"Положено в очередь: {result}")
-    # except Exception as e:
-    #     messages.error(request, f"Ошибка доставки ({via}): {e}")
-    # return _redirect_after(request, default_tab="debugger")
-
-
-
-
-    # docops_obj = None
-    # try:
-    #     docops_obj = try_extract_docops_json(answer)
-    # except Exception:
-    #     docops_obj = None
-    #
-    # if docops_obj and isinstance(docops_obj.get("ops"), list) and docops_obj.get("type") == "DocOps":
-    #     # Новая ветка: отдать raw DocOps в macroops_app (без ломки старой логики)
-    #     try:
-    #         # импортируем лениво, чтобы отсутствие macroops_app не ломало рантайм
-    #         from macroops_app.service import docops_to_addin_job, push_addin_job_via_ws
-    #     except Exception as e:
-    #         messages.error(request, f"DocOps распознан, но macroops_app недоступен: {e}")
-    #         return _redirect_after(request, default_tab="debugger")
-    #
-    #     try:
-    #         # 1) Конвертация DocOps.ops -> addin.job (опсы addin.block внутри job)
-    #         job = docops_to_addin_job(docops_obj, meta={
-    #             "source": "block_run",
-    #             "blockId": block.id,
-    #             "model": model_id,
-    #         })
-    #         # 2) Отправка в панель по WS (как и раньше, но централизовано через macroops_app)
-    #         USE_WS_PUSH = False  # ← временно
-    #         if USE_WS_PUSH:
-    #             sent_ops = push_addin_job_via_ws(target_email, job)
-    #             messages.success(
-    #                 request,
-    #                 f"Сырые DocOps обработаны в macroops_app и отправлены в Word. Опса(ов): {sent_ops}."
-    #             )
-    #
-    #         try:
-    #             job_id = enqueue_addin_job(doc_url, job, priority=10)
-    #             messages.success(request, f"Также положили addin.job в очередь: {job_id}")
-    #         except Exception as e:
-    #             messages.warning(request, f"В очередь положить не удалось: {e}")
-    #
-    #         return _redirect_after(request, default_tab="debugger")
-    #     except Exception as e:
-    #         messages.error(request, f"Ошибка macroops_app (DocOps): {e}")
-    #         return _redirect_after(request, default_tab="debugger")
-
-    # from django.core.cache import cache  # можно потом убрать, если не будешь юзать кэш
-    #
-    # # 11) Отправка в Word Add-in (DocOps → addin.block), фолбэк — плоский текст
-    # try:
-    #     target_email = (request.POST.get("email") or request.user.email or "").strip()
-    #     if not target_email:
-    #         messages.error(request, "У текущего пользователя не указан email — некуда пушить в Add-in.")
-    #         return _redirect_after(request, default_tab="debugger")
-    #
-    #     group = group_for_email(target_email)
-    #
-    #     # 11.1 Распарсим ответ модели: явный DocOps или синтез из текста
-    #     ctrl = None
-    #     try:
-    #         ctrl = extract_docops_control(answer)  # теперь вернёт {"program": {...}}
-    #     except Exception:
-    #         ctrl = None
-    #
-    #     program = None
-    #     if ctrl and ctrl.get("program"):
-    #         program = program_from_dict(ctrl["program"])
-    #     else:
-    #         tmp = synthesize_docops_from_text(answer)
-    #         if tmp:
-    #             program = program_from_dict(tmp)
-    #
-    #     # если и после этого программы нет — честно падаем на плоский текст
-    #     if not program:
-    #         sent = send_text_as_paragraphs(target_email, answer, styleBuiltIn="Normal")
-    #         messages.warning(
-    #             request,
-    #             f"DocOps не найден. Отправлен обычный текст ({sent} абз.)."
-    #         )
-    #         return _redirect_after(request, default_tab="debugger")
-    #
-    #     # 11.2 Компиляция в addin.block'и (как было)
-    #     blocks = compile_to_addin_blocks(program)
-    #
-    #     # 11.3 Фильтр мусора: пустые paragraph.insert без текста и без стиля
-    #     def _is_empty_par(b):
-    #         if (b.get("kind") or b.get("op") or b.get("type")) in ("paragraph.insert", "paragraph"):
-    #             txt = (b.get("text") or "").strip()
-    #             has_style = bool(
-    #                 b.get("styleId") or (b.get("styleBuiltIn") or "").strip() or (b.get("styleName") or "").strip() or (
-    #                             b.get("styleNameHint") or "").strip())
-    #             return (not txt) and (not has_style)
-    #         return False
-    #
-    #     blocks = [b for b in blocks if not _is_empty_par(b)]
-    #
-    #     # 11.4 Если блоков нет — фолбэк на плоский текст
-    #     if not blocks:
-    #         sent = send_text_as_paragraphs(target_email, answer, styleBuiltIn="Normal")
-    #         messages.warning(
-    #             request,
-    #             f"DocOps дал пустой вывод. Отправлен обычный текст ({sent} абз.)."
-    #         )
-    #         return _redirect_after(request, default_tab="debugger")
-    #
-    #     # 11.5 Пуш блоков по WS
-    #     layer = get_channel_layer()
-    #     for b in blocks:
-    #         async_to_sync(layer.group_send)(group, {"type": "addin.block", "block": b})
-    #
-    #     messages.success(
-    #         request,
-    #         f"Ответ модели «{model_id}» отправлен в Word через DocOps ({target_email}). "
-    #         f"Блоков: {len(blocks)}; вложений из Google Drive: {len(attachments)}."
-    #     )
-    #     return _redirect_after(request, default_tab="debugger")
-    #
-    # except Exception as e:
-    #     logging.exception("DocOps pipeline failed in block_run")
-    #     try:
-    #         sent = send_text_as_paragraphs(target_email, answer, styleBuiltIn="Normal")
-    #         messages.warning(request, f"DocOps не сработал ({e}). Отправлен обычный текст ({sent} абз.).")
-    #     except Exception as e2:
-    #         messages.error(request, f"Не удалось отправить данные в Word Add-in: {e2}")
-    #     return _redirect_after(request, default_tab="debugger")

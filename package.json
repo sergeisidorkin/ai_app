@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@microsoft/office-js": "1.1.110"
+  }
+}

@@ -5,10 +5,16 @@ import os
 from urllib.parse import urlparse
 from django.conf import settings
 
-import io, mimetypes
+import mimetypes
 
 
 # ---- Вспомогательные настройки из ENV/Django settings ----
+
+def _org_id() -> str | None:
+    return _env("OPENAI_ORG_ID") or _env("OPENAI_ORGANIZATION")
+
+def _project_id() -> str | None:
+    return _env("OPENAI_PROJECT_ID") or _env("OPENAI_PROJECT")
 
 def _env(key, default=None):
     return getattr(settings, key, None) or os.environ.get(key, default)
@@ -48,28 +54,47 @@ def _is_relay(url: str) -> bool:
 def get_client(user):
     """
     Возвращает OpenAI client, корректно выбирая ключ:
-    - если base_url указывает на релей — всегда используем RELAY_TOKEN из ENV (OPENAI_API_KEY);
+    - если base_url указывает на релей — используем общий OPENAI_API_KEY из ENV;
     - иначе: сначала ключ из БД, иначе из ENV (обычный sk-ключ).
+    Пробрасываем organization/project только при прямом доступе к api.openai.com.
     """
-    try:
-        from openai import OpenAI
-    except Exception:
-        return None
+    from openai import OpenAI  # чтобы импорт точно был до вызова
 
     base_url = _base_url()
+    is_relay = _is_relay(base_url)
 
-    if _is_relay(base_url):
-        # Работает через релей — используем общий RELAY_TOKEN из ENV и игнорируем БД
+    # 1) API-ключ
+    if is_relay:
         api_key = (_env("OPENAI_API_KEY") or "").strip()
-        if not api_key:
-            return None
     else:
-        # Прямое подключение к OpenAI — поддерживаем персональные ключи из БД
         api_key = (_get_api_key_for(user) or _env("OPENAI_API_KEY") or "").strip()
-        if not api_key:
-            return None
 
-    return OpenAI(api_key=api_key, base_url=base_url)
+    if not api_key:
+        return None  # пусть вызывающая сторона обработает отсутствие клиента
+
+    # 2) Базовые аргументы клиента
+    kwargs = {"api_key": api_key, "base_url": base_url}
+
+    # 3) org/project — только для прямого API
+    if not is_relay:
+        org = _org_id()
+        prj = _project_id()
+        if org:
+            kwargs["organization"] = org
+        if prj:
+            kwargs["project"] = prj
+
+    # 4) Конструируем клиент; фолбэк для старых SDK
+    try:
+        return OpenAI(**kwargs)
+    except TypeError:
+        headers = {}
+        if not is_relay:
+            if _org_id():
+                headers["OpenAI-Organization"] = _org_id()
+            if _project_id():
+                headers["OpenAI-Project"] = _project_id()
+        return OpenAI(api_key=api_key, base_url=base_url, default_headers=headers)
 
 # ---- Работа со списком моделей ----
 
@@ -181,7 +206,6 @@ def run_prompt(user, model: str, prompt: str, temperature: float | None = None) 
 
 import io
 from typing import List, Tuple, Optional
-from openai import OpenAI
 
 
 def _guess_mime(name: str | None, default: str = "application/octet-stream") -> str:
