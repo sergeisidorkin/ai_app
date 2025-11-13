@@ -78,10 +78,14 @@ def get_client(user):
     # 2) Базовые аргументы клиента
     kwargs = {"api_key": api_key, "base_url": base_url}
 
-    # 2.1) Явные таймауты httpx, чтобы не зависать дольше 60с на апстриме
-    # connect=5s, read/write=60s. При необходимости подкорректируй.
-    timeout = httpx.Timeout(connect=5.0, read=60.0, write=60.0)
-    kwargs["http_client"] = httpx.Client(timeout=timeout)
+    # 2.1) Явные таймауты httpx: ОБЯЗАТЕЛЬНО все 4 поля (или один default)
+    timeout = httpx.Timeout(connect=5.0, read=60.0, write=60.0, pool=5.0)
+    limits = httpx.Limits(
+        max_connections=50,
+        max_keepalive_connections=20,
+        keepalive_expiry=15.0,
+    )
+    kwargs["http_client"] = httpx.Client(timeout=timeout, limits=limits)
 
     # 3) org/project — только для прямого API
     if not is_relay:
