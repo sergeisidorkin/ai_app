@@ -2,6 +2,9 @@ from __future__ import annotations
 from typing import List, Optional, Tuple
 import os
 
+import httpx
+from openai import OpenAI, APITimeoutError, APIConnectionError, APIStatusError
+
 from urllib.parse import urlparse
 from django.conf import settings
 
@@ -74,6 +77,11 @@ def get_client(user):
 
     # 2) Базовые аргументы клиента
     kwargs = {"api_key": api_key, "base_url": base_url}
+
+    # 2.1) Явные таймауты httpx, чтобы не зависать дольше 60с на апстриме
+    # connect=5s, read/write=60s. При необходимости подкорректируй.
+    timeout = httpx.Timeout(connect=5.0, read=60.0, write=60.0)
+    kwargs["http_client"] = httpx.Client(timeout=timeout)
 
     # 3) org/project — только для прямого API
     if not is_relay:
@@ -173,6 +181,14 @@ def run_prompt(user, model: str, prompt: str, temperature: float | None = None) 
                         if getattr(content, "type", "") == "text":
                             parts.append(getattr(content, "text", ""))
             return "".join(parts).strip()
+
+        except (APITimeoutError, httpx.TimeoutException):
+            return "[OpenAI timeout: 60s]"
+        except APIConnectionError:
+            return "[OpenAI connection error]"
+        except APIStatusError as e:
+            # аккуратно отдадим код статуса апстрима
+            return f"[OpenAI error {getattr(e, 'status_code', '?')}]"
         except Exception as e:
             if temperature is not None and _is_unsupported_temperature_error(e):
                 # повтор без temperature
@@ -191,6 +207,13 @@ def run_prompt(user, model: str, prompt: str, temperature: float | None = None) 
             chat = client.chat.completions.create(temperature=temperature, **payload)
         else:
             chat = client.chat.completions.create(**payload)
+
+    except (APITimeoutError, httpx.TimeoutException):
+        return "[OpenAI timeout: 60s]"
+    except APIConnectionError:
+        return "[OpenAI connection error]"
+    except APIStatusError as e:
+        return f"[OpenAI error {getattr(e, 'status_code', '?')}]"
     except Exception as e:
         if temperature is not None and _is_unsupported_temperature_error(e):
             chat = client.chat.completions.create(**payload)
@@ -330,9 +353,17 @@ def run_prompt_with_files(user, model: str, prompt: str,
 
     try:
         resp = client.responses.create(**req)
+
     except TypeError:
         # очень старый SDK — фолбэк: только текст
         return run_prompt(user, model, prompt, temperature=temperature)
+
+    except (APITimeoutError, httpx.TimeoutException):
+        return "[OpenAI timeout: 60s]"
+    except APIConnectionError:
+        return "[OpenAI connection error]"
+    except APIStatusError as e:
+        return f"[OpenAI error {getattr(e, 'status_code', '?')}]"
 
     text = getattr(resp, "output_text", None)
     if text:
