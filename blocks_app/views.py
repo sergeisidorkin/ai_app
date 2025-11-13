@@ -1,5 +1,6 @@
 import json, re, os, logging
 import uuid
+from uuid import UUID, uuid4
 
 from io import BytesIO
 from docx import Document
@@ -58,6 +59,7 @@ from onedrive_app.service import resolve_doc_info, ensure_share_link_for_doc
 
 from logs_app.utils import new_trace_id
 from logs_app import utils as plog
+
 
 # === OpenAI service (импорт + надёжные заглушки) ===
 try:
@@ -1020,6 +1022,15 @@ def block_run(request, pk):
     block = get_object_or_404(Block, pk=pk)
 
     trace_id = new_trace_id()
+
+    _raw_tid = trace_id
+    try:
+        UUID(str(_raw_tid))  # валидно?
+    except Exception:
+        trace_id = uuid4()  # заменить на валидный UUID
+        # при желании сохранить старый для отображения:
+        request.META["X-Client-Trace"] = str(_raw_tid)
+
     request_id = uuid.uuid4()
 
     via = (request.POST.get("via") or request.GET.get("via") or "ws").lower()
@@ -1259,9 +1270,22 @@ def block_run(request, pk):
         if not answer:
             raise RuntimeError("Пустой ответ модели.")
     except Exception as e:
+
+        try:
+            detail = {}
+            # OpenAI SDK часто прячет статус и тело ответа так:
+            if hasattr(e, "status_code"): detail["status_code"] = e.status_code
+            if hasattr(e, "response") and hasattr(e.response, "text"):
+                detail["response_text"] = e.response.text[:1000]
+            plog.error(request.user, phase="llm", event="call.failed",
+                       message=str(e), data=detail)
+        except Exception:
+            pass
+
         emsg = str(e).lower()
         if ("temperature" in emsg) and ("unsupported" in emsg or "does not support" in emsg):
-            messages.error(request, "Выбранная температура не поддерживается этой моделью. Укажите 1.0 или оставьте пусто.")
+            messages.error(request,
+                           "Выбранная температура не поддерживается этой моделью. Укажите 1.0 или оставьте пусто.")
         else:
             messages.error(request, f"Ошибка при обращении к LLM: {e}")
         return _redirect_after(request, default_tab="debugger")
@@ -1465,6 +1489,10 @@ def block_run(request, pk):
 
     # Сборка addin.job через macroops
     job = docops_to_addin_job(docops_prog, meta=meta_for_compile, anchor=anchor_obj)
+
+    # Гарантируем meta и trace_id в самой job (для очереди/агента)
+    job.setdefault("meta", {})
+    job["meta"].setdefault("trace_id", str(trace_id))
 
     # якорь "< CODE" — если вы уже внедряли хелпер _make_anchor_for_block, просто используйте:
     anchor_text = f"< {(block.code or '').strip()}" if getattr(block, "code", None) else None
