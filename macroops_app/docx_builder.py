@@ -53,12 +53,12 @@ def _log(level: str, event: str, *, message: str = "",
     trace_id = ctx.get("trace_id")
     email    = ctx.get("email")
 
-    # Всё остальное (request_id, project_code6 и пр.) — в data
+    # Всё остальное (request_id, project_uid и пр.) — в data
     payload = dict(data or {})
     if ctx.get("request_id") is not None:
         payload.setdefault("request_id", ctx["request_id"])
-    if ctx.get("project_code6") is not None:
-        payload.setdefault("project_code6", ctx["project_code6"])
+    if ctx.get("project_uid") is not None:
+        payload.setdefault("project_uid", ctx["project_uid"])
 
     fn = getattr(p, level, p.info)
     try:

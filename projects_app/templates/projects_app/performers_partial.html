@@ -64,9 +64,7 @@
             </div>
           {% endif %}
         </td>
-        <td class="text-nowrap">
-          {% if p.registration %}{{ p.registration.number }}{{ p.registration.group }}{% endif %}
-        </td>
+        <td class="text-nowrap">{% if p.registration %}{{ p.registration.short_uid }}{% endif %}</td>
         <td class="text-nowrap">
           {% if p.registration.type %}{{ p.registration.type.short_name|default:p.registration.type }}{% endif %}
         </td>

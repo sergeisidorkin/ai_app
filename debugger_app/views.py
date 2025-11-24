@@ -35,9 +35,8 @@ def _product_short_label(product) -> str:
 
 def _format_project_label(reg: ProjectRegistration) -> str:
     """
-    Отображение проекта: "4444RU DD Название".
-    Между Номер и Группа — без пробела; остальное — через пробел.
-    Любые типы полей (int/None/str) приводим к строке безопасно.
+    Отображение проекта: "44441RU DD Название".
+    Приоритет: short_uid → number+group. Остальные поля через пробел.
     """
     def s(v):
         try:
@@ -45,14 +44,17 @@ def _format_project_label(reg: ProjectRegistration) -> str:
         except Exception:
             return ""
 
-    num  = s(getattr(reg, "number", ""))
-    grp  = s(getattr(reg, "group", ""))
-    typ  = s(_product_short_label(getattr(reg, "type", None)))
+    uid = s(getattr(reg, "short_uid", ""))
+    if not uid:
+        num = s(getattr(reg, "number", ""))
+        grp = s(getattr(reg, "group", ""))
+        uid = f"{num}{grp}".strip()
+
+    typ = s(_product_short_label(getattr(reg, "type", None)))
     name = s(getattr(reg, "name", ""))
 
-    base = f"{num}{grp}".strip()
     tail = " ".join(x for x in (typ, name) if x).strip()
-    return f"{base} {tail}".strip()
+    return f"{uid} {tail}".strip()
 
 def _project_meta(registration_id: int, asset_name: Optional[str] = None) -> dict:
     """
@@ -101,7 +103,6 @@ def panel(request):
     regs = list(ProjectRegistration.objects.select_related("type").order_by("position", "id"))
 
     def _s(v):
-        # безопасное приведение к str + strip для любых типов (int/None/str)
         try:
             return str(v).strip()
         except Exception:
@@ -109,13 +110,16 @@ def panel(request):
 
     project_options = []
     for r in regs:
-        # код проекта = number+group, оба могут быть не строками
-        code6 = f"{_s(getattr(r, 'number', ''))}{_s(getattr(r, 'group', ''))}".upper()
+        short_uid = _s(getattr(r, "short_uid", ""))
+        if not short_uid:
+            number = _s(getattr(r, "number", ""))
+            group = _s(getattr(r, "group", ""))
+            short_uid = f"{number}{group}".upper()
 
         project_options.append({
             "id": r.id,
             "label": _format_project_label(r),
-            "code": code6,  # ← пойдёт в data-project-code в шаблоне
+            "short_uid": short_uid,
             "product_short": _product_short_label(getattr(r, "type", None)),
             "product_id": getattr(getattr(r, "type", None), "id", None),
         })

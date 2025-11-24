@@ -18,7 +18,7 @@
     {% csrf_token %}
 
     <div class="mb-3">
-      <label class="form-label">Номер проекта</label>
+      <label class="form-label">Проект</label>
       {{ form.project }}
     </div>
     <div class="mb-3">
@@ -51,6 +51,13 @@
     <button type="submit" class="btn btn-primary">Сохранить</button>
   </div>
 </form>
+<style>
+  #projects-modal .readonly-field {
+    background-color: #f8f9fa;
+    color: #6c757d;
+    pointer-events: none;
+  }
+</style>
 <script>
 (function(){
   const modal = document.currentScript.closest('.modal-content');

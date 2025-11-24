@@ -31,7 +31,7 @@ class LogEvent(models.Model):
 
     # полезные поля для быстрых фильтров
     via           = models.CharField(max_length=16, blank=True)         # ws|queue
-    project_code6 = models.CharField(max_length=16, blank=True)
+    project_uid   = models.CharField(max_length=16, blank=True)
     company       = models.CharField(max_length=255, blank=True)
     section       = models.CharField(max_length=64, blank=True)
     anchor_text   = models.CharField(max_length=256, blank=True)

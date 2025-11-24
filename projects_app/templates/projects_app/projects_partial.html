@@ -1,3 +1,4 @@
+{% load projects_extras %}
 <div id="projects-pane">
   <!-- Индикатор, чтобы наследование hx-indicator не ругалось -->
   <div id="projects-loading" class="text-muted htmx-indicator d-none">Загрузка…</div>
@@ -12,28 +13,31 @@
 
     <table class="table table-sm align-middle reg-table">
         <colgroup>
-          <col class="checkbox">     <!-- 1: чекбокс -->
-          <col class="group">        <!-- 2: Номер -->
-          <col class="group">        <!-- 3: Группа -->
-          <col class="group">        <!-- 4: Тип -->
-          <col class="name">         <!-- 5: Название -->
-          <col class="status">       <!-- 6: Статус -->
-          <col class="narrow">       <!-- 7: Начало контракта -->
-          <col class="narrow">       <!-- 8: Оконч. контракта -->
-          <col class="narrow">       <!-- 9: Оконч., расчет -->
-          <col class="narrow">       <!-- 10: Исх. данные -->
-          <col class="narrow">       <!-- 11: Этап 1, недель -->
-          <col class="narrow">       <!-- 12: Этап 1, оконч. -->
-          <col class="narrow">       <!-- 13: Этап 2, недель -->
-          <col class="narrow">       <!-- 14: Этап 2, оконч. -->
-          <col class="narrow">       <!-- 15: Этап 3, недель -->
-          <col class="narrow">       <!-- 16: Срок, недель -->
-          <col class="narrow">       <!-- 17: Дедлайн -->
-          <col class="narrow">       <!-- 18: Год -->
-          <col>                      <!-- 19: Заказчик -->
-          <col>                      <!-- 20: Регистр. номер -->
-          <col>                      <!-- 21: Руководитель проекта -->
-          <col>                      <!-- 22: Предмет договора -->
+          <col class="checkbox">         <!-- 1: чекбокс -->
+          <col class="project-number">   <!-- 2: Номер -->
+          <col class="group">            <!-- 3: Группа -->
+          <col class="agreement-type">   <!-- 4: Вид соглашения -->
+          <col class="agreement-number"> <!-- 5: № соглашения -->
+          <col class="project-id">        <!-- 6: Проект ID -->  
+          <col class="group">            <!-- 7: Тип -->
+          <col class="name">             <!-- 8: Название -->
+          <col class="status">           <!-- 9: Статус -->
+          <col class="narrow">           <!-- 10: Начало контракта -->
+          <col class="narrow">           <!-- 11: Оконч. контракта -->
+          <col class="narrow">           <!-- 12: Оконч., расчет -->
+          <col class="narrow">           <!-- 13: Исх. данные -->
+          <col class="narrow">           <!-- 14: Этап 1, недель -->
+          <col class="narrow">           <!-- 15: Этап 1, оконч. -->
+          <col class="narrow">           <!-- 15: Этап 2, недель -->
+          <col class="narrow">           <!-- 17: Этап 2, оконч. -->
+          <col class="narrow">           <!-- 18: Этап 3, недель -->
+          <col class="narrow">           <!-- 19: Срок, недель -->
+          <col class="narrow">           <!-- 20: Дедлайн -->
+          <col class="narrow">           <!-- 21: Год -->
+          <col>                          <!-- 22: Заказчик -->
+          <col>                          <!-- 23: Регистр. номер -->
+          <col>                          <!-- 24: Руководитель проекта -->
+          <col>                          <!-- 25: Предмет договора -->
         </colgroup>
       <thead>
       <tr>
@@ -49,8 +53,11 @@
             </div>
           {% endif %}
         </th>
-        <th>Номер</th>
+        <th class="col-project-number">Номер</th>
         <th>Группа</th>
+        <th>Вид соглашения</th>
+        <th class="col-agreement-number">№ соглашения</th>
+        <th>Проект ID</th>
         <th>Тип</th>
         <th class="nowrap">Название</th>
         <th>Статус</th>
@@ -91,8 +98,11 @@
               </div>
             {% endif %}
           </td>
-          <td>{{ r.number }}</td>
+          <td class="col-project-number">{{ r.number }}</td>
           <td>{{ r.group }}</td>
+          <td>{{ r.get_agreement_type_display }}</td>
+          <td>{{ r.agreement_number }}</td>
+          <td class="project-id-cell">{{ r.short_uid }}</td>
           <td>{{ r.type }}</td>
           <td>{{ r.name }}</td>
           <td>{{ r.status }}</td>
@@ -100,12 +110,12 @@
           <td>{{ r.contract_end|date:"d.m.y" }}</td>
           <td>{{ r.completion_calc|date:"d.m.y" }}</td>
           <td>{{ r.input_data }}</td>
-          <td>{{ r.stage1_weeks }}</td>
+          <td>{{ r.stage1_weeks|comma_decimal:1 }}</td>
           <td>{{ r.stage1_end|date:"d.m.y" }}</td>
-          <td>{{ r.stage2_weeks }}</td>
+          <td>{{ r.stage2_weeks|comma_decimal:1 }}</td>
           <td>{{ r.stage2_end|date:"d.m.y" }}</td>
-          <td>{{ r.stage3_weeks }}</td>
-          <td>{{ r.term_weeks }}</td>
+          <td>{{ r.stage3_weeks|comma_decimal:1 }}</td>
+          <td>{{ r.term_weeks|comma_decimal:1 }}</td>
           <td>{{ r.deadline|date:"d.m.y" }}</td>
           <td>{{ r.year }}</td>
           <td>{{ r.customer }}</td>
@@ -114,7 +124,7 @@
           <td>{{ r.contract_subject|truncatechars:15 }}</td>
         </tr>
       {% empty %}
-        <tr><td colspan="22" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="25" class="text-muted">Пока нет данных.</td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -153,7 +163,7 @@
   <!-- Объем работ -->
   <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 50px;">
     <h5 class="table-section-title">
-      <i class="bi bi-table me-2"></i> Объем работ
+      <i class="bi bi-table me-2"></i> Объем услуг
     </h5>
   </div>
 
@@ -164,7 +174,7 @@
           <col class="col-project">     <!-- Номер проекта -->
           <col class="col-type">        <!-- Тип -->
           <col class="col-name">        <!-- Название -->
-          <col>                         <!-- Наименование актива -->
+          <col class="col-active">      <!-- Наименование актива -->
           <col>                         <!-- Регистрационный номер -->
           <col>                         <!-- Менеджер -->
       </colgroup>
@@ -209,7 +219,7 @@
               </div>
             {% endif %}
           </td>
-          <td class="text-nowrap">{{ w.project.number }}{{ w.project.group }}</td>
+          <td class="text-nowrap">{{ w.project.short_uid }}</td>
           <td class="text-nowrap">{{ w.type }}</td>
           <td>{{ w.name }}</td>
           <td class="text-nowrap">{{ w.asset_name }}</td>
@@ -252,4 +262,236 @@
       </div>
     {% endif %}
   </div>
+
+  <!-- Юридические лица -->
+  <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap" style="margin-top: 50px;">
+    <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
+      <i class="bi bi-table"></i> Юридические лица
+    </h5>
+    <div class="dropdown">
+      <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+              id="legal-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+        Проекты: <span class="js-legal-filter-label">Все</span>
+      </button>
+      <div class="dropdown-menu p-3" aria-labelledby="legal-project-filter-toggle" style="min-width: 200px; max-height: 240px; overflow-y: auto;">
+        <div class="form-check mb-2">
+          <input class="form-check-input js-legal-filter" type="checkbox" value="__all__" id="legal-filter-all">
+          <label class="form-check-label" for="legal-filter-all">Все проекты</label>
+        </div>
+        <hr class="dropdown-divider">
+        {% for project in legal_projects %}
+          <div class="form-check">
+            <input class="form-check-input js-legal-filter" type="checkbox"
+                   value="{{ project.id }}" id="legal-filter-{{ project.id }}">
+            <label class="form-check-label" for="legal-filter-{{ project.id }}">
+              {{ project.short_uid }}
+            </label>
+          </div>
+        {% empty %}
+          <div class="text-muted small">Нет проектов</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="table-responsive">
+    <table class="table table-sm align-middle legal-table">
+      <colgroup>
+        <col class="col-checkbox">
+        <col class="col-project">
+        <col class="col-type">
+        <col class="col-name">
+        <col class="col-active">
+        <col class="col-registration">
+      </colgroup>
+      <thead>
+      <tr>
+        <th style="width:1%">
+          {% if request.user.is_authenticated and request.user.is_staff %}
+            <div class="form-check m-0">
+              <input class="form-check-input"
+                      type="checkbox"
+                      id="legal-entities-master"
+                      data-target-name="legal-select"
+                      data-actions-id="legal-entities-actions"
+                      aria-label="Выделить все строки юридических лиц">
+            </div>
+          {% endif %}
+        </th>
+        <th>Проект</th>
+        <th>Тип</th>
+        <th>Название</th>
+        <th>Наименование актива</th>
+        <th>Наименование юридического лица</th>
+        <th>Регистрационный номер</th>
+      </tr>
+      </thead>
+      <tbody>
+      {% for entity in legal_entities %}
+        <tr
+          data-edit-url="{% url 'legal_entity_form_edit' entity.pk %}"
+          data-delete-url="{% url 'legal_entity_delete' entity.pk %}"
+          data-move-up-url="{% url 'legal_entity_move_up' entity.pk %}"
+          data-move-down-url="{% url 'legal_entity_move_down' entity.pk %}"
+          data-project-id="{{ entity.project_id }}">
+          <td class="text-nowrap">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+              <div class="form-check">
+                <input class="form-check-input"
+                        type="checkbox"
+                        id="legal-sel-{{ entity.id }}"
+                        name="legal-select"
+                        value="{{ entity.id }}"
+                        aria-label="Выделить строку юридического лица">
+              </div>
+            {% endif %}
+          </td>
+          <td class="text-nowrap">{{ entity.project.short_uid }}</td>
+          <td class="text-nowrap">{{ entity.work_type }}</td>
+          <td>{{ entity.work_name }}</td>
+          <td class="text-nowrap">{{ entity.work_item.asset_name|default:entity.work_item.name }}</td>
+          <td>{{ entity.legal_name|default:"—" }}</td>
+          <td class="text-nowrap">{{ entity.registration_number|default:"—" }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="5" class="text-muted">Пока нет данных.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+
+    {% if request.user.is_authenticated and request.user.is_staff %}
+      <div class="d-flex align-items-stretch gap-2 products-actions-row">
+        <button
+          class="btn btn-primary btn-sm d-flex align-items-center"
+          hx-get="{% url 'legal_entity_form_create' %}"
+          hx-target="#projects-modal .modal-content"
+          hx-swap="innerHTML"
+          data-bs-toggle="modal"
+          data-bs-target="#projects-modal">
+          <i class="bi bi-plus-circle me-2"></i>Добавить строку
+        </button>
+        <div id="legal-entities-actions" class="d-none d-flex">
+          <div class="btn-group">
+            <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+              <i class="bi bi-arrow-up-square"></i>
+            </button>
+            <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+              <i class="bi bi-arrow-down-square"></i>
+            </button>
+            <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+              <i class="bi bi-pencil-square"></i>
+            </button>
+            <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+              <i class="bi bi-x-square"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+
+  <script>
+  (function(){
+    const FILTER_ALL = "__all__";
+    window.__legalProjectFilter = window.__legalProjectFilter || [FILTER_ALL];
+
+    function initLegalFilter() {
+      const pane = document.getElementById("projects-pane");
+      if (!pane) return;
+
+      const dropdown = pane.querySelector(".dropdown");
+      const checks = pane.querySelectorAll(".js-legal-filter");
+      const label = pane.querySelector(".js-legal-filter-label");
+      const rows = pane.querySelectorAll("table.legal-table tbody tr");
+
+      if (!dropdown || checks.length === 0 || dropdown.dataset.bound === "1") return;
+      dropdown.dataset.bound = "1";
+
+      function syncCheckboxes(values) {
+        const set = new Set(values);
+        checks.forEach((cb) => {
+          cb.checked = set.has(cb.value);
+        });
+      }
+
+      function updateLabel(values) {
+        if (values.includes(FILTER_ALL) || !values.length) {
+          label.textContent = "Все";
+          return;
+        }
+        if (values.length === 1) {
+          const input = Array.from(checks).find((cb) => cb.value === values[0]);
+          label.textContent = input?.nextElementSibling?.textContent?.trim() || "1 проект";
+          return;
+        }
+        label.textContent = `${values.length} выбрано`;
+      }
+
+      function applyFilter(values) {
+        window.__legalProjectFilter = values.slice();
+        const showAll = values.includes(FILTER_ALL) || values.length === 0;
+        rows.forEach((row) => {
+          const pid = row.dataset.projectId || "";
+          row.classList.toggle("d-none", !showAll && !values.includes(pid));
+        });
+        updateLabel(values);
+      }
+
+      function normalizeSelection() {
+        let values = Array.from(checks)
+          .filter((cb) => cb.checked)
+          .map((cb) => cb.value);
+
+        if (!values.length) {
+          values = [FILTER_ALL];
+        }
+        if (values.includes(FILTER_ALL)) {
+          values = [FILTER_ALL];
+        }
+
+        syncCheckboxes(values);
+        return values;
+      }
+
+      checks.forEach((cb) => {
+        cb.addEventListener("change", (event) => {
+          const value = event.target.value;
+          if (value === FILTER_ALL && event.target.checked) {
+            syncCheckboxes([FILTER_ALL]);
+            applyFilter([FILTER_ALL]);
+            return;
+          }
+
+          if (value === FILTER_ALL && !event.target.checked) {
+            const firstProject = Array.from(checks).find((c) => c.value !== FILTER_ALL);
+            if (firstProject) {
+              firstProject.checked = true;
+            }
+          } else {
+            const allCheckbox = pane.querySelector("#legal-filter-all");
+            if (allCheckbox && allCheckbox.checked) {
+              allCheckbox.checked = false;
+            }
+          }
+
+          const values = normalizeSelection();
+          applyFilter(values);
+        });
+      });
+
+      const initialValues = window.__legalProjectFilter && window.__legalProjectFilter.length
+        ? window.__legalProjectFilter
+        : [FILTER_ALL];
+      syncCheckboxes(initialValues);
+      applyFilter(initialValues);
+    }
+
+    document.addEventListener("DOMContentLoaded", initLegalFilter);
+    document.body.addEventListener("htmx:afterSettle", (event) => {
+      if (event.target && event.target.id === "projects-pane") {
+        initLegalFilter();
+      }
+    });
+  })();
+  </script>
 </div>

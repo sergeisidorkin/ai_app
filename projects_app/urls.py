@@ -23,5 +23,12 @@ urlpatterns = [
     path("projects/performers/<int:pk>/move-up/", views.performer_move_up, name="performer_move_up"),
     path("projects/performers/<int:pk>/move-down/", views.performer_move_down, name="performer_move_down"),
 
+    path("projects/legal-entities/create/", views.legal_entity_form_create, name="legal_entity_form_create"),
+    path("projects/legal-entities/<int:pk>/edit/", views.legal_entity_form_edit, name="legal_entity_form_edit"),
+    path("projects/legal-entities/<int:pk>/delete/", views.legal_entity_delete, name="legal_entity_delete"),
+    path("projects/legal-entities/<int:pk>/move-up/", views.legal_entity_move_up, name="legal_entity_move_up"),
+    path("projects/legal-entities/<int:pk>/move-down/", views.legal_entity_move_down, name="legal_entity_move_down"),
+    path("projects/legal-entities/work-deps/", views.legal_entity_work_deps, name="legal_entity_work_deps"),
+
     path("projects/work/deps/", views.work_deps, name="work_deps"),
 ]

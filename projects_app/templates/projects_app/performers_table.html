@@ -40,9 +40,13 @@
                 <input class="form-check-input" type="checkbox" name="performer-select" value="{{ it.id }}">
               </div>
             </td>
-            <td class="text-nowrap">{{ reg.number }} {{ reg.group }}</td>
+            <td class="text-nowrap">
+              {% if reg %}{{ reg.short_uid }}{% endif %}
+            </td>
             <td class="text-nowrap">{{ reg.group }}</td>
-            <td class="text-nowrap">{{ reg.product.short_name|default:reg.type|default:"" }}</td>
+            <td class="text-nowrap">{{ reg.type }}</td>
+            <td class="text-nowrap">{{ reg.get_agreement_type_display }}</td>
+            <td class="text-nowrap">{{ reg.agreement_number }}</td>
             <td class="text-nowrap">{{ reg.name|default:reg.title }}</td>
             <td class="text-nowrap">{{ it.asset_name }}</td>
             <td class="text-nowrap">{{ it.executor }}</td>

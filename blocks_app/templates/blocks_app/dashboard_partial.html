@@ -40,21 +40,30 @@
               {% endif %}
             </div>
 
-            <button class="btn btn-sm btn-outline-secondary"
-                    data-bs-toggle="modal"
-                    data-bs-target="#blockModal"
-                    data-edit-url="{% url 'blocks_app:blocks_update' b.id %}"
-                    data-code="{{ b.code|escape }}"
-                    data-name="{{ b.name|escape }}"
-                    data-prompt="{{ b.prompt|escape }}"
 
-                    data-context-ids="{{ b.context_ids_for_edit|join:',' }}"
+            <div class="d-flex flex-wrap gap-2 ms-auto justify-content-end">
+                <a class="btn btn-sm btn-outline-primary"
+                  hx-get="{% url 'blockseditor_app:editor_partial' b.id %}"
+                  hx-target="#templates-pane"
+                  hx-swap="innerHTML"
+                  hx-indicator="#templates-loading">
+                  Редактировать
+                </a>
+                <button class="btn btn-sm btn-outline-secondary"
+                        data-bs-toggle="modal"
+                        data-bs-target="#blockModal"
+                        data-edit-url="{% url 'blocks_app:blocks_update' b.id %}"
+                        data-code="{{ b.code|escape }}"
+                        data-name="{{ b.name|escape }}"
+                        data-prompt="{{ b.prompt|escape }}"
+                        data-context-ids="{{ b.context_ids_for_edit|join:',' }}"
+                        data-model="{{ b.model|default_if_none:''|escape }}"
+                        data-temperature="{{ b.temperature|default_if_none:'' }}">
+                  Изменить
+                </button>
+              </div>
+            </div>
 
-                    data-model="{{ b.model|default_if_none:''|escape }}"
-                    data-temperature="{{ b.temperature|default_if_none:'' }}">
-              Изменить
-            </button>
-          </div>
 
           <hr class="my-3">
 
@@ -107,7 +116,7 @@
                     <input type="hidden" name="next" value="{{ next_url }}">
                     <input type="hidden" name="product_id" value="">
                     <input type="hidden" name="section_id" value="">
-                    <input type="hidden" name="project_code" value="">
+                    <input type="hidden" name="project_uid" value="">
                     <input type="hidden" name="asset_name" value="">
                     <button type="submit" class="btn btn-success btn-sm" name="via" value="queue">Создать</button>
                     <button type="submit" class="btn btn-secondary btn-sm" name="via" value="ws">Тест</button>

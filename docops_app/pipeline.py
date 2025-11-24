@@ -83,7 +83,7 @@ def process_answer_through_pipeline(
     user=None,
     trace_id=None,
     request_id=None,
-    project_code6: Optional[str] = None,
+    project_uid: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Унифицированный пайплайн DocOps + подробное логирование.
@@ -99,7 +99,7 @@ def process_answer_through_pipeline(
                 message=message,
                 trace_id=trace_id,
                 request_id=request_id,
-                project_code6=(project_code6 or ""),
+                project_uid=(project_uid or ""),
                 **data,
             )
         except Exception:

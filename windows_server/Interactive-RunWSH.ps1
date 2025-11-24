@@ -7,7 +7,7 @@ $ErrorActionPreference = "Continue"
 Set-StrictMode -Off
 
 # === конфиг ===
-$Base  = $env:DOCOPS_BASE  ; if([string]::IsNullOrWhiteSpace($Base))  { $Base  = "https://adamantly-fluttering-worm.cloudpub.ru" }
+$Base  = $env:DOCOPS_BASE  ; if([string]::IsNullOrWhiteSpace($Base))  { $Base  = "https://snappishly-primed-blackfish.cloudpub.ru" }
 $Agent = $env:DOCOPS_AGENT ; if([string]::IsNullOrWhiteSpace($Agent)) { $Agent = "addin-auto" }
 
 # === лог в файл ===

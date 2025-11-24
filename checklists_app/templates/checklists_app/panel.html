@@ -1,0 +1,211 @@
+<div id="checklists-panel-root"
+     data-table-url="{{ table_partial_url }}"
+     data-update-url="{{ update_status_url }}"
+     data-note-url="{{ update_note_url }}"
+     data-meta-url-base="{{ project_meta_url_base }}">
+    <div class="card shadow-sm chooser-card w-100 mb-3">
+        <div class="card-body">
+            <h6 class="card-title mb-3">Выбор рабочей области</h6>
+            <div class="d-flex align-items-center gap-3 chk-filters-row">
+                <div class="chk-filter-group">
+                    <span class="small text-muted">Проект:</span>
+                    <select id="chk-project" class="form-select form-select-sm">
+                        {% for opt in project_options %}
+                            <option value="{{ opt.short_uid }}"
+                                    data-project-id="{{ opt.id }}"
+                                    data-project-short="{{ opt.product_short }}"
+                                    data-project-code="{{ opt.short_uid }}"
+                                    {% if opt.short_uid == selected_project_uid %}selected{% endif %}>
+                            {{ opt.label }}
+                            </option>
+                        {% empty %}
+                            <option value="">Нет проектов</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="chk-filter-group">
+                    <span class="small text-muted">Актив:</span>
+                    <select id="chk-asset" class="form-select form-select-sm" {% if not asset_options %}disabled{% endif %}>
+                        {% if asset_options %}
+                            {% for name in asset_options %}
+                                <option value="{{ name }}" {% if name == selected_asset %}selected{% endif %}>{{ name }}</option>
+                            {% endfor %}
+                        {% else %}
+                            <option value="">Нет данных</option>
+                        {% endif %}
+                    </select>
+                </div>
+
+                <div class="chk-filter-group">
+                    <span class="small text-muted">Раздел:</span>
+                    <select id="chk-section" class="form-select form-select-sm">
+                        {% if section_options %}
+                            {% for s in section_options %}
+                                <option value="{{ s.id }}">{{ s.name }}</option>
+                            {% endfor %}
+                        {% else %}
+                            <option value="">Нет данных</option>
+                        {% endif %}
+                    </select>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mb-3 chk-status-heading">
+    <h5 class="mb-0 fs-4">Статусы запросов</h5>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-body position-relative">
+        <div id="checklists-table-wrap" class="table-responsive">
+            <div class="text-muted small">Выберите проект, актив и раздел, чтобы увидеть чек-лист.</div>
+        </div>
+        <div id="checklists-table-loading" class="loading-overlay d-none">
+            <div class="bg-white border rounded-3 shadow-sm px-3 py-2 d-flex align-items-center gap-2">
+                <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+                <span class="small">Загрузка статусов…</span>
+            </div>
+        </div>
+    </div>
+</div>
+</div>
+
+<style>
+    .chk-status-heading {
+        padding: 0 .5rem;
+        margin-left: 10px;
+    }
+    
+    #checklists-panel-root .chk-filters-row {
+        flex-wrap: nowrap;
+    }
+    #checklists-panel-root .chk-filter-group {
+        display: inline-flex;
+        align-items: center;
+        gap: .5rem;
+        white-space: nowrap;
+    }
+    #checklists-panel-root .chk-filter-group select {
+        min-width: 16rem;
+    }
+    @media (max-width: 1200px) {
+        #checklists-panel-root .chk-filters-row {
+        flex-wrap: wrap;
+        }
+        #checklists-panel-root .chk-filter-group {
+        width: 100%;
+        }
+        #checklists-panel-root .chk-filter-group select {
+        width: 100%;
+        min-width: 0;
+        }
+    }
+
+</style>
+
+<script>
+    (function() {
+        const root = document.getElementById('checklists-panel-root');
+        if (!root) return;
+        const projectSel = root.querySelector('#chk-project');
+        const assetSel = root.querySelector('#chk-asset');
+        const sectionSel = root.querySelector('#chk-section');
+        const tableWrap = document.getElementById('checklists-table-wrap');
+        const loading = document.getElementById('checklists-table-loading');
+        const tableUrl = root.dataset.tableUrl;
+        const metaUrlBase = root.dataset.metaUrlBase;
+
+        const showLoading = (state) => {
+            if (!loading) return;
+            loading.classList.toggle('d-none', !state);
+        };
+
+        async function loadProjectMeta() {
+            if (!metaUrlBase || !projectSel?.value) return;
+            try {
+                showLoading(true);
+                const projectUid = projectSel?.value || '';
+                const url = metaUrlBase.replace("__uid__", encodeURIComponent(projectUid || ""));
+                const resp = await fetch(url, { headers: { 'X-Requested-With': 'fetch' } });
+                const data = await resp.json();
+                if (assetSel) {
+                    assetSel.innerHTML = '';
+                    const assets = data.assets || [];
+                    if (!assets.length) {
+                        assetSel.innerHTML = '<option value="">Нет данных</option>';
+                        assetSel.setAttribute('disabled', 'disabled');
+                    } else {
+                        assetSel.removeAttribute('disabled');
+                        assets.forEach((a) => {
+                            const opt = document.createElement('option');
+                            opt.value = a;
+                            opt.textContent = a;
+                            if (a === data.asset) opt.selected = true;
+                            assetSel.appendChild(opt);
+                        });
+                    }
+                }
+                if (sectionSel) {
+                    sectionSel.innerHTML = '';
+                    const sections = data.sections || [];
+                    if (!sections.length) {
+                        sectionSel.innerHTML = '<option value="">Нет данных</option>';
+                    } else {
+                        sections.forEach((s) => {
+                            const opt = document.createElement('option');
+                            opt.value = s.id;
+                            opt.textContent = s.name;
+                            sectionSel.appendChild(opt);
+                        });
+                    }
+                }
+            } catch (err) {
+                console.error('checklists:meta', err);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        async function reloadTable() {
+            if (!tableUrl || !projectSel?.value) {
+                tableWrap.innerHTML = '<div class="text-muted small">Выберите проект.</div>';
+                return;
+            }
+            const projectUid = projectSel?.value || '';
+            const params = new URLSearchParams({
+                project_uid: projectUid,
+                asset: assetSel?.value || '',
+                section: sectionSel?.value || '',
+            });
+            showLoading(true);
+            try {
+                const resp = await fetch(`${tableUrl}?${params.toString()}`, { headers: { 'X-Requested-With': 'fetch' } });
+                const html = await resp.text();
+                tableWrap.innerHTML = html;
+                if (window.htmx) {
+                    window.htmx.process(tableWrap);
+                }
+            } catch (err) {
+                tableWrap.innerHTML = '<div class="alert alert-danger mb-0">Не удалось загрузить таблицу чек-листа.</div>';
+                console.error('checklists:table', err);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        projectSel?.addEventListener('change', async () => {
+            await loadProjectMeta();
+            await reloadTable();
+        });
+        assetSel?.addEventListener('change', reloadTable);
+        sectionSel?.addEventListener('change', reloadTable);
+
+        (async function init() {
+            await loadProjectMeta();
+            await reloadTable();
+        })();
+    })();
+</script>

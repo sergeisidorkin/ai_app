@@ -22,7 +22,7 @@ class LogEventAdmin(admin.ModelAdmin):
         "via",
         "email",
         "user",
-        "project_code6",
+        "project_uid",
         "company",
         "section",
         "job_id",
@@ -45,7 +45,7 @@ class LogEventAdmin(admin.ModelAdmin):
         "event",
         "company",
         "section",
-        "project_code6",
+        "project_uid",
         "anchor_text",
     )
 
@@ -58,7 +58,7 @@ class LogEventAdmin(admin.ModelAdmin):
             "fields": ("id", "created_at", "level", "phase", "event", "message"),
         }),
         ("Context", {
-            "fields": ("user", "email", "via", "project_code6", "company", "section", "anchor_text"),
+            "fields": ("user", "email", "via", "project_uid", "company", "section", "anchor_text"),
         }),
         ("IDs", {
             "fields": ("trace_id", "request_id", "job_id"),
