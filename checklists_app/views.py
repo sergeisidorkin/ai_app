@@ -3,7 +3,7 @@ from typing import Optional
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
 from django.db.models import Q
-from django.http import HttpResponseBadRequest, JsonResponse
+from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.urls import NoReverseMatch, reverse
 from django.views.decorators.http import require_GET, require_POST
@@ -472,4 +472,8 @@ def add_comment(request):
         "histories": history_qs,
         "add_comment_url": reverse("checklists_app:add_comment"),
     }
-    return render(request, "checklists_app/components/comment_cell.html", context)
+    # Рендерим ячейку + историю (OOB) в одном ответе
+    from django.template.loader import render_to_string
+    cell_html = render_to_string("checklists_app/components/comment_cell.html", context, request=request)
+    history_html = render_to_string("checklists_app/components/comment_history.html", context, request=request)
+    return HttpResponse(cell_html + history_html)
