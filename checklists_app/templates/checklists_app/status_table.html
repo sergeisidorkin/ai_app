@@ -42,7 +42,7 @@
       {% for row in rows %}
         <tr>
           <td id="chk-code-{{ row.item.id }}" class="col-code text-nowrap {{ row.code_class }}">{{ row.item.code }}</td>
-          <td id="chk-num-{{ row.item.id }}"  class="col-num text-nowrap  {{ row.code_class }}">{{ row.item.number|stringformat:"02d" }}</td>
+          <td id="chk-num-{{ row.item.id }}" class="col-num text-nowrap">{{ row.item.number|stringformat:"02d" }}</td>
           <td class="text-nowrap">{{ row.item.short_name }}</td>
           <td>{{ row.item.name }}</td>
 
@@ -89,6 +89,14 @@
       {% endfor %}
     </tbody>
   </table>
+
+  {# Модалки комментариев — вне таблицы #}
+  <div id="checklists-comment-modals">
+    {% for row in rows %}
+      {% include "checklists_app/components/comment_modal.html" with field="imc_comment" request_item=row.item project=project section=section asset_name=asset_name note=row.note histories=row.history.imc_comment add_comment_url=add_comment_url %}
+      {% include "checklists_app/components/comment_modal.html" with field="customer_comment" request_item=row.item project=project section=section asset_name=asset_name note=row.note histories=row.history.customer_comment add_comment_url=add_comment_url %}
+    {% endfor %}
+  </div>
   <style>
     #checklists-table-wrap table th,
     #checklists-table-wrap table td {
@@ -121,12 +129,19 @@
         background-color: transparent;
     }
 
-    #checklists-table-wrap table tbody tr td {
+    /* общее подсвечивание строки */
+    #checklists-table-wrap table tbody tr td:not(.col-code) {
+        transition: background-color .15s ease;
+    }
+    #checklists-table-wrap table tbody tr:hover td:not(.col-code) {
+        background-color: #1c1d200b;
+    }
+    /* код и номер темнеют ровно настолько, чтобы не терять исходный цвет */
+    #checklists-table-wrap table tbody tr td.col-code {
         transition: filter .15s ease;
     }
-
-    #checklists-table-wrap table tbody tr:hover td {
-        filter: brightness(0.96);
+    #checklists-table-wrap table tbody tr:hover td.col-code {
+        filter: brightness(0.95); /* чем меньше значение, тем темнее */
     }
 
     #checklists-table-wrap table .form-select {

@@ -1,0 +1,19 @@
+<div class="comment-history-list" id="comment-history-{{ field }}-{{ request_item.id }}" hx-swap-oob="true">
+    {% if histories %}
+      {% for entry in histories %}
+        <div class="mb-3">
+          <div class="small text-muted">
+            {% if entry.author %}
+              {{ entry.author.get_full_name|default:entry.author.username }}
+            {% else %}
+              —
+            {% endif %}
+            · {{ entry.created_at|date:"d.m.Y H:i" }}
+          </div>
+          <div>{{ entry.text|linebreaksbr }}</div>
+        </div>
+      {% endfor %}
+    {% else %}
+      <div class="text-muted small">История пока пуста.</div>
+    {% endif %}
+</div>
