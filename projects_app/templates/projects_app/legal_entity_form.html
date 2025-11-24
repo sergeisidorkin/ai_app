@@ -1,0 +1,88 @@
+<div class="modal-header">
+    <h5 class="modal-title">
+      {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+    </h5>
+    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+  </div>
+  
+  <form
+      method="post"
+      {% if action == "create" %}
+        hx-post="{% url 'legal_entity_form_create' %}"
+      {% else %}
+        hx-post="{% url 'legal_entity_form_edit' legal_entity.pk %}"
+      {% endif %}
+      hx-target="#projects-pane"
+      hx-swap="outerHTML">
+    <div class="modal-body">
+      {% csrf_token %}
+  
+      <div class="mb-3">
+        <label class="form-label">Наименование актива</label>
+        {{ form.work_item }}
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Тип</label>
+        {{ form.work_type }}
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Название</label>
+        {{ form.work_name }}
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Наименование юридического лица</label>
+        {{ form.legal_name }}
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Регистрационный номер</label>
+        {{ form.registration_number }}
+      </div>
+  
+      {% if form.errors %}
+        <div class="alert alert-danger mb-0">Проверьте введённые данные.</div>
+      {% endif %}
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+      <button type="submit" class="btn btn-primary">Сохранить</button>
+    </div>
+  </form>
+  <style>
+    #projects-modal .readonly-field {
+      background-color: #f8f9fa;
+      color: #6c757d;
+      pointer-events: none;
+    }
+  </style>
+  <script>
+    (function(){
+      const modal = document.currentScript.closest('.modal-content');
+      const form = modal?.querySelector('form');
+      if (!form) return;
+    
+      const workSel = form.querySelector('select[name="work_item"]');
+      const typeInput = form.querySelector('input[name="work_type"]');
+      const nameInput = form.querySelector('input[name="work_name"]');
+    
+      async function refill() {
+        const wid = workSel?.value;
+        if (!wid) return;
+        try {
+         const resp = await fetch("{% url 'legal_entity_work_deps' %}?work_item=" + encodeURIComponent(wid), {
+            headers: {"X-Requested-With": "XMLHttpRequest"},
+          });
+          const data = await resp.json();
+          if (!data.ok) return;
+          if (typeInput) typeInput.value = data.type || "";
+          if (nameInput) nameInput.value = data.name || "";
+        } catch (err) {
+          console.error(err);
+        }
+      }
+    
+      workSel?.addEventListener("change", refill);
+      if (workSel?.value && (!typeInput?.value || !nameInput?.value)) {
+        refill();
+      }
+    })();
+  </script>  

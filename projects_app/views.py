@@ -4,17 +4,17 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST, require_GET
 from django.db.models import Max
 from django import forms
-from .models import ProjectRegistration, WorkVolume, Performer, WorkVolumeItem
-from .forms import ProjectRegistrationForm, WorkVolumeForm, PerformerForm, BootstrapMixin
+from .models import ProjectRegistration, WorkVolume, Performer, WorkVolumeItem, LegalEntity
+from .forms import ProjectRegistrationForm, WorkVolumeForm, PerformerForm, BootstrapMixin, LegalEntityForm
 
 import json
 
 from policy_app.models import TypicalSection
 
-
 PROJECTS_PARTIAL_TEMPLATE = "projects_app/projects_partial.html"
 REG_FORM_TEMPLATE       = "projects_app/registration_form.html"
 WORK_FORM_TEMPLATE      = "projects_app/work_form.html"
+LEGAL_FORM_TEMPLATE     = "projects_app/legal_entity_form.html"
 
 PERF_FORM_TEMPLATE    = "projects_app/performer_form.html"
 PERFORMERS_PARTIAL_TEMPLATE = "projects_app/performers_partial.html"
@@ -29,7 +29,23 @@ def staff_required(user):
 def _projects_context():
     registrations = ProjectRegistration.objects.all()
     work_items = WorkVolume.objects.select_related("project").all()
-    return {"registrations": registrations, "work_items": work_items}
+    legal_entities = (
+        LegalEntity.objects
+        .select_related("project", "work_item", "work_item__project")
+        .all()
+    )
+    legal_projects = (
+        ProjectRegistration.objects
+        .filter(legal_entities__isnull=False)
+        .distinct()
+        .order_by("position", "id")
+    )
+    return {
+        "registrations": registrations,
+        "work_items": work_items,
+        "legal_entities": legal_entities,
+        "legal_projects": legal_projects,
+    }
 
 def _render_projects_updated(request):
     resp = render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context())
@@ -182,21 +198,31 @@ def registration_form_edit(request, pk: int):
     form.save()
     return _render_projects_updated(request)
 
-
-
 class RegistrationChoiceField(forms.ModelChoiceField):
-    def label_from_instance(self, obj: ProjectRegistration) -> str:
-        # 4444RU, 5555KZ и т.п.
-        return f"{obj.number}{obj.group or ''}"
+    def label_from_instance(self, obj):
+        type_label = getattr(obj.type, "short_name", obj.type) if obj.type_id else ""
+        name_label = obj.name or ""
+        parts = [obj.short_uid]
+        if type_label:
+            parts.append(str(type_label))
+        if name_label:
+            parts.append(name_label)
+        return " ".join(parts)
 
 class PerformerForm(BootstrapMixin, forms.ModelForm):
+    registration = RegistrationChoiceField(
+        label="Проект",
+        queryset=ProjectRegistration.objects.select_related("type").order_by("-id"),
+        required=True,
+        widget=forms.Select(),
+    )
     # делаем asset_name селектом, чтобы можно было подменять options с сервера/JS
     asset_name = forms.ChoiceField(label="Актив", required=False, choices=[("", "— Не выбрано —")])
 
     # «Номер» — через наш кастомный ModelChoiceField
     registration = RegistrationChoiceField(
         label="Номер",
-        queryset=ProjectRegistration.objects.select_related("type").order_by("position", "id"),
+        queryset=ProjectRegistration.objects.select_related("type").order_by("-id"),
         required=True,
         widget=forms.Select(),
     )
@@ -250,6 +276,7 @@ def work_delete(request, pk: int):
     pid = item.project_id
     item.delete()
     _normalize_work_positions(pid)
+    _normalize_legal_positions(pid)
     return _render_projects_updated(request)
 
 def _normalize_work_positions(product_id: int | None = None):
@@ -277,6 +304,31 @@ def _normalize_work_positions(product_id: int | None = None):
             if b.position != idx:
                 WorkVolume.objects.filter(pk=b.pk).update(position=idx)
 
+def _normalize_legal_positions(project_id: int | None = None):
+    qs = LegalEntity.objects.select_related("project").only("id", "position", "project_id")
+    if project_id:
+        items = list(qs.filter(project_id=project_id).order_by("position", "id"))
+        for idx, it in enumerate(items, start=1):
+            if it.position != idx:
+                LegalEntity.objects.filter(pk=it.pk).update(position=idx)
+        return
+
+    cur_pid = None
+    buf = []
+    for it in qs.order_by("project_id", "position", "id"):
+        if cur_pid is None:
+            cur_pid = it.project_id
+        if it.project_id != cur_pid:
+            for idx, b in enumerate(buf, start=1):
+                if b.position != idx:
+                    LegalEntity.objects.filter(pk=b.pk).update(position=idx)
+            cur_pid, buf = it.project_id, [it]
+        else:
+            buf.append(it)
+    for idx, b in enumerate(buf, start=1):
+        if b.position != idx:
+            LegalEntity.objects.filter(pk=b.pk).update(position=idx)
+
 @require_http_methods(["POST", "GET"])
 @login_required
 def work_move_up(request, pk: int):
@@ -299,7 +351,6 @@ def work_move_up(request, pk: int):
 
     # ВОЗВРАЩАЕМ ТОЛЬКО ФРАГМЕНТ БЕЗ HX-Trigger — чтобы не было двойной перерисовки
     return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context())
-
 
 @require_http_methods(["POST", "GET"])
 @login_required
@@ -324,12 +375,90 @@ def work_move_down(request, pk: int):
     # ВОЗВРАЩАЕМ ТОЛЬКО ФРАГМЕНТ БЕЗ HX-Trigger — чтобы не было двойной перерисовки
     return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context())
 
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def legal_entity_form_create(request):
+    if request.method == "GET":
+        form = LegalEntityForm()
+        return render(request, LEGAL_FORM_TEMPLATE, {"form": form, "action": "create"})
+    form = LegalEntityForm(request.POST)
+    if not form.is_valid():
+        return render(request, LEGAL_FORM_TEMPLATE, {"form": form, "action": "create"})
+    entity = form.save(commit=False)
+    if not getattr(entity, "position", 0):
+        entity.position = _next_position(LegalEntity, {"project": entity.project})
+    entity.save()
+    return _render_projects_updated(request)
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def legal_entity_form_edit(request, pk: int):
+    entity = get_object_or_404(LegalEntity, pk=pk)
+    if request.method == "GET":
+        form = LegalEntityForm(instance=entity)
+        return render(request, LEGAL_FORM_TEMPLATE, {"form": form, "action": "edit", "legal_entity": entity})
+    form = LegalEntityForm(request.POST, instance=entity)
+    if not form.is_valid():
+        return render(request, LEGAL_FORM_TEMPLATE, {"form": form, "action": "edit", "legal_entity": entity})
+    form.save()
+    return _render_projects_updated(request)
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def legal_entity_delete(request, pk: int):
+    entity = get_object_or_404(LegalEntity, pk=pk)
+    pid = entity.project_id
+    entity.delete()
+    _normalize_legal_positions(pid)
+    return _render_projects_updated(request)
 
 
+@require_http_methods(["POST", "GET"])
+@login_required
+def legal_entity_move_up(request, pk: int):
+    entity = get_object_or_404(LegalEntity, pk=pk)
+    pid = entity.project_id
 
+    _normalize_legal_positions(pid)
+    items = list(
+        LegalEntity.objects
+        .filter(project_id=pid)
+        .order_by("position", "id")
+        .only("id", "position")
+    )
+    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+    if idx is not None and idx > 0:
+        cur, prev = items[idx], items[idx - 1]
+        LegalEntity.objects.filter(pk=cur.id).update(position=prev.position)
+        LegalEntity.objects.filter(pk=prev.id).update(position=cur.position)
+        _normalize_legal_positions(pid)
 
+    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context())
 
+@require_http_methods(["POST", "GET"])
+@login_required
+def legal_entity_move_down(request, pk: int):
+    entity = get_object_or_404(LegalEntity, pk=pk)
+    pid = entity.project_id
 
+    _normalize_legal_positions(pid)
+    items = list(
+        LegalEntity.objects
+        .filter(project_id=pid)
+        .order_by("position", "id")
+        .only("id", "position")
+    )
+    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+    if idx is not None and idx < len(items) - 1:
+        cur, nxt = items[idx], items[idx + 1]
+        LegalEntity.objects.filter(pk=cur.id).update(position=nxt.position)
+        LegalEntity.objects.filter(pk=nxt.id).update(position=cur.position)
+        _normalize_legal_positions(pid)
+
+    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context())
 
 def _bind_dynamic_performer_fields(form, *, data=None, instance=None):
     """
@@ -440,8 +569,6 @@ def _next_performer_position():
     mx = Performer.objects.aggregate(Max("position")).get("position__max") or 0
     return mx + 1
 
-
-
 @login_required
 @require_http_methods(["GET", "POST"])
 def performer_form_create(request):
@@ -551,3 +678,28 @@ def performer_move_down(request, pk: int):
         _normalize_performer_positions()
     # ВОЗВРАЩАЕМ ТОЛЬКО ФРАГМЕНТ, БЕЗ HX-Trigger
     return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context())
+
+@login_required
+@require_GET
+def legal_entity_work_deps(request):
+    wid = request.GET.get("work_item")
+    try:
+        wid = int(wid)
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False})
+
+    work = (
+        WorkVolume.objects
+        .select_related("project")
+        .filter(pk=wid)
+        .first()
+    )
+    if not work:
+        return JsonResponse({"ok": False})
+
+    return JsonResponse({
+        "ok": True,
+        "project": getattr(work.project, "short_uid", ""),
+        "type": work.type or "",
+        "name": work.name or "",
+    })    

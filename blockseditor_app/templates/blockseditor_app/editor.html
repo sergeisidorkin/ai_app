@@ -1,0 +1,7 @@
+{% extends "core/base.html" %}
+{% load static %}
+{% block title %}Редактор блоков — {{ block.name }}{% endblock %}
+
+{% block content %}
+{% include "blockseditor_app/editor_partial.html" %}
+{% endblock %}

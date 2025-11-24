@@ -51,7 +51,7 @@
   }
 
   async function ensureConfigLoaded(){
-    // Если уже есть глобальная переменная — ничего не делаем
+    // Если уже есть глобальная переменная  ничего не делаем
     if(typeof window.DOCOPS_BASE === "string" || typeof window.DOCOPS_AGENT === "string"){
       return true;
     }
@@ -95,9 +95,9 @@
       if(ad){ chosen = ad; source = "autodetect"; }
     }
 
-    // 4) дефолт — cloudpub
+    // 4) дефолт  cloudpub
     if(!chosen){
-      chosen = "https://adamantly-fluttering-worm.cloudpub.ru";
+      chosen = "https://snappishly-primed-blackfish.cloudpub.ru";
       source = "default";
     }
 
@@ -135,13 +135,13 @@
 
   async function postWithFallback(primaryBase, altBase, path, body, tag){
     try{
-      log("HTTP → " + tag + " @ " + primaryBase + path);
+      log("HTTP  " + tag + " @ " + primaryBase + path);
       return await postJSON(primaryBase, path, body);
     }catch(e1){
       log("WARN: primary failed ("+e1+"), trying fallback @ " + altBase + path);
       try{
         var r2 = await postJSON(altBase, path, body);
-        // если фолбэк сработал — переключаем BASE
+        // если фолбэк сработал  переключаем BASE
         _BASE = altBase;
         log("BASE switched to fallback: " + _BASE + " (after " + tag + ")");
         return r2;
@@ -200,15 +200,15 @@
 
     var base = getBASE();
     var alt  = (base.indexOf("imcmontanai.ru") >= 0)
-      ? "https://adamantly-fluttering-worm.cloudpub.ru"
+      ? "https://snappishly-primed-blackfish.cloudpub.ru"
       : "https://imcmontanai.ru";
 
     var r = await postWithFallback(base, alt, "/api/docs/next", { url:url }, "docs/next");
     var job = (r && r.data && r.data.job) ? r.data.job : null;
     if(job){
-      log("docs/next → job " + job.id + " (trace=" + (job.traceId || "") + ")");
+      log("docs/next  job " + job.id + " (trace=" + (job.traceId || "") + ")");
     }else{
-      log("docs/next → no job");
+      log("docs/next  no job");
     }
     return job;
   }
@@ -216,7 +216,7 @@
   async function completeJob(jobId, ok, message){
     var base = getBASE();
     var alt  = (base.indexOf("imcmontanai.ru") >= 0)
-      ? "https://adamantly-fluttering-worm.cloudpub.ru"
+      ? "https://snappishly-primed-blackfish.cloudpub.ru"
       : "https://imcmontanai.ru";
 
     try {
@@ -248,7 +248,7 @@
 
         return hasMarker(jobId).then(function(already){
           if(already){
-            log("Marker present → complete (already done)");
+            log("Marker present  complete (already done)");
             return completeJob(jobId, true, "already-present").then(function(){
               inflight = false;
               return true;

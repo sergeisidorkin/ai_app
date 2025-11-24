@@ -70,8 +70,8 @@
     const btn = e.target.closest('button[data-panel-action]');
     if (!btn || !root.contains(btn)) return;
 
-    // Панель для двух таблиц
-    const panel = btn.closest('#registrations-actions, #work-actions');
+    // Панель теперь общая для трёх таблиц
+    const panel = btn.closest('#registrations-actions, #work-actions, #legal-entities-actions');
     if (!panel) return;
 
     const action = btn.dataset.panelAction; // "up" | "down" | "edit" | "delete"

@@ -1,0 +1,38 @@
+<div class="checklist-status-cell" id="chk-cell-{{ request_item.id }}-{{ legal_entity.id }}">
+    <form
+        hx-post="{{ update_url }}"
+        hx-trigger="change from:select"
+        hx-target="#chk-cell-{{ request_item.id }}-{{ legal_entity.id }}"
+        hx-swap="outerHTML"
+        hx-on::afterSwap="refreshDateCell{{ request_item.id }}_{{ legal_entity.id }}()">
+      {% csrf_token %}
+      <input type="hidden" name="request_item" value="{{ request_item.id }}">
+      <input type="hidden" name="legal_entity" value="{{ legal_entity.id }}">
+  
+      <select name="status" class="form-select form-select-sm">
+        {% for value,label in status_choices %}
+          {% if status %}
+            <option value="{{ value }}" {% if value == status.status %}selected{% endif %}>{{ label }}</option>
+          {% else %}
+            <option value="{{ value }}" {% if value == default_status %}selected{% endif %}>{{ label }}</option>
+          {% endif %}
+        {% endfor %}
+      </select>
+    </form>
+  </div>
+  <script>
+    function refreshDateCell(request_item_id, legal_entity_id) {
+      const wrap = document.querySelector('#chk-cell-' + request_item_id + '-' + legal_entity_id);
+      const dateCell = wrap && wrap.closest('td') ? wrap.closest('td').nextElementSibling : null;
+      if (!dateCell) return;
+      const url = "{{ update_status_url }}";
+      fetch(url + "?preview=1&request_item={{ request_item.id }}&legal_entity={{ legal_entity.id }}", { 
+        headers: { 'X-Requested-With': 'fetch' } 
+      })
+        .then(r => r.json())
+        .then(data => {
+          dateCell.textContent = data.date || '—';
+        })
+        .catch(() => {});
+    }
+  </script>

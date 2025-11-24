@@ -43,7 +43,7 @@ ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=[
     "testserver",
     "nonmagnetical-alanna-festive.ngrok-free.dev",
     ".ngrok-free.dev",
-    "adamantly-fluttering-worm.cloudpub.ru",
+    "snappishly-primed-blackfish.cloudpub.ru",
     ".cloudpub.ru",
     "imcmontanai.ru",
 ])
@@ -51,9 +51,9 @@ ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=[
 INSTALLED_APPS = [
     "core","django.contrib.admin","django.contrib.auth","django.contrib.contenttypes",
     "django.contrib.sessions","django.contrib.messages","django.contrib.staticfiles",
-    "policy_app","onedrive_app","blocks_app","openai_app","googledrive_app","projects_app",
+    "policy_app","onedrive_app","blocks_app","blockseditor_app","openai_app","googledrive_app","projects_app",
     "requests_app","debugger_app","office_addin","corsheaders","channels","docops_app",
-    "docops_queue","macroops_app","logs_app.apps.LogsAppConfig",
+    "docops_queue","macroops_app","checklists_app","logs_app.apps.LogsAppConfig",
 ]
 
 MIDDLEWARE = [
@@ -137,7 +137,7 @@ CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[
     "https://word-edit.officeapps.live.com",
     "https://nonmagnetical-alanna-festive.ngrok-free.dev",
     "https://*.ngrok-free.dev",
-    "https://adamantly-fluttering-worm.cloudpub.ru",
+    "https://snappishly-primed-blackfish.cloudpub.ru",
     "https://imcmontanai.ru",
 ])
 
@@ -160,7 +160,7 @@ CSRF_TRUSTED_ORIGINS = [
     "https://localhost:8001",
     "https://localhost:3000",
     "https://nonmagnetical-alanna-festive.ngrok-free.dev",
-    "https://adamantly-fluttering-worm.cloudpub.ru",
+    "https://snappishly-primed-blackfish.cloudpub.ru",
     "https://*.cloudpub.ru",
 ]
 

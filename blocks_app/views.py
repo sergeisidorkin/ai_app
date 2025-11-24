@@ -767,13 +767,17 @@ def block_set_model(request, pk):
     """
     block = get_object_or_404(Block, pk=pk)
     model = (request.POST.get("model") or "").strip()
+    temperature = _posted_temperature(request)
+
     block.model = model
-    block.save(update_fields=["model"])
+    block.temperature = temperature
+    block.save(update_fields=["model", "temperature"])
     messages.success(
         request,
-        f"Модель для «{block.name or block.code}» установлена: {block.model or '—'}."
+        f"Для «{block.code or block.name}» установлена модель: "
+        f"{block.model or '—'}, температура: {block.temperature if block.temperature is not None else '—'}."
     )
-    return _redirect_after(request, default_tab="debugger")
+    return _redirect_after(request, default_tab="templates")
 
 
 def _extract_context_labels(block) -> list[str]:

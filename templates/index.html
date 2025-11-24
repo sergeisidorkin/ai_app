@@ -41,6 +41,13 @@
             <span class="link-text">Запросы</span>
           </a>
         </li>
+        <!-- Вкладка "Чек-листы" -->
+        <li class="nav-item">
+          <a class="nav-link d-flex align-items-center" href="#checklists" data-bs-toggle="tab">
+            <i class="bi bi-list-check me-2"></i>
+            <span class="link-text">Чек-листы</span>
+          </a>
+        </li>
         <!-- Вкладка "Шаблоны" -->
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#templates" data-bs-toggle="tab">
@@ -137,7 +144,7 @@
             </aside>
 
             <!-- Контент справа -->
-            <div class="flex-grow-1 ps-3">
+            <div class="flex-grow-1 ps-3 pe-0">
               <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
                 <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height:30px;"></div>
                 <ul class="nav nav-underline px-3" id="requests-tabs"></ul>
@@ -170,6 +177,25 @@
             </div>
           </div>
       </section>
+      <!-- Чек-листы -->
+      <section id="checklists" class="tab-pane fade">
+        <div class="templates-bleed">
+          <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
+            <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 36px;">
+              <h5 class="mb-0 ps-3 fs-4 pt-2">Чек-листы</h5>
+            </div>
+          </div>
+          <div class="ps-3">
+            <div id="checklists-pane"
+                 hx-get="{% url 'checklists_app:panel_partial' %}"
+                 hx-trigger="load"
+                 hx-target="#checklists-pane"
+                 hx-swap="innerHTML">
+              <div class="text-muted htmx-indicator">Загрузка чек-листов…</div>
+            </div>
+          </div>
+        </div>
+      </section>
       <!-- Шаблоны -->
       <section id="templates" class="tab-pane fade">
         <div class="d-flex templates-bleed">
@@ -195,7 +221,7 @@
             </div>
           </aside>
         <!-- Контент "Шаблоны" -->
-        <div class="flex-grow-1 ps-3">
+        <div class="flex-grow-1 ps-3 pe-0">
 
           <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
             <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
@@ -319,6 +345,10 @@
             const r = await fetch(url, { headers: { 'X-Requested-With': 'fetch' } });
             const html = await r.text();
             pane.innerHTML = html;
+
+            if (window.htmx && pane) {
+              window.htmx.process(pane);
+            }
 
             // Перенаправляем кнопки модалки на локальный экземпляр
             pane.querySelectorAll('[data-bs-toggle="modal"][data-bs-target="#blockModal"]')
@@ -1217,10 +1247,74 @@
           window.__DbgBlocksModal = { forceClose, init };
         })();
         </script>
-
-
-
     </div>
   </main>
 </div>
+<style>
+#templates-pane.templates-pane--editor,
+#templates-pane.templates-pane--editor .templates-bleed,
+#templates-pane.templates-pane--editor .flex-grow-1 {
+  padding-right: 0 !important;
+}
+#templates-pane-wrap.templates-pane-wrap--editor {
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  padding: 0 !important;
+  width: 100% !important;
+}
+main.templates-main--editor {
+     padding-right: 0 !important;
+}
+.templates-bleed--editor {
+  margin-left: -1rem !important;   /* снова компенсируем левый padding main */
+  margin-right: 0 !important;      /* чтобы не вылезать вправо */
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+.templates-bleed--editor .content-bleed-x {
+  margin-right: 0 !important;      /* убираем правый “пролив” шапки */
+}
+.flex-grow-1.templates-content--editor {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+.flex-grow-1.templates-content--editor .section-header {
+  padding-left: 0rem !important;
+}
+.flex-grow-1.templates-content--editor .section-header.content-bleed-x {
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+}
+#templates-pane.templates-pane--editor .editor-backlink {
+  margin-left: 1.15rem;
+}
+</style>
+<script>
+  (function () {
+    function syncTemplatesEditorLayout() {
+      const pane = document.getElementById('templates-pane');
+      if (!pane) return;
+  
+      const hasEditor = !!pane.querySelector('[data-role="editor-root"]');
+      const main = pane.closest('main');
+      const content = pane.closest('.flex-grow-1');
+      const paneWrap = document.getElementById('templates-pane-wrap');
+      const bleed = pane.closest('.templates-bleed');
+  
+      pane.classList.toggle('templates-pane--editor', hasEditor);
+      paneWrap?.classList.toggle('templates-pane-wrap--editor', hasEditor);
+      main?.classList.toggle('templates-main--editor', hasEditor);
+      content?.classList.toggle('templates-content--editor', hasEditor);
+      bleed?.classList.toggle('templates-bleed--editor', hasEditor);
+    }
+  
+    document.addEventListener('DOMContentLoaded', syncTemplatesEditorLayout);
+    document.body.addEventListener('htmx:afterSwap', function (event) {
+      const target = event.target;
+      if (target && (target.id === 'templates-pane' || target.closest?.('#templates-pane'))) {
+        syncTemplatesEditorLayout();
+      }
+    });
+  })();
+</script>
 {% endblock %}

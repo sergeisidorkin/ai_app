@@ -14,77 +14,85 @@
   {% endif %}
   hx-target="#projects-pane"
   hx-swap="outerHTML">
-  <div class="modal-body">
+  <div class="modal-body modal-body-scroll">
     {% csrf_token %}
 
     <div class="row g-2">
 
-      <div class="col-4">
+      <div class="col-3">
         <label class="form-label">Номер</label>
         {{ form.number }}
       </div>
-      <div class="col-4">
+      <div class="col-3">
         <label class="form-label">Группа</label>
         {{ form.group }}
       </div>
-      <div class="col-4">
+      <div class="col-3">
+        <label class="form-label">Вид соглашения</label>
+        {{ form.agreement_type }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">№ соглашения</label>
+        {{ form.agreement_number }}
+      </div>
+      <div class="col-3">
         <label class="form-label">Тип</label>
         {{ form.type }}
       </div>
-      <div class="col-12">
+      <div class="col-6">
         <label class="form-label">Название</label>
         {{ form.name }}
-      </div>
-      <div class="col-6">
+      </div>      
+      <div class="col-3">
         <label class="form-label">Статус</label>
         {{ form.status }}
       </div>
-      <div class="col-6">
+      <div class="col-3">
         <label class="form-label">Год</label>
         {{ form.year }}
       </div>
-      <div class="col-4">
+      <div class="col-3">
         <label class="form-label">Начало контракта</label>
         {{ form.contract_start }}
       </div>
-      <div class="col-4">
+      <div class="col-3">
         <label class="form-label">Оконч. контракта</label>
         {{ form.contract_end }}
       </div>
-      <div class="col-4">
+      <div class="col-3">
         <label class="form-label">Оконч., расчет</label>
         {{ form.completion_calc }}
       </div>
       <div class="col-12">
-        <label class="form-label">Исх. данные</label>
+        <label class="form-label">Исх. данные, дней</label>
         {{ form.input_data }}
       </div>
-      <div class="col-4">
+      <div class="col-3">
         <label class="form-label">Этап 1, недель</label>
         {{ form.stage1_weeks }}
       </div>
-      <div class="col-4">
+      <div class="col-3">
         <label class="form-label">Этап 1, оконч.</label>
         {{ form.stage1_end }}
       </div>
-      <div class="col-4">
+      <div class="col-3">
         <label class="form-label">Этап 2, недель</label>
         {{ form.stage2_weeks }}
       </div>
-      <div class="col-4">
+      <div class="col-3">
         <label class="form-label">Этап 2, оконч.</label>
         {{ form.stage2_end }}
       </div>
-      <div class="col-4">
+      <div class="col-3">
         <label class="form-label">Этап 3, недель</label>
         {{ form.stage3_weeks }}
       </div>
-      <div class="col-4">
+      <div class="col-3">
         <label class="form-label">Срок, недель</label>
         {{ form.term_weeks }}
       </div>
 
-      <div class="col-4">
+      <div class="col-3">
         <label class="form-label">Дедлайн</label>
         {{ form.deadline }}
       </div>
@@ -129,3 +137,130 @@
       </div>
   </div>
 </form>
+<style>
+  #projects-modal .readonly-field {
+    background-color: #f8f9fa;
+    color: #6c757d;
+  }
+</style>
+<script>
+  const DATE_FMT = { day: "2-digit", month: "2-digit", year: "numeric" };
+
+  function parseDate(value) {
+    if (!value) return null;
+    const raw = value.trim();
+    const dotParts = raw.split(".");
+    if (dotParts.length === 3) {
+      const [day, month, year] = dotParts;
+      const fullYear = year.length === 2 ? "20" + year : year;
+      const iso = `${fullYear}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+      const parsed = new Date(iso);
+      return isNaN(parsed) ? null : parsed;
+    }
+    const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (isoMatch) {
+      const [, year, month, day] = isoMatch;
+      const parsed = new Date(`${year}-${month}-${day}`);
+      return isNaN(parsed) ? null : parsed;
+    }
+    return null;
+  }
+
+  function attachStageCalculator(node) {
+    if (!node) return;
+    const start = node.querySelector("[name='contract_start']");
+    const inputDays = node.querySelector("[name='input_data']");
+    const stage1Weeks = node.querySelector("[name='stage1_weeks']");
+    const stage2Weeks = node.querySelector("[name='stage2_weeks']");
+    const stage3Weeks = node.querySelector("[name='stage3_weeks']");
+
+    const stage1Target = node.querySelector(".js-stage1-end");
+    const stage2Target = node.querySelector(".js-stage2-end");
+    const completionTarget = node.querySelector(".js-completion-calc");
+    const termWeeksTarget = node.querySelector(".js-term-weeks");
+
+    if (!start || !inputDays || !stage1Weeks || !stage1Target) return;
+
+    const recalc = () => {
+      const base = parseDate(start.value);
+      if (!base) {
+        stage1Target.value = "";
+        if (stage2Target) stage2Target.value = "";
+        if (completionTarget) completionTarget.value = "";
+        if (termWeeksTarget) termWeeksTarget.value = "";
+        return;
+      }
+
+      const days = parseInt(inputDays.value.replace(/\D/g, ""), 10) || 0;
+      const stage1WeeksVal = parseFloat((stage1Weeks.value || "0").replace(",", ".")) || 0;
+      const stage2WeeksVal = parseFloat((stage2Weeks?.value || "0").replace(",", ".")) || 0;
+      const stage3WeeksVal = parseFloat((stage3Weeks?.value || "0").replace(",", ".")) || 0;
+
+      // Stage 1 end
+      const stage1TotalDays = Math.max(0, days + stage1WeeksVal * 7);
+      const stage1Rounded = Math.round(stage1TotalDays);
+      const stage1Date = new Date(base);
+      stage1Date.setDate(stage1Date.getDate() + stage1Rounded);
+      stage1Target.value = stage1Date.toLocaleDateString("ru-RU", DATE_FMT);
+
+      // Stage 2 end
+      let stage2Date = null;
+      if (stage2Weeks && stage2Target) {
+        if (!stage1Rounded && !stage2WeeksVal) {
+          stage2Target.value = "";
+        } else {
+          const stage2TotalDays = Math.max(0, stage2WeeksVal * 7);
+          const stage2Rounded = Math.round(stage2TotalDays);
+          stage2Date = new Date(stage1Date);
+          stage2Date.setDate(stage2Date.getDate() + stage2Rounded);
+          stage2Target.value = stage2Date.toLocaleDateString("ru-RU", DATE_FMT);
+        }
+      }
+
+      // Term weeks
+      if (termWeeksTarget) {
+        const termWeeks =
+          Math.max(0, (days / 7) + stage1WeeksVal + stage2WeeksVal + stage3WeeksVal);
+        termWeeksTarget.value = termWeeks.toFixed(1);
+      }
+
+      // Completion calc
+      if (completionTarget) {
+        const baseStage2Date = stage2Date || parseDate(stage2Target?.value || "");
+        if (!baseStage2Date) {
+          completionTarget.value = "";
+        } else {
+          const stage3Days = Math.round(Math.max(0, stage3WeeksVal * 7));
+          const completionDate = new Date(baseStage2Date);
+          completionDate.setDate(completionDate.getDate() + stage3Days);
+          completionTarget.value = completionDate.toLocaleDateString("ru-RU", DATE_FMT);
+        }
+      }
+    };
+
+    [start, inputDays, stage1Weeks, stage2Weeks, stage3Weeks]
+      .filter(Boolean)
+      .forEach((el) => ["input", "change"].forEach((evt) => el.addEventListener(evt, recalc)));
+
+    recalc();
+  }
+
+  function initCurrentModal() {
+    const modal = document.querySelector("#projects-modal");
+    if (!modal) return;
+    const form = modal.querySelector("form");
+    attachStageCalculator(form);
+  }
+
+  document.addEventListener("DOMContentLoaded", initCurrentModal);
+
+  document.addEventListener("htmx:afterSwap", (event) => {
+    if (!event.detail.target) return;
+    if (!event.detail.target.closest("#projects-modal")) return;
+    initCurrentModal();
+  });
+
+  (function bootstrapImmediately() {
+    initCurrentModal();
+  })();
+</script>
