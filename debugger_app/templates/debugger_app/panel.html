@@ -13,7 +13,7 @@
 
                         <option
                           value="{{ opt.id }}"
-                          data-project-code="{{ opt.code }}"
+                          data-project-uid="{{ opt.short_uid }}"
                           data-product-short="{{ opt.product_short }}"
                           data-product-id="{{ opt.product_id }}"
                           {% if opt.id == selected_project_id %}selected{% endif %}
@@ -86,14 +86,15 @@
     const projectId    = projSel?.value || '';
 
     // код проекта
-    let code = (opt?.dataset?.projectCode || '').toUpperCase();
-    if (!code) {
+    let projectUid = (opt?.dataset?.projectUid || '').toUpperCase();
+    if (!projectUid) {
         const U = label.toUpperCase();
-        let m = U.match(/\b(\d{4}[A-Z]{2})\b/) || U.match(/\b(\d{4})\s*[-_. ]\s*([A-Z]{2})\b/);
-        if (m) code = (m[1] + (m[2] || '')).toUpperCase();
-        else {
-          const f6 = U.replace(/[^0-9A-Z]+/g,'').slice(0,6);
-          if (/^\d{4}[A-Z]{2}$/.test(f6)) code = f6;
+        let m = U.match(/\b(\d{5}[A-Z]{2})\b/);
+        if (m) {
+          projectUid = m[1];
+        } else {
+          m = U.match(/\b(\d{4})\s*[-_. ]?\s*(\d)\s*[-_. ]?\s*([A-Z]{2})\b/);
+          if (m) projectUid = `${m[1]}${m[2]}${m[3]}`;
         }
     }
 
@@ -104,7 +105,7 @@
        : sectionText.trim().toUpperCase(); // на случай просто «HR»
 
 
-    return { code, label, projectId, productShort, sectionId, assetName, sectionCode };
+    return { projectUid, label, projectId, productShort, sectionId, assetName, sectionCode };
     }
 
   function ensureHidden(form, name, value){
@@ -128,7 +129,7 @@
     if (!RUN_RX.test(act)) return false;
 
     const b = getBinding();
-    ensureHidden(form, 'project_code',  b.code || '');
+    ensureHidden(form, 'project_uid',  b.projectUid || '');
     ensureHidden(form, 'project_label', b.label || '');
     ensureHidden(form, 'project_id',    b.projectId || '');
     ensureHidden(form, 'asset_name',    b.assetName || '');
@@ -137,7 +138,7 @@
     ensureHidden(form, 'section_code',  b.sectionCode || '');
 
     form.setAttribute('action', addQS(act, {
-      project_code:  b.code || '',
+      project_uid:  b.projectUid || '',
       project_label: b.label || '',
       project_id:    b.projectId || '',
       asset_name:    b.assetName || '',
@@ -185,7 +186,7 @@
       if (!RUN_RX.test(path)) return;
       const b = getBinding();
       d.parameters = d.parameters || {};
-      d.parameters.project_code  ??= b.code || '';
+      d.parameters.project_uid  ??= b.projectUid || '';
       d.parameters.project_label ??= b.label || '';
       d.parameters.project_id    ??= b.projectId || '';
       d.parameters.asset_name    ??= b.assetName || '';
@@ -193,7 +194,7 @@
       d.parameters.section_id    ??= b.sectionId || '';
       d.parameters.section_code ??= b.sectionCode || '';
       d.path = addQS(path, {
-        project_code:  b.code || '',
+        project_uid:  b.projectUid || '',
         project_label: b.label || '',
         project_id:    b.projectId || '',
         asset_name:    b.assetName || '',
@@ -236,10 +237,12 @@
     const opt = projSel?.selectedOptions?.[0];
     return {
       productShort: (opt?.dataset?.productShort || '').toUpperCase(),
+      projectUid: (opt?.dataset?.projectUid || '').toUpperCase(),
       sectionId:    sectSel?.value || '',
       projectId:    projSel?.value || '',
       assetName:    assetSel?.value || '',
     };
+    u.searchParams.set('product', b.productShort || '');
   }
 
   function blocksUrl(){

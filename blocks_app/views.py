@@ -161,29 +161,33 @@ def _latinize(s: str) -> str:
     }
     return "".join(m.get(ch, ch) for ch in s)
 
-def _extract_project_code6(raw: str) -> str:
+def _extract_project_uid(raw: str) -> str:
     """
-    Извлекает код вида 4444RU из произвольной строки:
-    поддерживает варианты '4444RU', '4444-RU', '4444 RU', '4444_ru',
-    кириллицу 'КЗ' -> 'KZ', лишние пробелы и т.п.
-    Возвращает '4444RU' либо ''.
+    Извлекает project_uid вида 44441RU из произвольной строки.
+    Поддерживает варианты с разделителями (4444-1-RU, 4444 1 RU, 4444_1RU),
+    а также кириллицу в буквенной части (КЗ -> KZ).
+    Возвращает нормализованный UID либо ''.
     """
     if not raw:
         return ""
+
+    uid_full = r"\b(\d{5}[A-Z]{2})\b"
+    uid_split = r"\b(\d{4})\s*[-_. ]?\s*(\d)\s*[-_. ]?\s*([A-Z]{2})\b"
+    cleaned_re = r"[^0-9A-Z]+"
+
     U = _latinize(raw).upper()
-    # 1) точное вхождение
-    m = re.search(r"\b(\d{4}[A-Z]{2})\b", U)
+
+    m = re.search(uid_full, U)
     if m:
         return m.group(1)
-    # 2) через разделители (4444-RU / 4444 RU / 4444.RU / 4444_RU)
-    m = re.search(r"\b(\d{4})\s*[-_. ]\s*([A-Z]{2})\b", U)
+
+    m = re.search(uid_split, U)
     if m:
-        return m.group(1) + m.group(2)
-    # 3) первые 6 алфанумериков
-    first6 = re.sub(r"[^0-9A-Z]+", "", U)[:6]
-    if re.fullmatch(r"\d{4}[A-Z]{2}", first6 or ""):
-        return first6
-    return ""
+        return f"{m.group(1)}{m.group(2)}{m.group(3)}"
+
+    candidate = re.sub(cleaned_re, "", U)[:7]
+    return candidate if re.fullmatch(r"\d{5}[A-Z]{2}", candidate or "") else ""
+
 
 def _project_label_by_id(pid: str) -> str:
     """
@@ -228,50 +232,51 @@ def _get_last_nonempty(qd, key: str) -> str:
             return str(v)
     return ""
 
-def _folder_code6_from_name(name: str) -> str:
+def _folder_project_uid_from_name(name: str) -> str:
     """
-    Нормализует имя папки Google Drive до кода (первые 6 алфанумериков после латинизации).
+    Нормализует имя папки Google Drive до project_uid (первые 7 алфанумериков после латинизации).
     """
     if not name:
         return ""
     U = _latinize(name).upper()
     cleaned = re.sub(r"[^0-9A-Z]+", "", U)
-    return cleaned[:6]
+    candidate = cleaned[:7]
+    return candidate if re.fullmatch(r"\d{5}[A-Z]{2}", candidate or "") else ""
 
-logger = logging.getLogger(__name__)  # можно настроить уровень/handler в settings.LOGGING
+logger = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Хелперы диагностики/извлечения project_code на СЕРВЕРЕ
 # ──────────────────────────────────────────────────────────────────────────────
-def _extract_project_code6_from_label(label: str) -> str:
+def _extract_project_uid_from_label(label: str) -> str:
     """
-    Извлекает 4444RU/5555KZ из произвольной подписи проекта (серверный дубль логики из браузера).
-    Поддерживаем "4444RU", "4444-RU", "4444 RU".
+    Серверный дубль клиентской логики: достаёт UID из подписи проекта.
     """
     s = (label or "").strip().upper()
     if not s:
         return ""
-    m = re.search(r"\b(\d{4}[A-Z]{2})\b", s)
+    m = re.search(r"\b(\d{5}[A-Z]{2})\b", s)
     if m:
         return m.group(1)
-    m = re.search(r"\b(\d{4})\s*[-_. ]\s*([A-Z]{2})\b", s)
+    m = re.search(r"\b(\d{4})\s*[-_. ]?\s*(\d)\s*[-_. ]?\s*([A-Z]{2})\b", s)
     if m:
-        return f"{m.group(1)}{m.group(2)}"
-    first6 = re.sub(r"[^0-9A-Z]+", "", s)[:6]
-    return first6 if re.fullmatch(r"\d{4}[A-Z]{2}", first6) else ""
+        return f"{m.group(1)}{m.group(2)}{m.group(3)}"
+    candidate = re.sub(r"[^0-9A-Z]+", "", s)[:7]
+    return candidate if re.fullmatch(r"\d{5}[A-Z]{2}", candidate or "") else ""
 
-def _extract_project_code6_server(request) -> tuple[str, dict]:
+def _extract_project_uid_from_request(request) -> tuple[str, dict]:
     """
-    Пытается достать код проекта 4444RU из разных источников запроса.
-    Возвращает (code6, debug_info_dict).
-    Не зависит жёстко от наличия модели Project.
+    Извлекает project_uid из запросов /blocks/.../run.
+    Возвращает (uid, debug_info).
     """
-    # снимки POST/GET
-
-    post = {k: (request.POST.getlist(k) if len(request.POST.getlist(k)) > 1 else request.POST.get(k))
-            for k in request.POST.keys()}
-    get_ = {k: (request.GET.getlist(k) if len(request.GET.getlist(k)) > 1 else request.GET.get(k))
-            for k in request.GET.keys()}
+    post = {
+        k: (request.POST.getlist(k) if len(request.POST.getlist(k)) > 1 else request.POST.get(k))
+        for k in request.POST.keys()
+    }
+    get_ = {
+        k: (request.GET.getlist(k) if len(request.GET.getlist(k)) > 1 else request.GET.get(k))
+        for k in request.GET.keys()
+    }
 
     raw_body = ""
     try:
@@ -280,13 +285,12 @@ def _extract_project_code6_server(request) -> tuple[str, dict]:
     except Exception:
         pass
 
-    # то, что прямо пришло
     label = (request.POST.get("project_label")
              or request.GET.get("project_label")
              or "").strip()
-    code = (request.POST.get("project_code")
-            or request.GET.get("project_code")
-            or "").strip().upper()
+    uid = (request.POST.get("project_uid")
+           or request.GET.get("project_uid")
+           or "").strip().upper()
     proj_id = (request.POST.get("project_id")
                or request.GET.get("project_id")
                or "").strip()
@@ -294,30 +298,26 @@ def _extract_project_code6_server(request) -> tuple[str, dict]:
     computed_from_label = ""
     computed_from_pid = ""
 
-    # 1) если code пуст — пробуем вытащить из label
-    if not code and label:
-        extracted = _extract_project_code6_from_label(label)
+    if not uid and label:
+        extracted = _extract_project_uid_from_label(label)
         if extracted:
-            code = extracted
+            uid = extracted
             computed_from_label = extracted
 
-    # 2) если всё ещё пусто — мягко пробуем по project_id (если в твоём проекте есть такая модель)
-    if not code and proj_id:
+    if not uid and proj_id:
         try:
             from projects_app.models import Project  # мягкая зависимость
             p = Project.objects.filter(pk=proj_id).first()
             if p:
-                # попробуем собрать подпись и вытащить из неё 4444RU
                 cand_label = getattr(p, "label", None)
                 if not cand_label:
                     prod_short = getattr(getattr(p, "product", None), "short_name", "") or ""
-                    cand_label = f"{getattr(p, 'code', '')} {prod_short} {getattr(p, 'name', '')}".strip()
-                extracted2 = _extract_project_code6_from_label(cand_label or "")
+                    cand_label = f"{getattr(p, 'short_uid', '')} {prod_short} {getattr(p, 'name', '')}".strip()
+                extracted2 = _extract_project_uid_from_label(cand_label or "")
                 if extracted2:
-                    code = extracted2
+                    uid = extracted2
                     computed_from_pid = extracted2
         except Exception:
-            # никакого Project — просто пропускаем
             pass
 
     dbg = {
@@ -326,16 +326,16 @@ def _extract_project_code6_server(request) -> tuple[str, dict]:
         "content_type": request.META.get("CONTENT_TYPE", ""),
         "post_keys": list(request.POST.keys()),
         "get_keys": list(request.GET.keys()),
-        "recv_project_code": (request.POST.get("project_code") or request.GET.get("project_code") or ""),
+        "recv_project_uid": (request.POST.get("project_uid") or request.GET.get("project_uid") or ""),
         "recv_project_label": label,
         "recv_project_id": proj_id,
-        "computed_code_from_label": computed_from_label,
-        "computed_code_from_project_id": computed_from_pid,
+        "computed_uid_from_label": computed_from_label,
+        "computed_uid_from_project_id": computed_from_pid,
         "POST_snapshot": post,
         "GET_snapshot": get_,
         "raw_body_2k": raw_body,
     }
-    return code, dbg
+    return uid, dbg
 
 def _get_block_code(block) -> str:
     """
@@ -381,25 +381,11 @@ def _llm_choices_for(user):
     return [(m, m) for m in models]
 
 def _extract_project_from_request(request):
-    code = (request.POST.get("project_code") or "").strip().upper()
+    uid = (request.POST.get("project_uid") or "").strip().upper()
     label = (request.POST.get("project_label") or "").strip()
-
-    U = label.upper()
-    if not code and U:
-        m = re.search(r"\b(\d{4}[A-Z]{2})\b", U)
-        if m:
-            code = m.group(1)
-    if not code and U:
-        m = re.search(r"\b(\d{4})\s*[-_. ]\s*([A-Z]{2})\b", U)
-        if m:
-            code = (m.group(1) + m.group(2)).upper()
-    if not code and U:
-        first6 = re.sub(r"[^0-9A-Z]+", "", U)[:6]
-        if re.fullmatch(r"\d{4}[A-Z]{2}", first6):
-            code = first6
-
-    return code, label
-
+    if not uid:
+        uid = _extract_project_uid_from_label(label)
+    return uid, label
 
 def _redirect_after(request, default_tab="templates"):
     nxt = (request.POST.get("next") or request.GET.get("next") or "").strip()
@@ -805,31 +791,30 @@ def _gdrive_list_children_safe(request, folder_id: str, res_key: str = "") -> li
     except Exception:
         return []
 
-def _find_project_folder_in_gdrive(request, base_folder_id: str, res_key: str, project_code6: str):
+def _find_project_folder_in_gdrive(request, base_folder_id: str, res_key: str, project_uid: str):
     """
-    Среди дочерних папок base_folder ищем те, у которых нормализованный префикс (первые 6)
-    совпадает с нормализованным кодом проекта (4444RU и т.п.).
+    Среди дочерних папок base_folder ищем ту, у которой UID совпадает с project_uid.
     """
     children = _gdrive_list_children_safe(request, base_folder_id, res_key)
     if not children:
         raise ValueError("Выбран файл или пустая папка Google Drive. Выберите папку с проектами в «Подключения».")
-    pc = _extract_project_code6(project_code6)  # повторная нормализация на всякий
-    if not pc:
-        raise ValueError("Не удалось определить номер проекта (формат 4444RU/5555KZ).")
+    uid = _extract_project_uid(project_uid)
+    if not uid:
+        raise ValueError("Не удалось определить номер проекта (формат 44441RU/55551KZ).")
 
     matched = []
     for ch in children:
         if not _is_folder_mime(ch.get("mimeType")):
             continue
         name = (ch.get("name") or "")
-        code = _folder_code6_from_name(name)
-        if code == pc:
+        folder_uid = _folder_project_uid_from_name(name)
+        if folder_uid == uid:
             matched.append(ch)
 
     if not matched:
         raise ValueError("Проект не найден")
     if len(matched) > 1:
-        raise ValueError("Найдено несколько папок с выбранным номером проекта")
+        raise ValueError("Найдено несколько папок с выбранным project_uid")
     return matched[0]
 
 def _find_child_folder_by_name(request, parent_id: str, res_key: str, name: str):
@@ -1065,21 +1050,21 @@ def block_run(request, pk):
         pass
 
     # 1) Код проекта с полной серверной диагностикой
-    code6, dbg = _extract_project_code6_server(request)
+    project_uid, dbg = _extract_project_uid_from_request(request)
     logger.info("block_run recv debug: %s", dbg)
-    plog.info(request.user, phase="extract", event="project_code6",
-              message=f"code6={code6 or ''}",
+    plog.info(request.user, phase="extract", event="project_uid",
+              message=f"project_uid={project_uid or ''}",
               trace_id=trace_id, request_id=request_id,
-              project_code6=code6 or "", data={"dbg": dbg})
+              project_uid=project_uid or "", data={"dbg": dbg})
 
 
-    if not code6:
+    if not project_uid:
         # Фолбэк из сессии (если когда-то уже запускали)
-        sess_code = (request.session.get("last_project_code6") or "").strip().upper()
-        if re.fullmatch(r"\d{4}[A-Z]{2}", sess_code or ""):
-            code6 = sess_code
-            logger.warning("PROJECT CODE FALLBACK from session: %s", {
-                "code6": code6,
+        sess_uid = (request.session.get("last_project_uid") or "").strip().upper()
+        if re.fullmatch(r"\d{5}[A-Z]{2}", sess_uid or ""):
+            project_uid = sess_uid
+            logger.warning("PROJECT UID FALLBACK from session", {
+                "project_uid": project_uid,
                 "label": request.session.get("last_project_label") or "",
                 "product_short": request.session.get("last_product_short") or "",
             })
@@ -1089,14 +1074,14 @@ def block_run(request, pk):
     if not sel or not sel.item_id:
         plog.warn(request.user, phase="onedrive", event="selection.missing",
                   message="OneDrive not connected", trace_id=trace_id,
-                  request_id=request_id, project_code6=code6 or "")
+                  request_id=request_id, project_uid=project_uid or "")
         messages.error(request, "Сначала выберите файл или папку …")
         return _redirect_after(request, default_tab="debugger")
     else:
         plog.info(request.user, phase="onedrive", event="selection.ok",
                   message="OneDrive selection ok",
                   trace_id=trace_id, request_id=request_id,
-                  project_code6=code6 or "",
+                  project_uid=project_uid or "",
                   data={"item_id": sel.item_id, "item_name": sel.item_name})
 
     # 3) Модель
@@ -1114,7 +1099,7 @@ def block_run(request, pk):
     plog.debug(request.user, phase="prompt", event="compose",
         message="Compose prompt + context",
         trace_id=trace_id, request_id=request_id,
-        project_code6=code6 or "",
+        project_uid=project_uid or "",
         data={"context_labels": _extract_context_labels(block)})
 
     # Лог с ПОЛНЫМ текстом промпта
@@ -1122,7 +1107,7 @@ def block_run(request, pk):
         request.user, phase="prompt", event="compose.raw",
         message=f"prompt_len={len(full_prompt)}",
         trace_id=trace_id, request_id=request_id,
-        project_code6=code6 or "",
+        project_uid=project_uid or "",
         data={
             "prompt": full_prompt,
             "context_labels": labels_for_prompt,
@@ -1142,19 +1127,19 @@ def block_run(request, pk):
         plog.error(request.user, phase="gdrive", event="not_connected",
                    message="Google Drive not connected",
                    trace_id=trace_id, request_id=request_id,
-                   project_code6=code6 or "")
+                   project_uid=project_uid or "")
         messages.error(request, "Google Drive не подключён …")
         return _redirect_after(request, default_tab="debugger")
 
     # 6) Валидация кода проекта
-    if not code6 or not re.fullmatch(r"\d{4}[A-Z]{2}", code6):
-        logger.warning("PROJECT CODE MISSING/INVALID in block_run: %s", dbg)
-        messages.error(request, "Не удалось определить номер проекта (формат 4444RU/5555KZ).")
+    if not project_uid or not re.fullmatch(r"\d{5}[A-Z]{2}", project_uid):
+        logger.warning("PROJECT UID MISSING/INVALID in block_run: %s", dbg)
+        messages.error(request, "Не удалось определить project_uid (формат 44441RU/12345KZ).")
         return _redirect_after(request, default_tab="debugger")
 
     # 7) Папка проекта в GDrive
     try:
-        project_folder = _find_project_folder_in_gdrive(request, base_folder_id, res_key, code6)
+        project_folder = _find_project_folder_in_gdrive(request, base_folder_id, res_key, project_uid)
     except ValueError as e:
         messages.error(request, str(e))
         return _redirect_after(request, default_tab="debugger")
@@ -1170,7 +1155,7 @@ def block_run(request, pk):
     plog.info(request.user, phase="gdrive", event="project_folder.ok",
               message="Project folder resolved",
               trace_id=trace_id, request_id=request_id,
-              project_code6=code6 or "",
+              project_uid=project_uid or "",
               data={"project_folder": project_folder.get("name"),
                     "asset": asset_name or ""})
 
@@ -1204,7 +1189,7 @@ def block_run(request, pk):
         request.user, phase="gdrive", event="attachments.meta",
         message="Attachments metadata",
         trace_id=trace_id, request_id=request_id,
-        project_code6=code6 or "",
+        project_uid=project_uid or "",
         data={"count": len(sanitized_meta), "samples": sanitized_meta[:10]}
     )
 
@@ -1254,7 +1239,7 @@ def block_run(request, pk):
         plog.info(request.user, phase="llm", event="call.start",
                   message=f"model={model_for_files}",
                   trace_id=trace_id, request_id=request_id,
-                  project_code6=code6 or "",
+                  project_uid=project_uid or "",
                   data={"temperature": getattr(block, "temperature", None),
                         "attachments": len(attachments)})
 
@@ -1297,13 +1282,13 @@ def block_run(request, pk):
     plog.info(request.user, phase="llm", event="call.done",
               message=f"answer_len={len(answer)}",
               trace_id=trace_id, request_id=request_id,
-              project_code6=code6 or "")
+              project_uid=project_uid or "")
 
     plog.debug(
         request.user, phase="llm", event="answer.raw",
         message=f"model={(model_for_files or model_id)} answer_len={len(answer)}",
         trace_id=trace_id, request_id=request_id,
-        project_code6=code6 or "",
+        project_uid=project_uid or "",
         data={"answer": answer}
     )
 
@@ -1378,14 +1363,14 @@ def block_run(request, pk):
         request.user, phase="extract", event="context.bound",
         message=f"binding from panel company='{company}' section='{section_code}'",
         trace_id=trace_id, request_id=request_id,
-        project_code6=code6 or "",
+        project_uid=project_uid or "",
         data={"asset_name": asset_name, "section_id": section_id, "section_code": section_code}
     )
 
     # 1) Ищем документ и получаем раздаваемую ссылку редактирования (share_url)
     try:
         info = resolve_doc_info(
-            request.user, sel, code6,
+            request.user, sel, project_uid,
             company=(company or None),
             section=(section_code or None),
         )
@@ -1400,7 +1385,7 @@ def block_run(request, pk):
             request.user, phase="onedrive", event="resolve.failed",
             message=f"resolve_doc_info failed: {e1}",
             trace_id=trace_id, request_id=request_id,
-            project_code6=code6 or "",
+            project_uid=project_uid or "",
             data={"company": company, "section_code": section_code}
         )
         status, item_id = _one_docx_in_folder_or_error(request.user, sel.item_id)
@@ -1437,7 +1422,7 @@ def block_run(request, pk):
         request.user, phase="onedrive", event="share_url.ok",
         message="Share URL resolved",
         trace_id=trace_id, request_id=request_id,
-        project_code6=code6 or "", doc_url=doc_url,
+        project_uid=project_uid or "", doc_url=doc_url,
         company=company or "", section=section_code or ""
     )
 
@@ -1446,13 +1431,13 @@ def block_run(request, pk):
         user=request.user,
         trace_id=trace_id,
         request_id=request_id,
-        project_code6=code6 or "",
+        project_uid=project_uid or "",
     )
 
     plog.info(request.user, phase="pipeline", event="result",
               message="pipeline result",
               trace_id=trace_id, request_id=request_id,
-              project_code6=code6 or "",
+              project_uid=project_uid or "",
               data={"valid": pipe.get("valid"),
                     "normalized": pipe.get("normalized"),
                     "source": pipe.get("source"),
@@ -1463,7 +1448,7 @@ def block_run(request, pk):
         plog.warn(request.user, phase="pipeline", event="invalid",
                   message=str(pipe.get("error") or "invalid"),
                   trace_id=trace_id, request_id=request_id,
-                  project_code6=code6 or "")
+                  project_uid=project_uid or "")
 
         # если совсем не смогли привести к валидному DocOps — аккуратный фолбэк
         if via == "ws":
@@ -1506,7 +1491,7 @@ def block_run(request, pk):
         plog.info(request.user, phase="job", event="build.ok",
                   message="addin.job built",
                   trace_id=trace_id, request_id=request_id,
-                  project_code6=code6 or "", anchor_text=anchor_text or "",
+                  project_uid=project_uid or "", anchor_text=anchor_text or "",
                   data={"ops": len(job.get("ops", []))})
 
     else:
@@ -1519,7 +1504,7 @@ def block_run(request, pk):
             request.user, phase="job", event="build.summary",
             message=f"addin.job summary ops={snap['ops_count']}",
             trace_id=trace_id, request_id=request_id, via=via,
-            project_code6=code6 or "", doc_url=doc_url,
+            project_uid=project_uid or "", doc_url=doc_url,
             anchor_text=(job.get("anchor") or {}).get("text", ""),
             data=snap,
         )
@@ -1528,7 +1513,7 @@ def block_run(request, pk):
             request.user, phase="job", event="build.summary.failed",
             message=str(e),
             trace_id=trace_id, request_id=request_id, via=via,
-            project_code6=code6 or ""
+            project_uid=project_uid or ""
         )
 
     # --- 3) Доставка: один вызов без дублирования ---
@@ -1578,7 +1563,7 @@ def block_run(request, pk):
                     request.user, phase="queue", event="payload",
                     message="Queue payload snapshot",
                     trace_id=trace_id, request_id=request_id, via="queue",
-                    project_code6=code6 or "", doc_url=doc_url,
+                    project_uid=project_uid or "", doc_url=doc_url,
                     anchor_text=(job.get("anchor") or {}).get("text", ""),
                     data=q_snap,
                 )
@@ -1587,7 +1572,7 @@ def block_run(request, pk):
                     request.user, phase="queue", event="payload.snapshot.failed",
                     message=str(e),
                     trace_id=trace_id, request_id=request_id, via="queue",
-                    project_code6=code6 or ""
+                    project_uid=project_uid or ""
                 )
             # queue: совместим разные версии enqueue_* (payload/job/ops)
             res = _enqueue_addin_job_compat(
@@ -1605,7 +1590,7 @@ def block_run(request, pk):
             request.user, phase="deliver", event="failed",
             message=str(e),
             trace_id=trace_id, request_id=request_id,
-            via=via, project_code6=code6 or "", doc_url=doc_url,
+            via=via, project_uid=project_uid or "", doc_url=doc_url,
             anchor_text=anchor_text or "", data={"exc": str(e)}
         )
 
@@ -1614,7 +1599,7 @@ def block_run(request, pk):
             request.user, phase="deliver", event="ok",
             message="delivery finished",
             trace_id=trace_id, request_id=request_id, via=via,
-            project_code6=code6 or "", doc_url=doc_url,
+            project_uid=project_uid or "", doc_url=doc_url,
             anchor_text=anchor_text or ""
         )
 

@@ -36,23 +36,23 @@ def _request_from_meta(meta: dict | None) -> str | None:
             or meta.get("jobId")
             or None)
 
-def _project_code6_from_meta(meta: dict | None) -> str | None:
+def _project_uid_from_meta(meta: dict | None) -> str | None:
     if not isinstance(meta, dict):
         return None
-    # часто прилетает как code6 или project_code6
-    return (meta.get("project_code6")
-            or meta.get("code6")
+    return (meta.get("project_uid")
+            or meta.get("projectUid")
+            or meta.get("short_uid")
             or None)
 
 def _log_ctx_from_meta(meta: dict | None) -> dict:
     trace_id = _trace_from_meta(meta)
     email = _email_from_meta(meta)
     request_id = _request_from_meta(meta)
-    project_code6 = _project_code6_from_meta(meta)
+    project_uid = _project_uid_from_meta(meta)
     return {
         "trace_id": trace_id,
         "request_id": request_id,
-        "project_code6": project_code6,
+        "project_uid": project_uid,
         "email": email,
     }
 

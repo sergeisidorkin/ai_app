@@ -149,15 +149,15 @@ def _log(level: str, event: str, *, message: str = "", data: Dict[str, Any] | No
     """
     Безопасное логирование для этапов гидрации диаграмм:
     - никогда не выбрасывает исключения;
-    - гарантирует ненулевой project_code6 (если нет — 'UNK'), чтобы не бить NOT NULL в БД.
+    - гарантирует ненулевой project_uid (если нет — 'UNK'), чтобы не бить NOT NULL в БД.
     """
     if not plog:
         return
     fn = getattr(plog, level, getattr(plog, "info", None)) or (lambda *a, **k: None)
     ctx = dict(log_ctx or {})
-    pc6 = (ctx.get("project_code6")
-           or ctx.get("code6")
-           or ctx.get("project")
+    uid = (ctx.get("project_uid")
+           or ctx.get("projectUid")
+           or ctx.get("short_uid")
            or "UNK")
     # жёстко прокидываем ожидаемые поля
     kwargs = {
@@ -166,7 +166,7 @@ def _log(level: str, event: str, *, message: str = "", data: Dict[str, Any] | No
         "message": message or "",
         "trace_id": ctx.get("trace_id"),
         "email": ctx.get("email"),
-        "project_code6": str(pc6),   # <— гарантированно НЕ None
+        "project_uid": str(uid),
         "data": (data or {}),
     }
     try:
@@ -176,7 +176,7 @@ def _log(level: str, event: str, *, message: str = "", data: Dict[str, Any] | No
         try:
             # попытаемся записать максимально «пусто»
             fn(None, phase="chart", event=event, message=message or "",
-               project_code6="UNK", data=(data or {}))
+               project_uid="UNK", data=(data or {}))
         except Exception:
             pass
 

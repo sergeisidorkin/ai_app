@@ -50,7 +50,7 @@ def _mk_payload(user, **kwargs) -> dict[str, Any]:
 
     allowed = {
         "email", "trace_id", "request_id", "job_id", "via",
-        "project_code6", "company", "section", "anchor_text",
+        "project_uid", "company", "section", "anchor_text",
         "data", "doc_url"
     }
     payload = {k: kwargs.get(k) for k in allowed if k in kwargs}
