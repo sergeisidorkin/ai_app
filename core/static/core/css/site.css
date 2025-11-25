@@ -1017,9 +1017,11 @@ section#templates .alert.alert-info .text-muted {
 
 /* Fallback на случай, если colgroup переопределяется */
 .work-table th:nth-child(2),
-.work-table td:nth-child(2) { width: 110px !important; }
+.work-table td:nth-child(2) { width: 110px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.work-table th:nth-child(3),
+.work-table td:nth-child(3) { width: 120px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .work-table th:nth-child(4),
-.work-table td:nth-child(4) { width: 220px !important; }
+.work-table td:nth-child(4) { width: 220px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 
 
@@ -1051,6 +1053,7 @@ section#templates .alert.alert-info .text-muted {
 /* +0px слева у колонки с чекбоксами во всех 3 таблицах раздела "Проекты" */
 #projects-pane table.table > thead tr > :first-child,
 #projects-pane table.table > tbody tr > :first-child,
+
 #performers-pane table.table > thead tr > :first-child,
 #performers-pane table.table > tbody tr > :first-child {
   padding-left: calc(var(--bs-table-cell-padding-x, .4rem) + 0px);
