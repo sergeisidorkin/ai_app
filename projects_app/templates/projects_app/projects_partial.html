@@ -180,7 +180,7 @@
       </colgroup>
       <thead>
       <tr>
-        <th style="width:1%">
+        <th style="width:30px">
           {% if request.user.is_authenticated and request.user.is_staff %}
             <div class="form-check m-0">
               <input class="form-check-input"
@@ -297,16 +297,17 @@
   <div class="table-responsive">
     <table class="table table-sm align-middle legal-table">
       <colgroup>
-        <col class="col-checkbox">
-        <col class="col-project">
-        <col class="col-type">
-        <col class="col-name">
-        <col class="col-active">
-        <col class="col-registration">
+        <col class="col-checkbox">       <!-- чекбокс -->
+        <col class="col-project">        <!-- Проект -->
+        <col class="col-type">           <!-- Тип -->
+        <col class="col-name">           <!-- Название -->
+        <col class="col-active">         <!-- Наименование актива -->
+        <col class="col-legal-name">     <!-- Наименование юридического лица -->
+        <col class="col-registration">   <!-- Регистрационный номер -->
       </colgroup>
       <thead>
       <tr>
-        <th style="width:1%">
+        <th style="width:30px">
           {% if request.user.is_authenticated and request.user.is_staff %}
             <div class="form-check m-0">
               <input class="form-check-input"
