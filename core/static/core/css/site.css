@@ -1015,6 +1015,15 @@ section#templates .alert.alert-info .text-muted {
 .legal-table col.col-name     { width: 220px !important; }
 .legal-table col.col-active   { width: 350px !important; } /* Наименование актива */
 
+.legal-table th:first-child,
+.legal-table td:first-child { width: 30px !important; min-width: 30px !important; max-width: 30px !important; padding-left: .4rem; padding-right: .4rem; }
+.legal-table th:nth-child(2),
+.legal-table td:nth-child(2) { width: 100px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.legal-table th:nth-child(3),
+.legal-table td:nth-child(3) { width: 50px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.legal-table th:nth-child(4),
+.legal-table td:nth-child(4) { width: 220px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 /* Fallback на случай, если colgroup переопределяется */
 .work-table th:nth-child(2),
 .work-table td:nth-child(2) { width: 110px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
