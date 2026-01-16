@@ -41,9 +41,7 @@ ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=[
     "0.0.0.0",
     "localhost",
     "testserver",
-    "nonmagnetical-alanna-festive.ngrok-free.dev",
-    ".ngrok-free.dev",
-    "snappishly-primed-blackfish.cloudpub.ru",
+    "admiringly-conscious-remora.cloudpub.ru",
     ".cloudpub.ru",
     "imcmontanai.ru",
 ])
@@ -135,16 +133,13 @@ CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[
     "https://localhost:3000",
     "https://localhost:8001",
     "https://word-edit.officeapps.live.com",
-    "https://nonmagnetical-alanna-festive.ngrok-free.dev",
-    "https://*.ngrok-free.dev",
-    "https://snappishly-primed-blackfish.cloudpub.ru",
+    "https://admiringly-conscious-remora.cloudpub.ru",
     "https://imcmontanai.ru",
 ])
 
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^https://.*\.officeapps\.live\.com$",
     r"^https://.*\.sharepoint\.com$",
-    r"^https://.*\.ngrok-free\.dev$",
     r"^https://.*\.cloudpub\.ru$",
 ]
 
@@ -159,8 +154,7 @@ CSRF_TRUSTED_ORIGINS = [
     "http://localhost:8000",
     "https://localhost:8001",
     "https://localhost:3000",
-    "https://nonmagnetical-alanna-festive.ngrok-free.dev",
-    "https://snappishly-primed-blackfish.cloudpub.ru",
+    "https://admiringly-conscious-remora.cloudpub.ru",
     "https://*.cloudpub.ru",
 ]
 
