@@ -15,3 +15,4 @@ media/
 .env
 .env.*
 .env.example
+office_addin_server/
