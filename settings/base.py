@@ -51,7 +51,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions","django.contrib.messages","django.contrib.staticfiles",
     "policy_app","onedrive_app","blocks_app","blockseditor_app","openai_app","googledrive_app","projects_app",
     "requests_app","debugger_app","office_addin","corsheaders","channels","docops_app",
-    "docops_queue","macroops_app","checklists_app","logs_app.apps.LogsAppConfig",
+    "docops_queue","macroops_app","checklists_app","logs_app.apps.LogsAppConfig","yandexdisk_app",
 ]
 
 MIDDLEWARE = [
@@ -104,6 +104,7 @@ ENFORCE_LOGIN_EXEMPT = (
     "/health/",
     "/gdrive/",
     "/onedrive/",
+    "/yadisk/",
     "/onedrive/callback", # ← коллбэк OAuth не должен требовать авторизации
     "/accounts/",  # ← сама страница логина тоже в белом списке
     "/static/",
@@ -129,6 +130,7 @@ ENFORCE_LOGIN_EXEMPT = (
 )
 
 CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[
+    "http://localhost",
     "https://localhost",
     "https://localhost:3000",
     "https://localhost:8001",
@@ -136,6 +138,8 @@ CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[
     "https://admiringly-conscious-remora.cloudpub.ru",
     "https://imcmontanai.ru",
 ])
+
+CORS_ALLOW_ALL_ORIGINS = True
 
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^https://.*\.officeapps\.live\.com$",
@@ -233,6 +237,10 @@ OPENAI_API_BASE = env("OPENAI_API_BASE", default="https://api.openai.com/v1")
 OPENAI_BASE_URL = env("OPENAI_BASE_URL", default=env("OPENAI_API_BASE", default="https://api.openai.com/v1"))
 OPENAI_ORG_ID   = env("OPENAI_ORG_ID", default="")
 OPENAI_PROJECT_ID=env("OPENAI_PROJECT_ID", default="")
+
+# === Яндекс.Диск ===
+YANDEX_DISK_CLIENT_ID = env("YANDEX_DISK_CLIENT_ID", default="")
+YANDEX_DISK_CLIENT_SECRET = env("YANDEX_DISK_CLIENT_SECRET", default="")
 
 # === DocOpsAgent ===
 BASE_PUBLIC_URL = os.getenv("BASE_PUBLIC_URL", "https://localhost:8001")

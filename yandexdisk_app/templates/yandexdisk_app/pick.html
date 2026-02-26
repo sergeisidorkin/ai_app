@@ -1,0 +1,171 @@
+{% extends "core/base.html" %}
+{% block title %}Яндекс.Диск — выбор папки{% endblock %}
+
+{% block content %}
+<div id="yadisk-pick">
+
+    <style>
+      /* --- Шапка: по 20px сверху/снизу/слева/справа --- */
+      #yadisk-pick .pick-header {
+        background: var(--bs-body-tertiary-bg, #f8f9fa);
+        padding-top: 35px !important;
+        padding-bottom: 20px !important;
+        padding-left: 20px !important;
+        padding-right: 20px !important;
+      }
+
+      /* --- Основной список: 80% ширины, без лишних скроллов --- */
+      #yadisk-pick .pick-main-narrow {
+        width: 80%;
+        max-width: 100%;
+        margin-top: 0 !important;       /* вплотную к шапке */
+        overflow-x: hidden;
+        overflow-y: visible !important;  /* скролл только у страницы */
+      }
+
+      /* --- Наведение на строки списка: слегка затемняем --- */
+      #yadisk-pick .list-group.list-folders .list-group-item {
+        transition: background-color .12s ease-in-out;
+      }
+      #yadisk-pick .list-group.list-folders .list-group-item:hover {
+        background-color: var(--bs-gray-100, rgba(0,0,0,.04));
+      }
+
+      /* --- Сайдбар: начинаем вровень с шапкой списка справа --- */
+      #yadisk-pick .second-sidebar {
+        position: static !important;
+        height: auto !important;
+        max-height: none !important;
+        overflow: visible !important;
+        background: #fff !important;
+        padding-top: 20px !important;    /* поднимаем контент до уровня шапки справа */
+      }
+      #yadisk-pick .second-sidebar .second-sidebar-header-spacer {
+        display: none !important;        /* убираем «прокладку» наверху */
+      }
+      #yadisk-pick .second-sidebar .list-group,
+      #yadisk-pick .second-sidebar .list-group-flush {
+        overflow: visible !important;
+        max-height: none !important;
+        margin-top: 0 !important;
+        padding-top: 0 !important;
+      }
+
+      /* +20px слева для всех пунктов меню слева (включая статичные) */
+      #yadisk-pick .second-sidebar .list-group-flush > .list-group-item {
+        padding-left: 20px !important;
+      }
+
+      /* Страховки от горизонтального скролла */
+      #yadisk-pick .templates-bleed,
+      #yadisk-pick .content-bleed-x {
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+        width: 100% !important;
+      }
+      #yadisk-pick .row.templates-bleed.content-bleed-x {
+        overflow-x: hidden !important;
+      }
+
+      /* truncate работает корректно */
+      #yadisk-pick .list-group-item { min-width: 0; }
+    </style>
+    <style>
+      /* Внешняя серая граница вокруг всей карточки со списком */
+      #yadisk-pick .card.pick-list {
+        border: 1px solid var(--bs-border-color, #dee2e6) !important;
+        border-radius: .5rem; /* можно убрать, если не нужно скругление */
+      }
+    </style>
+
+    <div class="row templates-bleed content-bleed-x">
+      <aside class="second-sidebar col-auto border-end">
+        <div class="second-sidebar-header-spacer"></div>
+
+        <div class="list-group list-group-flush">
+          <div class="list-group-item border-0 bg-transparent py-2">&nbsp;</div>  {# пустая строка #}
+
+          {% if parent_path %}
+            <a href="?path={{ parent_path|urlencode }}" class="list-group-item list-group-item-action">
+              ⤴︎ Назад
+            </a>
+          {% endif %}
+
+          {% if current_path != "/" %}
+            <a href="?path=/" class="list-group-item list-group-item-action">
+              🏠 В корень
+            </a>
+          {% else %}
+            <div class="list-group-item text-muted">Корень диска</div>
+          {% endif %}
+
+          {% if current %}
+              <div class="list-group-item">
+                <div class="small text-muted mb-1">Текущий выбор</div>
+                <div class="text-truncate">
+                  <div class="d-flex align-items-center text-truncate">
+                    <i class="bi bi-folder2 me-2 align-middle"></i>
+                    <strong class="text-truncate">{{ current.resource_name }}</strong>
+                  </div>
+                  <span class="small text-muted d-block text-truncate">{{ current.resource_path }}</span>
+                </div>
+              </div>
+          {% endif %}
+
+          <a href="/#connections" class="list-group-item list-group-item-action">
+            ← Назад к подключениям
+          </a>
+        </div>
+      </aside>
+
+
+      <!-- ПРАВАЯ ПАНЕЛЬ -->
+      <div class="col p-3">
+        <div class="pick-header d-flex justify-content-between align-items-center">
+          <h5 class="mb-0">Яндекс.Диск: {{ current_name }}</h5>
+          <div class="btn-group">
+            {% if current_path != "/" %}
+              <a href="?path=/" class="btn btn-sm btn-outline-secondary">В корень</a>
+            {% endif %}
+            <a href="/#connections" class="btn btn-sm btn-outline-secondary">Назад</a>
+          </div>
+        </div>
+
+
+    <div class="card shadow-sm pick-list">
+        <div class="card-body p-0">
+          <div class="list-group list-group-flush list-folders">
+            {% for it in items %}
+              <div class="list-group-item d-flex align-items-center justify-content-between">
+                <div class="d-flex align-items-center gap-2 flex-grow-1 overflow-hidden">
+                  <div class="text-truncate w-100">
+                    <div class="d-flex align-items-center text-truncate">
+                      <i class="bi bi-folder2 me-2 align-middle"></i>
+                      <div class="fw-semibold text-truncate">{{ it.name }}</div>
+                    </div>
+                    <div class="small text-muted text-truncate">
+                      {{ it.path }}
+                    </div>
+                  </div>
+                </div>
+                <div class="d-flex gap-2 ms-3">
+                  <a class="btn btn-sm btn-outline-primary" href="?path={{ it.path|urlencode }}">Открыть</a>
+                  <form method="post" action="{% url 'yadisk_select' %}" class="m-0">
+                    {% csrf_token %}
+                    <input type="hidden" name="resource_path" value="{{ it.path }}">
+                    <input type="hidden" name="resource_name" value="{{ it.name }}">
+                    <input type="hidden" name="resource_type" value="dir">
+                    <button type="submit" class="btn btn-primary btn-sm">Выбрать папку</button>
+                  </form>
+                </div>
+              </div>
+            {% empty %}
+              <div class="list-group-item text-muted py-4 text-center">Папок нет</div>
+            {% endfor %}
+          </div>
+        </div>
+    </div>
+</div> {# /#yadisk-pick #}
+{% endblock %}

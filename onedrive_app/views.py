@@ -6,6 +6,8 @@ from django.views.decorators.http import require_POST
 from django.urls import reverse
 from django.conf import settings
 
+from yandexdisk_app.models import YandexDiskAccount, YandexDiskSelection
+
 from .graph import get_auth_url, exchange_code, list_children
 from .models import OneDriveSelection, OneDriveAccount
 
@@ -54,6 +56,9 @@ def connections_partial(request):
     gdrive_connected = bool(request.session.get("gdrive_tokens"))
     gdrive_selection = request.session.get("gdrive_selection") or None
 
+    yadisk_connected = YandexDiskAccount.objects.filter(user=request.user).exists()
+    yadisk_selection = YandexDiskSelection.objects.filter(user=request.user).first()
+
     return render(
         request,
         "onedrive_app/connections_partial.html",
@@ -63,6 +68,8 @@ def connections_partial(request):
             "openai": openai,
             "gdrive_connected": gdrive_connected,
             "gdrive_selection": gdrive_selection,
+            "yadisk_connected": yadisk_connected,
+            "yadisk_selection": yadisk_selection,
         },
     )
 
