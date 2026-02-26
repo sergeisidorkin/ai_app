@@ -1,0 +1,69 @@
+{% load ui %}
+<div class="card shadow-sm mb-3 mt-3" id="yadisk-panel">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <p class="mb-0 fw-semibold d-flex align-items-center fs-6 lh-1">
+        {% svg_icon 'yandexdisk' 'me-2 icon-inline' %}
+        Яндекс.Диск
+      </p>
+      {% if yadisk_connected %}
+        <span class="badge text-bg-success">Подключено</span>
+      {% else %}
+        <span class="badge text-bg-secondary">Не подключено</span>
+      {% endif %}
+    </div>
+
+    {% if yadisk_connected and selection and selection.resource_path %}
+      <div class="mb-3">
+        <div class="small text-muted">Выбранная папка</div>
+        <div class="d-flex flex-wrap align-items-center gap-2">
+          <div>
+            <i class="bi bi-folder2 me-1 align-auto"></i>
+            <span class="fw-semibold">{{ selection.resource_name }}</span>
+            <span class="text-muted">({{ selection.resource_path }})</span>
+          </div>
+          <form method="post" action="{% url 'yadisk_clear' %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm btn-outline-danger"
+                    onclick="return confirm('Сбросить выбор папки?')">
+              Сбросить выбор
+            </button>
+          </form>
+        </div>
+      </div>
+    {% else %}
+      <div class="mb-3">
+        {% if yadisk_connected %}
+          <span class="text-muted">Папка не выбрана</span>
+        {% else %}
+          <span class="text-muted">Сначала подключите Яндекс.Диск, чтобы выбрать папку.</span>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    <div class="d-flex gap-2">
+      {% if yadisk_connected %}
+        <a class="btn btn-outline-secondary" href="{% url 'yadisk_pick' %}">Выбрать папку</a>
+        <form method="post"
+              action="{% url 'yadisk_disconnect' %}"
+              hx-post="{% url 'yadisk_disconnect' %}"
+              hx-target="#connections-pane"
+              hx-swap="innerHTML"
+              class="d-inline">
+          {% csrf_token %}
+          <button type="submit"
+                  class="btn btn-outline-danger"
+                  onclick="return confirm('Отключить Яндекс.Диск?')">
+            Удалить подключение
+          </button>
+        </form>
+      {% else %}
+        <a class="btn btn-outline-primary" href="{% url 'yadisk_connect' %}">Подключить</a>
+      {% endif %}
+    </div>
+
+    <p class="text-muted small mt-2 mb-0">
+      После выбора папки документы будут сохраняться в выбранную директорию.
+    </p>
+  </div>
+</div>

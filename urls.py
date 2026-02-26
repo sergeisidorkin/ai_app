@@ -33,6 +33,7 @@ path("", home_entry, name="home"),
     path("logs/api/config", logs_config, name="logs_config"),
     path("api/logs/ingest/", api_logs_ingest),
     path("logs/",      include(("logs_app.urls", "logs_app"), namespace="logs_app")),
+    path("yadisk/", include("yandexdisk_app.urls")),
     path(
         "addin/commands.html",
         TemplateView.as_view(template_name="docops_queue/commands.html"),
