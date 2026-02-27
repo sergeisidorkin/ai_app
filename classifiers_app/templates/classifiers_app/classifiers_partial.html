@@ -1,0 +1,95 @@
+<div id="classifiers-pane">
+    <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 0px;">
+        <h5 class="table-section-title">
+            <i class="bi bi-table me-2"></i>
+            Общероссийский классификатор стран мира (ОКСМ)
+        </h5>
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-sm align-middle">
+            <thead>
+            <tr>
+                <th style="width:1%">
+                    {% if request.user.is_authenticated and request.user.is_staff %}
+                        <div class="form-check m-0">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="oksm-master"
+                                   data-target-name="oksm-select"
+                                   data-actions-id="oksm-actions"
+                                   aria-label="Выделить все строки">
+                        </div>
+                    {% endif %}
+                </th>
+                <th>№</th>
+                <th>Код</th>
+                <th>Наименование страны (краткое)</th>
+                <th>Наименование страны (полное)</th>
+                <th>Буквенный код (Альфа-2)</th>
+                <th>Буквенный код (Альфа-3)</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for c in oksm_countries %}
+                <tr data-edit-url="{% url 'oksm_form_edit' c.pk %}"
+                    data-delete-url="{% url 'oksm_delete' c.pk %}"
+                    data-move-up-url="{% url 'oksm_move_up' c.pk %}"
+                    data-move-down-url="{% url 'oksm_move_down' c.pk %}">
+
+                    <td class="text-nowrap">
+                        {% if request.user.is_authenticated and request.user.is_staff %}
+                            <div class="form-check">
+                                <input class="form-check-input"
+                                       type="checkbox"
+                                       id="oksm-sel-{{ c.id }}"
+                                       name="oksm-select"
+                                       value="{{ c.id }}"
+                                       aria-label="Выделить строку">
+                            </div>
+                        {% endif %}
+                    </td>
+                    <td class="text-nowrap">{{ c.number }}</td>
+                    <td class="text-nowrap">{{ c.code }}</td>
+                    <td>{{ c.short_name }}</td>
+                    <td>{{ c.full_name }}</td>
+                    <td class="text-nowrap">{{ c.alpha2 }}</td>
+                    <td class="text-nowrap">{{ c.alpha3 }}</td>
+                </tr>
+            {% empty %}
+                <tr><td colspan="7" class="text-muted">Пока нет данных.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+
+        {% if request.user.is_authenticated and request.user.is_staff %}
+        <div class="d-flex align-items-stretch gap-2 products-actions-row">
+          <button
+                  class="btn btn-primary btn-sm d-flex align-items-center"
+                  hx-get="{% url 'oksm_form_create' %}"
+                  hx-target="#classifiers-modal .modal-content"
+                  hx-swap="innerHTML"
+                  data-bs-toggle="modal"
+                  data-bs-target="#classifiers-modal">
+            <i class="bi bi-plus-circle me-2"></i>Добавить строку
+          </button>
+          <div id="oksm-actions" class="d-none d-flex">
+            <div class="btn-group">
+              <button type="button" id="oksm-actions-up" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+                <i class="bi bi-arrow-up-square"></i>
+              </button>
+              <button type="button" id="oksm-actions-down" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+                <i class="bi bi-arrow-down-square"></i>
+              </button>
+              <button type="button" id="oksm-actions-edit" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+                <i class="bi bi-pencil-square"></i>
+              </button>
+              <button type="button" id="oksm-actions-delete" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+                <i class="bi bi-x-square"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
