@@ -8,37 +8,38 @@
 <form
     method="post"
     {% if action == "create" %}
-      hx-post="{% url 'oksm_form_create' %}"
+      hx-post="{% url 'okv_form_create' %}"
     {% else %}
-      hx-post="{% url 'oksm_form_edit' country.pk %}"
+      hx-post="{% url 'okv_form_edit' currency.pk %}"
     {% endif %}
     hx-target="#classifiers-pane"
     hx-swap="outerHTML">
   <div class="modal-body">
     {% csrf_token %}
     <div class="mb-3">
-      <label class="form-label">№</label>
-      {{ form.number }}
+      <label class="form-label">Код 000</label>
+      {{ form.code_numeric }}
     </div>
     <div class="mb-3">
-      <label class="form-label">Код</label>
-      {{ form.code }}
+      <label class="form-label">Код AAA</label>
+      {{ form.code_alpha }}
     </div>
     <div class="mb-3">
-      <label class="form-label">Наименование страны (краткое)</label>
-      {{ form.short_name }}
+      <label class="form-label">Наименование валюты</label>
+      {{ form.name }}
     </div>
     <div class="mb-3">
-      <label class="form-label">Наименование страны (полное)</label>
-      {{ form.full_name }}
+      <label class="form-label">Сокращенное обозначение</label>
+      {{ form.abbreviation }}
     </div>
     <div class="mb-3">
-      <label class="form-label">Буквенный код (Альфа-2)</label>
-      {{ form.alpha2 }}
+      <label class="form-label">Символ</label>
+      {{ form.symbol }}
     </div>
     <div class="mb-3">
-      <label class="form-label">Буквенный код (Альфа-3)</label>
-      {{ form.alpha3 }}
+      <label class="form-label">Страны использования</label>
+      {{ form.countries }}
+      <div class="form-text">Удерживайте Ctrl (Cmd) для множественного выбора</div>
     </div>
     <div class="mb-3">
       <label class="form-label">Дата введения в действие</label>

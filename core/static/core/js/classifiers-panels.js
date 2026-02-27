@@ -62,12 +62,30 @@
     panel.classList.toggle('d-none', !anyChecked);
   }
 
+  function filterQueryString() {
+    var parts = [];
+    var oksmEl = document.getElementById('oksm-date-filter');
+    var okvEl = document.getElementById('okv-date-filter');
+    var katdEl = document.getElementById('katd-date-filter');
+    var lwEl = document.getElementById('lw-date-filter');
+    if (oksmEl) parts.push('oksm_date=' + encodeURIComponent(oksmEl.value));
+    if (okvEl) parts.push('okv_date=' + encodeURIComponent(okvEl.value));
+    if (katdEl) parts.push('date=' + encodeURIComponent(katdEl.value));
+    if (lwEl) parts.push('lw_date=' + encodeURIComponent(lwEl.value));
+    return parts.length ? '?' + parts.join('&') : '';
+  }
+
+  function urlWithFilters(url) {
+    var qs = filterQueryString();
+    return qs ? url + qs : url;
+  }
+
   document.addEventListener('click', async (e) => {
     const root = pane();
     if (!root) return;
     const btn = e.target.closest('button[data-panel-action]');
     if (!btn || !root.contains(btn)) return;
-    const panel = btn.closest('#oksm-actions');
+    const panel = btn.closest('#oksm-actions, #okv-actions, #katd-actions, #lw-actions');
     if (!panel) return;
     const action = btn.dataset.panelAction;
     const name = getNameForPanel(panel);
@@ -99,9 +117,9 @@
       for (let i = 0; i < urls.length; i++) {
         const isLast = i === urls.length - 1;
         if (isLast) {
-          await htmx.ajax('POST', urls[i], { target: '#classifiers-pane', swap: 'outerHTML' });
+          await htmx.ajax('POST', urlWithFilters(urls[i]), { target: '#classifiers-pane', swap: 'outerHTML' });
         } else {
-          await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
+          await fetch(urlWithFilters(urls[i]), { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
         }
       }
       return;
@@ -115,14 +133,27 @@
       for (let i = 0; i < urls.length; i++) {
         const isLast = i === urls.length - 1;
         if (isLast) {
-          await htmx.ajax('POST', urls[i], { target: '#classifiers-pane', swap: 'outerHTML' });
+          await htmx.ajax('POST', urlWithFilters(urls[i]), { target: '#classifiers-pane', swap: 'outerHTML' });
         } else {
-          await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
+          await fetch(urlWithFilters(urls[i]), { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
         }
       }
       ensureActionsVisibility(name);
       return;
     }
+  });
+
+  document.addEventListener('htmx:configRequest', function(e) {
+    var modal = document.getElementById('classifiers-modal');
+    if (!modal || !modal.contains(e.target)) return;
+    var oksmEl = document.getElementById('oksm-date-filter');
+    var okvEl = document.getElementById('okv-date-filter');
+    var katdEl = document.getElementById('katd-date-filter');
+    var lwEl = document.getElementById('lw-date-filter');
+    if (oksmEl) e.detail.parameters['oksm_date'] = oksmEl.value;
+    if (okvEl) e.detail.parameters['okv_date'] = okvEl.value;
+    if (katdEl) e.detail.parameters['date'] = katdEl.value;
+    if (lwEl) e.detail.parameters['lw_date'] = lwEl.value;
   });
 
   document.addEventListener('change', (e) => {

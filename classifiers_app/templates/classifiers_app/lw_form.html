@@ -1,0 +1,124 @@
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    {% if action == "create" %}
+      hx-post="{% url 'lw_form_create' %}"
+    {% else %}
+      hx-post="{% url 'lw_form_edit' lw_item.pk %}"
+    {% endif %}
+    hx-target="#classifiers-pane"
+    hx-swap="outerHTML">
+  <div class="modal-body">
+    {% csrf_token %}
+    <div class="mb-3">
+      <label class="form-label">Наименование страны (краткое)</label>
+      {{ form.country }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Код</label>
+      <input type="text" class="form-control" id="lw-country-code" readonly tabindex="-1"
+             style="background-color:#f8f9fa; color:#6c757d;"
+             value="{% if lw_item %}{{ lw_item.country.code }}{% endif %}">
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Регион</label>
+      {{ form.region }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Величина прожиточного минимума</label>
+      {{ form.amount }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Валюта</label>
+      {{ form.currency }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Дата введения в действие</label>
+      {{ form.approval_date }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Дата прекращения действия</label>
+      {{ form.expiry_date }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Источник</label>
+      {{ form.source }}
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mb-0">
+        Проверьте введённые данные.
+      </div>
+    {% endif %}
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>
+
+<script>
+(function() {
+  var countryEl = document.getElementById('lw-country-select');
+  var regionEl = document.getElementById('lw-region-select');
+  var currencyEl = document.getElementById('id_currency');
+  var codeEl = document.getElementById('lw-country-code');
+  if (!countryEl || !regionEl) return;
+
+  var currentRegionId = regionEl.value;
+
+  function loadRegionsByCode(code, preselectId) {
+    if (!code) {
+      regionEl.innerHTML = '<option value="">---------</option>';
+      return;
+    }
+    fetch('{% url "lw_regions_for_country" %}?country_code=' + encodeURIComponent(code))
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var html = '<option value="">---------</option>';
+        data.forEach(function(item) {
+          var sel = (preselectId && String(item.id) === String(preselectId)) ? ' selected' : '';
+          html += '<option value="' + item.id + '"' + sel + '>' + item.name + '</option>';
+        });
+        regionEl.innerHTML = html;
+      });
+  }
+
+  function loadDependentFields(countryId, preselectRegionId) {
+    if (!countryId) {
+      if (codeEl) codeEl.value = '';
+      regionEl.innerHTML = '<option value="">---------</option>';
+      if (currencyEl) currencyEl.value = '';
+      return;
+    }
+    fetch('{% url "country_code_lookup" %}?country_id=' + encodeURIComponent(countryId))
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var code = data.code || '';
+        if (codeEl) codeEl.value = code;
+        if (code) {
+          loadRegionsByCode(code, preselectRegionId);
+          if (currencyEl) {
+            fetch('{% url "lw_currency_for_country" %}?country_code=' + encodeURIComponent(code))
+              .then(function(r) { return r.json(); })
+              .then(function(d) { currencyEl.value = d.code || ''; });
+          }
+        }
+      });
+  }
+
+  countryEl.addEventListener('change', function() {
+    loadDependentFields(this.value, null);
+  });
+
+  if (currentRegionId && countryEl.value) {
+    loadDependentFields(countryEl.value, currentRegionId);
+  }
+})();
+</script>
