@@ -43,3 +43,25 @@ class TypicalSection(models.Model):
 
     def __str__(self):
         return f"{self.product.short_name}:{self.code}"
+
+
+class SectionStructure(models.Model):
+    product = models.ForeignKey(
+        Product, verbose_name="Продукт", on_delete=models.CASCADE, related_name="structures"
+    )
+    section = models.ForeignKey(
+        TypicalSection, verbose_name="Раздел", on_delete=models.CASCADE, related_name="structures"
+    )
+    subsections = models.TextField("Подразделы", blank=True, default="")
+    position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Типовая структура раздела"
+        verbose_name_plural = "Типовая структура раздела"
+        ordering = ["position", "id"]
+
+    def __str__(self):
+        return f"{self.product.short_name} / {self.section.short_name}"

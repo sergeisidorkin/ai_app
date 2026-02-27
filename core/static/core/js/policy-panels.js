@@ -69,7 +69,7 @@
     if (!root) return;
     const btn = e.target.closest('button[data-panel-action]');
     if (!btn || !root.contains(btn)) return;
-    const panel = btn.closest('#products-actions, #sections-actions');
+    const panel = btn.closest('#products-actions, #sections-actions, #structures-actions');
     if (!panel) return;
     const action = btn.dataset.panelAction; // "up" | "down" | "edit" | "delete"
     const name = getNameForPanel(panel);

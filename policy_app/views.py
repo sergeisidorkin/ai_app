@@ -2,13 +2,14 @@ from django.contrib.auth.decorators import login_required, user_passes_test
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST
 from django.db.models import Max
-from .models import Product, TypicalSection
-from .forms import ProductForm, TypicalSectionForm
+from .models import Product, TypicalSection, SectionStructure
+from .forms import ProductForm, TypicalSectionForm, SectionStructureForm
 
 # Вынесенные константы для единообразия шаблонов/заголовков
 POLICY_PARTIAL_TEMPLATE = "policy_app/policy_partial.html"
 PRODUCT_FORM_TEMPLATE = "policy_app/product_form.html"
 SECTION_FORM_TEMPLATE = "policy_app/section_form.html"
+STRUCTURE_FORM_TEMPLATE = "policy_app/structure_form.html"
 HX_TRIGGER_HEADER = "HX-Trigger"
 HX_POLICY_UPDATED_EVENT = "policy-updated"
 
@@ -19,7 +20,8 @@ def staff_required(user):
 def _policy_context():
     products = Product.objects.all()
     sections = TypicalSection.objects.select_related("product").all()
-    return {"products": products, "sections": sections}
+    structures = SectionStructure.objects.select_related("product", "section").all()
+    return {"products": products, "sections": sections, "structures": structures}
 
 def _render_policy_updated(request):
     """
@@ -220,6 +222,88 @@ def section_move_down(request, pk: int):
         _normalize_section_positions(product_id=pid)
     return _render_policy_updated(request)
 
+# --- Типовая структура раздела ---
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def structure_form_create(request):
+    if request.method == "GET":
+        form = SectionStructureForm()
+        return render(request, STRUCTURE_FORM_TEMPLATE, {"form": form, "action": "create"})
+    form = SectionStructureForm(request.POST)
+    if not form.is_valid():
+        return render(request, STRUCTURE_FORM_TEMPLATE, {"form": form, "action": "create"})
+    obj = form.save(commit=False)
+    if not getattr(obj, "position", 0):
+        obj.position = _next_position(SectionStructure)
+    obj.save()
+    return _render_policy_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def structure_form_edit(request, pk: int):
+    structure = get_object_or_404(SectionStructure, pk=pk)
+    if request.method == "GET":
+        form = SectionStructureForm(instance=structure)
+        return render(request, STRUCTURE_FORM_TEMPLATE, {"form": form, "action": "edit", "structure": structure})
+    form = SectionStructureForm(request.POST, instance=structure)
+    if not form.is_valid():
+        return render(request, STRUCTURE_FORM_TEMPLATE, {"form": form, "action": "edit", "structure": structure})
+    form.save()
+    return _render_policy_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def structure_delete(request, pk: int):
+    structure = get_object_or_404(SectionStructure, pk=pk)
+    structure.delete()
+    return _render_policy_updated(request)
+
+
+def _normalize_structure_positions():
+    items = SectionStructure.objects.order_by("position", "id").only("id", "position")
+    for idx, it in enumerate(items, start=1):
+        if it.position != idx:
+            SectionStructure.objects.filter(pk=it.pk).update(position=idx)
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+def structure_move_up(request, pk: int):
+    _normalize_structure_positions()
+    items = list(SectionStructure.objects.order_by("position", "id").only("id", "position"))
+    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+    if idx is not None and idx > 0:
+        cur = items[idx]
+        prev = items[idx - 1]
+        cur_pos, prev_pos = cur.position, prev.position
+        SectionStructure.objects.filter(pk=cur.id).update(position=prev_pos)
+        SectionStructure.objects.filter(pk=prev.id).update(position=cur_pos)
+        _normalize_structure_positions()
+    return _render_policy_updated(request)
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+def structure_move_down(request, pk: int):
+    _normalize_structure_positions()
+    items = list(SectionStructure.objects.order_by("position", "id").only("id", "position"))
+    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+    if idx is not None and idx < len(items) - 1:
+        cur = items[idx]
+        nxt = items[idx + 1]
+        cur_pos, next_pos = cur.position, nxt.position
+        SectionStructure.objects.filter(pk=cur.id).update(position=next_pos)
+        SectionStructure.objects.filter(pk=nxt.id).update(position=cur_pos)
+        _normalize_structure_positions()
+    return _render_policy_updated(request)
+
+
 @login_required
 @user_passes_test(staff_required)
 @require_POST
@@ -236,6 +320,4 @@ def products_apply_defaults(request):
     if ids_checked:
         Product.objects.filter(id__in=ids_checked).update(is_default=True)
 
-    products = Product.objects.all()
-    sections = TypicalSection.objects.select_related("product").all()
-    return render(request, "policy_app/policy_partial.html", {"products": products, "sections": sections})
+    return _render_policy_updated(request)
