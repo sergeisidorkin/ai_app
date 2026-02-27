@@ -1,4 +1,6 @@
+import logging
 import os
+import secrets
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 
@@ -10,6 +12,8 @@ from django.http import HttpResponseBadRequest
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
+
+logger = logging.getLogger(__name__)
 
 from .models import YandexDiskAccount, YandexDiskSelection
 
@@ -99,6 +103,9 @@ def connections_partial(request):
     )
 
 
+OAUTH_STATE_SESSION_KEY = "yadisk_oauth_state"
+
+
 @login_required
 def connect(request):
     """Инициация OAuth2 авторизации с Яндекс.Диском."""
@@ -107,11 +114,15 @@ def connect(request):
         messages.error(request, "YANDEX_DISK_CLIENT_ID / YANDEX_DISK_CLIENT_SECRET не заданы.")
         return redirect(_home_tab("connections"))
 
+    state = secrets.token_urlsafe(32)
+    request.session[OAUTH_STATE_SESSION_KEY] = state
+
     params = {
         "response_type": "code",
         "client_id": cid,
         "redirect_uri": _callback_url(request),
-        "force_confirm": "yes",  # Форсируем подтверждение, чтобы получить refresh_token
+        "force_confirm": "yes",
+        "state": state,
     }
     url = f"{YANDEX_AUTH_URL}?{urllib.parse.urlencode(params)}"
     return redirect(url)
@@ -123,6 +134,16 @@ def callback(request):
     error = request.GET.get("error")
     if error:
         messages.error(request, f"Яндекс OAuth вернул ошибку: {error}")
+        return redirect(_home_tab("connections"))
+
+    expected_state = request.session.pop(OAUTH_STATE_SESSION_KEY, None)
+    received_state = request.GET.get("state")
+    if not expected_state or expected_state != received_state:
+        logger.warning(
+            "Yandex OAuth state mismatch: expected=%s, received=%s, session_key_present=%s",
+            bool(expected_state), bool(received_state), OAUTH_STATE_SESSION_KEY in request.session,
+        )
+        messages.error(request, "Ошибка безопасности OAuth (state mismatch). Попробуйте подключиться ещё раз.")
         return redirect(_home_tab("connections"))
 
     code = request.GET.get("code")
@@ -264,5 +285,6 @@ def disconnect(request):
     messages.success(request, "Подключение Яндекс.Диска удалено.")
 
     if request.headers.get("HX-Request") == "true":
-        return connections_partial(request)
+        from onedrive_app.views import connections_partial as full_connections_partial
+        return full_connections_partial(request)
     return redirect(_home_tab("connections"))
