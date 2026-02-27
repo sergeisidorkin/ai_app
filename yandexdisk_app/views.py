@@ -1,4 +1,5 @@
 import os
+import secrets
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 
@@ -99,6 +100,9 @@ def connections_partial(request):
     )
 
 
+OAUTH_STATE_SESSION_KEY = "yadisk_oauth_state"
+
+
 @login_required
 def connect(request):
     """Инициация OAuth2 авторизации с Яндекс.Диском."""
@@ -107,11 +111,15 @@ def connect(request):
         messages.error(request, "YANDEX_DISK_CLIENT_ID / YANDEX_DISK_CLIENT_SECRET не заданы.")
         return redirect(_home_tab("connections"))
 
+    state = secrets.token_urlsafe(32)
+    request.session[OAUTH_STATE_SESSION_KEY] = state
+
     params = {
         "response_type": "code",
         "client_id": cid,
         "redirect_uri": _callback_url(request),
-        "force_confirm": "yes",  # Форсируем подтверждение, чтобы получить refresh_token
+        "force_confirm": "yes",
+        "state": state,
     }
     url = f"{YANDEX_AUTH_URL}?{urllib.parse.urlencode(params)}"
     return redirect(url)
@@ -124,6 +132,11 @@ def callback(request):
     if error:
         messages.error(request, f"Яндекс OAuth вернул ошибку: {error}")
         return redirect(_home_tab("connections"))
+
+    expected_state = request.session.pop(OAUTH_STATE_SESSION_KEY, None)
+    received_state = request.GET.get("state")
+    if not expected_state or expected_state != received_state:
+        return HttpResponseBadRequest("invalid or missing OAuth state")
 
     code = request.GET.get("code")
     if not code:
@@ -264,5 +277,6 @@ def disconnect(request):
     messages.success(request, "Подключение Яндекс.Диска удалено.")
 
     if request.headers.get("HX-Request") == "true":
-        return connections_partial(request)
+        from onedrive_app.views import connections_partial as full_connections_partial
+        return full_connections_partial(request)
     return redirect(_home_tab("connections"))
