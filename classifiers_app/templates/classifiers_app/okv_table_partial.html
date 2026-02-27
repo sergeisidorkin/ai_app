@@ -1,0 +1,90 @@
+<table class="table table-sm align-middle">
+    <thead>
+    <tr>
+        <th style="width:1%">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+                <div class="form-check m-0">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           id="okv-master"
+                           data-target-name="okv-select"
+                           data-actions-id="okv-actions"
+                           aria-label="Выделить все строки">
+                </div>
+            {% endif %}
+        </th>
+        <th>Код 000</th>
+        <th>Код AAA</th>
+        <th>Наименование валюты</th>
+        <th>Сокращенное обозначение</th>
+        <th>Символ</th>
+        <th>Страны использования</th>
+        <th>Дата введения в действие</th>
+        <th>Дата прекращения действия</th>
+        <th>Источник</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for v in okv_currencies %}
+        <tr data-edit-url="{% url 'okv_form_edit' v.pk %}"
+            data-delete-url="{% url 'okv_delete' v.pk %}"
+            data-move-up-url="{% url 'okv_move_up' v.pk %}"
+            data-move-down-url="{% url 'okv_move_down' v.pk %}">
+
+            <td class="text-nowrap">
+                {% if request.user.is_authenticated and request.user.is_staff %}
+                    <div class="form-check">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="okv-sel-{{ v.id }}"
+                               name="okv-select"
+                               value="{{ v.id }}"
+                               aria-label="Выделить строку">
+                    </div>
+                {% endif %}
+            </td>
+            <td class="text-nowrap">{{ v.code_numeric }}</td>
+            <td class="text-nowrap">{{ v.code_alpha }}</td>
+            <td>{{ v.name }}</td>
+            <td class="text-nowrap">{{ v.abbreviation }}</td>
+            <td class="text-nowrap">{{ v.symbol }}</td>
+            <td>{{ v.countries_display }}</td>
+            <td class="text-nowrap">{% if v.approval_date %}{{ v.approval_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>
+            <td class="text-nowrap">{% if v.expiry_date %}{{ v.expiry_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>
+            <td>{{ v.source }}</td>
+        </tr>
+    {% empty %}
+        <tr><td colspan="10" class="text-muted">Пока нет данных.</td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+
+{% if request.user.is_authenticated and request.user.is_staff %}
+<div class="d-flex align-items-stretch gap-2 products-actions-row">
+  <button
+          class="btn btn-primary btn-sm d-flex align-items-center"
+          hx-get="{% url 'okv_form_create' %}"
+          hx-target="#classifiers-modal .modal-content"
+          hx-swap="innerHTML"
+          data-bs-toggle="modal"
+          data-bs-target="#classifiers-modal">
+    <i class="bi bi-plus-circle me-2"></i>Добавить строку
+  </button>
+  <div id="okv-actions" class="d-none d-flex">
+    <div class="btn-group">
+      <button type="button" id="okv-actions-up" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+        <i class="bi bi-arrow-up-square"></i>
+      </button>
+      <button type="button" id="okv-actions-down" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+        <i class="bi bi-arrow-down-square"></i>
+      </button>
+      <button type="button" id="okv-actions-edit" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+        <i class="bi bi-pencil-square"></i>
+      </button>
+      <button type="button" id="okv-actions-delete" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+        <i class="bi bi-x-square"></i>
+      </button>
+    </div>
+  </div>
+</div>
+{% endif %}
