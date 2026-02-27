@@ -1,0 +1,54 @@
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    {% if action == "create" %}
+      hx-post="{% url 'oksm_form_create' %}"
+    {% else %}
+      hx-post="{% url 'oksm_form_edit' country.pk %}"
+    {% endif %}
+    hx-target="#classifiers-pane"
+    hx-swap="outerHTML">
+  <div class="modal-body">
+    {% csrf_token %}
+    <div class="mb-3">
+      <label class="form-label">№</label>
+      {{ form.number }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Код</label>
+      {{ form.code }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Наименование страны (краткое)</label>
+      {{ form.short_name }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Наименование страны (полное)</label>
+      {{ form.full_name }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Буквенный код (Альфа-2)</label>
+      {{ form.alpha2 }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Буквенный код (Альфа-3)</label>
+      {{ form.alpha3 }}
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mb-0">
+        Проверьте введённые данные.
+      </div>
+    {% endif %}
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>

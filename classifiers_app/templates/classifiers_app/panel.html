@@ -1,0 +1,29 @@
+{% load static %}
+<div class="card shadow-sm">
+  <div class="card-body">
+
+    <div id="classifiers-pane"
+         hx-get="{% url 'classifiers_partial' %}"
+         hx-trigger="load"
+         hx-target="#classifiers-pane"
+         hx-swap="innerHTML">
+      <div class="text-muted htmx-indicator">Загрузка справочников…</div>
+    </div>
+
+    <div class="modal fade" id="classifiers-modal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-scrollable">
+        <div class="modal-content">
+        </div>
+      </div>
+    </div>
+
+    <script>
+      document.body.addEventListener('classifiers-updated', function () {
+        const el = document.getElementById('classifiers-modal');
+        if (!el) return;
+        const modal = bootstrap.Modal.getInstance(el) || bootstrap.Modal.getOrCreateInstance(el);
+        modal.hide();
+      });
+    </script>
+  </div>
+</div>
