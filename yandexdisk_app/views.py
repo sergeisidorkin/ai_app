@@ -1,3 +1,4 @@
+import logging
 import os
 import secrets
 import urllib.parse
@@ -11,6 +12,8 @@ from django.http import HttpResponseBadRequest
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
+
+logger = logging.getLogger(__name__)
 
 from .models import YandexDiskAccount, YandexDiskSelection
 
@@ -136,7 +139,12 @@ def callback(request):
     expected_state = request.session.pop(OAUTH_STATE_SESSION_KEY, None)
     received_state = request.GET.get("state")
     if not expected_state or expected_state != received_state:
-        return HttpResponseBadRequest("invalid or missing OAuth state")
+        logger.warning(
+            "Yandex OAuth state mismatch: expected=%s, received=%s, session_key_present=%s",
+            bool(expected_state), bool(received_state), OAUTH_STATE_SESSION_KEY in request.session,
+        )
+        messages.error(request, "Ошибка безопасности OAuth (state mismatch). Попробуйте подключиться ещё раз.")
+        return redirect(_home_tab("connections"))
 
     code = request.GET.get("code")
     if not code:
