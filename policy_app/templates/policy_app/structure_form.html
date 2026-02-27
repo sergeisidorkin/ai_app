@@ -1,0 +1,42 @@
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    {% if action == "create" %}
+      hx-post="{% url 'structure_form_create' %}"
+    {% else %}
+      hx-post="{% url 'structure_form_edit' structure.pk %}"
+    {% endif %}
+    hx-target="#policy-pane"
+    hx-swap="outerHTML">
+  <div class="modal-body">
+    {% csrf_token %}
+    <div class="mb-3">
+      <label class="form-label">Продукт</label>
+      {{ form.product }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Раздел</label>
+      {{ form.section }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Подраздел</label>
+      {{ form.subsections }}
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mb-0">
+        Проверьте введённые данные.
+      </div>
+    {% endif %}
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>

@@ -1,5 +1,5 @@
 from django import forms
-from .models import Product, TypicalSection
+from .models import Product, TypicalSection, SectionStructure
 
 class ProductForm(forms.ModelForm):
     class Meta:
@@ -29,4 +29,34 @@ class TypicalSectionForm(forms.ModelForm):
             "name_ru": forms.TextInput(attrs={"class": "form-control", "placeholder": "Русское наименование раздела"}),
             "accounting_type": forms.TextInput(attrs={"class": "form-control", "placeholder": "Тип учета"}),
             "executor": forms.TextInput(attrs={"class": "form-control", "placeholder": "Исполнитель"}),
+        }
+
+
+class SectionStructureForm(forms.ModelForm):
+    product = forms.ModelChoiceField(
+        label="Продукт",
+        queryset=Product.objects.all(),
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+    section = forms.ModelChoiceField(
+        label="Раздел",
+        queryset=TypicalSection.objects.select_related("product").all(),
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["section"].label_from_instance = (
+            lambda obj: f"{obj.product.short_name}: {obj.short_name}"
+        )
+
+    class Meta:
+        model = SectionStructure
+        fields = ["product", "section", "subsections"]
+        widgets = {
+            "subsections": forms.Textarea(attrs={
+                "class": "form-control",
+                "placeholder": "Наименование подраздела",
+                "rows": 4,
+            }),
         }

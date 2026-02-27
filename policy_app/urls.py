@@ -13,4 +13,9 @@ urlpatterns = [
     path("policy/section/<int:pk>/delete/", views.section_delete, name="section_delete"),
     path("sections/<int:pk>/move-up/", views.section_move_up, name="section_move_up"),
     path("sections/<int:pk>/move-down/", views.section_move_down, name="section_move_down"),
+    path("policy/structure/create/", views.structure_form_create, name="structure_form_create"),
+    path("policy/structure/<int:pk>/edit/", views.structure_form_edit, name="structure_form_edit"),
+    path("policy/structure/<int:pk>/delete/", views.structure_delete, name="structure_delete"),
+    path("structures/<int:pk>/move-up/", views.structure_move_up, name="structure_move_up"),
+    path("structures/<int:pk>/move-down/", views.structure_move_down, name="structure_move_down"),
 ]
