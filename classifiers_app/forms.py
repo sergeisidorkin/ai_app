@@ -55,7 +55,10 @@ class OKVCurrencyForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["countries"].queryset = _active_countries_qs()
+        qs = _active_countries_qs()
+        if self.instance and self.instance.pk:
+            qs = (qs | self.instance.countries.all()).distinct()
+        self.fields["countries"].queryset = qs
         self.fields["countries"].label_from_instance = lambda obj: f"{obj.code} — {obj.short_name}"
 
     class Meta:
@@ -91,7 +94,10 @@ class TerritorialDivisionForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["country"].queryset = _active_countries_qs()
+        qs = _active_countries_qs()
+        if self.instance and self.instance.pk and self.instance.country_id:
+            qs = (qs | OKSMCountry.objects.filter(pk=self.instance.country_id)).distinct()
+        self.fields["country"].queryset = qs
         self.fields["country"].label_from_instance = lambda obj: obj.short_name
 
     class Meta:
@@ -117,12 +123,23 @@ class LivingWageForm(forms.ModelForm):
         queryset=TerritorialDivision.objects.none(),
         widget=forms.Select(attrs={"class": "form-select", "id": "lw-region-select"}),
     )
+    amount = forms.CharField(
+        label="Величина прожиточного минимума",
+        widget=forms.TextInput(attrs={
+            "class": "form-control",
+            "placeholder": "0,00",
+            "inputmode": "decimal",
+        }),
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["country"].queryset = _active_countries_qs().filter(
+        qs = _active_countries_qs().filter(
             pk__in=TerritorialDivision.objects.values_list("country_id", flat=True).distinct()
         )
+        if self.instance and self.instance.pk and self.instance.country_id:
+            qs = (qs | OKSMCountry.objects.filter(pk=self.instance.country_id)).distinct()
+        self.fields["country"].queryset = qs
         self.fields["country"].label_from_instance = lambda obj: obj.short_name
         self.fields["region"].label_from_instance = lambda obj: obj.region_name
         if self.instance and self.instance.pk:
@@ -142,11 +159,6 @@ class LivingWageForm(forms.ModelForm):
         model = LivingWage
         fields = ["country", "region", "amount", "currency", "approval_date", "expiry_date", "source"]
         widgets = {
-            "amount": forms.TextInput(attrs={
-                "class": "form-control",
-                "placeholder": "0,00",
-                "inputmode": "decimal",
-            }),
             "currency": forms.TextInput(attrs={"class": "form-control", "placeholder": "Валюта", "readonly": True, "tabindex": "-1", "style": "background-color:#f8f9fa; color:#6c757d;"}),
             "approval_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
             "expiry_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
