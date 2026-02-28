@@ -430,7 +430,7 @@ def grade_move_up(request, pk: int):
     obj = get_object_or_404(Grade, pk=pk)
     if not request.user.is_superuser and obj.created_by != request.user:
         return _render_policy_updated(request)
-    qs = Grade.objects.filter(created_by=obj.created_by) if not request.user.is_superuser else Grade.objects.all()
+    qs = Grade.objects.filter(created_by=obj.created_by)
     prev = qs.filter(position__lt=obj.position).order_by("-position").first()
     if prev:
         obj.position, prev.position = prev.position, obj.position
@@ -445,7 +445,7 @@ def grade_move_down(request, pk: int):
     obj = get_object_or_404(Grade, pk=pk)
     if not request.user.is_superuser and obj.created_by != request.user:
         return _render_policy_updated(request)
-    qs = Grade.objects.filter(created_by=obj.created_by) if not request.user.is_superuser else Grade.objects.all()
+    qs = Grade.objects.filter(created_by=obj.created_by)
     nxt = qs.filter(position__gt=obj.position).order_by("position").first()
     if nxt:
         obj.position, nxt.position = nxt.position, obj.position
