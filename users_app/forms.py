@@ -1,5 +1,5 @@
 from django import forms
-from django.contrib.auth.models import User
+from django.contrib.auth.models import User, Group
 from django.contrib.auth.password_validation import validate_password
 
 from group_app.models import GroupMember
@@ -59,11 +59,12 @@ class EmployeeForm(forms.Form):
         required=False,
         widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Должность"}),
     )
-    role = forms.CharField(
+    role = forms.ModelChoiceField(
         label="Роль",
-        max_length=255,
+        queryset=Group.objects.all(),
         required=False,
-        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Роль"}),
+        empty_label="---------",
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
 
     def __init__(self, *args, instance=None, **kwargs):
@@ -73,6 +74,7 @@ class EmployeeForm(forms.Form):
         if instance:
             self.fields["password"].help_text = "Оставьте пустым, чтобы не менять"
             user = instance.user
+            current_group = user.groups.first()
             self.initial.update({
                 "last_name": user.last_name,
                 "first_name": user.first_name,
@@ -81,11 +83,13 @@ class EmployeeForm(forms.Form):
                 "phone": instance.phone,
                 "employment": instance.employment,
                 "job_title": instance.job_title,
-                "role": instance.role,
+                "role": current_group.pk if current_group else None,
             })
 
     def clean_email(self):
         email = self.cleaned_data["email"]
+        if len(email) > 150:
+            raise forms.ValidationError("Email не может быть длиннее 150 символов.")
         qs = User.objects.filter(username=email)
         if self.instance:
             qs = qs.exclude(pk=self.instance.user_id)
@@ -123,7 +127,14 @@ class EmployeeForm(forms.Form):
         employee.phone = data.get("phone", "")
         employee.employment = data.get("employment", "")
         employee.job_title = data.get("job_title", "")
-        employee.role = data.get("role", "")
+
+        group = data.get("role")
+        user.groups.clear()
+        if group:
+            user.groups.add(group)
+            employee.role = group.name
+        else:
+            employee.role = ""
         employee.save()
 
         return employee
