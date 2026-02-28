@@ -18,4 +18,9 @@ urlpatterns = [
     path("policy/structure/<int:pk>/delete/", views.structure_delete, name="structure_delete"),
     path("structures/<int:pk>/move-up/", views.structure_move_up, name="structure_move_up"),
     path("structures/<int:pk>/move-down/", views.structure_move_down, name="structure_move_down"),
+    path("policy/grade/create/", views.grade_form_create, name="grade_form_create"),
+    path("policy/grade/<int:pk>/edit/", views.grade_form_edit, name="grade_form_edit"),
+    path("policy/grade/<int:pk>/delete/", views.grade_delete, name="grade_delete"),
+    path("grades/<int:pk>/move-up/", views.grade_move_up, name="grade_move_up"),
+    path("grades/<int:pk>/move-down/", views.grade_move_down, name="grade_move_down"),
 ]

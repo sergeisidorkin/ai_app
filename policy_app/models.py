@@ -1,4 +1,7 @@
+from django.conf import settings
 from django.db import models
+
+DEPARTMENT_HEAD_GROUP = "Руководитель направления"
 
 class Product(models.Model):
     short_name = models.CharField("Краткое имя", max_length=64, unique=True)
@@ -65,3 +68,30 @@ class SectionStructure(models.Model):
 
     def __str__(self):
         return f"{self.product.short_name} / {self.section.short_name}"
+
+
+class Grade(models.Model):
+    grade_en = models.CharField("Грейд на английском языке", max_length=255)
+    grade_ru = models.CharField("Грейд на русском языке", max_length=255)
+    qualification_levels = models.PositiveIntegerField("Число уровней квалификации", default=5)
+    qualification = models.PositiveIntegerField("Квалификация", default=0)
+    is_base_rate = models.BooleanField("Базовая ставка", default=False)
+    base_rate_share = models.IntegerField("Доля базовой ставки, %", default=0)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="grades",
+        verbose_name="Автор",
+    )
+    position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["created_by", "position", "id"]
+        verbose_name = "Грейд"
+        verbose_name_plural = "Грейды"
+
+    def __str__(self):
+        return self.grade_en or self.grade_ru

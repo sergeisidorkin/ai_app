@@ -2,32 +2,52 @@ from django.contrib.auth.decorators import login_required, user_passes_test
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST
 from django.db.models import Max
-from .models import Product, TypicalSection, SectionStructure
-from .forms import ProductForm, TypicalSectionForm, SectionStructureForm
+from .models import Product, TypicalSection, SectionStructure, Grade, DEPARTMENT_HEAD_GROUP
+from .forms import ProductForm, TypicalSectionForm, SectionStructureForm, GradeForm
 
 # Вынесенные константы для единообразия шаблонов/заголовков
 POLICY_PARTIAL_TEMPLATE = "policy_app/policy_partial.html"
 PRODUCT_FORM_TEMPLATE = "policy_app/product_form.html"
 SECTION_FORM_TEMPLATE = "policy_app/section_form.html"
 STRUCTURE_FORM_TEMPLATE = "policy_app/structure_form.html"
+GRADE_FORM_TEMPLATE = "policy_app/grade_form.html"
 HX_TRIGGER_HEADER = "HX-Trigger"
 HX_POLICY_UPDATED_EVENT = "policy-updated"
+
+
+def _is_department_head(user):
+    return user.groups.filter(name=DEPARTMENT_HEAD_GROUP).exists()
+
+
+def _get_grades_for_user(user):
+    qs = Grade.objects.select_related("created_by", "created_by__employee_profile")
+    if user.is_superuser:
+        return qs
+    if _is_department_head(user):
+        return qs.filter(created_by=user)
+    return qs
 
 def staff_required(user):
     return user.is_authenticated and user.is_staff
 
 # Вспомогательные функции для устранения дублирования
-def _policy_context():
+def _policy_context(request):
     products = Product.objects.all()
     sections = TypicalSection.objects.select_related("product").all()
     structures = SectionStructure.objects.select_related("product", "section").all()
-    return {"products": products, "sections": sections, "structures": structures}
+    grades = _get_grades_for_user(request.user)
+    is_dept_head = _is_department_head(request.user)
+    return {
+        "products": products,
+        "sections": sections,
+        "structures": structures,
+        "grades": grades,
+        "is_admin": request.user.is_superuser,
+        "is_dept_head": is_dept_head,
+    }
 
 def _render_policy_updated(request):
-    """
-    Единый рендер policy_partial с установкой HX-триггера для закрытия модалки и обновления панели.
-    """
-    response = render(request, POLICY_PARTIAL_TEMPLATE, _policy_context())
+    response = render(request, POLICY_PARTIAL_TEMPLATE, _policy_context(request))
     response[HX_TRIGGER_HEADER] = HX_POLICY_UPDATED_EVENT
     return response
 
@@ -45,7 +65,7 @@ def _next_position(model, filters: dict | None = None) -> int:
 @login_required
 @require_http_methods(["GET"])
 def policy_partial(request):
-    return render(request, POLICY_PARTIAL_TEMPLATE, _policy_context())
+    return render(request, POLICY_PARTIAL_TEMPLATE, _policy_context(request))
 
 @login_required
 @user_passes_test(staff_required)
@@ -320,4 +340,115 @@ def products_apply_defaults(request):
     if ids_checked:
         Product.objects.filter(id__in=ids_checked).update(is_default=True)
 
+    return _render_policy_updated(request)
+
+
+# --- Грейды ---
+
+def _grade_owner(request, form):
+    if request.user.is_superuser:
+        owner = form.cleaned_data.get("owner")
+        if owner:
+            return owner
+    return request.user
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def grade_form_create(request):
+    if request.method == "GET":
+        form = GradeForm(request_user=request.user)
+        return render(request, GRADE_FORM_TEMPLATE, {
+            "form": form, "action": "create",
+            "is_admin": request.user.is_superuser,
+        })
+    form = GradeForm(request.POST, request_user=request.user)
+    if not form.is_valid():
+        return render(request, GRADE_FORM_TEMPLATE, {
+            "form": form, "action": "create",
+            "is_admin": request.user.is_superuser,
+        })
+    obj = form.save(commit=False)
+    obj.created_by = _grade_owner(request, form)
+    obj.position = _next_position(Grade, {"created_by": obj.created_by})
+    obj.save()
+    if form.cleaned_data.get("qualification_levels"):
+        Grade.objects.filter(created_by=obj.created_by).exclude(pk=obj.pk).update(
+            qualification_levels=obj.qualification_levels
+        )
+    if obj.is_base_rate:
+        Grade.objects.filter(created_by=obj.created_by).exclude(pk=obj.pk).update(is_base_rate=False)
+    return _render_policy_updated(request)
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def grade_form_edit(request, pk: int):
+    grade = get_object_or_404(Grade, pk=pk)
+    if not request.user.is_superuser and grade.created_by != request.user:
+        return _render_policy_updated(request)
+    if request.method == "GET":
+        form = GradeForm(instance=grade, request_user=request.user)
+        return render(request, GRADE_FORM_TEMPLATE, {
+            "form": form, "action": "edit", "grade": grade,
+            "is_admin": request.user.is_superuser,
+        })
+    form = GradeForm(request.POST, instance=grade, request_user=request.user)
+    if not form.is_valid():
+        return render(request, GRADE_FORM_TEMPLATE, {
+            "form": form, "action": "edit", "grade": grade,
+            "is_admin": request.user.is_superuser,
+        })
+    obj = form.save(commit=False)
+    if request.user.is_superuser:
+        owner = form.cleaned_data.get("owner")
+        if owner:
+            obj.created_by = owner
+    obj.save()
+    if form.cleaned_data.get("qualification_levels"):
+        Grade.objects.filter(created_by=obj.created_by).exclude(pk=obj.pk).update(
+            qualification_levels=obj.qualification_levels
+        )
+    if obj.is_base_rate:
+        Grade.objects.filter(created_by=obj.created_by).exclude(pk=obj.pk).update(is_base_rate=False)
+    return _render_policy_updated(request)
+
+
+@login_required
+@require_POST
+def grade_delete(request, pk: int):
+    grade = get_object_or_404(Grade, pk=pk)
+    if not request.user.is_superuser and grade.created_by != request.user:
+        return _render_policy_updated(request)
+    grade.delete()
+    return _render_policy_updated(request)
+
+
+@login_required
+@require_http_methods(["POST", "GET"])
+def grade_move_up(request, pk: int):
+    obj = get_object_or_404(Grade, pk=pk)
+    if not request.user.is_superuser and obj.created_by != request.user:
+        return _render_policy_updated(request)
+    qs = Grade.objects.filter(created_by=obj.created_by) if not request.user.is_superuser else Grade.objects.all()
+    prev = qs.filter(position__lt=obj.position).order_by("-position").first()
+    if prev:
+        obj.position, prev.position = prev.position, obj.position
+        Grade.objects.filter(pk=obj.pk).update(position=obj.position)
+        Grade.objects.filter(pk=prev.pk).update(position=prev.position)
+    return _render_policy_updated(request)
+
+
+@login_required
+@require_http_methods(["POST", "GET"])
+def grade_move_down(request, pk: int):
+    obj = get_object_or_404(Grade, pk=pk)
+    if not request.user.is_superuser and obj.created_by != request.user:
+        return _render_policy_updated(request)
+    qs = Grade.objects.filter(created_by=obj.created_by) if not request.user.is_superuser else Grade.objects.all()
+    nxt = qs.filter(position__gt=obj.position).order_by("position").first()
+    if nxt:
+        obj.position, nxt.position = nxt.position, obj.position
+        Grade.objects.filter(pk=obj.pk).update(position=obj.position)
+        Grade.objects.filter(pk=nxt.pk).update(position=nxt.position)
     return _render_policy_updated(request)
