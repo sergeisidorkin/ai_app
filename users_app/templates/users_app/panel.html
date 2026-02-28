@@ -1,0 +1,29 @@
+{% load static %}
+<div class="card shadow-sm">
+  <div class="card-body">
+
+    <div id="users-pane"
+         hx-get="{% url 'users_partial' %}"
+         hx-trigger="load"
+         hx-target="#users-pane"
+         hx-swap="innerHTML">
+      <div class="text-muted htmx-indicator">Загрузка сотрудников…</div>
+    </div>
+
+    <div class="modal fade" id="users-modal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-scrollable">
+        <div class="modal-content">
+        </div>
+      </div>
+    </div>
+
+    <script>
+      document.body.addEventListener('users-updated', function () {
+        const el = document.getElementById('users-modal');
+        if (!el) return;
+        const modal = bootstrap.Modal.getInstance(el) || bootstrap.Modal.getOrCreateInstance(el);
+        modal.hide();
+      });
+    </script>
+  </div>
+</div>
