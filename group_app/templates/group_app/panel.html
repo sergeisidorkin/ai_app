@@ -1,0 +1,29 @@
+{% load static %}
+<div class="card shadow-sm">
+  <div class="card-body">
+
+    <div id="group-pane"
+         hx-get="{% url 'group_partial' %}"
+         hx-trigger="load"
+         hx-target="#group-pane"
+         hx-swap="innerHTML">
+      <div class="text-muted htmx-indicator">Загрузка данных группы…</div>
+    </div>
+
+    <div class="modal fade" id="group-modal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-scrollable">
+        <div class="modal-content">
+        </div>
+      </div>
+    </div>
+
+    <script>
+      document.body.addEventListener('group-updated', function () {
+        const el = document.getElementById('group-modal');
+        if (!el) return;
+        const modal = bootstrap.Modal.getInstance(el) || bootstrap.Modal.getOrCreateInstance(el);
+        modal.hide();
+      });
+    </script>
+  </div>
+</div>

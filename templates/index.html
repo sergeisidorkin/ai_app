@@ -20,9 +20,16 @@
 
     <!-- Навигация -->
     <ul class="nav nav-pills flex-column gap-2 px-2 py-3">
+        <!-- Вкладка "Группа" -->
+        <li class="nav-item">
+          <a class="nav-link active d-flex align-items-center" href="#group" data-bs-toggle="tab">
+            <i class="bi bi-globe-europe-africa me-2"></i>
+            <span class="link-text">Группа</span>
+          </a>
+        </li>
         <!-- Вкладка "Продукты" -->
         <li class="nav-item">
-          <a class="nav-link active d-flex align-items-center" href="#policy" data-bs-toggle="tab">
+          <a class="nav-link d-flex align-items-center" href="#policy" data-bs-toggle="tab">
             <i class="bi bi-bag me-2"></i>
             <span class="link-text">Продукты</span>
           </a>
@@ -100,8 +107,21 @@
   <!-- Контент вкладок -->
   <main class="flex-grow-1 py-4 px-3">
     <div class="tab-content">
+      <!-- Группа -->
+      <section id="group" class="tab-pane fade show active">
+        <div class="templates-bleed">
+          <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
+            <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
+              <h5 class="mb-0 ps-3 fs-4 pt-2">Группа</h5>
+            </div>
+          </div>
+          <div class="ps-3">
+            {% include "group_app/panel.html" %}
+          </div>
+        </div>
+      </section>
       <!-- Продукты -->
-      <section id="policy" class="tab-pane fade show active">
+      <section id="policy" class="tab-pane fade">
         <div class="templates-bleed">
           <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
             <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
