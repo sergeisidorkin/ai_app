@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     "requests_app","debugger_app","office_addin","corsheaders","channels","docops_app",
     "docops_queue","macroops_app","checklists_app","logs_app.apps.LogsAppConfig","yandexdisk_app",
     "classifiers_app",
+    "group_app",
 ]
 
 MIDDLEWARE = [

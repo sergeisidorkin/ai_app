@@ -1,0 +1,78 @@
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    {% if action == "create" %}
+      hx-post="{% url 'gm_form_create' %}"
+    {% else %}
+      hx-post="{% url 'gm_form_edit' member.pk %}"
+    {% endif %}
+    hx-target="#group-pane"
+    hx-swap="outerHTML">
+  <div class="modal-body">
+    {% csrf_token %}
+    <div class="mb-3">
+      <label class="form-label">Наименование компании (краткое)</label>
+      {{ form.short_name }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Наименование компании (полное)</label>
+      {{ form.full_name }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Наименование на английском языке</label>
+      {{ form.name_en }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Страна регистрации</label>
+      {{ form.country }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Код ОКСМ</label>
+      <input type="text" class="form-control" id="gm-country-code" readonly tabindex="-1"
+             style="background-color:#f8f9fa; color:#6c757d;"
+             value="{% if member %}{{ member.country_code }}{% endif %}">
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Идентификатор</label>
+      {{ form.identifier }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Регистрационный номер</label>
+      {{ form.registration_number }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Дата регистрации</label>
+      {{ form.registration_date }}
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mb-0">
+        Проверьте введённые данные.
+      </div>
+    {% endif %}
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>
+
+<script>
+(function() {
+  var countryEl = document.getElementById('gm-country-select');
+  var codeEl = document.getElementById('gm-country-code');
+  if (!countryEl || !codeEl) return;
+  countryEl.addEventListener('change', function() {
+    if (!this.value) { codeEl.value = ''; return; }
+    fetch('{% url "country_code_lookup" %}?country_id=' + encodeURIComponent(this.value))
+      .then(function(r) { return r.json(); })
+      .then(function(data) { codeEl.value = data.code || ''; });
+  });
+})();
+</script>

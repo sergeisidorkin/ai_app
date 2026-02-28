@@ -1,0 +1,86 @@
+<table class="table table-sm align-middle">
+    <thead>
+    <tr>
+        <th style="width:1%">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+                <div class="form-check m-0">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           id="gm-master"
+                           data-target-name="gm-select"
+                           data-actions-id="gm-actions"
+                           aria-label="Выделить все строки">
+                </div>
+            {% endif %}
+        </th>
+        <th>Наименование компании (краткое)</th>
+        <th>Наименование компании (полное)</th>
+        <th>Наименование на английском языке</th>
+        <th>Страна регистрации</th>
+        <th>Идентификатор</th>
+        <th>Регистрационный номер</th>
+        <th>Дата регистрации</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for m in members %}
+        <tr data-edit-url="{% url 'gm_form_edit' m.pk %}"
+            data-delete-url="{% url 'gm_delete' m.pk %}"
+            data-move-up-url="{% url 'gm_move_up' m.pk %}"
+            data-move-down-url="{% url 'gm_move_down' m.pk %}">
+
+            <td class="text-nowrap">
+                {% if request.user.is_authenticated and request.user.is_staff %}
+                    <div class="form-check">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="gm-sel-{{ m.id }}"
+                               name="gm-select"
+                               value="{{ m.id }}"
+                               aria-label="Выделить строку">
+                    </div>
+                {% endif %}
+            </td>
+            <td class="text-nowrap">{{ m.short_name }}</td>
+            <td>{{ m.full_name }}</td>
+            <td>{{ m.name_en }}</td>
+            <td class="text-nowrap">{{ m.country_name }}</td>
+            <td class="text-nowrap">{{ m.identifier }}</td>
+            <td class="text-nowrap">{{ m.registration_number }}</td>
+            <td class="text-nowrap">{% if m.registration_date %}{{ m.registration_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>
+        </tr>
+    {% empty %}
+        <tr><td colspan="8" class="text-muted">Пока нет данных.</td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+
+{% if request.user.is_authenticated and request.user.is_staff %}
+<div class="d-flex align-items-stretch gap-2 products-actions-row">
+  <button
+          class="btn btn-primary btn-sm d-flex align-items-center"
+          hx-get="{% url 'gm_form_create' %}"
+          hx-target="#group-modal .modal-content"
+          hx-swap="innerHTML"
+          data-bs-toggle="modal"
+          data-bs-target="#group-modal">
+    <i class="bi bi-plus-circle me-2"></i>Добавить строку
+  </button>
+  <div id="gm-actions" class="d-none d-flex">
+    <div class="btn-group">
+      <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+        <i class="bi bi-arrow-up-square"></i>
+      </button>
+      <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+        <i class="bi bi-arrow-down-square"></i>
+      </button>
+      <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+        <i class="bi bi-pencil-square"></i>
+      </button>
+      <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+        <i class="bi bi-x-square"></i>
+      </button>
+    </div>
+  </div>
+</div>
+{% endif %}
