@@ -1,0 +1,73 @@
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить сотрудника{% else %}Изменить сотрудника{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    {% if action == "create" %}
+      hx-post="{% url 'emp_form_create' %}"
+    {% else %}
+      hx-post="{% url 'emp_form_edit' employee.pk %}"
+    {% endif %}
+    hx-target="#users-pane"
+    hx-swap="outerHTML">
+  <div class="modal-body">
+    {% csrf_token %}
+    <div class="mb-3">
+      <label class="form-label">Фамилия</label>
+      {{ form.last_name }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Имя</label>
+      {{ form.first_name }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Отчество</label>
+      {{ form.patronymic }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Эл. почта (логин)</label>
+      {{ form.email }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Пароль</label>
+      {{ form.password }}
+      {% if form.fields.password.help_text %}
+        <div class="form-text">{{ form.fields.password.help_text }}</div>
+      {% endif %}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Телефон</label>
+      {{ form.phone }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Трудоустройство</label>
+      {{ form.employment }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Должность</label>
+      {{ form.job_title }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Роль</label>
+      {{ form.role }}
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mb-0">
+        {% for field, errors in form.errors.items %}
+          {% for error in errors %}
+            <div>{{ error }}</div>
+          {% endfor %}
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>

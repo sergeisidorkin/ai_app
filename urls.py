@@ -36,6 +36,7 @@ path("", home_entry, name="home"),
     path("yadisk/", include("yandexdisk_app.urls")),
     path("classifiers/", include("classifiers_app.urls")),
     path("group/", include("group_app.urls")),
+    path("users/", include("users_app.urls")),
     path(
         "addin/commands.html",
         TemplateView.as_view(template_name="docops_queue/commands.html"),

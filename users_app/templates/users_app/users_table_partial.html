@@ -1,0 +1,88 @@
+<table class="table table-sm align-middle">
+    <thead>
+    <tr>
+        <th style="width:1%">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+                <div class="form-check m-0">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           id="emp-master"
+                           data-target-name="emp-select"
+                           data-actions-id="emp-actions"
+                           aria-label="Выделить все строки">
+                </div>
+            {% endif %}
+        </th>
+        <th>Фамилия</th>
+        <th>Имя</th>
+        <th>Отчество</th>
+        <th>Эл. почта (логин)</th>
+        <th>Телефон</th>
+        <th>Трудоустройство</th>
+        <th>Должность</th>
+        <th>Роль</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for e in employees %}
+        <tr data-edit-url="{% url 'emp_form_edit' e.pk %}"
+            data-delete-url="{% url 'emp_delete' e.pk %}"
+            data-move-up-url="{% url 'emp_move_up' e.pk %}"
+            data-move-down-url="{% url 'emp_move_down' e.pk %}">
+
+            <td class="text-nowrap">
+                {% if request.user.is_authenticated and request.user.is_staff %}
+                    <div class="form-check">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="emp-sel-{{ e.id }}"
+                               name="emp-select"
+                               value="{{ e.id }}"
+                               aria-label="Выделить строку">
+                    </div>
+                {% endif %}
+            </td>
+            <td class="text-nowrap">{{ e.user.last_name }}</td>
+            <td class="text-nowrap">{{ e.user.first_name }}</td>
+            <td class="text-nowrap">{{ e.patronymic }}</td>
+            <td class="text-nowrap">{{ e.user.email }}</td>
+            <td class="text-nowrap">{{ e.phone }}</td>
+            <td class="text-nowrap">{{ e.employment }}</td>
+            <td class="text-nowrap">{{ e.job_title }}</td>
+            <td class="text-nowrap">{{ e.role }}</td>
+        </tr>
+    {% empty %}
+        <tr><td colspan="9" class="text-muted">Пока нет данных.</td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+
+{% if request.user.is_authenticated and request.user.is_staff %}
+<div class="d-flex align-items-stretch gap-2 products-actions-row">
+  <button
+          class="btn btn-primary btn-sm d-flex align-items-center"
+          hx-get="{% url 'emp_form_create' %}"
+          hx-target="#users-modal .modal-content"
+          hx-swap="innerHTML"
+          data-bs-toggle="modal"
+          data-bs-target="#users-modal">
+    <i class="bi bi-plus-circle me-2"></i>Добавить строку
+  </button>
+  <div id="emp-actions" class="d-none d-flex">
+    <div class="btn-group">
+      <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+        <i class="bi bi-arrow-up-square"></i>
+      </button>
+      <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+        <i class="bi bi-arrow-down-square"></i>
+      </button>
+      <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+        <i class="bi bi-pencil-square"></i>
+      </button>
+      <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+        <i class="bi bi-x-square"></i>
+      </button>
+    </div>
+  </div>
+</div>
+{% endif %}
