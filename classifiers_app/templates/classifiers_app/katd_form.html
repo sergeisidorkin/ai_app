@@ -7,6 +7,7 @@
 
 <form
     method="post"
+    style="display:flex; flex-direction:column; overflow:hidden; flex:1 1 auto; min-height:0;"
     {% if action == "create" %}
       hx-post="{% url 'katd_form_create' %}"
     {% else %}
@@ -14,8 +15,13 @@
     {% endif %}
     hx-target="#classifiers-pane"
     hx-swap="outerHTML">
-  <div class="modal-body">
+  <div class="modal-body" style="overflow-y:auto; flex:1 1 auto; min-height:0;">
     {% csrf_token %}
+    <div class="mb-3">
+      <label class="form-label">Действителен на дату:</label>
+      <input type="date" class="form-control" id="katd-countries-date-filter"
+             value="{{ today_iso }}">
+    </div>
     <div class="mb-3">
       <label class="form-label">Наименование страны (краткое)</label>
       {{ form.country }}
@@ -53,7 +59,7 @@
       </div>
     {% endif %}
   </div>
-  <div class="modal-footer">
+  <div class="modal-footer" style="flex-shrink:0;">
     <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
     <button type="submit" class="btn btn-primary">Сохранить</button>
   </div>
@@ -61,14 +67,54 @@
 
 <script>
 (function() {
+  var dateInput = document.getElementById('katd-countries-date-filter');
   var countryEl = document.getElementById('id_country');
   var codeEl = document.getElementById('katd-country-code');
-  if (!countryEl || !codeEl) return;
-  countryEl.addEventListener('change', function() {
-    if (!this.value) { codeEl.value = ''; return; }
-    fetch('{% url "country_code_lookup" %}?country_id=' + encodeURIComponent(this.value))
+  if (!dateInput || !countryEl) return;
+
+  function loadCountries(dateVal) {
+    var url = '{% url "katd_countries_for_date" %}?date=' + encodeURIComponent(dateVal || '');
+    var currentVal = countryEl.value;
+    fetch(url)
       .then(function(r) { return r.json(); })
-      .then(function(data) { codeEl.value = data.code || ''; });
+      .then(function(data) {
+        var existingIds = new Set(data.map(function(c) { return String(c.id); }));
+        if (currentVal && !existingIds.has(currentVal)) {
+          for (var i = 0; i < countryEl.options.length; i++) {
+            var o = countryEl.options[i];
+            if (o.value === currentVal) {
+              data.push({ id: parseInt(o.value), label: o.text });
+              break;
+            }
+          }
+        }
+        data.sort(function(a, b) {
+          return a.label.localeCompare(b.label, 'ru');
+        });
+        countryEl.innerHTML = '<option value="">---------</option>';
+        data.forEach(function(c) {
+          var opt = document.createElement('option');
+          opt.value = c.id;
+          opt.textContent = c.label;
+          if (String(c.id) === currentVal) opt.selected = true;
+          countryEl.appendChild(opt);
+        });
+      });
+  }
+
+  dateInput.addEventListener('change', function() {
+    loadCountries(this.value);
   });
+
+  loadCountries(dateInput.value);
+
+  if (codeEl) {
+    countryEl.addEventListener('change', function() {
+      if (!this.value) { codeEl.value = ''; return; }
+      fetch('{% url "country_code_lookup" %}?country_id=' + encodeURIComponent(this.value))
+        .then(function(r) { return r.json(); })
+        .then(function(data) { codeEl.value = data.code || ''; });
+    });
+  }
 })();
 </script>

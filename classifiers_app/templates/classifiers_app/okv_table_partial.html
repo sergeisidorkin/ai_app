@@ -18,10 +18,10 @@
         <th>Наименование валюты</th>
         <th>Сокращенное обозначение</th>
         <th>Символ</th>
-        <th>Страны использования</th>
+        <th style="max-width: 1000px;">Страны использования</th>
         <th>Дата введения в действие</th>
         <th>Дата прекращения действия</th>
-        <th>Источник</th>
+        <th style="min-width: 280px;">Источник</th>
     </tr>
     </thead>
     <tbody>
@@ -48,7 +48,7 @@
             <td>{{ v.name }}</td>
             <td class="text-nowrap">{{ v.abbreviation }}</td>
             <td class="text-nowrap">{{ v.symbol }}</td>
-            <td>{{ v.countries_display }}</td>
+            <td style="max-width: 1000px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{ v.countries_display }}">{{ v.countries_display }}</td>
             <td class="text-nowrap">{% if v.approval_date %}{{ v.approval_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>
             <td class="text-nowrap">{% if v.expiry_date %}{{ v.expiry_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>
             <td>{{ v.source }}</td>
@@ -86,5 +86,12 @@
       </button>
     </div>
   </div>
+  <button type="button"
+          id="okv-csv-upload-btn"
+          class="btn btn-primary btn-sm d-flex align-items-center"
+          title="Загрузить CSV">
+    <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+  </button>
+  <input type="file" id="okv-csv-file-input" accept=".csv" style="display:none;">
 </div>
 {% endif %}

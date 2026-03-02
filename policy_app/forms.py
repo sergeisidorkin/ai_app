@@ -1,7 +1,7 @@
 from django import forms
 from django.contrib.auth.models import User
 
-from .models import Product, TypicalSection, SectionStructure, Grade, DEPARTMENT_HEAD_GROUP
+from .models import Product, TypicalSection, SectionStructure, Grade, Tariff, DEPARTMENT_HEAD_GROUP
 
 class ProductForm(forms.ModelForm):
     class Meta:
@@ -115,3 +115,51 @@ class GradeForm(forms.ModelForm):
         if q < 0 or q > levels:
             raise forms.ValidationError(f"Значение должно быть от 0 до {levels}.")
         return q
+
+
+class TariffForm(forms.ModelForm):
+    owner = forms.ModelChoiceField(
+        label="Руководитель направления",
+        queryset=User.objects.filter(groups__name=DEPARTMENT_HEAD_GROUP),
+        required=False,
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+    product = forms.ModelChoiceField(
+        label="Продукт",
+        queryset=Product.objects.all(),
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+    section = forms.ModelChoiceField(
+        label="Раздел",
+        queryset=TypicalSection.objects.select_related("product").all(),
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+
+    class Meta:
+        model = Tariff
+        fields = ["product", "section", "base_rate_vpm", "recommended_specialist"]
+        widgets = {
+            "base_rate_vpm": forms.NumberInput(attrs={
+                "class": "form-control", "step": "0.01", "min": "0",
+                "placeholder": "1,00",
+            }),
+            "recommended_specialist": forms.TextInput(attrs={
+                "class": "form-control", "placeholder": "Рекомендуемый специалист",
+            }),
+        }
+
+    def __init__(self, *args, request_user=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.request_user = request_user
+        self.fields["product"].label_from_instance = lambda obj: obj.short_name
+        self.fields["section"].label_from_instance = (
+            lambda obj: f"{obj.product.short_name}: {obj.short_name}"
+        )
+        self.fields["owner"].queryset = User.objects.filter(
+            groups__name=DEPARTMENT_HEAD_GROUP
+        ).distinct()
+        self.fields["owner"].label_from_instance = lambda u: (
+            f"{u.last_name} {u.first_name}".strip() or u.username
+        )
+        if self.instance and self.instance.pk:
+            self.initial["owner"] = self.instance.created_by_id

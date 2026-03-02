@@ -49,7 +49,11 @@ class OKVCurrencyForm(forms.ModelForm):
     countries = forms.ModelMultipleChoiceField(
         label="Страны использования",
         queryset=OKSMCountry.objects.none(),
-        widget=forms.SelectMultiple(attrs={"class": "form-select", "size": "8"}),
+        widget=forms.SelectMultiple(attrs={
+            "class": "form-select",
+            "size": "8",
+            "style": "font-family: monospace; font-size: 0.78rem;",
+        }),
         required=False,
     )
 
@@ -58,8 +62,8 @@ class OKVCurrencyForm(forms.ModelForm):
         qs = _active_countries_qs()
         if self.instance and self.instance.pk:
             qs = (qs | self.instance.countries.all()).distinct()
-        self.fields["countries"].queryset = qs
-        self.fields["countries"].label_from_instance = lambda obj: f"{obj.code} — {obj.short_name}"
+        self.fields["countries"].queryset = qs.order_by("short_name")
+        self.fields["countries"].label_from_instance = lambda obj: f"{obj.code}  {obj.short_name}"
 
     class Meta:
         model = OKVCurrency
@@ -97,7 +101,7 @@ class TerritorialDivisionForm(forms.ModelForm):
         qs = _active_countries_qs()
         if self.instance and self.instance.pk and self.instance.country_id:
             qs = (qs | OKSMCountry.objects.filter(pk=self.instance.country_id)).distinct()
-        self.fields["country"].queryset = qs
+        self.fields["country"].queryset = qs.order_by("short_name")
         self.fields["country"].label_from_instance = lambda obj: obj.short_name
 
     class Meta:

@@ -17,6 +17,7 @@
         <th>Код ОКСМ</th>
         <th>Наименование страны (краткое)</th>
         <th>Регион</th>
+        <th>Код</th>
         <th class="text-end">ВПМ</th>
         <th>Валюта</th>
         <th>Дата введения в действие</th>
@@ -46,6 +47,7 @@
             <td class="text-nowrap">{{ w.country.code }}</td>
             <td class="text-nowrap">{{ w.country.short_name }}</td>
             <td>{{ w.region.region_name }}</td>
+            <td class="text-nowrap">{{ w.region.region_code }}</td>
             <td class="text-nowrap text-end">{{ w.amount|format_money }}</td>
             <td class="text-nowrap">{{ w.currency }}</td>
             <td class="text-nowrap">{{ w.approval_date|date:"d.m.Y" }}</td>
@@ -53,7 +55,7 @@
             <td>{{ w.source }}</td>
         </tr>
     {% empty %}
-        <tr><td colspan="9" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="10" class="text-muted">Пока нет данных.</td></tr>
     {% endfor %}
     </tbody>
 </table>
@@ -69,6 +71,11 @@
           data-bs-target="#classifiers-modal">
     <i class="bi bi-plus-circle me-2"></i>Добавить строку
   </button>
+  <button class="btn btn-primary btn-sm d-flex align-items-center"
+          id="lw-csv-upload-btn">
+    <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+  </button>
+  <input type="file" id="lw-csv-file-input" accept=".csv" class="d-none">
   <div id="lw-actions" class="d-none d-flex">
     <div class="btn-group">
       <button type="button" id="lw-actions-up" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
