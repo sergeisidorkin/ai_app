@@ -2,8 +2,8 @@ from django.contrib.auth.decorators import login_required, user_passes_test
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST
 from django.db.models import Max
-from .models import Product, TypicalSection, SectionStructure, Grade, DEPARTMENT_HEAD_GROUP
-from .forms import ProductForm, TypicalSectionForm, SectionStructureForm, GradeForm
+from .models import Product, TypicalSection, SectionStructure, Grade, Tariff, DEPARTMENT_HEAD_GROUP
+from .forms import ProductForm, TypicalSectionForm, SectionStructureForm, GradeForm, TariffForm
 
 # Вынесенные константы для единообразия шаблонов/заголовков
 POLICY_PARTIAL_TEMPLATE = "policy_app/policy_partial.html"
@@ -11,6 +11,7 @@ PRODUCT_FORM_TEMPLATE = "policy_app/product_form.html"
 SECTION_FORM_TEMPLATE = "policy_app/section_form.html"
 STRUCTURE_FORM_TEMPLATE = "policy_app/structure_form.html"
 GRADE_FORM_TEMPLATE = "policy_app/grade_form.html"
+TARIFF_FORM_TEMPLATE = "policy_app/tariff_form.html"
 HX_TRIGGER_HEADER = "HX-Trigger"
 HX_POLICY_UPDATED_EVENT = "policy-updated"
 
@@ -27,6 +28,17 @@ def _get_grades_for_user(user):
         return qs.filter(created_by=user)
     return qs
 
+
+def _get_tariffs_for_user(user):
+    qs = Tariff.objects.select_related(
+        "product", "section", "created_by", "created_by__employee_profile"
+    )
+    if user.is_superuser:
+        return qs
+    if _is_department_head(user):
+        return qs.filter(created_by=user)
+    return qs
+
 def staff_required(user):
     return user.is_authenticated and user.is_staff
 
@@ -36,12 +48,14 @@ def _policy_context(request):
     sections = TypicalSection.objects.select_related("product").all()
     structures = SectionStructure.objects.select_related("product", "section").all()
     grades = _get_grades_for_user(request.user)
+    tariffs = _get_tariffs_for_user(request.user)
     is_dept_head = _is_department_head(request.user)
     return {
         "products": products,
         "sections": sections,
         "structures": structures,
         "grades": grades,
+        "tariffs": tariffs,
         "is_admin": request.user.is_superuser,
         "is_dept_head": is_dept_head,
     }
@@ -451,4 +465,103 @@ def grade_move_down(request, pk: int):
         obj.position, nxt.position = nxt.position, obj.position
         Grade.objects.filter(pk=obj.pk).update(position=obj.position)
         Grade.objects.filter(pk=nxt.pk).update(position=nxt.position)
+    return _render_policy_updated(request)
+
+
+# --- Тарифы ---
+
+def _tariff_owner(request, form):
+    if request.user.is_superuser:
+        owner = form.cleaned_data.get("owner")
+        if owner:
+            return owner
+    return request.user
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def tariff_form_create(request):
+    if request.method == "GET":
+        form = TariffForm(request_user=request.user)
+        return render(request, TARIFF_FORM_TEMPLATE, {
+            "form": form, "action": "create",
+            "is_admin": request.user.is_superuser,
+        })
+    form = TariffForm(request.POST, request_user=request.user)
+    if not form.is_valid():
+        return render(request, TARIFF_FORM_TEMPLATE, {
+            "form": form, "action": "create",
+            "is_admin": request.user.is_superuser,
+        })
+    obj = form.save(commit=False)
+    obj.created_by = _tariff_owner(request, form)
+    obj.position = _next_position(Tariff, {"created_by": obj.created_by})
+    obj.save()
+    return _render_policy_updated(request)
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def tariff_form_edit(request, pk: int):
+    tariff = get_object_or_404(Tariff, pk=pk)
+    if not request.user.is_superuser and tariff.created_by != request.user:
+        return _render_policy_updated(request)
+    if request.method == "GET":
+        form = TariffForm(instance=tariff, request_user=request.user)
+        return render(request, TARIFF_FORM_TEMPLATE, {
+            "form": form, "action": "edit", "tariff": tariff,
+            "is_admin": request.user.is_superuser,
+        })
+    form = TariffForm(request.POST, instance=tariff, request_user=request.user)
+    if not form.is_valid():
+        return render(request, TARIFF_FORM_TEMPLATE, {
+            "form": form, "action": "edit", "tariff": tariff,
+            "is_admin": request.user.is_superuser,
+        })
+    obj = form.save(commit=False)
+    if request.user.is_superuser:
+        owner = form.cleaned_data.get("owner")
+        if owner:
+            obj.created_by = owner
+    obj.save()
+    return _render_policy_updated(request)
+
+
+@login_required
+@require_POST
+def tariff_delete(request, pk: int):
+    tariff = get_object_or_404(Tariff, pk=pk)
+    if not request.user.is_superuser and tariff.created_by != request.user:
+        return _render_policy_updated(request)
+    tariff.delete()
+    return _render_policy_updated(request)
+
+
+@login_required
+@require_http_methods(["POST", "GET"])
+def tariff_move_up(request, pk: int):
+    obj = get_object_or_404(Tariff, pk=pk)
+    if not request.user.is_superuser and obj.created_by != request.user:
+        return _render_policy_updated(request)
+    qs = Tariff.objects.filter(created_by=obj.created_by)
+    prev = qs.filter(position__lt=obj.position).order_by("-position").first()
+    if prev:
+        obj.position, prev.position = prev.position, obj.position
+        Tariff.objects.filter(pk=obj.pk).update(position=obj.position)
+        Tariff.objects.filter(pk=prev.pk).update(position=prev.position)
+    return _render_policy_updated(request)
+
+
+@login_required
+@require_http_methods(["POST", "GET"])
+def tariff_move_down(request, pk: int):
+    obj = get_object_or_404(Tariff, pk=pk)
+    if not request.user.is_superuser and obj.created_by != request.user:
+        return _render_policy_updated(request)
+    qs = Tariff.objects.filter(created_by=obj.created_by)
+    nxt = qs.filter(position__gt=obj.position).order_by("position").first()
+    if nxt:
+        obj.position, nxt.position = nxt.position, obj.position
+        Tariff.objects.filter(pk=obj.pk).update(position=obj.position)
+        Tariff.objects.filter(pk=nxt.pk).update(position=nxt.position)
     return _render_policy_updated(request)

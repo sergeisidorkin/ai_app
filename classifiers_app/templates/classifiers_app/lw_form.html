@@ -7,6 +7,7 @@
 
 <form
     method="post"
+    style="display:flex; flex-direction:column; overflow:hidden; flex:1 1 auto; min-height:0;"
     {% if action == "create" %}
       hx-post="{% url 'lw_form_create' %}"
     {% else %}
@@ -14,7 +15,7 @@
     {% endif %}
     hx-target="#classifiers-pane"
     hx-swap="outerHTML">
-  <div class="modal-body">
+  <div class="modal-body" style="overflow-y:auto; flex:1 1 auto; min-height:0;">
     {% csrf_token %}
     <div class="mb-3">
       <label class="form-label">Наименование страны (краткое)</label>
@@ -27,8 +28,19 @@
              value="{% if lw_item %}{{ lw_item.country.code }}{% endif %}">
     </div>
     <div class="mb-3">
+      <label class="form-label">Действителен на дату:</label>
+      <input type="date" class="form-control" id="lw-regions-date-filter"
+             value="{{ today_iso }}">
+    </div>
+    <div class="mb-3">
       <label class="form-label">Регион</label>
       {{ form.region }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Код</label>
+      <input type="text" class="form-control" id="lw-region-code" readonly tabindex="-1"
+             style="background-color:#f8f9fa; color:#6c757d;"
+             value="{% if lw_item %}{{ lw_item.region.region_code }}{% endif %}">
     </div>
     <div class="mb-3">
       <label class="form-label">Величина прожиточного минимума</label>
@@ -57,7 +69,7 @@
       </div>
     {% endif %}
   </div>
-  <div class="modal-footer">
+  <div class="modal-footer" style="flex-shrink:0;">
     <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
     <button type="submit" class="btn btn-primary">Сохранить</button>
   </div>
@@ -69,24 +81,45 @@
   var regionEl = document.getElementById('lw-region-select');
   var currencyEl = document.getElementById('id_currency');
   var codeEl = document.getElementById('lw-country-code');
+  var regionCodeEl = document.getElementById('lw-region-code');
+  var dateFilterEl = document.getElementById('lw-regions-date-filter');
   if (!countryEl || !regionEl) return;
 
   var currentRegionId = regionEl.value;
+  var lastCode = '';
+  var regionCodeMap = {};
+
+  function getDateParam() {
+    return dateFilterEl ? dateFilterEl.value : '';
+  }
+
+  function updateRegionCode() {
+    if (!regionCodeEl) return;
+    regionCodeEl.value = regionCodeMap[regionEl.value] || '';
+  }
 
   function loadRegionsByCode(code, preselectId) {
+    lastCode = code || '';
     if (!code) {
       regionEl.innerHTML = '<option value="">---------</option>';
+      regionCodeMap = {};
+      updateRegionCode();
       return;
     }
-    fetch('{% url "lw_regions_for_country" %}?country_code=' + encodeURIComponent(code))
+    var url = '{% url "lw_regions_for_country" %}?country_code=' + encodeURIComponent(code)
+            + '&date=' + encodeURIComponent(getDateParam());
+    fetch(url)
       .then(function(r) { return r.json(); })
       .then(function(data) {
+        regionCodeMap = {};
         var html = '<option value="">---------</option>';
         data.forEach(function(item) {
+          regionCodeMap[String(item.id)] = item.code || '';
           var sel = (preselectId && String(item.id) === String(preselectId)) ? ' selected' : '';
           html += '<option value="' + item.id + '"' + sel + '>' + item.name + '</option>';
         });
         regionEl.innerHTML = html;
+        updateRegionCode();
       });
   }
 
@@ -95,6 +128,9 @@
       if (codeEl) codeEl.value = '';
       regionEl.innerHTML = '<option value="">---------</option>';
       if (currencyEl) currencyEl.value = '';
+      regionCodeMap = {};
+      updateRegionCode();
+      lastCode = '';
       return;
     }
     fetch('{% url "country_code_lookup" %}?country_id=' + encodeURIComponent(countryId))
@@ -116,6 +152,19 @@
   countryEl.addEventListener('change', function() {
     loadDependentFields(this.value, null);
   });
+
+  regionEl.addEventListener('change', function() {
+    updateRegionCode();
+  });
+
+  if (dateFilterEl) {
+    dateFilterEl.addEventListener('change', function() {
+      if (lastCode) {
+        var currentRegion = regionEl.value;
+        loadRegionsByCode(lastCode, currentRegion);
+      }
+    });
+  }
 
   if (currentRegionId && countryEl.value) {
     loadDependentFields(countryEl.value, currentRegionId);

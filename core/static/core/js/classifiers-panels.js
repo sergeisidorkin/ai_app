@@ -181,6 +181,82 @@
     ensureActionsVisibility(name);
   });
 
+  // CSV result modal helper
+  function showCsvResult(html) {
+    var body = document.getElementById('csv-result-body');
+    var modalEl = document.getElementById('csv-result-modal');
+    if (!body || !modalEl) { alert(html); return; }
+    body.innerHTML = html;
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+  }
+
+  // CSV upload helper
+  async function handleCsvUpload(uploadUrl, file) {
+    var formData = new FormData();
+    formData.append('csv_file', file);
+    try {
+      var resp = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrftoken },
+        body: formData,
+      });
+      var data = await resp.json();
+      if (data.ok) {
+        var html = '<div class="mb-2"><strong>Загружено строк: ' + data.created + '</strong></div>';
+        if (data.warnings && data.warnings.length) {
+          html += '<div class="text-danger mb-1"><strong>Предупреждения (' + data.warnings.length + '):</strong></div>';
+          html += '<div class="text-danger">';
+          for (var i = 0; i < data.warnings.length; i++) {
+            html += '<div class="mb-1">' + data.warnings[i].replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>';
+          }
+          html += '</div>';
+        }
+        showCsvResult(html);
+        await htmx.ajax('GET', '/classifiers/partial/' + filterQueryString(), {
+          target: '#classifiers-pane', swap: 'outerHTML'
+        });
+      } else {
+        showCsvResult('<div class="text-danger"><strong>Ошибка:</strong> ' +
+          (data.error || 'Неизвестная ошибка').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>');
+      }
+    } catch (err) {
+      showCsvResult('<div class="text-danger"><strong>Ошибка загрузки:</strong> ' +
+        err.message.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>');
+    }
+  }
+
+  // CSV upload buttons (OKSM + OKV)
+  document.addEventListener('click', function (e) {
+    var mapping = {
+      'oksm-csv-upload-btn': 'oksm-csv-file-input',
+      'okv-csv-upload-btn': 'okv-csv-file-input',
+      'katd-csv-upload-btn': 'katd-csv-file-input',
+      'lw-csv-upload-btn': 'lw-csv-file-input',
+    };
+    for (var btnId in mapping) {
+      var btn = e.target.closest('#' + btnId);
+      if (btn) {
+        var fileInput = document.getElementById(mapping[btnId]);
+        if (fileInput) { fileInput.value = ''; fileInput.click(); }
+        return;
+      }
+    }
+  });
+
+  document.addEventListener('change', async function (e) {
+    var mapping = {
+      'oksm-csv-file-input': '/classifiers/oksm/csv-upload/',
+      'okv-csv-file-input': '/classifiers/okv/csv-upload/',
+      'katd-csv-file-input': '/classifiers/katd/csv-upload/',
+      'lw-csv-file-input': '/classifiers/lw/csv-upload/',
+    };
+    var url = mapping[e.target.id];
+    if (!url) return;
+    var file = e.target.files[0];
+    if (!file) return;
+    await handleCsvUpload(url, file);
+  });
+
   document.body.addEventListener('htmx:afterSettle', function (e) {
     if (!(e.target && e.target.id === 'classifiers-pane')) return;
     const last = window.__clTableSelLast;

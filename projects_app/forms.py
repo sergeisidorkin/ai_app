@@ -145,7 +145,19 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
             from .models import ProjectRegistration as PR
             self.fields["group"].initial = PR.Group.RU
         if not self.instance.pk and "year" not in self.data:
-            self.fields["year"].initial = timezone.now().year       
+            self.fields["year"].initial = timezone.now().year
+
+    def clean_input_data(self):
+        return self.cleaned_data.get("input_data") or 0
+
+    def clean_stage1_weeks(self):
+        return self.cleaned_data.get("stage1_weeks") or 0
+
+    def clean_stage2_weeks(self):
+        return self.cleaned_data.get("stage2_weeks") or 0
+
+    def clean_stage3_weeks(self):
+        return self.cleaned_data.get("stage3_weeks") or 0
 
 class ProjectChoiceField(forms.ModelChoiceField):
     def label_from_instance(self, obj):

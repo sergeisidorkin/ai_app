@@ -95,3 +95,36 @@ class Grade(models.Model):
 
     def __str__(self):
         return self.grade_en or self.grade_ru
+
+
+class Tariff(models.Model):
+    product = models.ForeignKey(
+        Product, verbose_name="Продукт", on_delete=models.CASCADE, related_name="tariffs"
+    )
+    section = models.ForeignKey(
+        TypicalSection, verbose_name="Раздел", on_delete=models.CASCADE, related_name="tariffs"
+    )
+    base_rate_vpm = models.DecimalField(
+        "Базовая ставка в ВПМ", max_digits=10, decimal_places=2, default=1
+    )
+    recommended_specialist = models.CharField(
+        "Рекомендуемый специалист", max_length=255, blank=True, default=""
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="tariffs",
+        verbose_name="Автор",
+    )
+    position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["created_by", "position", "id"]
+        verbose_name = "Тариф"
+        verbose_name_plural = "Тарифы"
+
+    def __str__(self):
+        return f"{self.product.short_name} / {self.section.short_name}"

@@ -23,4 +23,9 @@ urlpatterns = [
     path("policy/grade/<int:pk>/delete/", views.grade_delete, name="grade_delete"),
     path("grades/<int:pk>/move-up/", views.grade_move_up, name="grade_move_up"),
     path("grades/<int:pk>/move-down/", views.grade_move_down, name="grade_move_down"),
+    path("policy/tariff/create/", views.tariff_form_create, name="tariff_form_create"),
+    path("policy/tariff/<int:pk>/edit/", views.tariff_form_edit, name="tariff_form_edit"),
+    path("policy/tariff/<int:pk>/delete/", views.tariff_delete, name="tariff_delete"),
+    path("tariffs/<int:pk>/move-up/", views.tariff_move_up, name="tariff_move_up"),
+    path("tariffs/<int:pk>/move-down/", views.tariff_move_down, name="tariff_move_down"),
 ]

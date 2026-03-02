@@ -1,9 +1,15 @@
+import csv
+import io
+import logging
 from datetime import date as date_type
 
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.shortcuts import render, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST
 from django.db.models import Max, Q
+from django.http import JsonResponse
+
+logger = logging.getLogger(__name__)
 
 from .models import OKSMCountry, OKVCurrency, TerritorialDivision, LivingWage
 from .forms import OKSMCountryForm, OKVCurrencyForm, TerritorialDivisionForm, LivingWageForm
@@ -317,6 +323,251 @@ def oksm_move_down(request, pk: int):
 
 
 # ---------------------------------------------------------------------------
+#  ОКСМ CSV upload
+# ---------------------------------------------------------------------------
+
+def _parse_csv_date(raw: str) -> date_type | None:
+    raw = raw.strip()
+    if not raw or raw == "—":
+        return None
+    from datetime import datetime
+    for fmt in ("%d.%m.%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def oksm_csv_upload(request):
+    csv_file = request.FILES.get("csv_file")
+    if not csv_file:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+
+    if not csv_file.name.lower().endswith(".csv"):
+        return JsonResponse({"ok": False, "error": "Допустимы только файлы CSV."}, status=400)
+
+    try:
+        raw = csv_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_file.seek(0)
+            raw = csv_file.read().decode("cp1251")
+        except Exception:
+            return JsonResponse({"ok": False, "error": "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251)."}, status=400)
+
+    reader = csv.reader(io.StringIO(raw), delimiter=";")
+    rows = list(reader)
+
+    if not rows:
+        return JsonResponse({"ok": False, "error": "Файл пуст."}, status=400)
+
+    # Try comma delimiter if only 1 column detected
+    if len(rows[0]) <= 1:
+        reader = csv.reader(io.StringIO(raw), delimiter=",")
+        rows = list(reader)
+
+    if len(rows) < 2:
+        return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
+
+    header = rows[0]
+    data_rows = rows[1:]
+    created_count = 0
+    errors = []
+    position = _next_oksm_position()
+
+    for i, row in enumerate(data_rows, start=2):
+        if not any(cell.strip() for cell in row):
+            continue
+
+        if len(row) < 6:
+            errors.append(f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается минимум 6).")
+            continue
+
+        try:
+            number = int(row[0].strip()) if row[0].strip() else 0
+            code = row[1].strip()[:3]
+            short_name = row[2].strip()
+            full_name = row[3].strip() if len(row) > 3 else ""
+            alpha2 = row[4].strip().upper()[:2] if len(row) > 4 else ""
+            alpha3 = row[5].strip().upper()[:3] if len(row) > 5 else ""
+            approval_date = _parse_csv_date(row[6]) if len(row) > 6 else None
+            expiry_date = _parse_csv_date(row[7]) if len(row) > 7 else None
+            source = row[8].strip() if len(row) > 8 else ""
+
+            if not short_name:
+                errors.append(f"Строка {i}: отсутствует наименование страны (краткое).")
+                continue
+
+            OKSMCountry.objects.create(
+                number=number,
+                code=code,
+                short_name=short_name,
+                full_name=full_name,
+                alpha2=alpha2,
+                alpha3=alpha3,
+                approval_date=approval_date,
+                expiry_date=expiry_date,
+                source=source,
+                position=position,
+            )
+            position += 1
+            created_count += 1
+        except Exception as exc:
+            logger.exception("CSV import row %d failed", i)
+            errors.append(f"Строка {i}: {exc}")
+
+    result = {"ok": True, "created": created_count}
+    if errors:
+        result["warnings"] = errors[:20]
+    return JsonResponse(result)
+
+
+# ---------------------------------------------------------------------------
+#  ОКВ CSV upload
+# ---------------------------------------------------------------------------
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def okv_csv_upload(request):
+    csv_file = request.FILES.get("csv_file")
+    if not csv_file:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+    if not csv_file.name.lower().endswith(".csv"):
+        return JsonResponse({"ok": False, "error": "Допустимы только файлы CSV."}, status=400)
+
+    try:
+        raw = csv_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_file.seek(0)
+            raw = csv_file.read().decode("cp1251")
+        except Exception:
+            return JsonResponse({"ok": False, "error": "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251)."}, status=400)
+
+    reader = csv.reader(io.StringIO(raw), delimiter=";")
+    rows = list(reader)
+
+    if not rows:
+        return JsonResponse({"ok": False, "error": "Файл пуст."}, status=400)
+    if len(rows[0]) <= 1:
+        reader = csv.reader(io.StringIO(raw), delimiter=",")
+        rows = list(reader)
+    if len(rows) < 2:
+        return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
+
+    data_rows = rows[1:]
+    created_count = 0
+    errors = []
+    position = _next_okv_position()
+
+    all_countries = list(OKSMCountry.objects.all().values("id", "short_name", "code", "approval_date", "expiry_date"))
+
+    def find_countries_for_date(country_names_raw, approval_date, row_num):
+        """Parse country names, match against OKSM filtered by date. Returns (found_ids, row_errors)."""
+        found_ids = []
+        row_errors = []
+        if not country_names_raw or not country_names_raw.strip():
+            return found_ids, row_errors
+
+        names = [n.strip() for n in country_names_raw.split(";") if n.strip()]
+
+        active_countries = []
+        for c in all_countries:
+            if approval_date:
+                ad = c["approval_date"]
+                ed = c["expiry_date"]
+                if ad and ad > approval_date:
+                    continue
+                if ed and ed < approval_date:
+                    continue
+            active_countries.append(c)
+
+        name_to_country = {}
+        for c in active_countries:
+            name_to_country[c["short_name"].strip().lower()] = c
+
+        for name in names:
+            key = name.strip().lower()
+            country = name_to_country.get(key)
+            if country:
+                found_ids.append(country["id"])
+            else:
+                similar = []
+                for c in active_countries:
+                    cn = c["short_name"].strip().lower()
+                    if key in cn or cn in key:
+                        similar.append(c["short_name"])
+
+                date_str = approval_date.strftime("%d.%m.%Y") if approval_date else "не указана"
+                err_msg = (
+                    f'Строка {row_num}: страна "{name}" не найдена в ОКСМ '
+                    f'(фильтр по дате: {date_str}).'
+                )
+                if similar:
+                    err_msg += f' Похожие: {"; ".join(similar[:5])}.'
+                row_errors.append(err_msg)
+
+        return found_ids, row_errors
+
+    for i, row in enumerate(data_rows, start=2):
+        if not any(cell.strip() for cell in row):
+            continue
+
+        if len(row) < 3:
+            errors.append(f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается минимум 3).")
+            continue
+
+        try:
+            code_numeric = row[0].strip()[:3]
+            code_alpha = row[1].strip()[:3]
+            name = row[2].strip()
+            abbreviation = row[3].strip() if len(row) > 3 else ""
+            symbol = row[4].strip() if len(row) > 4 else ""
+            countries_raw = row[5].strip() if len(row) > 5 else ""
+            approval_date = _parse_csv_date(row[6]) if len(row) > 6 else None
+            expiry_date = _parse_csv_date(row[7]) if len(row) > 7 else None
+            source = row[8].strip() if len(row) > 8 else ""
+
+            if not name:
+                errors.append(f"Строка {i}: отсутствует наименование валюты.")
+                continue
+
+            country_ids, country_errors = find_countries_for_date(countries_raw, approval_date, i)
+            errors.extend(country_errors)
+
+            obj = OKVCurrency.objects.create(
+                code_numeric=code_numeric,
+                code_alpha=code_alpha,
+                name=name,
+                abbreviation=abbreviation,
+                symbol=symbol,
+                approval_date=approval_date,
+                expiry_date=expiry_date,
+                source=source,
+                position=position,
+            )
+            if country_ids:
+                obj.countries.set(country_ids)
+                obj.update_countries_codes()
+            position += 1
+            created_count += 1
+
+        except Exception as exc:
+            logger.exception("OKV CSV import row %d failed", i)
+            errors.append(f"Строка {i}: {exc}")
+
+    result = {"ok": True, "created": created_count}
+    if errors:
+        result["warnings"] = errors[:50]
+    return JsonResponse(result)
+
+
+# ---------------------------------------------------------------------------
 #  ОКВ CRUD
 # ---------------------------------------------------------------------------
 
@@ -324,12 +575,13 @@ def oksm_move_down(request, pk: int):
 @user_passes_test(staff_required)
 @require_http_methods(["GET", "POST"])
 def okv_form_create(request):
+    today_iso = date_type.today().isoformat()
     if request.method == "GET":
         form = OKVCurrencyForm()
-        return render(request, OKV_FORM_TEMPLATE, {"form": form, "action": "create"})
+        return render(request, OKV_FORM_TEMPLATE, {"form": form, "action": "create", "today_iso": today_iso})
     form = OKVCurrencyForm(request.POST)
     if not form.is_valid():
-        return render(request, OKV_FORM_TEMPLATE, {"form": form, "action": "create"})
+        return render(request, OKV_FORM_TEMPLATE, {"form": form, "action": "create", "today_iso": today_iso})
     obj = form.save(commit=False)
     if not getattr(obj, "position", 0):
         obj.position = _next_okv_position()
@@ -344,12 +596,13 @@ def okv_form_create(request):
 @require_http_methods(["GET", "POST"])
 def okv_form_edit(request, pk: int):
     currency = get_object_or_404(OKVCurrency, pk=pk)
+    today_iso = date_type.today().isoformat()
     if request.method == "GET":
         form = OKVCurrencyForm(instance=currency)
-        return render(request, OKV_FORM_TEMPLATE, {"form": form, "action": "edit", "currency": currency})
+        return render(request, OKV_FORM_TEMPLATE, {"form": form, "action": "edit", "currency": currency, "today_iso": today_iso})
     form = OKVCurrencyForm(request.POST, instance=currency)
     if not form.is_valid():
-        return render(request, OKV_FORM_TEMPLATE, {"form": form, "action": "edit", "currency": currency})
+        return render(request, OKV_FORM_TEMPLATE, {"form": form, "action": "edit", "currency": currency, "today_iso": today_iso})
     form.save()
     currency.update_countries_codes()
     return _render_updated(request)
@@ -416,12 +669,13 @@ def katd_table_partial(request):
 @user_passes_test(staff_required)
 @require_http_methods(["GET", "POST"])
 def katd_form_create(request):
+    today_iso = date_type.today().isoformat()
     if request.method == "GET":
         form = TerritorialDivisionForm()
-        return render(request, KATD_FORM_TEMPLATE, {"form": form, "action": "create"})
+        return render(request, KATD_FORM_TEMPLATE, {"form": form, "action": "create", "today_iso": today_iso})
     form = TerritorialDivisionForm(request.POST)
     if not form.is_valid():
-        return render(request, KATD_FORM_TEMPLATE, {"form": form, "action": "create"})
+        return render(request, KATD_FORM_TEMPLATE, {"form": form, "action": "create", "today_iso": today_iso})
     obj = form.save(commit=False)
     if not getattr(obj, "position", 0):
         obj.position = _next_katd_position()
@@ -434,12 +688,13 @@ def katd_form_create(request):
 @require_http_methods(["GET", "POST"])
 def katd_form_edit(request, pk: int):
     division = get_object_or_404(TerritorialDivision, pk=pk)
+    today_iso = date_type.today().isoformat()
     if request.method == "GET":
         form = TerritorialDivisionForm(instance=division)
-        return render(request, KATD_FORM_TEMPLATE, {"form": form, "action": "edit", "division": division})
+        return render(request, KATD_FORM_TEMPLATE, {"form": form, "action": "edit", "division": division, "today_iso": today_iso})
     form = TerritorialDivisionForm(request.POST, instance=division)
     if not form.is_valid():
-        return render(request, KATD_FORM_TEMPLATE, {"form": form, "action": "edit", "division": division})
+        return render(request, KATD_FORM_TEMPLATE, {"form": form, "action": "edit", "division": division, "today_iso": today_iso})
     form.save()
     return _render_updated(request)
 
@@ -488,10 +743,124 @@ def katd_move_down(request, pk: int):
 
 
 # ---------------------------------------------------------------------------
-#  Величина прожиточного минимума — AJAX endpoint for dependent region dropdown
+#  КАТД CSV upload
 # ---------------------------------------------------------------------------
 
-from django.http import JsonResponse
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def katd_csv_upload(request):
+    csv_file = request.FILES.get("csv_file")
+    if not csv_file:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+    if not csv_file.name.lower().endswith(".csv"):
+        return JsonResponse({"ok": False, "error": "Допустимы только файлы CSV."}, status=400)
+
+    try:
+        raw = csv_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_file.seek(0)
+            raw = csv_file.read().decode("cp1251")
+        except Exception:
+            return JsonResponse({"ok": False, "error": "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251)."}, status=400)
+
+    reader = csv.reader(io.StringIO(raw), delimiter=";")
+    rows = list(reader)
+
+    if not rows:
+        return JsonResponse({"ok": False, "error": "Файл пуст."}, status=400)
+    if len(rows[0]) <= 1:
+        reader = csv.reader(io.StringIO(raw), delimiter=",")
+        rows = list(reader)
+    if len(rows) < 2:
+        return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
+
+    data_rows = rows[1:]
+    created_count = 0
+    errors = []
+    position = _next_katd_position()
+
+    all_countries = {
+        c.short_name.strip().lower(): c
+        for c in OKSMCountry.objects.all()
+    }
+    all_countries_by_code = {
+        c.code.strip(): c
+        for c in OKSMCountry.objects.all()
+    }
+
+    for i, row in enumerate(data_rows, start=2):
+        if not any(cell.strip() for cell in row):
+            continue
+
+        if len(row) < 4:
+            errors.append(f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается минимум 4).")
+            continue
+
+        try:
+            col_idx = 0
+            country_code_raw = row[col_idx].strip() if len(row) > col_idx else ""
+            col_idx = 1
+            country_name_raw = row[col_idx].strip() if len(row) > col_idx else ""
+            col_idx = 2
+            region_name = row[col_idx].strip() if len(row) > col_idx else ""
+            col_idx = 3
+            region_code = row[col_idx].strip() if len(row) > col_idx else ""
+            col_idx = 4
+            effective_date = _parse_csv_date(row[col_idx]) if len(row) > col_idx else None
+            col_idx = 5
+            abolished_date = _parse_csv_date(row[col_idx]) if len(row) > col_idx else None
+            col_idx = 6
+            source = row[col_idx].strip() if len(row) > col_idx else ""
+
+            country = None
+            if country_code_raw:
+                country = all_countries_by_code.get(country_code_raw)
+            if not country and country_name_raw:
+                country = all_countries.get(country_name_raw.lower())
+
+            if not country:
+                similar = [c for cn, c in all_countries.items() if country_name_raw.lower() in cn or cn in country_name_raw.lower()]
+                err = f'Строка {i}: страна "{country_name_raw}" (код "{country_code_raw}") не найдена в ОКСМ.'
+                if similar:
+                    err += f' Похожие: {"; ".join(s.short_name for s in similar[:5])}.'
+                errors.append(err)
+                continue
+
+            if not region_name:
+                errors.append(f"Строка {i}: отсутствует название региона.")
+                continue
+
+            if not effective_date:
+                errors.append(f"Строка {i}: отсутствует или некорректна дата образования.")
+                continue
+
+            TerritorialDivision.objects.create(
+                country=country,
+                region_name=region_name,
+                region_code=region_code,
+                effective_date=effective_date,
+                abolished_date=abolished_date,
+                source=source,
+                position=position,
+            )
+            position += 1
+            created_count += 1
+
+        except Exception as exc:
+            logger.exception("KATD CSV import row %d failed", i)
+            errors.append(f"Строка {i}: {exc}")
+
+    result = {"ok": True, "created": created_count}
+    if errors:
+        result["warnings"] = errors[:50]
+    return JsonResponse(result)
+
+
+# ---------------------------------------------------------------------------
+#  Величина прожиточного минимума — AJAX endpoint for dependent region dropdown
+# ---------------------------------------------------------------------------
 
 
 @login_required
@@ -500,14 +869,14 @@ def lw_regions_for_country(request):
     country_code = request.GET.get("country_code")
     if not country_code:
         return JsonResponse([], safe=False)
-    today = date_type.today()
+    as_of = _parse_date(request.GET.get("date")) or date_type.today()
     divisions = TerritorialDivision.objects.filter(
         country__code=country_code,
-        effective_date__lte=today,
+        effective_date__lte=as_of,
     ).filter(
-        Q(abolished_date__isnull=True) | Q(abolished_date__gte=today),
+        Q(abolished_date__isnull=True) | Q(abolished_date__gte=as_of),
     ).order_by("region_name")
-    data = [{"id": d.pk, "name": d.region_name} for d in divisions]
+    data = [{"id": d.pk, "name": d.region_name, "code": d.region_code} for d in divisions]
     return JsonResponse(data, safe=False)
 
 
@@ -541,6 +910,32 @@ def country_code_lookup(request):
         return JsonResponse({"code": ""})
 
 
+@login_required
+@require_http_methods(["GET"])
+def okv_countries_for_date(request):
+    """Return countries valid on a given date, sorted by short_name, for the OKV form."""
+    raw_date = request.GET.get("date", "")
+    as_of = _parse_date(raw_date)
+    if as_of is None:
+        as_of = date_type.today()
+    qs = _get_oksm_queryset(as_of).order_by("short_name")
+    data = [{"id": c.pk, "label": f"{c.code}  {c.short_name}"} for c in qs]
+    return JsonResponse(data, safe=False)
+
+
+@login_required
+@require_http_methods(["GET"])
+def katd_countries_for_date(request):
+    """Return countries valid on a given date, sorted by short_name, for the KATD form."""
+    raw_date = request.GET.get("date", "")
+    as_of = _parse_date(raw_date)
+    if as_of is None:
+        as_of = date_type.today()
+    qs = _get_oksm_queryset(as_of).order_by("short_name")
+    data = [{"id": c.pk, "label": c.short_name} for c in qs]
+    return JsonResponse(data, safe=False)
+
+
 # ---------------------------------------------------------------------------
 #  Величина прожиточного минимума — partial для HTMX-фильтрации по дате
 # ---------------------------------------------------------------------------
@@ -559,12 +954,13 @@ def lw_table_partial(request):
 @user_passes_test(staff_required)
 @require_http_methods(["GET", "POST"])
 def lw_form_create(request):
+    today_iso = date_type.today().isoformat()
     if request.method == "GET":
         form = LivingWageForm()
-        return render(request, LW_FORM_TEMPLATE, {"form": form, "action": "create"})
+        return render(request, LW_FORM_TEMPLATE, {"form": form, "action": "create", "today_iso": today_iso})
     form = LivingWageForm(request.POST)
     if not form.is_valid():
-        return render(request, LW_FORM_TEMPLATE, {"form": form, "action": "create"})
+        return render(request, LW_FORM_TEMPLATE, {"form": form, "action": "create", "today_iso": today_iso})
     obj = form.save(commit=False)
     if not getattr(obj, "position", 0):
         obj.position = _next_lw_position()
@@ -577,12 +973,13 @@ def lw_form_create(request):
 @require_http_methods(["GET", "POST"])
 def lw_form_edit(request, pk: int):
     item = get_object_or_404(LivingWage, pk=pk)
+    today_iso = date_type.today().isoformat()
     if request.method == "GET":
         form = LivingWageForm(instance=item)
-        return render(request, LW_FORM_TEMPLATE, {"form": form, "action": "edit", "lw_item": item})
+        return render(request, LW_FORM_TEMPLATE, {"form": form, "action": "edit", "lw_item": item, "today_iso": today_iso})
     form = LivingWageForm(request.POST, instance=item)
     if not form.is_valid():
-        return render(request, LW_FORM_TEMPLATE, {"form": form, "action": "edit", "lw_item": item})
+        return render(request, LW_FORM_TEMPLATE, {"form": form, "action": "edit", "lw_item": item, "today_iso": today_iso})
     form.save()
     return _render_updated(request)
 
@@ -628,3 +1025,149 @@ def lw_move_down(request, pk: int):
         LivingWage.objects.filter(pk=nxt.id).update(position=cur.position)
         _normalize_lw_positions()
     return _render_updated(request)
+
+
+# ---------------------------------------------------------------------------
+#  ВПМ CSV upload
+# ---------------------------------------------------------------------------
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def lw_csv_upload(request):
+    csv_file = request.FILES.get("csv_file")
+    if not csv_file:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+    if not csv_file.name.lower().endswith(".csv"):
+        return JsonResponse({"ok": False, "error": "Допустимы только файлы CSV."}, status=400)
+
+    try:
+        raw = csv_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_file.seek(0)
+            raw = csv_file.read().decode("cp1251")
+        except Exception:
+            return JsonResponse({"ok": False, "error": "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251)."}, status=400)
+
+    reader = csv.reader(io.StringIO(raw), delimiter=";")
+    rows = list(reader)
+
+    if not rows:
+        return JsonResponse({"ok": False, "error": "Файл пуст."}, status=400)
+    if len(rows[0]) <= 1:
+        reader = csv.reader(io.StringIO(raw), delimiter=",")
+        rows = list(reader)
+    if len(rows) < 2:
+        return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
+
+    data_rows = rows[1:]
+    created_count = 0
+    errors = []
+    position = _next_lw_position()
+
+    all_countries_by_code = {
+        c.code.strip(): c for c in OKSMCountry.objects.all()
+    }
+    all_countries_by_name = {
+        c.short_name.strip().lower(): c for c in OKSMCountry.objects.all()
+    }
+
+    from decimal import Decimal, InvalidOperation
+
+    for i, row in enumerate(data_rows, start=2):
+        if not any(cell.strip() for cell in row):
+            continue
+
+        if len(row) < 6:
+            errors.append(f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается минимум 6).")
+            continue
+
+        try:
+            country_code_raw = row[0].strip()
+            country_name_raw = row[1].strip()
+            region_name_raw = row[2].strip()
+            region_code_raw = row[3].strip()
+            amount_raw = row[4].strip()
+            currency_raw = row[5].strip()
+            approval_date = _parse_csv_date(row[6]) if len(row) > 6 else None
+            expiry_date = _parse_csv_date(row[7]) if len(row) > 7 else None
+            source = row[8].strip() if len(row) > 8 else ""
+
+            country = None
+            if country_code_raw:
+                country = all_countries_by_code.get(country_code_raw)
+            if not country and country_name_raw:
+                country = all_countries_by_name.get(country_name_raw.lower())
+
+            if not country:
+                similar = [
+                    c for cn, c in all_countries_by_name.items()
+                    if country_name_raw.lower() in cn or cn in country_name_raw.lower()
+                ]
+                err = f'Строка {i}: страна "{country_name_raw}" (код "{country_code_raw}") не найдена в ОКСМ.'
+                if similar:
+                    err += f' Похожие: {"; ".join(s.short_name for s in similar[:5])}.'
+                errors.append(err)
+                continue
+
+            if not region_name_raw and not region_code_raw:
+                errors.append(f"Строка {i}: отсутствует название и код региона.")
+                continue
+
+            region = None
+            if region_code_raw:
+                region = TerritorialDivision.objects.filter(
+                    country=country,
+                    region_code__iexact=region_code_raw,
+                ).first()
+            if not region and region_name_raw:
+                region = TerritorialDivision.objects.filter(
+                    country=country,
+                    region_name__iexact=region_name_raw,
+                ).first()
+            if not region:
+                available = list(
+                    TerritorialDivision.objects.filter(country=country)
+                    .values_list("region_name", flat=True)
+                    .order_by("region_name")[:10]
+                )
+                search = region_code_raw or region_name_raw
+                err = f'Строка {i}: регион "{search}" не найден для страны "{country.short_name}".'
+                if available:
+                    err += f' Доступные регионы: {"; ".join(available)}.'
+                errors.append(err)
+                continue
+
+            amount_str = amount_raw.replace("\u00a0", "").replace(" ", "").replace(",", ".")
+            try:
+                amount = Decimal(amount_str)
+            except (InvalidOperation, ValueError):
+                errors.append(f'Строка {i}: некорректное значение ВПМ "{amount_raw}".')
+                continue
+
+            if not approval_date:
+                errors.append(f"Строка {i}: отсутствует или некорректна дата введения в действие.")
+                continue
+
+            LivingWage.objects.create(
+                country=country,
+                region=region,
+                amount=amount,
+                currency=currency_raw,
+                approval_date=approval_date,
+                expiry_date=expiry_date,
+                source=source,
+                position=position,
+            )
+            position += 1
+            created_count += 1
+
+        except Exception as exc:
+            logger.exception("LW CSV import row %d failed", i)
+            errors.append(f"Строка {i}: {exc}")
+
+    result = {"ok": True, "created": created_count}
+    if errors:
+        result["warnings"] = errors[:50]
+    return JsonResponse(result)

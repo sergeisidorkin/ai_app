@@ -1,3 +1,4 @@
+{% load classifiers_filters %}
 <div id="policy-pane">
     <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 0px;">
         <h5 class="table-section-title">
@@ -373,6 +374,102 @@
             <i class="bi bi-plus-circle me-2"></i>Добавить строку
           </button>
           <div id="grades-actions" class="d-none d-flex">
+            <div class="btn-group">
+              <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+                <i class="bi bi-arrow-up-square"></i>
+              </button>
+              <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+                <i class="bi bi-arrow-down-square"></i>
+              </button>
+              <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+                <i class="bi bi-pencil-square"></i>
+              </button>
+              <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+                <i class="bi bi-x-square"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+    </div>
+
+    <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 50px;">
+        <h5 class="table-section-title">
+            <i class="bi bi-table me-2"></i>
+            Тарифы
+        </h5>
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-sm align-middle">
+            <thead>
+            <tr>
+                <th style="width:1%">
+                    <div class="form-check m-0">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="tariffs-master"
+                               data-target-name="tariff-select"
+                               data-actions-id="tariffs-actions"
+                               aria-label="Выделить все строки тарифов">
+                    </div>
+                </th>
+                <th>Продукт</th>
+                <th>Раздел</th>
+                <th>Базовая ставка в ВПМ</th>
+                <th>Рекомендуемый специалист</th>
+                {% if is_admin %}
+                <th>Руководитель направления</th>
+                {% endif %}
+            </tr>
+            </thead>
+            <tbody>
+            {% for t in tariffs %}
+                <tr data-edit-url="{% url 'tariff_form_edit' t.pk %}"
+                    data-delete-url="{% url 'tariff_delete' t.pk %}"
+                    data-move-up-url="{% url 'tariff_move_up' t.pk %}"
+                    data-move-down-url="{% url 'tariff_move_down' t.pk %}">
+
+                    <td class="text-nowrap">
+                        <div class="form-check">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="tariff-sel-{{ t.id }}"
+                                   name="tariff-select"
+                                   value="{{ t.id }}"
+                                   aria-label="Выделить строку тарифа">
+                        </div>
+                    </td>
+                    <td class="text-nowrap">{{ t.product.short_name }}</td>
+                    <td class="text-nowrap">{{ t.section.short_name }}</td>
+                    <td class="text-nowrap">{{ t.base_rate_vpm|format_money }}</td>
+                    <td class="text-nowrap">{{ t.recommended_specialist }}</td>
+                    {% if is_admin %}
+                    <td class="text-nowrap text-muted">
+                        {% if t.created_by.employee_profile %}
+                            {{ t.created_by.employee_profile.job_title }}
+                        {% else %}
+                            {{ t.created_by.get_full_name|default:t.created_by.username }}
+                        {% endif %}
+                    </td>
+                    {% endif %}
+                </tr>
+            {% empty %}
+                <tr><td colspan="{% if is_admin %}6{% else %}5{% endif %}" class="text-muted">Пока нет данных.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+
+        <div class="d-flex align-items-stretch gap-2 products-actions-row">
+          <button
+                  class="btn btn-primary btn-sm d-flex align-items-center"
+                  hx-get="{% url 'tariff_form_create' %}"
+                  hx-target="#policy-modal .modal-content"
+                  hx-swap="innerHTML"
+                  data-bs-toggle="modal"
+                  data-bs-target="#policy-modal">
+            <i class="bi bi-plus-circle me-2"></i>Добавить строку
+          </button>
+          <div id="tariffs-actions" class="d-none d-flex">
             <div class="btn-group">
               <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
                 <i class="bi bi-arrow-up-square"></i>

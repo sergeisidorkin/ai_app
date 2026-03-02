@@ -7,6 +7,7 @@
 
 <form
     method="post"
+    style="display:flex; flex-direction:column; overflow:hidden; flex:1 1 auto; min-height:0;"
     {% if action == "create" %}
       hx-post="{% url 'oksm_form_create' %}"
     {% else %}
@@ -14,7 +15,7 @@
     {% endif %}
     hx-target="#classifiers-pane"
     hx-swap="outerHTML">
-  <div class="modal-body">
+  <div class="modal-body" style="overflow-y:auto; flex:1 1 auto; min-height:0;">
     {% csrf_token %}
     <div class="mb-3">
       <label class="form-label">№</label>
@@ -59,7 +60,7 @@
       </div>
     {% endif %}
   </div>
-  <div class="modal-footer">
+  <div class="modal-footer" style="flex-shrink:0;">
     <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
     <button type="submit" class="btn btn-primary">Сохранить</button>
   </div>
