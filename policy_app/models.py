@@ -22,12 +22,18 @@ class Product(models.Model):
         return self.short_name
 
 class TypicalSection(models.Model):
+    ACCOUNTING_TYPE_CHOICES = [
+        ("Раздел", "Раздел"),
+        ("Услуги", "Услуги"),
+    ]
+
     product = models.ForeignKey(Product, verbose_name="Продукт", on_delete=models.CASCADE, related_name="sections")
     code = models.CharField("Код", max_length=64)
-    short_name = models.CharField("Краткое имя", max_length=64)
+    short_name = models.CharField("Краткое имя EN", max_length=64)
+    short_name_ru = models.CharField("Краткое имя RU", max_length=128, blank=True, default="")
     name_en = models.CharField("Наименование раздела на английском языке", max_length=255)
     name_ru = models.CharField("Наименование раздела на русском языке", max_length=255)
-    accounting_type = models.CharField("Тип учета", max_length=128)
+    accounting_type = models.CharField("Тип учета", max_length=128, choices=ACCOUNTING_TYPE_CHOICES, default="Раздел")
     executor = models.CharField("Исполнитель", max_length=128)
     position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
 

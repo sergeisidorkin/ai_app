@@ -8,4 +8,5 @@ urlpatterns = [
     path("requests/row/<int:pk>/delete/", views.request_delete, name="request_delete"),
     path("requests/row/<int:pk>/up/", views.request_move_up, name="request_move_up"),
     path("requests/row/<int:pk>/down/", views.request_move_down, name="request_move_down"),
+    path("requests/csv-upload/", views.request_csv_upload, name="request_csv_upload"),
 ]

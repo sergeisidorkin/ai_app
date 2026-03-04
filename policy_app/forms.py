@@ -23,13 +23,14 @@ class TypicalSectionForm(forms.ModelForm):
 
     class Meta:
         model = TypicalSection
-        fields = ["product", "code", "short_name", "name_en", "name_ru", "accounting_type", "executor"]
+        fields = ["product", "code", "short_name", "short_name_ru", "name_en", "name_ru", "accounting_type", "executor"]
         widgets = {
             "code": forms.TextInput(attrs={"class": "form-control", "placeholder": "Код"}),
-            "short_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Краткое имя"}),
+            "short_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Short name EN"}),
+            "short_name_ru": forms.TextInput(attrs={"class": "form-control", "placeholder": "Краткое имя RU"}),
             "name_en": forms.TextInput(attrs={"class": "form-control", "placeholder": "English section name"}),
             "name_ru": forms.TextInput(attrs={"class": "form-control", "placeholder": "Русское наименование раздела"}),
-            "accounting_type": forms.TextInput(attrs={"class": "form-control", "placeholder": "Тип учета"}),
+            "accounting_type": forms.Select(attrs={"class": "form-select"}),
             "executor": forms.TextInput(attrs={"class": "form-control", "placeholder": "Исполнитель"}),
         }
 

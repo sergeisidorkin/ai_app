@@ -16,7 +16,34 @@
           </tr>
         </thead>
         <tbody>
-          {% if table and table.items.exists %}
+          {% if all_sections %}
+            {% for it in all_items %}
+              <tr
+                data-id="{{ it.id }}"
+                data-edit-url="{% url 'request_form_edit' it.id %}"
+                data-delete-url="{% url 'request_delete' it.id %}"
+                data-move-up-url="{% url 'request_move_up' it.id %}"
+                data-move-down-url="{% url 'request_move_down' it.id %}"
+              >
+                <td>
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" name="request-select" value="{{ it.id }}">
+                  </div>
+                </td>
+                <td class="text-nowrap col-code">{{ it.code }}</td>
+                <td class="text-nowrap col-num">
+                    {% if it.number != None %}{{ it.number|stringformat:"02d" }}
+                    {% endif %}
+                </td>
+                <td class="text-nowrap">{{ it.short_name }}</td>
+                <td>{{ it.name }}</td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="5" class="requests-empty-hint">Пока здесь пусто.</td>
+              </tr>
+            {% endfor %}
+          {% elif table and table.items.exists %}
             {% for it in table.items.all %}
               <tr
                 data-id="{{ it.id }}"
@@ -48,10 +75,10 @@
   </table>
 </div>
 
-<div class="d-flex align-items-stretch gap-2 requests-actions-row">
+<div class="d-flex align-items-stretch gap-2 requests-actions-row mb-4">
   <button
     class="btn btn-primary btn-sm d-flex align-items-center"
-    hx-get="{% url 'request_form_create' %}?product={{ product.short_name|upper }}&section={{ section.id|default_if_none:'' }}"
+    hx-get="{% url 'request_form_create' %}?product={{ product.short_name|upper }}&section={% if all_sections %}all{% else %}{{ section.id|default_if_none:'' }}{% endif %}"
     hx-target="#requests-modal .modal-content"
     hx-swap="innerHTML"
     data-bs-toggle="modal"
@@ -79,4 +106,12 @@
       </button>
     </div>
   </div>
+
+  <button id="req-csv-upload-btn" type="button"
+          class="btn btn-primary btn-sm d-flex align-items-center"
+          data-upload-url="{% url 'request_csv_upload' %}?product={{ product.short_name|upper }}&section={% if all_sections %}all{% else %}{{ section.id|default_if_none:'' }}{% endif %}"
+          title="Загрузить CSV">
+    <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+  </button>
+  <input type="file" id="req-csv-file-input" accept=".csv" class="d-none">
 </div>

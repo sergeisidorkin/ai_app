@@ -15,7 +15,18 @@
         <label class="form-label small text-muted mb-1">Продукт</label>
         <div class="form-control-plaintext">{{ product.name_en }} ({{ product.short_name|upper }})</div>
       </div>
-      {% if section %}
+      {% if sections_choices %}
+      <div class="mb-2">
+        <label class="form-label small text-muted mb-1">Раздел <span class="text-danger">*</span></label>
+        <select name="section_id" id="req-section-select" class="form-select form-select-sm" required>
+          <option value="">— Выберите раздел —</option>
+          {% for s in sections_choices %}
+          <option value="{{ s.id }}" data-code="{{ s.code }}"
+            {% if selected_section_id == s.id %}selected{% endif %}>{{ s.name_ru }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% elif section %}
       <div class="mb-2">
         <label class="form-label small text-muted mb-1">Раздел</label>
         <div class="form-control-plaintext">{{ section.name_ru }}</div>
@@ -27,7 +38,7 @@
         <div class="row g-3 align-items-end">
           <div class="col-6">
             <label class="form-label mb-1">Код</label>
-            {{ form.code }}   {# без as_widget(attrs=...) #}
+            {{ form.code }}
           </div>
           <div class="col-6">
             <label class="form-label mb-1">№</label>
@@ -50,3 +61,17 @@
     <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
   </div>
 </form>
+
+{% if sections_choices %}
+<script>
+(function() {
+  const sel = document.getElementById('req-section-select');
+  const codeInput = document.getElementById('{{ form.code.id_for_label }}');
+  if (!sel || !codeInput) return;
+  sel.addEventListener('change', function() {
+    const opt = sel.options[sel.selectedIndex];
+    codeInput.value = opt?.dataset?.code || '';
+  });
+})();
+</script>
+{% endif %}

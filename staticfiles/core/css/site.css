@@ -657,6 +657,56 @@ section#templates .alert.alert-info .text-muted {
 
 
 
+/* Карусель табов «Запросы» — кнопки-стрелки */
+.req-tabs-arrow {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 28px;
+  background-color: #fff;
+  border: 1px solid var(--bs-border-color);
+  border-radius: .375rem;
+  color: rgba(var(--bs-primary-rgb, 7,93,148), .65);
+  font-size: .85rem;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color .15s;
+  margin-bottom: 7px;
+}
+.req-tabs-arrow-left  { margin-left: 15px; box-shadow: 3px 0 0 #fff; }
+.req-tabs-arrow-right { margin-right: 8px; box-shadow: -3px 0 0 #fff; }
+.req-tabs-arrow:hover {
+  color: var(--bs-primary, #075D94);
+  background-color: #fff;
+  border-color: var(--bs-border-color);
+}
+
+.req-tabs-arrow-left::after,
+.req-tabs-arrow-right::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  bottom: -6px;
+  width: 60px;
+  pointer-events: none;
+}
+.req-tabs-arrow-left::after {
+  left: calc(100% + 3px);
+  background: linear-gradient(to right, #fff 6px, transparent);
+}
+.req-tabs-arrow-right::before {
+  right: calc(100% + 3px);
+  background: linear-gradient(to left, #fff 6px, transparent);
+}
+
+/* Таб «Все разделы» в разделе «Запросы» */
+#requests-tabs .nav-link.req-tab-all {
+  font-weight: 600;
+}
+
 /* СТИЛЬ КНОПОК ПАНЕЛИ РАЗДЕЛА ЗАПРОСЫ */
 
 /* Отступ сверху для кнопки "Добавить запрос" и панели действий */
@@ -717,10 +767,10 @@ section#templates .alert.alert-info .text-muted {
   border-color: var(--bs-danger);
 }
 
-/* Слойность: "Изменить" над "Удалить" */
+/* Слойность: "Удалить" над другими кнопками */
 #requests-pane #requests-actions .btn-group { isolation: isolate; }
 #requests-pane #requests-actions .btn { position: relative; z-index: 1; }
-#requests-pane #requests-actions #requests-actions-edit { z-index: 2; }
+#requests-pane #requests-actions #requests-actions-delete { z-index: 2; }
 
 /* Мягче активные строки в таблице «Запросы» */
 #requests-pane tr.table-active > th,
@@ -830,6 +880,9 @@ section#templates .alert.alert-info .text-muted {
   padding-top: var(--bs-table-cell-padding-y) !important;
   padding-bottom: calc(var(--bs-table-cell-padding-y) + 3px) !important; /* базово */
 }
+#projects-pane table.reg-table thead th.col-agreement-number {
+  white-space: nowrap !important;
+}
 
 /* ↑ Поднять текст всех заголовков на 1px, КРОМЕ первого столбца (мастер-чекбокс) */
 #projects-pane table.reg-table thead th:not(:first-child){
@@ -852,42 +905,45 @@ section#templates .alert.alert-info .text-muted {
   max-width: 36px !important;
   box-sizing: border-box;
 }
-#projects-pane table.reg-table th:nth-child(2),
-#projects-pane table.reg-table td:nth-child(2){
-  width: 90px !important;
-  min-width: 90px !important;
-  max-width: 90px !important;
-  box-sizing: border-box;
+#projects-pane table.reg-table col.project-number,
+#projects-pane table.reg-table th.col-project-number,
+#projects-pane table.reg-table td.col-project-number {
+  width: 70px !important;
+  min-width: 70px !important;
+  max-width: 70px !important;
+}
+#projects-pane table.reg-table col.project-id,
+#projects-pane table.reg-table th:nth-child(6),
+#projects-pane table.reg-table td:nth-child(6) {
+    min-width: 100px !important;
+}
+#projects-pane table.reg-table tbody td.project-id-cell {
+  color: #a1a9b1 !important; /* или используйте text-muted */
 }
 
 /* 5) Минимумы по остальным */
-#projects-pane table.reg-table th:nth-child(3),
-#projects-pane table.reg-table td:nth-child(3){ min-width: 72px !important; }   /* Группа */
-#projects-pane table.reg-table th:nth-child(4),
-#projects-pane table.reg-table td:nth-child(4){ min-width: 80px !important; }   /* Тип   */
-#projects-pane table.reg-table th:nth-child(6),
-#projects-pane table.reg-table td:nth-child(6){ min-width: 120px !important; }  /* Статус */
-
-#projects-pane table.reg-table th:nth-child(7),  #projects-pane table.reg-table td:nth-child(7),
-#projects-pane table.reg-table th:nth-child(8),  #projects-pane table.reg-table td:nth-child(8),
-#projects-pane table.reg-table th:nth-child(9),  #projects-pane table.reg-table td:nth-child(9),
-#projects-pane table.reg-table th:nth-child(10), #projects-pane table.reg-table td:nth-child(10),
-#projects-pane table.reg-table th:nth-child(11), #projects-pane table.reg-table td:nth-child(11),
-#projects-pane table.reg-table th:nth-child(12), #projects-pane table.reg-table td:nth-child(12),
-#projects-pane table.reg-table th:nth-child(13), #projects-pane table.reg-table td:nth-child(13),
-#projects-pane table.reg-table th:nth-child(14), #projects-pane table.reg-table td:nth-child(14),
-#projects-pane table.reg-table th:nth-child(15), #projects-pane table.reg-table td:nth-child(15),
-#projects-pane table.reg-table th:nth-child(16), #projects-pane table.reg-table td:nth-child(16),
-#projects-pane table.reg-table th:nth-child(17), #projects-pane table.reg-table td:nth-child(17),
-#projects-pane table.reg-table th:nth-child(18), #projects-pane table.reg-table td:nth-child(18){
-  min-width: 92px !important;
-}
-
-#projects-pane table.reg-table th:nth-child(5),  #projects-pane table.reg-table td:nth-child(5){   min-width: 200px !important; } /* Название */
-#projects-pane table.reg-table th:nth-child(19), #projects-pane table.reg-table td:nth-child(19){  min-width: 160px !important; } /* Заказчик */
-#projects-pane table.reg-table th:nth-child(20), #projects-pane table.reg-table td:nth-child(20){  min-width: 140px !important; } /* Рег. номер */
-#projects-pane table.reg-table th:nth-child(21), #projects-pane table.reg-table td:nth-child(21){  min-width: 160px !important; } /* Руководитель */
-#projects-pane table.reg-table th:nth-child(22), #projects-pane table.reg-table td:nth-child(22){  min-width: 120px !important; } /* Предмет договора */
+#projects-pane table.reg-table th:nth-child(3),  #projects-pane table.reg-table td:nth-child(3){   min-width: 70px  !important; max-width: 70px !important; }   /* Группа */
+#projects-pane table.reg-table th:nth-child(4),  #projects-pane table.reg-table td:nth-child(4){   min-width: 160px !important; } /* Вид соглашения */
+#projects-pane table.reg-table th:nth-child(5),  #projects-pane table.reg-table td:nth-child(5){   min-width: 140px !important; } /* № соглашения */
+#projects-pane table.reg-table th:nth-child(7),  #projects-pane table.reg-table td:nth-child(7){   min-width: 50px  !important; } /* Тип */
+#projects-pane table.reg-table th:nth-child(8),  #projects-pane table.reg-table td:nth-child(8){   min-width: 220px !important; } /* Название */
+#projects-pane table.reg-table th:nth-child(9),  #projects-pane table.reg-table td:nth-child(9){   min-width: 120px !important; } /* Статус */
+#projects-pane table.reg-table th:nth-child(10), #projects-pane table.reg-table td:nth-child(10){  min-width: 80px  !important; } /* Начало контр. */
+#projects-pane table.reg-table th:nth-child(11), #projects-pane table.reg-table td:nth-child(11){  min-width: 80px  !important; } /* Оконч. контр. */
+#projects-pane table.reg-table th:nth-child(12), #projects-pane table.reg-table td:nth-child(12){  min-width: 80px  !important; } /* Оконч., расчет */
+#projects-pane table.reg-table th:nth-child(13), #projects-pane table.reg-table td:nth-child(13){  min-width: 80px  !important; } /* Исх. данные */
+#projects-pane table.reg-table th:nth-child(14), #projects-pane table.reg-table td:nth-child(14){  min-width: 80px  !important; } /* Этап 1, недель */
+#projects-pane table.reg-table th:nth-child(15), #projects-pane table.reg-table td:nth-child(15){  min-width: 80px  !important; } /* Этап 1, оконч. */
+#projects-pane table.reg-table th:nth-child(16), #projects-pane table.reg-table td:nth-child(16){  min-width: 80px  !important; } /* Этап 2, недель */
+#projects-pane table.reg-table th:nth-child(17), #projects-pane table.reg-table td:nth-child(17){  min-width: 80px  !important; } /* Этап 2, оконч. */
+#projects-pane table.reg-table th:nth-child(18), #projects-pane table.reg-table td:nth-child(18){  min-width: 80px  !important; } /* Этап 3, недель  */
+#projects-pane table.reg-table th:nth-child(19), #projects-pane table.reg-table td:nth-child(19){  min-width: 70px  !important; } /* Срок, недель  */
+#projects-pane table.reg-table th:nth-child(20), #projects-pane table.reg-table td:nth-child(20){  min-width: 90px  !important; } /* Дедлайн  */
+#projects-pane table.reg-table th:nth-child(21), #projects-pane table.reg-table td:nth-child(21){  min-width: 50px  !important; } /* Год */
+#projects-pane table.reg-table th:nth-child(22), #projects-pane table.reg-table td:nth-child(22){  min-width: 160px !important; } /* Заказчик */
+#projects-pane table.reg-table th:nth-child(23), #projects-pane table.reg-table td:nth-child(23){  min-width: 120px !important; } /* Рег. номер */
+#projects-pane table.reg-table th:nth-child(24), #projects-pane table.reg-table td:nth-child(24){  min-width: 150px !important; } /* Руководитель */
+#projects-pane table.reg-table th:nth-child(25), #projects-pane table.reg-table td:nth-child(25){  min-width: 190px !important; } /* Предмет договора */
 
 /* 6) Единый padding по краям 1-го столбца (и в шапке, и в теле) */
 #projects-pane table.reg-table > thead tr > :first-child,
@@ -942,8 +998,12 @@ section#templates .alert.alert-info .text-muted {
   bottom: calc(var(--bs-table-cell-padding-y) + 0px) !important; /* было + 3px */
 }
 
-
-
+/* Модальное окно регистрации проекта */
+#projects-modal .modal-body.modal-body-scroll {
+  max-height: calc(100vh - 170px); /* подстрой верхний отступ при необходимости */
+  overflow-y: auto;
+  padding-right: 1rem; /* чтобы скролл не перекрывал содержимое */
+}
 
 
 
@@ -956,10 +1016,11 @@ section#templates .alert.alert-info .text-muted {
 
 /* ==== Work Volume table (Объем работ) ==== */
 .work-table { table-layout: fixed; } /* точно соблюдает ширины колонок */
-.work-table col.col-checkbox { width: 30px !important; }
-.work-table col.col-project  { width: 80px !important; } /* Номер проекта, 4444RU */
-.work-table col.col-type     { width: 50px !important; } /* Тип (short_name) */
+.work-table col.col-checkbox { width: 30px  !important; }
+.work-table col.col-project  { width: 100px !important; } /* Номер проекта, 4444RU-0 */
+.work-table col.col-type     { width: 50px  !important; } /* Тип (short_name) */
 .work-table col.col-name     { width: 220px !important; } /* Название */
+.work-table col.col-active   { width: 350px !important; } /* Наименование актива */
 
 /* Fallback на случай, если colgroup переопределяется */
 .work-table th:nth-child(2),
@@ -984,10 +1045,42 @@ section#templates .alert.alert-info .text-muted {
   .work-table td:nth-child(4) { width: 220px !important; }
 }
 
+/* Наименование актива — обрезаем лишний текст троеточием */
+.work-table td:nth-child(5),
+.legal-table td:nth-child(5),
+.performers-table td:nth-child(5) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 0; /* ширина задаётся colgroup'ом */
+}
 
 
 
+/* ==== Legal Entities table (Юридические лица) ==== */
+.legal-table { table-layout: fixed; }
+.legal-table col.col-checkbox { width: 30px  !important; }
+.legal-table col.col-project  { width: 100px !important; }
+.legal-table col.col-type     { width: 50px  !important; }
+.legal-table col.col-name     { width: 220px !important; }
+.legal-table col.col-active   { width: 350px !important; } /* Наименование актива */
 
+.legal-table th:first-child,
+.legal-table td:first-child { width: 30px !important; min-width: 30px !important; max-width: 30px !important; padding-left: .4rem; padding-right: .4rem; }
+.legal-table th:nth-child(2),
+.legal-table td:nth-child(2) { width: 100px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.legal-table th:nth-child(3),
+.legal-table td:nth-child(3) { width: 50px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.legal-table th:nth-child(4),
+.legal-table td:nth-child(4) { width: 220px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Fallback на случай, если colgroup переопределяется */
+.work-table th:nth-child(2),
+.work-table td:nth-child(2) { width: 110px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.work-table th:nth-child(3),
+.work-table td:nth-child(3) { width: 120px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.work-table th:nth-child(4),
+.work-table td:nth-child(4) { width: 220px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 
 
@@ -996,11 +1089,11 @@ section#templates .alert.alert-info .text-muted {
 /* ==== Performers table ==== */
 .performers-table { table-layout: fixed; }
 
-.performers-table col.col-checkbox { width: 30px !important; }
-.performers-table col.col-number   { width: 80px !important; } /* 4444RU */
-.performers-table col.col-type     { width: 50px !important; } /* Тип */
+.performers-table col.col-checkbox { width: 30px  !important; }
+.performers-table col.col-number   { width: 100px !important; } /* 4444RU-0 */
+.performers-table col.col-type     { width: 50px  !important; } /* Тип */
 .performers-table col.col-name     { width: 220px !important; } /* Название */
-.performers-table col.col-active   { width: 350px !important; } /* Актив */
+.performers-table col.col-active   { width: 350px !important; } /* Наименование актива */
 
 
 .performers-table th:nth-child(2),
@@ -1019,6 +1112,7 @@ section#templates .alert.alert-info .text-muted {
 /* +0px слева у колонки с чекбоксами во всех 3 таблицах раздела "Проекты" */
 #projects-pane table.table > thead tr > :first-child,
 #projects-pane table.table > tbody tr > :first-child,
+
 #performers-pane table.table > thead tr > :first-child,
 #performers-pane table.table > tbody tr > :first-child {
   padding-left: calc(var(--bs-table-cell-padding-x, .4rem) + 0px);
