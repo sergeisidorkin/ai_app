@@ -184,7 +184,7 @@
                       class="list-group-item list-group-item-action {% if forloop.first %}active{% endif %}"
                       data-product="{{ p.short_name|default_if_none:''|upper }}"
                       data-product-id="{{ p.id }}">
-                      {{ p.name_en }}
+                      {{ p.display_name|default:p.name_en }}
                     </a>
                   {% endfor %}
                 {% else %}
