@@ -280,13 +280,16 @@ def section_csv_upload(request):
         except Exception:
             return JsonResponse({"ok": False, "error": "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251)."}, status=400)
 
-    reader = csv.reader(io.StringIO(raw), delimiter=";")
-    rows = list(reader)
-    if not rows:
-        return JsonResponse({"ok": False, "error": "Файл пуст."}, status=400)
-    if len(rows[0]) <= 1:
-        reader = csv.reader(io.StringIO(raw), delimiter=",")
+    try:
+        reader = csv.reader(io.StringIO(raw), delimiter=";")
         rows = list(reader)
+        if not rows:
+            return JsonResponse({"ok": False, "error": "Файл пуст."}, status=400)
+        if len(rows[0]) <= 1:
+            reader = csv.reader(io.StringIO(raw), delimiter=",")
+            rows = list(reader)
+    except csv.Error as exc:
+        return JsonResponse({"ok": False, "error": f"Ошибка разбора CSV: {exc}. Проверьте формат и кодировку файла."}, status=400)
     if len(rows) < 2:
         return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
 
@@ -318,6 +321,19 @@ def section_csv_upload(request):
 
         if not code:
             warnings.append(f"Строка {i}: отсутствует код раздела.")
+            continue
+
+        missing = []
+        if not short_name:
+            missing.append("Краткое имя EN")
+        if not name_en:
+            missing.append("Наименование EN")
+        if not name_ru:
+            missing.append("Наименование RU")
+        if not executor:
+            missing.append("Исполнитель")
+        if missing:
+            warnings.append(f"Строка {i}: не заполнены обязательные поля: {', '.join(missing)}.")
             continue
 
         if accounting_type not in dict(TypicalSection.ACCOUNTING_TYPE_CHOICES):
