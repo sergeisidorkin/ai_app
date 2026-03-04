@@ -20,6 +20,22 @@
       </div>
     </div>
 
+    <!-- Модалка для результатов CSV-загрузки -->
+    <div class="modal fade" id="policy-csv-result-modal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content" style="font-size:.85rem;">
+          <div class="modal-header">
+            <h5 class="modal-title">Результат загрузки CSV</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body" id="policy-csv-result-body" style="white-space:pre-wrap;"></div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Закрыть</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <script>
       // Закрываем модалку при успешном обновлении (событие от сервера через HX-Trigger)
       document.body.addEventListener('policy-updated', function () {
