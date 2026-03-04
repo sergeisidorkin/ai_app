@@ -1,4 +1,8 @@
+import csv
+import io
+
 from django.contrib.auth.decorators import login_required, user_passes_test
+from django.http import JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST
 from django.db.models import Max
@@ -255,6 +259,90 @@ def section_move_down(request, pk: int):
         TypicalSection.objects.filter(pk=nxt.id).update(position=cur_pos)
         _normalize_section_positions(product_id=pid)
     return _render_policy_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def section_csv_upload(request):
+    csv_file = request.FILES.get("csv_file")
+    if not csv_file:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+    if not csv_file.name.lower().endswith(".csv"):
+        return JsonResponse({"ok": False, "error": "Допустимы только файлы CSV."}, status=400)
+
+    try:
+        raw = csv_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_file.seek(0)
+            raw = csv_file.read().decode("cp1251")
+        except Exception:
+            return JsonResponse({"ok": False, "error": "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251)."}, status=400)
+
+    reader = csv.reader(io.StringIO(raw), delimiter=";")
+    rows = list(reader)
+    if not rows:
+        return JsonResponse({"ok": False, "error": "Файл пуст."}, status=400)
+    if len(rows[0]) <= 1:
+        reader = csv.reader(io.StringIO(raw), delimiter=",")
+        rows = list(reader)
+    if len(rows) < 2:
+        return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
+
+    products_by_name = {p.short_name.strip().lower(): p for p in Product.objects.all()}
+    data_rows = rows[1:]
+    created = 0
+    warnings = []
+
+    for i, row in enumerate(data_rows, start=2):
+        if not any(cell.strip() for cell in row):
+            continue
+        if len(row) < 8:
+            warnings.append(f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 9: Продукт, Код, Краткое имя EN, Краткое имя RU, Наименование EN, Наименование RU, Тип учета, Исполнитель).")
+            continue
+
+        product_name = row[0].strip()
+        code = row[1].strip()
+        short_name = row[2].strip()
+        short_name_ru = row[3].strip() if len(row) > 3 else ""
+        name_en = row[4].strip() if len(row) > 4 else ""
+        name_ru = row[5].strip() if len(row) > 5 else ""
+        accounting_type = row[6].strip() if len(row) > 6 else "Раздел"
+        executor = row[7].strip() if len(row) > 7 else ""
+
+        product = products_by_name.get(product_name.lower())
+        if not product:
+            warnings.append(f"Строка {i}: продукт «{product_name}» не найден. Доступные: {', '.join(products_by_name.keys())}.")
+            continue
+
+        if not code:
+            warnings.append(f"Строка {i}: отсутствует код раздела.")
+            continue
+
+        if accounting_type not in dict(TypicalSection.ACCOUNTING_TYPE_CHOICES):
+            warnings.append(f"Строка {i}: неизвестный тип учета «{accounting_type}». Допустимые: {', '.join(dict(TypicalSection.ACCOUNTING_TYPE_CHOICES).keys())}. Установлено «Раздел».")
+            accounting_type = "Раздел"
+
+        position = _next_position(TypicalSection, {"product": product})
+        try:
+            TypicalSection.objects.create(
+                product=product,
+                code=code,
+                short_name=short_name,
+                short_name_ru=short_name_ru,
+                name_en=name_en,
+                name_ru=name_ru,
+                accounting_type=accounting_type,
+                executor=executor,
+                position=position,
+            )
+            created += 1
+        except Exception as exc:
+            warnings.append(f"Строка {i}: ошибка сохранения — {exc}")
+
+    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
+
 
 # --- Типовая структура раздела ---
 

@@ -123,10 +123,8 @@ def request_form_create(request):
     sections_choices = None
     if all_mode:
         sections_choices = TypicalSection.objects.filter(
-            request_tables__product=product
-        ).distinct().order_by("position", "id")
-        if not sections_choices.exists():
-            sections_choices = TypicalSection.objects.all().order_by("position", "id")
+            product=product
+        ).order_by("position", "id")
 
     form_action = (
         f"{reverse('request_form_create')}?product={product.short_name.upper()}"
@@ -139,7 +137,7 @@ def request_form_create(request):
         if all_mode:
             sec_id = request.POST.get("section_id", "").strip()
             if sec_id.isdigit():
-                section = TypicalSection.objects.filter(id=sec_id).first()
+                section = TypicalSection.objects.filter(id=sec_id, product=product).first()
             if not section:
                 form.add_error(None, "Выберите раздел.")
 
@@ -169,7 +167,10 @@ def request_form_create(request):
             resp["HX-Trigger"] = "requests:saved"
             return resp
 
-        selected_section_id = int(request.POST.get("section_id", 0) or 0) if all_mode else None
+        selected_section_id = None
+        if all_mode:
+            raw = (request.POST.get("section_id") or "").strip()
+            selected_section_id = int(raw) if raw.isdigit() else None
         resp = render(request, "requests_app/request_form_modal.html", {
             "title": "Добавить запрос",
             "submit_label": "Сохранить",
