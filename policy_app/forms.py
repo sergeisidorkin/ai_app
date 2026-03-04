@@ -6,10 +6,11 @@ from .models import Product, TypicalSection, SectionStructure, Grade, Tariff, DE
 class ProductForm(forms.ModelForm):
     class Meta:
         model = Product
-        fields = ["short_name", "name_en", "name_ru", "service_type"]
+        fields = ["short_name", "name_en", "display_name", "name_ru", "service_type"]
         widgets = {
             "short_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Краткое имя"}),
             "name_en": forms.TextInput(attrs={"class": "form-control", "placeholder": "English name"}),
+            "display_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Отображаемое в системе имя"}),
             "name_ru": forms.TextInput(attrs={"class": "form-control", "placeholder": "Русское наименование"}),
             "service_type": forms.TextInput(attrs={"class": "form-control", "placeholder": "Тип услуги"}),
         }

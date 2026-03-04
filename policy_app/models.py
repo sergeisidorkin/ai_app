@@ -6,6 +6,7 @@ DEPARTMENT_HEAD_GROUP = "Руководитель направления"
 class Product(models.Model):
     short_name = models.CharField("Краткое имя", max_length=64, unique=True)
     name_en = models.CharField("Наименование на английском языке", max_length=255)
+    display_name = models.CharField("Отображаемое в системе имя", max_length=255, blank=True, default="")
     name_ru = models.CharField("Наименование на русском языке", max_length=255)
     service_type = models.CharField("Тип услуги", max_length=128)
     position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
