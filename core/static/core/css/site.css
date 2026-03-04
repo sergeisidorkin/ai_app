@@ -657,6 +657,56 @@ section#templates .alert.alert-info .text-muted {
 
 
 
+/* Карусель табов «Запросы» — кнопки-стрелки */
+.req-tabs-arrow {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 28px;
+  background-color: #fff;
+  border: 1px solid var(--bs-border-color);
+  border-radius: .375rem;
+  color: rgba(var(--bs-primary-rgb, 7,93,148), .65);
+  font-size: .85rem;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color .15s;
+  margin-bottom: 7px;
+}
+.req-tabs-arrow-left  { margin-left: 15px; box-shadow: 3px 0 0 #fff; }
+.req-tabs-arrow-right { margin-right: 8px; box-shadow: -3px 0 0 #fff; }
+.req-tabs-arrow:hover {
+  color: var(--bs-primary, #075D94);
+  background-color: #fff;
+  border-color: var(--bs-border-color);
+}
+
+.req-tabs-arrow-left::after,
+.req-tabs-arrow-right::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  bottom: -6px;
+  width: 60px;
+  pointer-events: none;
+}
+.req-tabs-arrow-left::after {
+  left: calc(100% + 3px);
+  background: linear-gradient(to right, #fff 6px, transparent);
+}
+.req-tabs-arrow-right::before {
+  right: calc(100% + 3px);
+  background: linear-gradient(to left, #fff 6px, transparent);
+}
+
+/* Таб «Все разделы» в разделе «Запросы» */
+#requests-tabs .nav-link.req-tab-all {
+  font-weight: 600;
+}
+
 /* СТИЛЬ КНОПОК ПАНЕЛИ РАЗДЕЛА ЗАПРОСЫ */
 
 /* Отступ сверху для кнопки "Добавить запрос" и панели действий */
@@ -717,10 +767,10 @@ section#templates .alert.alert-info .text-muted {
   border-color: var(--bs-danger);
 }
 
-/* Слойность: "Изменить" над "Удалить" */
+/* Слойность: "Удалить" над другими кнопками */
 #requests-pane #requests-actions .btn-group { isolation: isolate; }
 #requests-pane #requests-actions .btn { position: relative; z-index: 1; }
-#requests-pane #requests-actions #requests-actions-edit { z-index: 2; }
+#requests-pane #requests-actions #requests-actions-delete { z-index: 2; }
 
 /* Мягче активные строки в таблице «Запросы» */
 #requests-pane tr.table-active > th,

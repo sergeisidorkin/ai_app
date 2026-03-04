@@ -22,7 +22,7 @@ class RequestItem(models.Model):
     code = models.CharField(max_length=50)
     number = models.PositiveIntegerField()
     short_name = models.CharField("Краткое наименование", max_length=120, blank=True, default="")
-    name = models.CharField(max_length=255)
+    name = models.TextField("Наименование запроса")
 
     class Meta:
         ordering = ["position", "id"]

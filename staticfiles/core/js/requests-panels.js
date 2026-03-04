@@ -87,12 +87,20 @@
     window.__tableSel[name] = checked.map(ch => String(ch.value));
     window.__tableSelLast = name;
 
+    const allSuffix = (function() {
+      const tab = document.querySelector('#requests-tabs .nav-link.active');
+      if (tab?.dataset?.sectionId !== 'all') return '';
+      const sb = document.querySelector('#requests-second-sidebar-list .list-group-item.active');
+      const p = sb?.dataset?.product || '';
+      return `?section=all&product=${encodeURIComponent(p)}`;
+    })();
+
     if (action === 'edit') {
       const tr = checked[0].closest('tr');
       const id = tr?.dataset?.id;
       const url = tr?.dataset?.editUrl || (id ? `/requests/row/${id}/edit/` : null);
       if (!url) return;
-      await htmx.ajax('GET', url, { target: '#requests-modal .modal-content', swap: 'innerHTML' });
+      await htmx.ajax('GET', url + allSuffix, { target: '#requests-modal .modal-content', swap: 'innerHTML' });
       const modalEl = document.getElementById('requests-modal');
       if (modalEl && window.bootstrap) window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
       ensureActionsVisibility(name);
@@ -109,12 +117,11 @@
       for (let i = 0; i < urls.length; i++) {
         const isLast = i === urls.length - 1;
         if (isLast) {
-          await htmx.ajax('POST', urls[i], { target: '#requests-pane', swap: 'innerHTML' });
+          await htmx.ajax('POST', urls[i] + allSuffix, { target: '#requests-pane', swap: 'innerHTML' });
         } else {
-          await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(()=>{});
+          await fetch(urls[i] + allSuffix, { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(()=>{});
         }
       }
-      // после удаления сбрасываем "последний кликнутый"
       window.__tableLastClicked[name] = null;
       return;
     }
@@ -130,9 +137,9 @@
       for (let i = 0; i < urls.length; i++) {
         const isLast = i === urls.length - 1;
         if (isLast) {
-          await htmx.ajax('POST', urls[i], { target: '#requests-pane', swap: 'innerHTML' });
+          await htmx.ajax('POST', urls[i] + allSuffix, { target: '#requests-pane', swap: 'innerHTML' });
         } else {
-          await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(()=>{});
+          await fetch(urls[i] + allSuffix, { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(()=>{});
         }
       }
       ensureActionsVisibility(name);
@@ -175,7 +182,6 @@
   // Восстановление выбора и подсветки после перерисовки партиала
   document.body.addEventListener('htmx:afterSettle', function (e) {
     const root = pane(); if (!root) return;
-    // триггерим восстановление, если обновляли requests-pane или что-то внутри него
     if (!(e.target === root || root.contains(e.target))) return;
 
     const last = window.__tableSelLast;
@@ -188,11 +194,80 @@
     updateRowHighlightFor(last);
     ensureActionsVisibility(last);
 
-    // если «последний кликнутый» больше не отмечен — обнулим
     const lastId = window.__tableLastClicked?.[last];
     if (lastId && !set.has(String(lastId))) window.__tableLastClicked[last] = null;
 
     try { delete window.__tableSel[last]; } catch(_) { window.__tableSel[last] = []; }
     window.__tableSelLast = null;
+  });
+
+  // --- CSV upload ---
+
+  function showReqCsvResult(html) {
+    const body = document.getElementById('req-csv-result-body');
+    const modalEl = document.getElementById('req-csv-result-modal');
+    if (!body || !modalEl) { alert(html); return; }
+    body.innerHTML = html;
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+  }
+
+  async function handleReqCsvUpload(uploadUrl, file) {
+    const formData = new FormData();
+    formData.append('csv_file', file);
+    try {
+      const resp = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrftoken },
+        body: formData,
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        let html = '<div class="mb-2"><strong>Загружено строк: ' + data.created + '</strong></div>';
+        if (data.warnings && data.warnings.length) {
+          html += '<div class="text-danger mb-1"><strong>Предупреждения (' + data.warnings.length + '):</strong></div>';
+          html += '<div class="text-danger">';
+          for (let i = 0; i < data.warnings.length; i++) {
+            html += '<div class="mb-1">' + data.warnings[i].replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>';
+          }
+          html += '</div>';
+        }
+        showReqCsvResult(html);
+        // reload the current table
+        const tabsUl = document.getElementById('requests-tabs');
+        const paneEl = document.getElementById('requests-pane');
+        const paneUrl = paneEl?.getAttribute('data-url');
+        const activeTab = tabsUl?.querySelector('.nav-link.active');
+        const sectionId = activeTab?.dataset?.sectionId || '';
+        const sb = document.querySelector('#requests-second-sidebar-list .list-group-item.active');
+        const productShort = sb?.dataset?.product || '';
+        if (paneUrl) {
+          const url = paneUrl + '?product=' + encodeURIComponent(productShort) + '&section=' + encodeURIComponent(sectionId);
+          htmx.ajax('GET', url, { target: '#requests-pane', swap: 'innerHTML' });
+        }
+      } else {
+        showReqCsvResult('<div class="text-danger"><strong>Ошибка:</strong> ' +
+          (data.error || 'Неизвестная ошибка').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>');
+      }
+    } catch (err) {
+      showReqCsvResult('<div class="text-danger"><strong>Ошибка загрузки:</strong> ' +
+        err.message.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>');
+    }
+  }
+
+  document.addEventListener('click', function (e) {
+    const btn = e.target.closest('#req-csv-upload-btn');
+    if (!btn) return;
+    const fileInput = document.getElementById('req-csv-file-input');
+    if (fileInput) { fileInput.value = ''; fileInput.click(); }
+  });
+
+  document.addEventListener('change', async function (e) {
+    if (e.target.id !== 'req-csv-file-input') return;
+    const file = e.target.files[0];
+    if (!file) return;
+    const btn = document.getElementById('req-csv-upload-btn');
+    const uploadUrl = btn?.dataset?.uploadUrl;
+    if (!uploadUrl) return;
+    await handleReqCsvUpload(uploadUrl, file);
   });
 })();

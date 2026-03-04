@@ -112,7 +112,7 @@
   </aside>
 
   <!-- Контент вкладок -->
-  <main class="flex-grow-1 py-4 px-3">
+  <main class="flex-grow-1 py-4 px-3" style="min-width:0; overflow-x:hidden;">
     <div class="tab-content">
       <!-- Группа -->
       <section id="group" class="tab-pane fade show active">
@@ -167,6 +167,9 @@
         </div>
       </section>
       <!-- Запросы -->
+      <style>
+        .req-tabs-track::-webkit-scrollbar { display: none; }
+      </style>
       <section id="requests" class="tab-pane fade">
           <div class="d-flex templates-bleed">
             <!-- Второй уровень сайдбара -->
@@ -191,15 +194,27 @@
             </aside>
 
             <!-- Контент справа -->
-            <div class="flex-grow-1 ps-3 pe-0">
-              <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
+            <div class="flex-grow-1 ps-3 pe-0" style="min-width:0;">
+              <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column"
+                   style="margin-right:0 !important;">
                 <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height:30px;"></div>
-                <ul class="nav nav-underline px-3" id="requests-tabs"></ul>
+                <div class="req-tabs-carousel" style="display:flex; align-items:end; overflow:hidden;">
+                  <button type="button" class="req-tabs-arrow req-tabs-arrow-left d-none" aria-label="Прокрутить влево">
+                    <i class="bi bi-chevron-left"></i>
+                  </button>
+                  <div class="req-tabs-track" style="flex:1 1 0%; min-width:0; overflow-x:auto; overflow-y:hidden; scrollbar-width:none;">
+                    <ul class="nav nav-underline px-3" id="requests-tabs"
+                        style="flex-wrap:nowrap !important; white-space:nowrap; display:inline-flex !important;"></ul>
+                  </div>
+                  <button type="button" class="req-tabs-arrow req-tabs-arrow-right d-none" aria-label="Прокрутить вправо">
+                    <i class="bi bi-chevron-right"></i>
+                  </button>
+                </div>
                 {{ TEMPLATES_SECTIONS_MAP|json_script:"requests-sections-map-json" }}
               </div>
 
               <!-- Панель/таблица будет подгружаться сюда -->
-              <div class="position-relative" id="requests-pane-wrap">
+              <div class="position-relative" id="requests-pane-wrap" style="overflow-x:auto;">
                   <div id="requests-pane" data-url="{% url 'requests_partial' %}"></div>
                   <div id="requests-loading" class="loading-overlay d-none">
                     <div class="bg-white border rounded-3 shadow-sm px-3 py-2 d-flex align-items-center gap-2">
@@ -219,6 +234,22 @@
                   <div class="__spinner spinner-border" role="status">
                     <span class="visually-hidden">Загрузка…</span>
                   </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal fade" id="req-csv-result-modal" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-scrollable modal-lg">
+              <div class="modal-content">
+                <div class="modal-header">
+                  <h5 class="modal-title">Результат загрузки CSV</h5>
+                  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="req-csv-result-body"
+                     style="white-space:pre-wrap; font-size:.82rem;"></div>
+                <div class="modal-footer">
+                  <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Закрыть</button>
                 </div>
               </div>
             </div>
@@ -623,25 +654,83 @@
               reloadTable();
               return;
             }
-            items.forEach((item, idx) => {
+
+            const allLi = document.createElement('li');
+            allLi.className = 'nav-item';
+            const allA = document.createElement('a');
+            allA.className = 'nav-link active req-tab-all';
+            allA.href = '#';
+            allA.dataset.sectionId = 'all';
+            allA.innerHTML = '<i class="bi bi-collection me-1"></i>Все разделы';
+            function activateTab(link) {
+              tabsUl.querySelectorAll('.nav-link').forEach(x => x.classList.remove('active'));
+              link.classList.add('active');
+              const track = document.querySelector('.req-tabs-track');
+              if (track) {
+                const pad = 80;
+                const tRect = track.getBoundingClientRect();
+                const lRect = link.getBoundingClientRect();
+                if (lRect.left < tRect.left + pad) {
+                  track.scrollBy({ left: lRect.left - tRect.left - pad, behavior: 'smooth' });
+                } else if (lRect.right > tRect.right - pad) {
+                  track.scrollBy({ left: lRect.right - tRect.right + pad, behavior: 'smooth' });
+                }
+              }
+              reloadTable();
+            }
+
+            allA.addEventListener('click', (e) => {
+              e.preventDefault();
+              activateTab(allA);
+            });
+            allLi.appendChild(allA);
+            tabsUl.appendChild(allLi);
+
+            items.forEach((item) => {
               const li = document.createElement('li');
               li.className = 'nav-item';
               const a = document.createElement('a');
-              a.className = 'nav-link' + (idx === 0 ? ' active' : '');
+              a.className = 'nav-link';
               a.href = '#';
-              a.textContent = item.name_ru;
+              a.textContent = item.short_name_ru || item.name_ru;
               a.dataset.sectionId = item.id;
               a.addEventListener('click', (e) => {
                 e.preventDefault();
-                tabsUl.querySelectorAll('.nav-link').forEach(x => x.classList.remove('active'));
-                a.classList.add('active');
-                reloadTable();
+                activateTab(a);
               });
               li.appendChild(a);
               tabsUl.appendChild(li);
             });
             reloadTable();
+            updateTabArrows();
           }
+
+          // --- Carousel arrows logic ---
+          const tabsTrack = document.querySelector('.req-tabs-track');
+          const arrowL = document.querySelector('.req-tabs-arrow-left');
+          const arrowR = document.querySelector('.req-tabs-arrow-right');
+          const SCROLL_STEP = 200;
+
+          function updateTabArrows() {
+            if (!tabsTrack || !arrowL || !arrowR) return;
+            requestAnimationFrame(() => {
+              const { scrollLeft, scrollWidth, clientWidth } = tabsTrack;
+              const needsScroll = scrollWidth > clientWidth + 1;
+              arrowL.classList.toggle('d-none', !needsScroll || scrollLeft <= 0);
+              arrowR.classList.toggle('d-none', !needsScroll || scrollLeft + clientWidth >= scrollWidth - 1);
+            });
+          }
+
+          if (tabsTrack) {
+            tabsTrack.addEventListener('scroll', updateTabArrows, { passive: true });
+            new ResizeObserver(updateTabArrows).observe(tabsTrack);
+          }
+          if (arrowL) arrowL.addEventListener('click', () => {
+            tabsTrack.scrollBy({ left: -SCROLL_STEP, behavior: 'smooth' });
+          });
+          if (arrowR) arrowR.addEventListener('click', () => {
+            tabsTrack.scrollBy({ left: SCROLL_STEP, behavior: 'smooth' });
+          });
 
           function firstProductShort() {
               const a = document.querySelector('#requests-second-sidebar-list .list-group-item[data-product]');

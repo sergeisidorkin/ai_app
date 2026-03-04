@@ -29,21 +29,25 @@ def templates_products(request):
 
 def templates_sections_map(request):
     """
-    Карта: short_name продукта -> список названий разделов (name_ru)
-    Используется для построения вкладок в разделе «Шаблоны».
+    Карта: short_name продукта -> список разделов
+    Используется для построения вкладок в разделах «Шаблоны» и «Запросы».
     """
     try:
         sections = (
             TypicalSection.objects.select_related("product")
-            .only("id", "name_ru", "product__short_name")
-            .order_by("name_ru")
+            .only("id", "name_ru", "short_name_ru", "position", "product__short_name")
+            .order_by("product__short_name", "position", "id")
         )
         mapping = {}
         for s in sections:
             key = (getattr(s.product, "short_name", "") or "").strip().upper()
             if not key:
                 continue
-            mapping.setdefault(key, []).append({"id": s.id, "name_ru": s.name_ru})
+            mapping.setdefault(key, []).append({
+                "id": s.id,
+                "name_ru": s.name_ru,
+                "short_name_ru": s.short_name_ru or s.name_ru,
+            })
     except Exception:
         mapping = {}
     return {"TEMPLATES_SECTIONS_MAP": mapping}
