@@ -22,7 +22,7 @@ from policy_app.models import TypicalSection
 
 def templates_products(request):
     try:
-        qs = Product.objects.only("id", "name_en", "short_name", "position").order_by("position", "id")
+        qs = Product.objects.only("id", "name_en", "display_name", "short_name", "position").order_by("position", "id")
     except Exception:
         qs = Product.objects.none()
     return {"TEMPLATES_PRODUCTS": qs}
