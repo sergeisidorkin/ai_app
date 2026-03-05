@@ -25,7 +25,8 @@ jobs:
     #  - workflow_run: только если CI завершился success
     #  - workflow_dispatch: всегда
     if: >
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
+       && github.event.workflow_run.head_branch == 'main') ||
       (github.event_name == 'workflow_dispatch')
 
     runs-on: ubuntu-latest
@@ -85,18 +86,18 @@ jobs:
             git reset --hard
             git clean -fd
 
-            # 1) Если это валидный commit SHA — чекаутим его (гарантирует совпадение с тем, что прошёл CI)
-            if git cat-file -e "$REF^{commit}" 2>/dev/null; then
-              git checkout -f "$REF"
-              TARGET_DESC="sha:$REF"
-            # 2) Иначе тег
+            # 1) Ветка на remote (origin/<ref>) — приоритет для имён вроде "main"
+            if git rev-parse -q --verify "origin/$REF" >/dev/null; then
+              git checkout -f -B "$REF" "origin/$REF"
+              TARGET_DESC="origin/$REF"
+            # 2) Тег
             elif git rev-parse -q --verify "refs/tags/$REF" >/dev/null; then
               git checkout -f "tags/$REF"
               TARGET_DESC="tag:$REF"
-            # 3) Иначе ветка (origin/<ref>)
-            elif git rev-parse -q --verify "origin/$REF" >/dev/null; then
-              git checkout -f -B "$REF" "origin/$REF"
-              TARGET_DESC="origin/$REF"
+            # 3) Полный commit SHA (40 символов) — прямой чекаут
+            elif echo "$REF" | grep -qE '^[0-9a-f]{40}$' && git cat-file -e "$REF^{commit}" 2>/dev/null; then
+              git checkout -f "$REF"
+              TARGET_DESC="sha:$REF"
             else
               # 4) Последний шанс — main
               git checkout -f -B main origin/main
