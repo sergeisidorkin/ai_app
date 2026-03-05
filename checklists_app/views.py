@@ -1,18 +1,28 @@
+from datetime import date
 from typing import Optional
 
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Max, Q
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.urls import NoReverseMatch, reverse
+from django.utils import timezone
+from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
 from projects_app.models import LegalEntity, Performer, ProjectRegistration
 from policy_app.models import TypicalSection
 from requests_app.models import RequestItem, RequestTable
 
-from .models import ChecklistCommentHistory, ChecklistRequestNote, ChecklistStatus, ChecklistStatusHistory
+from .models import (
+    ChecklistCommentHistory,
+    ChecklistItem,
+    ChecklistRequestNote,
+    ChecklistStatus,
+    ChecklistStatusHistory,
+    SharedChecklistLink,
+)
 
 
 def _product_short_label(product) -> str:
@@ -25,26 +35,43 @@ def _product_short_label(product) -> str:
 
 def _project_meta(project: Optional[ProjectRegistration], asset_name: Optional[str] = None) -> dict:
     if not project:
-        return {"assets": [], "asset": "", "sections": []}
+        return {"assets": [], "asset_items": [], "asset": "", "sections": []}
 
-    assets, seen = [], set()
     legal_qs = (
         LegalEntity.objects.filter(project=project)
         .select_related("work_item")
         .order_by("position", "id")
     )
+
+    assets_flat = []
+    asset_items = []
+    seen_flat = set()
+    seen_work_items = {}
+
     for entity in legal_qs:
-        label = (
+        wi = entity.work_item
+        asset_label = (
+            (getattr(wi, "asset_name", "") or "").strip()
+            or (getattr(wi, "name", "") or "").strip()
+        )
+        entity_label = (
             (entity.legal_name or "").strip()
             or (entity.work_name or "").strip()
-            or (getattr(entity.work_item, "asset_name", "") or "").strip()
+            or asset_label
         )
-        if label and label not in seen:
-            seen.add(label)
-            assets.append(label)
+
+        if asset_label and asset_label not in seen_work_items:
+            seen_work_items[asset_label] = True
+            asset_items.append({"value": f"asset:{asset_label}", "label": asset_label, "type": "asset"})
+
+        if entity_label and entity_label not in seen_flat:
+            seen_flat.add(entity_label)
+            assets_flat.append(entity_label)
+            asset_items.append({"value": entity_label, "label": entity_label, "type": "entity",
+                                "asset": asset_label})
 
     performer_qs = None
-    if not assets:
+    if not assets_flat:
         performer_qs = (
             Performer.objects.filter(registration=project)
             .exclude(asset_name="")
@@ -53,30 +80,73 @@ def _project_meta(project: Optional[ProjectRegistration], asset_name: Optional[s
         )
         for perf in performer_qs:
             asset = (perf.asset_name or "").strip()
-            if asset and asset not in seen:
-                seen.add(asset)
-                assets.append(asset)
+            if asset and asset not in seen_flat:
+                seen_flat.add(asset)
+                assets_flat.append(asset)
+                asset_items.append({"value": asset, "label": asset, "type": "asset"})
 
-    selected_asset = asset_name if asset_name in seen else (assets[0] if assets else "")
-    sections = []
-    if selected_asset:
-        if performer_qs is None:
-            performer_qs = (
-                Performer.objects.filter(registration=project)
-                .exclude(asset_name="")
-                .select_related("typical_section")
-                .order_by("position", "id")
-            )
+    all_values = set(assets_flat) | {ai["value"] for ai in asset_items} | {"all"}
+    selected_asset = ""
+    if asset_name and asset_name in all_values:
+        selected_asset = asset_name
+    else:
+        first_asset = next((ai["value"] for ai in asset_items if ai["type"] == "asset"), None)
+        selected_asset = first_asset or (assets_flat[0] if assets_flat else "")
+
+    sections = _sections_for_asset(project, selected_asset, performer_qs)
+
+    return {
+        "assets": assets_flat,
+        "asset_items": asset_items,
+        "asset": selected_asset,
+        "sections": sections,
+    }
+
+
+def _sections_for_asset(project, selected_asset, performer_qs=None):
+    if not selected_asset:
+        return []
+
+    effective_asset = selected_asset
+    if selected_asset.startswith("asset:"):
+        effective_asset = selected_asset[6:]
+
+    if performer_qs is None:
+        performer_qs = (
+            Performer.objects.filter(registration=project)
+            .exclude(asset_name="")
+            .select_related("typical_section")
+            .order_by("position", "id")
+        )
+
+    if selected_asset == "all":
         ids = set()
+        sections = []
         for perf in performer_qs:
-            if (perf.asset_name or "").strip() != selected_asset:
-                continue
             ts = getattr(perf, "typical_section", None)
             if ts and ts.id not in ids:
                 ids.add(ts.id)
-                sections.append({"id": ts.id, "name": str(ts)})
+                label = str(ts)
+                if ts.short_name_ru:
+                    label += " " + ts.short_name_ru
+                sections.append({"id": ts.id, "name": label})
+        return sections
 
-    return {"assets": assets, "asset": selected_asset, "sections": sections}
+    ids = set()
+    sections = []
+    for perf in performer_qs:
+        perf_asset = (perf.asset_name or "").strip()
+        if perf_asset != effective_asset:
+            continue
+        ts = getattr(perf, "typical_section", None)
+        if ts and ts.id not in ids:
+            ids.add(ts.id)
+            label = str(ts)
+            if ts.short_name_ru:
+                label += " " + ts.short_name_ru
+            sections.append({"id": ts.id, "name": label})
+    return sections
+
 
 def _code_cell_class(status_cells):
     statuses = {
@@ -138,11 +208,7 @@ def _resolve_section(project: ProjectRegistration, section_id: Optional[str], as
     if first:
         return TypicalSection.objects.filter(pk=first).first()
 
-    return (
-        TypicalSection.objects.filter(product=project.type).order_by("position", "id").first()
-        if project.type_id
-        else None
-    )
+    return None
 
 
 def _legal_entities_for(project: ProjectRegistration, asset_name: Optional[str]):
@@ -151,14 +217,230 @@ def _legal_entities_for(project: ProjectRegistration, asset_name: Optional[str])
         .select_related("work_item")
         .order_by("position", "id")
     )
-    if asset_name:
-        qs = qs.filter(
-            Q(work_item__asset_name__iexact=asset_name)
-            | Q(work_item__name__iexact=asset_name)
-            | Q(legal_name__iexact=asset_name)
-        )
-    return list(qs)
+    if not asset_name or asset_name == "all":
+        return list(qs)
 
+    if asset_name.startswith("asset:"):
+        effective = asset_name[6:]
+        return list(qs.filter(
+            Q(work_item__asset_name__iexact=effective)
+            | Q(work_item__name__iexact=effective)
+        ))
+
+    entity_qs = qs.filter(
+        Q(legal_name__iexact=asset_name)
+        | Q(work_name__iexact=asset_name)
+    )
+    if entity_qs.exists():
+        return list(entity_qs)
+
+    return list(qs.filter(
+        Q(work_item__asset_name__iexact=asset_name)
+        | Q(work_item__name__iexact=asset_name)
+    ))
+
+
+# ---------------------------------------------------------------------------
+#  Lazy initialization: create ChecklistItems from RequestItems on first access
+# ---------------------------------------------------------------------------
+
+def _ensure_checklist_items(project: ProjectRegistration, section: TypicalSection):
+    """Create ChecklistItems from RequestItems if none exist for this project+section."""
+    if ChecklistItem.objects.filter(project=project, section=section).exists():
+        return
+
+    if not project.type:
+        return
+
+    table = (
+        RequestTable.objects.filter(product=project.type, section=section)
+        .prefetch_related("items")
+        .first()
+    )
+    if not table:
+        return
+
+    items_to_create = []
+    for ri in table.items.all().order_by("position", "id"):
+        items_to_create.append(ChecklistItem(
+            project=project,
+            section=section,
+            code=ri.code,
+            number=ri.number,
+            short_name=ri.short_name,
+            name=ri.name,
+            position=ri.position,
+            source_request_item=ri,
+        ))
+    if items_to_create:
+        ChecklistItem.objects.bulk_create(items_to_create)
+
+
+# ---------------------------------------------------------------------------
+#  Build table context (shared between internal and public views)
+# ---------------------------------------------------------------------------
+
+def _build_table_context(project, section, asset_name, checklist_items, legal_entities, url_map):
+    status_map = {}
+    if checklist_items and legal_entities:
+        status_qs = ChecklistStatus.objects.filter(
+            checklist_item__in=[it.id for it in checklist_items],
+            legal_entity__in=[le.id for le in legal_entities],
+        ).select_related("checklist_item", "legal_entity")
+        status_map = {(st.checklist_item_id, st.legal_entity_id): st for st in status_qs}
+
+    note_map = {}
+    if checklist_items:
+        note_qs = ChecklistRequestNote.objects.filter(
+            checklist_item__in=[it.id for it in checklist_items],
+            project=project,
+            section=section,
+            asset_name=asset_name,
+        )
+        note_map = {note.checklist_item_id: note for note in note_qs}
+
+    history_map = {}
+    if checklist_items:
+        history_qs = (
+            ChecklistCommentHistory.objects
+            .filter(
+                note__checklist_item__in=[it.id for it in checklist_items],
+                note__project=project,
+                note__section=section,
+                note__asset_name=asset_name,
+            )
+            .select_related("author", "note")
+            .order_by("-created_at")
+        )
+        for entry in history_qs:
+            key = entry.note.checklist_item_id
+            history_map.setdefault(key, {"imc_comment": [], "customer_comment": []})
+            history_map[key][entry.field].append(entry)
+
+    rows = []
+    seen_additional_groups = set()
+    for item in checklist_items:
+        statuses = [
+            {"entity": entity, "status": status_map.get((item.id, entity.id))}
+            for entity in legal_entities
+        ]
+        additional_header = None
+        if item.item_type == ChecklistItem.ItemType.ADDITIONAL and item.additional_number and item.additional_date:
+            group_key = (item.additional_number, item.additional_date)
+            if group_key not in seen_additional_groups:
+                seen_additional_groups.add(group_key)
+                additional_header = (
+                    f"Дополнительный запрос № {item.additional_number}"
+                    f" от {item.additional_date.strftime('%d.%m.%Y')}"
+                )
+        rows.append({
+            "item": item,
+            "statuses": statuses,
+            "code_class": _code_cell_class(statuses),
+            "note": note_map.get(item.id),
+            "history": history_map.get(item.id, {"imc_comment": [], "customer_comment": []}),
+            "additional_header": additional_header,
+        })
+
+    return {
+        "project": project,
+        "section": section,
+        "asset_name": asset_name,
+        "legal_entities": legal_entities,
+        "rows": rows,
+        "status_choices": ChecklistStatus.Status.choices,
+        "default_status": ChecklistStatus.Status.MISSING,
+        "update_status_url": url_map["update_status"],
+        "add_comment_url": url_map["add_comment"],
+        "update_note_url": url_map["update_note"],
+        "error": None if checklist_items else "Для выбранного продукта и раздела нет запросов",
+    }
+
+
+def _build_all_sections_context(project, section_items_list, asset_name, legal_entities, url_map):
+    all_item_ids = []
+    for _sec, items in section_items_list:
+        all_item_ids.extend(it.id for it in items)
+
+    status_map = {}
+    if all_item_ids and legal_entities:
+        status_qs = ChecklistStatus.objects.filter(
+            checklist_item__in=all_item_ids,
+            legal_entity__in=[le.id for le in legal_entities],
+        ).select_related("checklist_item", "legal_entity")
+        status_map = {(st.checklist_item_id, st.legal_entity_id): st for st in status_qs}
+
+    note_map = {}
+    if all_item_ids:
+        note_qs = ChecklistRequestNote.objects.filter(
+            checklist_item__in=all_item_ids,
+            project=project,
+            asset_name=asset_name,
+        )
+        note_map = {note.checklist_item_id: note for note in note_qs}
+
+    history_map = {}
+    if all_item_ids:
+        history_qs = (
+            ChecklistCommentHistory.objects
+            .filter(note__checklist_item__in=all_item_ids, note__project=project, note__asset_name=asset_name)
+            .select_related("author", "note")
+            .order_by("-created_at")
+        )
+        for entry in history_qs:
+            key = entry.note.checklist_item_id
+            history_map.setdefault(key, {"imc_comment": [], "customer_comment": []})
+            history_map[key][entry.field].append(entry)
+
+    rows = []
+    for sec, items in section_items_list:
+        if not items:
+            continue
+        rows.append({
+            "section_header": sec.name_ru or str(sec),
+            "section_obj": sec,
+        })
+        seen_additional_groups = set()
+        for item in items:
+            statuses = [
+                {"entity": entity, "status": status_map.get((item.id, entity.id))}
+                for entity in legal_entities
+            ]
+            additional_header = None
+            if item.item_type == ChecklistItem.ItemType.ADDITIONAL and item.additional_number and item.additional_date:
+                group_key = (item.additional_number, item.additional_date)
+                if group_key not in seen_additional_groups:
+                    seen_additional_groups.add(group_key)
+                    additional_header = (
+                        f"Дополнительный запрос № {item.additional_number}"
+                        f" от {item.additional_date.strftime('%d.%m.%Y')}"
+                    )
+            rows.append({
+                "item": item,
+                "statuses": statuses,
+                "code_class": _code_cell_class(statuses),
+                "note": note_map.get(item.id),
+                "history": history_map.get(item.id, {"imc_comment": [], "customer_comment": []}),
+                "additional_header": additional_header,
+            })
+
+    return {
+        "project": project,
+        "asset_name": asset_name,
+        "legal_entities": legal_entities,
+        "rows": rows,
+        "status_choices": ChecklistStatus.Status.choices,
+        "default_status": ChecklistStatus.Status.MISSING,
+        "update_status_url": url_map["update_status"],
+        "add_comment_url": url_map["add_comment"],
+        "update_note_url": url_map["update_note"],
+        "error": None if rows else "Для выбранного продукта нет запросов",
+    }
+
+
+# ---------------------------------------------------------------------------
+#  Internal (authenticated) views
+# ---------------------------------------------------------------------------
 
 @require_GET
 def panel(request):
@@ -187,6 +469,7 @@ def panel(request):
             "project_options": project_options,
             "selected_project_uid": selected_project_uid,
             "asset_options": meta["assets"],
+            "asset_items": meta.get("asset_items", []),
             "selected_asset": meta["asset"],
             "section_options": meta["sections"],
             "table_partial_url": table_url,
@@ -224,6 +507,58 @@ def table_partial(request):
             {"project": project, "section": None, "error": "У проекта не указан тип продукта"},
         )
 
+    all_mode = section_id == "all"
+
+    effective_asset = asset_name
+    if asset_name and asset_name.startswith("asset:"):
+        effective_asset = asset_name[6:]
+
+    if all_mode:
+        perf_qs = Performer.objects.filter(registration=project).exclude(asset_name="")
+        if effective_asset and asset_name != "all":
+            perf_qs = perf_qs.filter(asset_name=effective_asset)
+        perf_qs = perf_qs.select_related("typical_section__product").order_by("position", "id")
+
+        seen_ids = set()
+        sections = []
+        for perf in perf_qs:
+            ts = perf.typical_section
+            if ts and ts.id not in seen_ids:
+                seen_ids.add(ts.id)
+                sections.append(ts)
+        if not sections:
+            return render(request, "checklists_app/status_table.html", {
+                "project": project, "section": None, "error": "Нет разделов для данного продукта",
+            })
+
+        all_items = []
+        for sec in sections:
+            _ensure_checklist_items(project, sec)
+            items = list(
+                ChecklistItem.objects.filter(project=project, section=sec).order_by("position", "id")
+            )
+            all_items.append((sec, items))
+
+        legal_entities = _legal_entities_for(project, asset_name)
+        first_section = sections[0]
+
+        url_map = {
+            "update_status": reverse("checklists_app:update_status"),
+            "add_comment": reverse("checklists_app:add_comment"),
+            "update_note": reverse("checklists_app:update_note"),
+        }
+        context = _build_all_sections_context(
+            project, all_items, asset_name, legal_entities, url_map,
+        )
+        context["show_actions"] = True
+        context["all_mode"] = True
+        context["section"] = first_section
+        try:
+            context["item_form_create_url"] = reverse("checklists_app:item_form_create")
+        except NoReverseMatch:
+            context["item_form_create_url"] = ""
+        return render(request, "checklists_app/status_table.html", context)
+
     section = _resolve_section(project, section_id, asset_name)
     if not section:
         return render(
@@ -232,100 +567,47 @@ def table_partial(request):
             {"project": project, "section": None, "error": "Не удалось определить раздел"},
         )
 
-    table = (
-        RequestTable.objects.filter(product=project.type, section=section)
-        .prefetch_related("items")
-        .first()
+    _ensure_checklist_items(project, section)
+    checklist_items = list(
+        ChecklistItem.objects.filter(project=project, section=section).order_by("position", "id")
     )
-    request_items = list(table.items.all()) if table else []
     legal_entities = _legal_entities_for(project, asset_name)
 
-    status_map = {}
-    if request_items and legal_entities:
-        status_qs = ChecklistStatus.objects.filter(
-            request_item__in=[it.id for it in request_items],
-            legal_entity__in=[le.id for le in legal_entities],
-        ).select_related("request_item", "legal_entity")
-        status_map = {(st.request_item_id, st.legal_entity_id): st for st in status_qs}
-
-    note_map = {}
-    if request_items:
-        note_qs = ChecklistRequestNote.objects.filter(
-            request_item__in=[it.id for it in request_items],
-            project=project,
-            section=section,
-            asset_name=asset_name,
-        )
-        note_map = {note.request_item_id: note for note in note_qs}
-
-    history_map = {}
-    if request_items:
-        history_qs = (
-           ChecklistCommentHistory.objects
-           .filter(note__request_item__in=[it.id for it in request_items],
-                   note__project=project,
-                   note__section=section,
-                   note__asset_name=asset_name)
-           .select_related("author", "note")
-           .order_by("-created_at")
-        )
-        for entry in history_qs:
-           key = entry.note.request_item_id
-           history_map.setdefault(key, {"imc_comment": [], "customer_comment": []})
-           history_map[key][entry.field].append(entry)
-
-    rows = []
-    for item in request_items:
-        statuses = [
-            {"entity": entity, "status": status_map.get((item.id, entity.id))}
-            for entity in legal_entities
-        ]
-        rows.append(
-            {
-                "item": item,
-                "statuses": statuses,
-                "code_class": _code_cell_class(statuses),
-                "note": note_map.get(item.id),
-                "history": history_map.get(item.id, {"imc_comment": [], "customer_comment": []}),
-            }
-        )
-
-    context = {
-        "project": project,
-        "section": section,
-        "asset_name": asset_name,
-        "legal_entities": legal_entities,
-        "rows": rows,
-        "status_choices": ChecklistStatus.Status.choices,
-        "default_status": ChecklistStatus.Status.MISSING,
-        "update_status_url": reverse("checklists_app:update_status"),
-        "add_comment_url": reverse("checklists_app:add_comment"),
-        "update_note_url": reverse("checklists_app:update_note"),
-        "error": None if table else "В разделе «Запросы» нет строк для выбранного продукта/раздела",
+    url_map = {
+        "update_status": reverse("checklists_app:update_status"),
+        "add_comment": reverse("checklists_app:add_comment"),
+        "update_note": reverse("checklists_app:update_note"),
     }
+    context = _build_table_context(project, section, asset_name, checklist_items, legal_entities, url_map)
+    context["show_actions"] = True
+    try:
+        context["item_form_create_url"] = reverse("checklists_app:item_form_create")
+    except NoReverseMatch:
+        context["item_form_create_url"] = ""
     return render(request, "checklists_app/status_table.html", context)
+
 
 @login_required
 @require_POST
 def update_status(request):
-    request_item_id = request.POST.get("request_item")
+    item_id = request.POST.get("checklist_item")
     legal_entity_id = request.POST.get("legal_entity")
     status_value = request.POST.get("status")
     asset_name = (request.POST.get("asset_name") or "").strip()
 
-    if not all([request_item_id, legal_entity_id, status_value]):
+    if not all([item_id, legal_entity_id, status_value]):
         return HttpResponseBadRequest("Недостаточно данных.")
 
     valid_values = {value for value, _ in ChecklistStatus.Status.choices}
     if status_value not in valid_values:
         return HttpResponseBadRequest("Некорректный статус.")
 
-    request_item = get_object_or_404(RequestItem, pk=request_item_id)
+    checklist_item = get_object_or_404(ChecklistItem, pk=item_id)
     legal_entity = get_object_or_404(LegalEntity, pk=legal_entity_id)
 
     with transaction.atomic():
         status_obj, created = ChecklistStatus.objects.select_for_update().get_or_create(
-            request_item=request_item,
+            checklist_item=checklist_item,
             legal_entity=legal_entity,
             defaults={"updated_by": request.user},
         )
@@ -337,7 +619,7 @@ def update_status(request):
         if previous != status_value:
             ChecklistStatusHistory.objects.create(
                 checklist_status=status_obj,
-                request_item=request_item,
+                checklist_item=checklist_item,
                 legal_entity=legal_entity,
                 previous_status=previous or "",
                 new_status=status_value,
@@ -349,7 +631,7 @@ def update_status(request):
     status_map = {
         st.legal_entity_id: st
         for st in ChecklistStatus.objects.filter(
-            request_item=request_item,
+            checklist_item=checklist_item,
             legal_entity__in=[le.id for le in related_entities],
         )
     }
@@ -363,7 +645,7 @@ def update_status(request):
         request,
         "checklists_app/components/status_cell_fragment.html",
         {
-            "request_item": request_item,
+            "item": checklist_item,
             "legal_entity": legal_entity,
             "status": status_obj,
             "status_choices": ChecklistStatus.Status.choices,
@@ -374,11 +656,12 @@ def update_status(request):
         },
     )
 
+
 @login_required
 @require_POST
 def update_note(request):
     field = request.POST.get("field")
-    request_item_id = request.POST.get("request_item")
+    item_id = request.POST.get("checklist_item")
     project_id = request.POST.get("project")
     section_id = request.POST.get("section")
     asset_name = (request.POST.get("asset") or "").strip()
@@ -386,15 +669,15 @@ def update_note(request):
 
     if field not in {"imc_comment", "customer_comment"}:
         return HttpResponseBadRequest("Неизвестное поле.")
-    if not all([request_item_id, project_id, section_id]):
+    if not all([item_id, project_id, section_id]):
         return HttpResponseBadRequest("Недостаточно данных.")
 
     project = get_object_or_404(ProjectRegistration, pk=project_id)
     section = get_object_or_404(TypicalSection, pk=section_id)
-    request_item = get_object_or_404(RequestItem, pk=request_item_id)
+    checklist_item = get_object_or_404(ChecklistItem, pk=item_id)
 
     note, _ = ChecklistRequestNote.objects.get_or_create(
-        request_item=request_item,
+        checklist_item=checklist_item,
         project=project,
         section=section,
         asset_name=asset_name,
@@ -409,7 +692,7 @@ def update_note(request):
         "checklists_app/components/comment_cell.html",
         {
             "field": field,
-            "request_item": request_item,
+            "item": checklist_item,
             "project": project,
             "section": section,
             "asset_name": asset_name,
@@ -418,11 +701,12 @@ def update_note(request):
         },
     )
 
+
 @login_required
 @require_POST
 def add_comment(request):
     field = request.POST.get("field")
-    request_item_id = request.POST.get("request_item")
+    item_id = request.POST.get("checklist_item")
     project_id = request.POST.get("project")
     section_id = request.POST.get("section")
     asset_name = (request.POST.get("asset") or "").strip()
@@ -430,17 +714,17 @@ def add_comment(request):
 
     if field not in {"imc_comment", "customer_comment"}:
         return HttpResponseBadRequest("Неизвестное поле.")
-    if not all([request_item_id, project_id, section_id]):
+    if not all([item_id, project_id, section_id]):
         return HttpResponseBadRequest("Недостаточно данных.")
     if not value:
         return HttpResponseBadRequest("Введите текст комментария.")
 
-    request_item = get_object_or_404(RequestItem, pk=request_item_id)
+    checklist_item = get_object_or_404(ChecklistItem, pk=item_id)
     project = get_object_or_404(ProjectRegistration, pk=project_id)
     section = get_object_or_404(TypicalSection, pk=section_id)
 
     note, _ = ChecklistRequestNote.objects.get_or_create(
-        request_item=request_item,
+        checklist_item=checklist_item,
         project=project,
         section=section,
         asset_name=asset_name,
@@ -464,7 +748,7 @@ def add_comment(request):
     history_qs = note.comment_history.filter(field=field).select_related("author")
     context = {
         "field": field,
-        "request_item": request_item,
+        "item": checklist_item,
         "project": project,
         "section": section,
         "asset_name": asset_name,
@@ -472,8 +756,881 @@ def add_comment(request):
         "histories": history_qs,
         "add_comment_url": reverse("checklists_app:add_comment"),
     }
-    # Рендерим ячейку + историю (OOB) в одном ответе
     from django.template.loader import render_to_string
     cell_html = render_to_string("checklists_app/components/comment_cell.html", context, request=request)
     history_html = render_to_string("checklists_app/components/comment_history.html", context, request=request)
     return HttpResponse(cell_html + history_html)
+
+
+# ---------------------------------------------------------------------------
+#  ChecklistItem CRUD
+# ---------------------------------------------------------------------------
+
+@login_required
+@require_GET
+def item_form_create(request):
+    project_id = request.GET.get("project")
+    section_id = request.GET.get("section")
+    all_mode = request.GET.get("all_mode") == "1"
+    project = get_object_or_404(ProjectRegistration, pk=project_id) if project_id else None
+    section = get_object_or_404(TypicalSection, pk=section_id) if section_id else None
+
+    sections_list = []
+    if all_mode and project and project.type:
+        perf_qs = (
+            Performer.objects.filter(registration=project)
+            .exclude(asset_name="")
+            .select_related("typical_section__product")
+            .order_by("position", "id")
+        )
+        seen = set()
+        for perf in perf_qs:
+            ts = perf.typical_section
+            if ts and ts.id not in seen:
+                seen.add(ts.id)
+                sections_list.append(ts)
+        if not section and sections_list:
+            section = sections_list[0]
+
+    code = section.code if section else ""
+    next_num = 1
+    has_additional = False
+    if project and section:
+        agg = ChecklistItem.objects.filter(project=project, section=section).aggregate(m=Max("number"))
+        next_num = (agg["m"] or 0) + 1
+        has_additional = ChecklistItem.objects.filter(
+            project=project, section=section,
+            item_type=ChecklistItem.ItemType.ADDITIONAL,
+        ).exists()
+    forced_type = "additional" if has_additional else ""
+    return render(request, "checklists_app/checklist_item_form.html", {
+        "project": project, "section": section,
+        "code": code, "next_number": next_num,
+        "item_type": "additional" if has_additional else "basic",
+        "forced_type": forced_type,
+        "sections_list": sections_list,
+        "all_mode": all_mode,
+        "form_action": reverse("checklists_app:item_create"),
+    })
+
+
+@login_required
+@require_GET
+def item_form_edit(request, pk):
+    ci = get_object_or_404(ChecklistItem, pk=pk)
+    has_additional = ChecklistItem.objects.filter(
+        project=ci.project, section=ci.section,
+        item_type=ChecklistItem.ItemType.ADDITIONAL,
+    ).exists()
+    forced_type = "additional" if has_additional else ""
+    lock_number = has_additional and ci.item_type == ChecklistItem.ItemType.BASIC
+    return render(request, "checklists_app/checklist_item_form.html", {
+        "project": ci.project, "section": ci.section,
+        "code": ci.code, "next_number": ci.number,
+        "short_name": ci.short_name, "name": ci.name,
+        "item_type": ci.item_type,
+        "forced_type": forced_type,
+        "lock_number": lock_number,
+        "edit_mode": True, "item_id": ci.id,
+        "form_action": reverse("checklists_app:item_update", args=[ci.pk]),
+    })
+
+
+@login_required
+@require_POST
+def item_create(request):
+    project_id = request.POST.get("project")
+    section_id = request.POST.get("section")
+    code = (request.POST.get("code") or "").strip()
+    number_raw = (request.POST.get("number") or "").strip()
+    short_name = (request.POST.get("short_name") or "").strip()
+    name = (request.POST.get("name") or "").strip()
+    item_type = (request.POST.get("item_type") or "basic").strip()
+
+    if not all([project_id, section_id, code, number_raw, name]):
+        return HttpResponseBadRequest("Заполните все обязательные поля.")
+
+    project = get_object_or_404(ProjectRegistration, pk=project_id)
+    section = get_object_or_404(TypicalSection, pk=section_id)
+
+    try:
+        number = int(number_raw)
+    except ValueError:
+        return HttpResponseBadRequest("Некорректный номер.")
+
+    max_pos = ChecklistItem.objects.filter(project=project, section=section).aggregate(m=Max("position"))["m"] or 0
+
+    additional_date = None
+    additional_number = None
+
+    if item_type == ChecklistItem.ItemType.ADDITIONAL:
+        today = date.today()
+        existing_today = ChecklistItem.objects.filter(
+            project=project, section=section,
+            item_type=ChecklistItem.ItemType.ADDITIONAL,
+            additional_date=today,
+        ).first()
+        if existing_today:
+            additional_number = existing_today.additional_number
+        else:
+            max_add = ChecklistItem.objects.filter(
+                project=project, section=section,
+                item_type=ChecklistItem.ItemType.ADDITIONAL,
+            ).aggregate(m=Max("additional_number"))["m"] or 0
+            additional_number = max_add + 1
+        additional_date = today
+
+    if ChecklistItem.objects.filter(project=project, section=section, number=number).exists():
+        return HttpResponseBadRequest(f"Запрос с номером {number} уже существует в данном разделе.")
+
+    ChecklistItem.objects.create(
+        project=project, section=section,
+        code=code, number=number, short_name=short_name, name=name,
+        position=max_pos + 1,
+        item_type=item_type,
+        additional_date=additional_date,
+        additional_number=additional_number,
+    )
+    resp = HttpResponse(status=204)
+    resp["HX-Trigger"] = "checklists:saved"
+    return resp
+
+
+@login_required
+@require_POST
+def item_update(request, pk):
+    ci = get_object_or_404(ChecklistItem, pk=pk)
+    code = (request.POST.get("code") or "").strip()
+    number_raw = (request.POST.get("number") or "").strip()
+    short_name = (request.POST.get("short_name") or "").strip()
+    name = (request.POST.get("name") or "").strip()
+    new_type = (request.POST.get("item_type") or "basic").strip()
+
+    if not all([code, number_raw, name]):
+        return HttpResponseBadRequest("Заполните все обязательные поля.")
+
+    try:
+        new_number = int(number_raw)
+    except ValueError:
+        return HttpResponseBadRequest("Некорректный номер.")
+
+    if new_number != ci.number and ChecklistItem.objects.filter(
+        project=ci.project, section=ci.section, number=new_number,
+    ).exclude(pk=ci.pk).exists():
+        return HttpResponseBadRequest(f"Запрос с номером {new_number} уже существует в данном разделе.")
+
+    ci.number = new_number
+    ci.code = code
+    ci.short_name = short_name
+    ci.name = name
+
+    old_type = ci.item_type
+    ci.item_type = new_type
+
+    if new_type == ChecklistItem.ItemType.ADDITIONAL and old_type != ChecklistItem.ItemType.ADDITIONAL:
+        today = date.today()
+        existing_today = ChecklistItem.objects.filter(
+            project=ci.project, section=ci.section,
+            item_type=ChecklistItem.ItemType.ADDITIONAL,
+            additional_date=today,
+        ).exclude(pk=ci.pk).first()
+        if existing_today:
+            ci.additional_number = existing_today.additional_number
+        else:
+            max_add = ChecklistItem.objects.filter(
+                project=ci.project, section=ci.section,
+                item_type=ChecklistItem.ItemType.ADDITIONAL,
+            ).exclude(pk=ci.pk).aggregate(m=Max("additional_number"))["m"] or 0
+            ci.additional_number = max_add + 1
+        ci.additional_date = today
+    elif new_type == ChecklistItem.ItemType.BASIC:
+        ci.additional_date = None
+        ci.additional_number = None
+
+    ci.save(update_fields=[
+        "code", "number", "short_name", "name",
+        "item_type", "additional_date", "additional_number",
+    ])
+    resp = HttpResponse(status=204)
+    resp["HX-Trigger"] = "checklists:saved"
+    return resp
+
+
+@login_required
+@require_GET
+def item_check_number(request):
+    project_id = request.GET.get("project", "")
+    section_id = request.GET.get("section", "")
+    number_raw = request.GET.get("number", "").strip()
+    exclude_id = request.GET.get("exclude", "").strip()
+
+    if not all([project_id, section_id, number_raw]):
+        return JsonResponse({"exists": False})
+
+    try:
+        number = int(number_raw)
+    except ValueError:
+        return JsonResponse({"exists": False})
+
+    qs = ChecklistItem.objects.filter(
+        project_id=project_id, section_id=section_id, number=number,
+    )
+    if exclude_id and exclude_id.isdigit():
+        qs = qs.exclude(pk=int(exclude_id))
+    return JsonResponse({"exists": qs.exists()})
+
+
+@login_required
+@require_POST
+def item_delete(request, pk):
+    ci = get_object_or_404(ChecklistItem, pk=pk)
+    ci.delete()
+    resp = HttpResponse(status=204)
+    resp["HX-Trigger"] = "checklists:saved"
+    return resp
+
+
+@login_required
+@require_POST
+def item_move(request, pk, direction):
+    ci = get_object_or_404(ChecklistItem, pk=pk)
+
+    group_filter = Q(project=ci.project, section=ci.section)
+    if ci.item_type == ChecklistItem.ItemType.ADDITIONAL and ci.additional_number is not None:
+        group_filter &= Q(item_type=ChecklistItem.ItemType.ADDITIONAL, additional_number=ci.additional_number)
+    else:
+        group_filter &= Q(item_type=ChecklistItem.ItemType.BASIC)
+
+    siblings = ChecklistItem.objects.filter(group_filter).order_by("position", "id")
+    items = list(siblings)
+    idx = next((i for i, x in enumerate(items) if x.pk == ci.pk), None)
+    if idx is None:
+        return HttpResponse(status=204)
+
+    if direction == "up" and idx > 0:
+        swap = items[idx - 1]
+    elif direction == "down" and idx < len(items) - 1:
+        swap = items[idx + 1]
+    else:
+        return HttpResponse(status=204)
+
+    ci.position, swap.position = swap.position, ci.position
+    ci.save(update_fields=["position"])
+    swap.save(update_fields=["position"])
+    resp = HttpResponse(status=204)
+    resp["HX-Trigger"] = "checklists:saved"
+    return resp
+
+
+# ---------------------------------------------------------------------------
+#  XLSX export
+# ---------------------------------------------------------------------------
+
+def _generate_xlsx(project: ProjectRegistration) -> HttpResponse:
+    import io
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    meta = _project_meta(project, None)
+    assets = meta["assets"] or [""]
+
+    perf_qs = (
+        Performer.objects.filter(registration=project)
+        .exclude(asset_name="")
+        .select_related("typical_section__product")
+        .order_by("position", "id")
+    )
+    seen_sec = set()
+    sections = []
+    for perf in perf_qs:
+        ts = perf.typical_section
+        if ts and ts.id not in seen_sec:
+            seen_sec.add(ts.id)
+            sections.append(ts)
+
+    if not sections:
+        return HttpResponseBadRequest("Нет разделов для экспорта.")
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Статусы запросов"
+
+    header_font = Font(bold=True, size=10)
+    header_fill = PatternFill(start_color="E8EEF6", end_color="E8EEF6", fill_type="solid")
+    section_font = Font(bold=True, size=10)
+    section_fill = PatternFill(start_color="E8EEF6", end_color="E8EEF6", fill_type="solid")
+    add_header_font = Font(bold=True, size=10)
+    thin_border = Border(
+        left=Side(style="thin", color="DEE2E6"),
+        right=Side(style="thin", color="DEE2E6"),
+        top=Side(style="thin", color="DEE2E6"),
+        bottom=Side(style="thin", color="DEE2E6"),
+    )
+    wrap_align = Alignment(wrap_text=True, vertical="top")
+    top_align = Alignment(vertical="top")
+
+    all_legal = {}
+    for asset_name in assets:
+        entities = _legal_entities_for(project, asset_name)
+        for ent in entities:
+            if ent.id not in all_legal:
+                label = (
+                    (ent.legal_name or "").strip()
+                    or (ent.work_name or "").strip()
+                    or (getattr(ent.work_item, "asset_name", "") or "").strip()
+                    or "Юр. лицо"
+                )
+                all_legal[ent.id] = {"entity": ent, "label": label}
+
+    entity_order = list(all_legal.keys())
+    entity_labels = [all_legal[eid]["label"] for eid in entity_order]
+
+    headers = ["Код", "№", "Краткое наименование", "Наименование запроса"]
+    for label in entity_labels:
+        headers.append(label)
+        headers.append("Дата")
+    headers.append("Комментарий IMC Montan")
+    headers.append("Комментарий Заказчика")
+
+    for ci, val in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=ci, value=val)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.border = thin_border
+        cell.alignment = top_align
+
+    row_idx = 2
+
+    all_item_ids = []
+    section_items_map = {}
+    for sec in sections:
+        _ensure_checklist_items(project, sec)
+        items = list(
+            ChecklistItem.objects.filter(project=project, section=sec).order_by("position", "id")
+        )
+        section_items_map[sec.id] = items
+        all_item_ids.extend(it.id for it in items)
+
+    status_map = {}
+    if all_item_ids and entity_order:
+        for st in ChecklistStatus.objects.filter(
+            checklist_item__in=all_item_ids,
+            legal_entity__in=entity_order,
+        ).select_related("checklist_item", "legal_entity"):
+            status_map[(st.checklist_item_id, st.legal_entity_id)] = st
+
+    note_map = {}
+    if all_item_ids:
+        for note in ChecklistRequestNote.objects.filter(checklist_item__in=all_item_ids, project=project):
+            note_map[note.checklist_item_id] = note
+
+    for sec in sections:
+        items = section_items_map.get(sec.id, [])
+        if not items:
+            continue
+
+        num_cols = len(headers)
+        ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=num_cols)
+        cell = ws.cell(row=row_idx, column=1, value=sec.name_ru or str(sec))
+        cell.font = section_font
+        cell.fill = section_fill
+        cell.border = thin_border
+        cell.alignment = top_align
+        for ci in range(2, num_cols + 1):
+            ws.cell(row=row_idx, column=ci).border = thin_border
+            ws.cell(row=row_idx, column=ci).fill = section_fill
+        row_idx += 1
+
+        seen_additional_groups = set()
+        for item in items:
+            if item.item_type == ChecklistItem.ItemType.ADDITIONAL and item.additional_number and item.additional_date:
+                group_key = (item.additional_number, item.additional_date)
+                if group_key not in seen_additional_groups:
+                    seen_additional_groups.add(group_key)
+                    add_text = (
+                        f"Дополнительный запрос № {item.additional_number}"
+                        f" от {item.additional_date.strftime('%d.%m.%Y')}"
+                    )
+                    ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=num_cols)
+                    cell = ws.cell(row=row_idx, column=1, value=add_text)
+                    cell.font = add_header_font
+                    cell.border = thin_border
+                    cell.alignment = top_align
+                    for ci in range(2, num_cols + 1):
+                        ws.cell(row=row_idx, column=ci).border = thin_border
+                    row_idx += 1
+
+            col = 1
+            ws.cell(row=row_idx, column=col, value=item.code).border = thin_border
+            ws.cell(row=row_idx, column=col).alignment = top_align
+            col += 1
+            ws.cell(row=row_idx, column=col, value=f"{item.number:02d}").border = thin_border
+            ws.cell(row=row_idx, column=col).alignment = top_align
+            col += 1
+            ws.cell(row=row_idx, column=col, value=item.short_name).border = thin_border
+            ws.cell(row=row_idx, column=col).alignment = top_align
+            col += 1
+            c = ws.cell(row=row_idx, column=col, value=item.name)
+            c.border = thin_border
+            c.alignment = wrap_align
+            col += 1
+
+            for eid in entity_order:
+                st = status_map.get((item.id, eid))
+                status_label = ""
+                status_date = ""
+                if st:
+                    status_label = st.get_status_display()
+                    if st.status_changed_at:
+                        status_date = st.status_changed_at.strftime("%d.%m.%y %H:%M")
+                ws.cell(row=row_idx, column=col, value=status_label).border = thin_border
+                ws.cell(row=row_idx, column=col).alignment = top_align
+                col += 1
+                ws.cell(row=row_idx, column=col, value=status_date).border = thin_border
+                ws.cell(row=row_idx, column=col).alignment = top_align
+                col += 1
+
+            note = note_map.get(item.id)
+            c = ws.cell(row=row_idx, column=col, value=(note.imc_comment if note else ""))
+            c.border = thin_border
+            c.alignment = wrap_align
+            col += 1
+            c = ws.cell(row=row_idx, column=col, value=(note.customer_comment if note else ""))
+            c.border = thin_border
+            c.alignment = wrap_align
+            row_idx += 1
+
+    ws.column_dimensions['A'].width = 8
+    ws.column_dimensions['B'].width = 6
+    ws.column_dimensions['C'].width = 20
+    ws.column_dimensions['D'].width = 40
+    for i in range(len(entity_labels)):
+        status_col = 5 + i * 2
+        date_col = 6 + i * 2
+        ws.column_dimensions[get_column_letter(status_col)].width = 18
+        ws.column_dimensions[get_column_letter(date_col)].width = 14
+    if len(headers) >= 5 + len(entity_labels) * 2 + 1:
+        ws.column_dimensions[get_column_letter(len(headers) - 1)].width = 30
+        ws.column_dimensions[get_column_letter(len(headers))].width = 30
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    project_name = (project.name or project.short_uid or "project").replace(" ", "_")
+    filename = f"checklist_{project_name}.xlsx"
+
+    response = HttpResponse(
+        buf.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+@login_required
+@require_GET
+def export_xlsx(request):
+    project_uid = (request.GET.get("project_uid") or "").strip()
+    if not project_uid:
+        return HttpResponseBadRequest("Не указан проект.")
+    project = get_object_or_404(
+        ProjectRegistration.objects.select_related("type"), short_uid=project_uid,
+    )
+    return _generate_xlsx(project)
+
+
+# ---------------------------------------------------------------------------
+#  Public shared links
+# ---------------------------------------------------------------------------
+
+def _get_shared_link(token: str) -> Optional[SharedChecklistLink]:
+    try:
+        link = SharedChecklistLink.objects.select_related("project", "project__type").get(token=token)
+    except SharedChecklistLink.DoesNotExist:
+        return None
+    if link.is_expired:
+        return None
+    return link
+
+
+@login_required
+@require_POST
+def shared_link_create_or_get(request):
+    project_uid = (request.POST.get("project_uid") or "").strip()
+    if not project_uid:
+        return JsonResponse({"ok": False, "error": "Не указан проект."}, status=400)
+
+    project = get_object_or_404(ProjectRegistration, short_uid=project_uid)
+    link = SharedChecklistLink.objects.filter(
+        project=project, expires_at__gt=timezone.now()
+    ).order_by("-created_at").first()
+
+    if not link:
+        link = SharedChecklistLink.objects.create(
+            project=project,
+            created_by=request.user,
+        )
+
+    public_url = request.build_absolute_uri(
+        reverse("checklists_app:shared_page", args=[link.token])
+    )
+    return JsonResponse({
+        "ok": True,
+        "link_id": link.id,
+        "token": link.token,
+        "url": public_url,
+        "permission": link.permission,
+        "expires_at": link.expires_at.strftime("%Y-%m-%d"),
+    })
+
+
+@login_required
+@require_POST
+def shared_link_update(request):
+    link_id = request.POST.get("link_id")
+    if not link_id:
+        return JsonResponse({"ok": False, "error": "Не указан ID ссылки."}, status=400)
+
+    link = get_object_or_404(SharedChecklistLink, pk=link_id)
+    permission = request.POST.get("permission")
+    expires_at = request.POST.get("expires_at")
+
+    if permission and permission in dict(SharedChecklistLink.Permission.choices):
+        link.permission = permission
+
+    if expires_at:
+        try:
+            link.expires_at = timezone.make_aware(
+                timezone.datetime.strptime(expires_at, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+            )
+        except (ValueError, TypeError):
+            pass
+
+    link.save(update_fields=["permission", "expires_at", "updated_at"])
+    return JsonResponse({"ok": True})
+
+
+@ensure_csrf_cookie
+@require_GET
+def shared_page(request, token: str):
+    link = _get_shared_link(token)
+    if not link:
+        return render(request, "checklists_app/shared_expired.html", status=410)
+
+    project = link.project
+    meta = _project_meta(project, None) if project else {"assets": [], "asset": "", "sections": []}
+
+    project_options = [{
+        "id": project.id,
+        "short_uid": project.short_uid or "",
+        "label": " ".join(
+            x for x in (project.short_uid or "", _product_short_label(getattr(project, "type", None)), project.name) if x
+        ),
+        "code": (project.short_uid or "").strip() or f"{project.number}{project.group}".upper(),
+        "product_short": _product_short_label(getattr(project, "type", None)),
+        "product_id": getattr(getattr(project, "type", None), "id", None),
+    }]
+
+    try:
+        table_url = reverse("checklists_app:shared_table_partial", args=[token])
+        meta_url_base = reverse("checklists_app:shared_project_meta", args=[token])
+        update_url = reverse("checklists_app:shared_update_status", args=[token])
+        note_url = reverse("checklists_app:shared_update_note", args=[token])
+    except NoReverseMatch:
+        table_url = f"/checklists/shared/{token}/table/"
+        meta_url_base = f"/checklists/shared/{token}/meta/"
+        update_url = f"/checklists/shared/{token}/status/update/"
+        note_url = f"/checklists/shared/{token}/note/update/"
+
+    return render(request, "checklists_app/shared_page.html", {
+        "link": link,
+        "project": project,
+        "project_options": project_options,
+        "selected_project_uid": project.short_uid or "",
+        "asset_options": meta["assets"],
+        "asset_items": meta.get("asset_items", []),
+        "selected_asset": meta["asset"],
+        "section_options": meta["sections"],
+        "table_partial_url": table_url,
+        "update_status_url": update_url,
+        "update_note_url": note_url,
+        "project_meta_url_base": meta_url_base,
+        "can_edit": link.can_edit,
+        "token": token,
+    })
+
+
+@require_GET
+def shared_project_meta(request, token: str):
+    link = _get_shared_link(token)
+    if not link:
+        return JsonResponse({"error": "Ссылка недействительна."}, status=403)
+    asset = (request.GET.get("asset") or "").strip() or None
+    return JsonResponse(_project_meta(link.project, asset))
+
+
+@require_GET
+def shared_table_partial(request, token: str):
+    link = _get_shared_link(token)
+    if not link:
+        return HttpResponse('<div class="alert alert-danger">Ссылка недействительна или срок действия истёк.</div>')
+
+    project = link.project
+    asset_name = (request.GET.get("asset") or "").strip()
+    section_id = (request.GET.get("section") or "").strip()
+
+    if not project.type:
+        return render(request, "checklists_app/status_table.html", {
+            "project": project, "section": None,
+            "error": "У проекта не указан тип продукта",
+            "readonly": not link.can_edit,
+        })
+
+    all_mode = section_id == "all"
+
+    effective_asset = asset_name
+    if asset_name and asset_name.startswith("asset:"):
+        effective_asset = asset_name[6:]
+
+    if all_mode:
+        perf_qs = Performer.objects.filter(registration=project).exclude(asset_name="")
+        if effective_asset and asset_name != "all":
+            perf_qs = perf_qs.filter(asset_name=effective_asset)
+        perf_qs = perf_qs.select_related("typical_section__product").order_by("position", "id")
+
+        seen_ids = set()
+        sections = []
+        for perf in perf_qs:
+            ts = perf.typical_section
+            if ts and ts.id not in seen_ids:
+                seen_ids.add(ts.id)
+                sections.append(ts)
+
+        if not sections:
+            return render(request, "checklists_app/status_table.html", {
+                "project": project, "section": None,
+                "error": "Нет разделов для данного продукта",
+                "readonly": not link.can_edit,
+            })
+
+        all_items = []
+        for sec in sections:
+            _ensure_checklist_items(project, sec)
+            items = list(
+                ChecklistItem.objects.filter(project=project, section=sec).order_by("position", "id")
+            )
+            all_items.append((sec, items))
+
+        legal_entities = _legal_entities_for(project, asset_name)
+        url_map = {
+            "update_status": reverse("checklists_app:shared_update_status", args=[token]),
+            "add_comment": reverse("checklists_app:shared_add_comment", args=[token]),
+            "update_note": reverse("checklists_app:shared_update_note", args=[token]),
+        }
+        context = _build_all_sections_context(project, all_items, asset_name, legal_entities, url_map)
+        context["readonly"] = not link.can_edit
+        context["all_mode"] = True
+        context["section"] = sections[0]
+        context["xlsx_url"] = reverse("checklists_app:shared_export_xlsx", args=[token])
+        return render(request, "checklists_app/status_table.html", context)
+
+    section = _resolve_section(project, section_id, asset_name)
+    if not section:
+        return render(request, "checklists_app/status_table.html", {
+            "project": project, "section": None,
+            "error": "Не удалось определить раздел",
+            "readonly": not link.can_edit,
+        })
+
+    _ensure_checklist_items(project, section)
+    checklist_items = list(
+        ChecklistItem.objects.filter(project=project, section=section).order_by("position", "id")
+    )
+    legal_entities = _legal_entities_for(project, asset_name)
+
+    url_map = {
+        "update_status": reverse("checklists_app:shared_update_status", args=[token]),
+        "add_comment": reverse("checklists_app:shared_add_comment", args=[token]),
+        "update_note": reverse("checklists_app:shared_update_note", args=[token]),
+    }
+    context = _build_table_context(project, section, asset_name, checklist_items, legal_entities, url_map)
+    context["readonly"] = not link.can_edit
+    return render(request, "checklists_app/status_table.html", context)
+
+
+@require_POST
+def shared_update_status(request, token: str):
+    link = _get_shared_link(token)
+    if not link or not link.can_edit:
+        return HttpResponseBadRequest("Нет прав на редактирование или ссылка недействительна.")
+
+    item_id = request.POST.get("checklist_item")
+    legal_entity_id = request.POST.get("legal_entity")
+    status_value = request.POST.get("status")
+    asset_name = (request.POST.get("asset_name") or "").strip()
+
+    if not all([item_id, legal_entity_id, status_value]):
+        return HttpResponseBadRequest("Недостаточно данных.")
+
+    valid_values = {v for v, _ in ChecklistStatus.Status.choices}
+    if status_value not in valid_values:
+        return HttpResponseBadRequest("Некорректный статус.")
+
+    checklist_item = get_object_or_404(ChecklistItem, pk=item_id)
+    legal_entity = get_object_or_404(LegalEntity, pk=legal_entity_id)
+
+    if legal_entity.project_id != link.project_id:
+        return HttpResponseBadRequest("Нет доступа к этому юридическому лицу.")
+
+    with transaction.atomic():
+        status_obj, created = ChecklistStatus.objects.select_for_update().get_or_create(
+            checklist_item=checklist_item,
+            legal_entity=legal_entity,
+            defaults={"updated_by": None},
+        )
+        previous = None if created else status_obj.status
+        status_obj.status = status_value
+        status_obj.updated_by = request.user if request.user.is_authenticated else None
+        status_obj.save()
+
+        if previous != status_value:
+            ChecklistStatusHistory.objects.create(
+                checklist_status=status_obj,
+                checklist_item=checklist_item,
+                legal_entity=legal_entity,
+                previous_status=previous or "",
+                new_status=status_value,
+                changed_by=request.user if request.user.is_authenticated else None,
+            )
+
+    related_entities = _legal_entities_for(link.project, asset_name or None)
+    status_map = {
+        st.legal_entity_id: st
+        for st in ChecklistStatus.objects.filter(
+            checklist_item=checklist_item,
+            legal_entity__in=[le.id for le in related_entities],
+        )
+    }
+    row_statuses = [
+        {"entity": entity, "status": status_map.get(entity.id)}
+        for entity in related_entities
+    ]
+    code_class = _code_cell_class(row_statuses)
+
+    return render(request, "checklists_app/components/status_cell_fragment.html", {
+        "item": checklist_item,
+        "legal_entity": legal_entity,
+        "status": status_obj,
+        "status_choices": ChecklistStatus.Status.choices,
+        "default_status": ChecklistStatus.Status.MISSING,
+        "update_url": reverse("checklists_app:shared_update_status", args=[token]),
+        "code_class": code_class,
+        "asset_name": asset_name,
+    })
+
+
+@require_POST
+def shared_update_note(request, token: str):
+    link = _get_shared_link(token)
+    if not link or not link.can_edit:
+        return HttpResponseBadRequest("Нет прав на редактирование или ссылка недействительна.")
+
+    field = request.POST.get("field")
+    item_id = request.POST.get("checklist_item")
+    project_id = request.POST.get("project")
+    section_id = request.POST.get("section")
+    asset_name = (request.POST.get("asset") or "").strip()
+    value = (request.POST.get("value") or "").strip()
+
+    if field not in {"imc_comment", "customer_comment"}:
+        return HttpResponseBadRequest("Неизвестное поле.")
+    if not all([item_id, project_id, section_id]):
+        return HttpResponseBadRequest("Недостаточно данных.")
+
+    project = get_object_or_404(ProjectRegistration, pk=project_id)
+    if project.id != link.project_id:
+        return HttpResponseBadRequest("Нет доступа к этому проекту.")
+
+    section = get_object_or_404(TypicalSection, pk=section_id)
+    checklist_item = get_object_or_404(ChecklistItem, pk=item_id)
+
+    note, _ = ChecklistRequestNote.objects.get_or_create(
+        checklist_item=checklist_item, project=project, section=section, asset_name=asset_name,
+        defaults={"updated_by": request.user if request.user.is_authenticated else None},
+    )
+    setattr(note, field, value)
+    note.updated_by = request.user if request.user.is_authenticated else None
+    note.save(update_fields=[field, "updated_by", "updated_at"])
+
+    return render(request, "checklists_app/components/comment_cell.html", {
+        "field": field, "item": checklist_item, "project": project,
+        "section": section, "asset_name": asset_name, "note": note,
+        "note_url": reverse("checklists_app:shared_update_note", args=[token]),
+    })
+
+
+@require_POST
+def shared_add_comment(request, token: str):
+    link = _get_shared_link(token)
+    if not link or not link.can_edit:
+        return HttpResponseBadRequest("Нет прав на редактирование или ссылка недействительна.")
+
+    field = request.POST.get("field")
+    item_id = request.POST.get("checklist_item")
+    project_id = request.POST.get("project")
+    section_id = request.POST.get("section")
+    asset_name = (request.POST.get("asset") or "").strip()
+    value = (request.POST.get("value") or "").strip()
+
+    if field not in {"imc_comment", "customer_comment"}:
+        return HttpResponseBadRequest("Неизвестное поле.")
+    if not all([item_id, project_id, section_id]):
+        return HttpResponseBadRequest("Недостаточно данных.")
+    if not value:
+        return HttpResponseBadRequest("Введите текст комментария.")
+
+    checklist_item = get_object_or_404(ChecklistItem, pk=item_id)
+    project = get_object_or_404(ProjectRegistration, pk=project_id)
+    if project.id != link.project_id:
+        return HttpResponseBadRequest("Нет доступа к этому проекту.")
+
+    section = get_object_or_404(TypicalSection, pk=section_id)
+
+    note, _ = ChecklistRequestNote.objects.get_or_create(
+        checklist_item=checklist_item, project=project, section=section, asset_name=asset_name,
+        defaults={"updated_by": request.user if request.user.is_authenticated else None},
+    )
+
+    if field == "imc_comment":
+        note.imc_comment = value
+    else:
+        note.customer_comment = value
+    note.updated_by = request.user if request.user.is_authenticated else None
+    note.save(update_fields=[field, "updated_by", "updated_at"])
+
+    ChecklistCommentHistory.objects.create(
+        note=note, field=field, text=value,
+        author=request.user if request.user.is_authenticated else None,
+    )
+
+    history_qs = note.comment_history.filter(field=field).select_related("author")
+    context = {
+        "field": field, "item": checklist_item, "project": project,
+        "section": section, "asset_name": asset_name, "note": note,
+        "histories": history_qs,
+        "add_comment_url": reverse("checklists_app:shared_add_comment", args=[token]),
+    }
+    from django.template.loader import render_to_string
+    cell_html = render_to_string("checklists_app/components/comment_cell.html", context, request=request)
+    history_html = render_to_string("checklists_app/components/comment_history.html", context, request=request)
+    return HttpResponse(cell_html + history_html)
+
+
+@require_GET
+def shared_export_xlsx(request, token: str):
+    link = _get_shared_link(token)
+    if not link:
+        return HttpResponseBadRequest("Ссылка недействительна или срок действия истёк.")
+    return _generate_xlsx(link.project)

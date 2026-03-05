@@ -1,5 +1,5 @@
 <div  class="checklist-comment"
-      id="chk-comment-{{ field }}-{{ request_item.id }}"
+      id="chk-comment-{{ field }}-{{ item.id }}"
       hx-swap-oob="true"
       data-bs-toggle="tooltip"
       data-bs-placement="top"
@@ -20,14 +20,16 @@
             <span class="comment-placeholder">&nbsp;</span>
           {% endif %}
         </div>
+        {% if not readonly %}
         <button
           type="button"
           class="btn btn-link btn-sm p-0"
           title="Редактировать комментарий"
           data-bs-toggle="modal"
-          data-bs-target="#commentModal-{{ field }}-{{ request_item.id }}">
+          data-bs-target="#commentModal-{{ field }}-{{ item.id }}">
           <i class="bi bi-pencil-square text-muted"></i>
         </button>
+        {% endif %}
       </div>
     {% endwith %}
 </div>

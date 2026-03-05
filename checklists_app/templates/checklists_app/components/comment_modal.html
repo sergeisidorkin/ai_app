@@ -1,5 +1,5 @@
 <div class="modal fade"
-     id="commentModal-{{ field }}-{{ request_item.id }}"
+     id="commentModal-{{ field }}-{{ item.id }}"
      tabindex="-1"
      aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
@@ -17,11 +17,11 @@
       <div class="modal-body">
         <form
           hx-post="{{ add_comment_url }}"
-          hx-target="#chk-comment-{{ field }}-{{ request_item.id }}"
+          hx-target="#chk-comment-{{ field }}-{{ item.id }}"
           hx-swap="outerHTML">
           {% csrf_token %}
           <input type="hidden" name="field" value="{{ field }}">
-          <input type="hidden" name="request_item" value="{{ request_item.id }}">
+          <input type="hidden" name="checklist_item" value="{{ item.id }}">
           <input type="hidden" name="project" value="{{ project.id }}">
           <input type="hidden" name="section" value="{{ section.id }}">
           <input type="hidden" name="asset" value="{{ asset_name }}">
