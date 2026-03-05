@@ -69,14 +69,10 @@ class ChecklistStatus(models.Model):
         verbose_name_plural = "Статусы запросов"
 
     def save(self, *args, **kwargs):
-        refresh_timestamp = False
-        if not self.status_changed_at:
-            refresh_timestamp = True
-        elif self.pk:
+        if self.pk:
             previous = type(self).objects.filter(pk=self.pk).values_list("status", flat=True).first()
-            refresh_timestamp = previous != self.status
-        if refresh_timestamp:
-            self.status_changed_at = timezone.now()
+            if previous and previous != self.status:
+                self.status_changed_at = timezone.now()
         super().save(*args, **kwargs)
 
     def __str__(self):
