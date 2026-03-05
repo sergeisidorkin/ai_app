@@ -130,6 +130,7 @@ ENFORCE_LOGIN_EXEMPT = (
     "/ws/",  # на всякий случай для WS-рутов
     "/favicon.ico",
     "/site.webmanifest",
+    "/checklists/shared/",
 )
 
 CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[

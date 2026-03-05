@@ -604,6 +604,38 @@ def table_partial(request):
     return render(request, "checklists_app/status_table.html", context)
 
 
+def _render_status_cell(request, checklist_item, legal_entity, status_obj, asset_name,
+                        update_url_name="checklists_app:update_status"):
+    project = legal_entity.project
+    related_entities = _legal_entities_for(project, asset_name or None)
+    status_map = {
+        st.legal_entity_id: st
+        for st in ChecklistStatus.objects.filter(
+            checklist_item=checklist_item,
+            legal_entity__in=[le.id for le in related_entities],
+        )
+    }
+    row_statuses = [
+        {"entity": entity, "status": status_map.get(entity.id)}
+        for entity in related_entities
+    ]
+    code_class = _code_cell_class(row_statuses)
+    return render(
+        request,
+        "checklists_app/components/status_cell_fragment.html",
+        {
+            "item": checklist_item,
+            "legal_entity": legal_entity,
+            "status": status_obj,
+            "status_choices": ChecklistStatus.Status.choices,
+            "default_status": ChecklistStatus.Status.MISSING,
+            "update_url": update_url_name if update_url_name.startswith("/") else reverse(update_url_name),
+            "code_class": code_class,
+            "asset_name": asset_name,
+        },
+    )
+
+
 @login_required
 @require_POST
 def update_status(request):
@@ -621,6 +653,14 @@ def update_status(request):
 
     checklist_item = get_object_or_404(ChecklistItem, pk=item_id)
     legal_entity = get_object_or_404(LegalEntity, pk=legal_entity_id)
+
+    existing = ChecklistStatus.objects.filter(
+        checklist_item=checklist_item, legal_entity=legal_entity,
+    ).first()
+    if existing and existing.status == status_value:
+        return _render_status_cell(request, checklist_item, legal_entity, existing, asset_name)
+    if not existing and status_value == ChecklistStatus.Status.MISSING:
+        return _render_status_cell(request, checklist_item, legal_entity, None, asset_name)
 
     with transaction.atomic():
         status_obj, created = ChecklistStatus.objects.select_for_update().get_or_create(
@@ -643,35 +683,7 @@ def update_status(request):
                 changed_by=request.user,
             )
 
-    project = legal_entity.project
-    related_entities = _legal_entities_for(project, asset_name or None)
-    status_map = {
-        st.legal_entity_id: st
-        for st in ChecklistStatus.objects.filter(
-            checklist_item=checklist_item,
-            legal_entity__in=[le.id for le in related_entities],
-        )
-    }
-    row_statuses = [
-        {"entity": entity, "status": status_map.get(entity.id)}
-        for entity in related_entities
-    ]
-    code_class = _code_cell_class(row_statuses)
-
-    return render(
-        request,
-        "checklists_app/components/status_cell_fragment.html",
-        {
-            "item": checklist_item,
-            "legal_entity": legal_entity,
-            "status": status_obj,
-            "status_choices": ChecklistStatus.Status.choices,
-            "default_status": ChecklistStatus.Status.MISSING,
-            "update_url": reverse("checklists_app:update_status"),
-            "code_class": code_class,
-            "asset_name": asset_name,
-        },
-    )
+    return _render_status_cell(request, checklist_item, legal_entity, status_obj, asset_name)
 
 
 @login_required
@@ -1499,15 +1511,26 @@ def shared_update_status(request, token: str):
     if legal_entity.project_id != link.project_id:
         return HttpResponseBadRequest("Нет доступа к этому юридическому лицу.")
 
+    update_url = reverse("checklists_app:shared_update_status", args=[token])
+
+    existing = ChecklistStatus.objects.filter(
+        checklist_item=checklist_item, legal_entity=legal_entity,
+    ).first()
+    if existing and existing.status == status_value:
+        return _render_status_cell(request, checklist_item, legal_entity, existing, asset_name, update_url)
+    if not existing and status_value == ChecklistStatus.Status.MISSING:
+        return _render_status_cell(request, checklist_item, legal_entity, None, asset_name, update_url)
+
+    user = request.user if request.user.is_authenticated else None
     with transaction.atomic():
         status_obj, created = ChecklistStatus.objects.select_for_update().get_or_create(
             checklist_item=checklist_item,
             legal_entity=legal_entity,
-            defaults={"updated_by": None},
+            defaults={"updated_by": user},
         )
         previous = None if created else status_obj.status
         status_obj.status = status_value
-        status_obj.updated_by = request.user if request.user.is_authenticated else None
+        status_obj.updated_by = user
         status_obj.save()
 
         if previous != status_value:
@@ -1517,33 +1540,10 @@ def shared_update_status(request, token: str):
                 legal_entity=legal_entity,
                 previous_status=previous or "",
                 new_status=status_value,
-                changed_by=request.user if request.user.is_authenticated else None,
+                changed_by=user,
             )
 
-    related_entities = _legal_entities_for(link.project, asset_name or None)
-    status_map = {
-        st.legal_entity_id: st
-        for st in ChecklistStatus.objects.filter(
-            checklist_item=checklist_item,
-            legal_entity__in=[le.id for le in related_entities],
-        )
-    }
-    row_statuses = [
-        {"entity": entity, "status": status_map.get(entity.id)}
-        for entity in related_entities
-    ]
-    code_class = _code_cell_class(row_statuses)
-
-    return render(request, "checklists_app/components/status_cell_fragment.html", {
-        "item": checklist_item,
-        "legal_entity": legal_entity,
-        "status": status_obj,
-        "status_choices": ChecklistStatus.Status.choices,
-        "default_status": ChecklistStatus.Status.MISSING,
-        "update_url": reverse("checklists_app:shared_update_status", args=[token]),
-        "code_class": code_class,
-        "asset_name": asset_name,
-    })
+    return _render_status_cell(request, checklist_item, legal_entity, status_obj, asset_name, update_url)
 
 
 @require_POST
