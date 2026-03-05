@@ -26,10 +26,15 @@
 
                 <div class="chk-filter-group">
                     <span class="small text-muted">Актив:</span>
-                    <select id="chk-asset" class="form-select form-select-sm" {% if not asset_options %}disabled{% endif %}>
-                        {% if asset_options %}
-                            {% for name in asset_options %}
-                                <option value="{{ name }}" {% if name == selected_asset %}selected{% endif %}>{{ name }}</option>
+                    <select id="chk-asset" class="form-select form-select-sm" {% if not asset_items %}disabled{% endif %}>
+                        {% if asset_items %}
+                            <option value="all">Все активы</option>
+                            {% for item in asset_items %}
+                                <option value="{{ item.value }}"
+                                        data-item-type="{{ item.type }}"
+                                        {% if item.value == selected_asset %}selected{% endif %}>
+                                    {% if item.type == "asset" %}{{ item.label }}  • ᴀᴄᴛɪᴠᴇ{% else %}    {{ item.label }}{% endif %}
+                                </option>
                             {% endfor %}
                         {% else %}
                             <option value="">Нет данных</option>
@@ -49,9 +54,72 @@
                         {% endif %}
                     </select>
                 </div>
+
+                {% if request.user.is_authenticated and request.user.is_staff %}
+                <div class="chk-filter-group ms-auto">
+                    <div class="btn-group">
+                        <button type="button" id="chk-share-btn" class="btn btn-outline-primary btn-sm d-flex align-items-center gap-1" title="Публичная ссылка">
+                            <i class="bi bi-share"></i>
+                            <span>Публичная ссылка</span>
+                        </button>
+                        <button type="button" id="chk-share-settings-btn" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#shared-link-settings-modal" title="Настройки публичной ссылки">
+                            <i class="bi bi-gear"></i>
+                        </button>
+                    </div>
+                </div>
+                {% endif %}
             </div>
         </div>
     </div>
+</div>
+
+{% if request.user.is_authenticated and request.user.is_staff %}
+<div class="modal fade" id="shared-link-settings-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Настройки публичной ссылки</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="shared-link-loading" class="text-muted small mb-3">Загрузка…</div>
+        <div id="shared-link-content" class="d-none">
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Ссылка</label>
+            <div class="input-group">
+              <input type="text" id="shared-link-url" class="form-control form-control-sm" readonly>
+              <button type="button" id="shared-link-copy" class="btn btn-outline-secondary btn-sm" title="Копировать">
+                <i class="bi bi-clipboard"></i>
+              </button>
+            </div>
+          </div>
+          <hr>
+          <label class="form-label fw-semibold">Параметры</label>
+          <div class="mb-3">
+            <select id="shared-link-permission" class="form-select form-select-sm">
+              <option value="view">Доступен просмотр</option>
+              <option value="edit">Доступно редактирование</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small text-muted">Дата прекращения действия</label>
+            <input type="date" id="shared-link-expiry" class="form-control form-control-sm">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Закрыть</button>
+        <button type="button" id="shared-link-save" class="btn btn-primary btn-sm d-none">Сохранить</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<div class="modal fade" id="checklists-item-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable">
+    <div class="modal-content"></div>
+  </div>
 </div>
 
 <div class="d-flex justify-content-between align-items-center mb-3 chk-status-heading">
@@ -133,17 +201,22 @@
                 const data = await resp.json();
                 if (assetSel) {
                     assetSel.innerHTML = '';
-                    const assets = data.assets || [];
-                    if (!assets.length) {
+                    const items = data.asset_items || [];
+                    if (!items.length) {
                         assetSel.innerHTML = '<option value="">Нет данных</option>';
                         assetSel.setAttribute('disabled', 'disabled');
                     } else {
                         assetSel.removeAttribute('disabled');
-                        assets.forEach((a) => {
+                        const allOpt = document.createElement('option');
+                        allOpt.value = 'all';
+                        allOpt.textContent = 'Все активы';
+                        assetSel.appendChild(allOpt);
+                        items.forEach((item) => {
                             const opt = document.createElement('option');
-                            opt.value = a;
-                            opt.textContent = a;
-                            if (a === data.asset) opt.selected = true;
+                            opt.value = item.value;
+                            opt.textContent = item.type === 'asset' ? item.label + '  \u2022 \u1D00\u1D04\u1D1B\u026A\u1D20\u1D07' : '    ' + item.label;
+                            opt.dataset.itemType = item.type;
+                            if (item.value === data.asset) opt.selected = true;
                             assetSel.appendChild(opt);
                         });
                     }
@@ -154,6 +227,10 @@
                     if (!sections.length) {
                         sectionSel.innerHTML = '<option value="">Нет данных</option>';
                     } else {
+                        const allOpt = document.createElement('option');
+                        allOpt.value = 'all';
+                        allOpt.textContent = 'Все разделы';
+                        sectionSel.appendChild(allOpt);
                         sections.forEach((s) => {
                             const opt = document.createElement('option');
                             opt.value = s.id;
@@ -166,6 +243,37 @@
                 console.error('checklists:meta', err);
             } finally {
                 showLoading(false);
+            }
+        }
+
+        async function loadSections() {
+            if (!metaUrlBase || !projectSel?.value) return;
+            try {
+                const projectUid = projectSel.value;
+                const url = metaUrlBase.replace("__uid__", encodeURIComponent(projectUid))
+                    + '?asset=' + encodeURIComponent(assetSel?.value || '');
+                const resp = await fetch(url, { headers: { 'X-Requested-With': 'fetch' } });
+                const data = await resp.json();
+                if (sectionSel) {
+                    sectionSel.innerHTML = '';
+                    const sections = data.sections || [];
+                    if (!sections.length) {
+                        sectionSel.innerHTML = '<option value="">Нет данных</option>';
+                    } else {
+                        const allOpt = document.createElement('option');
+                        allOpt.value = 'all';
+                        allOpt.textContent = 'Все разделы';
+                        sectionSel.appendChild(allOpt);
+                        sections.forEach((s) => {
+                            const opt = document.createElement('option');
+                            opt.value = s.id;
+                            opt.textContent = s.name;
+                            sectionSel.appendChild(opt);
+                        });
+                    }
+                }
+            } catch (err) {
+                console.error('checklists:sections', err);
             }
         }
 
@@ -200,12 +308,332 @@
             await loadProjectMeta();
             await reloadTable();
         });
-        assetSel?.addEventListener('change', reloadTable);
+        assetSel?.addEventListener('change', async () => {
+            await loadSections();
+            await reloadTable();
+        });
         sectionSel?.addEventListener('change', reloadTable);
 
         (async function init() {
             await loadProjectMeta();
             await reloadTable();
         })();
+
+        // --- Shared link logic ---
+        const shareBtn = document.getElementById('chk-share-btn');
+        const settingsBtn = document.getElementById('chk-share-settings-btn');
+        let currentLinkData = null;
+
+        function getCsrf() {
+            const m = document.cookie.match('(^|;)\\s*csrftoken\\s*=\\s*([^;]+)');
+            return m ? m.pop() : '';
+        }
+
+        async function fetchOrCreateLink() {
+            const projectUid = projectSel?.value || '';
+            if (!projectUid) return null;
+            const resp = await fetch('{% url "checklists_app:shared_link_create" %}', {
+                method: 'POST',
+                headers: { 'X-CSRFToken': getCsrf(), 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'project_uid=' + encodeURIComponent(projectUid),
+            });
+            return await resp.json();
+        }
+
+        if (shareBtn) {
+            shareBtn.addEventListener('click', async () => {
+                try {
+                    const data = await fetchOrCreateLink();
+                    if (data && data.ok && data.url) {
+                        window.open(data.url, '_blank');
+                    } else {
+                        alert(data?.error || 'Не удалось создать ссылку');
+                    }
+                } catch (err) {
+                    alert('Ошибка: ' + err.message);
+                }
+            });
+        }
+
+        const modalEl = document.getElementById('shared-link-settings-modal');
+        if (modalEl) {
+            modalEl.addEventListener('show.bs.modal', async () => {
+                const loadingEl = document.getElementById('shared-link-loading');
+                const contentEl = document.getElementById('shared-link-content');
+                const saveBtn = document.getElementById('shared-link-save');
+                loadingEl.classList.remove('d-none');
+                contentEl.classList.add('d-none');
+                saveBtn.classList.add('d-none');
+
+                try {
+                    const data = await fetchOrCreateLink();
+                    if (!data || !data.ok) {
+                        loadingEl.textContent = data?.error || 'Ошибка загрузки';
+                        return;
+                    }
+                    currentLinkData = data;
+                    document.getElementById('shared-link-url').value = data.url;
+                    document.getElementById('shared-link-permission').value = data.permission;
+                    document.getElementById('shared-link-expiry').value = data.expires_at;
+                    loadingEl.classList.add('d-none');
+                    contentEl.classList.remove('d-none');
+                    saveBtn.classList.remove('d-none');
+                } catch (err) {
+                    loadingEl.textContent = 'Ошибка: ' + err.message;
+                }
+            });
+
+            document.getElementById('shared-link-copy')?.addEventListener('click', () => {
+                const urlInput = document.getElementById('shared-link-url');
+                if (urlInput) {
+                    navigator.clipboard.writeText(urlInput.value).then(() => {
+                        const btn = document.getElementById('shared-link-copy');
+                        const icon = btn.querySelector('i');
+                        icon.className = 'bi bi-check-lg text-success';
+                        setTimeout(() => { icon.className = 'bi bi-clipboard'; }, 1500);
+                    });
+                }
+            });
+
+            document.getElementById('shared-link-save')?.addEventListener('click', async () => {
+                if (!currentLinkData) return;
+                const permission = document.getElementById('shared-link-permission').value;
+                const expiresAt = document.getElementById('shared-link-expiry').value;
+                try {
+                    const resp = await fetch('{% url "checklists_app:shared_link_update" %}', {
+                        method: 'POST',
+                        headers: { 'X-CSRFToken': getCsrf(), 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: 'link_id=' + currentLinkData.link_id + '&permission=' + permission + '&expires_at=' + expiresAt,
+                    });
+                    const data = await resp.json();
+                    if (data.ok) {
+                        bootstrap.Modal.getInstance(modalEl).hide();
+                    } else {
+                        alert(data.error || 'Ошибка сохранения');
+                    }
+                } catch (err) {
+                    alert('Ошибка: ' + err.message);
+                }
+            });
+        }
+
+        // --- Checkbox & action menu logic ---
+        let __savedSelection = [];
+
+        function getRowChecks() {
+            return Array.from(tableWrap.querySelectorAll('input[name="chk-items-select"]'));
+        }
+        function getCheckedRows() {
+            return getRowChecks().filter(cb => cb.checked);
+        }
+        function saveSelection() {
+            __savedSelection = getCheckedRows().map(cb => cb.value);
+        }
+        function restoreSelection() {
+            if (!__savedSelection.length) return;
+            const set = new Set(__savedSelection);
+            getRowChecks().forEach(cb => { cb.checked = set.has(cb.value); });
+            updateMasterState();
+            updateRowHighlight();
+            ensureActionsVisibility();
+            __savedSelection = [];
+        }
+        function updateMasterState() {
+            const master = tableWrap.querySelector('#chk-items-master');
+            if (!master) return;
+            const all = getRowChecks();
+            const checked = all.filter(cb => cb.checked);
+            master.checked = checked.length === all.length && all.length > 0;
+            master.indeterminate = checked.length > 0 && checked.length < all.length;
+        }
+        function updateRowHighlight() {
+            getRowChecks().forEach(cb => {
+                const tr = cb.closest('tr');
+                if (tr) tr.classList.toggle('table-active', cb.checked);
+            });
+        }
+        function ensureActionsVisibility() {
+            const panel = tableWrap.querySelector('#chk-items-actions');
+            if (!panel) return;
+            panel.classList.toggle('d-none', !getCheckedRows().length);
+        }
+
+        tableWrap.addEventListener('click', (e) => {
+            const toggle = e.target.closest('#chk-wrap-toggle');
+            if (!toggle) return;
+            const table = tableWrap.querySelector('#chk-items-table');
+            if (!table) return;
+            const cols = table.querySelectorAll('colgroup col');
+            const headerCells = table.querySelectorAll('thead th');
+            const nameCells = tableWrap.querySelectorAll('td.col-name-cell');
+
+            if (!table.classList.contains('chk-truncated')) {
+                headerCells.forEach((th, i) => {
+                    if (cols[i]) cols[i].style.width = th.getBoundingClientRect().width + 'px';
+                });
+                table.style.width = '100%';
+                table.style.tableLayout = 'fixed';
+            } else {
+                cols.forEach(c => { c.style.width = ''; });
+                table.style.width = '';
+                table.style.tableLayout = '';
+            }
+
+            table.classList.toggle('chk-truncated');
+            const active = table.classList.contains('chk-truncated');
+            toggle.classList.toggle('active', active);
+
+            nameCells.forEach(td => {
+                if (active) {
+                    td.setAttribute('title', td.textContent.trim());
+                } else {
+                    td.removeAttribute('title');
+                }
+            });
+        });
+
+        tableWrap.addEventListener('change', (e) => {
+            const master = e.target.closest('#chk-items-master');
+            if (master) {
+                getRowChecks().forEach(cb => { cb.checked = master.checked; });
+                master.indeterminate = false;
+            }
+            if (e.target.name === 'chk-items-select' || master) {
+                updateMasterState();
+                updateRowHighlight();
+                ensureActionsVisibility();
+            }
+        });
+
+        tableWrap.addEventListener('click', async (e) => {
+            const btn = e.target.closest('button[data-panel-action]');
+            if (!btn) return;
+            const action = btn.dataset.panelAction;
+            const checked = getCheckedRows();
+            if (!checked.length) return;
+
+            const firstTr = checked[0].closest('tr');
+            if (!firstTr) return;
+
+            if (action === 'edit') {
+                const editUrl = firstTr.dataset.editUrl;
+                if (!editUrl) return;
+                const modalTarget = document.querySelector('#checklists-item-modal .modal-content');
+                const resp = await fetch(editUrl, { headers: { 'X-Requested-With': 'fetch' } });
+                modalTarget.innerHTML = await resp.text();
+                if (window.htmx) htmx.process(modalTarget);
+                new bootstrap.Modal(document.getElementById('checklists-item-modal')).show();
+                return;
+            }
+            if (action === 'delete') {
+                if (!confirm('Удалить выбранные записи?')) return;
+                for (const cb of checked) {
+                    const tr = cb.closest('tr');
+                    const url = tr?.dataset.deleteUrl;
+                    if (url) {
+                        await fetch(url, { method: 'POST', headers: { 'X-CSRFToken': getCsrf() } });
+                    }
+                }
+                await reloadTable();
+                return;
+            }
+            if (action === 'up' || action === 'down') {
+                saveSelection();
+                const rows = action === 'up' ? checked : [...checked].reverse();
+                for (const cb of rows) {
+                    const tr = cb.closest('tr');
+                    const url = action === 'up' ? tr?.dataset.moveUpUrl : tr?.dataset.moveDownUrl;
+                    if (url) {
+                        await fetch(url, { method: 'POST', headers: { 'X-CSRFToken': getCsrf() } });
+                    }
+                }
+                await reloadTable();
+                restoreSelection();
+                return;
+            }
+        });
+
+        // Section change in all_mode modal: update code + next number
+        document.body.addEventListener('change', async (e) => {
+            if (e.target.id !== 'chk-item-section-select') return;
+            const opt = e.target.selectedOptions[0];
+            if (!opt) return;
+            const code = opt.dataset.code || '';
+            const codeDisplay = document.getElementById('chk-item-code-display');
+            const codeHidden = document.getElementById('chk-item-code');
+            if (codeDisplay) codeDisplay.value = code;
+            if (codeHidden) codeHidden.value = code;
+
+            const projectInput = document.querySelector('#chk-item-form input[name="project"]');
+            const projectId = projectInput ? projectInput.value : '';
+            const sectionId = opt.value;
+            try {
+                const params = new URLSearchParams({ project: projectId, section: sectionId, number: '0' });
+                const resp = await fetch('{% url "checklists_app:item_check_number" %}?' + params.toString());
+                const data = await resp.json();
+                // Fetch next available number via a small trick: ask for max number
+            } catch {}
+            // Fetch next number directly
+            try {
+                const resp = await fetch(
+                    '{% url "checklists_app:item_form_create" %}?project=' + projectId + '&section=' + sectionId,
+                    { headers: { 'X-Requested-With': 'fetch' } }
+                );
+                const html = await resp.text();
+                const tmp = document.createElement('div');
+                tmp.innerHTML = html;
+                const numInput = tmp.querySelector('#chk-item-number');
+                const numberField = document.getElementById('chk-item-number');
+                if (numInput && numberField) numberField.value = numInput.value;
+
+                // Update type lock
+                const typeSelect = document.getElementById('chk-item-type-select');
+                const tmpType = tmp.querySelector('#chk-item-type-select');
+                if (typeSelect && tmpType) {
+                    typeSelect.value = tmpType.value;
+                    typeSelect.disabled = tmpType.disabled;
+                    typeSelect.className = tmpType.className;
+                    let hiddenType = document.querySelector('#chk-item-form input[type="hidden"][name="item_type"]');
+                    if (tmpType.disabled) {
+                        if (!hiddenType) {
+                            hiddenType = document.createElement('input');
+                            hiddenType.type = 'hidden';
+                            hiddenType.name = 'item_type';
+                            typeSelect.parentNode.appendChild(hiddenType);
+                        }
+                        hiddenType.value = tmpType.value;
+                    } else if (hiddenType) {
+                        hiddenType.remove();
+                    }
+                }
+            } catch {}
+        });
+
+        // Close modal and reload table on successful CRUD
+        document.body.addEventListener('checklists:saved', async () => {
+            const itemModal = document.getElementById('checklists-item-modal');
+            if (itemModal) {
+                const bsModal = bootstrap.Modal.getInstance(itemModal);
+                if (bsModal) bsModal.hide();
+            }
+            await reloadTable();
+        });
+        document.body.addEventListener('htmx:afterRequest', (e) => {
+            if (e.detail.xhr && e.detail.xhr.getResponseHeader('HX-Trigger')?.includes('checklists:saved')) {
+                document.body.dispatchEvent(new Event('checklists:saved'));
+            }
+            const form = e.detail.elt;
+            if (form && form.id === 'chk-item-form' && e.detail.xhr && e.detail.xhr.status >= 400) {
+                const msg = e.detail.xhr.responseText || 'Ошибка сохранения';
+                let alertEl = document.getElementById('chk-item-form-alert');
+                if (!alertEl) {
+                    alertEl = document.createElement('div');
+                    alertEl.id = 'chk-item-form-alert';
+                    alertEl.className = 'alert alert-danger mt-2 mb-0 py-2 small';
+                    form.appendChild(alertEl);
+                }
+                alertEl.textContent = msg;
+            }
+        });
     })();
 </script>

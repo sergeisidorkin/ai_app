@@ -1,0 +1,279 @@
+{% load static %}
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Чек-лист — {{ project.name|default:"Проект" }}</title>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'core/css/site.css' %}">
+  <link rel="icon" type="image/svg+xml" href="{% static 'core/icons/favicon.svg' %}">
+  <style>
+    body { background-color: #f8f9fa; }
+    .shared-header {
+      background: #fff;
+      border-bottom: 1px solid #dee2e6;
+      padding: 1rem 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .shared-header-logo img { height: 25px; width: auto; transform: translateY(-3px); margin-left: 15px; margin-top: 10px; }
+    .shared-main { padding: 24px; max-width: 100%; }
+    .shared-profile-icon { font-size: 1.5rem; color: #6c757d; }
+    .shared-profile-icon:hover { color: #075d94; }
+
+    .chk-status-heading {
+      padding: 0 .5rem;
+      margin-left: 10px;
+    }
+    #checklists-panel-root .chk-filters-row {
+      flex-wrap: nowrap;
+    }
+    #checklists-panel-root .chk-filter-group {
+      display: inline-flex;
+      align-items: center;
+      gap: .5rem;
+      white-space: nowrap;
+    }
+    #checklists-panel-root .chk-filter-group select {
+      min-width: 16rem;
+    }
+    @media (max-width: 1200px) {
+      #checklists-panel-root .chk-filters-row {
+        flex-wrap: wrap;
+      }
+      #checklists-panel-root .chk-filter-group {
+        width: 100%;
+      }
+      #checklists-panel-root .chk-filter-group select {
+        width: 100%;
+        min-width: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="shared-header">
+    <div class="shared-header-logo">
+      <img src="{% static 'core/img/logo.png' %}" alt="IMC Montan">
+    </div>
+    <div>
+      {% if request.user.is_authenticated %}
+        <a href="{% url 'home' %}" class="shared-profile-icon text-decoration-none" title="Профиль">
+          <i class="bi bi-person-circle"></i>
+        </a>
+      {% else %}
+        <span class="shared-profile-icon">
+          <i class="bi bi-person-circle"></i>
+        </span>
+      {% endif %}
+    </div>
+  </header>
+
+  <main class="shared-main">
+    {% if not can_edit %}
+    <div class="alert alert-info py-2 mb-3">
+      <i class="bi bi-eye me-1"></i> Режим просмотра — редактирование недоступно
+    </div>
+    {% endif %}
+
+    <div id="checklists-panel-root"
+         data-table-url="{{ table_partial_url }}"
+         data-update-url="{{ update_status_url }}"
+         data-note-url="{{ update_note_url }}"
+         data-meta-url-base="{{ project_meta_url_base }}">
+      <div class="card shadow-sm chooser-card w-100 mb-3">
+        <div class="card-body">
+          <h6 class="card-title mb-3">Выбор рабочей области</h6>
+          <div class="d-flex align-items-center gap-3 chk-filters-row">
+            <div class="chk-filter-group">
+              <span class="small text-muted">Проект:</span>
+              <select id="chk-project" class="form-select form-select-sm" disabled>
+                {% for opt in project_options %}
+                  <option value="{{ opt.short_uid }}"
+                          data-project-id="{{ opt.id }}"
+                          data-project-short="{{ opt.product_short }}"
+                          data-project-code="{{ opt.short_uid }}"
+                          selected>
+                    {{ opt.label }}
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="chk-filter-group">
+              <span class="small text-muted">Актив:</span>
+              <select id="chk-asset" class="form-select form-select-sm" {% if not asset_items %}disabled{% endif %}>
+                {% if asset_items %}
+                  <option value="all">Все активы</option>
+                  {% for item in asset_items %}
+                    <option value="{{ item.value }}"
+                            data-item-type="{{ item.type }}"
+                            {% if item.value == selected_asset %}selected{% endif %}>
+                      {% if item.type == "asset" %}{{ item.label }}  • ᴀᴄᴛɪᴠᴇ{% else %}    {{ item.label }}{% endif %}
+                    </option>
+                  {% endfor %}
+                {% else %}
+                  <option value="">Нет данных</option>
+                {% endif %}
+              </select>
+            </div>
+            <div class="chk-filter-group">
+              <span class="small text-muted">Раздел:</span>
+              <select id="chk-section" class="form-select form-select-sm">
+                {% if section_options %}
+                  {% for s in section_options %}
+                    <option value="{{ s.id }}">{{ s.name }}</option>
+                  {% endfor %}
+                {% else %}
+                  <option value="">Нет данных</option>
+                {% endif %}
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="d-flex justify-content-between align-items-center mb-3 chk-status-heading">
+      <h5 class="mb-0 fs-4">Статусы запросов</h5>
+    </div>
+
+    <div class="card shadow-sm">
+      <div class="card-body position-relative">
+        <div id="checklists-table-wrap" class="table-responsive">
+          <div class="text-muted small">Загрузка чек-листа…</div>
+        </div>
+        <div id="checklists-table-loading" class="loading-overlay d-none">
+          <div class="bg-white border rounded-3 shadow-sm px-3 py-2 d-flex align-items-center gap-2">
+            <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+            <span class="small">Загрузка статусов…</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    (function () {
+      function getCookie(name) {
+        const m = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
+        return m ? m.pop() : '';
+      }
+      document.addEventListener('htmx:configRequest', function (e) {
+        const token = getCookie('csrftoken');
+        if (token) e.detail.headers['X-CSRFToken'] = token;
+      });
+    })();
+  </script>
+  <script>
+    (function() {
+      const root = document.getElementById('checklists-panel-root');
+      if (!root) return;
+      const assetSel = root.querySelector('#chk-asset');
+      const sectionSel = root.querySelector('#chk-section');
+      const tableWrap = document.getElementById('checklists-table-wrap');
+      const loading = document.getElementById('checklists-table-loading');
+      const tableUrl = root.dataset.tableUrl;
+      const metaUrlBase = root.dataset.metaUrlBase;
+      const projectUid = '{{ selected_project_uid|escapejs }}';
+
+      const showLoading = (state) => {
+        if (loading) loading.classList.toggle('d-none', !state);
+      };
+
+      async function loadMeta() {
+        if (!metaUrlBase) return;
+        try {
+          showLoading(true);
+          const url = metaUrlBase + '?asset=' + encodeURIComponent(assetSel?.value || '');
+          const resp = await fetch(url, { headers: { 'X-Requested-With': 'fetch' } });
+          const data = await resp.json();
+          if (sectionSel) {
+            sectionSel.innerHTML = '';
+            const sections = data.sections || [];
+            if (!sections.length) {
+              sectionSel.innerHTML = '<option value="">Нет данных</option>';
+            } else {
+              const allOpt = document.createElement('option');
+              allOpt.value = 'all';
+              allOpt.textContent = 'Все разделы';
+              sectionSel.appendChild(allOpt);
+              sections.forEach((s) => {
+                const opt = document.createElement('option');
+                opt.value = s.id;
+                opt.textContent = s.name;
+                sectionSel.appendChild(opt);
+              });
+            }
+          }
+        } catch (err) {
+          console.error('shared:meta', err);
+        } finally {
+          showLoading(false);
+        }
+      }
+
+      async function reloadTable() {
+        if (!tableUrl) return;
+        const params = new URLSearchParams({
+          asset: assetSel?.value || '',
+          section: sectionSel?.value || '',
+        });
+        showLoading(true);
+        try {
+          const resp = await fetch(tableUrl + '?' + params.toString(), { headers: { 'X-Requested-With': 'fetch' } });
+          const html = await resp.text();
+          tableWrap.innerHTML = html;
+          if (window.htmx) window.htmx.process(tableWrap);
+        } catch (err) {
+          tableWrap.innerHTML = '<div class="alert alert-danger mb-0">Не удалось загрузить таблицу.</div>';
+        } finally {
+          showLoading(false);
+        }
+      }
+
+      tableWrap.addEventListener('click', (e) => {
+        const toggle = e.target.closest('#chk-wrap-toggle');
+        if (!toggle) return;
+        const table = tableWrap.querySelector('#chk-items-table');
+        if (!table) return;
+        const cols = table.querySelectorAll('colgroup col');
+        const headerCells = table.querySelectorAll('thead th');
+        const nameCells = tableWrap.querySelectorAll('td.col-name-cell');
+
+        if (!table.classList.contains('chk-truncated')) {
+          headerCells.forEach((th, i) => {
+            if (cols[i]) cols[i].style.width = th.getBoundingClientRect().width + 'px';
+          });
+          table.style.width = '100%';
+          table.style.tableLayout = 'fixed';
+        } else {
+          cols.forEach(c => { c.style.width = ''; });
+          table.style.width = '';
+          table.style.tableLayout = '';
+        }
+
+        table.classList.toggle('chk-truncated');
+        const active = table.classList.contains('chk-truncated');
+        toggle.classList.toggle('active', active);
+        nameCells.forEach(td => {
+          if (active) { td.setAttribute('title', td.textContent.trim()); }
+          else { td.removeAttribute('title'); }
+        });
+      });
+
+      assetSel?.addEventListener('change', async () => { await loadMeta(); await reloadTable(); });
+      sectionSel?.addEventListener('change', reloadTable);
+
+      (async function init() {
+        await loadMeta();
+        await reloadTable();
+      })();
+    })();
+  </script>
+</body>
+</html>

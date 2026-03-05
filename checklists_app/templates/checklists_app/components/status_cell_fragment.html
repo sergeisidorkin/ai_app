@@ -1,14 +1,14 @@
 <td class="status-cell"
-    id="status-cell-{{ request_item.id }}-{{ legal_entity.id }}"
+    id="status-cell-{{ item.id }}-{{ legal_entity.id }}"
     hx-swap-oob="true">
-  <div class="checklist-status-cell" id="chk-cell-{{ request_item.id }}-{{ legal_entity.id }}">
+  <div class="checklist-status-cell" id="chk-cell-{{ item.id }}-{{ legal_entity.id }}">
     <form
       hx-post="{{ update_url }}"
       hx-trigger="change from:select"
-      hx-target="#chk-cell-{{ request_item.id }}-{{ legal_entity.id }}"
+      hx-target="#chk-cell-{{ item.id }}-{{ legal_entity.id }}"
       hx-swap="outerHTML">
       {% csrf_token %}
-      <input type="hidden" name="request_item" value="{{ request_item.id }}">
+      <input type="hidden" name="checklist_item" value="{{ item.id }}">
       <input type="hidden" name="legal_entity" value="{{ legal_entity.id }}">
       <input type="hidden" name="asset_name" value="{{ asset_name }}">
       <select name="status" class="form-select form-select-sm">
@@ -25,7 +25,7 @@
 </td>
 
 <td class="date-cell text-nowrap"
-    id="date-cell-{{ request_item.id }}-{{ legal_entity.id }}"
+    id="date-cell-{{ item.id }}-{{ legal_entity.id }}"
     hx-swap-oob="true">
   {% if status and status.status_changed_at %}
     {{ status.status_changed_at|date:"d.m.y H:i" }}
@@ -34,14 +34,14 @@
   {% endif %}
 </td>
 
-<td id="chk-code-{{ request_item.id }}"
+<td id="chk-code-{{ item.id }}"
     class="col-code text-nowrap {{ code_class }}"
     hx-swap-oob="outerHTML">
-  {{ request_item.code }}
+  {{ item.code }}
 </td>
 
-<td id="chk-num-{{ request_item.id }}"
+<td id="chk-num-{{ item.id }}"
     class="col-num text-nowrap"
     hx-swap-oob="outerHTML">
-  {{ request_item.number|stringformat:"02d" }}
+  {{ item.number|stringformat:"02d" }}
 </td>

@@ -1,4 +1,4 @@
-<div class="comment-history-list" id="comment-history-{{ field }}-{{ request_item.id }}" hx-swap-oob="true">
+<div class="comment-history-list" id="comment-history-{{ field }}-{{ item.id }}" hx-swap-oob="true">
     {% if histories %}
       {% for entry in histories %}
         <div class="mb-3">

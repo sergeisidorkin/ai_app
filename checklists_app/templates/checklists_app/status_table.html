@@ -9,12 +9,13 @@
 {% elif not rows %}
   <div class="alert alert-info mb-0">Для выбранного продукта и раздела нет запросов.</div>
 {% else %}
-  <table class="table table-sm align-middle table-bordered">
+  <table class="table table-sm align-middle table-bordered" id="chk-items-table">
     <colgroup>
+        {% if show_actions %}<col style="width:1%">{% endif %}
         <col> <!-- Код -->
         <col> <!-- № -->
         <col> <!-- Краткое название -->
-        <col> <!-- Наименование -->
+        <col id="chk-col-name"> <!-- Наименование -->
         {% for entity in legal_entities %}
           <col class="status-col"> <!-- статус -->
           <col class="date-col">
@@ -24,10 +25,28 @@
     </colgroup>
     <thead class="table-light">
       <tr>
+        {% if show_actions %}
+        <th style="width:1%">
+          {% if request.user.is_authenticated and request.user.is_staff %}
+          <div class="form-check m-0">
+            <input class="form-check-input" type="checkbox"
+                   id="chk-items-master"
+                   data-target-name="chk-items-select"
+                   data-actions-id="chk-items-actions"
+                   aria-label="Выделить все строки">
+          </div>
+          {% endif %}
+        </th>
+        {% endif %}
         <th class="col-code">Код</th>
         <th class="col-num">№</th>
         <th>Краткое наименование</th>
-        <th>Наименование запроса</th>
+        <th class="col-name-header" style="position:relative">
+          <span>Наименование запроса</span>
+          <button type="button" id="chk-wrap-toggle" class="chk-wrap-btn" title="Свернуть/развернуть текст">
+            <i class="bi bi-text-wrap"></i>
+          </button>
+        </th>
         {% for entity in legal_entities %}
           <th class="status-col text-nowrap">
             {{ entity.legal_name|default:entity.work_name|default:entity.work_item.asset_name|default:"Юридическое лицо" }}
@@ -40,25 +59,70 @@
     </thead>
     <tbody>
       {% for row in rows %}
-        <tr>
+        {% if row.section_header %}
+        <tr class="section-header-row">
+          {% if show_actions %}<td></td>{% endif %}
+          <td colspan="4" class="section-header-cell">
+            {{ row.section_header }}
+          </td>
+          {% for entity in legal_entities %}
+            <td></td><td></td>
+          {% endfor %}
+          <td></td><td></td>
+        </tr>
+        {% elif row.item %}
+        {% if row.additional_header %}
+        <tr class="additional-header-row">
+          {% if show_actions %}<td></td>{% endif %}
+          <td colspan="4" class="additional-header-cell">
+            {{ row.additional_header }}
+          </td>
+          {% for entity in legal_entities %}
+            <td></td><td></td>
+          {% endfor %}
+          <td></td><td></td>
+        </tr>
+        {% endif %}
+        <tr data-item-id="{{ row.item.id }}"
+            {% if show_actions %}
+            data-edit-url="{% url 'checklists_app:item_form_edit' row.item.id %}"
+            data-delete-url="{% url 'checklists_app:item_delete' row.item.id %}"
+            data-move-up-url="{% url 'checklists_app:item_move' row.item.id 'up' %}"
+            data-move-down-url="{% url 'checklists_app:item_move' row.item.id 'down' %}"
+            {% endif %}>
+          {% if show_actions %}
+          <td class="text-nowrap">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox"
+                     id="chk-items-sel-{{ row.item.id }}"
+                     name="chk-items-select"
+                     value="{{ row.item.id }}"
+                     aria-label="Выделить строку">
+            </div>
+            {% endif %}
+          </td>
+          {% endif %}
           <td id="chk-code-{{ row.item.id }}" class="col-code text-nowrap {{ row.code_class }}">{{ row.item.code }}</td>
           <td id="chk-num-{{ row.item.id }}" class="col-num text-nowrap">{{ row.item.number|stringformat:"02d" }}</td>
           <td class="text-nowrap">{{ row.item.short_name }}</td>
-          <td>{{ row.item.name }}</td>
+          <td class="col-name-cell">{{ row.item.name }}</td>
 
           {% for cell in row.statuses %}
             <td class="status-cell status-col" id="status-cell-{{ row.item.id }}-{{ cell.entity.id }}">
               <div class="checklist-status-cell" id="chk-cell-{{ row.item.id }}-{{ cell.entity.id }}">
                 <form
+                  {% if not readonly %}
                   hx-post="{{ update_status_url }}"
                   hx-trigger="change from:select"
                   hx-target="#chk-cell-{{ row.item.id }}-{{ cell.entity.id }}"
-                  hx-swap="outerHTML">
+                  hx-swap="outerHTML"
+                  {% endif %}>
                   {% csrf_token %}
-                  <input type="hidden" name="request_item" value="{{ row.item.id }}">
+                  <input type="hidden" name="checklist_item" value="{{ row.item.id }}">
                   <input type="hidden" name="legal_entity" value="{{ cell.entity.id }}">
                   <input type="hidden" name="asset_name" value="{{ asset_name }}">
-                  <select name="status" class="form-select form-select-sm">
+                  <select name="status" class="form-select form-select-sm" {% if readonly %}disabled{% endif %}>
                     {% for value,label in status_choices %}
                       {% if cell.status %}
                         <option value="{{ value }}" {% if value == cell.status.status %}selected{% endif %}>{{ label }}</option>
@@ -80,12 +144,13 @@
           {% endfor %}
 
           <td class="col-comment col-comment-imc">
-            {% include "checklists_app/components/comment_cell.html" with field="imc_comment" request_item=row.item project=project section=section asset_name=asset_name note=row.note histories=row.history.imc_comment add_comment_url=add_comment_url %}
+            {% include "checklists_app/components/comment_cell.html" with field="imc_comment" item=row.item project=project section=section asset_name=asset_name note=row.note histories=row.history.imc_comment add_comment_url=add_comment_url %}
           </td>
           <td class="col-comment col-comment-customer">
-            {% include "checklists_app/components/comment_cell.html" with field="customer_comment" request_item=row.item project=project section=section asset_name=asset_name note=row.note histories=row.history.customer_comment add_comment_url=add_comment_url %}
+            {% include "checklists_app/components/comment_cell.html" with field="customer_comment" item=row.item project=project section=section asset_name=asset_name note=row.note histories=row.history.customer_comment add_comment_url=add_comment_url %}
           </td>
         </tr>
+        {% endif %}
       {% endfor %}
     </tbody>
   </table>
@@ -93,10 +158,57 @@
   {# Модалки комментариев — вне таблицы #}
   <div id="checklists-comment-modals">
     {% for row in rows %}
-      {% include "checklists_app/components/comment_modal.html" with field="imc_comment" request_item=row.item project=project section=section asset_name=asset_name note=row.note histories=row.history.imc_comment add_comment_url=add_comment_url %}
-      {% include "checklists_app/components/comment_modal.html" with field="customer_comment" request_item=row.item project=project section=section asset_name=asset_name note=row.note histories=row.history.customer_comment add_comment_url=add_comment_url %}
+      {% if row.item %}
+      {% include "checklists_app/components/comment_modal.html" with field="imc_comment" item=row.item project=project section=section asset_name=asset_name note=row.note histories=row.history.imc_comment add_comment_url=add_comment_url %}
+      {% include "checklists_app/components/comment_modal.html" with field="customer_comment" item=row.item project=project section=section asset_name=asset_name note=row.note histories=row.history.customer_comment add_comment_url=add_comment_url %}
+      {% endif %}
     {% endfor %}
   </div>
+
+  {% if show_actions and request.user.is_authenticated and request.user.is_staff %}
+  <div class="d-flex align-items-stretch gap-2 mt-3 pb-4 chk-actions-row">
+    <button class="btn btn-primary btn-sm d-flex align-items-center"
+            hx-get="{{ item_form_create_url }}?project={{ project.id }}{% if all_mode %}&all_mode=1{% else %}&section={{ section.id }}{% endif %}"
+            hx-target="#checklists-item-modal .modal-content"
+            hx-swap="innerHTML"
+            data-bs-toggle="modal"
+            data-bs-target="#checklists-item-modal">
+      <i class="bi bi-plus-circle me-2"></i>Добавить запрос
+    </button>
+    <div id="chk-items-actions" class="d-none d-flex">
+      <div class="btn-group">
+        <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+          <i class="bi bi-arrow-up-square"></i>
+        </button>
+        <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+          <i class="bi bi-arrow-down-square"></i>
+        </button>
+        <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+          <i class="bi bi-pencil-square"></i>
+        </button>
+        <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+          <i class="bi bi-x-square"></i>
+        </button>
+      </div>
+    </div>
+    {% if all_mode %}
+    <a class="btn btn-primary btn-sm d-flex align-items-center"
+       href="{% url 'checklists_app:export_xlsx' %}?project_uid={{ project.short_uid }}"
+       download>
+      <i class="bi bi-arrow-down-circle me-2"></i>Скачать XLSX
+    </a>
+    {% endif %}
+  </div>
+  {% elif not show_actions and all_mode and xlsx_url %}
+  <div class="d-flex align-items-stretch gap-2 mt-3 pb-4 chk-actions-row">
+    <a class="btn btn-primary btn-sm d-flex align-items-center"
+       href="{{ xlsx_url }}"
+       download>
+      <i class="bi bi-arrow-down-circle me-2"></i>Скачать XLSX
+    </a>
+  </div>
+  {% endif %}
+
   <style>
     #checklists-table-wrap table th,
     #checklists-table-wrap table td {
@@ -129,43 +241,41 @@
         background-color: transparent;
     }
 
-    /* общее подсвечивание строки */
     #checklists-table-wrap table tbody tr td:not(.col-code) {
         transition: background-color .15s ease;
     }
     #checklists-table-wrap table tbody tr:hover td:not(.col-code) {
         background-color: #1c1d200b;
     }
-    /* код и номер темнеют ровно настолько, чтобы не терять исходный цвет */
     #checklists-table-wrap table tbody tr td.col-code {
         transition: filter .15s ease;
     }
     #checklists-table-wrap table tbody tr:hover td.col-code {
-        filter: brightness(0.95); /* чем меньше значение, тем темнее */
+        filter: brightness(0.95);
     }
 
     #checklists-table-wrap table .form-select {
         background-color: transparent !important;
-        background-image: var(--bs-form-select-bg-img);  /* вернёт стрелку Bootstrap */
+        background-image: var(--bs-form-select-bg-img);
         box-shadow: none;
     }
 
     #checklists-table-wrap table .form-select:focus {
         color: inherit;
         background-color: transparent !important;
-        border-color: #ced4da;         /* обычная серая граница */
-        box-shadow: none !important;   /* убирает синюю засветку */
+        border-color: #ced4da;
+        box-shadow: none !important;
     }
 
     #checklists-table-wrap table thead {
-        background-color: #ffffff; /* #e6f0ff светлый синий в тон приложению */
+        background-color: #ffffff;
     }
 
     #checklists-table-wrap table thead th {
         padding-top: 11px;
         padding-bottom: 11px;
         font-weight: 600;
-        background-color: transparent; /* чтобы наследовали цвет thead */
+        background-color: transparent;
     }
 
     #checklists-table-wrap table .col-code {
@@ -193,7 +303,7 @@
         width: 100%;
         min-width: 0;
         max-width: 100%;
-        padding-right: 2rem;  /* чтобы стрелка не залезала на текст */
+        padding-right: 2rem;
         box-sizing: border-box;
     }
     #checklists-table-wrap table th.status-col {
@@ -209,25 +319,124 @@
         min-width: 115px;
     }
 
-
     #checklists-table-wrap .comment-placeholder {
         opacity: 0;
         display: inline-block;
         width: 100%;
     }
 
-
     #checklists-table-wrap table .chk-code--provided {
-    background-color: #d6f5d6;
+        background-color: #d6f5d6;
     }
     #checklists-table-wrap table .chk-code--partial {
-    background-color: #ffe6cc;
+        background-color: #ffe6cc;
     }
     #checklists-table-wrap table .chk-code--na {
-    background-color: #f0f0f0;
-    color: #6c757d;
+        background-color: #f0f0f0;
+        color: #6c757d;
     }
-
+    #checklists-table-wrap table tbody tr.table-active td {
+        background-color: #f5f8ff !important;
+        --bs-table-active-bg: transparent;
+        --bs-table-bg: transparent;
+        border-color: #b0bac8 !important;
+        border-style: solid !important;
+        border-width: 1px 0 !important;
+    }
+    #checklists-table-wrap table.table-bordered tbody tr.table-active td {
+        border-width: 1px !important;
+    }
+    #checklists-table-wrap table tbody tr.table-active td .form-select {
+        border-color: #b0bac8 !important;
+    }
+    #checklists-table-wrap table td .form-check,
+    #checklists-table-wrap table th .form-check {
+        margin-bottom: -3px;
+        min-height: 0;
+    }
+    #checklists-table-wrap table td:first-child,
+    #checklists-table-wrap table th:first-child {
+        padding-right: 0 !important;
+    }
+    .chk-actions-row .btn-group .btn {
+        background-color: #fff;
+    }
+    .chk-actions-row .btn-group .btn-outline-primary:hover,
+    .chk-actions-row .btn-group .btn-outline-primary:active {
+        background-color: var(--bs-primary);
+        color: #fff;
+    }
+    .chk-actions-row .btn-group .btn-outline-danger:hover,
+    .chk-actions-row .btn-group .btn-outline-danger:active {
+        background-color: var(--bs-danger);
+        color: #fff;
+    }
+    #checklists-table-wrap table tbody tr.section-header-row td {
+        background-color: #e8eef6 !important;
+        padding-top: 8px !important;
+        padding-bottom: 8px !important;
+    }
+    #checklists-table-wrap table tbody tr.section-header-row td.section-header-cell {
+        font-weight: 600;
+        color: #212529;
+        white-space: nowrap;
+    }
+    #checklists-table-wrap table tbody tr.section-header-row:hover td {
+        background-color: #dce5f0 !important;
+    }
+    .chk-wrap-btn {
+        position: absolute;
+        right: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 24px;
+        height: 24px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid #adb5bd;
+        border-radius: 6px;
+        background: #fff;
+        color: #adb5bd;
+        padding: 0;
+        font-size: 1rem;
+        line-height: 1;
+        cursor: pointer;
+    }
+    .chk-wrap-btn:hover {
+        background: #f8f9fa;
+        border-color: #9ca5ae;
+        color: #9ca5ae;
+    }
+    .chk-wrap-btn.active {
+        background: #adb5bd;
+        border-color: #adb5bd;
+        color: #fff;
+    }
+    .chk-wrap-btn.active:hover {
+        background: #9ca5ae;
+        border-color: #9ca5ae;
+    }
+    #checklists-table-wrap table.chk-truncated td.col-name-cell {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    #checklists-table-wrap table tbody tr.additional-header-row {
+        background-color: #fff;
+    }
+    #checklists-table-wrap table tbody tr.additional-header-row td {
+        padding-top: 8px !important;
+        padding-bottom: 8px !important;
+    }
+    #checklists-table-wrap table tbody tr.additional-header-row td.additional-header-cell {
+        font-weight: 600;
+        color: #212529;
+        white-space: nowrap;
+    }
+    #checklists-table-wrap table tbody tr.additional-header-row:hover td {
+        background-color: #fff !important;
+    }
   </style>
   <script>
     (() => {

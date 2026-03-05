@@ -1,0 +1,120 @@
+<div class="modal-header">
+  <h5 class="modal-title">{% if edit_mode %}Изменить запрос{% else %}Добавить запрос{% endif %}</h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+</div>
+<div class="modal-body">
+  <form id="chk-item-form"
+        hx-post="{{ form_action }}"
+        hx-swap="none">
+    {% csrf_token %}
+    <input type="hidden" name="project" value="{{ project.id }}">
+    {% if sections_list %}
+    <div class="mb-3">
+      <label class="form-label">Раздел</label>
+      <select name="section" id="chk-item-section-select" class="form-select" required>
+        {% for s in sections_list %}
+        <option value="{{ s.id }}" data-code="{{ s.code }}" {% if section and s.id == section.id %}selected{% endif %}>{{ s.product.short_name }}:{{ s.code }} {{ s.short_name_ru|default:s.short_name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% else %}
+    <input type="hidden" name="section" value="{{ section.id }}">
+    {% endif %}
+
+    <div class="mb-3">
+      <label class="form-label">Тип запроса</label>
+      <select name="item_type" id="chk-item-type-select"
+              class="form-select{% if edit_mode or forced_type %} bg-light text-muted{% endif %}"
+              {% if edit_mode or forced_type %}disabled{% endif %}>
+        <option value="basic" {% if item_type == "basic" or not item_type %}selected{% endif %}>Основной</option>
+        <option value="additional" {% if item_type == "additional" %}selected{% endif %}>Дополнительный</option>
+      </select>
+      {% if edit_mode or forced_type %}
+      <input type="hidden" name="item_type" value="{{ item_type }}">
+      {% endif %}
+    </div>
+
+    <div class="row mb-3">
+      <div class="col-md-6">
+        <label class="form-label">Код</label>
+        <input type="text" id="chk-item-code-display" class="form-control bg-light text-muted"
+               value="{{ code }}" required disabled>
+        <input type="hidden" name="code" id="chk-item-code" value="{{ code }}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">№</label>
+        <input type="number" {% if not lock_number %}name="number"{% endif %} id="chk-item-number"
+               class="form-control{% if lock_number %} bg-light text-muted{% endif %}"
+               value="{{ next_number }}" min="1" required
+               {% if lock_number %}disabled{% endif %}>
+        {% if lock_number %}
+        <input type="hidden" name="number" value="{{ next_number }}">
+        {% endif %}
+        <div id="chk-number-error" class="invalid-feedback">Запрос с таким номером уже существует в данном разделе.</div>
+      </div>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">Краткое наименование</label>
+      <input type="text" {% if not lock_number %}name="short_name"{% endif %}
+             class="form-control{% if lock_number %} bg-light text-muted{% endif %}"
+             value="{{ short_name|default:'' }}" placeholder="Краткое наименование"
+             {% if lock_number %}disabled{% endif %}>
+      {% if lock_number %}<input type="hidden" name="short_name" value="{{ short_name|default:'' }}">{% endif %}
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">Наименование запроса</label>
+      <textarea name="name" class="form-control" rows="3" required placeholder="Наименование запроса">{{ name|default:'' }}</textarea>
+    </div>
+  </form>
+</div>
+<div class="modal-footer">
+  <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Отмена</button>
+  <button type="submit" form="chk-item-form" id="chk-item-save-btn" class="btn btn-primary btn-sm">Сохранить</button>
+</div>
+<script>
+(function() {
+  const numberInput = document.getElementById('chk-item-number');
+  const errorDiv = document.getElementById('chk-number-error');
+  const saveBtn = document.getElementById('chk-item-save-btn');
+  const projectId = '{{ project.id }}';
+  const sectionId = '{{ section.id }}';
+  const excludeId = '{{ item_id|default:"" }}';
+  const checkUrl = '{% url "checklists_app:item_check_number" %}';
+  let debounceTimer = null;
+  let numberDuplicate = false;
+
+  function validate() {
+    const num = numberInput.value.trim();
+    if (!num) { setValid(); return; }
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(async () => {
+      const params = new URLSearchParams({ project: projectId, section: sectionId, number: num });
+      if (excludeId) params.set('exclude', excludeId);
+      try {
+        const resp = await fetch(checkUrl + '?' + params.toString());
+        const data = await resp.json();
+        if (data.exists) { setInvalid(); } else { setValid(); }
+      } catch { setValid(); }
+    }, 300);
+  }
+
+  function setInvalid() {
+    numberDuplicate = true;
+    numberInput.classList.add('is-invalid');
+    errorDiv.style.display = 'block';
+    saveBtn.disabled = true;
+  }
+
+  function setValid() {
+    numberDuplicate = false;
+    numberInput.classList.remove('is-invalid');
+    errorDiv.style.display = 'none';
+    saveBtn.disabled = false;
+  }
+
+  numberInput.addEventListener('input', validate);
+  numberInput.addEventListener('change', validate);
+})();
+</script>
