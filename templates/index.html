@@ -1466,5 +1466,12 @@ main.templates-main--editor {
       }
     });
   })();
+
+  document.addEventListener('shown.bs.tab', function (e) {
+    if (e.target.getAttribute('href') === '#checklists') {
+      const pane = document.getElementById('checklists-panel-root');
+      if (pane) pane.dispatchEvent(new CustomEvent('checklists:tab-shown'));
+    }
+  });
 </script>
 {% endblock %}

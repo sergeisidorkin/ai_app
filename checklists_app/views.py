@@ -103,13 +103,32 @@ def _project_meta(project: Optional[ProjectRegistration], asset_name: Optional[s
     }
 
 
+def _resolve_asset_name(project, selected_asset):
+    """Return the Performer-level asset_name for any kind of asset selector."""
+    if not selected_asset or selected_asset == "all":
+        return selected_asset or ""
+    if selected_asset.startswith("asset:"):
+        return selected_asset[6:]
+    entity = (
+        LegalEntity.objects
+        .filter(project=project)
+        .filter(
+            Q(legal_name__iexact=selected_asset)
+            | Q(work_name__iexact=selected_asset)
+        )
+        .select_related("work_item")
+        .first()
+    )
+    if entity and entity.work_item:
+        return (entity.work_item.asset_name or entity.work_item.name or "").strip()
+    return selected_asset
+
+
 def _sections_for_asset(project, selected_asset, performer_qs=None):
     if not selected_asset:
         return []
 
-    effective_asset = selected_asset
-    if selected_asset.startswith("asset:"):
-        effective_asset = selected_asset[6:]
+    effective_asset = _resolve_asset_name(project, selected_asset)
 
     if performer_qs is None:
         performer_qs = (
@@ -509,9 +528,7 @@ def table_partial(request):
 
     all_mode = section_id == "all"
 
-    effective_asset = asset_name
-    if asset_name and asset_name.startswith("asset:"):
-        effective_asset = asset_name[6:]
+    effective_asset = _resolve_asset_name(project, asset_name)
 
     if all_mode:
         perf_qs = Performer.objects.filter(registration=project).exclude(asset_name="")
@@ -1390,9 +1407,7 @@ def shared_table_partial(request, token: str):
 
     all_mode = section_id == "all"
 
-    effective_asset = asset_name
-    if asset_name and asset_name.startswith("asset:"):
-        effective_asset = asset_name[6:]
+    effective_asset = _resolve_asset_name(project, asset_name)
 
     if all_mode:
         perf_qs = Performer.objects.filter(registration=project).exclude(asset_name="")

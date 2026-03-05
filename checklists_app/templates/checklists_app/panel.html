@@ -319,6 +319,11 @@
             await reloadTable();
         })();
 
+        root.addEventListener('checklists:tab-shown', async () => {
+            await loadProjectMeta();
+            await reloadTable();
+        });
+
         // --- Shared link logic ---
         const shareBtn = document.getElementById('chk-share-btn');
         const settingsBtn = document.getElementById('chk-share-settings-btn');
