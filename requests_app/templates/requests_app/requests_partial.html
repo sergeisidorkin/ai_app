@@ -49,9 +49,7 @@
       class="btn btn-primary btn-sm d-flex align-items-center"
       hx-get="{% url 'request_form_create' %}?product={{ product.short_name|upper|urlencode }}&section={{ section.id }}"
       hx-target="#requests-modal .modal-content"
-      hx-swap="innerHTML"
-      data-bs-toggle="modal"
-      data-bs-target="#requests-modal">
+      hx-swap="innerHTML">
       <i class="bi bi-plus-circle me-2"></i>Добавить запрос
     </button>
     <div id="req-actions" class="d-none d-flex">

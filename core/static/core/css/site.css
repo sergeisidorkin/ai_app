@@ -620,6 +620,10 @@ body .second-sidebar + .flex-grow-1 {
 .products-actions-row {
   margin-top: 30px !important;
 }
+
+#projects-pane .registration-table-wrap .products-actions-row {
+  margin-bottom: 14px !important;
+}
 /* Слойность для кнопок панели под таблицей "Продукты" */
 #policy-pane #products-actions .btn-group {
   isolation: isolate;            /* создаём новый stacking context */

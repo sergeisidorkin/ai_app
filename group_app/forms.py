@@ -3,7 +3,7 @@ from datetime import date as date_type
 from django import forms
 from django.db.models import Q
 
-from classifiers_app.models import OKSMCountry
+from classifiers_app.models import LegalEntityIdentifier, OKSMCountry
 from .models import GroupMember
 
 
@@ -14,6 +14,13 @@ def _active_countries_qs():
     ).filter(
         Q(expiry_date__isnull=True) | Q(expiry_date__gte=today),
     )
+
+
+def _identifier_for_country_code(country_code: str) -> str:
+    if not country_code:
+        return ""
+    item = LegalEntityIdentifier.objects.filter(code=country_code).order_by("position", "id").first()
+    return item.identifier if item else ""
 
 
 class GroupMemberForm(forms.ModelForm):
@@ -35,6 +42,14 @@ class GroupMemberForm(forms.ModelForm):
                 self.initial["country"] = OKSMCountry.objects.get(code=self.instance.country_code).pk
             except OKSMCountry.DoesNotExist:
                 pass
+        self.fields["identifier"].widget.attrs.update({
+            "readonly": True,
+            "tabindex": "-1",
+            "style": "background-color:#f8f9fa; color:#6c757d;",
+            "id": "gm-identifier",
+        })
+        if self.instance and self.instance.pk:
+            self.initial["identifier"] = self.instance.identifier or _identifier_for_country_code(self.instance.country_code)
 
     class Meta:
         model = GroupMember
@@ -57,6 +72,13 @@ class GroupMemberForm(forms.ModelForm):
         if country:
             instance.country_name = country.short_name
             instance.country_code = country.code
+            instance.country_alpha2 = country.alpha2
+            instance.identifier = _identifier_for_country_code(country.code)
+        else:
+            instance.country_name = ""
+            instance.country_code = ""
+            instance.country_alpha2 = ""
+            instance.identifier = ""
         if commit:
             instance.save()
         return instance

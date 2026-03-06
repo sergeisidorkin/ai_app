@@ -85,10 +85,6 @@
       const url = tr?.dataset?.editUrl;
       if (!url) return;
       await htmx.ajax('GET', url, { target: '#group-modal .modal-content', swap: 'innerHTML' });
-      const modalEl = document.getElementById('group-modal');
-      if (modalEl && window.bootstrap) {
-        window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
-      }
       ensureActionsVisibility(name);
       return;
     }

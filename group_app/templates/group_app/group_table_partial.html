@@ -1,4 +1,4 @@
-<table class="table table-sm align-middle">
+<table class="table table-sm align-top">
     <thead>
     <tr>
         <th style="width:1%">
@@ -61,9 +61,7 @@
           class="btn btn-primary btn-sm d-flex align-items-center"
           hx-get="{% url 'gm_form_create' %}"
           hx-target="#group-modal .modal-content"
-          hx-swap="innerHTML"
-          data-bs-toggle="modal"
-          data-bs-target="#group-modal">
+          hx-swap="innerHTML">
     <i class="bi bi-plus-circle me-2"></i>Добавить строку
   </button>
   <div id="gm-actions" class="d-none d-flex">

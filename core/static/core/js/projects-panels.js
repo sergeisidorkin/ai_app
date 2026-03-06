@@ -93,11 +93,6 @@
 
       // грузим форму в модалку ПРОЕКТОВ — как в Продуктах
       await htmx.ajax('GET', url, { target: '#projects-modal .modal-content', swap: 'innerHTML' });
-
-      const modalEl = document.getElementById('projects-modal');
-      if (modalEl && window.bootstrap) {
-        window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
-      }
       ensureActionsVisibility(name);
       return;
     }
