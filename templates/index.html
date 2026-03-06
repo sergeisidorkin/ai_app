@@ -1071,11 +1071,6 @@
                 Array.prototype.forEach.call(form.querySelectorAll('button[type="submit"]'), function(btn){
                   btn.addEventListener('click', function(){ setGlobalBinding(); fillHiddenAndQS(form); }, { capture:true });
                 });
-                // косметика на закрытие
-                modal.addEventListener('hidden.bs.modal', function(){
-                  document.body.classList.remove('modal-open');
-                  var bd = document.querySelector('.modal-backdrop.show'); if (bd) bd.remove();
-                });
               }
             }
 
@@ -1201,6 +1196,8 @@
 
           // ---- утилиты -------------------------------------------------------------
           function cleanupBackdrops(){
+            const anyShown = !!document.querySelector('.modal.show');
+            if (anyShown) return;
             document.querySelectorAll('.modal-backdrop').forEach(b=>b.remove());
             document.body.classList.remove('modal-open');
             document.body.style.removeProperty('padding-right');

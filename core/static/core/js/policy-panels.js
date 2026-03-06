@@ -88,10 +88,6 @@
       const url = tr?.dataset?.editUrl;
       if (!url) return;
       await htmx.ajax('GET', url, { target: '#policy-modal .modal-content', swap: 'innerHTML' });
-      const modalEl = document.getElementById('policy-modal');
-      if (modalEl && window.bootstrap) {
-        window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
-      }
       // На случай если модалка не перерисовывает pane — поддержим видимость панели
       ensureActionsVisibility(name);
       return;

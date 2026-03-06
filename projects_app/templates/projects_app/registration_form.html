@@ -25,7 +25,10 @@
       </div>
       <div class="col-3">
         <label class="form-label">Группа</label>
-        {{ form.group }}
+        <div class="group-select-shell">
+          {{ form.group }}
+          <div class="group-select-display" id="registration-group-display" aria-hidden="true"></div>
+        </div>
       </div>
       <div class="col-3">
         <label class="form-label">Вид соглашения</label>
@@ -142,6 +145,46 @@
     background-color: #f8f9fa;
     color: #6c757d;
   }
+  #projects-modal .group-select-shell {
+    position: relative;
+  }
+  #projects-modal .group-select-shell select {
+    position: relative;
+    z-index: 2;
+    opacity: 0.01;
+  }
+  #projects-modal .group-select-display {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    padding: .25rem 2.25rem .25rem .75rem;
+    font-size: .875rem;
+    line-height: 1.5;
+    color: #212529;
+    background-color: #fff;
+    border: 1px solid #ced4da;
+    border-radius: .375rem;
+    pointer-events: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #projects-modal .group-select-display::after {
+    content: "";
+    position: absolute;
+    right: .75rem;
+    top: 50%;
+    width: 16px;
+    height: 16px;
+    transform: translateY(-50%);
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 16px 12px;
+    opacity: .7;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M2 5l6 6 6-6'/%3e%3c/svg%3e");
+  }
 </style>
 <script>
   const DATE_FMT = { day: "2-digit", month: "2-digit", year: "numeric" };
@@ -250,6 +293,24 @@
     if (!modal) return;
     const form = modal.querySelector("form");
     attachStageCalculator(form);
+    attachGroupSelectDisplay(form);
+  }
+
+  function attachGroupSelectDisplay(node) {
+    if (!node) return;
+    const select = node.querySelector("#registration-group-select");
+    const display = node.querySelector("#registration-group-display");
+    if (!select || !display || select.dataset.displayBound === "1") return;
+    select.dataset.displayBound = "1";
+
+    const options = Array.from(select.options);
+    const syncDisplay = () => {
+      const selected = select.options[select.selectedIndex];
+      display.textContent = selected && selected.value ? selected.value : "";
+    };
+
+    select.addEventListener("change", syncDisplay);
+    syncDisplay();
   }
 
   document.addEventListener("DOMContentLoaded", initCurrentModal);

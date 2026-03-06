@@ -4,7 +4,7 @@ from decimal import Decimal, InvalidOperation
 from django import forms
 from django.db.models import Q
 
-from .models import OKSMCountry, OKVCurrency, TerritorialDivision, LivingWage
+from .models import OKSMCountry, OKVCurrency, LegalEntityIdentifier, TerritorialDivision, LivingWage
 
 
 def _active_countries_qs():
@@ -87,6 +87,45 @@ class OKVCurrencyForm(forms.ModelForm):
 
     def clean_code_alpha(self):
         return (self.cleaned_data.get("code_alpha") or "").upper()
+
+
+class LegalEntityIdentifierForm(forms.ModelForm):
+    country = forms.ModelChoiceField(
+        label="Страна",
+        queryset=OKSMCountry.objects.none(),
+        widget=forms.Select(attrs={"class": "form-select", "id": "lei-country-select"}),
+        required=False,
+    )
+    code = forms.CharField(
+        label="Код",
+        required=False,
+        widget=forms.TextInput(attrs={
+            "class": "form-control",
+            "readonly": True,
+            "tabindex": "-1",
+            "style": "background-color:#e9ecef; color:#6c757d;",
+            "id": "lei-code-field",
+        }),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        qs = OKSMCountry.objects.all().order_by("short_name")
+        if self.instance and self.instance.pk and self.instance.country_id:
+            qs = (qs | OKSMCountry.objects.filter(pk=self.instance.country_id)).distinct().order_by("short_name")
+        self.fields["country"].queryset = qs
+        self.fields["country"].label_from_instance = lambda obj: obj.short_name
+        self.fields["country"].label = "Страна (наименование краткое)"
+        if self.instance and self.instance.pk and self.instance.country_id:
+            self.fields["code"].initial = self.instance.country.code if self.instance.country else ""
+
+    class Meta:
+        model = LegalEntityIdentifier
+        fields = ["identifier", "full_name", "country", "code"]
+        widgets = {
+            "identifier": forms.TextInput(attrs={"class": "form-control", "placeholder": "Идентификатор"}),
+            "full_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Наименование идентификатора (полное)"}),
+        }
 
 
 class TerritorialDivisionForm(forms.ModelForm):

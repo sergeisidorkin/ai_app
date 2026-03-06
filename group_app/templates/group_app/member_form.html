@@ -39,6 +39,12 @@
              value="{% if member %}{{ member.country_code }}{% endif %}">
     </div>
     <div class="mb-3">
+      <label class="form-label">Буквенный код (Альфа-2)</label>
+      <input type="text" class="form-control" id="gm-country-alpha2" readonly tabindex="-1"
+             style="background-color:#f8f9fa; color:#6c757d;"
+             value="{% if member %}{{ member.country_alpha2 }}{% endif %}">
+    </div>
+    <div class="mb-3">
       <label class="form-label">Идентификатор</label>
       {{ form.identifier }}
     </div>
@@ -67,12 +73,20 @@
 (function() {
   var countryEl = document.getElementById('gm-country-select');
   var codeEl = document.getElementById('gm-country-code');
-  if (!countryEl || !codeEl) return;
-  countryEl.addEventListener('change', function() {
-    if (!this.value) { codeEl.value = ''; return; }
-    fetch('{% url "country_code_lookup" %}?country_id=' + encodeURIComponent(this.value))
-      .then(function(r) { return r.json(); })
-      .then(function(data) { codeEl.value = data.code || ''; });
-  });
+  var alpha2El = document.getElementById('gm-country-alpha2');
+  var identifierEl = document.getElementById('gm-identifier');
+  if (!countryEl || !codeEl || !alpha2El || !identifierEl) return;
+
+  var countryMap = {{ country_identifier_map_json|safe }};
+
+  function updateCountryMeta() {
+    var meta = countryMap[countryEl.value] || {};
+    codeEl.value = meta.code || '';
+    alpha2El.value = meta.alpha2 || '';
+    identifierEl.value = meta.identifier || '';
+  }
+
+  countryEl.addEventListener('change', updateCountryMeta);
+  updateCountryMeta();
 })();
 </script>

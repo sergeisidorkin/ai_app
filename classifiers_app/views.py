@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import logging
 from datetime import date as date_type
 
@@ -11,8 +12,8 @@ from django.http import JsonResponse
 
 logger = logging.getLogger(__name__)
 
-from .models import OKSMCountry, OKVCurrency, TerritorialDivision, LivingWage
-from .forms import OKSMCountryForm, OKVCurrencyForm, TerritorialDivisionForm, LivingWageForm
+from .models import OKSMCountry, OKVCurrency, LegalEntityIdentifier, TerritorialDivision, LivingWage
+from .forms import OKSMCountryForm, OKVCurrencyForm, LegalEntityIdentifierForm, TerritorialDivisionForm, LivingWageForm
 
 PARTIAL_TEMPLATE = "classifiers_app/classifiers_partial.html"
 OKSM_TABLE_TEMPLATE = "classifiers_app/oksm_table_partial.html"
@@ -21,6 +22,8 @@ KATD_TABLE_TEMPLATE = "classifiers_app/katd_table_partial.html"
 KATD_FORM_TEMPLATE = "classifiers_app/katd_form.html"
 OKV_TABLE_TEMPLATE = "classifiers_app/okv_table_partial.html"
 OKV_FORM_TEMPLATE = "classifiers_app/okv_form.html"
+LEI_TABLE_TEMPLATE = "classifiers_app/lei_table_partial.html"
+LEI_FORM_TEMPLATE = "classifiers_app/lei_form.html"
 LW_TABLE_TEMPLATE = "classifiers_app/lw_table_partial.html"
 LW_FORM_TEMPLATE = "classifiers_app/lw_form.html"
 HX_TRIGGER_HEADER = "HX-Trigger"
@@ -124,6 +127,16 @@ def _okv_context(request):
 
 
 # ---------------------------------------------------------------------------
+#  LEI (Классификатор идентификаторов юрлиц) queryset helpers
+# ---------------------------------------------------------------------------
+
+def _lei_context(request):
+    return {
+        "lei_items": LegalEntityIdentifier.objects.select_related("country").order_by("position", "id"),
+    }
+
+
+# ---------------------------------------------------------------------------
 #  KATD queryset helpers
 # ---------------------------------------------------------------------------
 
@@ -170,6 +183,7 @@ def _classifiers_context(request):
     ctx = {}
     ctx.update(_oksm_context(request))
     ctx.update(_okv_context(request))
+    ctx.update(_lei_context(request))
     ctx.update(_katd_context(request))
     ctx.update(_lw_context(request))
     return ctx
@@ -194,6 +208,11 @@ def _next_oksm_position():
 
 def _next_okv_position():
     last = OKVCurrency.objects.aggregate(mx=Max("position")).get("mx") or 0
+    return last + 1
+
+
+def _next_lei_position():
+    last = LegalEntityIdentifier.objects.aggregate(mx=Max("position")).get("mx") or 0
     return last + 1
 
 
@@ -241,6 +260,16 @@ def oksm_table_partial(request):
 @require_http_methods(["GET"])
 def okv_table_partial(request):
     return render(request, OKV_TABLE_TEMPLATE, _okv_context(request))
+
+
+# ---------------------------------------------------------------------------
+#  LEI (Классификатор идентификаторов юрлиц) — partial
+# ---------------------------------------------------------------------------
+
+@login_required
+@require_http_methods(["GET"])
+def lei_table_partial(request):
+    return render(request, LEI_TABLE_TEMPLATE, _lei_context(request))
 
 
 # ---------------------------------------------------------------------------
@@ -648,6 +677,100 @@ def okv_move_down(request, pk: int):
         OKVCurrency.objects.filter(pk=cur.id).update(position=nxt.position)
         OKVCurrency.objects.filter(pk=nxt.id).update(position=cur.position)
         _normalize_okv_positions()
+    return _render_updated(request)
+
+
+# ---------------------------------------------------------------------------
+#  LEI (Классификатор идентификаторов юрлиц) CRUD
+# ---------------------------------------------------------------------------
+
+def _lei_form_context(form, action, lei=None):
+    """Build context for LEI form template with country_codes_json."""
+    qs = form.fields["country"].queryset
+    country_codes = {str(c.id): c.code for c in qs}
+    ctx = {"form": form, "action": action, "country_codes_json": json.dumps(country_codes)}
+    if lei is not None:
+        ctx["lei"] = lei
+    return ctx
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def lei_form_create(request):
+    if request.method == "GET":
+        form = LegalEntityIdentifierForm()
+        return render(request, LEI_FORM_TEMPLATE, _lei_form_context(form, "create"))
+    form = LegalEntityIdentifierForm(request.POST)
+    if not form.is_valid():
+        return render(request, LEI_FORM_TEMPLATE, _lei_form_context(form, "create"))
+    obj = form.save(commit=False)
+    if not getattr(obj, "position", 0):
+        obj.position = _next_lei_position()
+    if obj.country:
+        obj.code = obj.country.code
+    obj.save()
+    return _render_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def lei_form_edit(request, pk: int):
+    lei = get_object_or_404(LegalEntityIdentifier, pk=pk)
+    if request.method == "GET":
+        form = LegalEntityIdentifierForm(instance=lei)
+        return render(request, LEI_FORM_TEMPLATE, _lei_form_context(form, "edit", lei))
+    form = LegalEntityIdentifierForm(request.POST, instance=lei)
+    if not form.is_valid():
+        return render(request, LEI_FORM_TEMPLATE, _lei_form_context(form, "edit", lei))
+    obj = form.save(commit=False)
+    if obj.country:
+        obj.code = obj.country.code
+    obj.save()
+    return _render_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def lei_delete(request, pk: int):
+    get_object_or_404(LegalEntityIdentifier, pk=pk).delete()
+    return _render_updated(request)
+
+
+def _normalize_lei_positions():
+    items = LegalEntityIdentifier.objects.order_by("position", "id").only("id", "position")
+    for idx, it in enumerate(items, start=1):
+        if it.position != idx:
+            LegalEntityIdentifier.objects.filter(pk=it.pk).update(position=idx)
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+def lei_move_up(request, pk: int):
+    _normalize_lei_positions()
+    items = list(LegalEntityIdentifier.objects.order_by("position", "id").only("id", "position"))
+    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+    if idx is not None and idx > 0:
+        cur, prev = items[idx], items[idx - 1]
+        LegalEntityIdentifier.objects.filter(pk=cur.id).update(position=prev.position)
+        LegalEntityIdentifier.objects.filter(pk=prev.id).update(position=cur.position)
+        _normalize_lei_positions()
+    return _render_updated(request)
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+def lei_move_down(request, pk: int):
+    _normalize_lei_positions()
+    items = list(LegalEntityIdentifier.objects.order_by("position", "id").only("id", "position"))
+    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+    if idx is not None and idx < len(items) - 1:
+        cur, nxt = items[idx], items[idx + 1]
+        LegalEntityIdentifier.objects.filter(pk=cur.id).update(position=nxt.position)
+        LegalEntityIdentifier.objects.filter(pk=nxt.id).update(position=cur.position)
+        _normalize_lei_positions()
     return _render_updated(request)
 
 

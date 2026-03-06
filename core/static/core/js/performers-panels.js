@@ -55,8 +55,6 @@
       const url = tr?.dataset?.editUrl;
       if (!url) return;
       await htmx.ajax('GET', url, { target: '#performers-modal .modal-content', swap: 'innerHTML' });
-      const modalEl = document.getElementById('performers-modal');
-      if (modalEl && window.bootstrap) window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
       ensureActionsVisibility();
       return;
     }

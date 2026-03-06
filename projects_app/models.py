@@ -12,11 +12,6 @@ DATE_INPUT_ATTRS = {"class": "form-control js-date", "autocomplete": "off"}  # �
 DATE_INPUT_FORMATS = ["%Y-%m-%d", "%d.%m.%Y", "%d.%m.%y"]  # принимаем ISO и ДД.ММ.ГГ
 
 class ProjectRegistration(models.Model):
-    class Group(models.TextChoices):
-        RU = "RU", "RU"
-        KZ = "KZ", "KZ"
-        AM = "AM", "AM"
-
     class AgreementType(models.TextChoices):
         MAIN = "MAIN", "Основной договор"
         ADDENDUM = "ADDENDUM", "Допсоглашение"
@@ -26,7 +21,7 @@ class ProjectRegistration(models.Model):
         verbose_name="Номер",
         validators=[MinValueValidator(3333), MaxValueValidator(9999)],
     )
-    group = models.CharField("Группа", max_length=2, choices=Group.choices, default=Group.RU, db_index=True)
+    group = models.CharField("Группа", max_length=2, default="RU", db_index=True)
     agreement_type = models.CharField(
         "Вид соглашения",
         max_length=20,

@@ -1,9 +1,10 @@
 from django import forms
-from .models import ProjectRegistration, WorkVolume, LegalEntity
-from django import forms
-from .models import Performer
-from policy_app.models import TypicalSection
 from django.utils import timezone
+
+from group_app.models import GroupMember
+from policy_app.models import TypicalSection
+
+from .models import LegalEntity, Performer, ProjectRegistration, WorkVolume
 
 _common_input = {"class": "form-control form-control-sm"}
 _common_select = {"class": "form-select form-select-sm"}
@@ -128,6 +129,12 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
     deadline       = forms.DateField(required=False,
                                      widget=forms.TextInput(attrs=DATE_INPUT_ATTRS),
                                      input_formats=DATE_INPUT_FORMATS)
+    group = forms.ChoiceField(
+        label="Группа",
+        choices=(),
+        required=True,
+        widget=forms.Select(attrs={"id": "registration-group-select"}),
+    )
     class Meta:
         model = ProjectRegistration
         exclude = ("position",)
@@ -140,12 +147,33 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        current_group = self.data.get("group") or (self.instance.group if self.instance else "")
+        self.fields["group"].choices = self._group_choices(current_group)
         self._bootstrapify()
         if not self.instance.pk and "group" not in self.data:
-            from .models import ProjectRegistration as PR
-            self.fields["group"].initial = PR.Group.RU
+            ru_value = next((value for value, _label in self.fields["group"].choices if value == "RU"), "")
+            self.fields["group"].initial = ru_value
         if not self.instance.pk and "year" not in self.data:
             self.fields["year"].initial = timezone.now().year
+
+    @staticmethod
+    def _group_choices(current_value=""):
+        items = (
+            GroupMember.objects
+            .exclude(country_alpha2="")
+            .values_list("country_alpha2", "short_name")
+            .order_by("position", "id")
+        )
+        seen = set()
+        choices = [("", "— Не выбрано —")]
+        for alpha2, short_name in items:
+            if alpha2 in seen:
+                continue
+            seen.add(alpha2)
+            choices.append((alpha2, f"{alpha2} {short_name}"))
+        if current_value and all(value != current_value for value, _label in choices):
+            choices.insert(0, (current_value, current_value))
+        return choices
 
     def clean_input_data(self):
         return self.cleaned_data.get("input_data") or 0

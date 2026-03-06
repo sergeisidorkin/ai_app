@@ -21,6 +21,13 @@ urlpatterns = [
     path("okv/<int:pk>/move-up/", views.okv_move_up, name="okv_move_up"),
     path("okv/<int:pk>/move-down/", views.okv_move_down, name="okv_move_down"),
     path("okv/csv-upload/", views.okv_csv_upload, name="okv_csv_upload"),
+    # Классификатор идентификаторов юрлиц (LEI)
+    path("lei/table/", views.lei_table_partial, name="lei_table_partial"),
+    path("lei/create/", views.lei_form_create, name="lei_form_create"),
+    path("lei/<int:pk>/edit/", views.lei_form_edit, name="lei_form_edit"),
+    path("lei/<int:pk>/delete/", views.lei_delete, name="lei_delete"),
+    path("lei/<int:pk>/move-up/", views.lei_move_up, name="lei_move_up"),
+    path("lei/<int:pk>/move-down/", views.lei_move_down, name="lei_move_down"),
     # КАТД
     path("katd/countries-for-date/", views.katd_countries_for_date, name="katd_countries_for_date"),
     path("katd/table/", views.katd_table_partial, name="katd_table_partial"),

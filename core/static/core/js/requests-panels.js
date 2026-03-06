@@ -101,8 +101,6 @@
       const url = tr?.dataset?.editUrl || (id ? `/requests/row/${id}/edit/` : null);
       if (!url) return;
       await htmx.ajax('GET', url + allSuffix, { target: '#requests-modal .modal-content', swap: 'innerHTML' });
-      const modalEl = document.getElementById('requests-modal');
-      if (modalEl && window.bootstrap) window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
       ensureActionsVisibility(name);
       return;
     }
