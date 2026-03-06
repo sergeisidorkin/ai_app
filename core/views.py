@@ -9,9 +9,11 @@ class RememberMeLoginView(LoginView):
     redirect_authenticated_user = True
 
     def form_valid(self, form):
+        response = super().form_valid(form)
         if not self.request.POST.get("remember"):
             self.request.session.set_expiry(0)
-        return super().form_valid(form)
+            self.request.session.save()
+        return response
 
 
 def home_entry(request):
