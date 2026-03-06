@@ -6,8 +6,8 @@ from django.views.generic import TemplateView, RedirectView
 from django.http import HttpResponse
 from django.templatetags.static import static as static_url
 
-from django.contrib.auth.views import LoginView, LogoutView
-from core.views import home_entry
+from django.contrib.auth.views import LogoutView
+from core.views import home_entry, RememberMeLoginView
 from users_app.views import register_view, verify_view, resend_code_view
 
 from openai_app import views as openai_views
@@ -48,8 +48,7 @@ path("", home_entry, name="home"),
     path("blockseditor/", include(("blockseditor_app.urls", "blockseditor_app"), namespace="blockseditor_app")),
 
     # Auth
-    path("accounts/login/", LoginView.as_view(template_name="core/signin.html", redirect_authenticated_user=True),
-         name="login"),
+    path("accounts/login/", RememberMeLoginView.as_view(), name="login"),
     path("accounts/logout/", LogoutView.as_view(next_page="login"), name="logout"),
     path("accounts/register/", register_view, name="register"),
     path("accounts/profile/", include("userprofile_app.urls")),
@@ -69,3 +68,9 @@ urlpatterns += [
 
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+else:
+    from django.urls import re_path
+    from django.views.static import serve
+    urlpatterns += [
+        re_path(r"^media/(?P<path>.*)$", serve, {"document_root": settings.MEDIA_ROOT}),
+    ]
