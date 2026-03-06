@@ -1,0 +1,303 @@
+{% extends "core/base.html" %}
+{% load static %}
+
+{% block title %}Профиль пользователя | IMC Montan AI{% endblock %}
+
+{% block content %}
+<div class="d-flex" style="min-height:100vh;">
+  <!-- Сайдбар -->
+  <aside id="sidebar" class="sidebar bg-white border-end d-flex flex-column">
+    <div class="sidebar-header d-flex align-items-center justify-content-between px-3 py-3">
+      <a href="{% url 'home' %}" class="d-flex align-items-center text-decoration-none">
+        <img src="{% static 'core/img/logo.png' %}" alt="Логотип" class="sidebar-logo me-2" height="28">
+        <img src="{% static 'core/img/logoicon.png' %}" alt="Лого (иконка)" class="sidebar-logo-collapsed me-2" height="28">
+      </a>
+      <a href="#" id="sidebarToggle" class="icon-btn" title="Свернуть сайдбар" aria-label="Свернуть сайдбар">
+        <i class="bi bi-chevron-left" data-chevron></i>
+      </a>
+    </div>
+    <hr class="my-0">
+
+    <ul class="nav nav-pills flex-column gap-2 px-2 py-3">
+      {% if request.user.is_staff %}
+        <li class="nav-item">
+          <a class="nav-link d-flex align-items-center" href="{% url 'home' %}">
+            <i class="bi bi-arrow-left me-2"></i>
+            <span class="link-text">Назад</span>
+          </a>
+        </li>
+      {% endif %}
+    </ul>
+
+    <!-- Низ: профиль (sticky) -->
+    <div class="mt-auto py-3 border-top sidebar-profile">
+      {% if request.user.is_authenticated %}
+      <div class="d-flex align-items-center">
+        <span class="flex-shrink-0">
+          {% if employee and employee.avatar %}
+            <img src="{{ employee.avatar.url }}" alt="Аватар" class="sidebar-avatar-img rounded-circle" width="32" height="32" style="object-fit:cover;">
+          {% elif request.user.first_name or request.user.last_name %}
+            <span class="sidebar-initials rounded-circle d-inline-flex align-items-center justify-content-center">{{ request.user.first_name|make_list|first|default:"" }}{{ request.user.last_name|make_list|first|default:"" }}</span>
+          {% else %}
+            <span class="profile-icon"><i class="bi bi-person-circle"></i></span>
+          {% endif %}
+        </span>
+        <span class="link-text small text-truncate ms-2 me-auto">{{ request.user.get_full_name|default:request.user.email }}</span>
+        <form method="post" action="{% url 'logout' %}" class="flex-shrink-0 link-text">
+          {% csrf_token %}
+          <button type="submit" class="sidebar-logout-btn" title="Выйти">
+            <i class="bi bi-box-arrow-right"></i>
+          </button>
+        </form>
+      </div>
+      {% endif %}
+    </div>
+  </aside>
+
+  <!-- Контент -->
+  <main class="flex-grow-1 py-4 px-3" style="min-width:0; overflow-x:hidden;">
+    <div class="templates-bleed">
+      <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
+        <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
+          <h5 class="mb-0 ps-3 fs-4 pt-2">Профиль пользователя</h5>
+        </div>
+      </div>
+
+      <div class="ps-3 pt-4">
+        <!-- Аватар + Имя + Статус -->
+        <div class="d-flex align-items-center mb-4">
+          <div class="profile-avatar-wrap position-relative me-3" style="cursor:pointer;">
+            {% if employee and employee.avatar %}
+              <img src="{{ employee.avatar.url }}" alt="Аватар"
+                   class="rounded-circle" width="80" height="80"
+                   style="object-fit:cover;"
+                   onclick="document.getElementById('avatar-input').click();">
+              <!-- Затемнение с камерой -->
+              <div class="profile-avatar-overlay rounded-circle position-absolute top-0 start-0 w-100 h-100
+                          d-flex align-items-center justify-content-center"
+                   onclick="document.getElementById('avatar-input').click();">
+                <i class="bi bi-camera-fill text-white fs-5"></i>
+              </div>
+              <!-- Кнопка удаления -->
+              <button type="button"
+                      class="profile-avatar-delete position-absolute btn btn-sm p-0 rounded-circle
+                             d-flex align-items-center justify-content-center"
+                      data-bs-toggle="modal" data-bs-target="#deleteAvatarModal"
+                      title="Удалить фото">
+                <i class="bi bi-x"></i>
+              </button>
+            {% else %}
+              <div class="profile-avatar-initials rounded-circle d-flex align-items-center justify-content-center"
+                   style="width:80px;height:80px;background:#dee2e6;font-size:1.6rem;font-weight:600;color:#495057;"
+                   onclick="document.getElementById('avatar-input').click();">
+                {{ request.user.first_name|make_list|first|default:"" }}{{ request.user.last_name|make_list|first|default:"" }}
+              </div>
+              <div class="profile-avatar-overlay rounded-circle position-absolute top-0 start-0 w-100 h-100
+                          d-flex align-items-center justify-content-center"
+                   onclick="document.getElementById('avatar-input').click();">
+                <i class="bi bi-camera-fill text-white fs-5"></i>
+              </div>
+            {% endif %}
+          </div>
+          <form id="avatar-form" method="post" action="{% url 'user_profile_avatar' %}" enctype="multipart/form-data" class="d-none">
+            {% csrf_token %}
+            <input type="file" id="avatar-input" name="avatar" accept="image/*"
+                   onchange="document.getElementById('avatar-form').submit();">
+          </form>
+
+          <div>
+            <h5 class="mb-1">{{ request.user.first_name }} {{ request.user.last_name }}</h5>
+            <span class="badge bg-light text-secondary border">
+              {% if request.user.is_staff %}Сотрудник{% else %}Внешний пользователь{% endif %}
+            </span>
+          </div>
+        </div>
+
+        <!-- Белая панель: Общая информация -->
+        <div class="card shadow-sm" style="max-width:700px;">
+          <div class="card-body">
+            <h6 class="mb-3 fw-semibold">Общая информация о пользователе</h6>
+
+            <div class="row mb-2 align-items-center">
+              <div class="col-auto text-muted small" style="width:150px;">Имя</div>
+              <div class="col">
+                <input type="text" class="form-control form-control-sm" value="{{ request.user.first_name|default:"" }}" readonly tabindex="-1">
+              </div>
+            </div>
+            <div class="row mb-2 align-items-center">
+              <div class="col-auto text-muted small" style="width:150px;">Фамилия</div>
+              <div class="col">
+                <input type="text" class="form-control form-control-sm" value="{{ request.user.last_name|default:"" }}" readonly tabindex="-1">
+              </div>
+            </div>
+            <div class="row mb-2 align-items-center">
+              <div class="col-auto text-muted small" style="width:150px;">Отчество</div>
+              <div class="col">
+                <input type="text" class="form-control form-control-sm" value="{% if employee %}{{ employee.patronymic }}{% endif %}" readonly tabindex="-1">
+              </div>
+            </div>
+            <div class="row mb-2 align-items-center">
+              <div class="col-auto text-muted small" style="width:150px;">Эл. почта</div>
+              <div class="col">
+                <input type="text" class="form-control form-control-sm readonly-field" value="{{ request.user.email }}" readonly tabindex="-1">
+              </div>
+            </div>
+            <div class="row mb-2 align-items-center">
+              <div class="col-auto text-muted small" style="width:150px;">Пароль</div>
+              <div class="col">
+                <input type="text" class="form-control form-control-sm" value="••••••••" readonly tabindex="-1">
+              </div>
+            </div>
+            <div class="row mb-2 align-items-center">
+              <div class="col-auto text-muted small" style="width:150px;">Телефон</div>
+              <div class="col">
+                <input type="text" class="form-control form-control-sm" value="{% if employee %}{{ employee.phone }}{% endif %}" readonly tabindex="-1">
+              </div>
+            </div>
+            <div class="row mb-2 align-items-center">
+              <div class="col-auto text-muted small" style="width:150px;">Организация</div>
+              <div class="col">
+                {% if request.user.is_staff %}
+                  <input type="text" class="form-control form-control-sm readonly-field" value="{% if employee %}{{ employee.employment }}{% endif %}" readonly tabindex="-1">
+                {% else %}
+                  <input type="text" class="form-control form-control-sm" value="{% if employee %}{{ employee.organization }}{% endif %}" readonly tabindex="-1">
+                {% endif %}
+              </div>
+            </div>
+            <div class="row mb-3 align-items-center">
+              <div class="col-auto text-muted small" style="width:150px;">Должность</div>
+              <div class="col">
+                <input type="text" class="form-control form-control-sm" value="{% if employee %}{{ employee.job_title }}{% endif %}" readonly tabindex="-1">
+              </div>
+            </div>
+
+            <!-- Кнопки -->
+            <div class="d-flex align-items-center gap-2">
+              <button class="btn btn-primary btn-sm d-flex align-items-center"
+                      data-bs-toggle="modal" data-bs-target="#editProfileModal">
+                <i class="bi bi-pencil me-2"></i>Редактировать
+              </button>
+              <button class="btn btn-outline-danger btn-sm d-flex align-items-center"
+                      data-bs-toggle="modal" data-bs-target="#deleteProfileModal">
+                <i class="bi bi-trash me-2"></i>Удалить профиль
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- Модальное окно: Удалить фото -->
+<div class="modal fade" id="deleteAvatarModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title">Удалить фото профиля?</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-0 small">Фото профиля будет удалено. Вместо него будут отображаться инициалы.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Отмена</button>
+        <form method="post" action="{% url 'user_profile_avatar_delete' %}">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-danger btn-sm">Удалить</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Модальное окно: Редактировать профиль -->
+<div class="modal fade" id="editProfileModal" tabindex="-1" aria-labelledby="editProfileLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <form method="post" action="{% url 'user_profile_edit' %}">
+      {% csrf_token %}
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="editProfileLabel">Редактировать профиль</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label for="edit-first-name" class="form-label">Имя</label>
+            <input type="text" class="form-control" id="edit-first-name" name="first_name"
+                   value="{{ request.user.first_name }}">
+          </div>
+          <div class="mb-3">
+            <label for="edit-last-name" class="form-label">Фамилия</label>
+            <input type="text" class="form-control" id="edit-last-name" name="last_name"
+                   value="{{ request.user.last_name }}">
+          </div>
+          <div class="mb-3">
+            <label for="edit-patronymic" class="form-label">Отчество</label>
+            <input type="text" class="form-control" id="edit-patronymic" name="patronymic"
+                   value="{% if employee %}{{ employee.patronymic }}{% endif %}">
+          </div>
+          <div class="mb-3">
+            <label for="edit-email" class="form-label">Электронная почта</label>
+            <input type="email" class="form-control readonly-field" id="edit-email"
+                   value="{{ request.user.email }}" disabled>
+          </div>
+          <div class="mb-3">
+            <label for="edit-password" class="form-label">Новый пароль</label>
+            <input type="password" class="form-control" id="edit-password" name="password"
+                   placeholder="Оставьте пустым, чтобы не менять">
+          </div>
+          <div class="mb-3">
+            <label for="edit-phone" class="form-label">Телефон</label>
+            <input type="text" class="form-control" id="edit-phone" name="phone"
+                   value="{% if employee %}{{ employee.phone }}{% endif %}">
+          </div>
+          <div class="mb-3">
+            <label for="edit-organization" class="form-label">Организация</label>
+            {% if request.user.is_staff %}
+              <input type="text" class="form-control readonly-field" id="edit-organization"
+                     value="{% if employee %}{{ employee.employment }}{% endif %}" disabled>
+            {% else %}
+              <input type="text" class="form-control" id="edit-organization" name="organization"
+                     value="{% if employee %}{{ employee.organization }}{% endif %}">
+            {% endif %}
+          </div>
+          <div class="mb-3">
+            <label for="edit-job-title" class="form-label">Должность</label>
+            <input type="text" class="form-control" id="edit-job-title" name="job_title"
+                   value="{% if employee %}{{ employee.job_title }}{% endif %}">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Отмена</button>
+          <button type="submit" class="btn btn-primary btn-sm">Сохранить</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Модальное окно: Удалить профиль -->
+<div class="modal fade" id="deleteProfileModal" tabindex="-1" aria-labelledby="deleteProfileLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title text-danger" id="deleteProfileLabel">Удалить профиль</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+      </div>
+      <div class="modal-body">
+        <p>Вы уверены, что хотите удалить свой профиль?</p>
+        <p class="text-danger fw-semibold mb-0">Это действие необратимо. Ваш аккаунт и все связанные данные будут удалены навсегда.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Отмена</button>
+        <form method="post" action="{% url 'user_profile_delete' %}">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-danger btn-sm">Удалить навсегда</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

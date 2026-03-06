@@ -25,12 +25,17 @@
 /* Сайдбар: базовая раскладка */
 .sidebar {
   width: 260px;
-  min-height: 100vh;          /* на всю высоту окна */
+  height: 100vh;
   position: sticky;
-  top: 0;                      /* прилипает под шапкой, так как шапка выше в DOM */
+  top: 0;
   display: flex;
   flex-direction: column;
-  padding-top: 11px; /* отступ сверху для логотипа и стрелки */
+  padding-top: 11px;
+}
+.sidebar > .nav {
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* Зафиксировать ширину основного сайдбара вне зависимости от содержимого раздела "Шаблоны" */
@@ -41,8 +46,7 @@
 
 /* Кнопка сворачивания всегда поверх второго сайдбара */
 #sidebar {
-  position: relative;
-  z-index: 1031; /* выше второго сайдбара */
+  z-index: 1031;
 }
 
 .sidebar .sidebar-header .icon-btn {
@@ -161,6 +165,98 @@
 }
 .sidebar .mt-auto a:hover {
   opacity: 1;
+}
+
+.sidebar .profile-icon,
+.sidebar a.profile-icon {
+  font-size: 2.1rem;
+  color: var(--bs-primary, #075D94);
+}
+
+.sidebar .sidebar-profile {
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+
+.sidebar.is-collapsed .sidebar-profile {
+  padding-left: 0;
+  padding-right: 0;
+}
+.sidebar.is-collapsed .sidebar-profile > div {
+  justify-content: center;
+}
+.sidebar.is-collapsed .sidebar-profile .profile-icon {
+  margin: 0;
+}
+
+.sidebar .sidebar-logout-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: .375rem;
+  background: transparent;
+  color: var(--bs-primary, #075D94);
+  cursor: pointer;
+}
+.sidebar .sidebar-logout-btn:hover {
+  background-color: rgba(var(--bs-primary-rgb, 7,93,148), .08);
+  color: var(--bs-primary, #075D94);
+}
+
+/* Аватар профиля */
+.profile-avatar-overlay {
+  background: rgba(0,0,0,.45);
+  opacity: 0;
+  transition: opacity .2s;
+  cursor: pointer;
+}
+.profile-avatar-wrap:hover .profile-avatar-overlay {
+  opacity: 1;
+}
+.profile-avatar-delete {
+  top: -4px;
+  right: -4px;
+  width: 22px;
+  height: 22px;
+  background: #dc3545;
+  color: #fff;
+  border: 2px solid #fff;
+  font-size: .7rem;
+  opacity: 0;
+  transition: opacity .2s;
+}
+.profile-avatar-delete:hover {
+  background: #bb2d3b;
+  color: #fff;
+}
+.profile-avatar-wrap:hover .profile-avatar-delete {
+  opacity: 1;
+}
+
+/* Заблокированные поля (единый стиль) */
+.readonly-field,
+.readonly-field:disabled,
+.readonly-field[readonly] {
+  background-color: #f8f9fa !important;
+  color: #6c757d !important;
+}
+
+/* Аватар в сайдбаре */
+.sidebar-avatar-img {
+  display: block;
+}
+.sidebar-initials {
+  width: 32px;
+  height: 32px;
+  font-size: .75rem;
+  font-weight: 600;
+  color: #fff;
+  background: var(--bs-primary, #075D94);
+  line-height: 1;
 }
 
 /* Свернутый сайдбар */

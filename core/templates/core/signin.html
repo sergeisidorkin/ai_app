@@ -102,9 +102,8 @@
               Запомнить меня
             </label>
           </div>
-          <a class="text-decoration-none" href="#"
-             style="color: var(--bs-primary); margin-right: 14px;"
-             onclick="alert('Регистрация будет добавлена позже.'); return false;">Регистрация</a>
+          <a class="text-decoration-none" href="{% url 'register' %}"
+             style="color: var(--bs-primary); margin-right: 14px;">Регистрация</a>
         </div>
 
         <button class="btn btn-primary w-100 py-2" type="submit">Войти</button>
