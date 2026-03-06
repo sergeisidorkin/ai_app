@@ -1,10 +1,11 @@
 name: Deploy
 
 on:
-  # Запускаем деплой ТОЛЬКО когда CI завершился (на любой ветке/теге).
+  # Запускаем деплой ТОЛЬКО когда CI завершился на main.
   workflow_run:
     workflows: ["CI"]
     types: [completed]
+    branches: [main]
 
   # Ручной запуск
   workflow_dispatch:
