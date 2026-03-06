@@ -63,6 +63,13 @@
     panel.classList.toggle('d-none', !anyChecked);
   }
 
+  function getDeleteConfirmationMessage(name, count) {
+    if (name === 'work-select') {
+      return `Удалить ${count} строк(у/и) из "Объем услуг"? Будут также удалены связанные строки в "Юридические лица" и "Исполнители".`;
+    }
+    return `Удалить ${count} строк(у/и)?`;
+  }
+
   // Делегирование: клики по кнопкам панели РЕГИСТРАЦИИ (строго как в products)
   document.addEventListener('click', async (e) => {
     const root = pane();
@@ -98,7 +105,7 @@
     }
 
     if (action === 'delete') {
-      if (!confirm(`Удалить ${checked.length} строк(у/и)?`)) return;
+      if (!confirm(getDeleteConfirmationMessage(name, checked.length))) return;
       const urls = checked.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
       for (let i = 0; i < urls.length; i++) {
         const isLast = i === urls.length - 1;

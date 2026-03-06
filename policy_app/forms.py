@@ -68,7 +68,7 @@ class SectionStructureForm(forms.ModelForm):
 
 class GradeForm(forms.ModelForm):
     owner = forms.ModelChoiceField(
-        label="Руководитель направления",
+        label="Руководитель",
         queryset=User.objects.filter(groups__name=DEPARTMENT_HEAD_GROUP),
         required=False,
         widget=forms.Select(attrs={"class": "form-select"}),
@@ -98,7 +98,7 @@ class GradeForm(forms.ModelForm):
         self.fields["base_rate_share"].required = False
         self.fields["owner"].queryset = User.objects.filter(
             groups__name=DEPARTMENT_HEAD_GROUP
-        ).distinct()
+        ).distinct().order_by("last_name", "first_name", "username")
         self.fields["owner"].label_from_instance = lambda u: (
             f"{u.last_name} {u.first_name}".strip() or u.username
         )
@@ -121,7 +121,7 @@ class GradeForm(forms.ModelForm):
 
 class TariffForm(forms.ModelForm):
     owner = forms.ModelChoiceField(
-        label="Руководитель направления",
+        label="Руководитель",
         queryset=User.objects.filter(groups__name=DEPARTMENT_HEAD_GROUP),
         required=False,
         widget=forms.Select(attrs={"class": "form-select"}),
@@ -159,7 +159,7 @@ class TariffForm(forms.ModelForm):
         )
         self.fields["owner"].queryset = User.objects.filter(
             groups__name=DEPARTMENT_HEAD_GROUP
-        ).distinct()
+        ).distinct().order_by("last_name", "first_name", "username")
         self.fields["owner"].label_from_instance = lambda u: (
             f"{u.last_name} {u.first_name}".strip() or u.username
         )

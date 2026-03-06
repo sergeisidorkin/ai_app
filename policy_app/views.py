@@ -6,7 +6,7 @@ from django.http import JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST
 from django.db.models import Max
-from .models import Product, TypicalSection, SectionStructure, Grade, Tariff, DEPARTMENT_HEAD_GROUP
+from .models import Product, TypicalSection, SectionStructure, Grade, Tariff, MANAGER_GROUPS
 from .forms import ProductForm, TypicalSectionForm, SectionStructureForm, GradeForm, TariffForm
 
 # Вынесенные константы для единообразия шаблонов/заголовков
@@ -21,7 +21,7 @@ HX_POLICY_UPDATED_EVENT = "policy-updated"
 
 
 def _is_department_head(user):
-    return user.groups.filter(name=DEPARTMENT_HEAD_GROUP).exists()
+    return user.groups.filter(name__in=MANAGER_GROUPS).exists()
 
 
 def _get_grades_for_user(user):

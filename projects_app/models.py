@@ -1,11 +1,11 @@
-from django.db import models
+from django.db import models, transaction
 from django.core.validators import MinValueValidator, MaxValueValidator
 from policy_app.models import Product, TypicalSection
 from datetime import timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.db.models import Max
-from django.db.models.signals import post_save
+from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 
 DATE_INPUT_ATTRS = {"class": "form-control js-date", "autocomplete": "off"}  # ← хук для JS-пикера
@@ -204,6 +204,72 @@ class WorkVolume(models.Model):
     def __str__(self):
         return f"{self.project.number if self.project_id else '-'} — {self.name}"
 
+
+def _effective_work_asset_name(work_item):
+    return (getattr(work_item, "asset_name", "") or getattr(work_item, "name", "") or "").strip()
+
+
+def _sync_checklist_note_asset_names(project, section_ids, old_asset_name, new_asset_name):
+    if not old_asset_name or old_asset_name == new_asset_name or not section_ids:
+        return
+
+    from checklists_app.models import ChecklistRequestNote, ChecklistCommentHistory
+
+    source_notes = list(
+        ChecklistRequestNote.objects
+        .filter(project=project, asset_name=old_asset_name, section_id__in=section_ids)
+        .select_related("checklist_item", "section")
+    )
+    if not source_notes:
+        return
+
+    with transaction.atomic():
+        for source in source_notes:
+            target = ChecklistRequestNote.objects.filter(
+                checklist_item=source.checklist_item,
+                project=source.project,
+                section=source.section,
+                asset_name=new_asset_name,
+            ).exclude(pk=source.pk).first()
+
+            if target:
+                changed = False
+                if source.imc_comment and not target.imc_comment:
+                    target.imc_comment = source.imc_comment
+                    changed = True
+                if source.customer_comment and not target.customer_comment:
+                    target.customer_comment = source.customer_comment
+                    changed = True
+                if changed:
+                    target.save(update_fields=["imc_comment", "customer_comment", "updated_at"])
+                ChecklistCommentHistory.objects.filter(note=source).update(note=target)
+                source.delete()
+                continue
+
+            source.asset_name = new_asset_name
+            source.save(update_fields=["asset_name"])
+
+
+def _sync_related_asset_name_updates(instance, old_asset_name):
+    new_asset_name = _effective_work_asset_name(instance)
+    if old_asset_name == new_asset_name:
+        return
+
+    performers_qs = Performer.objects.filter(work_item=instance)
+    section_ids = list(
+        performers_qs.exclude(typical_section_id__isnull=True)
+        .values_list("typical_section_id", flat=True)
+        .distinct()
+    )
+    performers_qs.update(asset_name=new_asset_name)
+
+    LegalEntity.objects.filter(
+        work_item=instance,
+        legal_name=old_asset_name,
+    ).update(legal_name=new_asset_name)
+
+    _sync_checklist_note_asset_names(instance.project, section_ids, old_asset_name, new_asset_name)
+
 WorkVolumeItem = WorkVolume
 
 class LegalEntity(models.Model):
@@ -265,8 +331,82 @@ def ensure_primary_legal_entity(sender, instance, created, **kwargs):
         position=max_pos + 1,
     )
 
+
+@receiver(pre_save, sender=WorkVolume)
+def remember_previous_work_state(sender, instance, **kwargs):
+    if not instance.pk:
+        return
+    previous = (
+        WorkVolume.objects
+        .filter(pk=instance.pk)
+        .values("asset_name", "name")
+        .first()
+    )
+    if previous:
+        previous_asset = (previous.get("asset_name") or previous.get("name") or "").strip()
+        instance._old_effective_asset_name = previous_asset
+
+
+@receiver(post_save, sender=WorkVolume)
+def ensure_performer_rows(sender, instance, created, **kwargs):
+    if not created or not instance.project_id:
+        return
+
+    product_id = getattr(instance.project, "type_id", None)
+    if not product_id:
+        return
+
+    sections = list(
+        TypicalSection.objects
+        .filter(product_id=product_id)
+        .order_by("position", "id")
+    )
+    if not sections:
+        return
+
+    next_position = (
+        Performer.objects
+        .aggregate(max_pos=Max("position"))
+        .get("max_pos") or 0
+    )
+    asset_name = instance.asset_name or instance.name or ""
+
+    performers = []
+    for section in sections:
+        next_position += 1
+        performers.append(
+            Performer(
+                work_item=instance,
+                registration=instance.project,
+                asset_name=asset_name,
+                typical_section=section,
+                position=next_position,
+            )
+        )
+
+    Performer.objects.bulk_create(performers)
+
+
+@receiver(post_save, sender=WorkVolume)
+def sync_related_asset_name_updates(sender, instance, created, **kwargs):
+    if created or not instance.project_id:
+        return
+    old_asset_name = getattr(instance, "_old_effective_asset_name", None)
+    if old_asset_name is None:
+        return
+    _sync_related_asset_name_updates(instance, old_asset_name)
+
 class Performer(models.Model):
     position = models.PositiveIntegerField(default=1, db_index=True)
+
+    work_item = models.ForeignKey(
+        WorkVolume,
+        on_delete=models.CASCADE,
+        related_name="performers",
+        null=True,
+        blank=True,
+        verbose_name="Строка объема услуг",
+    )
 
     registration = models.ForeignKey(
         ProjectRegistration,

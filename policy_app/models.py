@@ -2,6 +2,11 @@ from django.conf import settings
 from django.db import models
 
 DEPARTMENT_HEAD_GROUP = "Руководитель направления"
+PROJECTS_HEAD_GROUP = "Руководитель проектов"
+MANAGER_GROUPS = (
+    DEPARTMENT_HEAD_GROUP,
+    PROJECTS_HEAD_GROUP,
+)
 
 class Product(models.Model):
     short_name = models.CharField("Краткое имя", max_length=64, unique=True)
