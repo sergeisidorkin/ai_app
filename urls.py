@@ -1,3 +1,5 @@
+from django.conf import settings
+from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import path, include
 from django.views.generic import TemplateView, RedirectView
@@ -6,6 +8,7 @@ from django.templatetags.static import static as static_url
 
 from django.contrib.auth.views import LoginView, LogoutView
 from core.views import home_entry
+from users_app.views import register_view, verify_view, resend_code_view
 
 from openai_app import views as openai_views
 from office_addin.views import manifest_xml
@@ -47,7 +50,11 @@ path("", home_entry, name="home"),
     # Auth
     path("accounts/login/", LoginView.as_view(template_name="core/signin.html", redirect_authenticated_user=True),
          name="login"),
-    path("accounts/logout/", LogoutView.as_view(next_page="home"), name="logout"),
+    path("accounts/logout/", LogoutView.as_view(next_page="login"), name="logout"),
+    path("accounts/register/", register_view, name="register"),
+    path("accounts/profile/", include("userprofile_app.urls")),
+    path("accounts/verify/<str:token>/", verify_view, name="verify_email"),
+    path("accounts/resend-code/<str:token>/", resend_code_view, name="resend_code"),
     path("admin/", admin.site.urls),
     path("health/", lambda r: HttpResponse("OK")),
     path("", include("projects_app.urls")),
@@ -59,3 +66,6 @@ urlpatterns += [
         url=static_url("core/icons/favicon.ico"), permanent=False
     )),
 ]
+
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

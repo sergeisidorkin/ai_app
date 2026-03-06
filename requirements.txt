@@ -32,3 +32,6 @@ typing_extensions==4.12.2
 PyYAML>=6.0.1,<7
 
 openpyxl==3.1.5
+
+# Работа с изображениями (ImageField)
+Pillow>=10.0.0,<11

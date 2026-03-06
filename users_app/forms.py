@@ -3,7 +3,7 @@ from django.contrib.auth.models import User, Group
 from django.contrib.auth.password_validation import validate_password
 
 from group_app.models import GroupMember
-from .models import Employee
+from .models import Employee, PendingRegistration
 
 FREELANCER_LABEL = "Внештатный сотрудник"
 
@@ -138,3 +138,105 @@ class EmployeeForm(forms.Form):
         employee.save()
 
         return employee
+
+
+_REG_INPUT = {"class": "form-control"}
+_REG_INPUT_SM = {"class": "form-control", "autocomplete": "off"}
+_REQ = {"required": "Поле является обязательным."}
+
+
+class ExternalRegistrationForm(forms.Form):
+    email = forms.EmailField(
+        label="Электронная почта (логин)",
+        error_messages=_REQ,
+        widget=forms.EmailInput(attrs={**_REG_INPUT, "placeholder": "email@business.ru", "autofocus": True}),
+    )
+    password = forms.CharField(
+        label="Пароль",
+        error_messages=_REQ,
+        widget=forms.PasswordInput(attrs={**_REG_INPUT, "placeholder": "Пароль"}),
+    )
+    password_confirm = forms.CharField(
+        label="Подтверждение пароля",
+        error_messages=_REQ,
+        widget=forms.PasswordInput(attrs={**_REG_INPUT, "placeholder": "Повторите пароль"}),
+    )
+    last_name = forms.CharField(
+        label="Фамилия", max_length=150,
+        error_messages=_REQ,
+        widget=forms.TextInput(attrs={**_REG_INPUT, "placeholder": "Фамилия"}),
+    )
+    first_name = forms.CharField(
+        label="Имя", max_length=150,
+        error_messages=_REQ,
+        widget=forms.TextInput(attrs={**_REG_INPUT, "placeholder": "Имя"}),
+    )
+    patronymic = forms.CharField(
+        label="Отчество", max_length=150,
+        error_messages=_REQ,
+        widget=forms.TextInput(attrs={**_REG_INPUT, "placeholder": "Отчество"}),
+    )
+    organization = forms.CharField(
+        label="Организация", max_length=255,
+        error_messages=_REQ,
+        widget=forms.TextInput(attrs={**_REG_INPUT, "placeholder": "Название организации"}),
+    )
+    job_title = forms.CharField(
+        label="Должность", max_length=255,
+        error_messages=_REQ,
+        widget=forms.TextInput(attrs={**_REG_INPUT, "placeholder": "Должность"}),
+    )
+    phone = forms.CharField(
+        label="Телефон", max_length=50, required=False,
+        widget=forms.TextInput(attrs={**_REG_INPUT, "placeholder": "+7 000 000-00-00"}),
+    )
+
+    def clean_email(self):
+        email = self.cleaned_data["email"].lower().strip()
+        if len(email) > 150:
+            raise forms.ValidationError("Email не может быть длиннее 150 символов.")
+        if User.objects.filter(username=email).exists():
+            raise forms.ValidationError("Пользователь с таким email уже зарегистрирован.")
+        return email
+
+    def clean_password(self):
+        pwd = self.cleaned_data.get("password", "")
+        if pwd:
+            validate_password(pwd)
+        return pwd
+
+    def clean(self):
+        cleaned = super().clean()
+        p1 = cleaned.get("password")
+        p2 = cleaned.get("password_confirm")
+        if p1 and p2 and p1 != p2:
+            self.add_error("password_confirm", "Пароли не совпадают.")
+        return cleaned
+
+    def save(self):
+        data = self.cleaned_data
+        user = User(
+            username=data["email"],
+            email=data["email"],
+            first_name=data["first_name"],
+            last_name=data["last_name"],
+            is_active=False,
+            is_staff=False,
+        )
+        user.set_password(data["password"])
+        user.save()
+
+        Employee.objects.create(
+            user=user,
+            patronymic=data.get("patronymic", ""),
+            organization=data.get("organization", ""),
+            job_title=data.get("job_title", ""),
+            phone=data.get("phone", ""),
+        )
+
+        pending = PendingRegistration.objects.create(
+            user=user,
+            token=PendingRegistration.generate_token(),
+            code=PendingRegistration.generate_code(),
+        )
+        return pending

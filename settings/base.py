@@ -55,6 +55,7 @@ INSTALLED_APPS = [
     "classifiers_app",
     "group_app",
     "users_app",
+    "userprofile_app",
 ]
 
 MIDDLEWARE = [
@@ -101,6 +102,18 @@ LOGGING["loggers"]["office_addin.consumers"] = {"handlers": ["console"], "level"
 LOGIN_URL = "login"
 LOGIN_REDIRECT_URL = "/#policy"   # после входа — сразу на вкладку «Продукты»
 LOGOUT_REDIRECT_URL = "login"
+
+# Email (SMTP)
+EMAIL_BACKEND = env("EMAIL_BACKEND", default="django.core.mail.backends.smtp.EmailBackend")
+EMAIL_HOST = env("EMAIL_HOST", default="smtp.yandex.ru")
+EMAIL_PORT = env.int("EMAIL_PORT", default=465)
+EMAIL_USE_SSL = env.bool("EMAIL_USE_SSL", default=True)
+EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=False)
+EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="noreply@imcmontanai.ru")
+EMAIL_TIMEOUT = env.int("EMAIL_TIMEOUT", default=10)
+EMAIL_VERIFICATION_CODE_TTL = 30 * 60  # 30 minutes
 
 # Дополнительные разрешённые пути (префиксы), доступные без авторизации
 ENFORCE_LOGIN_EXEMPT = (
@@ -212,6 +225,9 @@ USE_TZ = True
 STATIC_URL = "/static/"
 STATIC_ROOT = env("STATIC_ROOT", default=str(BASE_DIR / "staticfiles"))
 STATICFILES_DIRS = [BASE_DIR / "static"]
+
+MEDIA_URL = "/media/"
+MEDIA_ROOT = env("MEDIA_ROOT", default=str(BASE_DIR / "media"))
 
 REDIS_URL = os.environ.get("REDIS_URL", "")
 if REDIS_URL:

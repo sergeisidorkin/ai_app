@@ -20,93 +20,97 @@
 
     <!-- Навигация -->
     <ul class="nav nav-pills flex-column gap-2 px-2 py-3">
-        <!-- Вкладка "Группа" -->
+      {% if request.user.is_staff %}
         <li class="nav-item">
           <a class="nav-link active d-flex align-items-center" href="#group" data-bs-toggle="tab">
             <i class="bi bi-globe-europe-africa me-2"></i>
             <span class="link-text">Группа</span>
           </a>
         </li>
-        <!-- Вкладка "Сотрудники" -->
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#users" data-bs-toggle="tab">
             <i class="bi bi-people me-2"></i>
             <span class="link-text">Сотрудники</span>
           </a>
         </li>
-        <!-- Вкладка "Продукты" -->
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#policy" data-bs-toggle="tab">
             <i class="bi bi-bag me-2"></i>
             <span class="link-text">Продукты</span>
           </a>
         </li>
-        <!-- Вкладка "Проекты" -->
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#projects" data-bs-toggle="tab">
             <i class="bi bi-kanban me-2"></i>
             <span class="link-text">Проекты</span>
           </a>
         </li>
-        <!-- Вкладка "Запросы" -->
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#requests" data-bs-toggle="tab">
             <i class="bi bi-chat-left-text me-2"></i>
             <span class="link-text">Запросы</span>
           </a>
         </li>
-        <!-- Вкладка "Чек-листы" -->
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#checklists" data-bs-toggle="tab">
             <i class="bi bi-list-check me-2"></i>
             <span class="link-text">Чек-листы</span>
           </a>
         </li>
-        <!-- Вкладка "Шаблоны" -->
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#templates" data-bs-toggle="tab">
             <i class="bi bi-puzzle me-2"></i>
             <span class="link-text">Шаблоны</span>
           </a>
         </li>
-        <!-- Вкладка "Подключения" -->
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#connections" data-bs-toggle="tab">
             <i class="bi bi-hdd-network me-2"></i>
             <span class="link-text">Подключения</span>
           </a>
         </li>
-        <!-- Вкладка "Отладка" -->
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#debugger" data-bs-toggle="tab">
             <i class="bi bi-sliders me-2"></i>
             <span class="link-text">Отладка</span>
           </a>
         </li>
-        <!-- Вкладка "Логи" -->
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#logs" data-bs-toggle="tab">
             <i class="bi bi-journal-text me-2"></i>
             <span class="link-text">Логи</span>
           </a>
         </li>
-        <!-- Вкладка "Справочники" -->
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#classifiers" data-bs-toggle="tab">
             <i class="bi bi-book me-2"></i>
             <span class="link-text">Справочники</span>
           </a>
         </li>
-
+      {% endif %}
     </ul>
 
     <!-- Низ: профиль -->
-    <div class="mt-auto px-3 py-3">
-      {% if request.user.is_authenticated and request.user.is_staff %}
-      <a href="{% url 'admin:index' %}" class="d-flex align-items-center text-decoration-none">
-        <i class="bi bi-person-circle fs-4 me-2"></i>
-        <span class="link-text">Профиль</span>
-      </a>
+    <div class="mt-auto py-3 border-top sidebar-profile">
+      {% if request.user.is_authenticated %}
+      <div class="d-flex align-items-center">
+        <a href="{% if request.user.is_superuser %}{% url 'admin:index' %}{% else %}{% url 'user_profile' %}{% endif %}" class="flex-shrink-0" title="{% if request.user.is_superuser %}Панель администратора{% else %}Профиль пользователя{% endif %}">
+          {% if employee and employee.avatar %}
+            <img src="{{ employee.avatar.url }}" alt="Аватар" class="sidebar-avatar-img rounded-circle" width="32" height="32" style="object-fit:cover;">
+          {% elif request.user.first_name or request.user.last_name %}
+            <span class="sidebar-initials rounded-circle d-inline-flex align-items-center justify-content-center">{{ request.user.first_name|make_list|first|default:"" }}{{ request.user.last_name|make_list|first|default:"" }}</span>
+          {% else %}
+            <span class="profile-icon"><i class="bi bi-person-circle"></i></span>
+          {% endif %}
+        </a>
+        <a href="{% if request.user.is_superuser %}{% url 'admin:index' %}{% else %}{% url 'user_profile' %}{% endif %}" class="link-text small text-truncate ms-2 me-auto text-decoration-none text-body">{{ request.user.get_full_name|default:request.user.email }}</a>
+        <form method="post" action="{% url 'logout' %}" class="flex-shrink-0 link-text">
+          {% csrf_token %}
+          <button type="submit" class="sidebar-logout-btn" title="Выйти">
+            <i class="bi bi-box-arrow-right"></i>
+          </button>
+        </form>
+      </div>
       {% endif %}
     </div>
   </aside>
