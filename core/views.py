@@ -1,6 +1,17 @@
+from django.contrib.auth.views import LoginView
 from django.shortcuts import render, redirect
 
 from users_app.models import Employee
+
+
+class RememberMeLoginView(LoginView):
+    template_name = "core/signin.html"
+    redirect_authenticated_user = True
+
+    def form_valid(self, form):
+        if not self.request.POST.get("remember"):
+            self.request.session.set_expiry(0)
+        return super().form_valid(form)
 
 
 def home_entry(request):

@@ -144,6 +144,7 @@ ENFORCE_LOGIN_EXEMPT = (
     "/favicon.ico",
     "/site.webmanifest",
     "/checklists/shared/",
+    "/media/",
 )
 
 CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[
