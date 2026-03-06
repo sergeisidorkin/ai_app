@@ -324,6 +324,16 @@
             await reloadTable();
         });
 
+        document.body.addEventListener('projects-updated', async () => {
+            await loadProjectMeta();
+            await reloadTable();
+        });
+
+        document.body.addEventListener('performers-updated', async () => {
+            await loadProjectMeta();
+            await reloadTable();
+        });
+
         // --- Shared link logic ---
         const shareBtn = document.getElementById('chk-share-btn');
         const settingsBtn = document.getElementById('chk-share-settings-btn');

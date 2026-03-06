@@ -120,7 +120,7 @@
           <td>{{ r.year }}</td>
           <td>{{ r.customer }}</td>
           <td>{{ r.registration_number }}</td>
-          <td>{{ r.project_manager }}</td>
+          <td>{{ r.project_manager|short_fio }}</td>
           <td>{{ r.contract_subject|truncatechars:15 }}</td>
         </tr>
       {% empty %}
@@ -222,7 +222,7 @@
           <td>{{ w.name }}</td>
           <td class="text-nowrap">{{ w.asset_name }}</td>
           <td class="text-nowrap">{{ w.registration_number }}</td>
-          <td class="text-nowrap">{{ w.manager }}</td>
+          <td class="text-nowrap">{{ w.manager|short_fio }}</td>
         </tr>
       {% empty %}
         <tr><td colspan="7" class="text-muted">Пока нет данных.</td></tr>

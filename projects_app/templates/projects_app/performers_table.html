@@ -1,3 +1,4 @@
+{% load projects_extras %}
 <div class="table-responsive">
   <table class="table table-sm align-middle">
     <thead>
@@ -49,9 +50,9 @@
             <td class="text-nowrap">{{ reg.agreement_number }}</td>
             <td class="text-nowrap">{{ reg.name|default:reg.title }}</td>
             <td class="text-nowrap">{{ it.asset_name }}</td>
-            <td class="text-nowrap">{{ it.executor }}</td>
+            <td class="text-nowrap">{{ it.executor|short_fio }}</td>
             <td class="text-nowrap">{{ it.grade }}</td>
-            <td class="text-nowrap">{{ it.typical_section.code if it.typical_section }}</td>
+            <td class="text-nowrap">{% if it.typical_section %}{{ it.typical_section|typical_section_short }}{% endif %}</td>
             <td class="text-end">{{ it.actual_costs }}</td>
             <td class="text-end">{{ it.estimated_costs }}</td>
             <td class="text-end">{{ it.agreed_amount }}</td>
