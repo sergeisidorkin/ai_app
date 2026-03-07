@@ -5,6 +5,8 @@ from django.db import models
 from django.utils import timezone
 from datetime import timedelta
 
+_PREVIOUS_STATUS_UNSET = object()
+
 class ChecklistItem(models.Model):
     class ItemType(models.TextChoices):
         BASIC = "basic", "Основной"
@@ -69,8 +71,11 @@ class ChecklistStatus(models.Model):
         verbose_name_plural = "Статусы запросов"
 
     def save(self, *args, **kwargs):
+        previous_status = kwargs.pop("previous_status", _PREVIOUS_STATUS_UNSET)
         if self.pk:
-            previous = type(self).objects.filter(pk=self.pk).values_list("status", flat=True).first()
+            previous = previous_status
+            if previous is _PREVIOUS_STATUS_UNSET:
+                previous = type(self).objects.filter(pk=self.pk).values_list("status", flat=True).first()
             if previous and previous != self.status:
                 self.status_changed_at = timezone.now()
         super().save(*args, **kwargs)
