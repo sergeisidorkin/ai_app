@@ -10,6 +10,7 @@ urlpatterns = [
     path("status/update/", views.update_status, name="update_status"),
     path("note/update/", views.update_note, name="update_note"),
     path("comment/add/", views.add_comment, name="add_comment"),
+    path("comment/modal/", views.comment_modal, name="comment_modal"),
     # ChecklistItem CRUD
     path("item/form/create/", views.item_form_create, name="item_form_create"),
     path("item/form/edit/<int:pk>/", views.item_form_edit, name="item_form_edit"),
@@ -30,5 +31,6 @@ urlpatterns = [
     path("shared/<str:token>/status/update/", views.shared_update_status, name="shared_update_status"),
     path("shared/<str:token>/note/update/", views.shared_update_note, name="shared_update_note"),
     path("shared/<str:token>/comment/add/", views.shared_add_comment, name="shared_add_comment"),
+    path("shared/<str:token>/comment/modal/", views.shared_comment_modal, name="shared_comment_modal"),
     path("shared/<str:token>/export/xlsx/", views.shared_export_xlsx, name="shared_export_xlsx"),
 ]

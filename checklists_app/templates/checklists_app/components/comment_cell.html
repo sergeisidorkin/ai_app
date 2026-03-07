@@ -25,8 +25,11 @@
           type="button"
           class="btn btn-link btn-sm p-0"
           title="Редактировать комментарий"
+          hx-get="{{ comment_modal_url }}?field={{ field|urlencode }}&item={{ item.id }}&project={{ project.id }}&section={{ section.id }}&asset={{ asset_name|urlencode }}"
+          hx-target="#checklists-comment-modal .modal-content"
+          hx-swap="innerHTML"
           data-bs-toggle="modal"
-          data-bs-target="#commentModal-{{ field }}-{{ item.id }}">
+          data-bs-target="#checklists-comment-modal">
           <i class="bi bi-pencil-square text-muted"></i>
         </button>
         {% endif %}

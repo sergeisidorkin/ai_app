@@ -6,6 +6,7 @@ from django.db import transaction
 from django.db.models import Max, Q
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, render
+from django.template.loader import render_to_string
 from django.urls import NoReverseMatch, reverse
 from django.utils import timezone
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -246,12 +247,12 @@ def _legal_entities_for(project: ProjectRegistration, asset_name: Optional[str])
             | Q(work_item__name__iexact=effective)
         ))
 
-    entity_qs = qs.filter(
+    entity_qs = list(qs.filter(
         Q(legal_name__iexact=asset_name)
         | Q(work_name__iexact=asset_name)
-    )
-    if entity_qs.exists():
-        return list(entity_qs)
+    ))
+    if entity_qs:
+        return entity_qs
 
     return list(qs.filter(
         Q(work_item__asset_name__iexact=asset_name)
@@ -271,11 +272,7 @@ def _ensure_checklist_items(project: ProjectRegistration, section: TypicalSectio
     if not project.type:
         return
 
-    table = (
-        RequestTable.objects.filter(product=project.type, section=section)
-        .prefetch_related("items")
-        .first()
-    )
+    table = RequestTable.objects.filter(product=project.type, section=section).first()
     if not table:
         return
 
@@ -295,11 +292,59 @@ def _ensure_checklist_items(project: ProjectRegistration, section: TypicalSectio
         ChecklistItem.objects.bulk_create(items_to_create)
 
 
+def _load_comment_payload(checklist_item, project, section, asset_name, field):
+    note = (
+        ChecklistRequestNote.objects
+        .filter(
+            checklist_item=checklist_item,
+            project=project,
+            section=section,
+            asset_name=asset_name,
+        )
+        .first()
+    )
+    histories = []
+    if note:
+        histories = list(
+            note.comment_history
+            .filter(field=field)
+            .select_related("author")
+        )
+    return note, histories
+
+
+def _render_comment_modal_content(
+    request,
+    *,
+    field,
+    checklist_item,
+    project,
+    section,
+    asset_name,
+    add_comment_url,
+):
+    note, histories = _load_comment_payload(checklist_item, project, section, asset_name, field)
+    return render(
+        request,
+        "checklists_app/components/comment_modal.html",
+        {
+            "field": field,
+            "item": checklist_item,
+            "project": project,
+            "section": section,
+            "asset_name": asset_name,
+            "note": note,
+            "histories": histories,
+            "add_comment_url": add_comment_url,
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 #  Build table context (shared between internal and public views)
 # ---------------------------------------------------------------------------
 
-def _build_table_context(project, section, asset_name, checklist_items, legal_entities, url_map):
+def _build_table_context(project, section, asset_name, checklist_items, legal_entities, url_map, include_comment_history=False):
     status_map = {}
     if checklist_items and legal_entities:
         status_qs = ChecklistStatus.objects.filter(
@@ -319,7 +364,7 @@ def _build_table_context(project, section, asset_name, checklist_items, legal_en
         note_map = {note.checklist_item_id: note for note in note_qs}
 
     history_map = {}
-    if checklist_items:
+    if checklist_items and include_comment_history:
         history_qs = (
             ChecklistCommentHistory.objects
             .filter(
@@ -371,12 +416,13 @@ def _build_table_context(project, section, asset_name, checklist_items, legal_en
         "default_status": ChecklistStatus.Status.MISSING,
         "update_status_url": url_map["update_status"],
         "add_comment_url": url_map["add_comment"],
+        "comment_modal_url": url_map["comment_modal"],
         "update_note_url": url_map["update_note"],
         "error": None if checklist_items else "Для выбранного продукта и раздела нет запросов",
     }
 
 
-def _build_all_sections_context(project, section_items_list, asset_name, legal_entities, url_map):
+def _build_all_sections_context(project, section_items_list, asset_name, legal_entities, url_map, include_comment_history=False):
     all_item_ids = []
     for _sec, items in section_items_list:
         all_item_ids.extend(it.id for it in items)
@@ -399,7 +445,7 @@ def _build_all_sections_context(project, section_items_list, asset_name, legal_e
         note_map = {note.checklist_item_id: note for note in note_qs}
 
     history_map = {}
-    if all_item_ids:
+    if all_item_ids and include_comment_history:
         history_qs = (
             ChecklistCommentHistory.objects
             .filter(note__checklist_item__in=all_item_ids, note__project=project, note__asset_name=asset_name)
@@ -452,6 +498,7 @@ def _build_all_sections_context(project, section_items_list, asset_name, legal_e
         "default_status": ChecklistStatus.Status.MISSING,
         "update_status_url": url_map["update_status"],
         "add_comment_url": url_map["add_comment"],
+        "comment_modal_url": url_map["comment_modal"],
         "update_note_url": url_map["update_note"],
         "error": None if rows else "Для выбранного продукта нет запросов",
     }
@@ -504,6 +551,35 @@ def project_meta(request, uid: str):
     project = get_object_or_404(ProjectRegistration.objects.select_related("type"), short_uid=uid)
     asset = (request.GET.get("asset") or "").strip() or None
     return JsonResponse(_project_meta(project, asset))
+
+
+@login_required
+@require_GET
+def comment_modal(request):
+    field = (request.GET.get("field") or "").strip()
+    item_id = request.GET.get("item")
+    project_id = request.GET.get("project")
+    section_id = request.GET.get("section")
+    asset_name = (request.GET.get("asset") or "").strip()
+
+    if field not in {"imc_comment", "customer_comment"}:
+        return HttpResponseBadRequest("Неизвестное поле.")
+    if not all([item_id, project_id, section_id]):
+        return HttpResponseBadRequest("Недостаточно данных.")
+
+    checklist_item = get_object_or_404(ChecklistItem, pk=item_id)
+    project = get_object_or_404(ProjectRegistration, pk=project_id)
+    section = get_object_or_404(TypicalSection, pk=section_id)
+
+    return _render_comment_modal_content(
+        request,
+        field=field,
+        checklist_item=checklist_item,
+        project=project,
+        section=section,
+        asset_name=asset_name,
+        add_comment_url=reverse("checklists_app:add_comment"),
+    )
 
 
 @require_GET
@@ -562,6 +638,7 @@ def table_partial(request):
         url_map = {
             "update_status": reverse("checklists_app:update_status"),
             "add_comment": reverse("checklists_app:add_comment"),
+            "comment_modal": reverse("checklists_app:comment_modal"),
             "update_note": reverse("checklists_app:update_note"),
         }
         context = _build_all_sections_context(
@@ -593,6 +670,7 @@ def table_partial(request):
     url_map = {
         "update_status": reverse("checklists_app:update_status"),
         "add_comment": reverse("checklists_app:add_comment"),
+        "comment_modal": reverse("checklists_app:comment_modal"),
         "update_note": reverse("checklists_app:update_note"),
     }
     context = _build_table_context(project, section, asset_name, checklist_items, legal_entities, url_map)
@@ -671,7 +749,7 @@ def update_status(request):
         previous = None if created else status_obj.status
         status_obj.status = status_value
         status_obj.updated_by = request.user
-        status_obj.save()
+        status_obj.save(previous_status=previous)
 
         if previous != status_value:
             ChecklistStatusHistory.objects.create(
@@ -726,7 +804,7 @@ def update_note(request):
             "section": section,
             "asset_name": asset_name,
             "note": note,
-            "note_url": reverse("checklists_app:update_note"),
+            "comment_modal_url": reverse("checklists_app:comment_modal"),
         },
     )
 
@@ -784,8 +862,8 @@ def add_comment(request):
         "note": note,
         "histories": history_qs,
         "add_comment_url": reverse("checklists_app:add_comment"),
+        "comment_modal_url": reverse("checklists_app:comment_modal"),
     }
-    from django.template.loader import render_to_string
     cell_html = render_to_string("checklists_app/components/comment_cell.html", context, request=request)
     history_html = render_to_string("checklists_app/components/comment_history.html", context, request=request)
     return HttpResponse(cell_html + history_html)
@@ -1401,6 +1479,40 @@ def shared_project_meta(request, token: str):
 
 
 @require_GET
+def shared_comment_modal(request, token: str):
+    link = _get_shared_link(token)
+    if not link:
+        return HttpResponseBadRequest("Ссылка недействительна или срок действия истёк.")
+
+    field = (request.GET.get("field") or "").strip()
+    item_id = request.GET.get("item")
+    project_id = request.GET.get("project")
+    section_id = request.GET.get("section")
+    asset_name = (request.GET.get("asset") or "").strip()
+
+    if field not in {"imc_comment", "customer_comment"}:
+        return HttpResponseBadRequest("Неизвестное поле.")
+    if not all([item_id, project_id, section_id]):
+        return HttpResponseBadRequest("Недостаточно данных.")
+
+    checklist_item = get_object_or_404(ChecklistItem, pk=item_id)
+    project = get_object_or_404(ProjectRegistration, pk=project_id)
+    if project.id != link.project_id or checklist_item.project_id != link.project_id:
+        return HttpResponseBadRequest("Нет доступа к этому проекту.")
+    section = get_object_or_404(TypicalSection, pk=section_id)
+
+    return _render_comment_modal_content(
+        request,
+        field=field,
+        checklist_item=checklist_item,
+        project=project,
+        section=section,
+        asset_name=asset_name,
+        add_comment_url=reverse("checklists_app:shared_add_comment", args=[token]),
+    )
+
+
+@require_GET
 def shared_table_partial(request, token: str):
     link = _get_shared_link(token)
     if not link:
@@ -1454,6 +1566,7 @@ def shared_table_partial(request, token: str):
         url_map = {
             "update_status": reverse("checklists_app:shared_update_status", args=[token]),
             "add_comment": reverse("checklists_app:shared_add_comment", args=[token]),
+            "comment_modal": reverse("checklists_app:shared_comment_modal", args=[token]),
             "update_note": reverse("checklists_app:shared_update_note", args=[token]),
         }
         context = _build_all_sections_context(project, all_items, asset_name, legal_entities, url_map)
@@ -1480,6 +1593,7 @@ def shared_table_partial(request, token: str):
     url_map = {
         "update_status": reverse("checklists_app:shared_update_status", args=[token]),
         "add_comment": reverse("checklists_app:shared_add_comment", args=[token]),
+        "comment_modal": reverse("checklists_app:shared_comment_modal", args=[token]),
         "update_note": reverse("checklists_app:shared_update_note", args=[token]),
     }
     context = _build_table_context(project, section, asset_name, checklist_items, legal_entities, url_map)
@@ -1531,7 +1645,7 @@ def shared_update_status(request, token: str):
         previous = None if created else status_obj.status
         status_obj.status = status_value
         status_obj.updated_by = user
-        status_obj.save()
+        status_obj.save(previous_status=previous)
 
         if previous != status_value:
             ChecklistStatusHistory.objects.create(
@@ -1582,7 +1696,7 @@ def shared_update_note(request, token: str):
     return render(request, "checklists_app/components/comment_cell.html", {
         "field": field, "item": checklist_item, "project": project,
         "section": section, "asset_name": asset_name, "note": note,
-        "note_url": reverse("checklists_app:shared_update_note", args=[token]),
+        "comment_modal_url": reverse("checklists_app:shared_comment_modal", args=[token]),
     })
 
 
@@ -1636,8 +1750,8 @@ def shared_add_comment(request, token: str):
         "section": section, "asset_name": asset_name, "note": note,
         "histories": history_qs,
         "add_comment_url": reverse("checklists_app:shared_add_comment", args=[token]),
+        "comment_modal_url": reverse("checklists_app:shared_comment_modal", args=[token]),
     }
-    from django.template.loader import render_to_string
     cell_html = render_to_string("checklists_app/components/comment_cell.html", context, request=request)
     history_html = render_to_string("checklists_app/components/comment_history.html", context, request=request)
     return HttpResponse(cell_html + history_html)

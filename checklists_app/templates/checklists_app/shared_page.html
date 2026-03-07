@@ -141,6 +141,14 @@
       <h5 class="mb-0 fs-4">Статусы запросов</h5>
     </div>
 
+    <div class="modal fade" id="checklists-comment-modal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+          <div class="modal-body text-muted small">Загрузка комментария...</div>
+        </div>
+      </div>
+    </div>
+
     <div class="card shadow-sm">
       <div class="card-body position-relative">
         <div id="checklists-table-wrap" class="table-responsive">
@@ -180,6 +188,8 @@
       const tableUrl = root.dataset.tableUrl;
       const metaUrlBase = root.dataset.metaUrlBase;
       const projectUid = '{{ selected_project_uid|escapejs }}';
+      let metaController = null;
+      let tableController = null;
 
       const showLoading = (state) => {
         if (loading) loading.classList.toggle('d-none', !state);
@@ -187,10 +197,17 @@
 
       async function loadMeta() {
         if (!metaUrlBase) return;
+        let controller = null;
         try {
           showLoading(true);
+          metaController?.abort();
+          controller = new AbortController();
+          metaController = controller;
           const url = metaUrlBase + '?asset=' + encodeURIComponent(assetSel?.value || '');
-          const resp = await fetch(url, { headers: { 'X-Requested-With': 'fetch' } });
+          const resp = await fetch(url, {
+            headers: { 'X-Requested-With': 'fetch' },
+            signal: controller.signal,
+          });
           const data = await resp.json();
           if (sectionSel) {
             sectionSel.innerHTML = '';
@@ -211,9 +228,13 @@
             }
           }
         } catch (err) {
+          if (err.name === 'AbortError') return;
           console.error('shared:meta', err);
         } finally {
-          showLoading(false);
+          if (metaController === controller) {
+            metaController = null;
+            showLoading(false);
+          }
         }
       }
 
@@ -224,15 +245,26 @@
           section: sectionSel?.value || '',
         });
         showLoading(true);
+        let controller = null;
         try {
-          const resp = await fetch(tableUrl + '?' + params.toString(), { headers: { 'X-Requested-With': 'fetch' } });
+          tableController?.abort();
+          controller = new AbortController();
+          tableController = controller;
+          const resp = await fetch(tableUrl + '?' + params.toString(), {
+            headers: { 'X-Requested-With': 'fetch' },
+            signal: controller.signal,
+          });
           const html = await resp.text();
           tableWrap.innerHTML = html;
           if (window.htmx) window.htmx.process(tableWrap);
         } catch (err) {
+          if (err.name === 'AbortError') return;
           tableWrap.innerHTML = '<div class="alert alert-danger mb-0">Не удалось загрузить таблицу.</div>';
         } finally {
-          showLoading(false);
+          if (tableController === controller) {
+            tableController = null;
+            showLoading(false);
+          }
         }
       }
 
