@@ -51,3 +51,23 @@ def templates_sections_map(request):
     except Exception:
         mapping = {}
     return {"TEMPLATES_SECTIONS_MAP": mapping}
+
+
+def notifications_counters(request):
+    if not getattr(request.user, "is_authenticated", False):
+        return {
+            "NOTIFICATION_TOTAL_COUNT": 0,
+            "NOTIFICATION_SECTION_COUNTS": {},
+        }
+
+    try:
+        from notifications_app.services import build_notification_counters
+
+        counters = build_notification_counters(request.user)
+    except Exception:
+        counters = {"total": 0, "sections": {}}
+
+    return {
+        "NOTIFICATION_TOTAL_COUNT": counters.get("total", 0),
+        "NOTIFICATION_SECTION_COUNTS": counters.get("sections", {}),
+    }

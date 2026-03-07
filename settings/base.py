@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     "group_app",
     "users_app",
     "userprofile_app",
+    "notifications_app",
 ]
 
 MIDDLEWARE = [
@@ -209,6 +210,7 @@ TEMPLATES = [
                 "core.context_processors.nav_items",
                 "core.context_processors.templates_products",
                 "core.context_processors.templates_sections_map",
+                "core.context_processors.notifications_counters",
             ],
         },
     },

@@ -117,3 +117,205 @@
     </div>
   {% endif %}
 </div>
+
+<div id="participation-confirmation-section" class="mt-5">
+  <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
+    <div class="d-flex align-items-center gap-3 flex-wrap">
+      <h5 class="table-section-title mb-0">
+        <i class="bi bi-table me-2"></i> Подтверждение участия
+      </h5>
+      <div class="dropdown">
+        <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+                id="participation-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+          Проекты: <span class="js-participation-filter-label">Все</span>
+        </button>
+        <div class="dropdown-menu p-3" aria-labelledby="participation-project-filter-toggle" style="min-width: 200px; max-height: 240px; overflow-y: auto;">
+          <div class="form-check mb-2">
+            <input class="form-check-input js-participation-filter" type="checkbox" value="__all__" id="participation-filter-all">
+            <label class="form-check-label" for="participation-filter-all">Все проекты</label>
+          </div>
+          <hr class="dropdown-divider">
+          {% for project in participation_projects %}
+            <div class="form-check">
+              <input class="form-check-input js-participation-filter" type="checkbox"
+                     value="{{ project.id }}" id="participation-filter-{{ project.id }}">
+              <label class="form-check-label" for="participation-filter-{{ project.id }}">
+                {{ project.short_uid }}
+              </label>
+            </div>
+          {% empty %}
+            <div class="text-muted small">Нет проектов</div>
+          {% endfor %}
+        </div>
+      </div>
+      {% if request.user.is_authenticated and request.user.is_staff %}
+        <div id="participation-deadline-controls" class="d-flex align-items-center gap-2 invisible pe-none">
+          <span class="small text-muted">В течение:</span>
+          <input type="number"
+                 id="participation-duration-hours"
+                 class="form-control form-control-sm"
+                 min="1"
+                 step="1"
+                 value="48"
+                 style="width: 90px;"
+                 aria-label="Срок подтверждения в часах">
+          <span class="small text-muted">часов</span>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="table-responsive">
+    <table class="table table-sm align-middle performers-table">
+      <colgroup>
+        <col class="col-checkbox">
+        <col class="col-number">
+        <col class="col-type">
+        <col class="col-name">
+        <col class="col-active">
+        <col>
+        <col>
+        <col>
+        <col>
+        <col>
+        <col>
+        <col>
+        <col>
+      </colgroup>
+      <thead>
+      <tr>
+        <th class="col-checkbox">
+          {% if request.user.is_authenticated and request.user.is_staff %}
+            <div class="form-check m-0">
+              <input class="form-check-input"
+                     type="checkbox"
+                     id="participation-master"
+                     aria-label="Выделить все строки подтверждения участия">
+            </div>
+          {% endif %}
+        </th>
+        <th class="text-nowrap">Проект</th>
+        <th class="text-nowrap">Тип</th>
+        <th class="text-nowrap">Название</th>
+        <th>Наименование актива</th>
+        <th>Исполнитель</th>
+        <th>Грейд</th>
+        <th>Типовой раздел</th>
+        <th class="text-nowrap">Дата отправки запроса</th>
+        <th class="text-nowrap">Срок</th>
+        <th>Ответ на запрос</th>
+        <th class="text-nowrap">Дата ответа на запрос</th>
+        <th>Статус ответа</th>
+      </tr>
+      </thead>
+      <tbody>
+      {% for p in participation_performers %}
+        <tr data-project-id="{{ p.registration_id }}">
+          <td class="text-nowrap">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+              <div class="form-check m-0">
+                <input class="form-check-input"
+                       type="checkbox"
+                       id="participation-sel-{{ p.id }}"
+                       name="participation-select"
+                       value="{{ p.id }}"
+                       {% if p.participation_request_sent_at %}
+                         disabled
+                         title="Строка недоступна: запрос уже отправлен"
+                       {% endif %}
+                       aria-label="Выделить строку подтверждения участия">
+              </div>
+            {% endif %}
+          </td>
+          <td class="text-nowrap">{% if p.registration %}{{ p.registration.short_uid }}{% endif %}</td>
+          <td class="text-nowrap">
+            {% if p.registration.type %}{{ p.registration.type.short_name|default:p.registration.type }}{% endif %}
+          </td>
+          <td class="text-truncate">{{ p.registration.name }}</td>
+          <td class="text-nowrap">{{ p.asset_name }}</td>
+          <td class="text-nowrap">{{ p.executor|short_fio }}</td>
+          <td class="text-nowrap">{{ p.grade }}</td>
+          <td class="text-nowrap">
+            {% if p.typical_section %}{{ p.typical_section|typical_section_short }}{% else %}&mdash;{% endif %}
+          </td>
+          <td class="text-nowrap">{{ p.participation_request_sent_at|date:"d.m.Y H:i"|default:"—" }}</td>
+          <td class="text-nowrap">{{ p.participation_deadline_at|date:"d.m.Y H:i"|default:"—" }}</td>
+          <td>{{ p.get_participation_response_display|default:"—" }}</td>
+          <td class="text-nowrap">{{ p.participation_response_at|date:"d.m.Y H:i"|default:"—" }}</td>
+          <td>{{ p.participation_response_status|default:"—" }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="13" class="text-muted">Пока нет данных.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+
+    {% if request.user.is_authenticated and request.user.is_staff %}
+      <div id="participation-request-actions"
+           class="d-flex align-items-stretch gap-2 products-actions-row"
+           data-request-url="{% url 'participation_request' %}">
+        <div class="btn-group">
+          <button type="button"
+                  id="participation-request-btn"
+                  class="btn btn-primary btn-sm d-flex align-items-center"
+                  disabled>
+            <i class="bi bi-envelope-at me-2"></i>Запросить подтверждение
+          </button>
+          <button type="button"
+                  id="participation-request-settings-btn"
+                  class="btn btn-primary btn-sm"
+                  data-bs-toggle="modal"
+                  data-bs-target="#participation-request-modal"
+                  title="Настройки запроса подтверждения">
+            <i class="bi bi-gear"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="modal fade" id="participation-request-modal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title">Настройки запроса подтверждения</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+            </div>
+            <div class="modal-body">
+              <div class="mb-4">
+                <div class="fw-semibold mb-2">Способ отправки</div>
+                <div class="form-check">
+                  <input class="form-check-input js-participation-channel"
+                         type="checkbox"
+                         id="participation-channel-system"
+                         value="system"
+                         checked>
+                  <label class="form-check-label" for="participation-channel-system">
+                    Системные уведомления
+                  </label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input js-participation-channel"
+                         type="checkbox"
+                         id="participation-channel-email"
+                         value="email">
+                  <label class="form-check-label" for="participation-channel-email">
+                    Электронная почта
+                  </label>
+                </div>
+              </div>
+              <div class="mb-0">
+                <label for="participation-request-sent-at" class="form-label">Дата отправки запроса</label>
+                <input type="datetime-local"
+                       id="participation-request-sent-at"
+                       class="form-control"
+                       value="{{ participation_request_sent_initial }}">
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Закрыть</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+</div>

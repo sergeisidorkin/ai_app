@@ -40,6 +40,7 @@ path("", home_entry, name="home"),
     path("classifiers/", include("classifiers_app.urls")),
     path("group/", include("group_app.urls")),
     path("users/", include("users_app.urls")),
+    path("", include("notifications_app.urls")),
     path(
         "addin/commands.html",
         TemplateView.as_view(template_name="docops_queue/commands.html"),

@@ -7,6 +7,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from django.db.models import Max
 from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
+from django.utils import timezone
 
 DATE_INPUT_ATTRS = {"class": "form-control js-date", "autocomplete": "off"}  # ← хук для JS-пикера
 DATE_INPUT_FORMATS = ["%Y-%m-%d", "%d.%m.%Y", "%d.%m.%y"]  # принимаем ISO и ДД.ММ.ГГ
@@ -397,6 +398,10 @@ def sync_related_asset_name_updates(sender, instance, created, **kwargs):
     _sync_related_asset_name_updates(instance, old_asset_name)
 
 class Performer(models.Model):
+    class ParticipationResponse(models.TextChoices):
+        CONFIRMED = "confirmed", "Подтверждаю участие"
+        DECLINED = "declined", "Не готов(а) участвовать"
+
     position = models.PositiveIntegerField(default=1, db_index=True)
 
     work_item = models.ForeignKey(
@@ -417,6 +422,14 @@ class Performer(models.Model):
 
     asset_name = models.CharField("Актив", max_length=255, blank=True, default="")
     executor = models.CharField("Исполнитель", max_length=255, blank=True, default="")
+    employee = models.ForeignKey(
+        "users_app.Employee",
+        on_delete=models.SET_NULL,
+        related_name="performers",
+        verbose_name="Сотрудник",
+        null=True,
+        blank=True,
+    )
     grade = models.CharField("Грейд", max_length=50, blank=True, default="")
 
     typical_section = models.ForeignKey(
@@ -434,6 +447,16 @@ class Performer(models.Model):
     final_payment = models.DecimalField("Окон. платеж", max_digits=12, decimal_places=2, null=True, blank=True)
 
     contract_number = models.CharField("Номер договора", max_length=100, blank=True, default="")
+    participation_request_sent_at = models.DateTimeField("Дата отправки запроса", null=True, blank=True)
+    participation_deadline_at = models.DateTimeField("Срок подтверждения", null=True, blank=True)
+    participation_response = models.CharField(
+        "Ответ на запрос",
+        max_length=20,
+        choices=ParticipationResponse.choices,
+        blank=True,
+        default="",
+    )
+    participation_response_at = models.DateTimeField("Дата ответа на запрос", null=True, blank=True)
 
     class Meta:
         ordering = ["position", "id"]
@@ -444,3 +467,45 @@ class Performer(models.Model):
         num = getattr(self.registration, "number", "") or ""
         grp = getattr(self.registration, "group", "") or ""
         return f"{num} {grp} — {self.executor or 'исполнитель'}"
+
+    @staticmethod
+    def employee_full_name(employee):
+        if not employee:
+            return ""
+        parts = [
+            (getattr(getattr(employee, "user", None), "last_name", "") or "").strip(),
+            (getattr(getattr(employee, "user", None), "first_name", "") or "").strip(),
+            (getattr(employee, "patronymic", "") or "").strip(),
+        ]
+        return " ".join(part for part in parts if part).strip()
+
+    @classmethod
+    def resolve_employee_from_executor(cls, executor):
+        normalized_executor = " ".join(str(executor or "").split()).strip()
+        if not normalized_executor:
+            return None
+        from users_app.models import Employee
+
+        for employee in Employee.objects.select_related("user").all():
+            if cls.employee_full_name(employee) == normalized_executor:
+                return employee
+        return None
+
+    def save(self, *args, **kwargs):
+        normalized_executor = " ".join(str(self.executor or "").split()).strip()
+        if normalized_executor:
+            self.executor = normalized_executor
+            resolved_employee = self.resolve_employee_from_executor(normalized_executor)
+            if resolved_employee:
+                self.employee = resolved_employee
+        elif self.employee_id:
+            self.executor = self.employee_full_name(self.employee)
+        super().save(*args, **kwargs)
+
+    @property
+    def participation_response_status(self):
+        if not self.participation_deadline_at:
+            return ""
+        if self.participation_response_at:
+            return "Просрочено" if self.participation_response_at > self.participation_deadline_at else "В срок"
+        return "Просрочено" if timezone.now() > self.participation_deadline_at else "В срок"

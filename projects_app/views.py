@@ -2,15 +2,20 @@ from django.contrib.auth.decorators import login_required, user_passes_test
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST, require_GET
+from django.db import transaction
 from django.db.models import Max, Q
+from django.db.models.functions import Trim
 from django import forms
+from django.utils import timezone
 from .models import ProjectRegistration, WorkVolume, Performer, WorkVolumeItem, LegalEntity
 from .forms import ProjectRegistrationForm, WorkVolumeForm, PerformerForm, BootstrapMixin, LegalEntityForm
 
 import json
+from datetime import datetime, timedelta
 
 from policy_app.models import TypicalSection
 from users_app.models import Employee
+from notifications_app.services import create_participation_notifications
 
 PROJECTS_PARTIAL_TEMPLATE = "projects_app/projects_partial.html"
 REG_FORM_TEMPLATE       = "projects_app/registration_form.html"
@@ -597,12 +602,33 @@ def _bind_dynamic_performer_fields(form, *, data=None, instance=None):
             pass
 
 def _performers_context():
+    active_participation_statuses = ["Не начат", "В работе"]
     performers = (
         Performer.objects
-        .select_related("registration", "registration__type", "typical_section")
+        .select_related("registration", "registration__type", "typical_section", "employee", "employee__user")
         .order_by("position", "id")
     )
-    return {"performers": performers}
+    participation_performers = (
+        Performer.objects
+        .select_related("registration", "registration__type", "typical_section", "employee", "employee__user")
+        .annotate(executor_trim=Trim("executor"))
+        .filter(registration__status__in=active_participation_statuses)
+        .exclude(executor_trim="")
+        .order_by("position", "id")
+    )
+    participation_project_ids = participation_performers.values_list("registration_id", flat=True).distinct()
+    participation_projects = (
+        ProjectRegistration.objects
+        .filter(id__in=participation_project_ids)
+        .order_by("position", "id")
+    )
+    request_sent_initial = timezone.localtime().replace(second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M")
+    return {
+        "performers": performers,
+        "participation_performers": participation_performers,
+        "participation_projects": participation_projects,
+        "participation_request_sent_initial": request_sent_initial,
+    }
 
 @login_required
 @require_http_methods(["GET"])
@@ -670,6 +696,25 @@ def performers_partial(request):
 def _next_performer_position():
     mx = Performer.objects.aggregate(Max("position")).get("position__max") or 0
     return mx + 1
+
+
+def _parse_request_sent_at(raw_value: str):
+    if not raw_value:
+        return timezone.localtime().replace(second=0, microsecond=0)
+    try:
+        value = datetime.fromisoformat(raw_value)
+    except ValueError:
+        raise forms.ValidationError("Некорректная дата отправки запроса.")
+    if timezone.is_naive(value):
+        value = timezone.make_aware(value, timezone.get_current_timezone())
+    return value.replace(second=0, microsecond=0)
+
+
+def _round_up_to_hour(value):
+    value = value.replace(second=0, microsecond=0)
+    if value.minute == 0:
+        return value
+    return (value + timedelta(hours=1)).replace(minute=0)
 
 @login_required
 @require_http_methods(["GET", "POST"])
@@ -739,6 +784,75 @@ def performer_form_edit(request, pk: int):
     resp = HttpResponse(status=204)
     resp[HX_TRIGGER_HEADER] = HX_PERFORMERS_UPDATED_EVENT
     return resp
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def participation_request(request):
+    raw_ids = request.POST.getlist("performer_ids[]") or request.POST.getlist("performer_ids")
+    if not raw_ids:
+        return JsonResponse({"ok": False, "error": "Не выбраны строки для запроса."}, status=400)
+
+    try:
+        performer_ids = sorted({int(value) for value in raw_ids if str(value).strip()})
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Передан некорректный список строк."}, status=400)
+
+    try:
+        duration_hours = int(request.POST.get("duration_hours") or 0)
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Срок должен быть целым числом часов."}, status=400)
+    if duration_hours <= 0:
+        return JsonResponse({"ok": False, "error": "Срок должен быть больше нуля."}, status=400)
+
+    try:
+        request_sent_at = _parse_request_sent_at(request.POST.get("request_sent_at", "").strip())
+    except forms.ValidationError as exc:
+        return JsonResponse({"ok": False, "error": exc.message}, status=400)
+
+    deadline_at = _round_up_to_hour(request_sent_at + timedelta(hours=duration_hours))
+    selected_performers = list(
+        Performer.objects
+        .select_related(
+            "registration",
+            "registration__type",
+            "typical_section",
+            "employee",
+            "employee__user",
+        )
+        .filter(pk__in=performer_ids)
+        .order_by("position", "id")
+    )
+    if len(selected_performers) != len(performer_ids):
+        return JsonResponse({"ok": False, "error": "Часть выбранных строк не найдена."}, status=400)
+
+    try:
+        with transaction.atomic():
+            create_participation_notifications(
+                performers=selected_performers,
+                sender=request.user,
+                request_sent_at=request_sent_at,
+                deadline_at=deadline_at,
+                duration_hours=duration_hours,
+            )
+            updated = Performer.objects.filter(pk__in=performer_ids).update(
+                participation_request_sent_at=request_sent_at,
+                participation_deadline_at=deadline_at,
+                participation_response="",
+                participation_response_at=None,
+            )
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "updated": updated,
+            "request_sent_at": timezone.localtime(request_sent_at).strftime("%d.%m.%Y %H:%M"),
+            "deadline_at": timezone.localtime(deadline_at).strftime("%d.%m.%Y %H:%M"),
+        }
+    )
 
 @login_required
 @require_POST

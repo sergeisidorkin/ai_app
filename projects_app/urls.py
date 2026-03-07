@@ -22,6 +22,7 @@ urlpatterns = [
     path("projects/performers/<int:pk>/delete/", views.performer_delete, name="performer_delete"),
     path("projects/performers/<int:pk>/move-up/", views.performer_move_up, name="performer_move_up"),
     path("projects/performers/<int:pk>/move-down/", views.performer_move_down, name="performer_move_down"),
+    path("projects/performers/request-confirmation/", views.participation_request, name="participation_request"),
 
     path("projects/legal-entities/create/", views.legal_entity_form_create, name="legal_entity_form_create"),
     path("projects/legal-entities/<int:pk>/edit/", views.legal_entity_form_edit, name="legal_entity_form_edit"),

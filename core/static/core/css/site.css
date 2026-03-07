@@ -354,6 +354,7 @@
   margin-right: 0 !important;
   padding-left: 1rem;           /* текстовые отступы */
   padding-right: 1rem;
+  position: relative;
 }
 
 /* Активный пункт — без скруглений, фон на всю ширину */
@@ -538,6 +539,10 @@ body .second-sidebar + .flex-grow-1 {
   margin-bottom: 18px;              /* отступ снизу от панели */
 }
 
+#notifications .section-header {
+  margin-bottom: 16px;
+}
+
 .section-header .nav.nav-underline {
   padding-left: 20px !important; /* левый отступ 20px для меню вкладок, 33px*/
 }
@@ -614,6 +619,12 @@ body .second-sidebar + .flex-grow-1 {
   filter: none;
 }
 
+#participation-confirmation-section .form-check-input:disabled {
+  background-color: #e9ecef !important;
+  border-color: #d5dbe1 !important;
+  opacity: 1 !important;
+}
+
 
 
 /* Отступ сверху для панели действий под таблицей "Продукты" */
@@ -621,6 +632,187 @@ body .second-sidebar + .flex-grow-1 {
   margin-top: 30px !important;
 }
 
+.notifications-bell-btn {
+  color: var(--bs-primary, #075D94) !important;
+  padding-right: 0.75rem;
+}
+
+.notifications-bell-btn:hover,
+.notifications-bell-btn:focus {
+  color: var(--bs-link-hover-color, #064f7e) !important;
+}
+
+.notifications-bell-btn .bi-bell {
+  font-size: 1.7rem !important;
+  line-height: 1;
+}
+
+.notification-floating-badge {
+  position: absolute;
+  top: -20px;
+  right: 16px;
+  transform: translateY(-12px);
+  width: 1rem;
+  height: 1rem;
+  min-width: 1rem;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.68rem;
+  line-height: 1;
+}
+
+#sidebar .nav-link [data-notification-counter-section] {
+  width: 1.16rem;
+  height: 1.16rem;
+  min-width: 1.16rem;
+  margin-left: 0.125rem !important;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
+#sidebar .nav-link.active [data-notification-counter-section] {
+  background-color: #fff !important;
+  color: var(--bs-primary, #075D94) !important;
+}
+
+#sidebar.is-collapsed .nav-link [data-notification-counter-section] {
+  position: absolute;
+  top: 0.28rem;
+  left: calc(50% - 1.92px);
+  width: 1rem;
+  height: 1rem;
+  min-width: 1rem;
+  font-size: 0.68rem;
+  margin-left: 0 !important;
+  transform: none;
+  z-index: 1;
+}
+
+.notification-card__marker {
+  flex: 0 0 auto;
+}
+
+.notifications-list {
+  background: #fff;
+}
+
+.notifications-panel-card {
+  border-radius: 0.7rem;
+  overflow: hidden;
+}
+
+.notification-card {
+  border: 1px solid #e9ecef;
+  margin: 0;
+  border-radius: 0;
+  overflow: hidden;
+}
+
+.notification-card + .notification-card {
+  margin-top: -1px;
+}
+
+.notification-card:first-child {
+  border-top-left-radius: 0.6rem;
+  border-top-right-radius: 0.6rem;
+}
+
+.notification-card:last-child {
+  border-bottom-left-radius: 0.6rem;
+  border-bottom-right-radius: 0.6rem;
+}
+
+.notification-card__row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.8rem 1.25rem 0.9rem;
+  cursor: pointer;
+}
+
+.notification-card__main {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.notification-card__meta {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  flex-wrap: nowrap;
+  position: relative;
+  top: -1px;
+}
+
+.notification-card__date {
+  color: #6c757d;
+  font-size: 0.9rem;
+  margin-bottom: 0;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.notification-card__title {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.notification-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+
+.notification-card__actions .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.notification-card__details {
+  padding: 30px 1.25rem 30px calc(4.5rem - 18px);
+  color: #212529;
+  background: #f7f8fa;
+}
+
+.notification-marker {
+  width: 1.16rem;
+  height: 1.16rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1;
+  position: relative;
+  top: -2px;
+}
+
+.notification-marker--pending {
+  background: #dc3545;
+  color: #fff;
+}
+
+.notification-marker--processed {
+  background: #adb5bd;
+  color: #fff;
+}
 #projects-pane .registration-table-wrap .products-actions-row {
   margin-bottom: 14px !important;
 }

@@ -22,7 +22,13 @@
     <ul class="nav nav-pills flex-column gap-2 px-2 py-3">
       {% if request.user.is_staff %}
         <li class="nav-item">
-          <a class="nav-link active d-flex align-items-center" href="#group" data-bs-toggle="tab">
+          <a class="nav-link active d-flex align-items-center" href="#notifications" data-bs-toggle="tab">
+            <i class="bi bi-bell me-2"></i>
+            <span class="link-text">Уведомления</span>
+          </a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link d-flex align-items-center" href="#group" data-bs-toggle="tab">
             <i class="bi bi-globe-europe-africa me-2"></i>
             <span class="link-text">Группа</span>
           </a>
@@ -43,6 +49,8 @@
           <a class="nav-link d-flex align-items-center" href="#projects" data-bs-toggle="tab">
             <i class="bi bi-kanban me-2"></i>
             <span class="link-text">Проекты</span>
+            <span class="badge rounded-pill text-bg-danger ms-2 {% if NOTIFICATION_SECTION_COUNTS.projects|default:0 <= 0 %}d-none{% endif %}"
+                  data-notification-counter-section="projects">{{ NOTIFICATION_SECTION_COUNTS.projects|default:0 }}</span>
           </a>
         </li>
         <li class="nav-item">
@@ -118,12 +126,41 @@
   <!-- Контент вкладок -->
   <main class="flex-grow-1 py-4 px-3" style="min-width:0; overflow-x:hidden;">
     <div class="tab-content">
+      <!-- Уведомления -->
+      <section id="notifications" class="tab-pane fade show active">
+        <div class="templates-bleed">
+          <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
+            <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
+              <h5 class="mb-0 ps-3 fs-4 pt-2">Уведомления</h5>
+              <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
+                 href="#notifications"
+                 data-bs-toggle="tab"
+                 aria-label="Открыть уведомления">
+                <i class="bi bi-bell fs-5"></i>
+                <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
+                      data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
+              </a>
+            </div>
+          </div>
+          <div class="ps-3">
+            {% include "notifications_app/panel.html" %}
+          </div>
+        </div>
+      </section>
       <!-- Группа -->
-      <section id="group" class="tab-pane fade show active">
+      <section id="group" class="tab-pane fade">
         <div class="templates-bleed">
           <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
             <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
               <h5 class="mb-0 ps-3 fs-4 pt-2">Группа</h5>
+              <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
+                 href="#notifications"
+                 data-bs-toggle="tab"
+                 aria-label="Открыть уведомления">
+                <i class="bi bi-bell fs-5"></i>
+                <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
+                      data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
+              </a>
             </div>
           </div>
           <div class="ps-3">
@@ -137,6 +174,14 @@
           <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
             <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
               <h5 class="mb-0 ps-3 fs-4 pt-2">Сотрудники</h5>
+              <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
+                 href="#notifications"
+                 data-bs-toggle="tab"
+                 aria-label="Открыть уведомления">
+                <i class="bi bi-bell fs-5"></i>
+                <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
+                      data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
+              </a>
             </div>
           </div>
           <div class="ps-3">
@@ -150,6 +195,14 @@
           <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
             <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
               <h5 class="mb-0 ps-3 fs-4 pt-2">Продукты</h5>
+              <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
+                 href="#notifications"
+                 data-bs-toggle="tab"
+                 aria-label="Открыть уведомления">
+                <i class="bi bi-bell fs-5"></i>
+                <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
+                      data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
+              </a>
             </div>
           </div>
           <div class="ps-3">
@@ -163,6 +216,14 @@
           <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
             <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
               <h5 class="mb-0 ps-3 fs-4 pt-2">Проекты</h5>
+              <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
+                 href="#notifications"
+                 data-bs-toggle="tab"
+                 aria-label="Открыть уведомления">
+                <i class="bi bi-bell fs-5"></i>
+                <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
+                      data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
+              </a>
             </div>
           </div>
           <div class="ps-3">
@@ -201,7 +262,16 @@
             <div class="flex-grow-1 ps-3 pe-0" style="min-width:0;">
               <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column"
                    style="margin-right:0 !important;">
-                <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height:30px;"></div>
+                <div class="px-3 d-flex justify-content-end align-items-center flex-grow-1" style="min-height:30px;">
+                  <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
+                     href="#notifications"
+                     data-bs-toggle="tab"
+                     aria-label="Открыть уведомления">
+                    <i class="bi bi-bell fs-5"></i>
+                    <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
+                          data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
+                  </a>
+                </div>
                 <div class="req-tabs-carousel" style="display:flex; align-items:end; overflow:hidden;">
                   <button type="button" class="req-tabs-arrow req-tabs-arrow-left d-none" aria-label="Прокрутить влево">
                     <i class="bi bi-chevron-left"></i>
@@ -265,6 +335,14 @@
           <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
             <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 36px;">
               <h5 class="mb-0 ps-3 fs-4 pt-2">Чек-листы</h5>
+              <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
+                 href="#notifications"
+                 data-bs-toggle="tab"
+                 aria-label="Открыть уведомления">
+                <i class="bi bi-bell fs-5"></i>
+                <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
+                      data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
+              </a>
             </div>
           </div>
           <div class="ps-3">
@@ -307,6 +385,14 @@
 
           <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
             <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
+              <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn ms-auto"
+                 href="#notifications"
+                 data-bs-toggle="tab"
+                 aria-label="Открыть уведомления">
+                <i class="bi bi-bell fs-5"></i>
+                <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
+                      data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
+              </a>
             </div>
               <ul class="nav nav-underline px-3" id="templates-tabs"></ul>
               <!-- Сериализуем карту в HTML безопасно -->
@@ -336,6 +422,14 @@
           <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
             <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 36px;">
               <h5 class="mb-0 ps-3 fs-4 pt-2">Подключения</h5>
+              <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
+                 href="#notifications"
+                 data-bs-toggle="tab"
+                 aria-label="Открыть уведомления">
+                <i class="bi bi-bell fs-5"></i>
+                <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
+                      data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
+              </a>
             </div>
           </div>
           <div class="ps-3">
@@ -357,6 +451,14 @@
             <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
               <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 36px;">
                 <h5 class="mb-0 ps-3 fs-4 pt-2">Отладка</h5>
+                <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
+                   href="#notifications"
+                   data-bs-toggle="tab"
+                   aria-label="Открыть уведомления">
+                  <i class="bi bi-bell fs-5"></i>
+                  <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
+                        data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
+                </a>
               </div>
             </div>
 
@@ -381,6 +483,14 @@
           <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
             <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
               <h5 class="mb-0 ps-3 fs-4 pt-2">Справочники</h5>
+              <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
+                 href="#notifications"
+                 data-bs-toggle="tab"
+                 aria-label="Открыть уведомления">
+                <i class="bi bi-bell fs-5"></i>
+                <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
+                      data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
+              </a>
             </div>
           </div>
           <div class="ps-3">
