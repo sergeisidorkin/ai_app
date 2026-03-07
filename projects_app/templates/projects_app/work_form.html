@@ -67,6 +67,7 @@
   const projectSel = form.querySelector('select[name="project"]');
   const typeInput  = form.querySelector('input[name="type"]');
   const nameInput  = form.querySelector('input[name="name"]');
+  const managerSel = form.querySelector('select[name="manager"]');
 
   async function refillByProject() {
     const id = projectSel?.value;
@@ -83,6 +84,9 @@
 
       // «Название»: берём из регистрации
       if (nameInput) nameInput.value = j.name || nameInput.value || "";
+
+      // «Менеджер»: по умолчанию равен руководителю проекта выбранной регистрации
+      if (managerSel) managerSel.value = j.project_manager || "";
     } catch(e) {
       console.error(e);
     }
@@ -91,7 +95,7 @@
   projectSel?.addEventListener('change', refillByProject);
 
   // На открытии модалки: если редактирование и поля пустые — тоже подтянем
-  if (projectSel?.value && (!typeInput?.value || !nameInput?.value)) {
+  if (projectSel?.value && (!typeInput?.value || !nameInput?.value || !managerSel?.value)) {
     refillByProject();
   }
 })();

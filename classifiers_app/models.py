@@ -59,6 +59,33 @@ class OKVCurrency(models.Model):
             OKVCurrency.objects.filter(pk=self.pk).update(countries_codes=codes)
 
 
+class LegalEntityIdentifier(models.Model):
+    """Классификатор идентификаторов юрлиц."""
+    identifier = models.CharField("Идентификатор", max_length=64)
+    full_name = models.CharField("Наименование идентификатора (полное)", max_length=512)
+    code = models.CharField("Код", max_length=3, blank=True, default="")
+    country = models.ForeignKey(
+        OKSMCountry,
+        verbose_name="Страна",
+        on_delete=models.CASCADE,
+        related_name="legal_entity_identifiers",
+        null=True,
+        blank=True,
+    )
+    position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["position", "id"]
+        verbose_name = "Идентификатор юрлица"
+        verbose_name_plural = "Классификатор идентификаторов юрлиц"
+
+    def __str__(self):
+        return f"{self.identifier} — {self.full_name}"
+
+
 class TerritorialDivision(models.Model):
     country = models.ForeignKey(
         OKSMCountry, verbose_name="Страна", on_delete=models.CASCADE, related_name="territorial_divisions"

@@ -23,11 +23,11 @@
       </div>
       <div class="col-md-4">
         <label class="form-label">Тип</label>
-        <input type="text" class="form-control" id="perf-type" value="" readonly>
+        <input type="text" class="form-control readonly-field" id="perf-type" value="" readonly>
       </div>
       <div class="col-md-4">
         <label class="form-label">Название</label>
-        <input type="text" class="form-control" id="perf-name" value="" readonly>
+        <input type="text" class="form-control readonly-field" id="perf-name" value="" readonly>
       </div>
 
       <div class="col-md-4">
@@ -80,6 +80,14 @@
   </div>
 </form>
 
+<style>
+  #performers-modal .readonly-field {
+    background-color: #f8f9fa;
+    color: #6c757d;
+    pointer-events: none;
+  }
+</style>
+
 <script id="perf-reg-map" type="application/json">{{ reg_map_json|safe }}</script>
 <script id="perf-assets-map" type="application/json">{{ assets_map_json|safe }}</script>
 <script id="perf-sections-map" type="application/json">{{ sections_map_json|safe }}</script>
@@ -100,6 +108,7 @@
   function refillAssets(regId) {
     if (!assetSel) return;
     const list = assetsMap[regId] || [];
+    const current = assetSel.value;
     assetSel.innerHTML = '';
     const opt0 = document.createElement('option');
     opt0.value = ''; opt0.textContent = '— Не выбрано —';
@@ -108,19 +117,28 @@
       const o = document.createElement('option'); o.value = v; o.textContent = v;
       assetSel.appendChild(o);
     });
+    if (current && !list.includes(current)) {
+      const custom = document.createElement('option');
+      custom.value = current;
+      custom.textContent = current;
+      assetSel.appendChild(custom);
+    }
+    if (current) assetSel.value = current;
   }
 
   function refillSections(regId) {
     if (!sectSel) return;
     const list = sectMap[regId] || [];
+    const current = sectSel.value;
     sectSel.innerHTML = '';
     const opt0 = document.createElement('option');
     opt0.value = ''; opt0.textContent = '— Не выбрано —';
     sectSel.appendChild(opt0);
     list.forEach(it => {
-      const o = document.createElement('option'); o.value = it.id; o.textContent = it.code || it.id;
+      const o = document.createElement('option'); o.value = it.id; o.textContent = it.label || it.id;
       sectSel.appendChild(o);
     });
+    if (current) sectSel.value = current;
   }
 
   function applyReg(regId) {

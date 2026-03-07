@@ -5,6 +5,14 @@
   window.__clTableSel = window.__clTableSel || {};
   window.__clTableSelLast = window.__clTableSelLast || null;
 
+  const TABLE_CONFIG = {
+    'oksm-select': { target: '#oksm-table-wrap', swap: 'innerHTML', url: '/classifiers/oksm/table/', settleId: 'oksm-table-wrap' },
+    'okv-select': { target: '#okv-table-wrap', swap: 'innerHTML', url: '/classifiers/okv/table/', settleId: 'okv-table-wrap' },
+    'lei-select': { target: '#lei-table-wrap', swap: 'innerHTML', url: '/classifiers/lei/table/', settleId: 'lei-table-wrap' },
+    'katd-select': { target: '#katd-table-wrap', swap: 'innerHTML', url: '/classifiers/katd/table/', settleId: 'katd-table-wrap' },
+    'lw-select': { target: '#lw-table-wrap', swap: 'innerHTML', url: '/classifiers/lw/table/', settleId: 'lw-table-wrap' },
+  };
+
   function pane() { return document.getElementById('classifiers-pane'); }
   const qa = (sel, root) => Array.from((root || document).querySelectorAll(sel));
 
@@ -62,6 +70,12 @@
     panel.classList.toggle('d-none', !anyChecked);
   }
 
+  function releaseFocus(btn) {
+    if (btn && typeof btn.blur === 'function') btn.blur();
+    const active = document.activeElement;
+    if (active && typeof active.blur === 'function') active.blur();
+  }
+
   function filterQueryString() {
     var parts = [];
     var oksmEl = document.getElementById('oksm-date-filter');
@@ -80,12 +94,27 @@
     return qs ? url + qs : url;
   }
 
+  async function refreshTable(name) {
+    const cfg = TABLE_CONFIG[name];
+    if (!cfg) {
+      await htmx.ajax('GET', '/classifiers/partial/' + filterQueryString(), {
+        target: '#classifiers-pane',
+        swap: 'outerHTML',
+      });
+      return;
+    }
+    await htmx.ajax('GET', cfg.url + filterQueryString(), {
+      target: cfg.target,
+      swap: cfg.swap,
+    });
+  }
+
   document.addEventListener('click', async (e) => {
     const root = pane();
     if (!root) return;
     const btn = e.target.closest('button[data-panel-action]');
     if (!btn || !root.contains(btn)) return;
-    const panel = btn.closest('#oksm-actions, #okv-actions, #katd-actions, #lw-actions');
+    const panel = btn.closest('#oksm-actions, #okv-actions, #lei-actions, #katd-actions, #lw-actions');
     if (!panel) return;
     const action = btn.dataset.panelAction;
     const name = getNameForPanel(panel);
@@ -93,6 +122,8 @@
 
     const checked = getCheckedByName(name);
     if (!checked.length) return;
+
+    releaseFocus(btn);
 
     window.__clTableSel[name] = checked.map(ch => String(ch.value));
     window.__clTableSelLast = name;
@@ -103,10 +134,6 @@
       const url = tr?.dataset?.editUrl;
       if (!url) return;
       await htmx.ajax('GET', url, { target: '#classifiers-modal .modal-content', swap: 'innerHTML' });
-      const modalEl = document.getElementById('classifiers-modal');
-      if (modalEl && window.bootstrap) {
-        window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
-      }
       ensureActionsVisibility(name);
       return;
     }
@@ -115,13 +142,12 @@
       if (!confirm(`Удалить ${checked.length} строк(у/и)?`)) return;
       const urls = checked.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
       for (let i = 0; i < urls.length; i++) {
-        const isLast = i === urls.length - 1;
-        if (isLast) {
-          await htmx.ajax('POST', urlWithFilters(urls[i]), { target: '#classifiers-pane', swap: 'outerHTML' });
-        } else {
-          await fetch(urlWithFilters(urls[i]), { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
-        }
+        await fetch(urlWithFilters(urls[i]), {
+          method: 'POST',
+          headers: { 'X-CSRFToken': csrftoken, 'HX-Request': 'true' },
+        }).catch(() => {});
       }
+      await refreshTable(name);
       return;
     }
 
@@ -131,13 +157,12 @@
         .filter(Boolean);
       if (action === 'down') urls = urls.reverse();
       for (let i = 0; i < urls.length; i++) {
-        const isLast = i === urls.length - 1;
-        if (isLast) {
-          await htmx.ajax('POST', urlWithFilters(urls[i]), { target: '#classifiers-pane', swap: 'outerHTML' });
-        } else {
-          await fetch(urlWithFilters(urls[i]), { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
-        }
+        await fetch(urlWithFilters(urls[i]), {
+          method: 'POST',
+          headers: { 'X-CSRFToken': csrftoken, 'HX-Request': 'true' },
+        }).catch(() => {});
       }
+      await refreshTable(name);
       ensureActionsVisibility(name);
       return;
     }
@@ -258,9 +283,12 @@
   });
 
   document.body.addEventListener('htmx:afterSettle', function (e) {
-    if (!(e.target && e.target.id === 'classifiers-pane')) return;
+    const settleId = e.target && e.target.id;
     const last = window.__clTableSelLast;
     if (!last) return;
+    const cfg = TABLE_CONFIG[last];
+    const expectedId = cfg?.settleId || 'classifiers-pane';
+    if (settleId !== expectedId && settleId !== 'classifiers-pane') return;
     const ids = (window.__clTableSel && window.__clTableSel[last]) || [];
     const set = new Set(ids || []);
     getRowChecksByName(last).forEach(b => { b.checked = set.has(String(b.value)); });

@@ -9,7 +9,7 @@
     </h5>
   </div>
 
-  <div class="table-responsive">
+  <div class="table-responsive registration-table-wrap">
 
     <table class="table table-sm align-middle reg-table">
         <colgroup>
@@ -120,7 +120,7 @@
           <td>{{ r.year }}</td>
           <td>{{ r.customer }}</td>
           <td>{{ r.registration_number }}</td>
-          <td>{{ r.project_manager }}</td>
+          <td>{{ r.project_manager|short_fio }}</td>
           <td>{{ r.contract_subject|truncatechars:15 }}</td>
         </tr>
       {% empty %}
@@ -135,9 +135,7 @@
           class="btn btn-primary btn-sm d-flex align-items-center"
           hx-get="{% url 'registration_form_create' %}"
           hx-target="#projects-modal .modal-content"
-          hx-swap="innerHTML"
-          data-bs-toggle="modal"
-          data-bs-target="#projects-modal">
+          hx-swap="innerHTML">
           <i class="bi bi-plus-circle me-2"></i>Добавить строку
         </button>
         <div id="registrations-actions" class="d-none d-flex">
@@ -224,7 +222,7 @@
           <td>{{ w.name }}</td>
           <td class="text-nowrap">{{ w.asset_name }}</td>
           <td class="text-nowrap">{{ w.registration_number }}</td>
-          <td class="text-nowrap">{{ w.manager }}</td>
+          <td class="text-nowrap">{{ w.manager|short_fio }}</td>
         </tr>
       {% empty %}
         <tr><td colspan="7" class="text-muted">Пока нет данных.</td></tr>
@@ -238,9 +236,7 @@
           class="btn btn-primary btn-sm d-flex align-items-center"
           hx-get="{% url 'work_form_create' %}"
           hx-target="#projects-modal .modal-content"
-          hx-swap="innerHTML"
-          data-bs-toggle="modal"
-          data-bs-target="#projects-modal">
+          hx-swap="innerHTML">
           <i class="bi bi-plus-circle me-2"></i>Добавить строку
         </button>
         <div id="work-actions" class="d-none d-flex">
@@ -366,9 +362,7 @@
           class="btn btn-primary btn-sm d-flex align-items-center"
           hx-get="{% url 'legal_entity_form_create' %}"
           hx-target="#projects-modal .modal-content"
-          hx-swap="innerHTML"
-          data-bs-toggle="modal"
-          data-bs-target="#projects-modal">
+          hx-swap="innerHTML">
           <i class="bi bi-plus-circle me-2"></i>Добавить строку
         </button>
         <div id="legal-entities-actions" class="d-none d-flex">

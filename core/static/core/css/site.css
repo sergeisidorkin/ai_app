@@ -813,7 +813,6 @@ body .second-sidebar + .flex-grow-1 {
   background: #adb5bd;
   color: #fff;
 }
-
 #projects-pane .registration-table-wrap .products-actions-row {
   margin-bottom: 14px !important;
 }

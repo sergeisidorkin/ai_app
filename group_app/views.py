@@ -1,8 +1,11 @@
+import json
+
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.db.models import Max
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_http_methods, require_POST
 
+from classifiers_app.models import LegalEntityIdentifier
 from .forms import GroupMemberForm
 from .models import GroupMember
 
@@ -19,6 +22,29 @@ def staff_required(u):
 
 def _group_context():
     return {"members": GroupMember.objects.all()}
+
+
+def _member_form_context(form, action, member=None):
+    identifier_map = {}
+    country_qs = form.fields["country"].queryset
+    lei_by_code = {}
+    for item in LegalEntityIdentifier.objects.filter(code__in=country_qs.values("code")).order_by("position", "id").values("code", "identifier"):
+        lei_by_code.setdefault(item["code"], item["identifier"])
+    for country in country_qs:
+        identifier_map[str(country.pk)] = {
+            "code": country.code,
+            "alpha2": country.alpha2,
+            "identifier": lei_by_code.get(country.code, ""),
+        }
+
+    context = {
+        "form": form,
+        "action": action,
+        "country_identifier_map_json": json.dumps(identifier_map),
+    }
+    if member is not None:
+        context["member"] = member
+    return context
 
 
 def _render_updated(request):
@@ -58,10 +84,10 @@ def group_partial(request):
 def member_form_create(request):
     if request.method == "GET":
         form = GroupMemberForm()
-        return render(request, FORM_TEMPLATE, {"form": form, "action": "create"})
+        return render(request, FORM_TEMPLATE, _member_form_context(form, "create"))
     form = GroupMemberForm(request.POST)
     if not form.is_valid():
-        return render(request, FORM_TEMPLATE, {"form": form, "action": "create"})
+        return render(request, FORM_TEMPLATE, _member_form_context(form, "create"))
     obj = form.save(commit=False)
     obj.position = _next_position()
     obj.save()
@@ -75,10 +101,10 @@ def member_form_edit(request, pk: int):
     member = get_object_or_404(GroupMember, pk=pk)
     if request.method == "GET":
         form = GroupMemberForm(instance=member)
-        return render(request, FORM_TEMPLATE, {"form": form, "action": "edit", "member": member})
+        return render(request, FORM_TEMPLATE, _member_form_context(form, "edit", member))
     form = GroupMemberForm(request.POST, instance=member)
     if not form.is_valid():
-        return render(request, FORM_TEMPLATE, {"form": form, "action": "edit", "member": member})
+        return render(request, FORM_TEMPLATE, _member_form_context(form, "edit", member))
     form.save()
     return _render_updated(request)
 

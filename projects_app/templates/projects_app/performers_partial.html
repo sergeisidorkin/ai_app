@@ -1,3 +1,4 @@
+{% load projects_extras %}
 <div class="table-responsive">
   <table class="table table-sm align-middle performers-table">
     <colgroup>
@@ -70,10 +71,10 @@
         </td>
         <td class="text-truncate">{{ p.registration.name }}</td>
         <td class="text-nowrap">{{ p.asset_name }}</td>
-        <td class="text-nowrap">{{ p.executor }}</td>
+        <td class="text-nowrap">{{ p.executor|short_fio }}</td>
         <td class="text-nowrap">{{ p.grade }}</td>
         <td class="text-nowrap">
-          {% if p.typical_section %}{{ p.typical_section.code }}{% else %}&mdash;{% endif %}
+          {% if p.typical_section %}{{ p.typical_section|typical_section_short }}{% else %}&mdash;{% endif %}
         </td>
         <td class="text-nowrap">{{ p.actual_costs }}</td>
         <td class="text-nowrap">{{ p.estimated_costs }}</td>
@@ -94,9 +95,7 @@
         class="btn btn-primary btn-sm d-flex align-items-center"
         hx-get="{% url 'performer_form_create' %}"
         hx-target="#performers-modal .modal-content"
-        hx-swap="innerHTML"
-        data-bs-toggle="modal"
-        data-bs-target="#performers-modal">
+        hx-swap="innerHTML">
         <i class="bi bi-plus-circle me-2"></i>Добавить строку
       </button>
       <div id="performers-actions" class="d-none d-flex">

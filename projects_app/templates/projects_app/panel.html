@@ -81,13 +81,5 @@
         modal.hide();
       });
     </script>
-    <script>
-      document.body.addEventListener('performers-updated', function () {
-        const el = document.getElementById('performers-modal');
-        if (!el) return;
-        const modal = bootstrap.Modal.getInstance(el) || bootstrap.Modal.getOrCreateInstance(el);
-        modal.hide();
-      });
-    </script>
   </div>
 </div>

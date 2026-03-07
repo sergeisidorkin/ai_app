@@ -7,6 +7,7 @@ class GroupMember(models.Model):
     name_en = models.CharField("Наименование на английском языке", max_length=512, blank=True, default="")
     country_name = models.CharField("Страна регистрации", max_length=255)
     country_code = models.CharField("Код страны (ОКСМ)", max_length=3, blank=True, default="")
+    country_alpha2 = models.CharField("Буквенный код (Альфа-2)", max_length=2, blank=True, default="")
     identifier = models.CharField("Идентификатор", max_length=255, blank=True, default="")
     registration_number = models.CharField("Регистрационный номер", max_length=255, blank=True, default="")
     registration_date = models.DateField("Дата регистрации", blank=True, null=True)
