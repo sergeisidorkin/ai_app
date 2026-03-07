@@ -1,0 +1,82 @@
+<div class="notifications-list">
+  {% if notification_cards %}
+    {% for card in notification_cards %}
+      {% with notification=card.notification %}
+        <article class="notification-card{% if not notification.is_read %} notification-card--unread{% endif %}{% if notification.is_processed %} notification-card--processed{% endif %}"
+                 data-notification-id="{{ notification.id }}"
+                 data-unread="{% if notification.is_read %}0{% else %}1{% endif %}">
+          <div class="notification-card__row js-notification-row">
+            <div class="notification-card__main">
+              <div class="notification-card__marker">
+                {% if notification.is_processed %}
+                  <span class="notification-marker notification-marker--processed">
+                    <i class="bi bi-check-lg"></i>
+                  </span>
+                {% else %}
+                  <span class="notification-marker notification-marker--pending">
+                    {{ card.marker_number|default:"!" }}
+                  </span>
+                {% endif %}
+              </div>
+              <div class="notification-card__meta">
+                <span class="notification-card__date">{{ notification.sent_at|date:"d.m.Y H:i" }}</span>
+                <span class="notification-card__title">{{ notification.title_text }}</span>
+              </div>
+            </div>
+            <div class="notification-card__actions">
+              {% if not notification.is_processed %}
+                <button type="button"
+                        class="btn btn-primary btn-sm js-notification-action"
+                        data-action="confirmed"
+                        data-url="{% url 'notification_participation_action' notification.id %}">
+                  Подтвердить участие
+                </button>
+                <button type="button"
+                        class="btn btn-outline-danger btn-sm js-notification-action"
+                        data-action="declined"
+                        data-url="{% url 'notification_participation_action' notification.id %}">
+                  Отклонить
+                </button>
+              {% endif %}
+              <button type="button"
+                      class="btn btn-link btn-sm text-decoration-none js-notification-toggle"
+                      data-mark-read-url="{% url 'notification_mark_read' notification.id %}"
+                      aria-expanded="false">
+                <i class="bi bi-chevron-down"></i>
+              </button>
+            </div>
+          </div>
+          <div class="notification-card__details d-none">
+            <p class="mb-2">Добрый день, {{ card.recipient_name }}!</p>
+            <p class="mb-2">
+              Приглашаем вас принять участие в новом проекте IMC Montan Group — {{ card.project_label }}.
+            </p>
+            <p class="mb-2">Руководитель проекта: {{ card.project_manager }}.</p>
+            <p class="mb-2">Срок завершения проекта: {{ card.project_deadline_display }}.</p>
+            <p class="mb-2">Тип проекта: {{ card.project_type_display }}.</p>
+            <div class="mb-2">
+              <div class="mb-2">Предлагаемый состав услуг (разделов):</div>
+              <ul class="mb-0">
+                {% for service in card.services %}
+                  <li>{{ service }}</li>
+                {% empty %}
+                  <li>Без детализации</li>
+                {% endfor %}
+              </ul>
+            </div>
+            <p class="mb-2">Предлагаемая оплата услуг: {{ card.agreed_amount_display }}.</p>
+            <p class="mb-2">
+              Принять решение об участии в проекте, кликнув на кнопку
+              «Подтвердить участие» или «Отклонить», необходимо в течение
+              {{ card.duration_hours }} часов с момента отправки данного сообщения —
+              до {{ card.deadline_at_display }}.
+            </p>
+            <p class="mb-0">С уважением,<br>IMC Montan AI</p>
+          </div>
+        </article>
+      {% endwith %}
+    {% endfor %}
+  {% else %}
+    <div class="p-4 text-muted">Уведомлений пока нет.</div>
+  {% endif %}
+</div>

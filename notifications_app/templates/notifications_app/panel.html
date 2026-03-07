@@ -1,0 +1,15 @@
+{% load static %}
+<div class="card shadow-sm notifications-panel-card">
+  <div class="card-body p-0">
+    <div id="notifications-pane"
+         data-url="{% url 'notifications_partial' %}"
+         data-counters-url="{% url 'notifications_counters' %}"
+         hx-get="{% url 'notifications_partial' %}"
+         hx-trigger="load, notifications-updated from:body"
+         hx-target="#notifications-pane"
+         hx-swap="innerHTML">
+      <div class="text-muted p-4">Загрузка уведомлений…</div>
+    </div>
+  </div>
+</div>
+<script defer src="{% static 'notifications_app/js/notifications-panels.js' %}"></script>

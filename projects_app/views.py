@@ -2,14 +2,20 @@ from django.contrib.auth.decorators import login_required, user_passes_test
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST, require_GET
-from django.db.models import Max
+from django.db import transaction
+from django.db.models import Max, Q
+from django.db.models.functions import Trim
 from django import forms
+from django.utils import timezone
 from .models import ProjectRegistration, WorkVolume, Performer, WorkVolumeItem, LegalEntity
 from .forms import ProjectRegistrationForm, WorkVolumeForm, PerformerForm, BootstrapMixin, LegalEntityForm
 
 import json
+from datetime import datetime, timedelta
 
 from policy_app.models import TypicalSection
+from users_app.models import Employee
+from notifications_app.services import create_participation_notifications
 
 PROJECTS_PARTIAL_TEMPLATE = "projects_app/projects_partial.html"
 REG_FORM_TEMPLATE       = "projects_app/registration_form.html"
@@ -160,6 +166,7 @@ def work_deps(request):
         "type": str(reg.type) if reg.type_id else "",
         "type_short": getattr(reg.type, "short_name", "") if reg.type_id else "",
         "name": reg.name or "",
+        "project_manager": reg.project_manager or "",
     })
 
 
@@ -177,7 +184,12 @@ def work_form_create(request):
     if not getattr(obj, "position", 0):
         obj.position = _next_position(WorkVolume, {"project": obj.project})
     obj.save()
-    return _render_projects_updated(request)
+    response = _render_projects_updated(request)
+    response[HX_TRIGGER_HEADER] = json.dumps({
+        HX_PROJECTS_UPDATED_EVENT: True,
+        HX_PERFORMERS_UPDATED_EVENT: True,
+    })
+    return response
 
 # Редактирование регистрации
 @login_required
@@ -209,6 +221,47 @@ class RegistrationChoiceField(forms.ModelChoiceField):
             parts.append(name_label)
         return " ".join(parts)
 
+
+def _employee_full_name(employee):
+    parts = [
+        employee.user.last_name.strip(),
+        employee.user.first_name.strip(),
+        employee.patronymic.strip(),
+    ]
+    return " ".join(part for part in parts if part).strip()
+
+
+def _executor_choices(current_value=""):
+    choices = [("", "— Не выбрано —")]
+    current_value = (current_value or "").strip()
+    current_in_choices = False
+
+    employees = (
+        Employee.objects
+        .select_related("user")
+        .order_by("user__last_name", "user__first_name", "patronymic", "position", "id")
+    )
+    for employee in employees:
+        full_name = _employee_full_name(employee)
+        if not full_name:
+            continue
+        choices.append((full_name, full_name))
+        if full_name == current_value:
+            current_in_choices = True
+
+    if current_value and not current_in_choices:
+        choices.insert(1, (current_value, current_value))
+
+    return choices
+
+
+def _typical_section_option_label(section):
+    product = getattr(section.product, "short_name", "") if getattr(section, "product_id", None) else ""
+    code = section.code or ""
+    short_name_ru = section.short_name_ru or ""
+    head = f"{product}:{code}" if product else code
+    return " ".join(part for part in (head, short_name_ru) if part).strip()
+
 class PerformerForm(BootstrapMixin, forms.ModelForm):
     registration = RegistrationChoiceField(
         label="Проект",
@@ -234,6 +287,12 @@ class PerformerForm(BootstrapMixin, forms.ModelForm):
         empty_label="— Не выбрано —",
         widget=forms.Select(),
     )
+    executor = forms.ChoiceField(
+        label="Исполнитель",
+        required=False,
+        choices=(),
+        widget=forms.Select(),
+    )
 
     class Meta:
         model = Performer
@@ -245,6 +304,8 @@ class PerformerForm(BootstrapMixin, forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        current_executor = self.data.get("executor") or (self.instance.executor if self.instance else "")
+        self.fields["executor"].choices = _executor_choices(current_executor)
         self._bootstrapify()
 
 
@@ -265,7 +326,29 @@ def work_form_edit(request, pk: int):
             "form": form, "action": "edit", "work": item
         })
     form.save()
-    return _render_projects_updated(request)
+    response = _render_projects_updated(request)
+    response[HX_TRIGGER_HEADER] = json.dumps({
+        HX_PROJECTS_UPDATED_EVENT: True,
+        HX_PERFORMERS_UPDATED_EVENT: True,
+    })
+    return response
+
+
+def _delete_related_performers_for_work_item(item: WorkVolume):
+    """
+    Удаляет связанные строки исполнителей:
+      - новые строки, уже привязанные через work_item
+      - старые строки без work_item, совпадающие по проекту/активу
+    """
+    asset_name = (item.asset_name or item.name or "").strip()
+    filters = Q(work_item=item)
+    if asset_name:
+        filters |= Q(
+            work_item__isnull=True,
+            registration=item.project,
+            asset_name=asset_name,
+        )
+    Performer.objects.filter(filters).delete()
 
 
 @login_required
@@ -274,10 +357,17 @@ def work_form_edit(request, pk: int):
 def work_delete(request, pk: int):
     item = get_object_or_404(WorkVolume, pk=pk)
     pid = item.project_id
+    _delete_related_performers_for_work_item(item)
     item.delete()
     _normalize_work_positions(pid)
     _normalize_legal_positions(pid)
-    return _render_projects_updated(request)
+    _normalize_performer_positions()
+    response = _render_projects_updated(request)
+    response[HX_TRIGGER_HEADER] = json.dumps({
+        HX_PROJECTS_UPDATED_EVENT: True,
+        HX_PERFORMERS_UPDATED_EVENT: True,
+    })
+    return response
 
 def _normalize_work_positions(product_id: int | None = None):
     qs = WorkVolume.objects.select_related("project").only("id", "position", "project_id")
@@ -467,10 +557,15 @@ def _bind_dynamic_performer_fields(form, *, data=None, instance=None):
       - choices для asset_name по WorkVolume выбранной регистрации
     """
     reg_id = None
+    current_asset = ""
     if data and data.get("registration"):
         reg_id = data.get("registration")
     elif instance is not None:
         reg_id = getattr(instance, "registration_id", None)
+    if data and data.get("asset_name"):
+        current_asset = data.get("asset_name", "")
+    elif instance is not None:
+        current_asset = getattr(instance, "asset_name", "") or ""
 
     # Привязываем queryset для Типовых разделов
     if "typical_section" in form.fields:
@@ -478,8 +573,9 @@ def _bind_dynamic_performer_fields(form, *, data=None, instance=None):
         if reg_id:
             reg = ProjectRegistration.objects.select_related("type").filter(pk=reg_id).first()
             if reg and reg.type_id:
-                qs = TypicalSection.objects.filter(product=reg.type).order_by("code", "id")
+                qs = TypicalSection.objects.filter(product=reg.type).select_related("product").order_by("position", "id")
         form.fields["typical_section"].queryset = qs
+        form.fields["typical_section"].label_from_instance = _typical_section_option_label
 
     # Привязываем choices для Активов (если поле отрисовано как select)
     if "asset_name" in form.fields:
@@ -491,6 +587,8 @@ def _bind_dynamic_performer_fields(form, *, data=None, instance=None):
                 .values_list("asset_name", flat=True)
                 .distinct()
             )
+        if current_asset and current_asset not in assets:
+            assets.append(current_asset)
         choices = [("", "— Не выбрано —")] + [(a, a) for a in assets if a]
         # Если поле CharField с Select-виджетом — просто зададим choices на виджете
         try:
@@ -504,12 +602,33 @@ def _bind_dynamic_performer_fields(form, *, data=None, instance=None):
             pass
 
 def _performers_context():
+    active_participation_statuses = ["Не начат", "В работе"]
     performers = (
         Performer.objects
-        .select_related("registration", "registration__type", "typical_section")
+        .select_related("registration", "registration__type", "typical_section", "employee", "employee__user")
         .order_by("position", "id")
     )
-    return {"performers": performers}
+    participation_performers = (
+        Performer.objects
+        .select_related("registration", "registration__type", "typical_section", "employee", "employee__user")
+        .annotate(executor_trim=Trim("executor"))
+        .filter(registration__status__in=active_participation_statuses)
+        .exclude(executor_trim="")
+        .order_by("position", "id")
+    )
+    participation_project_ids = participation_performers.values_list("registration_id", flat=True).distinct()
+    participation_projects = (
+        ProjectRegistration.objects
+        .filter(id__in=participation_project_ids)
+        .order_by("position", "id")
+    )
+    request_sent_initial = timezone.localtime().replace(second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M")
+    return {
+        "performers": performers,
+        "participation_performers": participation_performers,
+        "participation_projects": participation_projects,
+        "participation_request_sent_initial": request_sent_initial,
+    }
 
 @login_required
 @require_http_methods(["GET"])
@@ -543,8 +662,17 @@ def _performer_form_ctx(form, action: str, performer=None):
         if not r.type_id:
             sections_map[str(r.id)] = []
             continue
-        qs = TypicalSection.objects.filter(product=r.type).only("id", "code").order_by("code", "id")
-        sections_map[str(r.id)] = [{"id": s.id, "code": s.code} for s in qs]
+        qs = (
+            TypicalSection.objects
+            .filter(product=r.type)
+            .select_related("product")
+            .only("id", "code", "short_name_ru", "product__short_name", "position")
+            .order_by("position", "id")
+        )
+        sections_map[str(r.id)] = [
+            {"id": s.id, "label": _typical_section_option_label(s)}
+            for s in qs
+        ]
 
     return {
         "form": form,
@@ -568,6 +696,25 @@ def performers_partial(request):
 def _next_performer_position():
     mx = Performer.objects.aggregate(Max("position")).get("position__max") or 0
     return mx + 1
+
+
+def _parse_request_sent_at(raw_value: str):
+    if not raw_value:
+        return timezone.localtime().replace(second=0, microsecond=0)
+    try:
+        value = datetime.fromisoformat(raw_value)
+    except ValueError:
+        raise forms.ValidationError("Некорректная дата отправки запроса.")
+    if timezone.is_naive(value):
+        value = timezone.make_aware(value, timezone.get_current_timezone())
+    return value.replace(second=0, microsecond=0)
+
+
+def _round_up_to_hour(value):
+    value = value.replace(second=0, microsecond=0)
+    if value.minute == 0:
+        return value
+    return (value + timedelta(hours=1)).replace(minute=0)
 
 @login_required
 @require_http_methods(["GET", "POST"])
@@ -637,6 +784,75 @@ def performer_form_edit(request, pk: int):
     resp = HttpResponse(status=204)
     resp[HX_TRIGGER_HEADER] = HX_PERFORMERS_UPDATED_EVENT
     return resp
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def participation_request(request):
+    raw_ids = request.POST.getlist("performer_ids[]") or request.POST.getlist("performer_ids")
+    if not raw_ids:
+        return JsonResponse({"ok": False, "error": "Не выбраны строки для запроса."}, status=400)
+
+    try:
+        performer_ids = sorted({int(value) for value in raw_ids if str(value).strip()})
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Передан некорректный список строк."}, status=400)
+
+    try:
+        duration_hours = int(request.POST.get("duration_hours") or 0)
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Срок должен быть целым числом часов."}, status=400)
+    if duration_hours <= 0:
+        return JsonResponse({"ok": False, "error": "Срок должен быть больше нуля."}, status=400)
+
+    try:
+        request_sent_at = _parse_request_sent_at(request.POST.get("request_sent_at", "").strip())
+    except forms.ValidationError as exc:
+        return JsonResponse({"ok": False, "error": exc.message}, status=400)
+
+    deadline_at = _round_up_to_hour(request_sent_at + timedelta(hours=duration_hours))
+    selected_performers = list(
+        Performer.objects
+        .select_related(
+            "registration",
+            "registration__type",
+            "typical_section",
+            "employee",
+            "employee__user",
+        )
+        .filter(pk__in=performer_ids)
+        .order_by("position", "id")
+    )
+    if len(selected_performers) != len(performer_ids):
+        return JsonResponse({"ok": False, "error": "Часть выбранных строк не найдена."}, status=400)
+
+    try:
+        with transaction.atomic():
+            create_participation_notifications(
+                performers=selected_performers,
+                sender=request.user,
+                request_sent_at=request_sent_at,
+                deadline_at=deadline_at,
+                duration_hours=duration_hours,
+            )
+            updated = Performer.objects.filter(pk__in=performer_ids).update(
+                participation_request_sent_at=request_sent_at,
+                participation_deadline_at=deadline_at,
+                participation_response="",
+                participation_response_at=None,
+            )
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "updated": updated,
+            "request_sent_at": timezone.localtime(request_sent_at).strftime("%d.%m.%Y %H:%M"),
+            "deadline_at": timezone.localtime(deadline_at).strftime("%d.%m.%Y %H:%M"),
+        }
+    )
 
 @login_required
 @require_POST
