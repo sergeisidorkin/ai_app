@@ -1258,36 +1258,6 @@ def grid_data(request):
 
 
 @login_required
-@require_GET
-def comment_modal(request):
-    field = (request.GET.get("field") or "").strip()
-    item_id = request.GET.get("item")
-    project_id = request.GET.get("project")
-    section_id = request.GET.get("section")
-    asset_name = (request.GET.get("asset") or "").strip()
-
-    if field not in {"imc_comment", "customer_comment"}:
-        return HttpResponseBadRequest("Неизвестное поле.")
-    if not all([item_id, project_id, section_id]):
-        return HttpResponseBadRequest("Недостаточно данных.")
-
-    checklist_item = get_object_or_404(ChecklistItem, pk=item_id)
-    project = get_object_or_404(ProjectRegistration, pk=project_id)
-    section = get_object_or_404(TypicalSection, pk=section_id)
-
-    return _render_comment_modal_content(
-        request,
-        field=field,
-        checklist_item=checklist_item,
-        project=project,
-        section=section,
-        asset_name=asset_name,
-        add_comment_url=reverse("checklists_app:add_comment"),
-        readonly=False,
-    )
-
-
-@login_required
 @require_POST
 def update_status_batch(request):
     try:
