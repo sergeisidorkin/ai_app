@@ -308,28 +308,6 @@ def _ensure_checklist_items(project: ProjectRegistration, section: TypicalSectio
         ChecklistItem.objects.bulk_create(items_to_create)
 
 
-def _load_comment_payload(checklist_item, project, section, asset_name, field):
-    note = (
-        ChecklistRequestNote.objects
-        .filter(
-            checklist_item=checklist_item,
-            project=project,
-            section=section,
-            asset_name=asset_name,
-        )
-        .first()
-    )
-    histories = []
-    if note:
-        histories = list(
-            note.comment_history
-            .filter(field=field)
-            .select_related("author")
-        )
-    return note, histories
-
-
-
 def _render_comment_modal_content(
     request,
     *,
@@ -339,21 +317,20 @@ def _render_comment_modal_content(
     section,
     asset_name,
     add_comment_url,
+    readonly=False,
 ):
-    note, histories = _load_comment_payload(checklist_item, project, section, asset_name, field)
     return render(
         request,
         "checklists_app/components/comment_modal.html",
-        {
-            "field": field,
-            "item": checklist_item,
-            "project": project,
-            "section": section,
-            "asset_name": asset_name,
-            "note": note,
-            "histories": histories,
-            "add_comment_url": add_comment_url,
-        },
+        _comment_modal_context(
+            checklist_item=checklist_item,
+            project=project,
+            section=section,
+            field=field,
+            active_scope_value=asset_name,
+            add_comment_url=add_comment_url,
+            readonly=readonly,
+        ),
     )
 
 
@@ -1200,6 +1177,7 @@ def comment_modal(request):
         section=section,
         asset_name=asset_name,
         add_comment_url=reverse("checklists_app:add_comment"),
+        readonly=False,
     )
 
 
@@ -1566,21 +1544,21 @@ def add_comment(request):
         author=request.user,
     )
 
-    history_qs = note.comment_history.filter(field=field).select_related("author")
-    context = {
-        "field": field,
-        "item": checklist_item,
-        "project": project,
-        "section": section,
-        "asset_name": asset_name,
-        "note": note,
-        "histories": history_qs,
-        "add_comment_url": reverse("checklists_app:add_comment"),
-        "comment_modal_url": reverse("checklists_app:comment_modal"),
-    }
-    cell_html = render_to_string("checklists_app/components/comment_cell.html", context, request=request)
-    history_html = render_to_string("checklists_app/components/comment_history.html", context, request=request)
-    return HttpResponse(cell_html + history_html)
+    history_qs = note.comment_history.filter(field=field).select_related("author").order_by("created_at", "id")
+    history_html = render_to_string(
+        "checklists_app/components/comment_thread.html",
+        {
+            "scope_id": _comment_scope_id(field, checklist_item.id, asset_name),
+            "histories": history_qs,
+            "oob": True,
+        },
+        request=request,
+    )
+    resp = HttpResponse(history_html)
+    resp["HX-Trigger"] = json.dumps({
+        "checklists:comment-updated": _comment_update_event_payload(note, field)
+    })
+    return resp
 
 
 # ---------------------------------------------------------------------------
@@ -2293,6 +2271,7 @@ def shared_comment_modal(request, token: str):
         section=section,
         asset_name=asset_name,
         add_comment_url=reverse("checklists_app:shared_add_comment", args=[token]),
+        readonly=not link.can_edit,
     )
 
 
@@ -2577,17 +2556,21 @@ def shared_add_comment(request, token: str):
         author=request.user if request.user.is_authenticated else None,
     )
 
-    history_qs = note.comment_history.filter(field=field).select_related("author")
-    context = {
-        "field": field, "item": checklist_item, "project": project,
-        "section": section, "asset_name": asset_name, "note": note,
-        "histories": history_qs,
-        "add_comment_url": reverse("checklists_app:shared_add_comment", args=[token]),
-        "comment_modal_url": reverse("checklists_app:shared_comment_modal", args=[token]),
-    }
-    cell_html = render_to_string("checklists_app/components/comment_cell.html", context, request=request)
-    history_html = render_to_string("checklists_app/components/comment_history.html", context, request=request)
-    return HttpResponse(cell_html + history_html)
+    history_qs = note.comment_history.filter(field=field).select_related("author").order_by("created_at", "id")
+    history_html = render_to_string(
+        "checklists_app/components/comment_thread.html",
+        {
+            "scope_id": _comment_scope_id(field, checklist_item.id, asset_name),
+            "histories": history_qs,
+            "oob": True,
+        },
+        request=request,
+    )
+    resp = HttpResponse(history_html)
+    resp["HX-Trigger"] = json.dumps({
+        "checklists:comment-updated": _comment_update_event_payload(note, field)
+    })
+    return resp
 
 
 @require_GET
