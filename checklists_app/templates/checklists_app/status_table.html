@@ -15,13 +15,13 @@
         <col> <!-- Код -->
         <col> <!-- № -->
         <col> <!-- Краткое название -->
+        <col class="files-col"> <!-- Файлы -->
         <col id="chk-col-name"> <!-- Наименование -->
         {% for entity in legal_entities %}
           <col class="status-col"> <!-- статус -->
           <col class="date-col">
         {% endfor %}
         <col class="comment-col"> <!-- IMC -->
-        <col class="comment-col"> <!-- Заказчик -->
     </colgroup>
     <thead class="table-light">
       <tr>
@@ -41,6 +41,7 @@
         <th class="col-code">Код</th>
         <th class="col-num">№</th>
         <th>Краткое наименование</th>
+        <th class="col-files">Файлы</th>
         <th class="col-name-header" style="position:relative">
           <span>Наименование запроса</span>
           <button type="button" id="chk-wrap-toggle" class="chk-wrap-btn" title="Свернуть/развернуть текст">
@@ -53,8 +54,7 @@
           </th>
           <th class="text-nowrap date-header">Дата</th>
         {% endfor %}
-        <th class="col-comment col-comment-imc">Комментарий IMC Montan</th>
-        <th class="col-comment col-comment-customer">Комментарий Заказчика</th>
+        <th class="col-comment col-comment-imc">Комментарии</th>
       </tr>
     </thead>
     <tbody>
@@ -62,25 +62,25 @@
         {% if row.section_header %}
         <tr class="section-header-row">
           {% if show_actions %}<td></td>{% endif %}
-          <td colspan="4" class="section-header-cell">
+          <td colspan="5" class="section-header-cell">
             {{ row.section_header }}
           </td>
           {% for entity in legal_entities %}
             <td></td><td></td>
           {% endfor %}
-          <td></td><td></td>
+          <td></td>
         </tr>
         {% elif row.item %}
         {% if row.additional_header %}
         <tr class="additional-header-row">
           {% if show_actions %}<td></td>{% endif %}
-          <td colspan="4" class="additional-header-cell">
+          <td colspan="5" class="additional-header-cell">
             {{ row.additional_header }}
           </td>
           {% for entity in legal_entities %}
             <td></td><td></td>
           {% endfor %}
-          <td></td><td></td>
+          <td></td>
         </tr>
         {% endif %}
         <tr data-item-id="{{ row.item.id }}"
@@ -106,6 +106,12 @@
           <td id="chk-code-{{ row.item.id }}" class="col-code text-nowrap {{ row.code_class }}">{{ row.item.code }}</td>
           <td id="chk-num-{{ row.item.id }}" class="col-num text-nowrap">{{ row.item.number|stringformat:"02d" }}</td>
           <td class="text-nowrap">{{ row.item.short_name }}</td>
+          <td class="col-files text-nowrap">
+            <div class="chk-files-info">
+              <div>Всего файлов: {{ row.file_count|default:"—" }}</div>
+              <div>Последняя загрузка: {{ row.last_upload_at|date:"d.m.y H:i"|default:"—" }}</div>
+            </div>
+          </td>
           <td class="col-name-cell">{{ row.item.name }}</td>
 
           {% for cell in row.statuses %}
@@ -144,27 +150,13 @@
           {% endfor %}
 
           <td class="col-comment col-comment-imc">
-            {% include "checklists_app/components/comment_cell.html" with field="imc_comment" item=row.item project=project section=section asset_name=asset_name note=row.note histories=row.history.imc_comment add_comment_url=add_comment_url %}
-          </td>
-          <td class="col-comment col-comment-customer">
-            {% include "checklists_app/components/comment_cell.html" with field="customer_comment" item=row.item project=project section=section asset_name=asset_name note=row.note histories=row.history.customer_comment add_comment_url=add_comment_url %}
+            {% include "checklists_app/components/comment_cell.html" with field="imc_comment" item=row.item project=project section=row.section_obj asset_name=asset_name note=row.note histories=row.history.imc_comment add_comment_url=add_comment_url %}
           </td>
         </tr>
         {% endif %}
       {% endfor %}
     </tbody>
   </table>
-
-  {# Модалки комментариев — вне таблицы #}
-  <div id="checklists-comment-modals">
-    {% for row in rows %}
-      {% if row.item %}
-      {% include "checklists_app/components/comment_modal.html" with field="imc_comment" item=row.item project=project section=section asset_name=asset_name note=row.note histories=row.history.imc_comment add_comment_url=add_comment_url %}
-      {% include "checklists_app/components/comment_modal.html" with field="customer_comment" item=row.item project=project section=section asset_name=asset_name note=row.note histories=row.history.customer_comment add_comment_url=add_comment_url %}
-      {% endif %}
-    {% endfor %}
-  </div>
-
   {% if show_actions and request.user.is_authenticated and request.user.is_staff %}
   <div class="d-flex align-items-stretch gap-2 mt-3 pb-4 chk-actions-row">
     <button class="btn btn-primary btn-sm d-flex align-items-center"
@@ -290,9 +282,27 @@
         max-width: 30px;
     }
 
+    #checklists-table-wrap table col.files-col {
+        width: 160px;
+        min-width: 160px;
+    }
+    #checklists-table-wrap table .col-files {
+        white-space: nowrap;
+    }
+    #checklists-table-wrap table td.col-files {
+        vertical-align: middle;
+        padding-top: 5px !important;
+        padding-bottom: 5px !important;
+    }
+    .chk-files-info {
+        font-size: 0.7rem;
+        line-height: 1.2;
+        color: #6c757d;
+    }
+
     #checklists-table-wrap table col.comment-col {
-        width: 60px;
-        min-width: 60px;
+        width: 190px;
+        min-width: 190px;
     }
 
     #checklists-table-wrap table col.status-col {
@@ -323,6 +333,21 @@
         opacity: 0;
         display: inline-block;
         width: 100%;
+    }
+    #checklists-table-wrap .chk-comment-icon--staff {
+        color: #075d94 !important;
+    }
+    #checklists-table-wrap .chk-comment-icon--guest {
+        color: #5ea96a !important;
+    }
+    #checklists-table-wrap .chk-comment-date {
+        font-size: 0.9rem;
+        color: #212529;
+        white-space: nowrap;
+        line-height: 1.15;
+    }
+    #checklists-table-wrap table .col-comment {
+        white-space: nowrap;
     }
 
     #checklists-table-wrap table .chk-code--provided {
@@ -370,6 +395,22 @@
     .chk-actions-row .btn-group .btn-outline-danger:active {
         background-color: var(--bs-danger);
         color: #fff;
+    }
+    .chk-actions-row {
+        box-sizing: border-box;
+        height: 83px;
+        border-top: var(--bs-border-width, 1px) solid var(--bs-border-color, #dee2e6);
+        align-items: center;
+        margin: 0 -1rem;
+        padding: 0 1rem;
+    }
+    .chk-actions-row--stuck {
+        position: fixed !important;
+        bottom: 0 !important;
+        z-index: 1040;
+        background: #fff;
+        margin: 0;
+        padding: 0 1rem;
     }
     #checklists-table-wrap table tbody tr.section-header-row td {
         background-color: #e8eef6 !important;

@@ -402,6 +402,10 @@ class Performer(models.Model):
         CONFIRMED = "confirmed", "Подтверждаю участие"
         DECLINED = "declined", "Не готов(а) участвовать"
 
+    class InfoApprovalStatus(models.TextChoices):
+        NOT_APPROVED = "not_approved", "Не согласован"
+        APPROVED = "approved", "Согласован"
+
     position = models.PositiveIntegerField(default=1, db_index=True)
 
     work_item = models.ForeignKey(
@@ -458,6 +462,17 @@ class Performer(models.Model):
     )
     participation_response_at = models.DateTimeField("Дата ответа на запрос", null=True, blank=True)
 
+    info_request_sent_at = models.DateTimeField("Дата отправки запроса согласования", null=True, blank=True)
+    info_request_deadline_at = models.DateTimeField("Срок согласования", null=True, blank=True)
+    info_approval_status = models.CharField(
+        "Статус согласования",
+        max_length=20,
+        choices=InfoApprovalStatus.choices,
+        blank=True,
+        default="",
+    )
+    info_approval_at = models.DateTimeField("Дата ответа на запрос согласования", null=True, blank=True)
+
     class Meta:
         ordering = ["position", "id"]
         verbose_name = "Исполнитель"
@@ -509,3 +524,11 @@ class Performer(models.Model):
         if self.participation_response_at:
             return "Просрочено" if self.participation_response_at > self.participation_deadline_at else "В срок"
         return "Просрочено" if timezone.now() > self.participation_deadline_at else "В срок"
+
+    @property
+    def info_response_status(self):
+        if not self.info_request_deadline_at:
+            return ""
+        if self.info_approval_at:
+            return "Просрочено" if self.info_approval_at > self.info_request_deadline_at else "В срок"
+        return "Просрочено" if timezone.now() > self.info_request_deadline_at else "В срок"

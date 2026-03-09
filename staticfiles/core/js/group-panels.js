@@ -1,12 +1,11 @@
 (function () {
-  if (window.__projectsPanelBound) return;
-  window.__projectsPanelBound = true;
+  if (window.__groupPanelBound) return;
+  window.__groupPanelBound = true;
 
-  // ТОЧНО как в policy-panels.js — общий кеш выбора
-  window.__tableSel = window.__tableSel || {};
-  window.__tableSelLast = window.__tableSelLast || null;
+  window.__grTableSel = window.__grTableSel || {};
+  window.__grTableSelLast = window.__grTableSelLast || null;
 
-  function pane() { return document.getElementById('projects-pane'); }
+  function pane() { return document.getElementById('group-pane'); }
   const qa = (sel, root) => Array.from((root || document).querySelectorAll(sel));
 
   function getCookie(name) {
@@ -61,57 +60,46 @@
     if (!panel) return;
     const anyChecked = getRowChecksByName(name).some(b => b.checked);
     panel.classList.toggle('d-none', !anyChecked);
-    panel.classList.toggle('d-flex', anyChecked);
   }
 
-  function getDeleteConfirmationMessage(name, count) {
-    if (name === 'work-select') {
-      return `Удалить ${count} строк(у/и) из "Объем услуг"? Будут также удалены связанные строки в "Юридические лица" и "Исполнители".`;
-    }
-    return `Удалить ${count} строк(у/и)?`;
-  }
-
-  // Делегирование: клики по кнопкам панели РЕГИСТРАЦИИ (строго как в products)
   document.addEventListener('click', async (e) => {
     const root = pane();
     if (!root) return;
     const btn = e.target.closest('button[data-panel-action]');
     if (!btn || !root.contains(btn)) return;
-
-    // Панель теперь общая для трёх таблиц
-    const panel = btn.closest('#registrations-actions, #work-actions, #legal-entities-actions');
+    const panel = btn.closest('#gm-actions');
     if (!panel) return;
-
-    const action = btn.dataset.panelAction; // "up" | "down" | "edit" | "delete"
-    const name = getNameForPanel(panel);    // ожидаем "registration-select"
+    const action = btn.dataset.panelAction;
+    const name = getNameForPanel(panel);
     if (!name) return;
 
     const checked = getCheckedByName(name);
     if (!checked.length) return;
 
-    // как в policy: запомним выбор именно этой таблицы
-    window.__tableSel[name] = checked.map(ch => String(ch.value));
-    window.__tableSelLast = name;
+    window.__grTableSel[name] = checked.map(ch => String(ch.value));
+    window.__grTableSelLast = name;
 
     if (action === 'edit') {
       const first = checked[0];
       const tr = first.closest('tr');
       const url = tr?.dataset?.editUrl;
       if (!url) return;
-
-      // грузим форму в модалку ПРОЕКТОВ — как в Продуктах
-      await htmx.ajax('GET', url, { target: '#projects-modal .modal-content', swap: 'innerHTML' });
+      await htmx.ajax('GET', url, { target: '#group-modal .modal-content', swap: 'innerHTML' });
+      const modalEl = document.getElementById('group-modal');
+      if (modalEl && window.bootstrap) {
+        window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+      }
       ensureActionsVisibility(name);
       return;
     }
 
     if (action === 'delete') {
-      if (!confirm(getDeleteConfirmationMessage(name, checked.length))) return;
+      if (!confirm(`Удалить ${checked.length} строк(у/и)?`)) return;
       const urls = checked.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
       for (let i = 0; i < urls.length; i++) {
         const isLast = i === urls.length - 1;
         if (isLast) {
-          await htmx.ajax('POST', urls[i], { target: '#projects-pane', swap: 'outerHTML' });
+          await htmx.ajax('POST', urls[i], { target: '#group-pane', swap: 'outerHTML' });
         } else {
           await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
         }
@@ -127,7 +115,7 @@
       for (let i = 0; i < urls.length; i++) {
         const isLast = i === urls.length - 1;
         if (isLast) {
-          await htmx.ajax('POST', urls[i], { target: '#projects-pane', swap: 'outerHTML' });
+          await htmx.ajax('POST', urls[i], { target: '#group-pane', swap: 'outerHTML' });
         } else {
           await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
         }
@@ -137,7 +125,6 @@
     }
   });
 
-  // Мастер-чекбокс (один-в-один)
   document.addEventListener('change', (e) => {
     const root = pane();
     if (!root) return;
@@ -152,7 +139,6 @@
     ensureActionsVisibility(name);
   });
 
-  // Чекбоксы строк (один-в-один)
   document.addEventListener('change', (e) => {
     const root = pane();
     if (!root) return;
@@ -164,18 +150,17 @@
     ensureActionsVisibility(name);
   });
 
-  // Восстановление выбора после перерисовки HTMX (один-в-один)
   document.body.addEventListener('htmx:afterSettle', function (e) {
-    if (!(e.target && e.target.id === 'projects-pane')) return;
-    const last = window.__tableSelLast;
+    if (!(e.target && e.target.id === 'group-pane')) return;
+    const last = window.__grTableSelLast;
     if (!last) return;
-    const ids = (window.__tableSel && window.__tableSel[last]) || [];
+    const ids = (window.__grTableSel && window.__grTableSel[last]) || [];
     const set = new Set(ids || []);
     getRowChecksByName(last).forEach(b => { b.checked = set.has(String(b.value)); });
     updateMasterStateFor(last);
     updateRowHighlightFor(last);
     ensureActionsVisibility(last);
-    try { delete window.__tableSel[last]; } catch(e) { window.__tableSel[last] = []; }
-    window.__tableSelLast = null;
+    try { delete window.__grTableSel[last]; } catch(e) { window.__grTableSel[last] = []; }
+    window.__grTableSelLast = null;
   });
 })();

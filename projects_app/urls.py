@@ -23,6 +23,8 @@ urlpatterns = [
     path("projects/performers/<int:pk>/move-up/", views.performer_move_up, name="performer_move_up"),
     path("projects/performers/<int:pk>/move-down/", views.performer_move_down, name="performer_move_down"),
     path("projects/performers/request-confirmation/", views.participation_request, name="participation_request"),
+    path("projects/performers/request-info-approval/", views.info_request_approval, name="info_request_approval"),
+    path("projects/performers/create-workspace/", views.create_workspace, name="create_workspace"),
 
     path("projects/legal-entities/create/", views.legal_entity_form_create, name="legal_entity_form_create"),
     path("projects/legal-entities/<int:pk>/edit/", views.legal_entity_form_edit, name="legal_entity_form_edit"),

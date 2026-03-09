@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 
 from policy_app.models import TypicalSection
 from users_app.models import Employee
-from notifications_app.services import create_participation_notifications
+from notifications_app.services import create_participation_notifications, create_info_request_notifications
 
 PROJECTS_PARTIAL_TEMPLATE = "projects_app/projects_partial.html"
 REG_FORM_TEMPLATE       = "projects_app/registration_form.html"
@@ -622,12 +622,32 @@ def _performers_context():
         .filter(id__in=participation_project_ids)
         .order_by("position", "id")
     )
+    info_request_performers = (
+        Performer.objects
+        .select_related("registration", "registration__type", "typical_section", "employee", "employee__user")
+        .annotate(executor_trim=Trim("executor"))
+        .filter(
+            registration__status__in=active_participation_statuses,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+        )
+        .exclude(executor_trim="")
+        .order_by("position", "id")
+    )
+    info_request_project_ids = info_request_performers.values_list("registration_id", flat=True).distinct()
+    info_request_projects = (
+        ProjectRegistration.objects
+        .filter(id__in=info_request_project_ids)
+        .order_by("position", "id")
+    )
     request_sent_initial = timezone.localtime().replace(second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M")
     return {
         "performers": performers,
         "participation_performers": participation_performers,
         "participation_projects": participation_projects,
         "participation_request_sent_initial": request_sent_initial,
+        "info_request_performers": info_request_performers,
+        "info_request_projects": info_request_projects,
+        "info_request_sent_initial": request_sent_initial,
     }
 
 @login_required
@@ -854,6 +874,76 @@ def participation_request(request):
         }
     )
 
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def info_request_approval(request):
+    raw_ids = request.POST.getlist("performer_ids[]") or request.POST.getlist("performer_ids")
+    if not raw_ids:
+        return JsonResponse({"ok": False, "error": "Не выбраны строки для запроса."}, status=400)
+
+    try:
+        performer_ids = sorted({int(value) for value in raw_ids if str(value).strip()})
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Передан некорректный список строк."}, status=400)
+
+    try:
+        duration_hours = int(request.POST.get("duration_hours") or 0)
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Срок должен быть целым числом часов."}, status=400)
+    if duration_hours <= 0:
+        return JsonResponse({"ok": False, "error": "Срок должен быть больше нуля."}, status=400)
+
+    try:
+        request_sent_at = _parse_request_sent_at(request.POST.get("request_sent_at", "").strip())
+    except forms.ValidationError as exc:
+        return JsonResponse({"ok": False, "error": exc.message}, status=400)
+
+    deadline_at = _round_up_to_hour(request_sent_at + timedelta(hours=duration_hours))
+    selected_performers = list(
+        Performer.objects
+        .select_related(
+            "registration",
+            "registration__type",
+            "typical_section",
+            "employee",
+            "employee__user",
+        )
+        .filter(pk__in=performer_ids)
+        .order_by("position", "id")
+    )
+    if len(selected_performers) != len(performer_ids):
+        return JsonResponse({"ok": False, "error": "Часть выбранных строк не найдена."}, status=400)
+
+    try:
+        with transaction.atomic():
+            create_info_request_notifications(
+                performers=selected_performers,
+                sender=request.user,
+                request_sent_at=request_sent_at,
+                deadline_at=deadline_at,
+                duration_hours=duration_hours,
+            )
+            updated = Performer.objects.filter(pk__in=performer_ids).update(
+                info_request_sent_at=request_sent_at,
+                info_request_deadline_at=deadline_at,
+                info_approval_status="",
+                info_approval_at=None,
+            )
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "updated": updated,
+            "request_sent_at": timezone.localtime(request_sent_at).strftime("%d.%m.%Y %H:%M"),
+            "deadline_at": timezone.localtime(deadline_at).strftime("%d.%m.%Y %H:%M"),
+        }
+    )
+
+
 @login_required
 @require_POST
 def performer_delete(request, pk: int):
@@ -918,4 +1008,35 @@ def legal_entity_work_deps(request):
         "project": getattr(work.project, "short_uid", ""),
         "type": work.type or "",
         "name": work.name or "",
-    })    
+    })
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def create_workspace(request):
+    from yandexdisk_app.workspace import create_project_workspace
+
+    project_id = request.POST.get("project_id")
+    if not project_id:
+        return JsonResponse({"ok": False, "error": "Не выбран проект."}, status=400)
+
+    try:
+        project_id = int(project_id)
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Некорректный ID проекта."}, status=400)
+
+    project = (
+        ProjectRegistration.objects
+        .select_related("type")
+        .filter(pk=project_id)
+        .first()
+    )
+    if not project:
+        return JsonResponse({"ok": False, "error": "Проект не найден."}, status=404)
+
+    result = create_project_workspace(request.user, project)
+    if not result.ok:
+        return JsonResponse({"ok": False, "error": result.message}, status=400)
+
+    return JsonResponse({"ok": True, "message": result.message})

@@ -1,0 +1,1947 @@
+(function () {
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function cellKey(itemId, entityId) {
+    return `${itemId}:${entityId}`;
+  }
+
+  function statusColorClass(status) {
+    return {
+      provided: "chk-grid-cell--provided",
+      partial: "chk-grid-cell--partial",
+      missing: "chk-grid-cell--missing",
+      na: "chk-grid-cell--na",
+    }[status] || "";
+  }
+
+  function computeCodeClass(cells) {
+    const statuses = new Set(
+      (cells || [])
+        .map((cell) => cell.status)
+        .filter(Boolean)
+    );
+    if (!statuses.size) return "";
+    if (statuses.size === 1 && statuses.has("provided")) return "chk-code--provided";
+    if (statuses.size === 1 && statuses.has("partial")) return "chk-code--partial";
+    if (statuses.size === 1 && statuses.has("na")) return "chk-code--na";
+    if (statuses.has("partial")) return "chk-code--partial";
+    if (statuses.has("provided") && statuses.has("missing")) return "chk-code--partial";
+    if (statuses.has("provided") && statuses.has("na") && statuses.size === 2) return "chk-code--provided";
+    return "";
+  }
+
+  function renderTextValue(value) {
+    if (!value) return "&nbsp;";
+    const idx = value.indexOf("\n");
+    if (idx === -1) return escapeHtml(value);
+    const first = escapeHtml(value.substring(0, idx));
+    const rest = escapeHtml(value.substring(idx + 1)).replace(/\n/g, "<br>");
+    return first + '<span class="chk-text-rest"><br>' + rest + "</span>";
+  }
+
+  function create(root, options) {
+    const state = {
+      payload: null,
+      rowMap: new Map(),
+      activeCellKey: "",
+      saveTimer: null,
+      pending: new Map(),
+      savePromise: null,
+      requestController: null,
+      renderWindow: { start: 0, end: 0 },
+      editorCellKey: "",
+      editMode: false,
+      selectedItems: new Set(),
+      editSnapshot: null,
+      editTextChanges: {},
+      truncated: false,
+      activeTextCellId: "",
+      inlineEditing: null,
+    };
+
+    const tableWrap = options.tableWrap;
+    const loading = options.loading;
+    const commentModalEl = options.commentModalEl;
+    const commentModalInstance = commentModalEl && window.bootstrap
+      ? window.bootstrap.Modal.getOrCreateInstance(commentModalEl)
+      : null;
+    const commentModalContent = commentModalEl
+      ? commentModalEl.querySelector(".modal-content")
+      : null;
+    const editor = ensureEditor();
+
+    bindEvents();
+
+    function setLoading(visible) {
+      if (loading) {
+        loading.classList.toggle("d-none", !visible);
+      }
+    }
+
+    function reindexRows() {
+      state.rowMap = new Map();
+      const rows = state.payload?.rows || [];
+      rows.forEach((row) => {
+        if (row.kind === "item") {
+          row.cellMap = new Map();
+          (row.cells || []).forEach((cell) => {
+            row.cellMap.set(String(cell.entityId), cell);
+          });
+          state.rowMap.set(String(row.id), row);
+        }
+      });
+    }
+
+    function getRow(itemId) {
+      return state.rowMap.get(String(itemId)) || null;
+    }
+
+    function getCell(itemId, entityId) {
+      const row = getRow(itemId);
+      if (!row || !row.cellMap) return null;
+      return row.cellMap.get(String(entityId)) || null;
+    }
+
+    async function reload() {
+      await flushPending();
+      const projectUid = options.getProjectUid();
+      if (!projectUid) {
+        clearSticky();
+        clearFloatingScroll();
+        clearStickyHeader();
+        tableWrap.innerHTML = '<div class="alert alert-info mb-0">Выберите проект, чтобы увидеть записи.</div>';
+        return;
+      }
+
+      const params = new URLSearchParams({
+        project_uid: projectUid,
+        asset: options.getAsset() || "",
+        section: options.getSection() || "",
+      });
+
+      setLoading(true);
+      const controller = new AbortController();
+      state.requestController?.abort();
+      state.requestController = controller;
+
+      try {
+        const resp = await fetch(`${options.gridUrl}?${params.toString()}`, {
+          headers: { "X-Requested-With": "fetch" },
+          signal: controller.signal,
+        });
+        const payload = await resp.json();
+        if (state.requestController !== controller) return;
+        state.payload = payload || {};
+        state.renderWindow = state.payload.virtualization?.window || {
+          start: 0,
+          end: (state.payload.rows || []).length,
+        };
+        reindexRows();
+        render();
+      } catch (error) {
+        if (error.name === "AbortError") return;
+        clearSticky();
+        clearFloatingScroll();
+        clearStickyHeader();
+        tableWrap.innerHTML = '<div class="alert alert-danger mb-0">Не удалось загрузить чек-лист.</div>';
+        console.error("checklists:grid", error);
+      } finally {
+        if (state.requestController === controller) {
+          state.requestController = null;
+          setLoading(false);
+        }
+      }
+    }
+
+    function visibleRows() {
+      const rows = state.payload?.rows || [];
+      const start = state.renderWindow?.start || 0;
+      const end = state.renderWindow?.end ?? rows.length;
+      return rows.slice(start, end);
+    }
+
+    function renderActions() {
+      const ui = state.payload?.ui || {};
+      if (!ui.createUrl && !ui.xlsxUrl && !ui.showActions && !ui.approveInfoRequestUrl && !ui.infoRequestApprovedAt) return "";
+      const actions = [];
+      if (ui.createUrl) {
+        actions.push(
+          `<button class="btn btn-primary btn-sm d-flex align-items-center"
+             hx-get="${escapeHtml(ui.createUrl)}"
+             hx-target="#checklists-item-modal .modal-content"
+             hx-swap="innerHTML"
+             data-bs-toggle="modal"
+             data-bs-target="#checklists-item-modal"
+             ${state.editMode ? "disabled" : ""}>
+            <i class="bi bi-plus-circle me-2"></i>Добавить запрос
+          </button>`
+        );
+      }
+      if (ui.showActions) {
+        actions.push(
+          `<button class="btn btn-primary btn-sm d-flex align-items-center"
+             data-grid-action="enter-edit"
+             ${state.editMode ? "disabled" : ""}>
+            <i class="bi bi-pencil-square me-2"></i>Редактировать
+          </button>`
+        );
+      }
+      if (state.editMode && ui.showActions) {
+        actions.push(
+          `<div id="chk-grid-actions" class="chk-grid-actions-wrap d-none">
+            <div class="btn-group">
+              <button type="button" data-grid-action="move-up" class="btn btn-outline-primary btn-sm" title="Переместить вверх" aria-label="Переместить вверх">
+                <i class="bi bi-arrow-up-square"></i>
+              </button>
+              <button type="button" data-grid-action="move-down" class="btn btn-outline-primary btn-sm" title="Переместить вниз" aria-label="Переместить вниз">
+                <i class="bi bi-arrow-down-square"></i>
+              </button>
+              <button type="button" data-grid-action="delete-item" class="btn btn-outline-danger btn-sm" title="Удалить" aria-label="Удалить">
+                <i class="bi bi-x-square"></i>
+              </button>
+            </div>
+          </div>`
+        );
+        actions.push(
+          `<button class="btn btn-success btn-sm d-flex align-items-center" data-grid-action="save-edit">
+            <i class="bi bi-check-circle me-2"></i>Сохранить
+          </button>`
+        );
+        actions.push(
+          `<button class="btn btn-outline-secondary btn-sm d-flex align-items-center" data-grid-action="cancel-edit">
+            Отмена
+          </button>`
+        );
+      }
+      if (ui.xlsxUrl) {
+        actions.push(
+          `<a class="btn btn-primary btn-sm d-flex align-items-center${state.editMode ? " disabled" : ""}"
+              href="${escapeHtml(ui.xlsxUrl)}"
+              ${state.editMode ? 'tabindex="-1" aria-disabled="true"' : ""}
+              download>
+            <i class="bi bi-arrow-down-circle me-2"></i>Скачать XLSX
+          </a>`
+        );
+      }
+      if (ui.approveInfoRequestUrl || ui.infoRequestApprovedAt) {
+        const approved = !!ui.infoRequestApprovedAt;
+        actions.push(
+          (approved ? `<span class="d-flex align-items-center ms-auto me-2" style="font-size:0.7rem;color:#6c757d;">${escapeHtml(ui.infoRequestApprovedAt)}</span>` : '') +
+          `<button class="btn btn-success btn-sm d-flex align-items-center${approved ? '' : ' ms-auto'}"
+             data-grid-action="approve-info-request"
+             ${state.editMode || approved ? "disabled" : ""}>
+            <i class="bi ${approved ? 'bi-check-circle' : 'bi-circle'} me-2"></i>${approved ? 'Согласовано' : 'Согласовать запрос (чек-лист)'}
+          </button>`
+        );
+      }
+      return `<div class="d-flex gap-2 chk-actions-row">${actions.join("")}</div>`;
+    }
+
+    function renderComment(field, row) {
+      const commentKey = field === "imc_comment" ? "imc" : "customer";
+      const hasComment = Boolean(row.comments && row.comments[commentKey]);
+      const registeredCount = Number(row.comments?.registeredCount || 0);
+      const guestCount = Number(row.comments?.guestCount || 0);
+      const lastCommentAt = row.comments?.lastCommentAt || "";
+      const lastCommentByStaff = Boolean(row.comments?.lastCommentByStaff);
+      const hasAnyComment = registeredCount > 0 || guestCount > 0;
+      let bubbleClass;
+      if (hasComment || hasAnyComment) {
+        bubbleClass = lastCommentByStaff
+          ? "bi-chat-left-text-fill chk-comment-icon--staff"
+          : "bi-chat-left-text-fill chk-comment-icon--guest";
+      } else {
+        bubbleClass = "bi-chat-left text-muted";
+      }
+      const title = hasComment ? "Открыть комментарий" : "Добавить комментарий";
+      return `<div class="checklist-comment chk-comment-compact" id="chk-comment-${field}-${row.id}">
+        <span class="chk-comment-counter chk-comment-counter--registered${registeredCount ? " has-comments" : ""}" title="Комментарии зарегистрированных пользователей">
+          ${registeredCount || ""}
+        </span>
+        <span class="chk-comment-counter chk-comment-counter--guest${guestCount ? " has-comments" : ""}" title="Комментарии незарегистрированных пользователей">
+          ${guestCount || ""}
+        </span>
+        <button
+          type="button"
+          class="btn btn-link btn-sm p-0 chk-comment-trigger"
+          title="${title}"
+          data-comment-trigger="1"
+          data-field="${field}"
+          data-item-id="${row.id}"
+          data-project-id="${state.payload.project.id}"
+          data-section-id="${row.sectionId}"
+          data-asset-name="${escapeHtml(state.payload.assetName || "")}">
+          <i class="bi ${bubbleClass}"></i>
+        </button>${lastCommentAt ? `<span class="chk-comment-date">${escapeHtml(lastCommentAt)}</span>` : ""}
+      </div>`;
+    }
+
+    function renderStatusCell(row, cell) {
+      const key = cellKey(row.id, cell.entityId);
+      return `<td class="status-cell status-col">
+        <button
+          type="button"
+          id="grid-cell-${row.id}-${cell.entityId}"
+          class="chk-grid-cell ${statusColorClass(cell.status)}${state.activeCellKey === key ? " is-active" : ""}"
+          data-action="status-cell"
+          data-item-id="${row.id}"
+          data-entity-id="${cell.entityId}"
+          data-status="${cell.status}"
+          title="${escapeHtml(cell.statusLabel)}"
+          ${state.payload.readonly ? "disabled" : ""}>
+          ${escapeHtml(cell.statusShortLabel)}
+        </button>
+      </td>
+      <td class="date-cell text-nowrap" id="grid-date-${row.id}-${cell.entityId}">
+        ${escapeHtml(cell.dateDisplay || "—")}
+      </td>`;
+    }
+
+    function renderTextCell(row, field, className) {
+      const value = field === "short_name" ? row.shortName : row.name;
+      const label = field === "short_name" ? "Краткое наименование" : "Наименование запроса";
+      return `<td
+        id="grid-text-${field}-${row.id}"
+        class="${className} chk-editable-text-cell"
+        data-action="text-cell"
+        data-item-id="${row.id}"
+        data-field="${field}"
+        data-label="${escapeHtml(label)}"
+        title="${escapeHtml(label)}"
+        ${state.editMode && !state.payload.readonly ? 'tabindex="0"' : ""}>
+        ${renderTextValue(value)}
+      </td>`;
+    }
+
+    function renderTable() {
+      const rows = visibleRows();
+      const entities = state.payload?.entities || [];
+      const ui = state.payload?.ui || {};
+      const showCheckboxes = state.editMode && ui.showActions;
+      const baseCols = 5 + entities.length * 2 + 1;
+      return `<table class="table table-sm align-middle table-bordered${state.editMode ? " chk-edit-mode" : ""}" id="chk-items-table">
+        <colgroup>
+          ${showCheckboxes ? '<col class="chk-select-col">' : ""}
+          <col>
+          <col>
+          <col>
+          <col class="files-col">
+          <col id="chk-col-name">
+          ${entities.map(() => '<col class="status-col"><col class="date-col">').join("")}
+          <col class="comment-col">
+        </colgroup>
+        <thead class="table-light">
+          <tr>
+            ${showCheckboxes ? `<th class="chk-select-col">
+              <div class="form-check m-0">
+                <input class="form-check-input" type="checkbox" id="chk-grid-master" aria-label="Выделить все строки">
+              </div>
+            </th>` : ""}
+            <th class="col-code">Код</th>
+            <th class="col-num">№</th>
+            <th>Краткое наименование</th>
+            <th class="col-files">Файлы</th>
+            <th class="col-name-header" style="position:relative">
+              <span>Наименование запроса</span>
+              <button type="button" id="chk-wrap-toggle" class="chk-wrap-btn" title="Свернуть/развернуть текст">
+                <i class="bi bi-text-wrap"></i>
+              </button>
+            </th>
+            ${entities.map((entity) => `
+              <th class="status-col text-nowrap">${escapeHtml(entity.label)}</th>
+              <th class="text-nowrap date-header">Дата</th>
+            `).join("")}
+            <th class="col-comment col-comment-imc">Комментарии</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((row) => {
+            if (row.kind === "section_header") {
+              return `<tr class="section-header-row">
+                ${showCheckboxes ? "<td></td>" : ""}
+                <td colspan="${baseCols}" class="section-header-cell">
+                  ${escapeHtml(row.sectionName)}
+                </td>
+              </tr>`;
+            }
+            if (row.kind === "additional_header") {
+              return `<tr class="additional-header-row">
+                ${showCheckboxes ? "<td></td>" : ""}
+                <td colspan="${baseCols}" class="additional-header-cell">
+                  ${escapeHtml(row.text)}
+                </td>
+              </tr>`;
+            }
+            const isSelected = state.selectedItems.has(String(row.id));
+            return `<tr data-item-id="${row.id}"
+                ${isSelected ? 'class="table-active"' : ""}
+                data-edit-url="${escapeHtml(row.actions?.editUrl || "")}"
+                data-delete-url="${escapeHtml(row.actions?.deleteUrl || "")}"
+                data-move-up-url="${escapeHtml(row.actions?.moveUpUrl || "")}"
+                data-move-down-url="${escapeHtml(row.actions?.moveDownUrl || "")}">
+              ${showCheckboxes ? `<td class="text-nowrap chk-select-col">
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox"
+                         name="chk-grid-select"
+                         value="${row.id}"
+                         ${isSelected ? "checked" : ""}
+                         aria-label="Выделить строку">
+                </div>
+              </td>` : ""}
+              <td id="chk-code-${row.id}" class="col-code text-nowrap ${escapeHtml(row.codeClass || "")}">${escapeHtml(row.code || "")}</td>
+              <td class="col-num text-nowrap">${escapeHtml(row.number || "")}</td>
+              ${renderTextCell(row, "short_name", "col-short-name-cell")}
+              <td class="col-files text-nowrap">
+                <div class="chk-files-info">
+                  <div>Всего файлов: ${row.fileCount != null ? row.fileCount : "—"}</div>
+                  <div>Последняя загрузка: ${row.lastUploadAt || "—"}</div>
+                </div>
+              </td>
+              ${renderTextCell(row, "name", "col-name-cell")}
+              ${(row.cells || []).map((cell) => renderStatusCell(row, cell)).join("")}
+              <td class="col-comment col-comment-imc">${renderComment("imc_comment", row)}</td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>`;
+    }
+
+    function clearSticky() {
+      if (cleanupSticky) { cleanupSticky(); cleanupSticky = null; }
+    }
+
+    let cleanupFloatingScroll = null;
+
+    function clearFloatingScroll() {
+      if (cleanupFloatingScroll) { cleanupFloatingScroll(); cleanupFloatingScroll = null; }
+    }
+
+    let cleanupStickyHeader = null;
+
+    function clearStickyHeader() {
+      if (cleanupStickyHeader) { cleanupStickyHeader(); cleanupStickyHeader = null; }
+    }
+
+    function render() {
+      clearSticky();
+      clearFloatingScroll();
+      clearStickyHeader();
+      const payload = state.payload || {};
+      if (payload.error && !(payload.rows || []).length) {
+        tableWrap.innerHTML = `<div class="alert alert-warning mb-0">${escapeHtml(payload.error)}</div>`;
+        return;
+      }
+      if (!(payload.entities || []).length) {
+        tableWrap.innerHTML = '<div class="alert alert-warning mb-0">В выбранном активе нет юридических лиц.</div>';
+        return;
+      }
+      if (!(payload.rows || []).length) {
+        tableWrap.innerHTML = '<div class="alert alert-info mb-0">Для выбранного продукта и раздела нет запросов.</div>';
+        return;
+      }
+
+      if (state.inlineEditing) {
+        state.inlineEditing = null;
+      }
+      state.activeTextCellId = "";
+      tableWrap.innerHTML = `${renderTable()}${renderActions()}`;
+      if (window.htmx) {
+        window.htmx.process(tableWrap);
+      }
+      if (state.activeCellKey) {
+        const [itemId, entityId] = state.activeCellKey.split(":");
+        const cellButton = document.getElementById(`grid-cell-${itemId}-${entityId}`);
+        if (!cellButton) {
+          state.activeCellKey = "";
+        }
+      }
+      applyTruncation();
+      setupStickyActions();
+      setupFloatingScroll();
+      setupStickyHeader();
+    }
+
+    let cleanupSticky = null;
+
+    function setupStickyActions() {
+      if (cleanupSticky) {
+        cleanupSticky();
+        cleanupSticky = null;
+      }
+      const actionsRow = tableWrap.querySelector('.chk-actions-row');
+      if (!actionsRow) return;
+
+      const cardBody = tableWrap.closest('.card-body');
+      const card = cardBody ? cardBody.closest('.card') : null;
+      const sentinel = document.createElement('div');
+      sentinel.style.display = 'flow-root';
+      sentinel.appendChild(actionsRow);
+      if (cardBody) {
+        cardBody.appendChild(sentinel);
+        cardBody.style.paddingBottom = '0';
+      } else {
+        tableWrap.appendChild(sentinel);
+      }
+      if (card) {
+        card.style.borderBottomLeftRadius = '0';
+        card.style.borderBottomRightRadius = '0';
+        card.style.borderBottomWidth = '0';
+      }
+
+      sentinel.addEventListener('click', function(event) {
+        const btn = event.target.closest('[data-grid-action]');
+        if (!btn) return;
+        event.preventDefault();
+        const action = btn.dataset.gridAction;
+        if (action === 'enter-edit') { enterEditMode(); return; }
+        if (action === 'save-edit') { saveEditMode(); return; }
+        if (action === 'cancel-edit') { cancelEditMode(); return; }
+        if (action === 'approve-info-request') { approveInfoRequest(btn); return; }
+        handleGridAction(action);
+      });
+
+      if (window.htmx) htmx.process(sentinel);
+
+      let naturalHeight = sentinel.offsetHeight;
+      let resizeObserver = null;
+
+      function update() {
+        if (!sentinel.isConnected) {
+          cleanup();
+          return;
+        }
+        const rect = sentinel.getBoundingClientRect();
+        const viewH = window.innerHeight;
+        const shouldStick = rect.bottom > viewH;
+
+        if (shouldStick && !actionsRow.classList.contains('chk-actions-row--stuck')) {
+          naturalHeight = sentinel.offsetHeight;
+          sentinel.style.minHeight = naturalHeight + 'px';
+          actionsRow.classList.add('chk-actions-row--stuck');
+        } else if (!shouldStick && actionsRow.classList.contains('chk-actions-row--stuck')) {
+          actionsRow.classList.remove('chk-actions-row--stuck');
+          sentinel.style.minHeight = '';
+          actionsRow.style.left = '';
+          actionsRow.style.width = '';
+        }
+
+        if (actionsRow.classList.contains('chk-actions-row--stuck')) {
+          if (cardBody) {
+            const cb = cardBody.getBoundingClientRect();
+            actionsRow.style.left = cb.left + 'px';
+            actionsRow.style.width = cb.width + 'px';
+          }
+        }
+      }
+
+      function onScroll() { requestAnimationFrame(update); }
+
+      window.addEventListener('scroll', onScroll, { passive: true });
+      window.addEventListener('resize', onScroll, { passive: true });
+
+      if (cardBody && window.ResizeObserver) {
+        resizeObserver = new ResizeObserver(onScroll);
+        resizeObserver.observe(cardBody);
+      }
+
+      function cleanup() {
+        window.removeEventListener('scroll', onScroll);
+        window.removeEventListener('resize', onScroll);
+        if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null; }
+        if (cardBody) cardBody.style.paddingBottom = '';
+        if (card) {
+          card.style.borderBottomLeftRadius = '';
+          card.style.borderBottomRightRadius = '';
+          card.style.borderBottomWidth = '';
+        }
+        if (sentinel.isConnected) sentinel.remove();
+      }
+
+      cleanupSticky = cleanup;
+      update();
+    }
+
+    function setupFloatingScroll() {
+      clearFloatingScroll();
+
+      const proxy = document.createElement('div');
+      proxy.style.cssText = 'display:none;position:fixed;overflow-x:auto;overflow-y:hidden;z-index:1041;bottom:0;left:0;background:#f8f9fa;';
+      const inner = document.createElement('div');
+      inner.style.height = '1px';
+      proxy.appendChild(inner);
+      document.body.appendChild(proxy);
+
+      let syncing = false;
+
+      function onProxyScroll() {
+        if (syncing) return;
+        syncing = true;
+        tableWrap.scrollLeft = proxy.scrollLeft;
+        syncing = false;
+      }
+
+      function onTableScroll() {
+        if (syncing) return;
+        syncing = true;
+        proxy.scrollLeft = tableWrap.scrollLeft;
+        syncing = false;
+      }
+
+      proxy.addEventListener('scroll', onProxyScroll, { passive: true });
+      tableWrap.addEventListener('scroll', onTableScroll, { passive: true });
+
+      function update() {
+        const hasOverflow = tableWrap.scrollWidth > tableWrap.clientWidth;
+        if (!hasOverflow) {
+          proxy.style.display = 'none';
+          return;
+        }
+
+        const wrapRect = tableWrap.getBoundingClientRect();
+        const viewH = window.innerHeight;
+
+        const stuckActions = document.querySelector('.chk-actions-row--stuck');
+        const bottomOffset = stuckActions ? stuckActions.offsetHeight : 0;
+        const nativeBarVisible = wrapRect.bottom <= (viewH - bottomOffset);
+
+        if (nativeBarVisible) {
+          proxy.style.display = 'none';
+          return;
+        }
+
+        proxy.style.display = 'block';
+        proxy.style.bottom = bottomOffset + 'px';
+        proxy.style.left = wrapRect.left + 'px';
+        proxy.style.width = wrapRect.width + 'px';
+        inner.style.width = tableWrap.scrollWidth + 'px';
+        proxy.scrollLeft = tableWrap.scrollLeft;
+      }
+
+      function onFrame() { requestAnimationFrame(update); }
+
+      window.addEventListener('scroll', onFrame, { passive: true });
+      window.addEventListener('resize', onFrame, { passive: true });
+
+      let resizeObs = null;
+      if (window.ResizeObserver) {
+        resizeObs = new ResizeObserver(onFrame);
+        resizeObs.observe(tableWrap);
+      }
+
+      function cleanup() {
+        proxy.removeEventListener('scroll', onProxyScroll);
+        tableWrap.removeEventListener('scroll', onTableScroll);
+        window.removeEventListener('scroll', onFrame);
+        window.removeEventListener('resize', onFrame);
+        if (resizeObs) { resizeObs.disconnect(); resizeObs = null; }
+        if (proxy.isConnected) proxy.remove();
+      }
+
+      cleanupFloatingScroll = cleanup;
+      update();
+    }
+
+    function setupStickyHeader() {
+      clearStickyHeader();
+
+      const table = tableWrap.querySelector('#chk-items-table');
+      if (!table) return;
+      const thead = table.querySelector('thead');
+      if (!thead) return;
+
+      const cardBody = tableWrap.closest('.card-body');
+      const tableCard = tableWrap.closest('.card');
+      if (!cardBody || !tableCard) return;
+
+      const templatesBleed = tableWrap.closest('.templates-bleed');
+      if (!templatesBleed) return;
+
+      const sectionHeader = templatesBleed.querySelector('.section-header');
+      if (!sectionHeader) return;
+
+      const panelRoot = templatesBleed.querySelector('#checklists-panel-root');
+      const chooserCard = panelRoot ? panelRoot.querySelector('.chooser-card') : null;
+      if (!chooserCard) return;
+      const chooserTitle = chooserCard.querySelector('.card-title');
+      const statusHeading = templatesBleed.querySelector('.chk-status-heading');
+      const mainEl = templatesBleed.closest('main');
+      const pageBg = (function() {
+        const raw = getComputedStyle(document.body).backgroundColor;
+        if (raw && raw !== 'transparent' && raw !== 'rgba(0, 0, 0, 0)') return raw;
+        const html = getComputedStyle(document.documentElement).backgroundColor;
+        if (html && html !== 'transparent' && html !== 'rgba(0, 0, 0, 0)') return html;
+        return '#f8f9fa';
+      })();
+
+      const stickyGap = 10;
+
+      const chSpacer = document.createElement('div');
+      chSpacer.style.display = 'none';
+      chooserCard.parentNode.insertBefore(chSpacer, chooserCard.nextSibling);
+
+      const bgFill = document.createElement('div');
+      bgFill.style.cssText = 'display:none;position:fixed;top:0;z-index:1030;background:' + pageBg + ';';
+      document.body.appendChild(bgFill);
+
+      const cardStyles = getComputedStyle(tableCard);
+      const cardRadius = cardStyles.borderTopLeftRadius || '.375rem';
+      const cardBorder = '1px solid var(--bs-border-color, #dee2e6)';
+
+      const cloneOuter = document.createElement('div');
+      cloneOuter.className = 'chk-thead-clone';
+      cloneOuter.style.cssText =
+        'display:none;position:fixed;z-index:1030;overflow:hidden;background:#fff;' +
+        'border:' + cardBorder + ';' +
+        'border-bottom:none;' +
+        'border-radius:' + cardRadius + ' ' + cardRadius + ' 0 0;' +
+        'box-shadow:0 1px 0 0 var(--bs-border-color,#dee2e6), 0 .125rem .25rem rgba(0,0,0,.075);';
+      const cloneInner = document.createElement('div');
+      cloneInner.style.overflow = 'hidden';
+      cloneOuter.appendChild(cloneInner);
+      const cloneScroll = document.createElement('div');
+      cloneInner.appendChild(cloneScroll);
+      document.body.appendChild(cloneOuter);
+
+      const cornerSize = parseFloat(cardRadius) * 2 || 12;
+      const cornerMaskL = document.createElement('div');
+      const cornerMaskR = document.createElement('div');
+      const cornerBase = 'display:none;position:fixed;z-index:1029;width:' + cornerSize + 'px;height:' + cornerSize + 'px;background:' + pageBg + ';';
+      cornerMaskL.style.cssText = cornerBase;
+      cornerMaskR.style.cssText = cornerBase;
+      document.body.appendChild(cornerMaskL);
+      document.body.appendChild(cornerMaskR);
+
+      cloneOuter.addEventListener('click', function(e) {
+        const btn = e.target.closest('.chk-wrap-btn');
+        if (btn) {
+          const realBtn = tableWrap.querySelector('#chk-wrap-toggle');
+          if (realBtn) realBtn.click();
+          return;
+        }
+        const cb = e.target.closest('#chk-grid-master');
+        if (cb) {
+          const realMaster = tableWrap.querySelector('#chk-grid-master');
+          if (realMaster) {
+            realMaster.checked = cb.checked;
+            realMaster.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        }
+      });
+
+      let isStuck = false;
+      let resizeObs = null;
+
+      function buildClone() {
+        cloneScroll.innerHTML = '';
+        const ct = document.createElement('table');
+        ct.className = table.className;
+        if (table.style.tableLayout) ct.style.tableLayout = table.style.tableLayout;
+        ct.style.width = table.offsetWidth + 'px';
+        ct.style.margin = '0';
+
+        const cg = table.querySelector('colgroup');
+        if (cg) ct.appendChild(cg.cloneNode(true));
+
+        const theadClone = thead.cloneNode(true);
+        theadClone.style.visibility = 'visible';
+        ct.appendChild(theadClone);
+
+        const realThs = thead.querySelectorAll('th');
+        const cloneThs = ct.querySelectorAll('thead th');
+        realThs.forEach((th, i) => {
+          if (cloneThs[i]) {
+            const w = th.getBoundingClientRect().width + 'px';
+            cloneThs[i].style.width = w;
+            cloneThs[i].style.minWidth = w;
+            cloneThs[i].style.maxWidth = w;
+            cloneThs[i].style.boxSizing = 'border-box';
+          }
+        });
+
+        cloneScroll.appendChild(ct);
+      }
+
+      function syncScroll() {
+        cloneScroll.style.marginLeft = (-tableWrap.scrollLeft) + 'px';
+      }
+
+      let isTheadStuck = false;
+      const theadGap = 18;
+
+      function activate() {
+        if (isStuck) return;
+        isStuck = true;
+
+        chSpacer.style.height = chooserCard.offsetHeight + 'px';
+        chSpacer.style.marginBottom = getComputedStyle(chooserCard).marginBottom;
+        chSpacer.style.display = 'block';
+
+        if (chooserTitle) chooserTitle.style.display = 'none';
+
+        chooserCard.classList.remove('w-100');
+        chooserCard.style.position = 'fixed';
+        chooserCard.style.zIndex = '1031';
+        chooserCard.style.margin = '0';
+        chooserCard.style.boxSizing = 'border-box';
+
+        bgFill.style.display = 'block';
+
+        positionElements();
+      }
+
+      function activateHead() {
+        if (isTheadStuck) return;
+        isTheadStuck = true;
+
+        tableCard.style.borderTopLeftRadius = '0';
+        tableCard.style.borderTopRightRadius = '0';
+        tableCard.style.borderTopWidth = '0';
+
+        buildClone();
+        cloneOuter.style.display = 'block';
+        cornerMaskL.style.display = 'block';
+        cornerMaskR.style.display = 'block';
+        thead.style.visibility = 'hidden';
+
+        positionElements();
+        syncScroll();
+      }
+
+      function deactivateHead() {
+        if (!isTheadStuck) return;
+        isTheadStuck = false;
+
+        tableCard.style.borderTopLeftRadius = '';
+        tableCard.style.borderTopRightRadius = '';
+        tableCard.style.borderTopWidth = '';
+
+        cloneOuter.style.display = 'none';
+        cornerMaskL.style.display = 'none';
+        cornerMaskR.style.display = 'none';
+        thead.style.visibility = '';
+
+        positionElements();
+      }
+
+      function deactivate() {
+        if (!isStuck) return;
+        if (isTheadStuck) deactivateHead();
+        isStuck = false;
+
+        chooserCard.classList.add('w-100');
+        chooserCard.style.position = '';
+        chooserCard.style.top = '';
+        chooserCard.style.left = '';
+        chooserCard.style.width = '';
+        chooserCard.style.zIndex = '';
+        chooserCard.style.margin = '';
+        chooserCard.style.boxSizing = '';
+        if (chooserTitle) chooserTitle.style.display = '';
+        chSpacer.style.display = 'none';
+
+        bgFill.style.display = 'none';
+
+        cloneOuter.style.display = 'none';
+        cornerMaskL.style.display = 'none';
+        cornerMaskR.style.display = 'none';
+        thead.style.visibility = '';
+      }
+
+      function positionElements() {
+        const spRect = chSpacer.getBoundingClientRect();
+        chooserCard.style.top = stickyGap + 'px';
+        chooserCard.style.left = spRect.left + 'px';
+        chooserCard.style.width = spRect.width + 'px';
+
+        const chH = chooserCard.offsetHeight;
+        const chooserBottom = stickyGap + chH;
+
+        const mainRect = mainEl ? mainEl.getBoundingClientRect() : spRect;
+        bgFill.style.left = mainRect.left + 'px';
+        bgFill.style.width = mainRect.width + 'px';
+
+        if (isTheadStuck) {
+          const cloneTop = chooserBottom + theadGap;
+
+          const cardRect = tableCard.getBoundingClientRect();
+          const cbStyle = getComputedStyle(cardBody);
+          const padT = parseFloat(cbStyle.paddingTop) || 0;
+          const padL = parseFloat(cbStyle.paddingLeft) || 0;
+          const padR = parseFloat(cbStyle.paddingRight) || 0;
+
+          cloneOuter.style.top = cloneTop + 'px';
+          cloneOuter.style.left = cardRect.left + 'px';
+          cloneOuter.style.width = cardRect.width + 'px';
+
+          cloneInner.style.paddingTop = padT + 'px';
+          cloneInner.style.paddingLeft = padL + 'px';
+          cloneInner.style.paddingRight = padR + 'px';
+
+          cornerMaskL.style.top = cloneTop + 'px';
+          cornerMaskL.style.left = cardRect.left + 'px';
+          cornerMaskR.style.top = cloneTop + 'px';
+          cornerMaskR.style.left = (cardRect.right - cornerSize) + 'px';
+
+          bgFill.style.height = cloneTop + 'px';
+        } else {
+          bgFill.style.height = (chooserBottom + stickyGap) + 'px';
+        }
+      }
+
+      function onUpdate() {
+        const visEl = isStuck ? chSpacer : chooserCard;
+        if (!visEl.offsetParent) {
+          if (isStuck) deactivate();
+          return;
+        }
+        const triggerEl = isStuck ? chSpacer : chooserCard;
+        const shouldStick = triggerEl.getBoundingClientRect().top < stickyGap;
+
+        if (shouldStick && !isStuck) activate();
+        else if (!shouldStick && isStuck) deactivate();
+
+        if (isStuck) {
+          const chH = chooserCard.offsetHeight;
+          const chooserBottom = stickyGap + chH;
+          const tableTop = tableCard.getBoundingClientRect().top;
+          const shouldStickHead = tableTop <= chooserBottom + theadGap;
+
+          if (shouldStickHead && !isTheadStuck) activateHead();
+          else if (!shouldStickHead && isTheadStuck) deactivateHead();
+
+          positionElements();
+          if (isTheadStuck) syncScroll();
+        }
+      }
+
+      function onScroll() { requestAnimationFrame(onUpdate); }
+
+      tableWrap.addEventListener('scroll', syncScroll, { passive: true });
+      window.addEventListener('scroll', onScroll, { passive: true });
+      window.addEventListener('resize', onScroll, { passive: true });
+
+      if (window.ResizeObserver) {
+        resizeObs = new ResizeObserver(() => {
+          if (isStuck) {
+            if (isTheadStuck) { buildClone(); }
+            positionElements();
+            if (isTheadStuck) { syncScroll(); }
+          }
+        });
+        resizeObs.observe(cardBody);
+        if (mainEl) resizeObs.observe(mainEl);
+      }
+
+      function cleanup() {
+        deactivate();
+        window.removeEventListener('scroll', onScroll);
+        window.removeEventListener('resize', onScroll);
+        tableWrap.removeEventListener('scroll', syncScroll);
+        if (resizeObs) { resizeObs.disconnect(); resizeObs = null; }
+        if (chSpacer.isConnected) chSpacer.remove();
+        if (bgFill.isConnected) bgFill.remove();
+        if (cloneOuter.isConnected) cloneOuter.remove();
+        if (cornerMaskL.isConnected) cornerMaskL.remove();
+        if (cornerMaskR.isConnected) cornerMaskR.remove();
+      }
+
+      cleanupStickyHeader = cleanup;
+      onUpdate();
+    }
+
+    function applyTruncation() {
+      const table = tableWrap.querySelector("#chk-items-table");
+      if (!table) return;
+      if (!state.truncated) return;
+      const cols = table.querySelectorAll("colgroup col");
+      const headerCells = table.querySelectorAll("thead th");
+      headerCells.forEach((th, i) => {
+        if (cols[i]) cols[i].style.width = th.getBoundingClientRect().width + "px";
+      });
+      table.style.width = "100%";
+      table.style.tableLayout = "fixed";
+      table.classList.add("chk-truncated");
+      const toggle = table.querySelector("#chk-wrap-toggle");
+      if (toggle) toggle.classList.add("active");
+      tableWrap.querySelectorAll("td.col-name-cell").forEach((td) => {
+        td.setAttribute("title", td.textContent.trim());
+      });
+    }
+
+    function updateCellDom(itemId, entityId, pending) {
+      const cell = getCell(itemId, entityId);
+      if (!cell) return;
+      const button = document.getElementById(`grid-cell-${itemId}-${entityId}`);
+      if (button) {
+        button.textContent = cell.statusShortLabel;
+        button.title = cell.statusLabel;
+        button.dataset.status = cell.status;
+        button.className = `chk-grid-cell ${statusColorClass(cell.status)}${pending ? " is-pending" : ""}${state.activeCellKey === cellKey(itemId, entityId) ? " is-active" : ""}`;
+      }
+      const dateEl = document.getElementById(`grid-date-${itemId}-${entityId}`);
+      if (dateEl) {
+        dateEl.textContent = cell.dateDisplay || "—";
+      }
+      const row = getRow(itemId);
+      const codeEl = document.getElementById(`chk-code-${itemId}`);
+      if (row && codeEl) {
+        codeEl.className = `col-code text-nowrap ${row.codeClass || ""}`;
+      }
+    }
+
+    function updateTextDom(itemId) {
+      const row = getRow(itemId);
+      if (!row) return;
+      const shortNameEl = document.getElementById(`grid-text-short_name-${itemId}`);
+      if (shortNameEl) {
+        shortNameEl.innerHTML = renderTextValue(row.shortName || "");
+      }
+      const nameEl = document.getElementById(`grid-text-name-${itemId}`);
+      if (nameEl) {
+        nameEl.innerHTML = renderTextValue(row.name || "");
+      }
+    }
+
+    function updateCommentDom(itemId, field) {
+      const row = getRow(itemId);
+      if (!row) return;
+      const wrapper = document.getElementById(`chk-comment-${field}-${itemId}`);
+      if (!wrapper) return;
+      wrapper.outerHTML = renderComment(field, row);
+    }
+
+    function setCommentModalCounts(payload) {
+      if (!commentModalContent) return;
+      const registered = commentModalContent.querySelector("[data-comment-total-registered]");
+      const guest = commentModalContent.querySelector("[data-comment-total-guest]");
+      const registeredCount = Number(payload.registeredCount || 0);
+      const guestCount = Number(payload.guestCount || 0);
+      if (registered) {
+        registered.textContent = String(registeredCount);
+      }
+      if (guest) {
+        guest.textContent = String(guestCount);
+      }
+    }
+
+    function updateCommentTabCounts() {
+      if (!commentModalContent) return;
+      const modalRoot = commentModalContent.querySelector("[data-comment-modal-root]");
+      if (!modalRoot) return;
+      modalRoot.querySelectorAll("[data-comment-tab]").forEach(btn => {
+        const scopeValue = btn.dataset.commentTab;
+        const pane = modalRoot.querySelector(`[data-comment-pane="${scopeValue}"]`);
+        const count = pane ? pane.querySelectorAll(".chk-comment-bubble").length : 0;
+        btn.dataset.tabCount = String(count);
+        let badge = btn.querySelector(".chk-tab-count");
+        if (count > 0) {
+          if (!badge) {
+            badge = document.createElement("span");
+            badge.className = "chk-tab-count";
+            btn.appendChild(badge);
+          }
+          badge.textContent = String(count);
+        } else if (badge) {
+          badge.remove();
+        }
+      });
+    }
+
+    function updateCommentTabArrows(modalRoot) {
+      const track = modalRoot?.querySelector(".chk-comment-tabs-track");
+      const arrowLeft = modalRoot?.querySelector('[data-comment-tabs-arrow="left"]');
+      const arrowRight = modalRoot?.querySelector('[data-comment-tabs-arrow="right"]');
+      if (!track || !arrowLeft || !arrowRight) return;
+      window.requestAnimationFrame(() => {
+        const { scrollLeft, scrollWidth, clientWidth } = track;
+        const needsScroll = scrollWidth > clientWidth + 1;
+        arrowLeft.classList.toggle("d-none", !needsScroll || scrollLeft <= 0);
+        arrowRight.classList.toggle("d-none", !needsScroll || scrollLeft + clientWidth >= scrollWidth - 1);
+      });
+    }
+
+    function scrollActiveCommentPane(modalRoot) {
+      const panesWrap = modalRoot?.querySelector(".chk-comment-panes");
+      if (panesWrap) {
+        panesWrap.scrollTop = panesWrap.scrollHeight;
+      }
+    }
+
+    function setActiveCommentTab(scopeValue) {
+      if (!commentModalContent) return;
+      const modalRoot = commentModalContent.querySelector("[data-comment-modal-root]");
+      if (!modalRoot) return;
+      modalRoot.querySelectorAll("[data-comment-tab]").forEach((button) => {
+        button.classList.toggle("active", button.dataset.commentTab === scopeValue);
+      });
+      modalRoot.querySelectorAll("[data-comment-pane]").forEach((pane) => {
+        pane.classList.toggle("d-none", pane.dataset.commentPane !== scopeValue);
+      });
+      const assetInput = modalRoot.querySelector("[data-comment-active-asset]");
+      if (assetInput) {
+        assetInput.value = scopeValue;
+      }
+      const activeButton = modalRoot.querySelector(`[data-comment-tab="${CSS.escape(scopeValue)}"]`);
+      const track = modalRoot.querySelector(".chk-comment-tabs-track");
+      if (activeButton && track) {
+        const pad = 80;
+        const tRect = track.getBoundingClientRect();
+        const bRect = activeButton.getBoundingClientRect();
+        if (bRect.left < tRect.left + pad) {
+          track.scrollBy({ left: bRect.left - tRect.left - pad, behavior: "smooth" });
+        } else if (bRect.right > tRect.right - pad) {
+          track.scrollBy({ left: bRect.right - tRect.right + pad, behavior: "smooth" });
+        }
+      }
+      updateCommentTabArrows(modalRoot);
+      scrollActiveCommentPane(modalRoot);
+    }
+
+    function initCommentModalUi() {
+      if (!commentModalContent) return;
+      const modalRoot = commentModalContent.querySelector("[data-comment-modal-root]");
+      if (!modalRoot) return;
+      const activeTab = modalRoot.querySelector("[data-comment-tab].active");
+      if (activeTab) {
+        setActiveCommentTab(activeTab.dataset.commentTab || "all");
+      }
+      setCommentModalCounts({
+        registeredCount: modalRoot.dataset.commentRegisteredCount || 0,
+        guestCount: modalRoot.dataset.commentGuestCount || 0,
+      });
+      const track = modalRoot.querySelector(".chk-comment-tabs-track");
+      if (track) {
+        track.addEventListener("scroll", () => updateCommentTabArrows(modalRoot), { passive: true });
+        if (window.ResizeObserver) {
+          const observer = new ResizeObserver(() => updateCommentTabArrows(modalRoot));
+          observer.observe(track);
+        }
+      }
+      updateCommentTabArrows(modalRoot);
+      updateCommentTabCounts();
+      scrollActiveCommentPane(modalRoot);
+    }
+
+    function applyLocalStatus(itemId, entityId, statusValue) {
+      const row = getRow(itemId);
+      const cell = getCell(itemId, entityId);
+      if (!row || !cell) return;
+
+      const choice = (state.payload.statusChoices || []).find((item) => item.value === statusValue);
+      cell.status = statusValue;
+      cell.statusLabel = choice?.label || statusValue;
+      cell.statusShortLabel = choice?.shortLabel || statusValue;
+      cell.dateDisplay = "Сохр…";
+      cell.dateIso = "";
+      row.codeClass = computeCodeClass(row.cells || []);
+      state.pending.set(cellKey(itemId, entityId), {
+        checklist_item: itemId,
+        legal_entity: entityId,
+        status: statusValue,
+      });
+      updateCellDom(itemId, entityId, true);
+      scheduleSave();
+    }
+
+    function applyServerResult(result) {
+      const row = getRow(result.checklistItem);
+      const cell = getCell(result.checklistItem, result.legalEntity);
+      if (!row || !cell) return;
+      cell.status = result.status;
+      cell.statusLabel = result.statusLabel;
+      cell.statusShortLabel = result.statusShortLabel;
+      cell.dateDisplay = result.dateDisplay;
+      cell.dateIso = result.dateIso;
+      row.codeClass = result.codeClass || "";
+      updateCellDom(result.checklistItem, result.legalEntity, false);
+    }
+
+    function scheduleSave() {
+      if (state.saveTimer) {
+        window.clearTimeout(state.saveTimer);
+      }
+      state.saveTimer = window.setTimeout(() => {
+        flushPending();
+      }, 450);
+    }
+
+    async function flushPending() {
+      if (state.savePromise) {
+        await state.savePromise;
+      }
+      if (!state.pending.size || !options.batchUpdateUrl) return;
+
+      const entries = Array.from(state.pending.entries());
+      state.pending.clear();
+      const updates = entries.map((entry) => entry[1]);
+      state.savePromise = fetch(options.batchUpdateUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": options.getCsrf(),
+          "X-Requested-With": "fetch",
+        },
+        body: JSON.stringify({
+          asset_name: state.payload?.assetName || options.getAsset() || "",
+          updates,
+        }),
+      })
+        .then(async (resp) => {
+          const data = await resp.json();
+          if (!resp.ok || !data.ok) {
+            throw new Error(data.error || "Не удалось сохранить изменения.");
+          }
+          (data.results || []).forEach(applyServerResult);
+        })
+        .catch((error) => {
+          entries.forEach(([key, value]) => {
+            if (!state.pending.has(key)) {
+              state.pending.set(key, value);
+            }
+          });
+          console.error("checklists:save", error);
+        })
+        .finally(() => {
+          state.savePromise = null;
+          if (state.pending.size) {
+            scheduleSave();
+          }
+        });
+
+      await state.savePromise;
+    }
+
+    function selectCell(button) {
+      const key = cellKey(button.dataset.itemId, button.dataset.entityId);
+      if (state.activeCellKey === key) return;
+      if (state.activeCellKey) {
+        const [prevItemId, prevEntityId] = state.activeCellKey.split(":");
+        const prevButton = document.getElementById(`grid-cell-${prevItemId}-${prevEntityId}`);
+        if (prevButton) {
+          prevButton.classList.remove("is-active");
+        }
+      }
+      state.activeCellKey = key;
+      button.classList.add("is-active");
+    }
+
+    function closeEditor() {
+      editor.classList.add("d-none");
+      state.editorCellKey = "";
+    }
+
+    function clearActiveCell() {
+      if (!state.activeCellKey) return;
+      const [itemId, entityId] = state.activeCellKey.split(":");
+      const activeButton = document.getElementById(`grid-cell-${itemId}-${entityId}`);
+      if (activeButton) {
+        activeButton.classList.remove("is-active");
+      }
+      state.activeCellKey = "";
+    }
+
+    function selectTextCell(cellEl) {
+      const cellId = `${cellEl.dataset.field}:${cellEl.dataset.itemId}`;
+      if (state.activeTextCellId) {
+        clearTextCellSelection();
+      }
+      state.activeTextCellId = cellId;
+      cellEl.classList.add("chk-text-selected");
+    }
+
+    function clearTextCellSelection() {
+      if (!state.activeTextCellId) return;
+      const [field, itemId] = state.activeTextCellId.split(":");
+      const el = document.getElementById(`grid-text-${field}-${itemId}`);
+      if (el) el.classList.remove("chk-text-selected");
+      state.activeTextCellId = "";
+    }
+
+    function commitInlineEdit() {
+      if (!state.inlineEditing) return;
+      const { itemId, field, textarea } = state.inlineEditing;
+      const nextValue = textarea.value.trim();
+      const row = getRow(itemId);
+      if (row) {
+        const oldValue = field === "short_name" ? (row.shortName || "") : (row.name || "");
+        if (field === "short_name" && !nextValue) {
+          showEditModeNotice("Краткое наименование не может быть пустым");
+          closeInlineEdit();
+          return;
+        }
+        if (nextValue !== oldValue) {
+          if (field === "short_name") row.shortName = nextValue;
+          else row.name = nextValue;
+          if (!state.editTextChanges[itemId]) state.editTextChanges[itemId] = {};
+          state.editTextChanges[itemId][field] = nextValue;
+        }
+      }
+      closeInlineEdit();
+    }
+
+    function closeInlineEdit() {
+      if (!state.inlineEditing) return;
+      const { itemId, field } = state.inlineEditing;
+      state.inlineEditing = null;
+      const cellEl = document.getElementById(`grid-text-${field}-${itemId}`);
+      if (cellEl) {
+        const wrap = cellEl.querySelector(".chk-inline-text-wrap");
+        if (wrap) wrap.remove();
+        cellEl.classList.remove("chk-text-editing");
+        cellEl.style.height = "";
+        const tr = cellEl.closest("tr");
+        if (tr) {
+          tr.style.height = "";
+          tr.classList.remove("chk-editing-row");
+        }
+      }
+      updateTextDom(itemId);
+      state.activeTextCellId = "";
+    }
+
+    function openInlineEdit(cellEl) {
+      if (state.inlineEditing) commitInlineEdit();
+      const itemId = cellEl.dataset.itemId;
+      const field = cellEl.dataset.field;
+      const row = getRow(itemId);
+      if (!row || !field) return;
+
+      const value = field === "short_name" ? (row.shortName || "") : (row.name || "");
+      state.activeTextCellId = `${field}:${itemId}`;
+
+      const cs = getComputedStyle(cellEl);
+      const pt = parseFloat(cs.paddingTop);
+      const pb = parseFloat(cs.paddingBottom);
+      const pl = parseFloat(cs.paddingLeft);
+      const pr = parseFloat(cs.paddingRight);
+      const rect = cellEl.getBoundingClientRect();
+      const cellH = rect.height;
+
+      const tr = cellEl.closest("tr");
+      if (tr) {
+        tr.style.height = tr.getBoundingClientRect().height + "px";
+        tr.classList.add("chk-editing-row");
+      }
+
+      cellEl.classList.add("chk-text-editing");
+      cellEl.classList.remove("chk-text-selected");
+      cellEl.style.height = cellH + "px";
+      cellEl.textContent = "";
+
+      const wrap = document.createElement("div");
+      wrap.className = "chk-inline-text-wrap";
+      wrap.style.cssText =
+        "position:absolute;top:0;left:0;right:0;" +
+        "min-height:" + cellH + "px;" +
+        "padding:" + pt + "px " + pr + "px " + pb + "px " + pl + "px;" +
+        "background:#fff;z-index:10;" +
+        "outline:2px solid var(--bs-primary,#0d6efd);outline-offset:-2px;box-sizing:border-box;";
+
+      const textarea = document.createElement("textarea");
+      textarea.className = "chk-inline-text-input";
+      textarea.value = value;
+      textarea.rows = 1;
+      wrap.appendChild(textarea);
+      cellEl.appendChild(wrap);
+
+      state.inlineEditing = { itemId, field, textarea };
+
+      textarea.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          closeInlineEdit();
+          return;
+        }
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          commitInlineEdit();
+          return;
+        }
+        if (e.key === "Tab") {
+          e.preventDefault();
+          commitInlineEdit();
+        }
+      });
+
+      function resizeWrap() {
+        textarea.style.height = "auto";
+        textarea.style.height = textarea.scrollHeight + "px";
+        wrap.style.minHeight = Math.max(cellH, textarea.scrollHeight + pt + pb) + "px";
+      }
+
+      textarea.addEventListener("input", resizeWrap);
+
+      window.requestAnimationFrame(() => {
+        resizeWrap();
+        textarea.focus();
+        textarea.select();
+      });
+    }
+
+    function openEditor(button) {
+      if (state.payload?.readonly) return;
+      selectCell(button);
+      const itemId = button.dataset.itemId;
+      const entityId = button.dataset.entityId;
+      const cell = getCell(itemId, entityId);
+      if (!cell) return;
+
+      editor.innerHTML = "";
+      (state.payload.statusChoices || []).forEach((choice) => {
+        const opt = document.createElement("option");
+        opt.value = choice.value;
+        opt.textContent = choice.label;
+        if (choice.value === cell.status) opt.selected = true;
+        editor.appendChild(opt);
+      });
+      editor.dataset.itemId = itemId;
+      editor.dataset.entityId = entityId;
+      state.editorCellKey = cellKey(itemId, entityId);
+
+      const td = button.closest("td.status-cell") || button;
+      const rect = td.getBoundingClientRect();
+      editor.style.position = "fixed";
+      editor.style.left = rect.left + "px";
+      editor.style.top = rect.top + "px";
+      editor.style.width = rect.width + "px";
+      editor.style.height = rect.height + "px";
+      editor.classList.remove("d-none");
+
+      try { editor.showPicker(); } catch (_) { editor.focus(); }
+    }
+
+    async function openCommentModal(trigger) {
+      if (!commentModalContent || !options.commentModalUrl) return;
+      commentModalContent.innerHTML = '<div class="modal-body text-muted small">Загрузка комментария...</div>';
+      if (commentModalInstance) {
+        commentModalInstance.show();
+      }
+      const params = new URLSearchParams({
+        field: trigger.dataset.field || "",
+        item: trigger.dataset.itemId || "",
+        project: trigger.dataset.projectId || "",
+        section: trigger.dataset.sectionId || "",
+        asset: trigger.dataset.assetName || "",
+      });
+      try {
+        const resp = await fetch(`${options.commentModalUrl}?${params.toString()}`, {
+          headers: { "X-Requested-With": "fetch" },
+        });
+        const html = await resp.text();
+        commentModalContent.innerHTML = html;
+        if (window.htmx) {
+          window.htmx.process(commentModalContent);
+        }
+        initCommentModalUi();
+      } catch (error) {
+        commentModalContent.innerHTML = '<div class="modal-body text-danger small">Не удалось загрузить комментарий.</div>';
+        console.error("checklists:comment", error);
+      }
+    }
+
+    function showEditModeNotice(msg) {
+      let toast = document.getElementById("chk-edit-mode-toast");
+      if (!toast) {
+        toast = document.createElement("div");
+        toast.id = "chk-edit-mode-toast";
+        toast.className = "chk-edit-toast";
+        document.body.appendChild(toast);
+      }
+      toast.textContent = msg || "В режиме редактирования изменение статусов недоступно";
+      toast.classList.remove("chk-edit-toast--visible");
+      void toast.offsetWidth;
+      toast.classList.add("chk-edit-toast--visible");
+      clearTimeout(toast._hideTimer);
+      toast._hideTimer = setTimeout(() => {
+        toast.classList.remove("chk-edit-toast--visible");
+      }, 2500);
+    }
+
+    function enterEditMode() {
+      state.editMode = true;
+      state.selectedItems.clear();
+      state.editTextChanges = {};
+      state.editSnapshot = JSON.parse(JSON.stringify(state.payload.rows));
+      closeEditor();
+      if (state.inlineEditing) closeInlineEdit();
+      clearTextCellSelection();
+      clearActiveCell();
+      render();
+    }
+
+    function hasEditChanges() {
+      if (!state.editSnapshot) return false;
+      const snapshotIds = state.editSnapshot
+        .filter((r) => r.kind === "item").map((r) => String(r.id));
+      const currentIds = state.payload.rows
+        .filter((r) => r.kind === "item").map((r) => String(r.id));
+      if (snapshotIds.length !== currentIds.length) return true;
+      if (snapshotIds.some((id, i) => id !== currentIds[i])) return true;
+      if (Object.keys(state.editTextChanges).length > 0) return true;
+      return false;
+    }
+
+    function cancelEditMode() {
+      if (state.inlineEditing) closeInlineEdit();
+      clearTextCellSelection();
+
+      if (hasEditChanges()) {
+        if (!window.confirm("Все внесённые изменения будут потеряны. Уверены, что хотите выйти из режима редактирования без сохранения внесённых изменений?")) {
+          return;
+        }
+      }
+
+      state.editSnapshot = null;
+      state.editTextChanges = {};
+      state.editMode = false;
+      state.selectedItems.clear();
+      closeEditor();
+      clearActiveCell();
+      reload();
+    }
+
+    async function saveEditMode() {
+      if (state.inlineEditing) commitInlineEdit();
+      clearTextCellSelection();
+      if (!state.editSnapshot || !options.batchEditUrl) {
+        cancelEditMode();
+        return;
+      }
+
+      const snapshotIds = state.editSnapshot
+        .filter((r) => r.kind === "item")
+        .map((r) => String(r.id));
+      const currentItems = state.payload.rows.filter((r) => r.kind === "item");
+      const currentIds = currentItems.map((r) => String(r.id));
+      const currentIdSet = new Set(currentIds);
+
+      const deleted = snapshotIds.filter((id) => !currentIdSet.has(id));
+
+      const order = [];
+      const snapshotOrder = snapshotIds.filter((id) => currentIdSet.has(id));
+      const currentOrder = currentIds;
+      let orderChanged = snapshotOrder.length !== currentOrder.length
+        || snapshotOrder.some((id, i) => id !== currentOrder[i]);
+      if (orderChanged) {
+        currentItems.forEach((row, i) => {
+          order.push({ id: Number(row.id), position: i });
+        });
+      }
+
+      const textUpdates = [];
+      for (const [itemId, fields] of Object.entries(state.editTextChanges)) {
+        if (!currentIdSet.has(String(itemId))) continue;
+        for (const [field, value] of Object.entries(fields)) {
+          textUpdates.push({ id: Number(itemId), field, value });
+        }
+      }
+
+      if (!deleted.length && !order.length && !textUpdates.length) {
+        state.editSnapshot = null;
+        state.editTextChanges = {};
+        state.editMode = false;
+        state.selectedItems.clear();
+        closeEditor();
+        clearActiveCell();
+        reload();
+        return;
+      }
+
+      try {
+        const resp = await fetch(options.batchEditUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": options.getCsrf(),
+            "X-Requested-With": "fetch",
+          },
+          body: JSON.stringify({
+            deleted: deleted.map(Number),
+            order,
+            text_updates: textUpdates,
+          }),
+        });
+        if (!resp.ok) {
+          const data = await resp.json().catch(() => ({}));
+          throw new Error(data.error || "Не удалось сохранить изменения.");
+        }
+      } catch (error) {
+        console.error("checklists:batch-edit", error);
+        showEditModeNotice("Ошибка сохранения. Попробуйте снова.");
+        return;
+      }
+
+      state.editSnapshot = null;
+      state.editTextChanges = {};
+      state.editMode = false;
+      state.selectedItems.clear();
+      closeEditor();
+      clearActiveCell();
+      reload();
+    }
+
+    function updateSelectionUI() {
+      const scope = tableWrap.closest('.card-body') || tableWrap;
+      const actionsEl = scope.querySelector("#chk-grid-actions");
+      if (actionsEl) {
+        actionsEl.classList.toggle("d-none", !state.selectedItems.size);
+      }
+      const master = tableWrap.querySelector("#chk-grid-master");
+      if (master) {
+        const allChecks = tableWrap.querySelectorAll('input[name="chk-grid-select"]');
+        const total = allChecks.length;
+        const checked = state.selectedItems.size;
+        master.checked = checked === total && total > 0;
+        master.indeterminate = checked > 0 && checked < total;
+        const cloneMaster = document.querySelector('.chk-thead-clone #chk-grid-master');
+        if (cloneMaster) {
+          cloneMaster.checked = master.checked;
+          cloneMaster.indeterminate = master.indeterminate;
+        }
+      }
+      tableWrap.querySelectorAll('input[name="chk-grid-select"]').forEach((cb) => {
+        const tr = cb.closest("tr");
+        if (tr) tr.classList.toggle("table-active", cb.checked);
+      });
+    }
+
+    function saveSelection() {
+      return new Set(state.selectedItems);
+    }
+
+    function restoreSelection(saved) {
+      state.selectedItems.clear();
+      saved.forEach((id) => {
+        if (state.rowMap.has(String(id))) {
+          state.selectedItems.add(String(id));
+        }
+      });
+      tableWrap.querySelectorAll('input[name="chk-grid-select"]').forEach((cb) => {
+        cb.checked = state.selectedItems.has(cb.value);
+      });
+      updateSelectionUI();
+    }
+
+    async function approveInfoRequest(btn) {
+      const ui = state.payload?.ui || {};
+      const url = ui.approveInfoRequestUrl;
+      if (!url || btn.disabled) return;
+
+      btn.disabled = true;
+      try {
+        const formData = new FormData();
+        formData.append("project_uid", ui.projectUid || state.payload?.project?.shortUid || "");
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "X-CSRFToken": options.getCsrf() },
+          body: formData,
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+          throw new Error(data?.error || "Не удалось согласовать запрос.");
+        }
+        ui.infoRequestApprovedAt = data.approved_at || '';
+        ui.approveInfoRequestUrl = '';
+        ui.showActions = false;
+        if (state.editMode) cancelEditMode();
+        render();
+        document.body.dispatchEvent(new Event("performers-updated"));
+        document.body.dispatchEvent(new Event("notifications-updated"));
+      } catch (err) {
+        alert(err.message || "Не удалось согласовать запрос.");
+        btn.disabled = false;
+      }
+    }
+
+    function handleGridAction(action) {
+      const selected = Array.from(state.selectedItems);
+      if (!selected.length) return;
+
+      if (action === "delete-item") {
+        if (!window.confirm("Удалить выбранные записи?")) return;
+        const deleteSet = new Set(selected.map(String));
+        state.payload.rows = state.payload.rows.filter(
+          (row) => row.kind !== "item" || !deleteSet.has(String(row.id))
+        );
+        deleteSet.forEach((id) => state.selectedItems.delete(id));
+        reindexRows();
+        render();
+        return;
+      }
+
+      if (action === "move-up" || action === "move-down") {
+        const saved = saveSelection();
+        const rows = state.payload.rows;
+
+        const sections = [];
+        let cur = [];
+        for (let i = 0; i < rows.length; i++) {
+          if (rows[i].kind === "section_header") {
+            cur = [];
+            sections.push(cur);
+          } else if (rows[i].kind === "item") {
+            cur.push(i);
+          }
+        }
+        if (!sections.length) {
+          sections.push([]);
+          rows.forEach((r, i) => { if (r.kind === "item") sections[0].push(i); });
+        }
+
+        const ordered = action === "move-up" ? selected : [...selected].reverse();
+        for (const itemId of ordered) {
+          const rowIdx = rows.findIndex((r) => r.kind === "item" && String(r.id) === String(itemId));
+          if (rowIdx < 0) continue;
+          const sectionItems = sections.find((s) => s.includes(rowIdx));
+          if (!sectionItems) continue;
+          const posInSection = sectionItems.indexOf(rowIdx);
+          if (posInSection < 0) continue;
+          const swapPos = action === "move-up" ? posInSection - 1 : posInSection + 1;
+          if (swapPos < 0 || swapPos >= sectionItems.length) continue;
+          const swapIdx = sectionItems[swapPos];
+          [rows[rowIdx], rows[swapIdx]] = [rows[swapIdx], rows[rowIdx]];
+          [sectionItems[posInSection], sectionItems[swapPos]] = [sectionItems[swapPos], sectionItems[posInSection]];
+        }
+
+        reindexRows();
+        render();
+        restoreSelection(saved);
+        return;
+      }
+    }
+
+    function bindEvents() {
+      tableWrap.addEventListener("click", (event) => {
+        const gridActionBtn = event.target.closest("[data-grid-action]");
+        if (gridActionBtn) {
+          event.preventDefault();
+          const action = gridActionBtn.dataset.gridAction;
+          if (action === "enter-edit") { enterEditMode(); return; }
+          if (action === "save-edit") { saveEditMode(); return; }
+          if (action === "cancel-edit") { cancelEditMode(); return; }
+          if (action === "approve-info-request") { approveInfoRequest(gridActionBtn); return; }
+          handleGridAction(action);
+          return;
+        }
+
+        const commentTrigger = event.target.closest("[data-comment-trigger]");
+        if (commentTrigger) {
+          event.preventDefault();
+          if (state.editMode) {
+            showEditModeNotice("В режиме редактирования работа с комментариями недоступна");
+            return;
+          }
+          closeEditor();
+          openCommentModal(commentTrigger);
+          return;
+        }
+
+        const textCell = event.target.closest('[data-action="text-cell"]');
+        if (textCell && !state.payload?.readonly && state.editMode) {
+          if (event.target.closest(".chk-inline-text-input")) return;
+          const cellId = `${textCell.dataset.field}:${textCell.dataset.itemId}`;
+          if (state.inlineEditing) {
+            if (state.inlineEditing.itemId === textCell.dataset.itemId
+                && state.inlineEditing.field === textCell.dataset.field) return;
+            commitInlineEdit();
+          }
+          if (state.activeTextCellId === cellId) {
+            openInlineEdit(textCell);
+          } else {
+            clearTextCellSelection();
+            selectTextCell(textCell);
+          }
+          return;
+        }
+
+        const button = event.target.closest('[data-action="status-cell"]');
+        if (!button || state.payload?.readonly) return;
+        if (state.editMode) {
+          showEditModeNotice();
+          return;
+        }
+        openEditor(button);
+      });
+
+      tableWrap.addEventListener("change", (event) => {
+        const master = event.target.closest("#chk-grid-master");
+        if (master) {
+          const allChecks = tableWrap.querySelectorAll('input[name="chk-grid-select"]');
+          allChecks.forEach((cb) => {
+            cb.checked = master.checked;
+            if (master.checked) {
+              state.selectedItems.add(cb.value);
+            } else {
+              state.selectedItems.delete(cb.value);
+            }
+          });
+          master.indeterminate = false;
+          updateSelectionUI();
+          return;
+        }
+        if (event.target.name === "chk-grid-select") {
+          const cb = event.target;
+          if (cb.checked) {
+            state.selectedItems.add(cb.value);
+          } else {
+            state.selectedItems.delete(cb.value);
+          }
+          updateSelectionUI();
+        }
+      });
+
+      tableWrap.addEventListener("dblclick", (event) => {
+        const button = event.target.closest('[data-action="status-cell"]');
+        if (button && !state.payload?.readonly) {
+          if (state.editMode) { showEditModeNotice(); return; }
+          openEditor(button);
+          return;
+        }
+        const textCell = event.target.closest('[data-action="text-cell"]');
+        if (textCell && !state.payload?.readonly && state.editMode) {
+          if (state.inlineEditing) return;
+          openInlineEdit(textCell);
+        }
+      });
+
+      tableWrap.addEventListener("keydown", (event) => {
+        const button = event.target.closest('[data-action="status-cell"]');
+        if (button && !state.payload?.readonly && (event.key === "Enter" || event.key === " ")) {
+          event.preventDefault();
+          if (state.editMode) { showEditModeNotice(); return; }
+          openEditor(button);
+          return;
+        }
+
+        const textCell = event.target.closest('[data-action="text-cell"]');
+        if (textCell && !state.payload?.readonly && state.editMode && !state.inlineEditing && (event.key === "Enter" || event.key === " ")) {
+          event.preventDefault();
+          openInlineEdit(textCell);
+        }
+      });
+
+      editor.addEventListener("change", () => {
+        const itemId = editor.dataset.itemId;
+        const entityId = editor.dataset.entityId;
+        if (itemId && entityId) {
+          applyLocalStatus(itemId, entityId, editor.value);
+        }
+        closeEditor();
+      });
+
+      editor.addEventListener("blur", () => {
+        closeEditor();
+      });
+
+      document.body.addEventListener("checklists:comment-updated", (event) => {
+        const payload = event.detail?.value || event.detail || {};
+        const itemId = String(payload.itemId || "");
+        const field = payload.field || "imc_comment";
+        const row = getRow(itemId);
+        if (!row || !row.comments) return;
+
+        const commentKey = field === "imc_comment" ? "imc" : "customer";
+        row.comments[commentKey] = Boolean(payload.hasComment);
+        row.comments.registeredCount = Number(payload.registeredCount || 0);
+        row.comments.guestCount = Number(payload.guestCount || 0);
+        row.comments.lastCommentAt = payload.lastCommentAt || "";
+        row.comments.lastCommentByStaff = Boolean(payload.lastCommentByStaff);
+        updateCommentDom(itemId, field);
+        const modalRoot = commentModalContent?.querySelector("[data-comment-modal-root]");
+        if (
+          modalRoot
+          && modalRoot.dataset.itemId === itemId
+          && modalRoot.dataset.field === field
+        ) {
+          setCommentModalCounts(payload);
+          if (payload.scopeValue) {
+            setActiveCommentTab(payload.scopeValue);
+          }
+        }
+      });
+
+      commentModalContent?.addEventListener("click", (event) => {
+        const tab = event.target.closest("[data-comment-tab]");
+        if (tab) {
+          event.preventDefault();
+          setActiveCommentTab(tab.dataset.commentTab || "all");
+          return;
+        }
+        const arrow = event.target.closest("[data-comment-tabs-arrow]");
+        if (!arrow) return;
+        const modalRoot = commentModalContent.querySelector("[data-comment-modal-root]");
+        const track = modalRoot?.querySelector(".chk-comment-tabs-track");
+        if (!track) return;
+        const direction = arrow.dataset.commentTabsArrow === "left" ? -220 : 220;
+        track.scrollBy({ left: direction, behavior: "smooth" });
+      });
+
+      commentModalContent?.addEventListener("htmx:afterRequest", (event) => {
+        const form = event.target.closest(".chk-comment-compose");
+        if (!form || !event.detail.successful) return;
+        const textarea = form.querySelector('textarea[name="value"]');
+        if (textarea) {
+          textarea.value = "";
+          textarea.focus();
+        }
+        const modalRoot = commentModalContent.querySelector("[data-comment-modal-root]");
+        scrollActiveCommentPane(modalRoot);
+        updateCommentTabCounts();
+      });
+
+      document.addEventListener("click", (event) => {
+        const clickedStatusCell = event.target.closest('[data-action="status-cell"]');
+        const clickedTextCell = event.target.closest('[data-action="text-cell"]');
+        if (state.inlineEditing && !clickedTextCell) {
+          commitInlineEdit();
+        }
+        if (!clickedTextCell && state.activeTextCellId && !state.inlineEditing) {
+          clearTextCellSelection();
+        }
+        if (!clickedStatusCell && !clickedTextCell) {
+          clearActiveCell();
+        }
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          closeEditor();
+          if (state.inlineEditing) closeInlineEdit();
+          clearTextCellSelection();
+        }
+      });
+    }
+
+    return {
+      reload,
+      flushPending,
+      enterEditMode,
+      cancelEditMode,
+      saveEditMode,
+      setTruncated(value) { state.truncated = value; },
+      isTruncated() { return state.truncated; },
+    };
+  }
+
+  function ensureEditor() {
+    let editor = document.getElementById("checklists-status-editor");
+    if (editor) return editor;
+    editor = document.createElement("select");
+    editor.id = "checklists-status-editor";
+    editor.className = "form-select form-select-sm chk-native-status-select d-none";
+    document.body.appendChild(editor);
+    return editor;
+  }
+
+  window.ChecklistsGrid = {
+    create,
+  };
+})();

@@ -20,15 +20,21 @@ class Notification(models.Model):
             "project_participation_confirmation",
             "Запрос подтверждения участия в проекте",
         )
+        PROJECT_INFO_REQUEST_APPROVAL = (
+            "project_info_request_approval",
+            "Согласование запроса информации",
+        )
 
     class RelatedSection(models.TextChoices):
         NONE = "none", "Не указан"
         PROJECTS = "projects", "Проекты"
+        CHECKLISTS = "checklists", "Чек-листы"
 
     class ActionChoice(models.TextChoices):
         NONE = "", "Не выбрано"
         CONFIRMED = "confirmed", "Подтвердить участие"
         DECLINED = "declined", "Отклонить"
+        APPROVED = "approved", "Согласовать запрос"
 
     notification_type = models.CharField(
         "Тип уведомления",
