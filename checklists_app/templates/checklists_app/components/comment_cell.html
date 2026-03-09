@@ -3,63 +3,36 @@
      id="chk-comment-{{ field }}-{{ item.id }}"
      hx-swap-oob="true">
     {% with latest=histories|first %}
-    {% if latest %}
-      <button
-        type="button"
-        class="btn btn-link btn-sm p-0 chk-comment-trigger"
-        title="Открыть комментарий"
-        data-comment-trigger="1"
-        data-field="{{ field }}"
-        data-item-id="{{ item.id }}"
-        data-project-id="{{ project.id }}"
-        data-section-id="{{ section.id }}"
-        data-asset-name="{{ asset_name }}">
-        {% if latest.author and latest.author.is_staff %}
-          <i class="bi bi-chat-left-text-fill chk-comment-icon--staff"></i>
-        {% else %}
-          <i class="bi bi-chat-left-text-fill chk-comment-icon--guest"></i>
+      <div class="d-flex align-items-center justify-content-between gap-2">
+        <div class="text-truncate">
+          {% if latest %}
+            {{ latest.text|truncatechars:22 }}
+          {% elif note %}
+            {% if field == "imc_comment" %}
+              {{ note.imc_comment|default:"" }}
+            {% else %}
+              {{ note.customer_comment|default:"" }}
+            {% endif %}
+          {% else %}
+            <span class="comment-placeholder">&nbsp;</span>
+          {% endif %}
+        </div>
+        {% if not readonly %}
+        <button
+          type="button"
+          class="btn btn-link btn-sm p-0"
+          title="Редактировать комментарий"
+          hx-get="{{ comment_modal_url }}?field={{ field|urlencode }}&item={{ item.id }}&project={{ project.id }}&section={{ section.id }}&asset={{ asset_name|urlencode }}"
+          hx-target="#checklists-comment-modal .modal-content"
+          hx-swap="innerHTML"
+          data-bs-toggle="modal"
+          data-bs-target="#checklists-comment-modal">
+          <i class="bi bi-pencil-square text-muted"></i>
+        </button>
         {% endif %}
-      </button>
-      <span class="chk-comment-date">{% timezone "Europe/Moscow" %}{{ latest.created_at|date:"d.m.y H:i" }}{% endtimezone %}</span>
-    {% elif note and field == "imc_comment" and note.imc_comment %}
-      <button
-        type="button"
-        class="btn btn-link btn-sm p-0 chk-comment-trigger"
-        title="Открыть комментарий"
-        data-comment-trigger="1"
-        data-field="{{ field }}"
-        data-item-id="{{ item.id }}"
-        data-project-id="{{ project.id }}"
-        data-section-id="{{ section.id }}"
-        data-asset-name="{{ asset_name }}">
-        <i class="bi bi-chat-left-text-fill chk-comment-icon--staff"></i>
-      </button>
-    {% elif note and field == "customer_comment" and note.customer_comment %}
-      <button
-        type="button"
-        class="btn btn-link btn-sm p-0 chk-comment-trigger"
-        title="Открыть комментарий"
-        data-comment-trigger="1"
-        data-field="{{ field }}"
-        data-item-id="{{ item.id }}"
-        data-project-id="{{ project.id }}"
-        data-section-id="{{ section.id }}"
-        data-asset-name="{{ asset_name }}">
-        <i class="bi bi-chat-left-text-fill chk-comment-icon--staff"></i>
-      </button>
-    {% else %}
-      <button
-        type="button"
-        class="btn btn-link btn-sm p-0 chk-comment-trigger"
-        title="Добавить комментарий"
-        data-comment-trigger="1"
-        data-field="{{ field }}"
-        data-item-id="{{ item.id }}"
-        data-project-id="{{ project.id }}"
-        data-section-id="{{ section.id }}"
-        data-asset-name="{{ asset_name }}">
-        <i class="bi bi-chat-left text-muted"></i>
-      </button>
-    {% endif %}
+      </div>
+      {% if latest %}
+        <span class="chk-comment-date">{% timezone "Europe/Moscow" %}{{ latest.created_at|date:"d.m.y H:i" }}{% endtimezone %}</span>
+      {% endif %}
     {% endwith %}
 </div>

@@ -308,6 +308,28 @@ def _ensure_checklist_items(project: ProjectRegistration, section: TypicalSectio
         ChecklistItem.objects.bulk_create(items_to_create)
 
 
+def _load_comment_payload(checklist_item, project, section, asset_name, field):
+    note = (
+        ChecklistRequestNote.objects
+        .filter(
+            checklist_item=checklist_item,
+            project=project,
+            section=section,
+            asset_name=asset_name,
+        )
+        .first()
+    )
+    histories = []
+    if note:
+        histories = list(
+            note.comment_history
+            .filter(field=field)
+            .select_related("author")
+        )
+    return note, histories
+
+
+
 def _render_comment_modal_content(
     request,
     *,
@@ -317,20 +339,21 @@ def _render_comment_modal_content(
     section,
     asset_name,
     add_comment_url,
-    readonly=False,
 ):
+    note, histories = _load_comment_payload(checklist_item, project, section, asset_name, field)
     return render(
         request,
         "checklists_app/components/comment_modal.html",
-        _comment_modal_context(
-            checklist_item=checklist_item,
-            project=project,
-            section=section,
-            field=field,
-            active_scope_value=asset_name,
-            add_comment_url=add_comment_url,
-            readonly=readonly,
-        ),
+        {
+            "field": field,
+            "item": checklist_item,
+            "project": project,
+            "section": section,
+            "asset_name": asset_name,
+            "note": note,
+            "histories": histories,
+            "add_comment_url": add_comment_url,
+        },
     )
 
 
@@ -1151,6 +1174,35 @@ def project_meta(request, uid: str):
     return JsonResponse(_project_meta(project, asset))
 
 
+@login_required
+@require_GET
+def comment_modal(request):
+    field = (request.GET.get("field") or "").strip()
+    item_id = request.GET.get("item")
+    project_id = request.GET.get("project")
+    section_id = request.GET.get("section")
+    asset_name = (request.GET.get("asset") or "").strip()
+
+    if field not in {"imc_comment", "customer_comment"}:
+        return HttpResponseBadRequest("Неизвестное поле.")
+    if not all([item_id, project_id, section_id]):
+        return HttpResponseBadRequest("Недостаточно данных.")
+
+    checklist_item = get_object_or_404(ChecklistItem, pk=item_id)
+    project = get_object_or_404(ProjectRegistration, pk=project_id)
+    section = get_object_or_404(TypicalSection, pk=section_id)
+
+    return _render_comment_modal_content(
+        request,
+        field=field,
+        checklist_item=checklist_item,
+        project=project,
+        section=section,
+        asset_name=asset_name,
+        add_comment_url=reverse("checklists_app:add_comment"),
+    )
+
+
 @require_GET
 def grid_data(request):
     project_uid = (request.GET.get("project_uid") or request.GET.get("project") or "").strip()
@@ -1544,21 +1596,21 @@ def add_comment(request):
         author=request.user,
     )
 
-    history_qs = note.comment_history.filter(field=field).select_related("author").order_by("created_at", "id")
-    history_html = render_to_string(
-        "checklists_app/components/comment_thread.html",
-        {
-            "scope_id": _comment_scope_id(field, checklist_item.id, asset_name),
-            "histories": history_qs,
-            "oob": True,
-        },
-        request=request,
-    )
-    resp = HttpResponse(history_html)
-    resp["HX-Trigger"] = json.dumps({
-        "checklists:comment-updated": _comment_update_event_payload(note, field)
-    })
-    return resp
+    history_qs = note.comment_history.filter(field=field).select_related("author")
+    context = {
+        "field": field,
+        "item": checklist_item,
+        "project": project,
+        "section": section,
+        "asset_name": asset_name,
+        "note": note,
+        "histories": history_qs,
+        "add_comment_url": reverse("checklists_app:add_comment"),
+        "comment_modal_url": reverse("checklists_app:comment_modal"),
+    }
+    cell_html = render_to_string("checklists_app/components/comment_cell.html", context, request=request)
+    history_html = render_to_string("checklists_app/components/comment_history.html", context, request=request)
+    return HttpResponse(cell_html + history_html)
 
 
 # ---------------------------------------------------------------------------
@@ -2271,7 +2323,6 @@ def shared_comment_modal(request, token: str):
         section=section,
         asset_name=asset_name,
         add_comment_url=reverse("checklists_app:shared_add_comment", args=[token]),
-        readonly=not link.can_edit,
     )
 
 
@@ -2556,21 +2607,17 @@ def shared_add_comment(request, token: str):
         author=request.user if request.user.is_authenticated else None,
     )
 
-    history_qs = note.comment_history.filter(field=field).select_related("author").order_by("created_at", "id")
-    history_html = render_to_string(
-        "checklists_app/components/comment_thread.html",
-        {
-            "scope_id": _comment_scope_id(field, checklist_item.id, asset_name),
-            "histories": history_qs,
-            "oob": True,
-        },
-        request=request,
-    )
-    resp = HttpResponse(history_html)
-    resp["HX-Trigger"] = json.dumps({
-        "checklists:comment-updated": _comment_update_event_payload(note, field)
-    })
-    return resp
+    history_qs = note.comment_history.filter(field=field).select_related("author")
+    context = {
+        "field": field, "item": checklist_item, "project": project,
+        "section": section, "asset_name": asset_name, "note": note,
+        "histories": history_qs,
+        "add_comment_url": reverse("checklists_app:shared_add_comment", args=[token]),
+        "comment_modal_url": reverse("checklists_app:shared_comment_modal", args=[token]),
+    }
+    cell_html = render_to_string("checklists_app/components/comment_cell.html", context, request=request)
+    history_html = render_to_string("checklists_app/components/comment_history.html", context, request=request)
+    return HttpResponse(cell_html + history_html)
 
 
 @require_GET
