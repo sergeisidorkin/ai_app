@@ -246,6 +246,146 @@ def process_participation_notification(notification, actor, action_choice):
     return notification
 
 
+def _build_info_request_payload(*, recipient, project, performers, request_sent_at, deadline_at, duration_hours):
+    services = [_service_line(performer) for performer in performers]
+    project_label_parts = [project.short_uid]
+    if project.type_id:
+        project_label_parts.append(project.type.short_name or str(project.type))
+    if project.name:
+        project_label_parts.append(project.name)
+    project_label = " ".join(part for part in project_label_parts if part)
+    recipient_name = _user_full_name(recipient)
+    deadline_at_label = timezone.localtime(deadline_at).strftime("%H:%M %d.%m.%Y") if deadline_at else "—"
+    sent_at_label = timezone.localtime(request_sent_at).strftime("%d.%m.%y %H:%M")
+    title_text = f"{sent_at_label} Согласование запроса информации по проекту {project_label}".strip()
+    content_lines = [
+        f"Добрый день, {recipient_name}!",
+        "",
+        f"Прошу согласовать информационный запрос по проекту {project_label} по следующим разделам:",
+    ]
+    for service in services:
+        content_lines.append(f"- {service}")
+    content_lines.extend(
+        [
+            "",
+            (
+                f"Для согласования информационного запроса необходимо изучить сформированный "
+                f"типовой чек-лист по проекту {project_label} в разделе «Чек-листы», "
+                f"при необходимости внести изменения и согласовать итоговый чек-лист, "
+                f"кликнув на кнопку «Согласовать запрос (чек-лист)» в разделе «Чек-листы» внизу страницы раздела."
+            ),
+            "",
+            (
+                f"Согласовать запрос необходимо в течение {duration_hours} "
+                f"часов с момента отправки данного сообщения — до {deadline_at_label}."
+            ),
+            "",
+            "С уважением,",
+            "IMC Montan AI",
+        ]
+    )
+    payload = {
+        "recipient_name": recipient_name,
+        "project_label": project_label,
+        "services": services,
+        "duration_hours": duration_hours,
+        "request_sent_at_display": sent_at_label,
+        "deadline_at_display": deadline_at_label,
+    }
+    return title_text, "\n".join(content_lines).strip(), payload
+
+
+@transaction.atomic
+def create_info_request_notifications(*, performers, sender, request_sent_at, deadline_at, duration_hours):
+    performers = list(performers)
+    missing_employee = [performer for performer in performers if not performer.employee_id]
+    if missing_employee:
+        names = ", ".join(sorted({(performer.executor or f"#{performer.pk}").strip() for performer in missing_employee}))
+        raise ValueError(f"Для части строк не найден сотрудник-получатель: {names}.")
+
+    grouped = defaultdict(list)
+    for performer in performers:
+        grouped[(performer.registration_id, performer.employee_id)].append(performer)
+
+    created = []
+    for (_registration_id, _employee_id), grouped_performers in grouped.items():
+        first = grouped_performers[0]
+        recipient = first.employee.user
+        project = first.registration
+        title_text, content_text, payload = _build_info_request_payload(
+            recipient=recipient,
+            project=project,
+            performers=grouped_performers,
+            request_sent_at=request_sent_at,
+            deadline_at=deadline_at,
+            duration_hours=duration_hours,
+        )
+        notification = Notification.objects.create(
+            notification_type=Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
+            related_section=Notification.RelatedSection.CHECKLISTS,
+            recipient=recipient,
+            sender=sender,
+            project=project,
+            title_text=title_text,
+            content_text=content_text,
+            payload=payload,
+            sent_at=request_sent_at,
+            deadline_at=deadline_at,
+            is_read=False,
+            is_processed=False,
+        )
+        NotificationPerformerLink.objects.bulk_create(
+            [
+                NotificationPerformerLink(
+                    notification=notification,
+                    performer=performer,
+                    position=index,
+                )
+                for index, performer in enumerate(grouped_performers, start=1)
+            ]
+        )
+        created.append(notification)
+    return created
+
+
+@transaction.atomic
+def process_info_request_notification(notification, actor):
+    if notification.notification_type != Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL:
+        raise ValueError("Этот тип уведомления не поддерживает согласование.")
+    if notification.is_processed:
+        return notification
+
+    now = timezone.now()
+
+    performer_ids = list(notification.performer_links.values_list("performer_id", flat=True))
+    Performer.objects.filter(pk__in=performer_ids).update(
+        info_approval_status=Performer.InfoApprovalStatus.APPROVED,
+        info_approval_at=now,
+    )
+
+    if not notification.is_read:
+        notification.is_read = True
+        notification.read_at = now
+        notification.read_by = actor
+    notification.is_processed = True
+    notification.action_at = now
+    notification.action_by = actor
+    notification.action_choice = Notification.ActionChoice.APPROVED
+    notification.save(
+        update_fields=[
+            "is_read",
+            "read_at",
+            "read_by",
+            "is_processed",
+            "action_at",
+            "action_by",
+            "action_choice",
+            "updated_at",
+        ]
+    )
+    return notification
+
+
 def serialize_notification_cards(notifications):
     pending_notifications = [item for item in notifications if item.requires_attention]
     pending_numbers = {item.pk: len(pending_notifications) - index for index, item in enumerate(pending_notifications)}

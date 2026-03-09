@@ -1,10 +1,7 @@
-<div  class="checklist-comment"
-      id="chk-comment-{{ field }}-{{ item.id }}"
-      hx-swap-oob="true"
-      data-bs-toggle="tooltip"
-      data-bs-placement="top"
-      data-bs-trigger="hover focus"
-      title="{% if latest %}{{ latest.text|striptags|escape }}{% elif note %}{% if field == 'imc_comment' %}{{ note.imc_comment|default_if_none:''|striptags|escape }}{% else %}{{ note.customer_comment|default_if_none:''|striptags|escape }}{% endif %}{% else %}Комментарий отсутствует{% endif %}">
+{% load tz %}
+<div class="checklist-comment chk-comment-compact"
+     id="chk-comment-{{ field }}-{{ item.id }}"
+     hx-swap-oob="true">
     {% with latest=histories|first %}
       <div class="d-flex align-items-center justify-content-between gap-2">
         <div class="text-truncate">
@@ -34,5 +31,8 @@
         </button>
         {% endif %}
       </div>
+      {% if latest %}
+        <span class="chk-comment-date">{% timezone "Europe/Moscow" %}{{ latest.created_at|date:"d.m.y H:i" }}{% endtimezone %}</span>
+      {% endif %}
     {% endwith %}
 </div>

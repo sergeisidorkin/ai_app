@@ -1,0 +1,23 @@
+<div class="comment-history-list chk-comment-thread" id="{{ scope_id }}"{% if oob %} hx-swap-oob="true"{% endif %}>
+  {% if histories %}
+    {% for entry in histories %}
+      <div class="chk-comment-msg-row {% if entry.author %}is-registered{% else %}is-guest{% endif %}">
+        <div class="chk-comment-bubble {% if entry.author %}is-registered{% else %}is-guest{% endif %}">
+          <div class="chk-comment-meta">
+            <span class="chk-comment-author">
+              {% if entry.author %}
+                {{ entry.author.get_full_name|default:entry.author.username }}
+              {% else %}
+                Гость
+              {% endif %}
+            </span>
+            <span class="chk-comment-time">{{ entry.created_at|date:"d.m.Y H:i" }}</span>
+          </div>
+          <div class="chk-comment-text">{{ entry.text|linebreaksbr }}</div>
+        </div>
+      </div>
+    {% endfor %}
+  {% else %}
+    <div class="text-muted small">История пока пуста.</div>
+  {% endif %}
+</div>

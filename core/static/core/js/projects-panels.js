@@ -61,6 +61,7 @@
     if (!panel) return;
     const anyChecked = getRowChecksByName(name).some(b => b.checked);
     panel.classList.toggle('d-none', !anyChecked);
+    panel.classList.toggle('d-flex', anyChecked);
   }
 
   function getDeleteConfirmationMessage(name, count) {

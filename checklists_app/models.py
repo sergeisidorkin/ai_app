@@ -76,7 +76,7 @@ class ChecklistStatus(models.Model):
             previous = previous_status
             if previous is _PREVIOUS_STATUS_UNSET:
                 previous = type(self).objects.filter(pk=self.pk).values_list("status", flat=True).first()
-            if previous and previous != self.status:
+            if previous != self.status and (previous is not None or self.status != self.Status.MISSING):
                 self.status_changed_at = timezone.now()
         super().save(*args, **kwargs)
 
@@ -228,3 +228,54 @@ class SharedChecklistLink(models.Model):
     @property
     def can_edit(self):
         return self.permission == self.Permission.EDIT and self.is_active
+
+
+class ProjectWorkspace(models.Model):
+    """Корневая папка рабочего пространства проекта на Яндекс.Диске."""
+    project = models.OneToOneField(
+        "projects_app.ProjectRegistration",
+        on_delete=models.CASCADE,
+        related_name="yadisk_workspace",
+    )
+    disk_path = models.CharField("Путь на диске", max_length=2048)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_workspaces",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Рабочее пространство проекта"
+        verbose_name_plural = "Рабочие пространства проектов"
+
+    def __str__(self):
+        return f"Workspace:{self.project_id}:{self.disk_path[:60]}"
+
+
+class ChecklistItemFolder(models.Model):
+    """Связь пункта чек-листа с папкой на Яндекс.Диске."""
+    checklist_item = models.OneToOneField(
+        ChecklistItem,
+        on_delete=models.CASCADE,
+        related_name="yadisk_folder",
+    )
+    project = models.ForeignKey(
+        "projects_app.ProjectRegistration",
+        on_delete=models.CASCADE,
+        related_name="yadisk_folders",
+    )
+    disk_path = models.CharField("Путь на диске", max_length=2048)
+    file_count = models.PositiveIntegerField("Кол-во файлов", default=0)
+    last_upload_at = models.DateTimeField("Последняя загрузка", null=True, blank=True)
+    synced_at = models.DateTimeField("Последняя синхронизация", null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Папка пункта чек-листа"
+        verbose_name_plural = "Папки пунктов чек-листа"
+
+    def __str__(self):
+        return f"Folder:{self.checklist_item_id}:{self.disk_path[:60]}"

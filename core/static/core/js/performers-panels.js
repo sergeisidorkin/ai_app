@@ -39,6 +39,7 @@
     if (!panel) return;
     const any = getRowChecks('performer-select').some(b => b.checked);
     panel.classList.toggle('d-none', !any);
+    panel.classList.toggle('d-flex', any);
   }
 
   function getParticipationMaster() {
@@ -84,6 +85,64 @@
       controls.classList.toggle('invisible', !show);
       controls.classList.toggle('pe-none', !show);
     }
+  }
+
+  function getInfoRequestMaster() {
+    return pane()?.querySelector('#info-request-master');
+  }
+  function getInfoRequestBtn() {
+    return pane()?.querySelector('#info-request-btn');
+  }
+  function getInfoRequestPanel() {
+    return pane()?.querySelector('#info-request-actions');
+  }
+  function getInfoRequestDeadlineControls() {
+    return pane()?.querySelector('#info-request-deadline-controls');
+  }
+  function getInfoRequestChannels() {
+    return qa('.js-info-request-channel', pane());
+  }
+  function getInfoRequestRows() {
+    return qa('#info-request-approval-section tbody tr[data-project-id]', pane());
+  }
+  function getVisibleInfoRequestChecks() {
+    return getInfoRequestRows()
+      .filter((row) => !row.classList.contains('d-none'))
+      .map((row) => row.querySelector('input[name="info-request-select"]'))
+      .filter((checkbox) => checkbox && !checkbox.disabled);
+  }
+  function getCreateWorkspaceBtn() {
+    return pane()?.querySelector('#create-workspace-btn');
+  }
+
+  function getSelectedInfoRequestProjectId() {
+    const filter = window.__infoRequestProjectFilter;
+    if (filter && filter.length === 1 && filter[0] !== '__all__') return filter[0];
+    return null;
+  }
+
+  function updateInfoRequestState() {
+    const boxes = getVisibleInfoRequestChecks();
+    const checkedCount = boxes.filter(b => b.checked).length;
+    const master = getInfoRequestMaster();
+    if (master) {
+      master.checked = boxes.length > 0 && checkedCount === boxes.length;
+      master.indeterminate = checkedCount > 0 && checkedCount < boxes.length;
+    }
+    updateRowHighlight('info-request-select');
+
+    const requestBtn = getInfoRequestBtn();
+    if (requestBtn) requestBtn.disabled = checkedCount === 0;
+
+    const controls = getInfoRequestDeadlineControls();
+    if (controls) {
+      const show = checkedCount > 0;
+      controls.classList.toggle('invisible', !show);
+      controls.classList.toggle('pe-none', !show);
+    }
+
+    const wsBtn = getCreateWorkspaceBtn();
+    if (wsBtn) wsBtn.disabled = !getSelectedInfoRequestProjectId();
   }
 
   function initParticipationProjectFilter() {
@@ -181,8 +240,172 @@
     applyFilter(initialValues);
   }
 
+  function initInfoRequestProjectFilter() {
+    const root = pane();
+    if (!root) return;
+
+    window.__infoRequestProjectFilter = window.__infoRequestProjectFilter || [];
+
+    const dropdown = root.querySelector('#info-request-project-filter-toggle')?.closest('.dropdown');
+    const radios = root.querySelectorAll('.js-info-request-filter');
+    const label = root.querySelector('.js-info-request-filter-label');
+    const master = root.querySelector('#info-request-master');
+
+    if (!dropdown || !radios.length || !label || dropdown.dataset.bound === '1') return;
+    dropdown.dataset.bound = '1';
+
+    function applyFilter(projectId) {
+      window.__infoRequestProjectFilter = projectId ? [projectId] : [];
+      getInfoRequestRows().forEach((row) => {
+        const pid = row.dataset.projectId || '';
+        const visible = !projectId || pid === projectId;
+        row.classList.toggle('d-none', !visible);
+        if (!visible) {
+          const checkbox = row.querySelector('input[name="info-request-select"]');
+          if (checkbox) checkbox.checked = false;
+        }
+      });
+      if (master && projectId && !getInfoRequestRows().some((row) => !row.classList.contains('d-none'))) {
+        master.checked = false;
+        master.indeterminate = false;
+      }
+      const selected = Array.from(radios).find((r) => r.checked);
+      label.textContent = selected
+        ? (selected.nextElementSibling?.textContent?.trim() || '—')
+        : '—';
+      updateInfoRequestState();
+    }
+
+    radios.forEach((r) => {
+      r.addEventListener('change', () => {
+        if (r.checked) applyFilter(r.value);
+      });
+    });
+
+    const saved = window.__infoRequestProjectFilter;
+    if (saved && saved.length === 1 && saved[0] !== '__all__') {
+      const target = Array.from(radios).find((r) => r.value === saved[0]);
+      if (target) {
+        target.checked = true;
+        applyFilter(saved[0]);
+        return;
+      }
+    }
+    const first = radios[0];
+    if (first) {
+      first.checked = true;
+      applyFilter(first.value);
+    } else {
+      applyFilter(null);
+    }
+  }
+
   document.addEventListener('click', async (e) => {
     const root = pane(); if (!root) return;
+
+    const infoRequestBtn = e.target.closest('#info-request-btn');
+    if (infoRequestBtn && root.contains(infoRequestBtn)) {
+      const checked = getVisibleInfoRequestChecks().filter((cb) => cb.checked);
+      if (!checked.length || infoRequestBtn.disabled) return;
+
+      const requestPanel = getInfoRequestPanel();
+      const requestUrl = requestPanel?.dataset?.requestUrl;
+      const hoursInput = root.querySelector('#info-request-duration-hours');
+      const sentAtInput = root.querySelector('#info-request-sent-at');
+      const selectedChannels = getInfoRequestChannels().filter((cb) => cb.checked).map((cb) => cb.value);
+      const durationHours = parseInt(hoursInput?.value || '', 10);
+
+      if (!Number.isInteger(durationHours) || durationHours <= 0) {
+        alert('Укажите срок в целых часах больше нуля.');
+        hoursInput?.focus();
+        return;
+      }
+      if (!selectedChannels.length) {
+        alert('Выберите хотя бы один способ отправки.');
+        return;
+      }
+      if (!requestUrl) return;
+
+      const formData = new FormData();
+      checked.forEach((cb) => formData.append('performer_ids[]', cb.value));
+      formData.append('duration_hours', String(durationHours));
+      formData.append('request_sent_at', sentAtInput?.value || '');
+      selectedChannels.forEach((value) => formData.append('delivery_channels[]', value));
+
+      infoRequestBtn.disabled = true;
+      try {
+        const response = await fetch(requestUrl, {
+          method: 'POST',
+          headers: { 'X-CSRFToken': csrftoken },
+          body: formData,
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+          throw new Error(data?.error || 'Не удалось запросить согласование.');
+        }
+
+        window.__tableSel['info-request-select'] = [];
+        window.__tableSel['performer-select'] = (window.__tableSel['performer-select'] || []);
+        window.__tableSelLast = null;
+
+        const modalEl = root.querySelector('#info-request-modal');
+        const modal = modalEl ? window.bootstrap?.Modal.getInstance(modalEl) : null;
+        modal?.hide();
+
+        document.body.dispatchEvent(new Event('performers-updated'));
+        document.body.dispatchEvent(new Event('notifications-updated'));
+      } catch (err) {
+        alert(err.message || 'Не удалось запросить согласование.');
+        updateInfoRequestState();
+      }
+      return;
+    }
+
+    const wsConfirmBtn = e.target.closest('#create-workspace-confirm-btn');
+    if (wsConfirmBtn && root.contains(wsConfirmBtn)) {
+      const projectId = getSelectedInfoRequestProjectId();
+      if (!projectId) {
+        alert('Выберите проект в фильтре.');
+        return;
+      }
+      const panel = getInfoRequestPanel();
+      const wsUrl = panel?.dataset?.createWorkspaceUrl;
+      if (!wsUrl) return;
+
+      const statusEl = root.querySelector('#create-workspace-status');
+      wsConfirmBtn.disabled = true;
+      if (statusEl) statusEl.textContent = 'Создание папок…';
+
+      try {
+        const formData = new FormData();
+        formData.append('project_id', projectId);
+
+        const response = await fetch(wsUrl, {
+          method: 'POST',
+          headers: { 'X-CSRFToken': csrftoken },
+          body: formData,
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+          throw new Error(data?.error || 'Не удалось создать рабочее пространство.');
+        }
+
+        if (statusEl) statusEl.innerHTML = '<span class="text-success">' + (data.message || 'Готово!') + '</span>';
+
+        const modalEl = root.querySelector('#create-workspace-modal');
+        setTimeout(() => {
+          const modal = modalEl ? window.bootstrap?.Modal.getInstance(modalEl) : null;
+          modal?.hide();
+          if (statusEl) statusEl.textContent = '';
+        }, 2000);
+      } catch (err) {
+        if (statusEl) statusEl.innerHTML = '<span class="text-danger">' + (err.message || 'Ошибка') + '</span>';
+        else alert(err.message || 'Не удалось создать рабочее пространство.');
+      } finally {
+        wsConfirmBtn.disabled = false;
+      }
+      return;
+    }
 
     const requestBtn = e.target.closest('#participation-request-btn');
     if (requestBtn && root.contains(requestBtn)) {
@@ -341,6 +564,33 @@
         participationChannelCb.checked = true;
       }
     }
+
+    const infoRequestMaster = e.target.closest('#info-request-master');
+    if (infoRequestMaster && root.contains(infoRequestMaster)) {
+      getInfoRequestRows().forEach((row) => {
+        if (row.classList.contains('d-none')) return;
+        const checkbox = row.querySelector('input[name="info-request-select"]');
+        if (!checkbox || checkbox.disabled) return;
+        checkbox.checked = infoRequestMaster.checked;
+      });
+      infoRequestMaster.indeterminate = false;
+      updateInfoRequestState();
+      return;
+    }
+
+    const infoRequestRowCb = e.target.closest('tbody input.form-check-input[name="info-request-select"]');
+    if (infoRequestRowCb && root.contains(infoRequestRowCb)) {
+      updateInfoRequestState();
+      return;
+    }
+
+    const infoRequestChannelCb = e.target.closest('.js-info-request-channel');
+    if (infoRequestChannelCb && root.contains(infoRequestChannelCb)) {
+      const checkedChannels = getInfoRequestChannels().filter((cb) => cb.checked);
+      if (!checkedChannels.length) {
+        infoRequestChannelCb.checked = true;
+      }
+    }
   });
 
   // восстановление после перерисовки
@@ -363,8 +613,18 @@
     updateParticipationState();
     try { delete window.__tableSel['participation-select']; } catch(_) {}
 
+    const infoRequestIds = (window.__tableSel && window.__tableSel['info-request-select']) || [];
+    const infoRequestSet = new Set(infoRequestIds || []);
+    getRowChecks('info-request-select').forEach((b) => { b.checked = infoRequestSet.has(String(b.value)); });
+    initInfoRequestProjectFilter();
+    updateInfoRequestState();
+    try { delete window.__tableSel['info-request-select']; } catch(_) {}
+
     window.__tableSelLast = null;
   });
 
-  document.addEventListener('DOMContentLoaded', initParticipationProjectFilter);
+  document.addEventListener('DOMContentLoaded', () => {
+    initParticipationProjectFilter();
+    initInfoRequestProjectFilter();
+  });
 })();

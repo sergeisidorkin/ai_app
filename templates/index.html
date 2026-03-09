@@ -63,6 +63,8 @@
           <a class="nav-link d-flex align-items-center" href="#checklists" data-bs-toggle="tab">
             <i class="bi bi-list-check me-2"></i>
             <span class="link-text">Чек-листы</span>
+            <span class="badge rounded-pill text-bg-danger ms-2 {% if NOTIFICATION_SECTION_COUNTS.checklists|default:0 <= 0 %}d-none{% endif %}"
+                  data-notification-counter-section="checklists">{{ NOTIFICATION_SECTION_COUNTS.checklists|default:0 }}</span>
           </a>
         </li>
         <li class="nav-item">
