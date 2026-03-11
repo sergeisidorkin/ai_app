@@ -1100,6 +1100,32 @@
             }
         }
 
+        function _buildFormCheck(value, id, labelText) {
+            const wrap = document.createElement('div');
+            wrap.className = 'form-check';
+            const input = document.createElement('input');
+            input.className = 'form-check-input';
+            input.type = 'checkbox';
+            input.value = value;
+            input.id = id;
+            const label = document.createElement('label');
+            label.className = 'form-check-label';
+            label.setAttribute('for', id);
+            label.textContent = labelText;
+            wrap.appendChild(input);
+            wrap.appendChild(label);
+            return wrap;
+        }
+
+        function _buildAssetCheckItem(value, id, labelText, checked) {
+            const div = document.createElement('div');
+            div.className = 'chk-multiselect-item';
+            const fc = _buildFormCheck(value, id, labelText);
+            if (checked) fc.querySelector('input').checked = true;
+            div.appendChild(fc);
+            return div;
+        }
+
         if (assetBtn && assetMenu) {
             assetBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -1177,23 +1203,20 @@
                     } else {
                         assetBtn.removeAttribute('disabled');
                         let idx = 0;
-                        const allDiv = document.createElement('div');
-                        allDiv.className = 'chk-multiselect-item';
-                        allDiv.innerHTML = '<div class="form-check"><input class="form-check-input" type="checkbox" value="all" id="chk-asset-dyn-all" checked><label class="form-check-label" for="chk-asset-dyn-all">Все активы</label></div>';
-                        assetMenu.appendChild(allDiv);
+                        assetMenu.appendChild(_buildAssetCheckItem('all', 'chk-asset-dyn-all', 'Все активы', true));
                         items.forEach((item) => {
                             idx++;
                             const isMultiEntityAsset = item.type === 'asset' && (item.entityCount || 0) > 1;
                             const div = document.createElement('div');
-                            div.className = isMultiEntityAsset ? 'chk-multiselect-item chk-multiselect-group' : 'chk-multiselect-item';
                             if (item.type) div.dataset.itemType = item.type;
                             if (isMultiEntityAsset) {
+                                div.className = 'chk-multiselect-item chk-multiselect-group';
                                 div.textContent = item.label + '  \u2022 \u1D00\u1D0B\u1D1B\u1D0E\u0299';
                             } else {
+                                div.className = 'chk-multiselect-item';
                                 const cbId = 'chk-asset-dyn-' + idx;
-                                const val = item.value.replace(/"/g, '&quot;');
                                 const suffix = item.type === 'asset' ? ' \u2022 \u1D00\u1D0B\u1D1B\u1D0E\u0299' : '';
-                                div.innerHTML = '<div class="form-check"><input class="form-check-input" type="checkbox" value="' + val + '" id="' + cbId + '"><label class="form-check-label" for="' + cbId + '">' + item.label + suffix + '</label></div>';
+                                div.appendChild(_buildFormCheck(item.value, cbId, item.label + suffix));
                             }
                             assetMenu.appendChild(div);
                         });

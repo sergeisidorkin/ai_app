@@ -175,7 +175,7 @@ def ext_form_create(request):
 @user_passes_test(staff_required)
 @require_http_methods(["GET", "POST"])
 def ext_form_edit(request, pk: int):
-    employee = get_object_or_404(Employee.objects.select_related("user"), pk=pk)
+    employee = get_object_or_404(Employee.objects.select_related("user"), pk=pk, user__is_staff=False)
     if request.method == "GET":
         form = ExternalEmployeeForm(instance=employee)
         return render(request, EXT_FORM_TEMPLATE, {"form": form, "action": "edit", "employee": employee})
@@ -190,7 +190,7 @@ def ext_form_edit(request, pk: int):
 @user_passes_test(staff_required)
 @require_POST
 def ext_delete(request, pk: int):
-    emp = get_object_or_404(Employee, pk=pk)
+    emp = get_object_or_404(Employee, pk=pk, user__is_staff=False)
     emp.user.delete()
     _normalize_positions(is_staff=False)
     return _render_updated(request)
@@ -200,7 +200,7 @@ def ext_delete(request, pk: int):
 @user_passes_test(staff_required)
 @require_POST
 def ext_move_up(request, pk: int):
-    obj = get_object_or_404(Employee, pk=pk)
+    obj = get_object_or_404(Employee, pk=pk, user__is_staff=False)
     prev = (
         Employee.objects
         .filter(user__is_staff=False, position__lt=obj.position)
@@ -218,7 +218,7 @@ def ext_move_up(request, pk: int):
 @user_passes_test(staff_required)
 @require_POST
 def ext_move_down(request, pk: int):
-    obj = get_object_or_404(Employee, pk=pk)
+    obj = get_object_or_404(Employee, pk=pk, user__is_staff=False)
     nxt = (
         Employee.objects
         .filter(user__is_staff=False, position__gt=obj.position)
