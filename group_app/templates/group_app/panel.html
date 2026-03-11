@@ -17,12 +17,30 @@
       </div>
     </div>
 
+    <div class="modal fade" id="org-structure-modal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-scrollable">
+        <div class="modal-content">
+        </div>
+      </div>
+    </div>
+
     <script>
       document.body.addEventListener('group-updated', function () {
-        const el = document.getElementById('group-modal');
-        if (!el) return;
-        const modal = bootstrap.Modal.getInstance(el) || bootstrap.Modal.getOrCreateInstance(el);
-        modal.hide();
+        ['group-modal', 'org-structure-modal'].forEach(function (id) {
+          const el = document.getElementById(id);
+          if (!el) return;
+          const modal = bootstrap.Modal.getInstance(el) || bootstrap.Modal.getOrCreateInstance(el);
+          modal.hide();
+        });
+      });
+
+      document.addEventListener('htmx:afterSwap', function (e) {
+        ['group-modal', 'org-structure-modal'].forEach(function (id) {
+          if (e.target && e.target.matches('#' + id + ' .modal-content')) {
+            var m = bootstrap.Modal.getOrCreateInstance(document.getElementById(id));
+            m.show();
+          }
+        });
       });
     </script>
   </div>

@@ -14,6 +14,14 @@ class Employee(models.Model):
     patronymic = models.CharField("Отчество", max_length=150, blank=True, default="")
     phone = models.CharField("Телефон", max_length=50, blank=True, default="")
     employment = models.CharField("Трудоустройство", max_length=255, blank=True, default="")
+    department = models.ForeignKey(
+        "group_app.OrgUnit",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="employees",
+        verbose_name="Подразделение",
+    )
     organization = models.CharField("Организация", max_length=255, blank=True, default="")
     job_title = models.CharField("Должность", max_length=255, blank=True, default="")
     avatar = models.ImageField("Фото профиля", upload_to="avatars/", blank=True, default="")

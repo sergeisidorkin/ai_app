@@ -175,6 +175,77 @@ class ChecklistCommentHistory(models.Model):
         return self.author.get_full_name() or self.author.username
 
 
+_PREVIOUS_CUSTOMER_STATUS_UNSET = object()
+
+
+class ChecklistCustomerStatus(models.Model):
+    class Status(models.TextChoices):
+        NOT_TRANSFERRED = "not_transferred", "Не передано"
+        PARTIAL_TRANSFER = "partial_transfer", "Передано частично"
+        TRANSFERRED = "transferred", "Передано все"
+        NO_DATA = "no_data", "Нет данных"
+
+    checklist_item = models.ForeignKey(
+        ChecklistItem, on_delete=models.CASCADE, related_name="customer_statuses"
+    )
+    legal_entity = models.ForeignKey(
+        "projects_app.LegalEntity", on_delete=models.CASCADE, related_name="checklist_customer_statuses"
+    )
+    status = models.CharField(max_length=32, choices=Status.choices, default=Status.NOT_TRANSFERRED)
+    status_changed_at = models.DateTimeField("Дата изменения статуса", null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="checklist_customer_statuses",
+    )
+
+    class Meta:
+        unique_together = (("checklist_item", "legal_entity"),)
+        verbose_name = "Статус заказчика"
+        verbose_name_plural = "Статусы заказчика"
+
+    def save(self, *args, **kwargs):
+        previous_status = kwargs.pop("previous_status", _PREVIOUS_CUSTOMER_STATUS_UNSET)
+        if self.pk:
+            previous = previous_status
+            if previous is _PREVIOUS_CUSTOMER_STATUS_UNSET:
+                previous = type(self).objects.filter(pk=self.pk).values_list("status", flat=True).first()
+            if previous != self.status and (previous is not None or self.status != self.Status.NOT_TRANSFERRED):
+                self.status_changed_at = timezone.now()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.checklist_item_id} / {self.legal_entity_id} — {self.get_status_display()}"
+
+
+class ChecklistCustomerStatusHistory(models.Model):
+    customer_status = models.ForeignKey(
+        ChecklistCustomerStatus, related_name="history", on_delete=models.CASCADE
+    )
+    checklist_item = models.ForeignKey(
+        ChecklistItem, null=True, blank=True, on_delete=models.CASCADE, related_name="customer_status_history"
+    )
+    legal_entity = models.ForeignKey("projects_app.LegalEntity", on_delete=models.CASCADE)
+    previous_status = models.CharField(
+        max_length=32, choices=ChecklistCustomerStatus.Status.choices, blank=True
+    )
+    new_status = models.CharField(max_length=32, choices=ChecklistCustomerStatus.Status.choices)
+    changed_at = models.DateTimeField(auto_now_add=True)
+    changed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="checklist_customer_status_history",
+    )
+
+    class Meta:
+        ordering = ["-changed_at"]
+        verbose_name = "История статуса заказчика"
+        verbose_name_plural = "История статусов заказчика"
+
+    def __str__(self):
+        return f"{self.checklist_item_id}/{self.legal_entity_id}: {self.new_status}"
+
+
 def _default_expiry():
     return timezone.now() + timedelta(days=183)
 

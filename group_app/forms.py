@@ -4,7 +4,7 @@ from django import forms
 from django.db.models import Q
 
 from classifiers_app.models import LegalEntityIdentifier, OKSMCountry
-from .models import GroupMember
+from .models import GroupMember, OrgUnit
 
 
 def _active_countries_qs():
@@ -82,3 +82,58 @@ class GroupMemberForm(forms.ModelForm):
         if commit:
             instance.save()
         return instance
+
+
+class OrgUnitForm(forms.ModelForm):
+    class Meta:
+        model = OrgUnit
+        fields = ["company", "level", "department_name", "short_name", "functional_subordination", "unit_type"]
+        widgets = {
+            "company": forms.Select(attrs={
+                "class": "form-select",
+                "id": "org-company-select",
+            }),
+            "level": forms.NumberInput(attrs={
+                "class": "form-control",
+                "min": "1",
+                "placeholder": "1",
+                "id": "org-level-input",
+            }),
+            "department_name": forms.TextInput(attrs={
+                "class": "form-control",
+                "placeholder": "Наименование подразделения",
+            }),
+            "short_name": forms.TextInput(attrs={
+                "class": "form-control",
+                "placeholder": "Краткое имя",
+            }),
+            "functional_subordination": forms.Select(attrs={
+                "class": "form-select",
+                "id": "org-func-sub",
+            }),
+            "unit_type": forms.Select(attrs={
+                "class": "form-select",
+            }),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["company"].queryset = GroupMember.objects.all()
+        self.fields["company"].label_from_instance = lambda obj: obj.short_name
+        self.fields["company"].empty_label = "---------"
+
+        qs = OrgUnit.objects.select_related("company").all()
+        if self.instance and self.instance.pk:
+            qs = qs.exclude(pk=self.instance.pk)
+        self.fields["functional_subordination"].queryset = qs
+        self.fields["functional_subordination"].label_from_instance = (
+            lambda obj: obj.department_name
+        )
+        self.fields["functional_subordination"].required = False
+        self.fields["functional_subordination"].empty_label = "---------"
+
+    def clean_level(self):
+        level = self.cleaned_data.get("level")
+        if level is not None and level < 1:
+            raise forms.ValidationError("Уровень не может быть меньше 1.")
+        return level

@@ -18,8 +18,12 @@
         <col class="files-col"> <!-- Файлы -->
         <col id="chk-col-name"> <!-- Наименование -->
         {% for entity in legal_entities %}
-          <col class="status-col"> <!-- статус -->
-          <col class="date-col">
+          <col class="status-col imcm-col">
+          <col class="date-col imcm-col">
+        {% endfor %}
+        {% for entity in legal_entities %}
+          <col class="status-col cs-col">
+          <col class="date-col cs-col">
         {% endfor %}
         <col class="comment-col"> <!-- IMC -->
     </colgroup>
@@ -49,10 +53,18 @@
           </button>
         </th>
         {% for entity in legal_entities %}
-          <th class="status-col text-nowrap">
+          <th class="status-col imcm-col text-nowrap">
+            <span class="chk-bullet chk-bullet--imcm">&bull;</span>
             {{ entity.legal_name|default:entity.work_name|default:entity.work_item.asset_name|default:"Юридическое лицо" }}
           </th>
-          <th class="text-nowrap date-header">Дата</th>
+          <th class="text-nowrap date-header imcm-col"><span class="chk-bullet chk-bullet--imcm">&bull;</span> Дата</th>
+        {% endfor %}
+        {% for entity in legal_entities %}
+          <th class="status-col cs-col text-nowrap">
+            <span class="chk-bullet chk-bullet--cs">&bull;</span>
+            {{ entity.legal_name|default:entity.work_name|default:entity.work_item.asset_name|default:"Юридическое лицо" }}
+          </th>
+          <th class="text-nowrap date-header cs-col"><span class="chk-bullet chk-bullet--cs">&bull;</span> Дата</th>
         {% endfor %}
         <th class="col-comment col-comment-imc">Комментарии</th>
       </tr>
@@ -68,6 +80,9 @@
           {% for entity in legal_entities %}
             <td></td><td></td>
           {% endfor %}
+          {% for entity in legal_entities %}
+            <td></td><td></td>
+          {% endfor %}
           <td></td>
         </tr>
         {% elif row.item %}
@@ -77,6 +92,9 @@
           <td colspan="5" class="additional-header-cell">
             {{ row.additional_header }}
           </td>
+          {% for entity in legal_entities %}
+            <td></td><td></td>
+          {% endfor %}
           {% for entity in legal_entities %}
             <td></td><td></td>
           {% endfor %}
@@ -115,7 +133,7 @@
           <td class="col-name-cell">{{ row.item.name }}</td>
 
           {% for cell in row.statuses %}
-            <td class="status-cell status-col" id="status-cell-{{ row.item.id }}-{{ cell.entity.id }}">
+            <td class="status-cell status-col imcm-col" id="status-cell-{{ row.item.id }}-{{ cell.entity.id }}">
               <div class="checklist-status-cell" id="chk-cell-{{ row.item.id }}-{{ cell.entity.id }}">
                 <form
                   {% if not readonly %}
@@ -140,9 +158,26 @@
                 </form>
               </div>
             </td>
-            <td class="date-cell text-nowrap" id="date-cell-{{ row.item.id }}-{{ cell.entity.id }}">
+            <td class="date-cell text-nowrap imcm-col" id="date-cell-{{ row.item.id }}-{{ cell.entity.id }}">
               {% if cell.status and cell.status.status_changed_at %}
                 {{ cell.status.status_changed_at|date:"d.m.y H:i" }}
+              {% else %}
+                —
+              {% endif %}
+            </td>
+          {% endfor %}
+
+          {% for cell in row.customer_statuses %}
+            <td class="status-cell status-col cs-col">
+              {% if cell.customer_status %}
+                {{ cell.customer_status.get_status_display }}
+              {% else %}
+                Не передано
+              {% endif %}
+            </td>
+            <td class="date-cell text-nowrap cs-col">
+              {% if cell.customer_status and cell.customer_status.status_changed_at %}
+                {{ cell.customer_status.status_changed_at|date:"d.m.y H:i" }}
               {% else %}
                 —
               {% endif %}

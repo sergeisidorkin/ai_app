@@ -3,7 +3,6 @@
   window.__usersPanelBound = true;
 
   window.__usTableSel = window.__usTableSel || {};
-  window.__usTableSelLast = window.__usTableSelLast || null;
 
   function pane() { return document.getElementById('users-pane'); }
   const qa = (sel, root) => Array.from((root || document).querySelectorAll(sel));
@@ -13,6 +12,21 @@
     return m ? m.pop() : '';
   }
   const csrftoken = getCookie('csrftoken');
+
+  const PANELS = {
+    'emp-actions': {
+      name: 'emp-select',
+      modal: '#users-modal .modal-content',
+      modalId: 'users-modal',
+      deleteLabel: 'сотрудник(а/ов)',
+    },
+    'ext-actions': {
+      name: 'ext-select',
+      modal: '#ext-users-modal .modal-content',
+      modalId: 'ext-users-modal',
+      deleteLabel: 'пользователь(ей)',
+    },
+  };
 
   function getMasterForPanel(panel) {
     const id = panel?.id;
@@ -62,30 +76,37 @@
     panel.classList.toggle('d-none', !anyChecked);
   }
 
+  function findPanelConfig(btn) {
+    for (const [panelId, config] of Object.entries(PANELS)) {
+      if (btn.closest('#' + panelId)) return config;
+    }
+    return null;
+  }
+
   document.addEventListener('click', async (e) => {
     const root = pane();
     if (!root) return;
     const btn = e.target.closest('button[data-panel-action]');
     if (!btn || !root.contains(btn)) return;
-    const panel = btn.closest('#emp-actions');
-    if (!panel) return;
+
+    const config = findPanelConfig(btn);
+    if (!config) return;
+
     const action = btn.dataset.panelAction;
-    const name = getNameForPanel(panel);
-    if (!name) return;
+    const name = config.name;
 
     const checked = getCheckedByName(name);
     if (!checked.length) return;
 
     window.__usTableSel[name] = checked.map(ch => String(ch.value));
-    window.__usTableSelLast = name;
 
     if (action === 'edit') {
       const first = checked[0];
       const tr = first.closest('tr');
       const url = tr?.dataset?.editUrl;
       if (!url) return;
-      await htmx.ajax('GET', url, { target: '#users-modal .modal-content', swap: 'innerHTML' });
-      const modalEl = document.getElementById('users-modal');
+      await htmx.ajax('GET', url, { target: config.modal, swap: 'innerHTML' });
+      const modalEl = document.getElementById(config.modalId);
       if (modalEl && window.bootstrap) {
         window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
       }
@@ -94,7 +115,7 @@
     }
 
     if (action === 'delete') {
-      if (!confirm(`Удалить ${checked.length} сотрудник(а/ов)?`)) return;
+      if (!confirm(`Удалить ${checked.length} ${config.deleteLabel}?`)) return;
       const urls = checked.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
       for (let i = 0; i < urls.length; i++) {
         const isLast = i === urls.length - 1;
@@ -152,15 +173,15 @@
 
   document.body.addEventListener('htmx:afterSettle', function (e) {
     if (!(e.target && e.target.id === 'users-pane')) return;
-    const last = window.__usTableSelLast;
-    if (!last) return;
-    const ids = (window.__usTableSel && window.__usTableSel[last]) || [];
-    const set = new Set(ids || []);
-    getRowChecksByName(last).forEach(b => { b.checked = set.has(String(b.value)); });
-    updateMasterStateFor(last);
-    updateRowHighlightFor(last);
-    ensureActionsVisibility(last);
-    try { delete window.__usTableSel[last]; } catch(e) { window.__usTableSel[last] = []; }
-    window.__usTableSelLast = null;
+    const sel = window.__usTableSel || {};
+    Object.keys(sel).forEach(name => {
+      const ids = sel[name] || [];
+      const set = new Set(ids);
+      getRowChecksByName(name).forEach(b => { b.checked = set.has(String(b.value)); });
+      updateMasterStateFor(name);
+      updateRowHighlightFor(name);
+      ensureActionsVisibility(name);
+    });
+    window.__usTableSel = {};
   });
 })();

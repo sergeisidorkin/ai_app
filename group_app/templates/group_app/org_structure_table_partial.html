@@ -1,4 +1,4 @@
-<table class="table table-sm align-middle">
+<table class="table table-sm align-top">
     <thead>
     <tr>
         <th style="width:1%">
@@ -6,55 +6,49 @@
                 <div class="form-check m-0">
                     <input class="form-check-input"
                            type="checkbox"
-                           id="emp-master"
-                           data-target-name="emp-select"
-                           data-actions-id="emp-actions"
+                           id="org-master"
+                           data-target-name="org-select"
+                           data-actions-id="org-actions"
                            aria-label="Выделить все строки">
                 </div>
             {% endif %}
         </th>
-        <th>Фамилия</th>
-        <th>Имя</th>
-        <th>Отчество</th>
-        <th>Эл. почта (логин)</th>
-        <th>Телефон</th>
-        <th>Трудоустройство</th>
-        <th>Подразделение</th>
-        <th>Должность</th>
-        <th>Роль</th>
+        <th>Наименование компании (краткое)</th>
+        <th>Уровень</th>
+        <th>Наименование структурного подразделения</th>
+        <th>Краткое имя</th>
+        <th>Функциональное подчинение</th>
+        <th>Тип подразделения</th>
     </tr>
     </thead>
     <tbody>
-    {% for e in staff_employees %}
-        <tr data-edit-url="{% url 'emp_form_edit' e.pk %}"
-            data-delete-url="{% url 'emp_delete' e.pk %}"
-            data-move-up-url="{% url 'emp_move_up' e.pk %}"
-            data-move-down-url="{% url 'emp_move_down' e.pk %}">
+    {% for u in org_units %}
+        <tr data-edit-url="{% url 'org_form_edit' u.pk %}"
+            data-delete-url="{% url 'org_delete' u.pk %}"
+            data-move-up-url="{% url 'org_move_up' u.pk %}"
+            data-move-down-url="{% url 'org_move_down' u.pk %}">
 
             <td class="text-nowrap">
                 {% if request.user.is_authenticated and request.user.is_staff %}
                     <div class="form-check">
                         <input class="form-check-input"
                                type="checkbox"
-                               id="emp-sel-{{ e.id }}"
-                               name="emp-select"
-                               value="{{ e.id }}"
+                               id="org-sel-{{ u.id }}"
+                               name="org-select"
+                               value="{{ u.id }}"
                                aria-label="Выделить строку">
                     </div>
                 {% endif %}
             </td>
-            <td class="text-nowrap">{{ e.user.last_name }}</td>
-            <td class="text-nowrap">{{ e.user.first_name }}</td>
-            <td class="text-nowrap">{{ e.patronymic }}</td>
-            <td class="text-nowrap">{{ e.user.email }}</td>
-            <td class="text-nowrap">{{ e.phone }}</td>
-            <td class="text-nowrap">{{ e.employment }}</td>
-            <td class="text-nowrap">{% if e.department %}{{ e.department.department_name }}{% endif %}</td>
-            <td class="text-nowrap">{{ e.job_title }}</td>
-            <td class="text-nowrap">{{ e.role }}</td>
+            <td class="text-nowrap">{{ u.company.short_name }}</td>
+            <td class="text-nowrap">{{ u.level }}</td>
+            <td>{{ u.department_name }}</td>
+            <td class="text-nowrap">{{ u.short_name }}</td>
+            <td>{% if u.functional_subordination %}{{ u.functional_subordination.department_name }}{% else %}—{% endif %}</td>
+            <td class="text-nowrap">{{ u.get_unit_type_display }}</td>
         </tr>
     {% empty %}
-        <tr><td colspan="10" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="7" class="text-muted">Пока нет данных.</td></tr>
     {% endfor %}
     </tbody>
 </table>
@@ -63,12 +57,12 @@
 <div class="d-flex align-items-stretch gap-2 products-actions-row">
   <button
           class="btn btn-primary btn-sm d-flex align-items-center"
-          hx-get="{% url 'emp_form_create' %}"
-          hx-target="#users-modal .modal-content"
+          hx-get="{% url 'org_form_create' %}"
+          hx-target="#org-structure-modal .modal-content"
           hx-swap="innerHTML">
     <i class="bi bi-plus-circle me-2"></i>Добавить строку
   </button>
-  <div id="emp-actions" class="d-none d-flex">
+  <div id="org-actions" class="d-none d-flex">
     <div class="btn-group">
       <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
         <i class="bi bi-arrow-up-square"></i>

@@ -6,9 +6,9 @@
                 <div class="form-check m-0">
                     <input class="form-check-input"
                            type="checkbox"
-                           id="emp-master"
-                           data-target-name="emp-select"
-                           data-actions-id="emp-actions"
+                           id="ext-master"
+                           data-target-name="ext-select"
+                           data-actions-id="ext-actions"
                            aria-label="Выделить все строки">
                 </div>
             {% endif %}
@@ -18,26 +18,24 @@
         <th>Отчество</th>
         <th>Эл. почта (логин)</th>
         <th>Телефон</th>
-        <th>Трудоустройство</th>
-        <th>Подразделение</th>
+        <th>Организация</th>
         <th>Должность</th>
-        <th>Роль</th>
     </tr>
     </thead>
     <tbody>
-    {% for e in staff_employees %}
-        <tr data-edit-url="{% url 'emp_form_edit' e.pk %}"
-            data-delete-url="{% url 'emp_delete' e.pk %}"
-            data-move-up-url="{% url 'emp_move_up' e.pk %}"
-            data-move-down-url="{% url 'emp_move_down' e.pk %}">
+    {% for e in external_employees %}
+        <tr data-edit-url="{% url 'ext_form_edit' e.pk %}"
+            data-delete-url="{% url 'ext_delete' e.pk %}"
+            data-move-up-url="{% url 'ext_move_up' e.pk %}"
+            data-move-down-url="{% url 'ext_move_down' e.pk %}">
 
             <td class="text-nowrap">
                 {% if request.user.is_authenticated and request.user.is_staff %}
                     <div class="form-check">
                         <input class="form-check-input"
                                type="checkbox"
-                               id="emp-sel-{{ e.id }}"
-                               name="emp-select"
+                               id="ext-sel-{{ e.id }}"
+                               name="ext-select"
                                value="{{ e.id }}"
                                aria-label="Выделить строку">
                     </div>
@@ -48,13 +46,11 @@
             <td class="text-nowrap">{{ e.patronymic }}</td>
             <td class="text-nowrap">{{ e.user.email }}</td>
             <td class="text-nowrap">{{ e.phone }}</td>
-            <td class="text-nowrap">{{ e.employment }}</td>
-            <td class="text-nowrap">{% if e.department %}{{ e.department.department_name }}{% endif %}</td>
+            <td class="text-nowrap">{{ e.organization }}</td>
             <td class="text-nowrap">{{ e.job_title }}</td>
-            <td class="text-nowrap">{{ e.role }}</td>
         </tr>
     {% empty %}
-        <tr><td colspan="10" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="8" class="text-muted">Пока нет данных.</td></tr>
     {% endfor %}
     </tbody>
 </table>
@@ -63,12 +59,12 @@
 <div class="d-flex align-items-stretch gap-2 products-actions-row">
   <button
           class="btn btn-primary btn-sm d-flex align-items-center"
-          hx-get="{% url 'emp_form_create' %}"
-          hx-target="#users-modal .modal-content"
+          hx-get="{% url 'ext_form_create' %}"
+          hx-target="#ext-users-modal .modal-content"
           hx-swap="innerHTML">
     <i class="bi bi-plus-circle me-2"></i>Добавить строку
   </button>
-  <div id="emp-actions" class="d-none d-flex">
+  <div id="ext-actions" class="d-none d-flex">
     <div class="btn-group">
       <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
         <i class="bi bi-arrow-up-square"></i>

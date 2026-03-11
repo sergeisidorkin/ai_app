@@ -1,0 +1,126 @@
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    {% if action == "create" %}
+      hx-post="{% url 'org_form_create' %}"
+    {% else %}
+      hx-post="{% url 'org_form_edit' unit.pk %}"
+    {% endif %}
+    hx-target="#group-pane"
+    hx-swap="outerHTML">
+  <div class="modal-body">
+    {% csrf_token %}
+    <div class="mb-3">
+      <label class="form-label">Наименование компании (краткое)</label>
+      {{ form.company }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Уровень</label>
+      {{ form.level }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Наименование структурного подразделения</label>
+      {{ form.department_name }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Краткое имя</label>
+      {{ form.short_name }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Функциональное подчинение</label>
+      {{ form.functional_subordination }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Тип подразделения</label>
+      {{ form.unit_type }}
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mb-0">
+        {% for field, errors in form.errors.items %}
+          {% for error in errors %}
+            <div>{{ error }}</div>
+          {% endfor %}
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>
+
+<script>
+(function() {
+  var companyEl = document.getElementById('org-company-select');
+  var levelEl = document.getElementById('org-level-input');
+  var subEl = document.getElementById('org-func-sub');
+  if (!companyEl || !levelEl || !subEl) return;
+
+  var allUnits = {{ org_units_json|safe }};
+  var currentSubValue = subEl.value || '';
+
+  function rebuildSubOptions() {
+    var companyId = parseInt(companyEl.value, 10);
+    var level = parseInt(levelEl.value, 10);
+    var parentLevel = level - 1;
+    var prevValue = subEl.value;
+
+    subEl.innerHTML = '';
+
+    if (isNaN(level) || level <= 1 || isNaN(companyId)) {
+      subEl.disabled = true;
+      subEl.style.backgroundColor = '#f8f9fa';
+      subEl.style.color = '#6c757d';
+      var opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = '---------';
+      subEl.appendChild(opt);
+      return;
+    }
+
+    subEl.disabled = false;
+    subEl.style.backgroundColor = '';
+    subEl.style.color = '';
+
+    var empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = '---------';
+    subEl.appendChild(empty);
+
+    var matched = allUnits.filter(function(u) {
+      return u.company_id === companyId && u.level === parentLevel;
+    });
+
+    matched.forEach(function(u) {
+      var opt = document.createElement('option');
+      opt.value = u.id;
+      opt.textContent = u.department_name;
+      if (String(u.id) === String(prevValue) || String(u.id) === String(currentSubValue)) {
+        opt.selected = true;
+      }
+      subEl.appendChild(opt);
+    });
+
+    currentSubValue = '';
+  }
+
+  companyEl.addEventListener('change', rebuildSubOptions);
+  levelEl.addEventListener('input', rebuildSubOptions);
+  levelEl.addEventListener('change', rebuildSubOptions);
+
+  if (levelEl.value) {
+    var val = parseInt(levelEl.value, 10);
+    if (isNaN(val) || val < 1) levelEl.value = 1;
+  }
+
+  rebuildSubOptions();
+})();
+</script>
