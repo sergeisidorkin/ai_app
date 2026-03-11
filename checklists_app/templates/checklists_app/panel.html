@@ -3,6 +3,7 @@
      data-grid-url="{{ grid_data_url }}"
      data-update-url="{{ update_status_url }}"
      data-batch-update-url="{{ update_status_batch_url }}"
+     data-customer-batch-update-url="{{ update_customer_status_batch_url }}"
      data-item-text-update-url-base="{{ item_text_update_url_base }}"
      data-note-url="{{ update_note_url }}"
      data-comment-modal-url="{{ comment_modal_url }}"
@@ -33,20 +34,35 @@
 
                 <div class="chk-filter-group">
                     <span class="small text-muted">Актив:</span>
-                    <select id="chk-asset" class="form-select form-select-sm" {% if not asset_items %}disabled{% endif %}>
-                        {% if asset_items %}
-                            <option value="all">Все активы</option>
-                            {% for item in asset_items %}
-                                <option value="{{ item.value }}"
-                                        data-item-type="{{ item.type }}"
-                                        {% if item.value == selected_asset %}selected{% endif %}>
-                                    {% if item.type == "asset" %}{{ item.label }}  • ᴀᴋᴛᴎʙ{% else %}    {{ item.label }}{% endif %}
-                                </option>
-                            {% endfor %}
-                        {% else %}
-                            <option value="">Нет данных</option>
-                        {% endif %}
-                    </select>
+                    <div class="chk-multiselect" id="chk-asset-wrap">
+                        <button type="button" class="form-select form-select-sm text-start chk-multiselect-btn" id="chk-asset-btn" {% if not asset_items %}disabled{% endif %}>
+                            Все активы
+                        </button>
+                        <div class="chk-multiselect-menu" id="chk-asset-menu">
+                            <div class="chk-multiselect-item">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" value="all" id="chk-asset-all" checked>
+                                    <label class="form-check-label" for="chk-asset-all">Все активы</label>
+                                </div>
+                            </div>
+                            {% if asset_items %}
+                                {% for item in asset_items %}
+                                    {% if item.type == "asset" and item.entityCount > 1 %}
+                                    <div class="chk-multiselect-item chk-multiselect-group" data-item-type="asset">
+                                        {{ item.label }}  • ᴀᴋᴛᴎʙ
+                                    </div>
+                                    {% else %}
+                                    <div class="chk-multiselect-item" data-item-type="{{ item.type }}">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="{{ item.value }}" id="chk-asset-{{ forloop.counter }}">
+                                            <label class="form-check-label" for="chk-asset-{{ forloop.counter }}">{{ item.label }}{% if item.type == "asset" %} • ᴀᴋᴛᴎʙ{% endif %}</label>
+                                        </div>
+                                    </div>
+                                    {% endif %}
+                                {% endfor %}
+                            {% endif %}
+                        </div>
+                    </div>
                 </div>
 
                 <div class="chk-filter-group">
@@ -60,6 +76,19 @@
                             <option value="">Нет данных</option>
                         {% endif %}
                     </select>
+                </div>
+
+                <div class="chk-filter-group chk-visibility-toggles">
+                    <button type="button" id="chk-toggle-imcm" class="chk-vis-toggle chk-vis-toggle--active" title="Показать/скрыть статусы IMCM">
+                        <i class="bi bi-eye"></i>
+                        <span class="chk-bullet chk-bullet--imcm">&bull;</span>
+                        <span>Статусы IMCM</span>
+                    </button>
+                    <button type="button" id="chk-toggle-cs" class="chk-vis-toggle chk-vis-toggle--active" title="Показать/скрыть статусы Заказчика">
+                        <i class="bi bi-eye"></i>
+                        <span class="chk-bullet chk-bullet--cs">&bull;</span>
+                        <span>Статусы Заказчика</span>
+                    </button>
                 </div>
 
                 {% if request.user.is_authenticated and request.user.is_staff %}
@@ -178,7 +207,8 @@
         gap: .5rem;
         white-space: nowrap;
     }
-    #checklists-panel-root .chk-filter-group select {
+    #checklists-panel-root .chk-filter-group select,
+    #checklists-panel-root .chk-filter-group .chk-multiselect {
         min-width: 16rem;
     }
     @media (max-width: 1200px) {
@@ -188,10 +218,65 @@
         #checklists-panel-root .chk-filter-group {
         width: 100%;
         }
-        #checklists-panel-root .chk-filter-group select {
+        #checklists-panel-root .chk-filter-group select,
+        #checklists-panel-root .chk-filter-group .chk-multiselect {
         width: 100%;
         min-width: 0;
         }
+    }
+
+    .chk-multiselect {
+        position: relative;
+        min-width: 16rem;
+    }
+    .chk-multiselect-btn {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        padding-right: 2rem !important;
+    }
+    .chk-multiselect-menu {
+        display: none;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        z-index: 1055;
+        background: #fff;
+        border: 1px solid #ced4da;
+        border-radius: .25rem;
+        max-height: 22rem;
+        overflow-y: auto;
+        min-width: 100%;
+        padding: .25rem 0;
+        box-shadow: 0 .25rem .5rem rgba(0,0,0,.15);
+        margin-top: 2px;
+    }
+    .chk-multiselect-menu.show {
+        display: block;
+    }
+    .chk-multiselect-item {
+        display: flex;
+        align-items: center;
+        padding: .2rem .75rem;
+        white-space: nowrap;
+        margin: 0;
+        font-size: .875em;
+        color: #212529;
+    }
+    .chk-multiselect-item:hover {
+        background: #f8f9fa;
+    }
+    .chk-multiselect-item .form-check {
+        margin: 0;
+        min-height: auto;
+    }
+    .chk-multiselect-item .form-check-label {
+        cursor: pointer;
+        user-select: none;
+    }
+    .chk-multiselect-item.chk-multiselect-group {
+        cursor: default;
+        padding-left: calc(.75rem + 1.5em);
     }
 
     #checklists-table-wrap .chk-grid-cell {
@@ -228,6 +313,69 @@
     #checklists-table-wrap .chk-grid-cell--na {
         background: transparent;
         border-color: #ced4da;
+    }
+    #checklists-table-wrap .chk-grid-cell--cs-not-transferred {
+        background: transparent;
+        border-color: #d8dee5;
+    }
+    #checklists-table-wrap .chk-grid-cell--cs-partial {
+        background: transparent;
+        border-color: #d8dee5;
+    }
+    #checklists-table-wrap .chk-grid-cell--cs-transferred {
+        background: transparent;
+        border-color: #d8dee5;
+    }
+    #checklists-table-wrap .chk-grid-cell--cs-no-data {
+        background: transparent;
+        border-color: #ced4da;
+    }
+    .chk-bullet {
+        font-size: 2.5em;
+        line-height: 0;
+        vertical-align: middle;
+        position: relative;
+        top: -0.12em;
+    }
+    .chk-bullet--imcm {
+        color: #075d94;
+    }
+    .chk-bullet--cs {
+        color: #5ea96a;
+    }
+    .chk-visibility-toggles {
+        gap: .35rem !important;
+        margin-left: 1rem;
+    }
+    .chk-vis-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: .3rem;
+        padding: .25rem .5rem;
+        border: 1px solid #dee2e6;
+        border-radius: .25rem;
+        background: #fff;
+        font-size: .875rem;
+        line-height: 1.5;
+        color: #212529;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: opacity .15s ease, border-color .15s ease;
+    }
+    .chk-vis-toggle:hover {
+        border-color: #adb5bd;
+    }
+    .chk-vis-toggle .bi {
+        font-size: .875rem;
+    }
+    .chk-vis-toggle .chk-bullet {
+        font-size: 2.8rem;
+        top: -4px;
+        margin-right: -.35rem;
+    }
+    .chk-vis-toggle:not(.chk-vis-toggle--active) {
+        opacity: .5;
+        border-style: dashed;
     }
     #checklists-table-wrap .chk-comment-compact {
         display: flex;
@@ -905,7 +1053,9 @@
         const root = document.getElementById('checklists-panel-root');
         if (!root) return;
         const projectSel = root.querySelector('#chk-project');
-        const assetSel = root.querySelector('#chk-asset');
+        const assetWrap = root.querySelector('#chk-asset-wrap');
+        const assetBtn = root.querySelector('#chk-asset-btn');
+        const assetMenu = root.querySelector('#chk-asset-menu');
         const sectionSel = root.querySelector('#chk-section');
         const tableWrap = document.getElementById('checklists-table-wrap');
         const loading = document.getElementById('checklists-table-loading');
@@ -919,18 +1069,82 @@
             return m ? m.pop() : '';
         }
 
+        function getAssetValue() {
+            if (!assetMenu) return 'all';
+            const allCb = assetMenu.querySelector('.form-check-input[value="all"]');
+            if (allCb && allCb.checked) return 'all';
+            const checked = [...assetMenu.querySelectorAll('.form-check-input:checked')]
+                .filter(cb => cb.value !== 'all')
+                .map(cb => cb.value);
+            return checked.length ? checked.join(',') : 'all';
+        }
+
+        function updateAssetBtnText() {
+            if (!assetBtn || !assetMenu) return;
+            const allCb = assetMenu.querySelector('.form-check-input[value="all"]');
+            if (allCb && allCb.checked) {
+                assetBtn.textContent = 'Все активы';
+                return;
+            }
+            const checked = [...assetMenu.querySelectorAll('.form-check-input:checked')]
+                .filter(cb => cb.value !== 'all');
+            if (!checked.length) {
+                assetBtn.textContent = 'Все активы';
+                return;
+            }
+            if (checked.length === 1) {
+                const lbl = checked[0].closest('.form-check')?.querySelector('.form-check-label');
+                assetBtn.textContent = lbl ? lbl.textContent.trim() : checked[0].value;
+            } else {
+                assetBtn.textContent = `Выбрано: ${checked.length}`;
+            }
+        }
+
+        if (assetBtn && assetMenu) {
+            assetBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                assetMenu.classList.toggle('show');
+            });
+            document.addEventListener('click', (e) => {
+                if (!assetWrap.contains(e.target)) {
+                    assetMenu.classList.remove('show');
+                }
+            });
+            assetMenu.addEventListener('change', async (e) => {
+                const cb = e.target;
+                if (!cb.classList.contains('form-check-input')) return;
+                if (cb.value === 'all' && cb.checked) {
+                    assetMenu.querySelectorAll('.form-check-input').forEach(c => {
+                        if (c.value !== 'all') c.checked = false;
+                    });
+                } else if (cb.value !== 'all') {
+                    const allCb = assetMenu.querySelector('.form-check-input[value="all"]');
+                    if (allCb) allCb.checked = false;
+                    const anyChecked = [...assetMenu.querySelectorAll('.form-check-input:checked')]
+                        .some(c => c.value !== 'all');
+                    if (!anyChecked && allCb) allCb.checked = true;
+                }
+                updateAssetBtnText();
+                await loadSections();
+                await reloadTable();
+            });
+        }
+
+        const customerBatchUpdateUrl = root.dataset.customerBatchUpdateUrl;
+
         const controller = window.ChecklistsGrid.create(root, {
             tableWrap,
             loading,
             gridUrl,
             batchUpdateUrl,
+            customerBatchUpdateUrl,
             batchEditUrl: root.dataset.batchEditUrl,
             itemTextUpdateUrlBase: root.dataset.itemTextUpdateUrlBase,
             commentModalUrl: root.dataset.commentModalUrl,
             commentModalEl: document.getElementById('checklists-comment-modal'),
             getCsrf,
             getProjectUid: () => projectSel?.value || '',
-            getAsset: () => assetSel?.value || '',
+            getAsset: getAssetValue,
             getSection: () => sectionSel?.value || '',
         });
 
@@ -954,26 +1168,36 @@
                     signal: controller.signal,
                 });
                 const data = await resp.json();
-                if (assetSel) {
-                    assetSel.innerHTML = '';
+                if (assetMenu) {
+                    assetMenu.innerHTML = '';
                     const items = data.asset_items || [];
                     if (!items.length) {
-                        assetSel.innerHTML = '<option value="">Нет данных</option>';
-                        assetSel.setAttribute('disabled', 'disabled');
+                        assetBtn.textContent = 'Нет данных';
+                        assetBtn.setAttribute('disabled', 'disabled');
                     } else {
-                        assetSel.removeAttribute('disabled');
-                        const allOpt = document.createElement('option');
-                        allOpt.value = 'all';
-                        allOpt.textContent = 'Все активы';
-                        assetSel.appendChild(allOpt);
+                        assetBtn.removeAttribute('disabled');
+                        let idx = 0;
+                        const allDiv = document.createElement('div');
+                        allDiv.className = 'chk-multiselect-item';
+                        allDiv.innerHTML = '<div class="form-check"><input class="form-check-input" type="checkbox" value="all" id="chk-asset-dyn-all" checked><label class="form-check-label" for="chk-asset-dyn-all">Все активы</label></div>';
+                        assetMenu.appendChild(allDiv);
                         items.forEach((item) => {
-                            const opt = document.createElement('option');
-                            opt.value = item.value;
-                            opt.textContent = item.type === 'asset' ? item.label + '  \u2022 \u1D00\u1D0B\u1D1B\u1D0E\u0299' : '    ' + item.label;
-                            opt.dataset.itemType = item.type;
-                            if (item.value === data.asset) opt.selected = true;
-                            assetSel.appendChild(opt);
+                            idx++;
+                            const isMultiEntityAsset = item.type === 'asset' && (item.entityCount || 0) > 1;
+                            const div = document.createElement('div');
+                            div.className = isMultiEntityAsset ? 'chk-multiselect-item chk-multiselect-group' : 'chk-multiselect-item';
+                            if (item.type) div.dataset.itemType = item.type;
+                            if (isMultiEntityAsset) {
+                                div.textContent = item.label + '  \u2022 \u1D00\u1D0B\u1D1B\u1D0E\u0299';
+                            } else {
+                                const cbId = 'chk-asset-dyn-' + idx;
+                                const val = item.value.replace(/"/g, '&quot;');
+                                const suffix = item.type === 'asset' ? ' \u2022 \u1D00\u1D0B\u1D1B\u1D0E\u0299' : '';
+                                div.innerHTML = '<div class="form-check"><input class="form-check-input" type="checkbox" value="' + val + '" id="' + cbId + '"><label class="form-check-label" for="' + cbId + '">' + item.label + suffix + '</label></div>';
+                            }
+                            assetMenu.appendChild(div);
                         });
+                        updateAssetBtnText();
                     }
                 }
                 if (sectionSel) {
@@ -1014,13 +1238,14 @@
                 metaController = controller;
                 const projectUid = projectSel.value;
                 const url = metaUrlBase.replace("__uid__", encodeURIComponent(projectUid))
-                    + '?asset=' + encodeURIComponent(assetSel?.value || '');
+                    + '?asset=' + encodeURIComponent(getAssetValue());
                 const resp = await fetch(url, {
                     headers: { 'X-Requested-With': 'fetch' },
                     signal: controller.signal,
                 });
                 const data = await resp.json();
                 if (sectionSel) {
+                    const prevValue = sectionSel.value;
                     sectionSel.innerHTML = '';
                     const sections = data.sections || [];
                     if (!sections.length) {
@@ -1036,6 +1261,9 @@
                             opt.textContent = s.name;
                             sectionSel.appendChild(opt);
                         });
+                        if (prevValue && sectionSel.querySelector(`option[value="${CSS.escape(prevValue)}"]`)) {
+                            sectionSel.value = prevValue;
+                        }
                     }
                 }
             } catch (err) {
@@ -1054,10 +1282,6 @@
 
         projectSel?.addEventListener('change', async () => {
             await loadProjectMeta();
-            await reloadTable();
-        });
-        assetSel?.addEventListener('change', async () => {
-            await loadSections();
             await reloadTable();
         });
         sectionSel?.addEventListener('change', reloadTable);
@@ -1081,6 +1305,30 @@
             await loadProjectMeta();
             await reloadTable();
         });
+
+        // --- Column visibility toggles ---
+        const toggleImcm = document.getElementById('chk-toggle-imcm');
+        const toggleCs = document.getElementById('chk-toggle-cs');
+        function swapEyeIcon(btn, isActive) {
+            const icon = btn.querySelector('.bi');
+            if (!icon) return;
+            icon.classList.toggle('bi-eye', isActive);
+            icon.classList.toggle('bi-eye-slash', !isActive);
+        }
+        if (toggleImcm) {
+            toggleImcm.addEventListener('click', () => {
+                const isActive = toggleImcm.classList.toggle('chk-vis-toggle--active');
+                swapEyeIcon(toggleImcm, isActive);
+                controller.setImcmVisible(isActive);
+            });
+        }
+        if (toggleCs) {
+            toggleCs.addEventListener('click', () => {
+                const isActive = toggleCs.classList.toggle('chk-vis-toggle--active');
+                swapEyeIcon(toggleCs, isActive);
+                controller.setCsVisible(isActive);
+            });
+        }
 
         // --- Yandex.Disk button ---
         const yadiskBtn = document.getElementById('chk-yadisk-btn');

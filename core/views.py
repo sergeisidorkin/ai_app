@@ -1,6 +1,7 @@
 from django.contrib.auth.views import LoginView
 from django.shortcuts import render, redirect
 
+from policy_app.models import EXPERT_GROUP
 from users_app.models import Employee
 
 
@@ -28,4 +29,8 @@ def home_entry(request):
     if not request.user.is_staff:
         return redirect("user_profile")
     employee = Employee.objects.filter(user=request.user).first()
-    return render(request, "index.html", {"employee": employee})
+    is_expert = request.user.groups.filter(name=EXPERT_GROUP).exists()
+    return render(request, "index.html", {
+        "employee": employee,
+        "is_expert": is_expert,
+    })

@@ -2,7 +2,8 @@ from django import forms
 from django.contrib.auth.models import User, Group
 from django.contrib.auth.password_validation import validate_password
 
-from group_app.models import GroupMember
+from group_app.models import GroupMember, OrgUnit
+from policy_app.models import ADMIN_GROUP
 from .models import Employee, PendingRegistration
 
 FREELANCER_LABEL = "Внештатный сотрудник"
@@ -51,7 +52,14 @@ class EmployeeForm(forms.Form):
     employment = forms.ChoiceField(
         label="Трудоустройство",
         required=False,
-        widget=forms.Select(attrs={"class": "form-select"}),
+        widget=forms.Select(attrs={"class": "form-select", "id": "emp-employment-select"}),
+    )
+    department = forms.ModelChoiceField(
+        label="Подразделение",
+        queryset=OrgUnit.objects.none(),
+        required=False,
+        empty_label="---------",
+        widget=forms.Select(attrs={"class": "form-select", "id": "emp-department-select"}),
     )
     job_title = forms.CharField(
         label="Должность",
@@ -71,6 +79,8 @@ class EmployeeForm(forms.Form):
         self.instance = instance
         super().__init__(*args, **kwargs)
         self.fields["employment"].choices = _employment_choices()
+        self.fields["department"].queryset = OrgUnit.objects.select_related("company").all()
+        self.fields["department"].label_from_instance = lambda obj: obj.department_name
         if instance:
             self.fields["password"].help_text = "Оставьте пустым, чтобы не менять"
             user = instance.user
@@ -82,6 +92,7 @@ class EmployeeForm(forms.Form):
                 "email": user.email,
                 "phone": instance.phone,
                 "employment": instance.employment,
+                "department": instance.department_id,
                 "job_title": instance.job_title,
                 "role": current_group.pk if current_group else None,
             })
@@ -126,6 +137,7 @@ class EmployeeForm(forms.Form):
         employee.patronymic = data.get("patronymic", "")
         employee.phone = data.get("phone", "")
         employee.employment = data.get("employment", "")
+        employee.department = data.get("department")
         employee.job_title = data.get("job_title", "")
 
         group = data.get("role")
@@ -135,6 +147,117 @@ class EmployeeForm(forms.Form):
             employee.role = group.name
         else:
             employee.role = ""
+
+        user.is_superuser = bool(group and group.name == ADMIN_GROUP)
+        user.save(update_fields=["is_superuser"])
+
+        employee.save()
+
+        return employee
+
+
+class ExternalEmployeeForm(forms.Form):
+    last_name = forms.CharField(
+        label="Фамилия",
+        max_length=150,
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Фамилия"}),
+    )
+    first_name = forms.CharField(
+        label="Имя",
+        max_length=150,
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Имя"}),
+    )
+    patronymic = forms.CharField(
+        label="Отчество",
+        max_length=150,
+        required=False,
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Отчество"}),
+    )
+    email = forms.EmailField(
+        label="Эл. почта (логин)",
+        widget=forms.EmailInput(attrs={"class": "form-control", "placeholder": "email@example.com"}),
+    )
+    password = forms.CharField(
+        label="Пароль",
+        required=False,
+        widget=forms.PasswordInput(attrs={"class": "form-control", "placeholder": "Пароль"}),
+    )
+    phone = forms.CharField(
+        label="Телефон",
+        max_length=50,
+        required=False,
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "+7 000 000-00-00"}),
+    )
+    organization = forms.CharField(
+        label="Организация",
+        max_length=255,
+        required=False,
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Организация"}),
+    )
+    job_title = forms.CharField(
+        label="Должность",
+        max_length=255,
+        required=False,
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Должность"}),
+    )
+
+    def __init__(self, *args, instance=None, **kwargs):
+        self.instance = instance
+        super().__init__(*args, **kwargs)
+        if instance:
+            self.fields["password"].help_text = "Оставьте пустым, чтобы не менять"
+            user = instance.user
+            self.initial.update({
+                "last_name": user.last_name,
+                "first_name": user.first_name,
+                "patronymic": instance.patronymic,
+                "email": user.email,
+                "phone": instance.phone,
+                "organization": instance.organization,
+                "job_title": instance.job_title,
+            })
+
+    def clean_email(self):
+        email = self.cleaned_data["email"]
+        if len(email) > 150:
+            raise forms.ValidationError("Email не может быть длиннее 150 символов.")
+        qs = User.objects.filter(username=email)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.user_id)
+        if qs.exists():
+            raise forms.ValidationError("Пользователь с таким email уже существует.")
+        return email
+
+    def clean_password(self):
+        pwd = self.cleaned_data.get("password", "")
+        if not self.instance and not pwd:
+            raise forms.ValidationError("Пароль обязателен при создании пользователя.")
+        if pwd:
+            validate_password(pwd)
+        return pwd
+
+    def save(self):
+        data = self.cleaned_data
+        if self.instance:
+            user = self.instance.user
+            employee = self.instance
+        else:
+            user = User(is_staff=False)
+            employee = Employee(user=user)
+
+        user.last_name = data["last_name"]
+        user.first_name = data["first_name"]
+        user.email = data["email"]
+        user.username = data["email"]
+        if data.get("password"):
+            user.set_password(data["password"])
+        user.save()
+
+        employee.user = user
+        employee.patronymic = data.get("patronymic", "")
+        employee.phone = data.get("phone", "")
+        employee.organization = data.get("organization", "")
+        employee.job_title = data.get("job_title", "")
         employee.save()
 
         return employee

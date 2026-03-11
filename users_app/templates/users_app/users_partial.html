@@ -9,4 +9,15 @@
     <div class="table-responsive">
         {% include "users_app/users_table_partial.html" %}
     </div>
+
+    <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 24px;">
+        <h5 class="table-section-title">
+            <i class="bi bi-table me-2"></i>
+            Внешние пользователи
+        </h5>
+    </div>
+
+    <div class="table-responsive">
+        {% include "users_app/external_table_partial.html" %}
+    </div>
 </div>

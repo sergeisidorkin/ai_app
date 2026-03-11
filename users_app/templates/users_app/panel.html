@@ -7,7 +7,7 @@
          hx-trigger="load"
          hx-target="#users-pane"
          hx-swap="innerHTML">
-      <div class="text-muted htmx-indicator">Загрузка сотрудников…</div>
+      <div class="text-muted htmx-indicator">Загрузка пользователей…</div>
     </div>
 
     <div class="modal fade" id="users-modal" tabindex="-1" aria-hidden="true">
@@ -17,12 +17,30 @@
       </div>
     </div>
 
+    <div class="modal fade" id="ext-users-modal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-scrollable">
+        <div class="modal-content">
+        </div>
+      </div>
+    </div>
+
     <script>
       document.body.addEventListener('users-updated', function () {
-        const el = document.getElementById('users-modal');
-        if (!el) return;
-        const modal = bootstrap.Modal.getInstance(el) || bootstrap.Modal.getOrCreateInstance(el);
-        modal.hide();
+        ['users-modal', 'ext-users-modal'].forEach(function (id) {
+          const el = document.getElementById(id);
+          if (!el) return;
+          const modal = bootstrap.Modal.getInstance(el) || bootstrap.Modal.getOrCreateInstance(el);
+          modal.hide();
+        });
+      });
+
+      document.addEventListener('htmx:afterSwap', function (e) {
+        ['users-modal', 'ext-users-modal'].forEach(function (id) {
+          if (e.target && e.target.matches('#' + id + ' .modal-content')) {
+            const m = bootstrap.Modal.getOrCreateInstance(document.getElementById(id));
+            m.show();
+          }
+        });
       });
     </script>
   </div>

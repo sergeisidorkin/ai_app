@@ -21,6 +21,15 @@
     }[status] || "";
   }
 
+  function customerStatusColorClass(status) {
+    return {
+      not_transferred: "chk-grid-cell--cs-not-transferred",
+      partial_transfer: "chk-grid-cell--cs-partial",
+      transferred: "chk-grid-cell--cs-transferred",
+      no_data: "chk-grid-cell--cs-no-data",
+    }[status] || "";
+  }
+
   function computeCodeClass(cells) {
     const statuses = new Set(
       (cells || [])
@@ -54,6 +63,9 @@
       saveTimer: null,
       pending: new Map(),
       savePromise: null,
+      customerPending: new Map(),
+      customerSaveTimer: null,
+      customerSavePromise: null,
       requestController: null,
       renderWindow: { start: 0, end: 0 },
       editorCellKey: "",
@@ -62,6 +74,8 @@
       editSnapshot: null,
       editTextChanges: {},
       truncated: false,
+      imcmVisible: true,
+      csVisible: true,
       activeTextCellId: "",
       inlineEditing: null,
     };
@@ -76,6 +90,7 @@
       ? commentModalEl.querySelector(".modal-content")
       : null;
     const editor = ensureEditor();
+    const customerEditor = ensureCustomerEditor();
 
     bindEvents();
 
@@ -94,6 +109,10 @@
           (row.cells || []).forEach((cell) => {
             row.cellMap.set(String(cell.entityId), cell);
           });
+          row.customerCellMap = new Map();
+          (row.customerCells || []).forEach((cell) => {
+            row.customerCellMap.set(String(cell.entityId), cell);
+          });
           state.rowMap.set(String(row.id), row);
         }
       });
@@ -107,6 +126,12 @@
       const row = getRow(itemId);
       if (!row || !row.cellMap) return null;
       return row.cellMap.get(String(entityId)) || null;
+    }
+
+    function getCustomerCell(itemId, entityId) {
+      const row = getRow(itemId);
+      if (!row || !row.customerCellMap) return null;
+      return row.customerCellMap.get(String(entityId)) || null;
     }
 
     async function reload() {
@@ -230,6 +255,15 @@
           </a>`
         );
       }
+      if (ui.touchStatusDatesUrl) {
+        actions.push(
+          `<button class="btn btn-primary btn-sm d-flex align-items-center"
+             data-grid-action="touch-status-dates"
+             ${state.editMode ? "disabled" : ""}>
+            <i class="bi bi-cloud-minus me-2"></i>Статусы без изменений
+          </button>`
+        );
+      }
       if (ui.approveInfoRequestUrl || ui.infoRequestApprovedAt) {
         const approved = !!ui.infoRequestApprovedAt;
         actions.push(
@@ -285,7 +319,7 @@
 
     function renderStatusCell(row, cell) {
       const key = cellKey(row.id, cell.entityId);
-      return `<td class="status-cell status-col">
+      return `<td class="status-cell status-col imcm-col">
         <button
           type="button"
           id="grid-cell-${row.id}-${cell.entityId}"
@@ -299,7 +333,28 @@
           ${escapeHtml(cell.statusShortLabel)}
         </button>
       </td>
-      <td class="date-cell text-nowrap" id="grid-date-${row.id}-${cell.entityId}">
+      <td class="date-cell text-nowrap imcm-col" id="grid-date-${row.id}-${cell.entityId}">
+        ${escapeHtml(cell.dateDisplay || "—")}
+      </td>`;
+    }
+
+    function renderCustomerStatusCell(row, cell) {
+      const key = "cs:" + cellKey(row.id, cell.entityId);
+      return `<td class="status-cell status-col cs-col">
+        <button
+          type="button"
+          id="grid-cs-${row.id}-${cell.entityId}"
+          class="chk-grid-cell ${customerStatusColorClass(cell.status)}${state.activeCellKey === key ? " is-active" : ""}"
+          data-action="customer-status-cell"
+          data-item-id="${row.id}"
+          data-entity-id="${cell.entityId}"
+          data-status="${cell.status}"
+          title="${escapeHtml(cell.statusLabel)}"
+          ${state.payload.readonly ? "disabled" : ""}>
+          ${escapeHtml(cell.statusShortLabel)}
+        </button>
+      </td>
+      <td class="date-cell text-nowrap cs-col" id="grid-cs-date-${row.id}-${cell.entityId}">
         ${escapeHtml(cell.dateDisplay || "—")}
       </td>`;
     }
@@ -325,7 +380,10 @@
       const entities = state.payload?.entities || [];
       const ui = state.payload?.ui || {};
       const showCheckboxes = state.editMode && ui.showActions;
-      const baseCols = 5 + entities.length * 2 + 1;
+      const showImcm = state.imcmVisible;
+      const showCs = state.csVisible;
+      const statusColCount = (showImcm ? entities.length * 2 : 0) + (showCs ? entities.length * 2 : 0);
+      const baseCols = 5 + statusColCount + 1;
       return `<table class="table table-sm align-middle table-bordered${state.editMode ? " chk-edit-mode" : ""}" id="chk-items-table">
         <colgroup>
           ${showCheckboxes ? '<col class="chk-select-col">' : ""}
@@ -334,7 +392,8 @@
           <col>
           <col class="files-col">
           <col id="chk-col-name">
-          ${entities.map(() => '<col class="status-col"><col class="date-col">').join("")}
+          ${showImcm ? entities.map(() => '<col class="status-col imcm-col"><col class="date-col imcm-col">').join("") : ""}
+          ${showCs ? entities.map(() => '<col class="status-col cs-col"><col class="date-col cs-col">').join("") : ""}
           <col class="comment-col">
         </colgroup>
         <thead class="table-light">
@@ -354,10 +413,14 @@
                 <i class="bi bi-text-wrap"></i>
               </button>
             </th>
-            ${entities.map((entity) => `
-              <th class="status-col text-nowrap">${escapeHtml(entity.label)}</th>
-              <th class="text-nowrap date-header">Дата</th>
-            `).join("")}
+            ${showImcm ? entities.map((entity) => `
+              <th class="status-col imcm-col text-nowrap"><span class="chk-bullet chk-bullet--imcm">\u2022</span> ${escapeHtml(entity.label)}</th>
+              <th class="text-nowrap date-header imcm-col"><span class="chk-bullet chk-bullet--imcm">\u2022</span> Дата</th>
+            `).join("") : ""}
+            ${showCs ? entities.map((entity) => `
+              <th class="status-col cs-col text-nowrap"><span class="chk-bullet chk-bullet--cs">\u2022</span> ${escapeHtml(entity.label)}</th>
+              <th class="text-nowrap date-header cs-col"><span class="chk-bullet chk-bullet--cs">\u2022</span> Дата</th>
+            `).join("") : ""}
             <th class="col-comment col-comment-imc">Комментарии</th>
           </tr>
         </thead>
@@ -405,7 +468,8 @@
                 </div>
               </td>
               ${renderTextCell(row, "name", "col-name-cell")}
-              ${(row.cells || []).map((cell) => renderStatusCell(row, cell)).join("")}
+              ${showImcm ? (row.cells || []).map((cell) => renderStatusCell(row, cell)).join("") : ""}
+              ${showCs ? (row.customerCells || []).map((cell) => renderCustomerStatusCell(row, cell)).join("") : ""}
               <td class="col-comment col-comment-imc">${renderComment("imc_comment", row)}</td>
             </tr>`;
           }).join("")}
@@ -469,6 +533,11 @@
     }
 
     let cleanupSticky = null;
+    let _stickyBuildClone = null;
+
+    function rebuildStickyClone() {
+      if (_stickyBuildClone) _stickyBuildClone();
+    }
 
     function setupStickyActions() {
       if (cleanupSticky) {
@@ -504,6 +573,7 @@
         if (action === 'save-edit') { saveEditMode(); return; }
         if (action === 'cancel-edit') { cancelEditMode(); return; }
         if (action === 'approve-info-request') { approveInfoRequest(btn); return; }
+        if (action === 'touch-status-dates') { touchStatusDates(btn); return; }
         handleGridAction(action);
       });
 
@@ -767,6 +837,7 @@
 
         cloneScroll.appendChild(ct);
       }
+      _stickyBuildClone = buildClone;
 
       function syncScroll() {
         cloneScroll.style.marginLeft = (-tableWrap.scrollLeft) + 'px';
@@ -961,11 +1032,38 @@
       if (!table) return;
       if (!state.truncated) return;
       const cols = table.querySelectorAll("colgroup col");
+      const nameCol = table.querySelector("col#chk-col-name");
       const headerCells = table.querySelectorAll("thead th");
+      const MIN_NAME_WIDTH = 200;
+
+      let otherSum = 0;
+      let nameNatural = 0;
       headerCells.forEach((th, i) => {
-        if (cols[i]) cols[i].style.width = th.getBoundingClientRect().width + "px";
+        const w = th.getBoundingClientRect().width;
+        if (cols[i] === nameCol) {
+          nameNatural = w;
+        } else {
+          otherSum += w;
+        }
       });
-      table.style.width = "100%";
+
+      const containerWidth = tableWrap.clientWidth;
+      const fitsInContainer = otherSum + MIN_NAME_WIDTH <= containerWidth;
+
+      headerCells.forEach((th, i) => {
+        if (!cols[i] || cols[i] === nameCol) return;
+        cols[i].style.width = th.getBoundingClientRect().width + "px";
+      });
+
+      if (fitsInContainer) {
+        if (nameCol) nameCol.style.width = "";
+        table.style.width = "100%";
+      } else {
+        const nameWidth = Math.max(nameNatural, MIN_NAME_WIDTH);
+        if (nameCol) nameCol.style.width = nameWidth + "px";
+        table.style.width = (otherSum + nameWidth) + "px";
+      }
+
       table.style.tableLayout = "fixed";
       table.classList.add("chk-truncated");
       const toggle = table.querySelector("#chk-wrap-toggle");
@@ -993,6 +1091,23 @@
       const codeEl = document.getElementById(`chk-code-${itemId}`);
       if (row && codeEl) {
         codeEl.className = `col-code text-nowrap ${row.codeClass || ""}`;
+      }
+    }
+
+    function updateCustomerCellDom(itemId, entityId, pending) {
+      const cell = getCustomerCell(itemId, entityId);
+      if (!cell) return;
+      const button = document.getElementById(`grid-cs-${itemId}-${entityId}`);
+      if (button) {
+        button.textContent = cell.statusShortLabel;
+        button.title = cell.statusLabel;
+        button.dataset.status = cell.status;
+        const key = "cs:" + cellKey(itemId, entityId);
+        button.className = `chk-grid-cell ${customerStatusColorClass(cell.status)}${pending ? " is-pending" : ""}${state.activeCellKey === key ? " is-active" : ""}`;
+      }
+      const dateEl = document.getElementById(`grid-cs-date-${itemId}-${entityId}`);
+      if (dateEl) {
+        dateEl.textContent = cell.dateDisplay || "—";
       }
     }
 
@@ -1221,13 +1336,7 @@
     function selectCell(button) {
       const key = cellKey(button.dataset.itemId, button.dataset.entityId);
       if (state.activeCellKey === key) return;
-      if (state.activeCellKey) {
-        const [prevItemId, prevEntityId] = state.activeCellKey.split(":");
-        const prevButton = document.getElementById(`grid-cell-${prevItemId}-${prevEntityId}`);
-        if (prevButton) {
-          prevButton.classList.remove("is-active");
-        }
-      }
+      clearActiveCell();
       state.activeCellKey = key;
       button.classList.add("is-active");
     }
@@ -1237,14 +1346,109 @@
       state.editorCellKey = "";
     }
 
+    function closeCustomerEditor() {
+      customerEditor.classList.add("d-none");
+    }
+
     function clearActiveCell() {
       if (!state.activeCellKey) return;
-      const [itemId, entityId] = state.activeCellKey.split(":");
-      const activeButton = document.getElementById(`grid-cell-${itemId}-${entityId}`);
-      if (activeButton) {
-        activeButton.classList.remove("is-active");
+      if (state.activeCellKey.startsWith("cs:")) {
+        const inner = state.activeCellKey.slice(3);
+        const [itemId, entityId] = inner.split(":");
+        const activeButton = document.getElementById(`grid-cs-${itemId}-${entityId}`);
+        if (activeButton) activeButton.classList.remove("is-active");
+      } else {
+        const [itemId, entityId] = state.activeCellKey.split(":");
+        const activeButton = document.getElementById(`grid-cell-${itemId}-${entityId}`);
+        if (activeButton) activeButton.classList.remove("is-active");
       }
       state.activeCellKey = "";
+    }
+
+    function applyLocalCustomerStatus(itemId, entityId, statusValue) {
+      const row = getRow(itemId);
+      const cell = getCustomerCell(itemId, entityId);
+      if (!row || !cell) return;
+
+      const choice = (state.payload.customerStatusChoices || []).find((c) => c.value === statusValue);
+      cell.status = statusValue;
+      cell.statusLabel = choice?.label || statusValue;
+      cell.statusShortLabel = choice?.shortLabel || statusValue;
+      cell.dateDisplay = "Сохр…";
+      cell.dateIso = "";
+      state.customerPending.set(cellKey(itemId, entityId), {
+        checklist_item: itemId,
+        legal_entity: entityId,
+        status: statusValue,
+      });
+      updateCustomerCellDom(itemId, entityId, true);
+      scheduleCustomerSave();
+    }
+
+    function applyCustomerServerResult(result) {
+      const cell = getCustomerCell(result.checklistItem, result.legalEntity);
+      if (!cell) return;
+      cell.status = result.status;
+      cell.statusLabel = result.statusLabel;
+      cell.statusShortLabel = result.statusShortLabel;
+      cell.dateDisplay = result.dateDisplay;
+      cell.dateIso = result.dateIso;
+      updateCustomerCellDom(result.checklistItem, result.legalEntity, false);
+    }
+
+    function scheduleCustomerSave() {
+      if (state.customerSaveTimer) {
+        window.clearTimeout(state.customerSaveTimer);
+      }
+      state.customerSaveTimer = window.setTimeout(() => {
+        flushCustomerPending();
+      }, 450);
+    }
+
+    async function flushCustomerPending() {
+      if (state.customerSavePromise) {
+        await state.customerSavePromise;
+      }
+      if (!state.customerPending.size || !options.customerBatchUpdateUrl) return;
+
+      const entries = Array.from(state.customerPending.entries());
+      state.customerPending.clear();
+      const updates = entries.map((entry) => entry[1]);
+      state.customerSavePromise = fetch(options.customerBatchUpdateUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": options.getCsrf(),
+          "X-Requested-With": "fetch",
+        },
+        body: JSON.stringify({
+          asset_name: state.payload?.assetName || options.getAsset() || "",
+          updates,
+        }),
+      })
+        .then(async (resp) => {
+          const data = await resp.json();
+          if (!resp.ok || !data.ok) {
+            throw new Error(data.error || "Не удалось сохранить изменения.");
+          }
+          (data.results || []).forEach(applyCustomerServerResult);
+        })
+        .catch((error) => {
+          entries.forEach(([key, value]) => {
+            if (!state.customerPending.has(key)) {
+              state.customerPending.set(key, value);
+            }
+          });
+          console.error("checklists:customer-save", error);
+        })
+        .finally(() => {
+          state.customerSavePromise = null;
+          if (state.customerPending.size) {
+            scheduleCustomerSave();
+          }
+        });
+
+      await state.customerSavePromise;
     }
 
     function selectTextCell(cellEl) {
@@ -1416,6 +1620,41 @@
       editor.classList.remove("d-none");
 
       try { editor.showPicker(); } catch (_) { editor.focus(); }
+    }
+
+    function openCustomerEditor(button) {
+      if (state.payload?.readonly) return;
+      const key = "cs:" + cellKey(button.dataset.itemId, button.dataset.entityId);
+      clearActiveCell();
+      state.activeCellKey = key;
+      button.classList.add("is-active");
+
+      const itemId = button.dataset.itemId;
+      const entityId = button.dataset.entityId;
+      const cell = getCustomerCell(itemId, entityId);
+      if (!cell) return;
+
+      customerEditor.innerHTML = "";
+      (state.payload.customerStatusChoices || []).forEach((choice) => {
+        const opt = document.createElement("option");
+        opt.value = choice.value;
+        opt.textContent = choice.label;
+        if (choice.value === cell.status) opt.selected = true;
+        customerEditor.appendChild(opt);
+      });
+      customerEditor.dataset.itemId = itemId;
+      customerEditor.dataset.entityId = entityId;
+
+      const td = button.closest("td.status-cell") || button;
+      const rect = td.getBoundingClientRect();
+      customerEditor.style.position = "fixed";
+      customerEditor.style.left = rect.left + "px";
+      customerEditor.style.top = rect.top + "px";
+      customerEditor.style.width = rect.width + "px";
+      customerEditor.style.height = rect.height + "px";
+      customerEditor.classList.remove("d-none");
+
+      try { customerEditor.showPicker(); } catch (_) { customerEditor.focus(); }
     }
 
     async function openCommentModal(trigger) {
@@ -1661,6 +1900,60 @@
       }
     }
 
+    async function touchStatusDates(btn) {
+      const ui = state.payload?.ui || {};
+      const url = ui.touchStatusDatesUrl;
+      if (!url || btn.disabled) return;
+
+      btn.disabled = true;
+      try {
+        const body = JSON.stringify({
+          project_uid: ui.projectUid || state.payload?.project?.shortUid || "",
+          section_id: state.payload?.section?.id || "",
+          asset_name: options.getAsset() || state.payload?.assetName || "",
+        });
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "X-CSRFToken": options.getCsrf(),
+            "Content-Type": "application/json",
+            "X-Requested-With": "fetch",
+          },
+          body,
+        });
+        const data = await response.json().catch(() => null);
+        if (!response.ok || !data?.ok) {
+          throw new Error(data?.error || `Ошибка ${response.status}: не удалось актуализировать статусы.`);
+        }
+        await reload();
+        showToast("Статусы «Не предоставлено» и «Предоставлено частично» актуализированы");
+      } catch (err) {
+        alert(err.message || "Не удалось актуализировать статусы.");
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function showToast(message) {
+      let container = document.getElementById("chk-toast-container");
+      if (!container) {
+        container = document.createElement("div");
+        container.id = "chk-toast-container";
+        container.className = "toast-container position-fixed bottom-0 end-0 p-3";
+        container.style.zIndex = "1090";
+        document.body.appendChild(container);
+      }
+      const toast = document.createElement("div");
+      toast.className = "toast align-items-center text-bg-success border-0";
+      toast.setAttribute("role", "alert");
+      toast.innerHTML = `<div class="d-flex align-items-start"><div class="toast-body">${escapeHtml(message)}</div>` +
+        `<button type="button" class="btn-close btn-close-white me-2 mt-2" data-bs-dismiss="toast"></button></div>`;
+      container.appendChild(toast);
+      const bsToast = new bootstrap.Toast(toast, { delay: 4000 });
+      bsToast.show();
+      toast.addEventListener("hidden.bs.toast", () => toast.remove());
+    }
+
     function handleGridAction(action) {
       const selected = Array.from(state.selectedItems);
       if (!selected.length) return;
@@ -1728,6 +2021,7 @@
           if (action === "save-edit") { saveEditMode(); return; }
           if (action === "cancel-edit") { cancelEditMode(); return; }
           if (action === "approve-info-request") { approveInfoRequest(gridActionBtn); return; }
+          if (action === "touch-status-dates") { touchStatusDates(gridActionBtn); return; }
           handleGridAction(action);
           return;
         }
@@ -1763,12 +2057,18 @@
         }
 
         const button = event.target.closest('[data-action="status-cell"]');
-        if (!button || state.payload?.readonly) return;
-        if (state.editMode) {
-          showEditModeNotice();
+        if (button && !state.payload?.readonly) {
+          if (state.editMode) { showEditModeNotice(); return; }
+          openEditor(button);
           return;
         }
-        openEditor(button);
+
+        const csButton = event.target.closest('[data-action="customer-status-cell"]');
+        if (csButton && !state.payload?.readonly) {
+          if (state.editMode) { showEditModeNotice(); return; }
+          openCustomerEditor(csButton);
+          return;
+        }
       });
 
       tableWrap.addEventListener("change", (event) => {
@@ -1805,6 +2105,12 @@
           openEditor(button);
           return;
         }
+        const csButton = event.target.closest('[data-action="customer-status-cell"]');
+        if (csButton && !state.payload?.readonly) {
+          if (state.editMode) { showEditModeNotice(); return; }
+          openCustomerEditor(csButton);
+          return;
+        }
         const textCell = event.target.closest('[data-action="text-cell"]');
         if (textCell && !state.payload?.readonly && state.editMode) {
           if (state.inlineEditing) return;
@@ -1818,6 +2124,13 @@
           event.preventDefault();
           if (state.editMode) { showEditModeNotice(); return; }
           openEditor(button);
+          return;
+        }
+        const csButton = event.target.closest('[data-action="customer-status-cell"]');
+        if (csButton && !state.payload?.readonly && (event.key === "Enter" || event.key === " ")) {
+          event.preventDefault();
+          if (state.editMode) { showEditModeNotice(); return; }
+          openCustomerEditor(csButton);
           return;
         }
 
@@ -1839,6 +2152,19 @@
 
       editor.addEventListener("blur", () => {
         closeEditor();
+      });
+
+      customerEditor.addEventListener("change", () => {
+        const itemId = customerEditor.dataset.itemId;
+        const entityId = customerEditor.dataset.entityId;
+        if (itemId && entityId) {
+          applyLocalCustomerStatus(itemId, entityId, customerEditor.value);
+        }
+        closeCustomerEditor();
+      });
+
+      customerEditor.addEventListener("blur", () => {
+        closeCustomerEditor();
       });
 
       document.body.addEventListener("checklists:comment-updated", (event) => {
@@ -1899,6 +2225,7 @@
 
       document.addEventListener("click", (event) => {
         const clickedStatusCell = event.target.closest('[data-action="status-cell"]');
+        const clickedCustomerStatusCell = event.target.closest('[data-action="customer-status-cell"]');
         const clickedTextCell = event.target.closest('[data-action="text-cell"]');
         if (state.inlineEditing && !clickedTextCell) {
           commitInlineEdit();
@@ -1906,7 +2233,7 @@
         if (!clickedTextCell && state.activeTextCellId && !state.inlineEditing) {
           clearTextCellSelection();
         }
-        if (!clickedStatusCell && !clickedTextCell) {
+        if (!clickedStatusCell && !clickedCustomerStatusCell && !clickedTextCell) {
           clearActiveCell();
         }
       });
@@ -1914,6 +2241,7 @@
       document.addEventListener("keydown", (event) => {
         if (event.key === "Escape") {
           closeEditor();
+          closeCustomerEditor();
           if (state.inlineEditing) closeInlineEdit();
           clearTextCellSelection();
         }
@@ -1928,6 +2256,10 @@
       saveEditMode,
       setTruncated(value) { state.truncated = value; },
       isTruncated() { return state.truncated; },
+      setImcmVisible(value) { state.imcmVisible = value; render(); },
+      setCsVisible(value) { state.csVisible = value; render(); },
+      isImcmVisible() { return state.imcmVisible; },
+      isCsVisible() { return state.csVisible; },
     };
   }
 
@@ -1936,6 +2268,16 @@
     if (editor) return editor;
     editor = document.createElement("select");
     editor.id = "checklists-status-editor";
+    editor.className = "form-select form-select-sm chk-native-status-select d-none";
+    document.body.appendChild(editor);
+    return editor;
+  }
+
+  function ensureCustomerEditor() {
+    let editor = document.getElementById("checklists-customer-status-editor");
+    if (editor) return editor;
+    editor = document.createElement("select");
+    editor.id = "checklists-customer-status-editor";
     editor.className = "form-select form-select-sm chk-native-status-select d-none";
     document.body.appendChild(editor);
     return editor;

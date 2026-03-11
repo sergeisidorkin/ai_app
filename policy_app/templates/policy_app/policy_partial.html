@@ -125,6 +125,7 @@
                 <th>Наименование раздела на русском языке</th>
                 <th>Тип учета</th>
                 <th>Исполнитель</th>
+                <th>Направление экспертизы</th>
             </tr>
             </thead>
             <tbody>
@@ -155,6 +156,7 @@
                     <td>{{ s.name_ru }}</td>
                     <td class="text-nowrap">{{ s.accounting_type }}</td>
                     <td class="text-nowrap">{{ s.executor }}</td>
+                    <td class="text-nowrap">{% if s.expertise_direction %}{{ s.expertise_direction.department_name }}{% endif %}</td>
                 </tr>
             {% empty %}
                 <tr><td colspan="11" class="text-muted">Пока нет данных.</td></tr>

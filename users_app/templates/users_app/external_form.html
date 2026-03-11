@@ -1,6 +1,6 @@
 <div class="modal-header">
   <h5 class="modal-title">
-    {% if action == "create" %}Добавить сотрудника{% else %}Изменить сотрудника{% endif %}
+    {% if action == "create" %}Добавить внешнего пользователя{% else %}Изменить внешнего пользователя{% endif %}
   </h5>
   <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
 </div>
@@ -8,9 +8,9 @@
 <form
     method="post"
     {% if action == "create" %}
-      hx-post="{% url 'emp_form_create' %}"
+      hx-post="{% url 'ext_form_create' %}"
     {% else %}
-      hx-post="{% url 'emp_form_edit' employee.pk %}"
+      hx-post="{% url 'ext_form_edit' employee.pk %}"
     {% endif %}
     hx-target="#users-pane"
     hx-swap="outerHTML">
@@ -44,20 +44,12 @@
       {{ form.phone }}
     </div>
     <div class="mb-3">
-      <label class="form-label">Трудоустройство</label>
-      {{ form.employment }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Подразделение</label>
-      {{ form.department }}
+      <label class="form-label">Организация</label>
+      {{ form.organization }}
     </div>
     <div class="mb-3">
       <label class="form-label">Должность</label>
       {{ form.job_title }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Роль</label>
-      {{ form.role }}
     </div>
 
     {% if form.errors %}
@@ -75,47 +67,3 @@
     <button type="submit" class="btn btn-primary">Сохранить</button>
   </div>
 </form>
-
-<script>
-(function() {
-  var empEl = document.getElementById('emp-employment-select');
-  var deptEl = document.getElementById('emp-department-select');
-  if (!empEl || !deptEl) return;
-
-  var allUnits = {{ org_units_json|safe }};
-  var currentDeptValue = deptEl.value || '';
-
-  function rebuildDeptOptions() {
-    var employment = empEl.value || '';
-    var prevValue = deptEl.value;
-
-    deptEl.innerHTML = '';
-
-    var empty = document.createElement('option');
-    empty.value = '';
-    empty.textContent = '---------';
-    deptEl.appendChild(empty);
-
-    if (!employment) return;
-
-    var matched = allUnits.filter(function(u) {
-      return u.company_short === employment;
-    });
-
-    matched.forEach(function(u) {
-      var opt = document.createElement('option');
-      opt.value = u.id;
-      opt.textContent = u.department_name;
-      if (String(u.id) === String(prevValue) || String(u.id) === String(currentDeptValue)) {
-        opt.selected = true;
-      }
-      deptEl.appendChild(opt);
-    });
-
-    currentDeptValue = '';
-  }
-
-  empEl.addEventListener('change', rebuildDeptOptions);
-  rebuildDeptOptions();
-})();
-</script>

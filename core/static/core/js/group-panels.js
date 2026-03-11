@@ -3,7 +3,6 @@
   window.__groupPanelBound = true;
 
   window.__grTableSel = window.__grTableSel || {};
-  window.__grTableSelLast = window.__grTableSelLast || null;
 
   function pane() { return document.getElementById('group-pane'); }
   const qa = (sel, root) => Array.from((root || document).querySelectorAll(sel));
@@ -13,6 +12,21 @@
     return m ? m.pop() : '';
   }
   const csrftoken = getCookie('csrftoken');
+
+  const PANELS = {
+    'gm-actions': {
+      name: 'gm-select',
+      modal: '#group-modal .modal-content',
+      modalId: 'group-modal',
+      deleteLabel: 'строк(у/и)',
+    },
+    'org-actions': {
+      name: 'org-select',
+      modal: '#org-structure-modal .modal-content',
+      modalId: 'org-structure-modal',
+      deleteLabel: 'строк(у/и)',
+    },
+  };
 
   function getMasterForPanel(panel) {
     const id = panel?.id;
@@ -62,35 +76,46 @@
     panel.classList.toggle('d-none', !anyChecked);
   }
 
+  function findPanelConfig(btn) {
+    for (const [panelId, config] of Object.entries(PANELS)) {
+      if (btn.closest('#' + panelId)) return config;
+    }
+    return null;
+  }
+
   document.addEventListener('click', async (e) => {
     const root = pane();
     if (!root) return;
     const btn = e.target.closest('button[data-panel-action]');
     if (!btn || !root.contains(btn)) return;
-    const panel = btn.closest('#gm-actions');
-    if (!panel) return;
+
+    const config = findPanelConfig(btn);
+    if (!config) return;
+
     const action = btn.dataset.panelAction;
-    const name = getNameForPanel(panel);
-    if (!name) return;
+    const name = config.name;
 
     const checked = getCheckedByName(name);
     if (!checked.length) return;
 
     window.__grTableSel[name] = checked.map(ch => String(ch.value));
-    window.__grTableSelLast = name;
 
     if (action === 'edit') {
       const first = checked[0];
       const tr = first.closest('tr');
       const url = tr?.dataset?.editUrl;
       if (!url) return;
-      await htmx.ajax('GET', url, { target: '#group-modal .modal-content', swap: 'innerHTML' });
+      await htmx.ajax('GET', url, { target: config.modal, swap: 'innerHTML' });
+      const modalEl = document.getElementById(config.modalId);
+      if (modalEl && window.bootstrap) {
+        window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+      }
       ensureActionsVisibility(name);
       return;
     }
 
     if (action === 'delete') {
-      if (!confirm(`Удалить ${checked.length} строк(у/и)?`)) return;
+      if (!confirm(`Удалить ${checked.length} ${config.deleteLabel}?`)) return;
       const urls = checked.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
       for (let i = 0; i < urls.length; i++) {
         const isLast = i === urls.length - 1;
@@ -148,15 +173,15 @@
 
   document.body.addEventListener('htmx:afterSettle', function (e) {
     if (!(e.target && e.target.id === 'group-pane')) return;
-    const last = window.__grTableSelLast;
-    if (!last) return;
-    const ids = (window.__grTableSel && window.__grTableSel[last]) || [];
-    const set = new Set(ids || []);
-    getRowChecksByName(last).forEach(b => { b.checked = set.has(String(b.value)); });
-    updateMasterStateFor(last);
-    updateRowHighlightFor(last);
-    ensureActionsVisibility(last);
-    try { delete window.__grTableSel[last]; } catch(e) { window.__grTableSel[last] = []; }
-    window.__grTableSelLast = null;
+    const sel = window.__grTableSel || {};
+    Object.keys(sel).forEach(name => {
+      const ids = sel[name] || [];
+      const set = new Set(ids);
+      getRowChecksByName(name).forEach(b => { b.checked = set.has(String(b.value)); });
+      updateMasterStateFor(name);
+      updateRowHighlightFor(name);
+      ensureActionsVisibility(name);
+    });
+    window.__grTableSel = {};
   });
 })();

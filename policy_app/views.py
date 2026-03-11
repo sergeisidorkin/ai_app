@@ -6,6 +6,7 @@ from django.http import JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST
 from django.db.models import Max
+from group_app.models import OrgUnit
 from .models import Product, TypicalSection, SectionStructure, Grade, Tariff, MANAGER_GROUPS
 from .forms import ProductForm, TypicalSectionForm, SectionStructureForm, GradeForm, TariffForm
 
@@ -49,7 +50,7 @@ def staff_required(user):
 # Вспомогательные функции для устранения дублирования
 def _policy_context(request):
     products = Product.objects.all()
-    sections = TypicalSection.objects.select_related("product").all()
+    sections = TypicalSection.objects.select_related("product", "expertise_direction").all()
     structures = SectionStructure.objects.select_related("product", "section").all()
     grades = _get_grades_for_user(request.user)
     tariffs = _get_tariffs_for_user(request.user)
@@ -294,6 +295,10 @@ def section_csv_upload(request):
         return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
 
     products_by_name = {p.short_name.strip().lower(): p for p in Product.objects.all()}
+    expertise_units = {
+        u.department_name.strip().lower(): u
+        for u in OrgUnit.objects.filter(unit_type="expertise")
+    }
     data_rows = rows[1:]
     created = 0
     warnings = []
@@ -302,7 +307,7 @@ def section_csv_upload(request):
         if not any(cell.strip() for cell in row):
             continue
         if len(row) < 8:
-            warnings.append(f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 9: Продукт, Код, Краткое имя EN, Краткое имя RU, Наименование EN, Наименование RU, Тип учета, Исполнитель).")
+            warnings.append(f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 8–9: Продукт, Код, Краткое имя EN, Краткое имя RU, Наименование EN, Наименование RU, Тип учета, Исполнитель, [Направление экспертизы]).")
             continue
 
         product_name = row[0].strip()
@@ -313,6 +318,7 @@ def section_csv_upload(request):
         name_ru = row[5].strip() if len(row) > 5 else ""
         accounting_type = row[6].strip() if len(row) > 6 else "Раздел"
         executor = row[7].strip() if len(row) > 7 else ""
+        expertise_name = row[8].strip() if len(row) > 8 else ""
 
         product = products_by_name.get(product_name.lower())
         if not product:
@@ -340,6 +346,12 @@ def section_csv_upload(request):
             warnings.append(f"Строка {i}: неизвестный тип учета «{accounting_type}». Допустимые: {', '.join(dict(TypicalSection.ACCOUNTING_TYPE_CHOICES).keys())}. Установлено «Раздел».")
             accounting_type = "Раздел"
 
+        expertise_direction = None
+        if expertise_name:
+            expertise_direction = expertise_units.get(expertise_name.lower())
+            if not expertise_direction:
+                warnings.append(f"Строка {i}: направление экспертизы «{expertise_name}» не найдено. Поле оставлено пустым.")
+
         position = _next_position(TypicalSection, {"product": product})
         try:
             TypicalSection.objects.create(
@@ -351,6 +363,7 @@ def section_csv_upload(request):
                 name_ru=name_ru,
                 accounting_type=accounting_type,
                 executor=executor,
+                expertise_direction=expertise_direction,
                 position=position,
             )
             created += 1

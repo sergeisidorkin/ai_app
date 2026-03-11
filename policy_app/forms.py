@@ -1,6 +1,7 @@
 from django import forms
 from django.contrib.auth.models import User
 
+from group_app.models import OrgUnit
 from .models import Product, TypicalSection, SectionStructure, Grade, Tariff, DEPARTMENT_HEAD_GROUP
 
 class ProductForm(forms.ModelForm):
@@ -21,10 +22,16 @@ class TypicalSectionForm(forms.ModelForm):
         queryset=Product.objects.all(),
         widget=forms.Select(attrs={"class": "form-select"})
     )
+    expertise_direction = forms.ModelChoiceField(
+        label="Направление экспертизы",
+        queryset=OrgUnit.objects.filter(unit_type="expertise"),
+        required=False,
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
 
     class Meta:
         model = TypicalSection
-        fields = ["product", "code", "short_name", "short_name_ru", "name_en", "name_ru", "accounting_type", "executor"]
+        fields = ["product", "code", "short_name", "short_name_ru", "name_en", "name_ru", "accounting_type", "executor", "expertise_direction"]
         widgets = {
             "code": forms.TextInput(attrs={"class": "form-control", "placeholder": "Код"}),
             "short_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Short name EN"}),
@@ -34,6 +41,12 @@ class TypicalSectionForm(forms.ModelForm):
             "accounting_type": forms.Select(attrs={"class": "form-select"}),
             "executor": forms.TextInput(attrs={"class": "form-control", "placeholder": "Исполнитель"}),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        qs = OrgUnit.objects.filter(unit_type="expertise")
+        self.fields["expertise_direction"].queryset = qs
+        self.fields["expertise_direction"].label_from_instance = lambda obj: obj.department_name
 
 
 class SectionStructureForm(forms.ModelForm):

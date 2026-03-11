@@ -3,6 +3,8 @@ from django.db import models
 
 DEPARTMENT_HEAD_GROUP = "Руководитель направления"
 PROJECTS_HEAD_GROUP = "Руководитель проектов"
+ADMIN_GROUP = "Администратор"
+EXPERT_GROUP = "Эксперт"
 MANAGER_GROUPS = (
     DEPARTMENT_HEAD_GROUP,
     PROJECTS_HEAD_GROUP,
@@ -41,6 +43,14 @@ class TypicalSection(models.Model):
     name_ru = models.CharField("Наименование раздела на русском языке", max_length=255)
     accounting_type = models.CharField("Тип учета", max_length=128, choices=ACCOUNTING_TYPE_CHOICES, default="Раздел")
     executor = models.CharField("Исполнитель", max_length=128)
+    expertise_direction = models.ForeignKey(
+        "group_app.OrgUnit",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="typical_sections",
+        verbose_name="Направление экспертизы",
+    )
     position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
 
     created_at = models.DateTimeField(auto_now_add=True)

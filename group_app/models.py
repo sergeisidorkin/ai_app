@@ -23,3 +23,52 @@ class GroupMember(models.Model):
 
     def __str__(self):
         return self.short_name
+
+
+class OrgUnit(models.Model):
+    UNIT_TYPE_CHOICES = [
+        ("administrative", "Административное подразделение"),
+        ("expertise", "Направление экспертизы"),
+        ("project_roles", "Группа проектных ролей"),
+    ]
+
+    company = models.ForeignKey(
+        GroupMember,
+        on_delete=models.CASCADE,
+        related_name="org_units",
+        verbose_name="Наименование компании (краткое)",
+    )
+    level = models.PositiveIntegerField("Уровень", default=1)
+    department_name = models.CharField(
+        "Наименование структурного подразделения", max_length=512
+    )
+    short_name = models.CharField(
+        "Краткое имя", max_length=128, blank=True, default=""
+    )
+    functional_subordination = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="subordinates",
+        verbose_name="Функциональное подчинение",
+    )
+    unit_type = models.CharField(
+        "Тип подразделения",
+        max_length=32,
+        choices=UNIT_TYPE_CHOICES,
+        blank=True,
+        default="",
+    )
+    position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["position", "id"]
+        verbose_name = "Структурное подразделение"
+        verbose_name_plural = "Организационная структура"
+
+    def __str__(self):
+        return self.department_name

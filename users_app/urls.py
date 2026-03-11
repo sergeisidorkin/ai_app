@@ -8,4 +8,9 @@ urlpatterns = [
     path("<int:pk>/delete/", views.employee_delete, name="emp_delete"),
     path("<int:pk>/move-up/", views.employee_move_up, name="emp_move_up"),
     path("<int:pk>/move-down/", views.employee_move_down, name="emp_move_down"),
+    path("ext/create/", views.ext_form_create, name="ext_form_create"),
+    path("ext/<int:pk>/edit/", views.ext_form_edit, name="ext_form_edit"),
+    path("ext/<int:pk>/delete/", views.ext_delete, name="ext_delete"),
+    path("ext/<int:pk>/move-up/", views.ext_move_up, name="ext_move_up"),
+    path("ext/<int:pk>/move-down/", views.ext_move_down, name="ext_move_down"),
 ]

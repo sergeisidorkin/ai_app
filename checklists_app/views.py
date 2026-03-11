@@ -23,6 +23,8 @@ from yandexdisk_app.models import YandexDiskAccount, YandexDiskSelection
 
 from .models import (
     ChecklistCommentHistory,
+    ChecklistCustomerStatus,
+    ChecklistCustomerStatusHistory,
     ChecklistItem,
     ChecklistRequestNote,
     ChecklistStatus,
@@ -97,6 +99,9 @@ def _project_meta(project: Optional[ProjectRegistration], asset_name: Optional[s
             a = ai.get("asset", "")
             entity_count_per_asset[a] = entity_count_per_asset.get(a, 0) + 1
     single_entity_assets = {a for a, c in entity_count_per_asset.items() if c == 1}
+    for ai in asset_items:
+        if ai["type"] == "asset":
+            ai["entityCount"] = entity_count_per_asset.get(ai["label"], 0)
     asset_items = [
         ai for ai in asset_items
         if not (ai["type"] == "entity" and ai.get("asset", "") in single_entity_assets)
@@ -104,7 +109,11 @@ def _project_meta(project: Optional[ProjectRegistration], asset_name: Optional[s
 
     all_values = set(assets_flat) | {ai["value"] for ai in asset_items} | {"all"}
     selected_asset = ""
-    if asset_name and asset_name in all_values:
+    if asset_name and "," in asset_name:
+        parts = [p.strip() for p in asset_name.split(",") if p.strip()]
+        valid = [p for p in parts if p in all_values]
+        selected_asset = ",".join(valid) if valid else "all"
+    elif asset_name and asset_name in all_values:
         selected_asset = asset_name
     else:
         first_asset = next((ai["value"] for ai in asset_items if ai["type"] == "asset"), None)
@@ -141,11 +150,24 @@ def _resolve_asset_name(project, selected_asset):
     return selected_asset
 
 
+def _resolve_asset_names(project, asset_name: str) -> list[str]:
+    """Resolve possibly comma-separated asset selector into a list of Performer-level asset names."""
+    if not asset_name or asset_name == "all":
+        return []
+    names = [n.strip() for n in asset_name.split(",") if n.strip()] if "," in asset_name else [asset_name]
+    result = []
+    for n in names:
+        resolved = _resolve_asset_name(project, n)
+        if resolved and resolved != "all" and resolved not in result:
+            result.append(resolved)
+    return result
+
+
 def _sections_for_asset(project, selected_asset, performer_qs=None):
     if not selected_asset:
         return []
 
-    effective_asset = _resolve_asset_name(project, selected_asset)
+    effective_assets = _resolve_asset_names(project, selected_asset)
 
     if performer_qs is None:
         performer_qs = (
@@ -155,7 +177,7 @@ def _sections_for_asset(project, selected_asset, performer_qs=None):
             .order_by("position", "id")
         )
 
-    if selected_asset == "all":
+    if selected_asset == "all" or not effective_assets:
         ids = set()
         sections = []
         for perf in performer_qs:
@@ -168,11 +190,12 @@ def _sections_for_asset(project, selected_asset, performer_qs=None):
                 sections.append({"id": ts.id, "name": label})
         return sections
 
+    effective_set = set(effective_assets)
     ids = set()
     sections = []
     for perf in performer_qs:
         perf_asset = (perf.asset_name or "").strip()
-        if perf_asset != effective_asset:
+        if perf_asset not in effective_set:
             continue
         ts = getattr(perf, "typical_section", None)
         if ts and ts.id not in ids:
@@ -256,6 +279,25 @@ def _legal_entities_for(project: ProjectRegistration, asset_name: Optional[str])
     if not asset_name or asset_name == "all":
         return list(qs)
 
+    names = [n.strip() for n in asset_name.split(",") if n.strip()] if "," in asset_name else [asset_name]
+    if len(names) == 1:
+        return _legal_entities_for_single(qs, names[0])
+
+    seen_ids: set[int] = set()
+    ordered: list[LegalEntity] = []
+    all_entities = list(qs)
+    matched_ids: set[int] = set()
+    for name in names:
+        sub = _legal_entities_for_single(qs, name)
+        matched_ids.update(e.id for e in sub)
+    for e in all_entities:
+        if e.id in matched_ids and e.id not in seen_ids:
+            seen_ids.add(e.id)
+            ordered.append(e)
+    return ordered
+
+
+def _legal_entities_for_single(qs, asset_name: str):
     if asset_name.startswith("asset:"):
         effective = asset_name[6:]
         return list(qs.filter(
@@ -339,13 +381,24 @@ def _render_comment_modal_content(
 # ---------------------------------------------------------------------------
 
 def _build_table_context(project, section, asset_name, checklist_items, legal_entities, url_map, include_comment_history=False):
+    item_ids = [it.id for it in checklist_items]
+    entity_ids = [le.id for le in legal_entities]
+
     status_map = {}
-    if checklist_items and legal_entities:
+    if item_ids and entity_ids:
         status_qs = ChecklistStatus.objects.filter(
-            checklist_item__in=[it.id for it in checklist_items],
-            legal_entity__in=[le.id for le in legal_entities],
+            checklist_item__in=item_ids,
+            legal_entity__in=entity_ids,
         ).select_related("checklist_item", "legal_entity")
         status_map = {(st.checklist_item_id, st.legal_entity_id): st for st in status_qs}
+
+    cs_map = {}
+    if item_ids and entity_ids:
+        cs_qs = ChecklistCustomerStatus.objects.filter(
+            checklist_item__in=item_ids,
+            legal_entity__in=entity_ids,
+        ).select_related("checklist_item", "legal_entity")
+        cs_map = {(cs.checklist_item_id, cs.legal_entity_id): cs for cs in cs_qs}
 
     note_map = {}
     if checklist_items:
@@ -402,11 +455,16 @@ def _build_table_context(project, section, asset_name, checklist_items, legal_en
                     f"Дополнительный запрос № {item.additional_number}"
                     f" от {item.additional_date.strftime('%d.%m.%Y')}"
                 )
+        customer_statuses = [
+            {"entity": entity, "customer_status": cs_map.get((item.id, entity.id))}
+            for entity in legal_entities
+        ]
         folder = folder_map.get(item.id)
         rows.append({
             "item": item,
             "section_obj": section,
             "statuses": statuses,
+            "customer_statuses": customer_statuses,
             "code_class": _code_cell_class(statuses),
             "note": note_map.get(item.id),
             "history": history_map.get(item.id, {"imc_comment": [], "customer_comment": []}),
@@ -435,14 +493,23 @@ def _build_all_sections_context(project, section_items_list, asset_name, legal_e
     all_item_ids = []
     for _sec, items in section_items_list:
         all_item_ids.extend(it.id for it in items)
+    entity_ids = [le.id for le in legal_entities]
 
     status_map = {}
-    if all_item_ids and legal_entities:
+    if all_item_ids and entity_ids:
         status_qs = ChecklistStatus.objects.filter(
             checklist_item__in=all_item_ids,
-            legal_entity__in=[le.id for le in legal_entities],
+            legal_entity__in=entity_ids,
         ).select_related("checklist_item", "legal_entity")
         status_map = {(st.checklist_item_id, st.legal_entity_id): st for st in status_qs}
+
+    cs_map_all = {}
+    if all_item_ids and entity_ids:
+        cs_qs = ChecklistCustomerStatus.objects.filter(
+            checklist_item__in=all_item_ids,
+            legal_entity__in=entity_ids,
+        ).select_related("checklist_item", "legal_entity")
+        cs_map_all = {(cs.checklist_item_id, cs.legal_entity_id): cs for cs in cs_qs}
 
     note_map = {}
     if all_item_ids:
@@ -498,11 +565,16 @@ def _build_all_sections_context(project, section_items_list, asset_name, legal_e
                         f"Дополнительный запрос № {item.additional_number}"
                         f" от {item.additional_date.strftime('%d.%m.%Y')}"
                     )
+            customer_statuses = [
+                {"entity": entity, "customer_status": cs_map_all.get((item.id, entity.id))}
+                for entity in legal_entities
+            ]
             folder = folder_map.get(item.id)
             rows.append({
                 "item": item,
                 "section_obj": sec,
                 "statuses": statuses,
+                "customer_statuses": customer_statuses,
                 "code_class": _code_cell_class(statuses),
                 "note": note_map.get(item.id),
                 "history": history_map.get(item.id, {"imc_comment": [], "customer_comment": []}),
@@ -536,6 +608,21 @@ def _status_short_label(value: str) -> str:
 
 
 def _format_status_changed_at(status_obj: Optional[ChecklistStatus]) -> str:
+    if not status_obj or not status_obj.status_changed_at:
+        return "—"
+    return timezone.localtime(status_obj.status_changed_at).strftime("%d.%m.%y %H:%M")
+
+
+def _customer_status_short_label(value: str) -> str:
+    return {
+        ChecklistCustomerStatus.Status.NOT_TRANSFERRED: "Не передано",
+        ChecklistCustomerStatus.Status.PARTIAL_TRANSFER: "Передано частично",
+        ChecklistCustomerStatus.Status.TRANSFERRED: "Передано все",
+        ChecklistCustomerStatus.Status.NO_DATA: "Нет данных",
+    }.get(value, value)
+
+
+def _format_customer_status_changed_at(status_obj: Optional[ChecklistCustomerStatus]) -> str:
     if not status_obj or not status_obj.status_changed_at:
         return "—"
     return timezone.localtime(status_obj.status_changed_at).strftime("%d.%m.%y %H:%M")
@@ -762,12 +849,12 @@ def _resolve_grid_scope(project: ProjectRegistration, asset_name: str, section_i
         }
 
     all_mode = section_id == "all"
-    effective_asset = _resolve_asset_name(project, asset_name)
+    effective_assets = _resolve_asset_names(project, asset_name)
 
     if all_mode:
         perf_qs = Performer.objects.filter(registration=project).exclude(asset_name="")
-        if effective_asset and asset_name != "all":
-            perf_qs = perf_qs.filter(asset_name=effective_asset)
+        if effective_assets and asset_name != "all":
+            perf_qs = perf_qs.filter(asset_name__in=effective_assets)
         perf_qs = perf_qs.select_related("typical_section__product").order_by("position", "id")
 
         seen_ids = set()
@@ -837,13 +924,23 @@ def _build_grid_payload(
     legal_entities = scope["legal_entities"]
     all_item_ids = [item.id for _section, items in section_items_list for item in items]
 
+    entity_ids = [entity.id for entity in legal_entities]
+
     status_map = {}
     if all_item_ids and legal_entities:
         status_qs = ChecklistStatus.objects.filter(
             checklist_item__in=all_item_ids,
-            legal_entity__in=[entity.id for entity in legal_entities],
+            legal_entity__in=entity_ids,
         ).select_related("checklist_item", "legal_entity")
         status_map = {(st.checklist_item_id, st.legal_entity_id): st for st in status_qs}
+
+    customer_status_map = {}
+    if all_item_ids and legal_entities:
+        cs_qs = ChecklistCustomerStatus.objects.filter(
+            checklist_item__in=all_item_ids,
+            legal_entity__in=entity_ids,
+        ).select_related("checklist_item", "legal_entity")
+        customer_status_map = {(cs.checklist_item_id, cs.legal_entity_id): cs for cs in cs_qs}
 
     comment_summary_map = _comment_summary_map(
         project=project,
@@ -861,9 +958,10 @@ def _build_grid_payload(
             pass
 
     status_label_map = dict(ChecklistStatus.Status.choices)
+    customer_status_label_map = dict(ChecklistCustomerStatus.Status.choices)
     rows = []
     for sec, items in section_items_list:
-        if scope["all_mode"] and items:
+        if items:
             rows.append({
                 "kind": "section_header",
                 "sectionId": sec.id,
@@ -887,6 +985,7 @@ def _build_grid_payload(
 
             row_statuses = []
             cells = []
+            customer_cells = []
             for entity in legal_entities:
                 status_obj = status_map.get((item.id, entity.id))
                 row_statuses.append({"entity": entity, "status": status_obj})
@@ -898,6 +997,17 @@ def _build_grid_payload(
                     "statusShortLabel": _status_short_label(value),
                     "dateDisplay": _format_status_changed_at(status_obj),
                     "dateIso": timezone.localtime(status_obj.status_changed_at).isoformat() if status_obj and status_obj.status_changed_at else "",
+                })
+
+                cs_obj = customer_status_map.get((item.id, entity.id))
+                cs_value = cs_obj.status if cs_obj else ChecklistCustomerStatus.Status.NOT_TRANSFERRED
+                customer_cells.append({
+                    "entityId": entity.id,
+                    "status": cs_value,
+                    "statusLabel": customer_status_label_map[cs_value],
+                    "statusShortLabel": _customer_status_short_label(cs_value),
+                    "dateDisplay": _format_customer_status_changed_at(cs_obj),
+                    "dateIso": timezone.localtime(cs_obj.status_changed_at).isoformat() if cs_obj and cs_obj.status_changed_at else "",
                 })
 
             folder = folder_map.get(item.id)
@@ -918,6 +1028,7 @@ def _build_grid_payload(
                     if folder and folder.last_upload_at else None
                 ),
                 "cells": cells,
+                "customerCells": customer_cells,
                 "actions": {
                     "editUrl": reverse("checklists_app:item_form_edit", args=[item.id]) if show_actions else "",
                     "deleteUrl": reverse("checklists_app:item_delete", args=[item.id]) if show_actions else "",
@@ -959,6 +1070,10 @@ def _build_grid_payload(
         "statusChoices": [
             {"value": value, "label": label, "shortLabel": _status_short_label(value)}
             for value, label in ChecklistStatus.Status.choices
+        ],
+        "customerStatusChoices": [
+            {"value": value, "label": label, "shortLabel": _customer_status_short_label(value)}
+            for value, label in ChecklistCustomerStatus.Status.choices
         ],
         "rows": rows,
         "ui": {
@@ -1066,6 +1181,80 @@ def _batch_update_statuses(*, request_user, asset_name, updates, shared_link=Non
     return results
 
 
+def _customer_status_update_payload(checklist_item, legal_entity, asset_name, cs_obj):
+    value = cs_obj.status if cs_obj else ChecklistCustomerStatus.Status.NOT_TRANSFERRED
+    return {
+        "checklistItem": checklist_item.id,
+        "legalEntity": legal_entity.id,
+        "status": value,
+        "statusLabel": dict(ChecklistCustomerStatus.Status.choices)[value],
+        "statusShortLabel": _customer_status_short_label(value),
+        "dateDisplay": _format_customer_status_changed_at(cs_obj),
+        "dateIso": timezone.localtime(cs_obj.status_changed_at).isoformat() if cs_obj and cs_obj.status_changed_at else "",
+    }
+
+
+def _batch_update_customer_statuses(*, request_user, asset_name, updates, shared_link=None):
+    valid_values = {value for value, _ in ChecklistCustomerStatus.Status.choices}
+    if not isinstance(updates, list) or not updates:
+        raise ValueError("Нет изменений для сохранения.")
+
+    results = []
+    user = request_user if request_user and getattr(request_user, "is_authenticated", False) else None
+
+    with transaction.atomic():
+        for update in updates:
+            item_id = str(update.get("checklist_item") or "").strip()
+            legal_entity_id = str(update.get("legal_entity") or "").strip()
+            status_value = str(update.get("status") or "").strip()
+
+            if not all([item_id, legal_entity_id, status_value]):
+                raise ValueError("Недостаточно данных.")
+            if status_value not in valid_values:
+                raise ValueError("Некорректный статус.")
+
+            checklist_item = get_object_or_404(ChecklistItem, pk=item_id)
+            legal_entity = get_object_or_404(LegalEntity, pk=legal_entity_id)
+            if shared_link and (
+                legal_entity.project_id != shared_link.project_id
+                or checklist_item.project_id != shared_link.project_id
+            ):
+                raise ValueError("Нет доступа к этой записи.")
+
+            existing = ChecklistCustomerStatus.objects.filter(
+                checklist_item=checklist_item,
+                legal_entity=legal_entity,
+            ).first()
+            if existing and existing.status == status_value:
+                cs_obj = existing
+            elif not existing and status_value == ChecklistCustomerStatus.Status.NOT_TRANSFERRED:
+                cs_obj = None
+            else:
+                cs_obj, created = ChecklistCustomerStatus.objects.select_for_update().get_or_create(
+                    checklist_item=checklist_item,
+                    legal_entity=legal_entity,
+                    defaults={"updated_by": user},
+                )
+                previous = None if created else cs_obj.status
+                cs_obj.status = status_value
+                cs_obj.updated_by = user
+                cs_obj.save(previous_status=previous)
+
+                if previous != status_value:
+                    ChecklistCustomerStatusHistory.objects.create(
+                        customer_status=cs_obj,
+                        checklist_item=checklist_item,
+                        legal_entity=legal_entity,
+                        previous_status=previous or "",
+                        new_status=status_value,
+                        changed_by=user,
+                    )
+
+            results.append(_customer_status_update_payload(checklist_item, legal_entity, asset_name, cs_obj))
+
+    return results
+
+
 def _text_update_payload(item: ChecklistItem) -> dict:
     return {
         "itemId": item.id,
@@ -1092,6 +1281,7 @@ def panel(request):
         grid_url = reverse("checklists_app:grid_data")
         update_url = reverse("checklists_app:update_status")
         batch_update_url = reverse("checklists_app:update_status_batch")
+        customer_batch_update_url = reverse("checklists_app:update_customer_status_batch")
         text_update_url_base = reverse("checklists_app:item_text_update", args=[0])
         note_url = reverse("checklists_app:update_note")
         comment_modal_url = reverse("checklists_app:comment_modal")
@@ -1103,6 +1293,7 @@ def panel(request):
         grid_url = "/checklists/grid/data/"
         update_url = "/checklists/status/update/"
         batch_update_url = "/checklists/status/batch-update/"
+        customer_batch_update_url = "/checklists/customer-status/batch-update/"
         text_update_url_base = "/checklists/item/text-update/0/"
         note_url = "/checklists/note/update/"
         comment_modal_url = "/checklists/comment/modal/"
@@ -1133,6 +1324,7 @@ def panel(request):
             "grid_data_url": grid_url,
             "update_status_url": update_url,
             "update_status_batch_url": batch_update_url,
+            "update_customer_status_batch_url": customer_batch_update_url,
             "item_text_update_url_base": text_update_url_base,
             "update_note_url": note_url,
             "comment_modal_url": comment_modal_url,
@@ -1232,6 +1424,8 @@ def grid_data(request):
     )
     if info_request_approved_at:
         payload["ui"]["infoRequestApprovedAt"] = info_request_approved_at
+    if show_actions and not scope["all_mode"] and scope["section"]:
+        payload["ui"]["touchStatusDatesUrl"] = reverse("checklists_app:touch_status_dates")
     return JsonResponse(payload)
 
 
@@ -1255,6 +1449,114 @@ def update_status_batch(request):
         return JsonResponse({"ok": False, "error": str(exc)}, status=400)
 
     return JsonResponse({"ok": True, "results": results})
+
+
+@login_required
+@require_POST
+def update_customer_status_batch(request):
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"ok": False, "error": "Некорректный JSON."}, status=400)
+
+    asset_name = str(payload.get("asset_name") or "").strip()
+    updates = payload.get("updates") or []
+    try:
+        results = _batch_update_customer_statuses(
+            request_user=request.user,
+            asset_name=asset_name,
+            updates=updates,
+        )
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+
+    return JsonResponse({"ok": True, "results": results})
+
+
+@login_required
+@require_POST
+def touch_status_dates(request):
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"ok": False, "error": "Некорректный JSON."}, status=400)
+
+    section_id = payload.get("section_id")
+    project_uid = (payload.get("project_uid") or "").strip()
+    raw_asset = (payload.get("asset_name") or "").strip()
+
+    if not section_id or not project_uid:
+        return JsonResponse({"ok": False, "error": "Недостаточно данных."}, status=400)
+
+    try:
+        project = ProjectRegistration.objects.get(short_uid=project_uid)
+    except ProjectRegistration.DoesNotExist:
+        return JsonResponse({"ok": False, "error": "Проект не найден."}, status=404)
+
+    try:
+        section = TypicalSection.objects.get(pk=section_id)
+    except TypicalSection.DoesNotExist:
+        return JsonResponse({"ok": False, "error": "Раздел не найден."}, status=404)
+
+    item_ids = list(
+        ChecklistItem.objects.filter(project=project, section=section).values_list("id", flat=True)
+    )
+    if not item_ids:
+        return JsonResponse({"ok": True, "updated": 0, "created": 0,
+                             "debug": {"reason": "no items", "section_id": str(section_id),
+                                       "project_uid": project_uid, "asset_name": raw_asset}})
+
+    le_ids = [le.id for le in _legal_entities_for(project, raw_asset)]
+
+    if not le_ids:
+        return JsonResponse({"ok": True, "updated": 0, "created": 0,
+                             "debug": {"reason": "no legal entities", "item_count": len(item_ids),
+                                       "asset_name": raw_asset}})
+
+    now = timezone.now()
+    target_statuses = [ChecklistStatus.Status.MISSING, ChecklistStatus.Status.PARTIAL]
+
+    updated = ChecklistStatus.objects.filter(
+        checklist_item_id__in=item_ids,
+        legal_entity_id__in=le_ids,
+        status__in=target_statuses,
+    ).update(status_changed_at=now)
+
+    existing_pairs = set(
+        ChecklistStatus.objects.filter(
+            checklist_item_id__in=item_ids,
+            legal_entity_id__in=le_ids,
+        ).values_list("checklist_item_id", "legal_entity_id")
+    )
+
+    to_create = []
+    for item_id in item_ids:
+        for le_id in le_ids:
+            if (item_id, le_id) not in existing_pairs:
+                to_create.append(ChecklistStatus(
+                    checklist_item_id=item_id,
+                    legal_entity_id=le_id,
+                    status=ChecklistStatus.Status.MISSING,
+                    status_changed_at=now,
+                    updated_by=request.user,
+                ))
+    created_count = 0
+    if to_create:
+        ChecklistStatus.objects.bulk_create(to_create, ignore_conflicts=True)
+        created_count = len(to_create)
+
+    return JsonResponse({
+        "ok": True,
+        "updated": updated,
+        "created": created_count,
+        "debug": {
+            "item_count": len(item_ids),
+            "le_count": len(le_ids),
+            "existing_pairs": len(existing_pairs),
+            "asset_name": raw_asset,
+            "section_id": str(section_id),
+        },
+    })
 
 
 @login_required
@@ -1926,6 +2228,9 @@ def _generate_xlsx(project: ProjectRegistration) -> HttpResponse:
     for label in entity_labels:
         headers.append(label)
         headers.append("Дата")
+    for label in entity_labels:
+        headers.append(f"{label} (Заказчик)")
+        headers.append("Дата")
     headers.append("Комментарий IMC Montan")
     headers.append("Комментарий Заказчика")
 
@@ -1955,6 +2260,14 @@ def _generate_xlsx(project: ProjectRegistration) -> HttpResponse:
             legal_entity__in=entity_order,
         ).select_related("checklist_item", "legal_entity"):
             status_map[(st.checklist_item_id, st.legal_entity_id)] = st
+
+    customer_status_map_xlsx = {}
+    if all_item_ids and entity_order:
+        for cs in ChecklistCustomerStatus.objects.filter(
+            checklist_item__in=all_item_ids,
+            legal_entity__in=entity_order,
+        ).select_related("checklist_item", "legal_entity"):
+            customer_status_map_xlsx[(cs.checklist_item_id, cs.legal_entity_id)] = cs
 
     note_map = {}
     if all_item_ids:
@@ -2027,6 +2340,21 @@ def _generate_xlsx(project: ProjectRegistration) -> HttpResponse:
                 ws.cell(row=row_idx, column=col).alignment = top_align
                 col += 1
 
+            for eid in entity_order:
+                cs = customer_status_map_xlsx.get((item.id, eid))
+                cs_label = ""
+                cs_date = ""
+                if cs:
+                    cs_label = cs.get_status_display()
+                    if cs.status_changed_at:
+                        cs_date = timezone.localtime(cs.status_changed_at).strftime("%d.%m.%y %H:%M")
+                ws.cell(row=row_idx, column=col, value=cs_label).border = thin_border
+                ws.cell(row=row_idx, column=col).alignment = top_align
+                col += 1
+                ws.cell(row=row_idx, column=col, value=cs_date).border = thin_border
+                ws.cell(row=row_idx, column=col).alignment = top_align
+                col += 1
+
             note = note_map.get(item.id)
             c = ws.cell(row=row_idx, column=col, value=(note.imc_comment if note else ""))
             c.border = thin_border
@@ -2041,12 +2369,19 @@ def _generate_xlsx(project: ProjectRegistration) -> HttpResponse:
     ws.column_dimensions['B'].width = 6
     ws.column_dimensions['C'].width = 20
     ws.column_dimensions['D'].width = 40
-    for i in range(len(entity_labels)):
+    n_ent = len(entity_labels)
+    for i in range(n_ent):
         status_col = 5 + i * 2
         date_col = 6 + i * 2
         ws.column_dimensions[get_column_letter(status_col)].width = 18
         ws.column_dimensions[get_column_letter(date_col)].width = 14
-    if len(headers) >= 5 + len(entity_labels) * 2 + 1:
+    cs_offset = 5 + n_ent * 2
+    for i in range(n_ent):
+        cs_status_col = cs_offset + i * 2
+        cs_date_col = cs_offset + i * 2 + 1
+        ws.column_dimensions[get_column_letter(cs_status_col)].width = 18
+        ws.column_dimensions[get_column_letter(cs_date_col)].width = 14
+    if len(headers) >= cs_offset + n_ent * 2 + 1:
         ws.column_dimensions[get_column_letter(len(headers) - 1)].width = 30
         ws.column_dimensions[get_column_letter(len(headers))].width = 30
 
@@ -2175,6 +2510,7 @@ def shared_page(request, token: str):
         meta_url_base = reverse("checklists_app:shared_project_meta", args=[token])
         update_url = reverse("checklists_app:shared_update_status", args=[token])
         batch_update_url = reverse("checklists_app:shared_update_status_batch", args=[token])
+        customer_batch_update_url = reverse("checklists_app:shared_update_customer_status_batch", args=[token])
         text_update_url_base = reverse("checklists_app:shared_item_text_update", args=[token, 0])
         note_url = reverse("checklists_app:shared_update_note", args=[token])
         comment_modal_url = reverse("checklists_app:shared_comment_modal", args=[token])
@@ -2184,6 +2520,7 @@ def shared_page(request, token: str):
         meta_url_base = f"/checklists/shared/{token}/meta/"
         update_url = f"/checklists/shared/{token}/status/update/"
         batch_update_url = f"/checklists/shared/{token}/status/batch-update/"
+        customer_batch_update_url = f"/checklists/shared/{token}/customer-status/batch-update/"
         text_update_url_base = f"/checklists/shared/{token}/item/text-update/0/"
         note_url = f"/checklists/shared/{token}/note/update/"
         comment_modal_url = f"/checklists/shared/{token}/comment/modal/"
@@ -2201,6 +2538,7 @@ def shared_page(request, token: str):
         "grid_data_url": grid_url,
         "update_status_url": update_url,
         "update_status_batch_url": batch_update_url,
+        "update_customer_status_batch_url": customer_batch_update_url,
         "item_text_update_url_base": text_update_url_base,
         "update_note_url": note_url,
         "comment_modal_url": comment_modal_url,
@@ -2290,6 +2628,32 @@ def shared_update_status_batch(request, token: str):
     updates = payload.get("updates") or []
     try:
         results = _batch_update_statuses(
+            request_user=request.user,
+            asset_name=asset_name,
+            updates=updates,
+            shared_link=link,
+        )
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+
+    return JsonResponse({"ok": True, "results": results})
+
+
+@require_POST
+def shared_update_customer_status_batch(request, token: str):
+    link = _get_shared_link(token)
+    if not link or not link.can_edit:
+        return JsonResponse({"ok": False, "error": "Нет прав на редактирование или ссылка недействительна."}, status=403)
+
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"ok": False, "error": "Некорректный JSON."}, status=400)
+
+    asset_name = str(payload.get("asset_name") or "").strip()
+    updates = payload.get("updates") or []
+    try:
+        results = _batch_update_customer_statuses(
             request_user=request.user,
             asset_name=asset_name,
             updates=updates,
