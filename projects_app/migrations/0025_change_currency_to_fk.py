@@ -5,12 +5,8 @@ from django.db import migrations, models
 
 
 def clear_empty_currency(apps, schema_editor):
-    schema_editor.execute(
-        "ALTER TABLE projects_app_performer ALTER COLUMN currency DROP NOT NULL"
-    )
-    schema_editor.execute(
-        "UPDATE projects_app_performer SET currency = NULL WHERE currency = ''"
-    )
+    Performer = apps.get_model('projects_app', 'Performer')
+    Performer.objects.filter(currency='').update(currency=None)
 
 
 class Migration(migrations.Migration):
@@ -21,7 +17,15 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        # First make the CharField nullable so empty strings can become NULL
+        migrations.AlterField(
+            model_name='performer',
+            name='currency',
+            field=models.CharField(blank=True, null=True, default='', max_length=50, verbose_name='Валюта'),
+        ),
+        # Convert empty strings to NULL via Python
         migrations.RunPython(clear_empty_currency, migrations.RunPython.noop),
+        # Now convert to ForeignKey
         migrations.AlterField(
             model_name='performer',
             name='currency',

@@ -4,10 +4,15 @@ from django.db import models
 DEPARTMENT_HEAD_GROUP = "Руководитель направления"
 PROJECTS_HEAD_GROUP = "Руководитель проектов"
 ADMIN_GROUP = "Администратор"
+DIRECTOR_GROUP = "Директор"
 EXPERT_GROUP = "Эксперт"
 MANAGER_GROUPS = (
     DEPARTMENT_HEAD_GROUP,
     PROJECTS_HEAD_GROUP,
+)
+SUPERUSER_GROUPS = (
+    ADMIN_GROUP,
+    DIRECTOR_GROUP,
 )
 
 class Product(models.Model):

@@ -92,10 +92,14 @@ def _sync_to_legal_entity_record(short_name, country, identifier, registration_n
         from datetime import date as _date
         defaults["record_date"] = _date.today()
         defaults["record_author"] = _ler_record_author(user)
-    ler, created = LegalEntityRecord.objects.get_or_create(
-        short_name=short_name,
-        defaults=defaults,
-    )
+    try:
+        ler, created = LegalEntityRecord.objects.get_or_create(
+            short_name=short_name,
+            defaults=defaults,
+        )
+    except LegalEntityRecord.MultipleObjectsReturned:
+        ler = LegalEntityRecord.objects.filter(short_name=short_name).order_by("id").first()
+        created = False
     if not created:
         changed = False
         for field, val in defaults.items():
@@ -1048,7 +1052,7 @@ def legal_entity_work_deps(request):
 
     work = (
         WorkVolume.objects
-        .select_related("project", "project__country")
+        .select_related("project")
         .filter(pk=wid)
         .first()
     )
@@ -1060,7 +1064,7 @@ def legal_entity_work_deps(request):
         "project": getattr(work.project, "short_uid", ""),
         "type": work.type or "",
         "name": work.name or "",
-        "country_id": work.project.country_id if work.project else "",
+        "country_id": work.country_id or "",
     })
 
 
