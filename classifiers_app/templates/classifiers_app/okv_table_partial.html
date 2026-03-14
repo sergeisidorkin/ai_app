@@ -1,4 +1,4 @@
-<table class="table table-sm align-middle">
+<table class="table table-sm align-middle clf-truncated">
     <thead>
     <tr>
         <th style="width:1%">
@@ -18,10 +18,16 @@
         <th>Наименование валюты</th>
         <th>Сокращенное обозначение</th>
         <th>Символ</th>
-        <th style="max-width: 1000px;">Страны использования</th>
+        <th style="max-width: 300px;">Страны использования</th>
         <th>Дата введения в действие</th>
         <th>Дата прекращения действия</th>
-        <th style="min-width: 280px;">Источник</th>
+        <th class="okv-source-header" style="min-width: 280px; position:relative">
+            <span>Источник</span>
+            <button type="button" class="clf-wrap-btn active" id="okv-wrap-toggle"
+                    title="Свернуть/развернуть строки">
+              <i class="bi bi-text-wrap"></i>
+            </button>
+        </th>
     </tr>
     </thead>
     <tbody>
@@ -48,10 +54,10 @@
             <td>{{ v.name }}</td>
             <td class="text-nowrap">{{ v.abbreviation }}</td>
             <td class="text-nowrap">{{ v.symbol }}</td>
-            <td style="max-width: 1000px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{ v.countries_display }}">{{ v.countries_display }}</td>
+            <td class="okv-countries-cell" title="{{ v.countries_display }}">{{ v.countries_display }}</td>
             <td class="text-nowrap">{% if v.approval_date %}{{ v.approval_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>
             <td class="text-nowrap">{% if v.expiry_date %}{{ v.expiry_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>
-            <td>{{ v.source }}</td>
+            <td class="okv-source-cell" title="{{ v.source }}">{{ v.source }}</td>
         </tr>
     {% empty %}
         <tr><td colspan="10" class="text-muted">Пока нет данных.</td></tr>

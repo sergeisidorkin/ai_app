@@ -10,6 +10,8 @@ urlpatterns = [
     path("projects/registration/<int:pk>/move-up/", views.registration_move_up, name="registration_move_up"),
     path("projects/registration/<int:pk>/move-down/", views.registration_move_down, name="registration_move_down"),
 
+    path("projects/contract/<int:pk>/edit/", views.contract_form_edit, name="contract_form_edit"),
+
     path("projects/work/create/", views.work_form_create, name="work_form_create"),
     path("projects/work/<int:pk>/edit/",  views.work_form_edit, name="work_form_edit"),
     path("projects/work/<int:pk>/delete/", views.work_delete, name="work_delete"),
@@ -34,4 +36,5 @@ urlpatterns = [
     path("projects/legal-entities/work-deps/", views.legal_entity_work_deps, name="legal_entity_work_deps"),
 
     path("projects/work/deps/", views.work_deps, name="work_deps"),
+    path("projects/identifier-for-country/", views.identifier_for_country, name="identifier_for_country"),
 ]

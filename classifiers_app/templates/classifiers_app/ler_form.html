@@ -1,0 +1,122 @@
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    style="display:flex; flex-direction:column; overflow:hidden; flex:1 1 auto; min-height:0;"
+    {% if action == "create" %}
+      hx-post="{% url 'ler_form_create' %}"
+    {% else %}
+      hx-post="{% url 'ler_form_edit' record.pk %}"
+    {% endif %}
+    hx-target="#ler-table-wrap"
+    hx-swap="innerHTML">
+  <div class="modal-body" style="overflow-y:auto; flex:1 1 auto; min-height:0;">
+    {% csrf_token %}
+    <div class="mb-3">
+      <label class="form-label">Наименование (краткое)</label>
+      {{ form.short_name }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Наименование (полное)</label>
+      {{ form.full_name }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Страна регистрации</label>
+      {{ form.registration_country }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Идентификатор</label>
+      {{ form.identifier }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Регистрационный номер</label>
+      {{ form.registration_number }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Дата регистрации</label>
+      {{ form.registration_date }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Дата записи</label>
+      <input type="text" class="form-control" readonly tabindex="-1"
+             style="background-color:#e9ecef; color:#6c757d;"
+             value="{% if record and record.record_date %}{{ record.record_date|date:'d.m.Y' }}{% endif %}">
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Автор записи</label>
+      <input type="text" class="form-control" readonly tabindex="-1"
+             style="background-color:#e9ecef; color:#6c757d;"
+             value="{% if record and record.record_author %}{{ record.record_author }}{% endif %}">
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Дата получения наименования</label>
+      {{ form.name_received_date }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Дата смены наименования</label>
+      {{ form.name_changed_date }}
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mb-0">
+        Проверьте введённые данные.
+      </div>
+    {% endif %}
+  </div>
+  <div class="modal-footer" style="flex-shrink:0;">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>
+
+<script>
+(function() {
+  var countryEl = document.getElementById('id_registration_country');
+  var identifierEl = document.getElementById('id_identifier');
+  if (!countryEl || !identifierEl) return;
+
+  countryEl.addEventListener('change', function() {
+    if (!this.value) {
+      identifierEl.value = '';
+      return;
+    }
+    fetch('{% url "ler_identifiers_for_country" %}?country_id=' + encodeURIComponent(this.value))
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var ids = data.identifiers || [];
+        if (ids.length > 0) {
+          identifierEl.value = ids.map(function(i) { return i.identifier; }).join(', ');
+        } else {
+          identifierEl.value = '';
+        }
+      });
+  });
+
+  function replaceQuotes(el) {
+    var v = el.value;
+    if (v.indexOf('"') === -1) return;
+    var pos = el.selectionStart;
+    var out = '';
+    for (var i = 0; i < v.length; i++) {
+      if (v[i] === '"') {
+        var prev = out.length ? out[out.length - 1] : '';
+        out += (!prev || /[\s(\[{\u00AB]/.test(prev)) ? '\u00AB' : '\u00BB';
+      } else {
+        out += v[i];
+      }
+    }
+    el.value = out;
+    el.setSelectionRange(pos, pos);
+  }
+
+  var shortNameEl = document.getElementById('id_short_name');
+  var fullNameEl = document.getElementById('id_full_name');
+  if (shortNameEl) shortNameEl.addEventListener('input', function() { replaceQuotes(this); });
+  if (fullNameEl) fullNameEl.addEventListener('input', function() { replaceQuotes(this); });
+})();
+</script>

@@ -88,10 +88,6 @@
       const url = tr?.dataset?.editUrl;
       if (!url) return;
       await htmx.ajax('GET', url, { target: '#policy-modal .modal-content', swap: 'innerHTML' });
-      const modalEl = document.getElementById('policy-modal');
-      if (modalEl && window.bootstrap) {
-        window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
-      }
       // На случай если модалка не перерисовывает pane — поддержим видимость панели
       ensureActionsVisibility(name);
       return;
@@ -155,6 +151,72 @@
     updateMasterStateFor(name);
     updateRowHighlightFor(name);
     ensureActionsVisibility(name);
+  });
+
+  // CSV result modal helper
+  function showPolicyCsvResult(html) {
+    var body = document.getElementById('policy-csv-result-body');
+    var modalEl = document.getElementById('policy-csv-result-modal');
+    if (!body || !modalEl) { alert(html); return; }
+    body.innerHTML = html;
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+  }
+
+  async function handlePolicyCsvUpload(uploadUrl, file) {
+    var formData = new FormData();
+    formData.append('csv_file', file);
+    try {
+      var resp = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrftoken },
+        body: formData,
+      });
+      var data = await resp.json();
+      if (data.ok) {
+        var html = '<div class="mb-2"><strong>Загружено строк: ' + data.created + '</strong></div>';
+        if (data.warnings && data.warnings.length) {
+          html += '<div class="text-danger mb-1"><strong>Предупреждения (' + data.warnings.length + '):</strong></div>';
+          html += '<div class="text-danger">';
+          for (var i = 0; i < data.warnings.length; i++) {
+            html += '<div class="mb-1">' + data.warnings[i].replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>';
+          }
+          html += '</div>';
+        }
+        showPolicyCsvResult(html);
+        await htmx.ajax('GET', '/policy/policy/partial/', { target: '#policy-pane', swap: 'innerHTML' });
+      } else {
+        showPolicyCsvResult('<div class="text-danger"><strong>Ошибка:</strong> ' +
+          (data.error || 'Неизвестная ошибка').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>');
+      }
+    } catch (err) {
+      showPolicyCsvResult('<div class="text-danger"><strong>Ошибка загрузки:</strong> ' +
+        err.message.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>');
+    }
+  }
+
+  document.addEventListener('click', function (e) {
+    var mapping = {
+      'sections-csv-upload-btn': 'sections-csv-file-input',
+    };
+    for (var btnId in mapping) {
+      var btn = e.target.closest('#' + btnId);
+      if (btn) {
+        var fileInput = document.getElementById(mapping[btnId]);
+        if (fileInput) { fileInput.value = ''; fileInput.click(); }
+        return;
+      }
+    }
+  });
+
+  document.addEventListener('change', async function (e) {
+    var mapping = {
+      'sections-csv-file-input': '/policy/policy/section/csv-upload/',
+    };
+    var url = mapping[e.target.id];
+    if (!url) return;
+    var file = e.target.files[0];
+    if (!file) return;
+    await handlePolicyCsvUpload(url, file);
   });
 
   // Восстановление выбора только для таблицы, где было действие

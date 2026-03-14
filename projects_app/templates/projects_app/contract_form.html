@@ -1,0 +1,359 @@
+<div class="modal-header" data-modal-size="xl">
+  <h5 class="modal-title">Изменить условия контракта</h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+  method="post"
+  hx-post="{% url 'contract_form_edit' registration.pk %}"
+  hx-target="#projects-pane"
+  hx-swap="outerHTML">
+  <div class="modal-body modal-body-scroll">
+    {% csrf_token %}
+
+    <div class="row g-2">
+
+      <!-- Строка 1 -->
+      <div class="col-3">
+        <label class="form-label">Проект</label>
+        <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+               value="{{ registration.short_uid }}">
+      </div>
+      <div class="col-3">
+        <label class="form-label">Название</label>
+        <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+               value="{{ registration.type }} {{ registration.name }}">
+      </div>
+      <div class="col-3">
+        <label class="form-label">Вид соглашения</label>
+        {{ form.agreement_type }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">№ соглашения</label>
+        {{ form.agreement_number }}
+      </div>
+
+      <!-- Строка 2 -->
+      <div class="col-3">
+        <label class="form-label">Начало контракта</label>
+        {{ form.contract_start }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Оконч. контракта</label>
+        {{ form.contract_end }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Оконч., расчет</label>
+        {{ form.completion_calc }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Срок, недель</label>
+        {{ form.term_weeks }}
+      </div>
+
+      <!-- Строка 3 -->
+      <div class="col-3">
+        <label class="form-label">Исх. данные, дней</label>
+        {{ form.input_data }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Этап 1, недель</label>
+        {{ form.stage1_weeks }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Этап 1, оконч. расчет</label>
+        {{ form.stage1_end }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">
+          Этап 1, дата
+          <i class="bi bi-lock-fill ms-1 js-stage1-lock" role="button" title="Разблокировать ввод даты"></i>
+        </label>
+        {{ form.stage1_date }}
+      </div>
+
+      <!-- Строка 4 -->
+      <div class="col-3">
+        <label class="form-label">Этап 2, недель</label>
+        {{ form.stage2_weeks }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Этап 2, оконч. расчет</label>
+        {{ form.stage2_end }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Этап 3, недель</label>
+        {{ form.stage3_weeks }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Этап 3, оконч. расчет</label>
+        {{ form.stage3_end }}
+      </div>
+
+      <!-- Строка 5 -->
+      <div class="col-12">
+        <label class="form-label">Предмет договора</label>
+        {{ form.contract_subject }}
+      </div>
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mt-3 mb-0">
+        <div class="fw-semibold mb-1">Проверьте введённые данные:</div>
+        <ul class="mb-0">
+          {% for field, errors in form.errors.items %}
+            {% for err in errors %}
+              <li>{{ field }}: {{ err }}</li>
+            {% endfor %}
+          {% endfor %}
+          {% for err in form.non_field_errors %}<li>{{ err }}</li>{% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
+      <div class="modal-footer pb-3">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+        <button type="submit" class="btn btn-primary">Сохранить</button>
+      </div>
+  </div>
+</form>
+<style>
+  #projects-modal .readonly-field {
+    background-color: #f8f9fa;
+    color: #6c757d;
+  }
+  .js-stage1-lock {
+    cursor: pointer;
+    font-size: .85em;
+    vertical-align: baseline;
+    color: #6c757d;
+    transition: color .15s;
+  }
+  .js-stage1-lock:hover { color: #0d6efd; }
+</style>
+<script>
+(function() {
+  var DATE_FMT = { day: "2-digit", month: "2-digit", year: "numeric" };
+
+  function parseDate(value) {
+    if (!value) return null;
+    const raw = value.trim();
+    const dotParts = raw.split(".");
+    if (dotParts.length === 3) {
+      const [day, month, year] = dotParts;
+      const fullYear = year.length === 2 ? "20" + year : year;
+      const iso = `${fullYear}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+      const parsed = new Date(iso);
+      return isNaN(parsed) ? null : parsed;
+    }
+    const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (isoMatch) {
+      const [, year, month, day] = isoMatch;
+      const parsed = new Date(`${year}-${month}-${day}`);
+      return isNaN(parsed) ? null : parsed;
+    }
+    return null;
+  }
+
+  function addDays(date, n) {
+    const d = new Date(date);
+    d.setDate(d.getDate() + Math.round(n));
+    return d;
+  }
+
+  function diffDays(a, b) {
+    return Math.round((a - b) / 86400000);
+  }
+
+  function fmtDate(d) {
+    return d.toLocaleDateString("ru-RU", DATE_FMT);
+  }
+
+  function attachStageCalculator(node) {
+    if (!node) return;
+    const start        = node.querySelector("[name='contract_start']");
+    const inputDays    = node.querySelector("[name='input_data']");
+    const stage1Weeks  = node.querySelector("[name='stage1_weeks']");
+    const stage2Weeks  = node.querySelector("[name='stage2_weeks']");
+    const stage3Weeks  = node.querySelector("[name='stage3_weeks']");
+    const stage1DateEl = node.querySelector(".js-stage1-date");
+
+    const stage1EndTarget  = node.querySelector(".js-stage1-end");
+    const stage2EndTarget  = node.querySelector(".js-stage2-end");
+    const stage3EndTarget  = node.querySelector(".js-stage3-end");
+    const completionTarget = node.querySelector(".js-completion-calc");
+    const termWeeksTarget  = node.querySelector(".js-term-weeks");
+
+    if (!start || !inputDays || !stage1Weeks || !stage1EndTarget) return;
+
+    let stage1DateMode = false;
+
+    const lockIcon = node.querySelector(".js-stage1-lock")
+      || document.querySelector("#projects-modal .js-stage1-lock");
+
+    function setReadonly(el, on) {
+      if (!el) return;
+      el.readOnly = on;
+      el.classList.toggle("readonly-field", on);
+      if (on) el.setAttribute("readonly", ""); else el.removeAttribute("readonly");
+    }
+
+    function applyLockState() {
+      if (stage1DateMode) {
+        if (stage1DateEl) {
+          stage1DateEl.disabled = false;
+          stage1DateEl.removeAttribute("disabled");
+          stage1DateEl.removeAttribute("readonly");
+          stage1DateEl.readOnly = false;
+          stage1DateEl.type = "date";
+          stage1DateEl.classList.remove("readonly-field");
+        }
+        setReadonly(stage1Weeks, true);
+        if (lockIcon) {
+          lockIcon.classList.remove("bi-lock-fill");
+          lockIcon.classList.add("bi-unlock-fill");
+          lockIcon.title = "Заблокировать — вернуться к вводу недель";
+        }
+      } else {
+        if (stage1DateEl) {
+          stage1DateEl.type = "text";
+          stage1DateEl.readOnly = true;
+          stage1DateEl.setAttribute("readonly", "");
+          stage1DateEl.classList.add("readonly-field");
+        }
+        setReadonly(stage1Weeks, false);
+        if (lockIcon) {
+          lockIcon.classList.remove("bi-unlock-fill");
+          lockIcon.classList.add("bi-lock-fill");
+          lockIcon.title = "Разблокировать ввод даты";
+        }
+      }
+    }
+
+    if (lockIcon) {
+      lockIcon.addEventListener("click", () => {
+        if (!stage1DateMode) {
+          if (!parseDate(start.value)) {
+            alert("Сначала заполните поле «Начало контракта».");
+            return;
+          }
+        }
+        if (!stage1DateMode && stage1DateEl && stage1EndTarget) {
+          const d = parseDate(stage1EndTarget.value);
+          if (d) {
+            const iso = d.getFullYear() + "-"
+              + String(d.getMonth() + 1).padStart(2, "0") + "-"
+              + String(d.getDate()).padStart(2, "0");
+            stage1DateEl.value = iso;
+          }
+        }
+        stage1DateMode = !stage1DateMode;
+        applyLockState();
+        recalc();
+      });
+    }
+
+    applyLockState();
+
+    const clear = () => {
+      stage1EndTarget.value = "";
+      if (!stage1DateMode && stage1DateEl) stage1DateEl.value = "";
+      if (stage2EndTarget) stage2EndTarget.value = "";
+      if (stage3EndTarget) stage3EndTarget.value = "";
+      if (completionTarget) completionTarget.value = "";
+      if (termWeeksTarget) termWeeksTarget.value = "";
+    };
+
+    const recalc = () => {
+      const base = parseDate(start.value);
+      if (!base) { clear(); return; }
+
+      const days = parseInt(inputDays.value.replace(/\D/g, ""), 10) || 0;
+
+      let s1w;
+      if (stage1DateMode) {
+        const s1date = stage1DateEl.value ? new Date(stage1DateEl.value) : null;
+        if (s1date && !isNaN(s1date)) {
+          const elapsed = diffDays(s1date, base) - days;
+          s1w = Math.max(0, elapsed / 7);
+          stage1Weeks.value = s1w.toFixed(1);
+        } else {
+          s1w = 0;
+          stage1Weeks.value = "";
+        }
+      } else {
+        s1w = parseFloat((stage1Weeks.value || "0").replace(",", ".")) || 0;
+      }
+
+      const s2w = parseFloat((stage2Weeks?.value || "0").replace(",", ".")) || 0;
+      const s3w = parseFloat((stage3Weeks?.value || "0").replace(",", ".")) || 0;
+
+      const stage1Days = Math.max(0, days + s1w * 7);
+      const stage1Date = addDays(base, stage1Days);
+      stage1EndTarget.value = fmtDate(stage1Date);
+
+      if (!stage1DateMode && stage1DateEl) {
+        stage1DateEl.value = fmtDate(stage1Date);
+      }
+
+      let stage2Date = null;
+      if (stage2Weeks && stage2EndTarget) {
+        if (!Math.round(stage1Days) && !s2w) {
+          stage2EndTarget.value = "";
+        } else {
+          stage2Date = addDays(stage1Date, Math.max(0, s2w * 7));
+          stage2EndTarget.value = fmtDate(stage2Date);
+        }
+      }
+
+      if (stage3EndTarget) {
+        const baseS2 = stage2Date || parseDate(stage2EndTarget?.value || "");
+        if (!baseS2 || !s3w) {
+          stage3EndTarget.value = "";
+        } else {
+          stage3EndTarget.value = fmtDate(addDays(baseS2, Math.max(0, s3w * 7)));
+        }
+      }
+
+      if (completionTarget) {
+        const baseS2 = stage2Date || parseDate(stage2EndTarget?.value || "");
+        if (!baseS2) {
+          completionTarget.value = "";
+        } else {
+          completionTarget.value = fmtDate(addDays(baseS2, Math.max(0, s3w * 7)));
+        }
+      }
+
+      if (termWeeksTarget) {
+        const tw = Math.max(0, (days / 7) + s1w + s2w + s3w);
+        termWeeksTarget.value = tw.toFixed(1);
+      }
+    };
+
+    [start, inputDays, stage1Weeks, stage2Weeks, stage3Weeks]
+      .filter(Boolean)
+      .forEach((el) => ["input", "change"].forEach((evt) => el.addEventListener(evt, recalc)));
+
+    if (stage1DateEl) {
+      ["input", "change"].forEach((evt) => stage1DateEl.addEventListener(evt, recalc));
+    }
+
+    recalc();
+  }
+
+  function initCurrentModal() {
+    const modal = document.querySelector("#projects-modal");
+    if (!modal) return;
+    const form = modal.querySelector("form");
+    attachStageCalculator(form);
+  }
+
+  initCurrentModal();
+
+  document.addEventListener("htmx:afterSwap", function(event) {
+    if (!event.detail || !event.detail.target) return;
+    if (!event.detail.target.closest || !event.detail.target.closest("#projects-modal")) return;
+    initCurrentModal();
+  });
+})();
+</script>

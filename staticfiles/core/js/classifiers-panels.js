@@ -5,8 +5,29 @@
   window.__clTableSel = window.__clTableSel || {};
   window.__clTableSelLast = window.__clTableSelLast || null;
 
-  function pane() { return document.getElementById('classifiers-pane'); }
+  const TABLE_CONFIG = {
+    'oksm-select': { target: '#oksm-table-wrap', swap: 'innerHTML', url: '/classifiers/oksm/table/', settleId: 'oksm-table-wrap' },
+    'okv-select': { target: '#okv-table-wrap', swap: 'innerHTML', url: '/classifiers/okv/table/', settleId: 'okv-table-wrap' },
+    'lei-select': { target: '#lei-table-wrap', swap: 'innerHTML', url: '/classifiers/lei/table/', settleId: 'lei-table-wrap' },
+    'katd-select': { target: '#katd-table-wrap', swap: 'innerHTML', url: '/classifiers/katd/table/', settleId: 'katd-table-wrap' },
+    'lw-select': { target: '#lw-table-wrap', swap: 'innerHTML', url: '/classifiers/lw/table/', settleId: 'lw-table-wrap' },
+    'ler-select': { target: '#ler-table-wrap', swap: 'innerHTML', url: '/classifiers/ler/table/', settleId: 'ler-table-wrap' },
+  };
+
+  const PANE_SELECTOR = '#classifiers-pane, #normatives-pane, #legal-entities-pane';
+  function panes() {
+    return Array.from(document.querySelectorAll(PANE_SELECTOR));
+  }
+  function paneOf(el) {
+    return el?.closest?.(PANE_SELECTOR) || null;
+  }
+  function inAnyPane(el) {
+    return !!paneOf(el);
+  }
   const qa = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+  function qaAllPanes(sel) {
+    return panes().flatMap(p => qa(sel, p));
+  }
 
   function getCookie(name) {
     const m = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
@@ -17,15 +38,15 @@
   function getMasterForPanel(panel) {
     const id = panel?.id;
     if (!id) return null;
-    return pane()?.querySelector(`input.form-check-input[data-actions-id="${CSS.escape(id)}"]`) || null;
+    const root = paneOf(panel);
+    return root?.querySelector(`input.form-check-input[data-actions-id="${CSS.escape(id)}"]`) || null;
   }
   function getNameForPanel(panel) {
     const master = getMasterForPanel(panel);
     return master?.dataset?.targetName || null;
   }
   function getRowChecksByName(name) {
-    const root = pane();
-    return qa(`tbody input.form-check-input[name="${CSS.escape(name)}"]`, root);
+    return qaAllPanes(`tbody input.form-check-input[name="${CSS.escape(name)}"]`);
   }
   function getCheckedByName(name) {
     return getRowChecksByName(name).filter(b => b.checked);
@@ -38,8 +59,11 @@
   }
   function updateMasterStateFor(name) {
     const boxes = getRowChecksByName(name);
-    const root = pane();
-    const master = root?.querySelector(`input.form-check-input[data-target-name="${CSS.escape(name)}"]`);
+    let master = null;
+    for (const p of panes()) {
+      master = p.querySelector(`input.form-check-input[data-target-name="${CSS.escape(name)}"]`);
+      if (master) break;
+    }
     if (!master) return;
     const checkedCount = boxes.filter(b => b.checked).length;
     master.checked = boxes.length > 0 && checkedCount === boxes.length;
@@ -47,19 +71,53 @@
   }
 
   function findActionsByName(name) {
-    const root = pane();
-    if (!root) return null;
-    const master = root.querySelector(`input.form-check-input[data-target-name="${CSS.escape(name)}"]`);
-    if (!master) return null;
-    const actionsId = master.getAttribute('data-actions-id') || '';
-    if (!actionsId) return null;
-    return root.querySelector('#' + actionsId);
+    for (const root of panes()) {
+      const master = root.querySelector(`input.form-check-input[data-target-name="${CSS.escape(name)}"]`);
+      if (!master) continue;
+      const actionsId = master.getAttribute('data-actions-id') || '';
+      if (!actionsId) continue;
+      const panel = root.querySelector('#' + actionsId);
+      if (panel) return panel;
+    }
+    return null;
   }
   function ensureActionsVisibility(name) {
     const panel = findActionsByName(name);
     if (!panel) return;
     const anyChecked = getRowChecksByName(name).some(b => b.checked);
     panel.classList.toggle('d-none', !anyChecked);
+  }
+
+  // Classifiers wrap/truncate toggle (OKSM, OKV)
+  const CLF_WRAP_CFG = {
+    'oksm-wrap-toggle': { wrap: 'oksm-table-wrap', cellClass: 'oksm-source-cell' },
+    'okv-wrap-toggle':  { wrap: 'okv-table-wrap',  cellClass: 'okv-source-cell' },
+    'katd-wrap-toggle': { wrap: 'katd-table-wrap', cellClass: 'katd-source-cell' },
+    'lw-wrap-toggle':   { wrap: 'lw-table-wrap',   cellClass: 'lw-source-cell' },
+  };
+  document.addEventListener('click', function (e) {
+    const toggle = e.target.closest('.clf-wrap-btn');
+    if (!toggle) return;
+    const cfg = CLF_WRAP_CFG[toggle.id];
+    if (!cfg) return;
+    const wrap = document.getElementById(cfg.wrap);
+    const table = wrap?.querySelector('table');
+    if (!table) return;
+
+    table.classList.toggle('clf-truncated');
+    const active = table.classList.contains('clf-truncated');
+    toggle.classList.toggle('active', active);
+
+    wrap.querySelectorAll('td.' + cfg.cellClass).forEach(td => {
+      if (active) td.setAttribute('title', td.textContent.trim());
+      else td.removeAttribute('title');
+    });
+  });
+
+  function releaseFocus(btn) {
+    if (btn && typeof btn.blur === 'function') btn.blur();
+    const active = document.activeElement;
+    if (active && typeof active.blur === 'function') active.blur();
   }
 
   function filterQueryString() {
@@ -80,12 +138,25 @@
     return qs ? url + qs : url;
   }
 
+  async function refreshTable(name) {
+    const cfg = TABLE_CONFIG[name];
+    if (!cfg) {
+      await htmx.ajax('GET', '/classifiers/partial/' + filterQueryString(), {
+        target: '#classifiers-pane',
+        swap: 'outerHTML',
+      });
+      return;
+    }
+    await htmx.ajax('GET', cfg.url + filterQueryString(), {
+      target: cfg.target,
+      swap: cfg.swap,
+    });
+  }
+
   document.addEventListener('click', async (e) => {
-    const root = pane();
-    if (!root) return;
     const btn = e.target.closest('button[data-panel-action]');
-    if (!btn || !root.contains(btn)) return;
-    const panel = btn.closest('#oksm-actions, #okv-actions, #lei-actions, #katd-actions, #lw-actions');
+    if (!btn || !inAnyPane(btn)) return;
+    const panel = btn.closest('#oksm-actions, #okv-actions, #lei-actions, #katd-actions, #lw-actions, #ler-actions');
     if (!panel) return;
     const action = btn.dataset.panelAction;
     const name = getNameForPanel(panel);
@@ -93,6 +164,8 @@
 
     const checked = getCheckedByName(name);
     if (!checked.length) return;
+
+    releaseFocus(btn);
 
     window.__clTableSel[name] = checked.map(ch => String(ch.value));
     window.__clTableSelLast = name;
@@ -103,10 +176,6 @@
       const url = tr?.dataset?.editUrl;
       if (!url) return;
       await htmx.ajax('GET', url, { target: '#classifiers-modal .modal-content', swap: 'innerHTML' });
-      const modalEl = document.getElementById('classifiers-modal');
-      if (modalEl && window.bootstrap) {
-        window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
-      }
       ensureActionsVisibility(name);
       return;
     }
@@ -115,13 +184,12 @@
       if (!confirm(`Удалить ${checked.length} строк(у/и)?`)) return;
       const urls = checked.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
       for (let i = 0; i < urls.length; i++) {
-        const isLast = i === urls.length - 1;
-        if (isLast) {
-          await htmx.ajax('POST', urlWithFilters(urls[i]), { target: '#classifiers-pane', swap: 'outerHTML' });
-        } else {
-          await fetch(urlWithFilters(urls[i]), { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
-        }
+        await fetch(urlWithFilters(urls[i]), {
+          method: 'POST',
+          headers: { 'X-CSRFToken': csrftoken, 'HX-Request': 'true' },
+        }).catch(() => {});
       }
+      await refreshTable(name);
       return;
     }
 
@@ -131,13 +199,12 @@
         .filter(Boolean);
       if (action === 'down') urls = urls.reverse();
       for (let i = 0; i < urls.length; i++) {
-        const isLast = i === urls.length - 1;
-        if (isLast) {
-          await htmx.ajax('POST', urlWithFilters(urls[i]), { target: '#classifiers-pane', swap: 'outerHTML' });
-        } else {
-          await fetch(urlWithFilters(urls[i]), { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
-        }
+        await fetch(urlWithFilters(urls[i]), {
+          method: 'POST',
+          headers: { 'X-CSRFToken': csrftoken, 'HX-Request': 'true' },
+        }).catch(() => {});
       }
+      await refreshTable(name);
       ensureActionsVisibility(name);
       return;
     }
@@ -157,10 +224,8 @@
   });
 
   document.addEventListener('change', (e) => {
-    const root = pane();
-    if (!root) return;
     const master = e.target.closest('input.form-check-input[data-actions-id][data-target-name]');
-    if (!master || !root.contains(master)) return;
+    if (!master || !inAnyPane(master)) return;
     const name = master.dataset.targetName;
     const boxes = getRowChecksByName(name);
     boxes.forEach(b => { b.checked = master.checked; });
@@ -171,10 +236,8 @@
   });
 
   document.addEventListener('change', (e) => {
-    const root = pane();
-    if (!root) return;
     const rowCb = e.target.closest('tbody input.form-check-input[name]');
-    if (!rowCb || !root.contains(rowCb)) return;
+    if (!rowCb || !inAnyPane(rowCb)) return;
     const name = rowCb.name;
     updateMasterStateFor(name);
     updateRowHighlightFor(name);
@@ -191,7 +254,9 @@
   }
 
   // CSV upload helper
-  async function handleCsvUpload(uploadUrl, file) {
+  function esc(s) { return (s || '').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+  async function handleCsvUpload(uploadUrl, file, refreshName) {
     var formData = new FormData();
     formData.append('csv_file', file);
     try {
@@ -202,26 +267,42 @@
       });
       var data = await resp.json();
       if (data.ok) {
-        var html = '<div class="mb-2"><strong>Загружено строк: ' + data.created + '</strong></div>';
+        var html = '<div class="mb-2"><strong>Создано строк: ' + data.created + '</strong></div>';
+        if (data.updated) {
+          html += '<div class="mb-2"><strong>Обновлено строк: ' + data.updated + '</strong></div>';
+        }
+        if (data.skipped) {
+          html += '<div class="mb-2 text-muted">Пропущено (дубликаты без изменений): ' + data.skipped + '</div>';
+        }
+        if (data.conflicts && data.conflicts.length) {
+          html += '<div class="text-warning mb-1"><strong>Конфликты / обновления (' + data.conflicts.length + '):</strong></div>';
+          html += '<div class="text-warning" style="max-height:200px;overflow-y:auto;">';
+          for (var i = 0; i < data.conflicts.length; i++) {
+            html += '<div class="mb-1">' + esc(data.conflicts[i]) + '</div>';
+          }
+          html += '</div>';
+        }
         if (data.warnings && data.warnings.length) {
-          html += '<div class="text-danger mb-1"><strong>Предупреждения (' + data.warnings.length + '):</strong></div>';
-          html += '<div class="text-danger">';
+          html += '<div class="text-danger mb-1 mt-2"><strong>Ошибки (' + data.warnings.length + '):</strong></div>';
+          html += '<div class="text-danger" style="max-height:200px;overflow-y:auto;">';
           for (var i = 0; i < data.warnings.length; i++) {
-            html += '<div class="mb-1">' + data.warnings[i].replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>';
+            html += '<div class="mb-1">' + esc(data.warnings[i]) + '</div>';
           }
           html += '</div>';
         }
         showCsvResult(html);
-        await htmx.ajax('GET', '/classifiers/partial/' + filterQueryString(), {
-          target: '#classifiers-pane', swap: 'outerHTML'
-        });
+        if (refreshName && TABLE_CONFIG[refreshName]) {
+          await refreshTable(refreshName);
+        } else {
+          await htmx.ajax('GET', '/classifiers/partial/' + filterQueryString(), {
+            target: '#classifiers-pane', swap: 'outerHTML'
+          });
+        }
       } else {
-        showCsvResult('<div class="text-danger"><strong>Ошибка:</strong> ' +
-          (data.error || 'Неизвестная ошибка').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>');
+        showCsvResult('<div class="text-danger"><strong>Ошибка:</strong> ' + esc(data.error || 'Неизвестная ошибка') + '</div>');
       }
     } catch (err) {
-      showCsvResult('<div class="text-danger"><strong>Ошибка загрузки:</strong> ' +
-        err.message.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>');
+      showCsvResult('<div class="text-danger"><strong>Ошибка загрузки:</strong> ' + esc(err.message) + '</div>');
     }
   }
 
@@ -232,6 +313,7 @@
       'okv-csv-upload-btn': 'okv-csv-file-input',
       'katd-csv-upload-btn': 'katd-csv-file-input',
       'lw-csv-upload-btn': 'lw-csv-file-input',
+      'ler-csv-upload-btn': 'ler-csv-file-input',
     };
     for (var btnId in mapping) {
       var btn = e.target.closest('#' + btnId);
@@ -245,22 +327,26 @@
 
   document.addEventListener('change', async function (e) {
     var mapping = {
-      'oksm-csv-file-input': '/classifiers/oksm/csv-upload/',
-      'okv-csv-file-input': '/classifiers/okv/csv-upload/',
-      'katd-csv-file-input': '/classifiers/katd/csv-upload/',
-      'lw-csv-file-input': '/classifiers/lw/csv-upload/',
+      'oksm-csv-file-input': { url: '/classifiers/oksm/csv-upload/', refresh: null },
+      'okv-csv-file-input':  { url: '/classifiers/okv/csv-upload/',  refresh: null },
+      'katd-csv-file-input': { url: '/classifiers/katd/csv-upload/', refresh: null },
+      'lw-csv-file-input':   { url: '/classifiers/lw/csv-upload/',   refresh: 'lw-select' },
+      'ler-csv-file-input':  { url: '/classifiers/ler/csv-upload/',  refresh: 'ler-select' },
     };
-    var url = mapping[e.target.id];
-    if (!url) return;
+    var cfg = mapping[e.target.id];
+    if (!cfg) return;
     var file = e.target.files[0];
     if (!file) return;
-    await handleCsvUpload(url, file);
+    await handleCsvUpload(cfg.url, file, cfg.refresh);
   });
 
   document.body.addEventListener('htmx:afterSettle', function (e) {
-    if (!(e.target && e.target.id === 'classifiers-pane')) return;
+    const settleId = e.target && e.target.id;
     const last = window.__clTableSelLast;
     if (!last) return;
+    const cfg = TABLE_CONFIG[last];
+    const expectedId = cfg?.settleId || 'classifiers-pane';
+    if (settleId !== expectedId && settleId !== 'classifiers-pane' && settleId !== 'normatives-pane' && settleId !== 'legal-entities-pane') return;
     const ids = (window.__clTableSel && window.__clTableSel[last]) || [];
     const set = new Set(ids || []);
     getRowChecksByName(last).forEach(b => { b.checked = set.has(String(b.value)); });

@@ -1,4 +1,4 @@
-<table class="table table-sm align-middle">
+<table class="table table-sm align-middle clf-truncated">
     <thead>
     <tr>
         <th style="width:1%">
@@ -21,7 +21,13 @@
         <th>Буквенный код (Альфа-3)</th>
         <th>Дата введения в действие</th>
         <th>Дата прекращения действия</th>
-        <th>Источник</th>
+        <th class="oksm-source-header" style="position:relative">
+            <span>Источник</span>
+            <button type="button" class="clf-wrap-btn active" id="oksm-wrap-toggle"
+                    title="Свернуть/развернуть строки">
+              <i class="bi bi-text-wrap"></i>
+            </button>
+        </th>
     </tr>
     </thead>
     <tbody>
@@ -51,7 +57,7 @@
             <td class="text-nowrap">{{ c.alpha3 }}</td>
             <td class="text-nowrap">{% if c.approval_date %}{{ c.approval_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>
             <td class="text-nowrap">{% if c.expiry_date %}{{ c.expiry_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>
-            <td>{{ c.source }}</td>
+            <td class="oksm-source-cell" title="{{ c.source }}">{{ c.source }}</td>
         </tr>
     {% empty %}
         <tr><td colspan="10" class="text-muted">Пока нет данных.</td></tr>

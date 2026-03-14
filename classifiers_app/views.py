@@ -12,8 +12,8 @@ from django.http import JsonResponse
 
 logger = logging.getLogger(__name__)
 
-from .models import OKSMCountry, OKVCurrency, LegalEntityIdentifier, TerritorialDivision, LivingWage
-from .forms import OKSMCountryForm, OKVCurrencyForm, LegalEntityIdentifierForm, TerritorialDivisionForm, LivingWageForm
+from .models import OKSMCountry, OKVCurrency, LegalEntityIdentifier, TerritorialDivision, LivingWage, LegalEntityRecord
+from .forms import OKSMCountryForm, OKVCurrencyForm, LegalEntityIdentifierForm, TerritorialDivisionForm, LivingWageForm, LegalEntityRecordForm
 
 PARTIAL_TEMPLATE = "classifiers_app/classifiers_partial.html"
 OKSM_TABLE_TEMPLATE = "classifiers_app/oksm_table_partial.html"
@@ -26,6 +26,8 @@ LEI_TABLE_TEMPLATE = "classifiers_app/lei_table_partial.html"
 LEI_FORM_TEMPLATE = "classifiers_app/lei_form.html"
 LW_TABLE_TEMPLATE = "classifiers_app/lw_table_partial.html"
 LW_FORM_TEMPLATE = "classifiers_app/lw_form.html"
+LER_TABLE_TEMPLATE = "classifiers_app/ler_table_partial.html"
+LER_FORM_TEMPLATE = "classifiers_app/ler_form.html"
 HX_TRIGGER_HEADER = "HX-Trigger"
 HX_EVENT = "classifiers-updated"
 
@@ -176,6 +178,16 @@ def _lw_context(request, param_name="lw_date"):
 
 
 # ---------------------------------------------------------------------------
+#  LER (База юридических лиц) queryset helpers
+# ---------------------------------------------------------------------------
+
+def _ler_context(request):
+    return {
+        "ler_items": LegalEntityRecord.objects.select_related("registration_country").order_by("position", "id"),
+    }
+
+
+# ---------------------------------------------------------------------------
 #  Common context / render helpers
 # ---------------------------------------------------------------------------
 
@@ -223,6 +235,17 @@ def _next_katd_position():
 
 def _render_lw_updated(request):
     response = render(request, LW_TABLE_TEMPLATE, _lw_context(request))
+    response[HX_TRIGGER_HEADER] = HX_EVENT
+    return response
+
+
+def _next_ler_position():
+    last = LegalEntityRecord.objects.aggregate(mx=Max("position")).get("mx") or 0
+    return last + 1
+
+
+def _render_ler_updated(request):
+    response = render(request, LER_TABLE_TEMPLATE, _ler_context(request))
     response[HX_TRIGGER_HEADER] = HX_EVENT
     return response
 
@@ -1033,6 +1056,46 @@ def country_code_lookup(request):
         return JsonResponse({"code": ""})
 
 
+def ler_search(request):
+    """Search LegalEntityRecord by partial short_name match."""
+    q = (request.GET.get("q") or "").strip()
+    if len(q) < 1:
+        return JsonResponse({"results": []})
+    items = (
+        LegalEntityRecord.objects
+        .select_related("registration_country")
+        .filter(short_name__icontains=q)
+        .order_by("short_name")[:15]
+    )
+    data = []
+    for r in items:
+        data.append({
+            "id": r.id,
+            "short_name": r.short_name,
+            "full_name": r.full_name or "",
+            "identifier": r.identifier or "",
+            "registration_number": r.registration_number or "",
+            "country_id": r.registration_country_id or "",
+            "country_name": r.registration_country.short_name if r.registration_country else "",
+            "registration_date": r.registration_date.isoformat() if r.registration_date else "",
+        })
+    return JsonResponse({"results": data})
+
+
+def ler_identifiers_for_country(request):
+    """Return LegalEntityIdentifier entries for a given country."""
+    country_id = request.GET.get("country_id")
+    if not country_id:
+        return JsonResponse({"identifiers": []})
+    try:
+        country_id = int(country_id)
+    except (ValueError, TypeError):
+        return JsonResponse({"identifiers": []})
+    items = LegalEntityIdentifier.objects.filter(country_id=country_id).order_by("position", "id")
+    data = [{"id": i.id, "identifier": i.identifier, "full_name": i.full_name} for i in items]
+    return JsonResponse({"identifiers": data})
+
+
 @login_required
 @require_http_methods(["GET"])
 def okv_countries_for_date(request):
@@ -1088,7 +1151,7 @@ def lw_form_create(request):
     if not getattr(obj, "position", 0):
         obj.position = _next_lw_position()
     obj.save()
-    return _render_updated(request)
+    return _render_lw_updated(request)
 
 
 @login_required
@@ -1104,7 +1167,7 @@ def lw_form_edit(request, pk: int):
     if not form.is_valid():
         return render(request, LW_FORM_TEMPLATE, {"form": form, "action": "edit", "lw_item": item, "today_iso": today_iso})
     form.save()
-    return _render_updated(request)
+    return _render_lw_updated(request)
 
 
 @login_required
@@ -1112,7 +1175,7 @@ def lw_form_edit(request, pk: int):
 @require_POST
 def lw_delete(request, pk: int):
     get_object_or_404(LivingWage, pk=pk).delete()
-    return _render_updated(request)
+    return _render_lw_updated(request)
 
 
 def _normalize_lw_positions():
@@ -1133,7 +1196,7 @@ def lw_move_up(request, pk: int):
         LivingWage.objects.filter(pk=cur.id).update(position=prev.position)
         LivingWage.objects.filter(pk=prev.id).update(position=cur.position)
         _normalize_lw_positions()
-    return _render_updated(request)
+    return _render_lw_updated(request)
 
 
 @require_http_methods(["POST", "GET"])
@@ -1147,7 +1210,7 @@ def lw_move_down(request, pk: int):
         LivingWage.objects.filter(pk=cur.id).update(position=nxt.position)
         LivingWage.objects.filter(pk=nxt.id).update(position=cur.position)
         _normalize_lw_positions()
-    return _render_updated(request)
+    return _render_lw_updated(request)
 
 
 # ---------------------------------------------------------------------------
@@ -1291,6 +1354,275 @@ def lw_csv_upload(request):
             errors.append(f"Строка {i}: {exc}")
 
     result = {"ok": True, "created": created_count}
+    if errors:
+        result["warnings"] = errors[:50]
+    return JsonResponse(result)
+
+
+# ---------------------------------------------------------------------------
+#  LER (База юридических лиц) partial
+# ---------------------------------------------------------------------------
+
+def ler_table_partial(request):
+    return render(request, LER_TABLE_TEMPLATE, _ler_context(request))
+
+
+# ---------------------------------------------------------------------------
+#  LER CRUD
+# ---------------------------------------------------------------------------
+
+def _ler_record_author(user):
+    full = f"{user.first_name} {user.last_name}".strip()
+    return full if full else user.email or user.username
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def ler_form_create(request):
+    if request.method == "GET":
+        form = LegalEntityRecordForm()
+        return render(request, LER_FORM_TEMPLATE, {"form": form, "action": "create"})
+    form = LegalEntityRecordForm(request.POST)
+    if not form.is_valid():
+        resp = render(request, LER_FORM_TEMPLATE, {"form": form, "action": "create"})
+        resp["HX-Retarget"] = "#classifiers-modal .modal-content"
+        resp["HX-Reswap"] = "innerHTML"
+        return resp
+    obj = form.save(commit=False)
+    if not getattr(obj, "position", 0):
+        obj.position = _next_ler_position()
+    obj.record_date = date_type.today()
+    obj.record_author = _ler_record_author(request.user)
+    obj.save()
+    return _render_ler_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def ler_form_edit(request, pk: int):
+    record = get_object_or_404(LegalEntityRecord, pk=pk)
+    if request.method == "GET":
+        form = LegalEntityRecordForm(instance=record)
+        return render(request, LER_FORM_TEMPLATE, {"form": form, "action": "edit", "record": record})
+    form = LegalEntityRecordForm(request.POST, instance=record)
+    if not form.is_valid():
+        resp = render(request, LER_FORM_TEMPLATE, {"form": form, "action": "edit", "record": record})
+        resp["HX-Retarget"] = "#classifiers-modal .modal-content"
+        resp["HX-Reswap"] = "innerHTML"
+        return resp
+    obj = form.save(commit=False)
+    obj.record_date = date_type.today()
+    obj.record_author = _ler_record_author(request.user)
+    obj.save()
+    return _render_ler_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def ler_delete(request, pk: int):
+    get_object_or_404(LegalEntityRecord, pk=pk).delete()
+    return _render_ler_updated(request)
+
+
+def _normalize_ler_positions():
+    items = LegalEntityRecord.objects.order_by("position", "id").only("id", "position")
+    for idx, it in enumerate(items, start=1):
+        if it.position != idx:
+            LegalEntityRecord.objects.filter(pk=it.pk).update(position=idx)
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+def ler_move_up(request, pk: int):
+    _normalize_ler_positions()
+    items = list(LegalEntityRecord.objects.order_by("position", "id").only("id", "position"))
+    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+    if idx is not None and idx > 0:
+        cur, prev = items[idx], items[idx - 1]
+        LegalEntityRecord.objects.filter(pk=cur.id).update(position=prev.position)
+        LegalEntityRecord.objects.filter(pk=prev.id).update(position=cur.position)
+        _normalize_ler_positions()
+    return _render_ler_updated(request)
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+def ler_move_down(request, pk: int):
+    _normalize_ler_positions()
+    items = list(LegalEntityRecord.objects.order_by("position", "id").only("id", "position"))
+    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+    if idx is not None and idx < len(items) - 1:
+        cur, nxt = items[idx], items[idx + 1]
+        LegalEntityRecord.objects.filter(pk=cur.id).update(position=nxt.position)
+        LegalEntityRecord.objects.filter(pk=nxt.id).update(position=cur.position)
+        _normalize_ler_positions()
+    return _render_ler_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def ler_csv_upload(request):
+    csv_file = request.FILES.get("csv_file")
+    if not csv_file:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+    if not csv_file.name.lower().endswith(".csv"):
+        return JsonResponse({"ok": False, "error": "Допустимы только файлы CSV."}, status=400)
+
+    try:
+        raw = csv_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_file.seek(0)
+            raw = csv_file.read().decode("cp1251")
+        except Exception:
+            return JsonResponse({"ok": False, "error": "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251)."}, status=400)
+
+    reader = csv.reader(io.StringIO(raw), delimiter=";")
+    rows = list(reader)
+
+    if not rows:
+        return JsonResponse({"ok": False, "error": "Файл пуст."}, status=400)
+    if len(rows[0]) <= 1:
+        reader = csv.reader(io.StringIO(raw), delimiter=",")
+        rows = list(reader)
+    if len(rows) < 2:
+        return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
+
+    data_rows = rows[1:]
+    created_count = 0
+    updated_count = 0
+    skipped_count = 0
+    errors = []
+    conflicts = []
+    position = _next_ler_position()
+
+    countries_by_code = {c.code.strip(): c for c in OKSMCountry.objects.all()}
+    countries_by_name = {c.short_name.strip().lower(): c for c in OKSMCountry.objects.all()}
+    countries_by_alpha2 = {c.alpha2.strip().upper(): c for c in OKSMCountry.objects.all() if c.alpha2}
+    countries_by_alpha3 = {c.alpha3.strip().upper(): c for c in OKSMCountry.objects.all() if c.alpha3}
+
+    author = _ler_record_author(request.user)
+    today = date_type.today()
+
+    for i, row in enumerate(data_rows, start=2):
+        if not any(cell.strip() for cell in row):
+            continue
+
+        if len(row) < 1 or not row[0].strip():
+            errors.append(f"Строка {i}: отсутствует наименование (краткое).")
+            continue
+
+        try:
+            short_name = row[0].strip()
+            full_name = row[1].strip() if len(row) > 1 else ""
+            country_raw = row[2].strip() if len(row) > 2 else ""
+            identifier = row[3].strip() if len(row) > 3 else ""
+            registration_number = row[4].strip() if len(row) > 4 else ""
+            registration_date = _parse_csv_date(row[5]) if len(row) > 5 else None
+            record_date_csv = _parse_csv_date(row[6]) if len(row) > 6 else None
+            record_author_csv = row[7].strip() if len(row) > 7 else ""
+            name_received_date = _parse_csv_date(row[8]) if len(row) > 8 else None
+            name_changed_date = _parse_csv_date(row[9]) if len(row) > 9 else None
+
+            country = None
+            if country_raw:
+                country = countries_by_name.get(country_raw.lower())
+                if not country:
+                    country = countries_by_code.get(country_raw)
+                if not country:
+                    country = countries_by_alpha2.get(country_raw.upper())
+                if not country:
+                    country = countries_by_alpha3.get(country_raw.upper())
+                if not country:
+                    similar = [
+                        c for cn, c in countries_by_name.items()
+                        if country_raw.lower() in cn or cn in country_raw.lower()
+                    ]
+                    err = f'Строка {i}: страна "{country_raw}" не найдена в ОКСМ.'
+                    if similar:
+                        err += f' Похожие: {"; ".join(s.short_name for s in similar[:5])}.'
+                    errors.append(err)
+                    continue
+
+            existing = LegalEntityRecord.objects.filter(short_name__iexact=short_name).first()
+            if existing:
+                changed_fields = []
+                field_map = {
+                    "full_name": ("Наименование (полное)", full_name, existing.full_name),
+                    "registration_country": ("Страна регистрации", country, existing.registration_country),
+                    "identifier": ("Идент.", identifier, existing.identifier),
+                    "registration_number": ("Регистр. номер", registration_number, existing.registration_number),
+                    "registration_date": ("Дата регистрации", registration_date, existing.registration_date),
+                    "name_received_date": ("Дата получения наим.", name_received_date, existing.name_received_date),
+                    "name_changed_date": ("Дата смены наим.", name_changed_date, existing.name_changed_date),
+                }
+                for field, (label, new_val, old_val) in field_map.items():
+                    if field == "registration_country":
+                        new_id = new_val.pk if new_val else None
+                        old_id = old_val.pk if old_val else None
+                        if new_id != old_id and new_val is not None:
+                            old_display = old_val.short_name if old_val else "—"
+                            new_display = new_val.short_name if new_val else "—"
+                            changed_fields.append(f'{label}: «{old_display}» → «{new_display}»')
+                            setattr(existing, field, new_val)
+                    elif field in ("registration_date", "name_received_date", "name_changed_date"):
+                        if new_val is not None and new_val != old_val:
+                            old_d = old_val.strftime("%d.%m.%Y") if old_val else "—"
+                            new_d = new_val.strftime("%d.%m.%Y")
+                            changed_fields.append(f'{label}: «{old_d}» → «{new_d}»')
+                            setattr(existing, field, new_val)
+                    else:
+                        if new_val and new_val != (old_val or ""):
+                            changed_fields.append(f'{label}: «{old_val or "—"}» → «{new_val}»')
+                            setattr(existing, field, new_val)
+
+                if changed_fields:
+                    existing.record_date = record_date_csv or today
+                    existing.record_author = record_author_csv or author
+                    existing.save()
+                    conflicts.append(
+                        f'Строка {i}: «{short_name}» — обновлено: {"; ".join(changed_fields)}.'
+                    )
+                    updated_count += 1
+                else:
+                    skipped_count += 1
+                    conflicts.append(
+                        f'Строка {i}: «{short_name}» — дубликат без изменений, пропущено.'
+                    )
+                continue
+
+            LegalEntityRecord.objects.create(
+                short_name=short_name,
+                full_name=full_name,
+                registration_country=country,
+                identifier=identifier,
+                registration_number=registration_number,
+                registration_date=registration_date,
+                record_date=record_date_csv or today,
+                record_author=record_author_csv or author,
+                name_received_date=name_received_date,
+                name_changed_date=name_changed_date,
+                position=position,
+            )
+            position += 1
+            created_count += 1
+
+        except Exception as exc:
+            logger.exception("LER CSV import row %d failed", i)
+            errors.append(f"Строка {i}: {exc}")
+
+    result = {
+        "ok": True,
+        "created": created_count,
+        "updated": updated_count,
+        "skipped": skipped_count,
+    }
+    if conflicts:
+        result["conflicts"] = conflicts
     if errors:
         result["warnings"] = errors[:50]
     return JsonResponse(result)

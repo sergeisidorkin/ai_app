@@ -29,7 +29,16 @@
       }
 
       // 3) Fallback — нативный
-      el.setAttribute('type', 'date'); // покажет родной календарь браузера
+      var raw = (el.value || '').trim();
+      if (raw) {
+        var dotParts = raw.split('.');
+        if (dotParts.length === 3) {
+          var dd = dotParts[0], mm = dotParts[1], yy = dotParts[2];
+          var yyyy = yy.length === 2 ? '20' + yy : yy;
+          el.value = yyyy + '-' + mm.padStart(2, '0') + '-' + dd.padStart(2, '0');
+        }
+      }
+      el.setAttribute('type', 'date');
       el.dataset.hasPicker = '1';
     });
   }

@@ -1,6 +1,7 @@
 from django.db import models, transaction
 from django.core.validators import MinValueValidator, MaxValueValidator
 from policy_app.models import Product, TypicalSection
+from classifiers_app.models import OKSMCountry
 from datetime import timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -90,8 +91,18 @@ class ProjectRegistration(models.Model):
     deadline = models.DateField("Дедлайн", null=True, blank=True)
     year = models.PositiveIntegerField("Год", null=True, blank=True)
 
+    country = models.ForeignKey(
+        OKSMCountry,
+        verbose_name="Страна",
+        on_delete=models.SET_NULL,
+        related_name="project_registrations",
+        null=True,
+        blank=True,
+    )
     customer = models.CharField("Заказчик", max_length=255, blank=True)
+    identifier = models.CharField("Идентификатор", max_length=64, blank=True, default="")
     registration_number = models.CharField("Регистрационный номер", max_length=100, blank=True)
+    registration_date = models.DateField("Дата регистрации", null=True, blank=True)
     project_manager = models.CharField("Руководитель проекта", max_length=255, blank=True)
     contract_subject = models.TextField("Предмет договора", blank=True)
 
@@ -120,6 +131,12 @@ class ProjectRegistration(models.Model):
         return " ".join(parts)
 
     def save(self, *args, **kwargs):
+        if (
+            not self.agreement_number
+            and self.group == "RU"
+            and self.agreement_type == self.AgreementType.MAIN
+        ):
+            self.agreement_number = f"IMCM/{self.number}"
         self.stage1_end = self._calculate_stage1_end()
         self.stage2_end = self._calculate_stage2_end()
         self.term_weeks = self._calculate_term_weeks()
@@ -194,7 +211,17 @@ class WorkVolume(models.Model):
     type = models.CharField(max_length=100, blank=True, verbose_name="Тип")
     name = models.CharField(max_length=255, verbose_name="Название")
     asset_name = models.CharField(max_length=255, blank=True, verbose_name="Наименование актива")
+    country = models.ForeignKey(
+        OKSMCountry,
+        verbose_name="Страна",
+        on_delete=models.SET_NULL,
+        related_name="work_volumes",
+        null=True,
+        blank=True,
+    )
+    identifier = models.CharField("Идентификатор", max_length=64, blank=True, default="")
     registration_number = models.CharField(max_length=100, blank=True, verbose_name="Регистрационный номер")
+    registration_date = models.DateField("Дата регистрации", null=True, blank=True)
     manager = models.CharField(max_length=255, blank=True, verbose_name="Менеджер")
 
     class Meta:
@@ -291,7 +318,17 @@ class LegalEntity(models.Model):
     work_type = models.CharField("Тип", max_length=100, blank=True)
     work_name = models.CharField("Название", max_length=255, blank=True)    
     legal_name = models.CharField("Наименование юридического лица", max_length=255, blank=True)
+    country = models.ForeignKey(
+        OKSMCountry,
+        verbose_name="Страна",
+        on_delete=models.SET_NULL,
+        related_name="legal_entities",
+        null=True,
+        blank=True,
+    )
+    identifier = models.CharField("Идентификатор", max_length=64, blank=True, default="")
     registration_number = models.CharField("Регистрационный номер", max_length=100, blank=True)
+    registration_date = models.DateField("Дата регистрации", null=True, blank=True)
 
     class Meta:
         ordering = ["project__position", "position", "id"]
@@ -328,7 +365,10 @@ def ensure_primary_legal_entity(sender, instance, created, **kwargs):
         work_type=instance.type or "",
         work_name=instance.name or "",
         legal_name=instance.asset_name or instance.name or "",
+        country=instance.country,
+        identifier=instance.identifier,
         registration_number=instance.registration_number,
+        registration_date=instance.registration_date,
         position=max_pos + 1,
     )
 
@@ -434,7 +474,16 @@ class Performer(models.Model):
         null=True,
         blank=True,
     )
-    grade = models.CharField("Грейд", max_length=50, blank=True, default="")
+    grade = models.CharField("Грейд (уровень)", max_length=50, blank=True, default="")
+    grade_name = models.CharField("Грейд (наименование)", max_length=255, blank=True, default="")
+    currency = models.ForeignKey(
+        "classifiers_app.OKVCurrency",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        verbose_name="Валюта",
+        related_name="performers",
+    )
 
     typical_section = models.ForeignKey(
         TypicalSection,
@@ -515,6 +564,8 @@ class Performer(models.Model):
                 self.employee = resolved_employee
         elif self.employee_id:
             self.executor = self.employee_full_name(self.employee)
+        if self.prepayment is not None:
+            self.final_payment = Decimal("100") - Decimal(str(self.prepayment))
         super().save(*args, **kwargs)
 
     @property
