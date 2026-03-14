@@ -1,4 +1,5 @@
 {% load static %}
+<div class="projects-outer-scroll">
 <div class="card shadow-sm">
   <div class="card-body">
     <div id="projects-pane"
@@ -20,13 +21,8 @@
 
 
 
-<div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 50px;">
-  <h5 class="table-section-title">
-    <i class="bi bi-table me-2"></i> Исполнители
-  </h5>
-</div>
-
 <div id="performers-pane"
+     style="margin-top: 50px;"
      hx-get="{% url 'performers_partial' %}"
      hx-trigger="load, performers-updated from:body"
      hx-target="#performers-pane"
@@ -69,8 +65,7 @@
 
         // Если в загруженном фрагменте есть data-modal-size, применяем
         const sz = modalContent.querySelector('[data-modal-size]')?.dataset?.modalSize;
-        if (sz === 'xl') dlg.classList.add('modal-xl');
-        // можно добавить другие варианты при желании
+        if (sz) dlg.classList.add('modal-' + sz);
       });
     </script>
     <script>
@@ -82,4 +77,5 @@
       });
     </script>
   </div>
+</div>
 </div>

@@ -3,13 +3,37 @@
   <!-- Индикатор, чтобы наследование hx-indicator не ругалось -->
   <div id="projects-loading" class="text-muted htmx-indicator d-none">Загрузка…</div>
   <!-- Регистрация проекта -->
-  <div class="d-flex justify-content-between align-items-center mb-3 table-section-header">
-    <h5 class="table-section-title">
-      <i class="bi bi-table me-2"></i> Регистрация проекта
+  <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
+    <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
+      <i class="bi bi-table"></i> Регистрация проекта
     </h5>
+    <div class="dropdown" id="reg-project-filter-dropdown">
+      <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+              id="reg-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+        Проекты: <span class="js-reg-filter-label">Все</span>
+      </button>
+      <div class="dropdown-menu p-3" aria-labelledby="reg-project-filter-toggle" style="min-width: 200px; max-height: 240px; overflow-y: auto;">
+        <div class="form-check mb-2">
+          <input class="form-check-input js-reg-filter" type="checkbox" value="__all__" id="reg-filter-all">
+          <label class="form-check-label" for="reg-filter-all">Все проекты</label>
+        </div>
+        <hr class="dropdown-divider">
+        {% for r in reg_filter_projects %}
+          <div class="form-check">
+            <input class="form-check-input js-reg-filter" type="checkbox"
+                   value="{{ r.id }}" id="reg-filter-{{ r.id }}">
+            <label class="form-check-label" for="reg-filter-{{ r.id }}">
+              {{ r.short_uid }}
+            </label>
+          </div>
+        {% empty %}
+          <div class="text-muted small">Нет проектов</div>
+        {% endfor %}
+      </div>
+    </div>
   </div>
 
-  <div class="table-responsive registration-table-wrap">
+  <div class="registration-table-wrap">
 
     <table class="table table-sm align-middle reg-table">
         <colgroup>
@@ -17,27 +41,18 @@
           <col class="project-number">   <!-- 2: Номер -->
           <col class="group">            <!-- 3: Группа -->
           <col class="agreement-type">   <!-- 4: Вид соглашения -->
-          <col class="agreement-number"> <!-- 5: № соглашения -->
-          <col class="project-id">        <!-- 6: Проект ID -->  
-          <col class="group">            <!-- 7: Тип -->
-          <col class="name">             <!-- 8: Название -->
-          <col class="status">           <!-- 9: Статус -->
-          <col class="narrow">           <!-- 10: Начало контракта -->
-          <col class="narrow">           <!-- 11: Оконч. контракта -->
-          <col class="narrow">           <!-- 12: Оконч., расчет -->
-          <col class="narrow">           <!-- 13: Исх. данные -->
-          <col class="narrow">           <!-- 14: Этап 1, недель -->
-          <col class="narrow">           <!-- 15: Этап 1, оконч. -->
-          <col class="narrow">           <!-- 15: Этап 2, недель -->
-          <col class="narrow">           <!-- 17: Этап 2, оконч. -->
-          <col class="narrow">           <!-- 18: Этап 3, недель -->
-          <col class="narrow">           <!-- 19: Срок, недель -->
-          <col class="narrow">           <!-- 20: Дедлайн -->
-          <col class="narrow">           <!-- 21: Год -->
-          <col>                          <!-- 22: Заказчик -->
-          <col>                          <!-- 23: Регистр. номер -->
-          <col>                          <!-- 24: Руководитель проекта -->
-          <col>                          <!-- 25: Предмет договора -->
+          <col class="project-id">       <!-- 5: Проект ID -->
+          <col class="reg-type">          <!-- 6: Тип -->
+          <col class="reg-name">         <!-- 7: Название -->
+          <col class="reg-status">       <!-- 8: Статус -->
+          <col class="reg-deadline">      <!-- 9: Дедлайн -->
+          <col class="reg-year">         <!-- 10: Год -->
+          <col class="reg-manager">      <!-- 11: Руководитель проекта -->
+          <col class="reg-customer">     <!-- 12: Заказчик -->
+          <col class="reg-country">      <!-- 13: Страна -->
+          <col class="reg-identifier">   <!-- 14: Идентификатор -->
+          <col class="reg-regnumber">    <!-- 15: Регистр. номер -->
+          <col class="reg-regdate">     <!-- 16: Дата регистр. -->
         </colgroup>
       <thead>
       <tr>
@@ -56,32 +71,24 @@
         <th class="col-project-number">Номер</th>
         <th>Группа</th>
         <th>Вид соглашения</th>
-        <th class="col-agreement-number">№ соглашения</th>
         <th>Проект ID</th>
         <th>Тип</th>
         <th class="nowrap">Название</th>
         <th>Статус</th>
-        <th class="wrap">Начало контр.</th>
-        <th>Оконч. контр.</th>
-        <th>Оконч., расчет</th>
-        <th>Исх. данные</th>
-        <th>Этап 1, недель</th>
-        <th>Этап 1, оконч.</th>
-        <th>Этап 2, недель</th>
-        <th>Этап 2, оконч.</th>
-        <th>Этап 3, недель</th>
-        <th>Срок, недель</th>
         <th>Дедлайн</th>
         <th>Год</th>
-        <th>Заказчик</th>
-        <th>Регистр. номер</th>
         <th>Руководитель проекта</th>
-        <th>Предмет договора</th>
+        <th class="reg-customer-cell">Заказчик</th>
+        <th>Страна</th>
+        <th>Идент.</th>
+        <th>Регистр. номер</th>
+        <th>Дата</th>
       </tr>
       </thead>
       <tbody>
       {% for r in registrations %}
         <tr
+          data-project-id="{{ r.id }}"
           data-edit-url="{% url 'registration_form_edit' r.pk %}"
           data-delete-url="{% url 'registration_delete' r.pk %}"
           data-move-up-url="{% url 'registration_move_up' r.pk %}"
@@ -101,30 +108,21 @@
           <td class="col-project-number">{{ r.number }}</td>
           <td>{{ r.group }}</td>
           <td>{{ r.get_agreement_type_display }}</td>
-          <td>{{ r.agreement_number }}</td>
           <td class="project-id-cell">{{ r.short_uid }}</td>
           <td>{{ r.type }}</td>
           <td>{{ r.name }}</td>
           <td>{{ r.status }}</td>
-          <td>{{ r.contract_start|date:"d.m.y" }}</td>
-          <td>{{ r.contract_end|date:"d.m.y" }}</td>
-          <td>{{ r.completion_calc|date:"d.m.y" }}</td>
-          <td>{{ r.input_data }}</td>
-          <td>{{ r.stage1_weeks|comma_decimal:1 }}</td>
-          <td>{{ r.stage1_end|date:"d.m.y" }}</td>
-          <td>{{ r.stage2_weeks|comma_decimal:1 }}</td>
-          <td>{{ r.stage2_end|date:"d.m.y" }}</td>
-          <td>{{ r.stage3_weeks|comma_decimal:1 }}</td>
-          <td>{{ r.term_weeks|comma_decimal:1 }}</td>
           <td>{{ r.deadline|date:"d.m.y" }}</td>
           <td>{{ r.year }}</td>
-          <td>{{ r.customer }}</td>
-          <td>{{ r.registration_number }}</td>
           <td>{{ r.project_manager|short_fio }}</td>
-          <td>{{ r.contract_subject|truncatechars:15 }}</td>
+          <td>{{ r.customer }}</td>
+          <td>{{ r.country.short_name|default:"" }}</td>
+          <td>{{ r.identifier }}</td>
+          <td>{{ r.registration_number }}</td>
+          <td>{{ r.registration_date|date:"d.m.y" }}</td>
         </tr>
       {% empty %}
-        <tr><td colspan="25" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="16" class="text-muted">Пока нет данных.</td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -158,14 +156,151 @@
     {% endif %}
   </div>
 
-  <!-- Объем работ -->
+  <!-- Условия контракта -->
   <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 50px;">
     <h5 class="table-section-title">
-      <i class="bi bi-table me-2"></i> Объем услуг
+      <i class="bi bi-table me-2"></i> Условия контракта
     </h5>
   </div>
 
-  <div class="table-responsive">
+  <div class="contract-table-wrap">
+
+    <table class="table table-sm align-middle contract-table">
+        <colgroup>
+          <col class="checkbox">         <!-- 1: чекбокс -->
+          <col class="project-id">       <!-- 2: Проект -->
+          <col class="group">            <!-- 3: Тип -->
+          <col class="name">             <!-- 4: Название -->
+          <col class="agreement-type">   <!-- 5: Вид соглашения -->
+          <col class="agreement-number"> <!-- 6: № соглашения -->
+          <col class="narrow-sm">         <!-- 7: Начало -->
+          <col class="narrow-sm">         <!-- 8: Оконч. -->
+          <col class="narrow-sm">         <!-- 9: Оконч. lock -->
+          <col class="narrow">           <!-- 10: Исх. данные -->
+          <col class="narrow">           <!-- 11: Этап 1, недель -->
+          <col class="narrow">           <!-- 12: Этап 1, оконч. -->
+          <col class="narrow">           <!-- 13: Этап 2, недель -->
+          <col class="narrow">           <!-- 14: Этап 2, оконч. -->
+          <col class="narrow">           <!-- 15: Этап 3, недель -->
+          <col class="narrow">           <!-- 16: Срок, недель -->
+          <col class="col-subject">      <!-- 17: Предмет договора -->
+        </colgroup>
+      <thead>
+      <tr>
+        <th class="w-checkbox">
+          {% if request.user.is_authenticated and request.user.is_staff %}
+            <div class="form-check m-0">
+                <input class="form-check-input"
+                       type="checkbox"
+                       id="contract-conditions-master"
+                       data-target-name="contract-select"
+                       data-actions-id="contract-conditions-actions"
+                       aria-label="Выделить все строки условий контракта">
+            </div>
+          {% endif %}
+        </th>
+        <th>Проект</th>
+        <th>Тип</th>
+        <th class="nowrap">Название</th>
+        <th>Вид соглашения</th>
+        <th class="col-agreement-number">№ соглашения</th>
+        <th class="wrap">Начало</th>
+        <th>Оконч.</th>
+        <th>Оконч. <i class="bi bi-lock"></i></th>
+        <th>Исх. данные</th>
+        <th>Этап 1, нед.</th>
+        <th>Этап 1, ок.</th>
+        <th>Этап 2, нед.</th>
+        <th>Этап 2, ок.</th>
+        <th>Этап 3, нед.</th>
+        <th>Срок, нед.</th>
+        <th>Предмет договора</th>
+      </tr>
+      </thead>
+      <tbody>
+      {% for r in registrations %}
+        <tr data-project-id="{{ r.id }}" data-edit-url="{% url 'contract_form_edit' r.pk %}">
+          <td class="text-nowrap">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+              <div class="form-check">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           id="contract-sel-{{ r.id }}"
+                           name="contract-select"
+                           value="{{ r.id }}"
+                           aria-label="Выделить строку условий контракта">
+              </div>
+            {% endif %}
+          </td>
+          <td class="project-id-cell">{{ r.short_uid }}</td>
+          <td>{{ r.type }}</td>
+          <td>{{ r.name }}</td>
+          <td>{{ r.get_agreement_type_display }}</td>
+          <td>{{ r.agreement_number }}</td>
+          <td>{{ r.contract_start|date:"d.m.y" }}</td>
+          <td>{{ r.contract_end|date:"d.m.y" }}</td>
+          <td class="completion-calc-cell">{{ r.completion_calc|date:"d.m.y" }}</td>
+          <td>{{ r.input_data }}</td>
+          <td>{{ r.stage1_weeks|comma_decimal:1 }}</td>
+          <td>{{ r.stage1_end|date:"d.m.y" }}</td>
+          <td>{{ r.stage2_weeks|comma_decimal:1 }}</td>
+          <td>{{ r.stage2_end|date:"d.m.y" }}</td>
+          <td>{{ r.stage3_weeks|comma_decimal:1 }}</td>
+          <td>{{ r.term_weeks|comma_decimal:1 }}</td>
+          <td>{{ r.contract_subject }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="17" class="text-muted">Пока нет данных.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+
+    {% if request.user.is_authenticated and request.user.is_staff %}
+      <div class="d-flex align-items-stretch gap-2 products-actions-row">
+        <button
+          type="button"
+          id="contract-edit-btn"
+          class="btn btn-primary btn-sm d-flex align-items-center"
+          disabled>
+          <i class="bi bi-pencil-square me-2"></i>Редактировать
+        </button>
+        <div id="contract-conditions-actions" class="d-none"></div>
+      </div>
+    {% endif %}
+  </div>
+
+  <!-- Объем работ -->
+  <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap" style="margin-top: 50px;">
+    <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
+      <i class="bi bi-table"></i> Объем услуг
+    </h5>
+    <div class="dropdown">
+      <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+              id="work-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+        Проекты: <span class="js-work-filter-label">Все</span>
+      </button>
+      <div class="dropdown-menu p-3" aria-labelledby="work-project-filter-toggle" style="min-width: 200px; max-height: 240px; overflow-y: auto;">
+        <div class="form-check mb-2">
+          <input class="form-check-input js-work-filter" type="checkbox" value="__all__" id="work-filter-all">
+          <label class="form-check-label" for="work-filter-all">Все проекты</label>
+        </div>
+        <hr class="dropdown-divider">
+        {% for project in work_projects %}
+          <div class="form-check">
+            <input class="form-check-input js-work-filter" type="checkbox"
+                   value="{{ project.id }}" id="work-filter-{{ project.id }}">
+            <label class="form-check-label" for="work-filter-{{ project.id }}">
+              {{ project.short_uid }}
+            </label>
+          </div>
+        {% empty %}
+          <div class="text-muted small">Нет проектов</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div>
     <table class="table table-sm align-middle work-table">
       <colgroup>
           <col class="col-checkbox">    <!-- чекбокс -->
@@ -173,7 +308,10 @@
           <col class="col-type">        <!-- Тип -->
           <col class="col-name">        <!-- Название -->
           <col class="col-active">      <!-- Наименование актива -->
-          <col>                         <!-- Регистрационный номер -->
+          <col class="work-country">    <!-- Страна -->
+          <col class="work-identifier"> <!-- Идент. -->
+          <col class="work-regnumber">  <!-- Регистр. номер -->
+          <col class="work-regdate">    <!-- Дата -->
           <col>                         <!-- Менеджер -->
       </colgroup>
       <thead>
@@ -194,13 +332,17 @@
         <th>Тип</th>
         <th>Название</th>
         <th>Наименование актива</th>
-        <th>Регистрационный номер</th>
+        <th>Страна</th>
+        <th>Идент.</th>
+        <th>Регистр. номер</th>
+        <th>Дата</th>
         <th>Менеджер</th>
       </tr>
       </thead>
       <tbody>
       {% for w in work_items %}
         <tr
+          data-project-id="{{ w.project_id }}"
           data-edit-url="{% url 'work_form_edit' w.pk %}"
           data-delete-url="{% url 'work_delete' w.pk %}"
           data-move-up-url="{% url 'work_move_up' w.pk %}"
@@ -221,11 +363,14 @@
           <td class="text-nowrap">{{ w.type }}</td>
           <td>{{ w.name }}</td>
           <td class="text-nowrap">{{ w.asset_name }}</td>
+          <td class="text-nowrap">{{ w.country.short_name|default:"" }}</td>
+          <td class="text-nowrap">{{ w.identifier }}</td>
           <td class="text-nowrap">{{ w.registration_number }}</td>
+          <td class="text-nowrap">{{ w.registration_date|date:"d.m.y" }}</td>
           <td class="text-nowrap">{{ w.manager|short_fio }}</td>
         </tr>
       {% empty %}
-        <tr><td colspan="7" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="10" class="text-muted">Пока нет данных.</td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -290,7 +435,7 @@
     </div>
   </div>
 
-  <div class="table-responsive">
+  <div>
     <table class="table table-sm align-middle legal-table">
       <colgroup>
         <col class="col-checkbox">       <!-- чекбокс -->
@@ -299,7 +444,10 @@
         <col class="col-name">           <!-- Название -->
         <col class="col-active">         <!-- Наименование актива -->
         <col class="col-legal-name">     <!-- Наименование юридического лица -->
-        <col class="col-registration">   <!-- Регистрационный номер -->
+        <col class="legal-country">      <!-- Страна -->
+        <col class="legal-identifier">   <!-- Идент. -->
+        <col class="legal-regnumber">    <!-- Регистр. номер -->
+        <col class="legal-regdate">      <!-- Дата -->
       </colgroup>
       <thead>
       <tr>
@@ -320,7 +468,10 @@
         <th>Название</th>
         <th>Наименование актива</th>
         <th>Наименование юридического лица</th>
-        <th>Регистрационный номер</th>
+        <th>Страна</th>
+        <th>Идент.</th>
+        <th>Регистр. номер</th>
+        <th>Дата</th>
       </tr>
       </thead>
       <tbody>
@@ -348,10 +499,13 @@
           <td>{{ entity.work_name }}</td>
           <td class="text-nowrap">{{ entity.work_item.asset_name|default:entity.work_item.name }}</td>
           <td>{{ entity.legal_name|default:"—" }}</td>
+          <td class="text-nowrap">{{ entity.country.short_name|default:"" }}</td>
+          <td class="text-nowrap">{{ entity.identifier }}</td>
           <td class="text-nowrap">{{ entity.registration_number|default:"—" }}</td>
+          <td class="text-nowrap">{{ entity.registration_date|date:"d.m.y" }}</td>
         </tr>
       {% empty %}
-        <tr><td colspan="5" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="10" class="text-muted">Пока нет данных.</td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -388,19 +542,106 @@
   <script>
   (function(){
     const FILTER_ALL = "__all__";
+    window.__regProjectFilter = window.__regProjectFilter || [FILTER_ALL];
+
+    function initRegFilter() {
+      const pane = document.getElementById("projects-pane");
+      if (!pane) return;
+
+      const dropdown = pane.querySelector("#reg-project-filter-dropdown");
+      const checks = pane.querySelectorAll(".js-reg-filter");
+      const label = pane.querySelector(".js-reg-filter-label");
+      const regRows = pane.querySelectorAll("table.reg-table tbody tr");
+      const contractRows = pane.querySelectorAll("table.contract-table tbody tr");
+
+      if (!dropdown || checks.length === 0 || dropdown.dataset.bound === "1") return;
+      dropdown.dataset.bound = "1";
+
+      function syncCheckboxes(values) {
+        const set = new Set(values);
+        checks.forEach(cb => { cb.checked = set.has(cb.value); });
+      }
+
+      function updateLabel(values) {
+        if (values.includes(FILTER_ALL) || !values.length) { label.textContent = "Все"; return; }
+        if (values.length === 1) {
+          const input = Array.from(checks).find(cb => cb.value === values[0]);
+          label.textContent = input?.nextElementSibling?.textContent?.trim() || "1 проект";
+          return;
+        }
+        label.textContent = values.length + " выбрано";
+      }
+
+      function applyFilter(values) {
+        window.__regProjectFilter = values.slice();
+        const showAll = values.includes(FILTER_ALL) || values.length === 0;
+        [regRows, contractRows].forEach(rows => {
+          rows.forEach(row => {
+            const pid = row.dataset.projectId || "";
+            row.classList.toggle("d-none", !showAll && !values.includes(pid));
+          });
+        });
+        updateLabel(values);
+        if (window.__enforceMasterOnRows) window.__enforceMasterOnRows();
+      }
+
+      function normalizeSelection() {
+        let values = Array.from(checks).filter(cb => cb.checked).map(cb => cb.value);
+        if (!values.length) values = [FILTER_ALL];
+        if (values.includes(FILTER_ALL)) values = [FILTER_ALL];
+        syncCheckboxes(values);
+        return values;
+      }
+
+      checks.forEach(cb => {
+        cb.addEventListener("change", event => {
+          const value = event.target.value;
+          if (value === FILTER_ALL && event.target.checked) {
+            syncCheckboxes([FILTER_ALL]);
+            applyFilter([FILTER_ALL]);
+            return;
+          }
+          if (value === FILTER_ALL && !event.target.checked) {
+            const first = Array.from(checks).find(c => c.value !== FILTER_ALL);
+            if (first) first.checked = true;
+          } else {
+            const allCb = pane.querySelector("#reg-filter-all");
+            if (allCb && allCb.checked) allCb.checked = false;
+          }
+          applyFilter(normalizeSelection());
+        });
+      });
+
+      const initial = window.__regProjectFilter && window.__regProjectFilter.length
+        ? window.__regProjectFilter : [FILTER_ALL];
+      syncCheckboxes(initial);
+      applyFilter(initial);
+    }
+
+    document.addEventListener("DOMContentLoaded", initRegFilter);
+    document.body.addEventListener("htmx:afterSettle", event => {
+      if (event.target && event.target.id === "projects-pane") initRegFilter();
+    });
+  })();
+  </script>
+
+  <script>
+  (function(){
+    const FILTER_ALL = "__all__";
     window.__legalProjectFilter = window.__legalProjectFilter || [FILTER_ALL];
 
     function initLegalFilter() {
       const pane = document.getElementById("projects-pane");
       if (!pane) return;
 
-      const dropdown = pane.querySelector(".dropdown");
       const checks = pane.querySelectorAll(".js-legal-filter");
       const label = pane.querySelector(".js-legal-filter-label");
       const rows = pane.querySelectorAll("table.legal-table tbody tr");
 
-      if (!dropdown || checks.length === 0 || dropdown.dataset.bound === "1") return;
-      dropdown.dataset.bound = "1";
+      if (checks.length === 0) return;
+      var firstCheck = checks[0];
+      if (firstCheck.dataset.legalBound === "1") return;
+      firstCheck.dataset.legalBound = "1";
 
       function syncCheckboxes(values) {
         const set = new Set(values);
@@ -430,6 +671,7 @@
           row.classList.toggle("d-none", !showAll && !values.includes(pid));
         });
         updateLabel(values);
+        if (window.__enforceMasterOnRows) window.__enforceMasterOnRows();
       }
 
       function normalizeSelection() {
@@ -487,6 +729,346 @@
         initLegalFilter();
       }
     });
+  })();
+  </script>
+  <script>
+  (function() {
+    const FILTER_ALL = "__all__";
+
+    function initWorkFilter() {
+      const pane = document.getElementById("projects-pane");
+      if (!pane) return;
+
+      const checks = pane.querySelectorAll(".js-work-filter");
+      const label = pane.querySelector(".js-work-filter-label");
+      const rows = pane.querySelectorAll("table.work-table tbody tr");
+
+      if (checks.length === 0) return;
+      const firstCheck = checks[0];
+      if (firstCheck.dataset.workBound === "1") return;
+      firstCheck.dataset.workBound = "1";
+
+      function syncCheckboxes(values) {
+        const set = new Set(values);
+        checks.forEach((cb) => { cb.checked = set.has(cb.value); });
+      }
+
+      function updateLabel(values) {
+        if (values.includes(FILTER_ALL) || !values.length) {
+          label.textContent = "Все";
+          return;
+        }
+        if (values.length === 1) {
+          const input = Array.from(checks).find((cb) => cb.value === values[0]);
+          label.textContent = input?.nextElementSibling?.textContent?.trim() || "1 проект";
+          return;
+        }
+        label.textContent = values.length + " выбрано";
+      }
+
+      function applyFilter(values) {
+        window.__workProjectFilter = values.slice();
+        const showAll = values.includes(FILTER_ALL) || values.length === 0;
+        rows.forEach((row) => {
+          const pid = row.dataset.projectId || "";
+          row.classList.toggle("d-none", !showAll && !values.includes(pid));
+        });
+        updateLabel(values);
+        if (window.__enforceMasterOnRows) window.__enforceMasterOnRows();
+      }
+
+      function normalizeSelection() {
+        let values = Array.from(checks).filter((cb) => cb.checked).map((cb) => cb.value);
+        if (!values.length) values = [FILTER_ALL];
+        if (values.includes(FILTER_ALL)) values = [FILTER_ALL];
+        syncCheckboxes(values);
+        return values;
+      }
+
+      checks.forEach((cb) => {
+        cb.addEventListener("change", (event) => {
+          const value = event.target.value;
+          if (value === FILTER_ALL && event.target.checked) {
+            syncCheckboxes([FILTER_ALL]);
+            applyFilter([FILTER_ALL]);
+            return;
+          }
+          if (value === FILTER_ALL && !event.target.checked) {
+            const firstProject = Array.from(checks).find((c) => c.value !== FILTER_ALL);
+            if (firstProject) firstProject.checked = true;
+          } else {
+            const allCb = pane.querySelector("#work-filter-all");
+            if (allCb && allCb.checked) allCb.checked = false;
+          }
+          const values = normalizeSelection();
+          applyFilter(values);
+        });
+      });
+
+      const initialValues = window.__workProjectFilter && window.__workProjectFilter.length
+        ? window.__workProjectFilter
+        : [FILTER_ALL];
+      syncCheckboxes(initialValues);
+      applyFilter(initialValues);
+    }
+
+    document.addEventListener("DOMContentLoaded", initWorkFilter);
+    document.body.addEventListener("htmx:afterSettle", (event) => {
+      if (event.target && event.target.id === "projects-pane") {
+        initWorkFilter();
+      }
+    });
+  })();
+  </script>
+  <script>
+  (function setupProjectsFloatingScroll() {
+    const wrap = document.querySelector('.projects-outer-scroll');
+    if (!wrap) return;
+
+    let proxy = document.getElementById('projects-floating-scroll');
+    if (proxy) proxy.remove();
+
+    proxy = document.createElement('div');
+    proxy.id = 'projects-floating-scroll';
+    proxy.style.cssText = 'display:none;position:fixed;overflow-x:auto;overflow-y:hidden;z-index:1041;bottom:0;left:0;background:#f8f9fa;border-top:1px solid #dee2e6;';
+    const inner = document.createElement('div');
+    inner.style.height = '1px';
+    proxy.appendChild(inner);
+    document.body.appendChild(proxy);
+
+    let syncing = false;
+
+    proxy.addEventListener('scroll', function() {
+      if (syncing) return;
+      syncing = true;
+      wrap.scrollLeft = proxy.scrollLeft;
+      syncing = false;
+    }, { passive: true });
+
+    wrap.addEventListener('scroll', function() {
+      if (syncing) return;
+      syncing = true;
+      proxy.scrollLeft = wrap.scrollLeft;
+      syncing = false;
+    }, { passive: true });
+
+    function update() {
+      const hasOverflow = wrap.scrollWidth > wrap.clientWidth;
+      if (!hasOverflow) { proxy.style.display = 'none'; return; }
+
+      const rect = wrap.getBoundingClientRect();
+      const viewH = window.innerHeight;
+      const nativeVisible = rect.bottom <= viewH;
+
+      if (nativeVisible) { proxy.style.display = 'none'; return; }
+
+      proxy.style.display = 'block';
+      proxy.style.left = rect.left + 'px';
+      proxy.style.width = rect.width + 'px';
+      inner.style.width = wrap.scrollWidth + 'px';
+      proxy.scrollLeft = wrap.scrollLeft;
+    }
+
+    function onFrame() { requestAnimationFrame(update); }
+
+    window.addEventListener('scroll', onFrame, { passive: true });
+    window.addEventListener('resize', onFrame, { passive: true });
+
+    const ro = new ResizeObserver(onFrame);
+    ro.observe(wrap);
+
+    update();
+  })();
+  </script>
+  <script>
+  (function initMasterFilter() {
+    var FILTER_ALL = "__all__";
+    var pane = document.getElementById("projects-pane");
+    var listContainer = document.getElementById("master-filter-projects-list");
+    var masterLabel = document.querySelector(".js-master-filter-label");
+    if (!pane || !listContainer) return;
+
+    var allProjectIds = [];
+    var regChecks = pane.querySelectorAll(".js-reg-filter");
+    regChecks.forEach(function(cb) {
+      if (cb.value !== FILTER_ALL) allProjectIds.push(cb.value);
+    });
+
+    listContainer.innerHTML = "";
+    allProjectIds.forEach(function(pid) {
+      var regCb = Array.from(regChecks).find(function(c) { return c.value === pid; });
+      var labelText = regCb ? regCb.nextElementSibling.textContent.trim() : pid;
+      var div = document.createElement("div");
+      div.className = "form-check";
+      div.innerHTML =
+        '<input class="form-check-input js-master-filter" type="checkbox" value="' + pid + '" id="master-filter-' + pid + '">' +
+        '<label class="form-check-label" for="master-filter-' + pid + '">' + labelText + '</label>';
+      listContainer.appendChild(div);
+    });
+
+    var dropdown = document.getElementById("master-project-filter-dropdown");
+    if (!dropdown) return;
+    var masterChecks = dropdown.querySelectorAll(".js-master-filter");
+
+    function getMasterValues() {
+      var vals = [];
+      masterChecks.forEach(function(cb) { if (cb.checked) vals.push(cb.value); });
+      if (!vals.length || vals.indexOf(FILTER_ALL) !== -1) return [FILTER_ALL];
+      return vals;
+    }
+
+    window.__getMasterValues = getMasterValues;
+
+    function syncMasterLabel(values) {
+      if (values[0] === FILTER_ALL) { masterLabel.textContent = "Все"; return; }
+      if (values.length === 1) {
+        var cb = Array.from(masterChecks).find(function(c) { return c.value === values[0]; });
+        masterLabel.textContent = cb ? cb.nextElementSibling.textContent.trim() : "1 проект";
+        return;
+      }
+      masterLabel.textContent = values.length + " выбрано";
+    }
+
+    function enforceMasterOnRows() {
+      var mv = getMasterValues();
+      if (mv[0] === FILTER_ALL) return;
+      var allRows = [];
+      ["table.reg-table", "table.contract-table", "table.work-table", "table.legal-table"].forEach(function(sel) {
+        pane.querySelectorAll(sel + " tbody tr").forEach(function(r) { allRows.push(r); });
+      });
+      var perfPane = document.getElementById("performers-pane");
+      if (perfPane) {
+        perfPane.querySelectorAll("table.performers-table tbody tr").forEach(function(r) { allRows.push(r); });
+      }
+      allRows.forEach(function(row) {
+        var pid = row.dataset.projectId || "";
+        if (mv.indexOf(pid) === -1) row.classList.add("d-none");
+      });
+    }
+
+    window.__enforceMasterOnRows = enforceMasterOnRows;
+
+    function filterTableRows(values) {
+      var showAll = values[0] === FILTER_ALL;
+      var tables = [
+        pane.querySelectorAll("table.reg-table tbody tr"),
+        pane.querySelectorAll("table.contract-table tbody tr"),
+        pane.querySelectorAll("table.work-table tbody tr"),
+        pane.querySelectorAll("table.legal-table tbody tr")
+      ];
+      tables.forEach(function(rows) {
+        rows.forEach(function(row) {
+          var pid = row.dataset.projectId || "";
+          row.classList.toggle("d-none", !showAll && values.indexOf(pid) === -1);
+        });
+      });
+      var perfPane = document.getElementById("performers-pane");
+      if (perfPane) {
+        perfPane.querySelectorAll("table.performers-table tbody tr").forEach(function(row) {
+          var pid = row.dataset.projectId || "";
+          row.classList.toggle("d-none", !showAll && values.indexOf(pid) === -1);
+        });
+      }
+    }
+
+    function syncTableFilter(cssClass, allId, globalVar, values) {
+      var checks = pane.querySelectorAll("." + cssClass);
+      if (!checks.length) return;
+      var isAll = values[0] === FILTER_ALL;
+      var isSingle = !isAll && values.length === 1;
+      var set = new Set(values);
+
+      checks.forEach(function(cb) {
+        if (isAll) {
+          cb.checked = cb.value === FILTER_ALL;
+          cb.disabled = false;
+        } else if (isSingle) {
+          cb.checked = cb.value === values[0];
+          cb.disabled = true;
+        } else {
+          if (cb.value === FILTER_ALL) {
+            cb.checked = true;
+            cb.disabled = false;
+          } else {
+            var inMaster = set.has(cb.value);
+            cb.checked = inMaster;
+            cb.disabled = !inMaster;
+          }
+        }
+      });
+
+      var label = pane.querySelector(".js-" + cssClass.replace("js-", "").replace("-filter", "-filter-label"));
+      if (label) {
+        if (isAll) label.textContent = "Все";
+        else if (isSingle) {
+          var cb = Array.from(checks).find(function(c) { return c.value === values[0]; });
+          label.textContent = cb ? cb.nextElementSibling.textContent.trim() : "1 проект";
+        } else {
+          label.textContent = "Все";
+        }
+      }
+      window[globalVar] = isAll ? [FILTER_ALL] : values.slice();
+    }
+
+    function syncPerfFilter(values) {
+      var perfPane = document.getElementById("performers-pane");
+      if (!perfPane) return;
+      var checks = perfPane.querySelectorAll(".js-perf-filter");
+      if (!checks.length) return;
+      var isAll = values[0] === FILTER_ALL;
+      var isSingle = !isAll && values.length === 1;
+      var set = new Set(values);
+
+      checks.forEach(function(cb) {
+        if (isAll) { cb.checked = cb.value === FILTER_ALL; cb.disabled = false; }
+        else if (isSingle) { cb.checked = cb.value === values[0]; cb.disabled = true; }
+        else {
+          if (cb.value === FILTER_ALL) { cb.checked = true; cb.disabled = false; }
+          else { cb.checked = set.has(cb.value); cb.disabled = !set.has(cb.value); }
+        }
+      });
+      var label = perfPane.querySelector(".js-perf-filter-label");
+      if (label) {
+        if (isAll) label.textContent = "Все";
+        else if (isSingle) {
+          var cb = Array.from(checks).find(function(c) { return c.value === values[0]; });
+          label.textContent = cb ? cb.nextElementSibling.textContent.trim() : "1 проект";
+        } else label.textContent = "Все";
+      }
+      window.__perfProjectFilter = isAll ? [FILTER_ALL] : values.slice();
+    }
+
+    function applyMaster() {
+      var values = getMasterValues();
+      window.__masterProjectFilter = values.slice();
+      syncMasterLabel(values);
+      filterTableRows(values);
+      syncTableFilter("js-reg-filter", "reg-filter-all", "__regProjectFilter", values);
+      syncTableFilter("js-work-filter", "work-filter-all", "__workProjectFilter", values);
+      syncTableFilter("js-legal-filter", "legal-filter-all", "__legalProjectFilter", values);
+      syncPerfFilter(values);
+    }
+
+    masterChecks.forEach(function(cb) {
+      cb.addEventListener("change", function(e) {
+        if (e.target.value === FILTER_ALL && e.target.checked) {
+          masterChecks.forEach(function(c) { c.checked = c.value === FILTER_ALL; });
+        } else if (e.target.value === FILTER_ALL && !e.target.checked) {
+          var first = Array.from(masterChecks).find(function(c) { return c.value !== FILTER_ALL; });
+          if (first) first.checked = true;
+        } else {
+          var allCb = document.getElementById("master-filter-all");
+          if (allCb) allCb.checked = false;
+          var anyChecked = Array.from(masterChecks).some(function(c) { return c.value !== FILTER_ALL && c.checked; });
+          if (!anyChecked && allCb) allCb.checked = true;
+        }
+        applyMaster();
+      });
+    });
+
+    window.__masterProjectFilter = [FILTER_ALL];
+    var allCb = document.getElementById("master-filter-all");
+    if (allCb) allCb.checked = true;
   })();
   </script>
 </div>

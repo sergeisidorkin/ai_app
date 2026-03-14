@@ -47,4 +47,14 @@ urlpatterns = [
     path("lw/<int:pk>/move-up/", views.lw_move_up, name="lw_move_up"),
     path("lw/<int:pk>/move-down/", views.lw_move_down, name="lw_move_down"),
     path("lw/csv-upload/", views.lw_csv_upload, name="lw_csv_upload"),
+    # База юридических лиц (LER)
+    path("ler/search/", views.ler_search, name="ler_search"),
+    path("ler/identifiers-for-country/", views.ler_identifiers_for_country, name="ler_identifiers_for_country"),
+    path("ler/table/", views.ler_table_partial, name="ler_table_partial"),
+    path("ler/create/", views.ler_form_create, name="ler_form_create"),
+    path("ler/<int:pk>/edit/", views.ler_form_edit, name="ler_form_edit"),
+    path("ler/<int:pk>/delete/", views.ler_delete, name="ler_delete"),
+    path("ler/<int:pk>/move-up/", views.ler_move_up, name="ler_move_up"),
+    path("ler/<int:pk>/move-down/", views.ler_move_down, name="ler_move_down"),
+    path("ler/csv-upload/", views.ler_csv_upload, name="ler_csv_upload"),
 ]

@@ -35,88 +35,60 @@
         {{ form.agreement_type }}
       </div>
       <div class="col-3">
-        <label class="form-label">№ соглашения</label>
-        {{ form.agreement_number }}
-      </div>
-      <div class="col-3">
         <label class="form-label">Тип</label>
         {{ form.type }}
       </div>
-      <div class="col-6">
+      <!-- Строка 2 -->
+      <div class="col-3">
         <label class="form-label">Название</label>
         {{ form.name }}
-      </div>      
+      </div>
       <div class="col-3">
         <label class="form-label">Статус</label>
         {{ form.status }}
       </div>
       <div class="col-3">
-        <label class="form-label">Год</label>
-        {{ form.year }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">Начало контракта</label>
-        {{ form.contract_start }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">Оконч. контракта</label>
-        {{ form.contract_end }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">Оконч., расчет</label>
-        {{ form.completion_calc }}
-      </div>
-      <div class="col-12">
-        <label class="form-label">Исх. данные, дней</label>
-        {{ form.input_data }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">Этап 1, недель</label>
-        {{ form.stage1_weeks }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">Этап 1, оконч.</label>
-        {{ form.stage1_end }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">Этап 2, недель</label>
-        {{ form.stage2_weeks }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">Этап 2, оконч.</label>
-        {{ form.stage2_end }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">Этап 3, недель</label>
-        {{ form.stage3_weeks }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">Срок, недель</label>
-        {{ form.term_weeks }}
-      </div>
-
-      <div class="col-3">
         <label class="form-label">Дедлайн</label>
         {{ form.deadline }}
       </div>
-
-      <div class="col-6">
-        <label class="form-label">Заказчик</label>
-        {{ form.customer }}
-      </div>
-      <div class="col-6">
-        <label class="form-label">Регистрационный номер</label>
-        {{ form.registration_number }}
+      <div class="col-3">
+        <label class="form-label">Год</label>
+        {{ form.year }}
       </div>
 
-      <div class="col-12">
+      <!-- Строка 3 -->
+      <div class="col-6">
         <label class="form-label">Руководитель проекта</label>
         {{ form.project_manager }}
       </div>
+      <div class="w-100"></div>
 
-      <div class="col-12">
-        <label class="form-label">Предмет договора</label>
-        {{ form.contract_subject }}
+      <!-- Строка 4 -->
+      <div class="col-6">
+        <label class="form-label">Заказчик: краткое наименование юрлица</label>
+        <div class="ler-ac-wrap">
+          {{ form.customer }}
+          <div class="ler-ac-list" id="reg-ler-ac-list"></div>
+        </div>
+      </div>
+      <div class="w-100"></div>
+
+      <!-- Строка 5 -->
+      <div class="col-3">
+        <label class="form-label">Заказчик: страна регистрации</label>
+        {{ form.country }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Идентификатор</label>
+        {{ form.identifier }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Регистрационный номер</label>
+        {{ form.registration_number }}
+      </div>
+      <div class="col-3 mb-3">
+        <label class="form-label">Дата регистрации</label>
+        {{ form.registration_date }}
       </div>
     </div>
 
@@ -187,115 +159,6 @@
   }
 </style>
 <script>
-  const DATE_FMT = { day: "2-digit", month: "2-digit", year: "numeric" };
-
-  function parseDate(value) {
-    if (!value) return null;
-    const raw = value.trim();
-    const dotParts = raw.split(".");
-    if (dotParts.length === 3) {
-      const [day, month, year] = dotParts;
-      const fullYear = year.length === 2 ? "20" + year : year;
-      const iso = `${fullYear}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
-      const parsed = new Date(iso);
-      return isNaN(parsed) ? null : parsed;
-    }
-    const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (isoMatch) {
-      const [, year, month, day] = isoMatch;
-      const parsed = new Date(`${year}-${month}-${day}`);
-      return isNaN(parsed) ? null : parsed;
-    }
-    return null;
-  }
-
-  function attachStageCalculator(node) {
-    if (!node) return;
-    const start = node.querySelector("[name='contract_start']");
-    const inputDays = node.querySelector("[name='input_data']");
-    const stage1Weeks = node.querySelector("[name='stage1_weeks']");
-    const stage2Weeks = node.querySelector("[name='stage2_weeks']");
-    const stage3Weeks = node.querySelector("[name='stage3_weeks']");
-
-    const stage1Target = node.querySelector(".js-stage1-end");
-    const stage2Target = node.querySelector(".js-stage2-end");
-    const completionTarget = node.querySelector(".js-completion-calc");
-    const termWeeksTarget = node.querySelector(".js-term-weeks");
-
-    if (!start || !inputDays || !stage1Weeks || !stage1Target) return;
-
-    const recalc = () => {
-      const base = parseDate(start.value);
-      if (!base) {
-        stage1Target.value = "";
-        if (stage2Target) stage2Target.value = "";
-        if (completionTarget) completionTarget.value = "";
-        if (termWeeksTarget) termWeeksTarget.value = "";
-        return;
-      }
-
-      const days = parseInt(inputDays.value.replace(/\D/g, ""), 10) || 0;
-      const stage1WeeksVal = parseFloat((stage1Weeks.value || "0").replace(",", ".")) || 0;
-      const stage2WeeksVal = parseFloat((stage2Weeks?.value || "0").replace(",", ".")) || 0;
-      const stage3WeeksVal = parseFloat((stage3Weeks?.value || "0").replace(",", ".")) || 0;
-
-      // Stage 1 end
-      const stage1TotalDays = Math.max(0, days + stage1WeeksVal * 7);
-      const stage1Rounded = Math.round(stage1TotalDays);
-      const stage1Date = new Date(base);
-      stage1Date.setDate(stage1Date.getDate() + stage1Rounded);
-      stage1Target.value = stage1Date.toLocaleDateString("ru-RU", DATE_FMT);
-
-      // Stage 2 end
-      let stage2Date = null;
-      if (stage2Weeks && stage2Target) {
-        if (!stage1Rounded && !stage2WeeksVal) {
-          stage2Target.value = "";
-        } else {
-          const stage2TotalDays = Math.max(0, stage2WeeksVal * 7);
-          const stage2Rounded = Math.round(stage2TotalDays);
-          stage2Date = new Date(stage1Date);
-          stage2Date.setDate(stage2Date.getDate() + stage2Rounded);
-          stage2Target.value = stage2Date.toLocaleDateString("ru-RU", DATE_FMT);
-        }
-      }
-
-      // Term weeks
-      if (termWeeksTarget) {
-        const termWeeks =
-          Math.max(0, (days / 7) + stage1WeeksVal + stage2WeeksVal + stage3WeeksVal);
-        termWeeksTarget.value = termWeeks.toFixed(1);
-      }
-
-      // Completion calc
-      if (completionTarget) {
-        const baseStage2Date = stage2Date || parseDate(stage2Target?.value || "");
-        if (!baseStage2Date) {
-          completionTarget.value = "";
-        } else {
-          const stage3Days = Math.round(Math.max(0, stage3WeeksVal * 7));
-          const completionDate = new Date(baseStage2Date);
-          completionDate.setDate(completionDate.getDate() + stage3Days);
-          completionTarget.value = completionDate.toLocaleDateString("ru-RU", DATE_FMT);
-        }
-      }
-    };
-
-    [start, inputDays, stage1Weeks, stage2Weeks, stage3Weeks]
-      .filter(Boolean)
-      .forEach((el) => ["input", "change"].forEach((evt) => el.addEventListener(evt, recalc)));
-
-    recalc();
-  }
-
-  function initCurrentModal() {
-    const modal = document.querySelector("#projects-modal");
-    if (!modal) return;
-    const form = modal.querySelector("form");
-    attachStageCalculator(form);
-    attachGroupSelectDisplay(form);
-  }
-
   function attachGroupSelectDisplay(node) {
     if (!node) return;
     const select = node.querySelector("#registration-group-select");
@@ -303,7 +166,6 @@
     if (!select || !display || select.dataset.displayBound === "1") return;
     select.dataset.displayBound = "1";
 
-    const options = Array.from(select.options);
     const syncDisplay = () => {
       const selected = select.options[select.selectedIndex];
       display.textContent = selected && selected.value ? selected.value : "";
@@ -311,6 +173,143 @@
 
     select.addEventListener("change", syncDisplay);
     syncDisplay();
+  }
+
+  function attachCountryIdentifierSync(node) {
+    if (!node) return;
+    const countrySelect = node.querySelector("#reg-country-select");
+    const identifierField = node.querySelector("#reg-identifier-field");
+    if (!countrySelect || !identifierField || countrySelect.dataset.identBound === "1") return;
+    countrySelect.dataset.identBound = "1";
+
+    countrySelect.addEventListener("change", () => {
+      const countryId = countrySelect.value;
+      if (!countryId) {
+        identifierField.value = "";
+        return;
+      }
+      fetch("{% url 'identifier_for_country' %}?country_id=" + encodeURIComponent(countryId))
+        .then(r => r.json())
+        .then(data => { identifierField.value = data.identifier || ""; });
+    });
+  }
+
+  function replaceQuotes(el) {
+    var v = el.value;
+    if (v.indexOf('"') === -1) return;
+    var pos = el.selectionStart;
+    var out = '';
+    for (var i = 0; i < v.length; i++) {
+      if (v[i] === '"') {
+        var prev = out.length ? out[out.length - 1] : '';
+        out += (!prev || /[\s(\[{\u00AB]/.test(prev)) ? '\u00AB' : '\u00BB';
+      } else {
+        out += v[i];
+      }
+    }
+    el.value = out;
+    el.setSelectionRange(pos, pos);
+  }
+
+  function attachGuillemets(node) {
+    if (!node) return;
+    const input = node.querySelector('input[name="customer"]');
+    if (!input || input.dataset.guillBound === "1") return;
+    input.dataset.guillBound = "1";
+    input.addEventListener("input", function() { replaceQuotes(input); });
+  }
+
+  function attachLerAutocomplete(node) {
+    if (!node) return;
+    var input = node.querySelector('input[name="customer"]');
+    var list = node.querySelector('#reg-ler-ac-list');
+    if (!input || !list || input.dataset.lerBound === '1') return;
+    input.dataset.lerBound = '1';
+    var debounce = null;
+    var results = [];
+    var picking = false;
+
+    function highlight(text, q) {
+      if (!q) return text;
+      var esc = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return text.replace(new RegExp('(' + esc + ')', 'gi'), '<mark>$1</mark>');
+    }
+
+    function render(data, q) {
+      results = data;
+      if (!data.length) { list.classList.remove('show'); return; }
+      list.innerHTML = data.map(function(r, i) {
+        var main = highlight(r.short_name || '', q);
+        var parts = [r.full_name, r.identifier, r.registration_number].filter(Boolean);
+        var sub = parts.length ? highlight(parts.join(' · '), q) : '';
+        return '<div class="ler-ac-item" data-idx="' + i + '">'
+          + '<div class="ler-ac-main">' + main + '</div>'
+          + (sub ? '<div class="ler-ac-sub">' + sub + '</div>' : '')
+          + '</div>';
+      }).join('');
+      list.classList.add('show');
+    }
+
+    function pick(r) {
+      input.value = r.short_name || '';
+      var countrySel = node.querySelector('#reg-country-select');
+      var identField = node.querySelector('#reg-identifier-field');
+      var regNumField = node.querySelector('input[name="registration_number"]');
+      var regDateField = node.querySelector('input[name="registration_date"]');
+      if (countrySel && r.country_id) countrySel.value = r.country_id;
+      if (identField) identField.value = r.identifier || '';
+      if (regNumField) regNumField.value = r.registration_number || '';
+      if (regDateField) regDateField.value = r.registration_date || '';
+      list.classList.remove('show');
+    }
+
+    input.addEventListener('input', function() {
+      var q = input.value.trim();
+      clearTimeout(debounce);
+      if (q.length < 1) { list.classList.remove('show'); return; }
+      debounce = setTimeout(function() {
+        fetch('{% url "ler_search" %}?q=' + encodeURIComponent(q))
+          .then(function(r) { return r.json(); })
+          .then(function(d) { render(d.results || [], q); })
+          .catch(function() { list.classList.remove('show'); });
+      }, 200);
+    });
+
+    list.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      picking = true;
+      var item = e.target.closest('.ler-ac-item');
+      if (!item) return;
+      var idx = parseInt(item.dataset.idx, 10);
+      if (results[idx]) pick(results[idx]);
+    });
+
+    list.addEventListener('click', function(e) {
+      var item = e.target.closest('.ler-ac-item');
+      if (!item) return;
+      var idx = parseInt(item.dataset.idx, 10);
+      if (results[idx]) pick(results[idx]);
+      picking = false;
+    });
+
+    input.addEventListener('blur', function() {
+      if (picking) { picking = false; return; }
+      setTimeout(function() { list.classList.remove('show'); }, 200);
+    });
+
+    input.addEventListener('focus', function() {
+      if (results.length && input.value.trim().length >= 1) list.classList.add('show');
+    });
+  }
+
+  function initCurrentModal() {
+    const modal = document.querySelector("#projects-modal");
+    if (!modal) return;
+    const form = modal.querySelector("form");
+    attachGroupSelectDisplay(form);
+    attachCountryIdentifierSync(form);
+    attachGuillemets(form);
+    attachLerAutocomplete(form);
   }
 
   document.addEventListener("DOMContentLoaded", initCurrentModal);

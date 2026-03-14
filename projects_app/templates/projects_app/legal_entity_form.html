@@ -1,3 +1,4 @@
+<div data-modal-size="lg"></div>
 <div class="modal-header">
     <h5 class="modal-title">
       {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
@@ -16,26 +17,47 @@
       hx-swap="outerHTML">
     <div class="modal-body">
       {% csrf_token %}
-  
-      <div class="mb-3">
-        <label class="form-label">Наименование актива</label>
-        {{ form.work_item }}
-      </div>
-      <div class="mb-3">
-        <label class="form-label">Тип</label>
-        {{ form.work_type }}
-      </div>
-      <div class="mb-3">
-        <label class="form-label">Название</label>
-        {{ form.work_name }}
+
+      <div class="row">
+        <div class="col-md-6 mb-3">
+          <label class="form-label">Наименование актива</label>
+          {{ form.work_item }}
+        </div>
+        <div class="col-md-2 mb-3">
+          <label class="form-label">Тип</label>
+          {{ form.work_type }}
+        </div>
+        <div class="col-md-4 mb-3">
+          <label class="form-label">Название</label>
+          {{ form.work_name }}
+        </div>
       </div>
       <div class="mb-3">
         <label class="form-label">Наименование юридического лица</label>
-        {{ form.legal_name }}
+        <div class="ler-ac-wrap">
+          {{ form.legal_name }}
+          <div class="ler-ac-list" id="legal-ler-ac-list"></div>
+        </div>
       </div>
-      <div class="mb-3">
-        <label class="form-label">Регистрационный номер</label>
-        {{ form.registration_number }}
+      <div class="row">
+        <div class="col-md-6 mb-3">
+          <label class="form-label">Страна регистрации</label>
+          {{ form.country }}
+        </div>
+        <div class="col-md-6 mb-3">
+          <label class="form-label">Идентификатор</label>
+          {{ form.identifier }}
+        </div>
+      </div>
+      <div class="row">
+        <div class="col-md-6 mb-3">
+          <label class="form-label">Регистрационный номер</label>
+          {{ form.registration_number }}
+        </div>
+        <div class="col-md-6 mb-3">
+          <label class="form-label">Дата регистрации</label>
+          {{ form.registration_date }}
+        </div>
       </div>
   
       {% if form.errors %}
@@ -59,30 +81,140 @@
       const modal = document.currentScript.closest('.modal-content');
       const form = modal?.querySelector('form');
       if (!form) return;
-    
+
       const workSel = form.querySelector('select[name="work_item"]');
       const typeInput = form.querySelector('input[name="work_type"]');
       const nameInput = form.querySelector('input[name="work_name"]');
-    
+      var countrySel = form.querySelector('#legal-country-select');
+      var identField = form.querySelector('#legal-identifier-field');
+
       async function refill() {
         const wid = workSel?.value;
         if (!wid) return;
         try {
-         const resp = await fetch("{% url 'legal_entity_work_deps' %}?work_item=" + encodeURIComponent(wid), {
+          const resp = await fetch("{% url 'legal_entity_work_deps' %}?work_item=" + encodeURIComponent(wid), {
             headers: {"X-Requested-With": "XMLHttpRequest"},
           });
           const data = await resp.json();
           if (!data.ok) return;
           if (typeInput) typeInput.value = data.type || "";
           if (nameInput) nameInput.value = data.name || "";
+          if (countrySel && data.country_id) {
+            countrySel.value = data.country_id;
+            countrySel.dispatchEvent(new Event('change'));
+          }
         } catch (err) {
           console.error(err);
         }
       }
-    
+
       workSel?.addEventListener("change", refill);
       if (workSel?.value && (!typeInput?.value || !nameInput?.value)) {
         refill();
+      }
+
+      function replaceQuotes(el) {
+        var v = el.value;
+        if (v.indexOf('"') === -1) return;
+        var pos = el.selectionStart;
+        var out = '';
+        for (var i = 0; i < v.length; i++) {
+          if (v[i] === '"') {
+            var prev = out.length ? out[out.length - 1] : '';
+            out += (!prev || /[\s(\[{\u00AB]/.test(prev)) ? '\u00AB' : '\u00BB';
+          } else {
+            out += v[i];
+          }
+        }
+        el.value = out;
+        el.setSelectionRange(pos, pos);
+      }
+
+      var legalNameInput = form.querySelector('input[name="legal_name"]');
+      if (legalNameInput) {
+        legalNameInput.addEventListener('input', function() { replaceQuotes(legalNameInput); });
+      }
+
+      // LER autocomplete for legal_name
+      (function() {
+        var input = legalNameInput;
+        var list = form.querySelector('#legal-ler-ac-list');
+        if (!input || !list) return;
+        var debounce = null, results = [], picking = false;
+
+        function hl(text, q) {
+          if (!q) return text;
+          var esc = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          return text.replace(new RegExp('(' + esc + ')', 'gi'), '<mark>$1</mark>');
+        }
+        function render(data, q) {
+          results = data;
+          if (!data.length) { list.classList.remove('show'); return; }
+          list.innerHTML = data.map(function(r, i) {
+            var main = hl(r.short_name || '', q);
+            var parts = [r.full_name, r.identifier, r.registration_number].filter(Boolean);
+            var sub = parts.length ? hl(parts.join(' · '), q) : '';
+            return '<div class="ler-ac-item" data-idx="' + i + '">'
+              + '<div class="ler-ac-main">' + main + '</div>'
+              + (sub ? '<div class="ler-ac-sub">' + sub + '</div>' : '')
+              + '</div>';
+          }).join('');
+          list.classList.add('show');
+        }
+        function pick(r) {
+          input.value = r.short_name || '';
+          if (countrySel && r.country_id) countrySel.value = r.country_id;
+          if (identField) identField.value = r.identifier || '';
+          var regNum = form.querySelector('input[name="registration_number"]');
+          var regDate = form.querySelector('input[name="registration_date"]');
+          if (regNum) regNum.value = r.registration_number || '';
+          if (regDate) regDate.value = r.registration_date || '';
+          list.classList.remove('show');
+        }
+        input.addEventListener('input', function() {
+          var q = input.value.trim();
+          clearTimeout(debounce);
+          if (q.length < 1) { list.classList.remove('show'); return; }
+          debounce = setTimeout(function() {
+            fetch('{% url "ler_search" %}?q=' + encodeURIComponent(q))
+              .then(function(r) { return r.json(); })
+              .then(function(d) { render(d.results || [], q); })
+              .catch(function() { list.classList.remove('show'); });
+          }, 200);
+        });
+        list.addEventListener('mousedown', function(e) {
+          e.preventDefault();
+          picking = true;
+          var item = e.target.closest('.ler-ac-item');
+          if (!item) return;
+          pick(results[parseInt(item.dataset.idx, 10)]);
+        });
+        list.addEventListener('click', function(e) {
+          var item = e.target.closest('.ler-ac-item');
+          if (!item) return;
+          pick(results[parseInt(item.dataset.idx, 10)]);
+          picking = false;
+        });
+        input.addEventListener('blur', function() {
+          if (picking) { picking = false; return; }
+          setTimeout(function() { list.classList.remove('show'); }, 200);
+        });
+        input.addEventListener('focus', function() {
+          if (results.length && input.value.trim().length >= 1) list.classList.add('show');
+        });
+      })();
+
+      if (countrySel && identField) {
+        countrySel.addEventListener('change', function() {
+          var cid = countrySel.value;
+          if (!cid) { identField.value = ''; return; }
+          fetch("{% url 'identifier_for_country' %}?country_id=" + encodeURIComponent(cid), {
+            headers: {'X-Requested-With': 'XMLHttpRequest'}
+          })
+          .then(function(r) { return r.json(); })
+          .then(function(j) { identField.value = j.identifier || ''; })
+          .catch(function() { identField.value = ''; });
+        });
       }
     })();
   </script>  

@@ -17,11 +17,11 @@
     {{ form.non_field_errors }}
 
     <div class="row g-3">
-      <div class="col-md-4">
+      <div class="col-md-6">
         <label class="form-label">Проект</label>
         {{ form.registration }}
       </div>
-      <div class="col-md-4">
+      <div class="col-md-2">
         <label class="form-label">Тип</label>
         <input type="text" class="form-control readonly-field" id="perf-type" value="" readonly>
       </div>
@@ -30,24 +30,33 @@
         <input type="text" class="form-control readonly-field" id="perf-name" value="" readonly>
       </div>
 
-      <div class="col-md-4">
+      <div class="col-md-6">
         <label class="form-label">Актив</label>
         {{ form.asset_name }}
       </div>
-      <div class="col-md-4">
+      <div class="col-md-6">
         <label class="form-label">Типовой раздел</label>
         {{ form.typical_section }}
       </div>
-      <div class="col-md-4">
+
+      <div class="col-md-6">
         <label class="form-label">Исполнитель</label>
         {{ form.executor }}
       </div>
-
       <div class="col-md-3">
-        <label class="form-label">Грейд</label>
+        <label class="form-label">Грейд (уровень)</label>
         {{ form.grade }}
       </div>
       <div class="col-md-3">
+        <label class="form-label">Грейд (наименование)</label>
+        {{ form.grade_name }}
+      </div>
+
+      <div class="col-md-2">
+        <label class="form-label">Валюта</label>
+        {{ form.currency }}
+      </div>
+      <div class="col-md-4">
         <label class="form-label">Фактические затраты</label>
         {{ form.actual_costs }}
       </div>
@@ -59,13 +68,20 @@
         <label class="form-label">Согласованная сумма</label>
         {{ form.agreed_amount }}
       </div>
+      <div class="w-100"></div>
       <div class="col-md-3">
         <label class="form-label">Аванс</label>
-        {{ form.prepayment }}
+        <div class="input-group">
+          {{ form.prepayment }}
+          <span class="input-group-text">%</span>
+        </div>
       </div>
       <div class="col-md-3">
-        <label class="form-label">Окон. платеж</label>
-        {{ form.final_payment }}
+        <label class="form-label">Окон. платёж</label>
+        <div class="input-group">
+          {{ form.final_payment }}
+          <span class="input-group-text">%</span>
+        </div>
       </div>
       <div class="col-md-6">
         <label class="form-label">Номер договора</label>
@@ -151,5 +167,63 @@
 
   regSel?.addEventListener('change', () => applyReg(regSel.value));
   if (regSel?.value) applyReg(regSel.value);
+
+  const prepEl = formEl.querySelector('[name="prepayment"]');
+  const finalEl = formEl.querySelector('[name="final_payment"]');
+  function calcFinal() {
+    const v = parseFloat(prepEl?.value) || 0;
+    if (finalEl) finalEl.value = Math.max(0, 100 - v);
+  }
+  prepEl?.addEventListener('input', calcFinal);
+  calcFinal();
+
+  function setupShortSelect(sel) {
+    if (!sel) return;
+    Array.from(sel.options).forEach(function(opt) {
+      if (opt.value) opt.dataset.full = opt.textContent;
+    });
+    function showShort() {
+      Array.from(sel.options).forEach(function(opt) {
+        if (opt.dataset.full) opt.textContent = opt.dataset.full;
+      });
+      var cur = sel.options[sel.selectedIndex];
+      if (cur && cur.dataset.full) cur.textContent = cur.dataset.full.trim().split(/\s+/)[0];
+    }
+    function showFull() {
+      Array.from(sel.options).forEach(function(opt) {
+        if (opt.dataset.full) opt.textContent = opt.dataset.full;
+      });
+    }
+    sel.addEventListener('mousedown', showFull);
+    sel.addEventListener('focus', showFull);
+    sel.addEventListener('blur', showShort);
+    sel.addEventListener('change', showShort);
+    showShort();
+  }
+  setupShortSelect(regSel);
+  setupShortSelect(formEl.querySelector('select[name="currency"]'));
+
+  function fmtMoney(v) {
+    var s = String(v).replace(/[^\d.,-]/g, '').replace(',', '.');
+    var n = parseFloat(s);
+    if (isNaN(n)) return '';
+    var parts = n.toFixed(2).split('.');
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0');
+    return parts.join(',');
+  }
+  function rawMoney(v) {
+    return String(v).replace(/\s/g, '').replace(/\u00a0/g, '').replace(',', '.');
+  }
+  formEl.querySelectorAll('.js-money-input').forEach(function(inp) {
+    if (inp.value) inp.value = fmtMoney(inp.value);
+    inp.addEventListener('blur', function() {
+      if (inp.value) inp.value = fmtMoney(inp.value);
+    });
+  });
+  formEl.querySelector('form')?.addEventListener('submit', function() {
+    formEl.querySelectorAll('.js-money-input').forEach(function(inp) {
+      inp.value = rawMoney(inp.value);
+    });
+  });
 })();
 </script>

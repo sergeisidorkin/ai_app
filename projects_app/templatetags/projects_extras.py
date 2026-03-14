@@ -1,3 +1,5 @@
+from decimal import Decimal, InvalidOperation
+
 from django import template
 
 register = template.Library()
@@ -10,6 +12,23 @@ def comma_decimal(value, precision=1):
         return ""
     formatted = f"{number:.{int(precision)}f}"
     return formatted.replace(".", ",")
+
+
+@register.filter
+def money_fmt(value):
+    """Format a number as financial: 1 234 567,89 (space-separated groups, comma decimal)."""
+    if value is None or value == "":
+        return ""
+    try:
+        d = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return ""
+    sign = "-" if d < 0 else ""
+    d = abs(d)
+    integer_part = int(d)
+    frac = f"{d - integer_part:.2f}"[1:]  # ".XX"
+    int_str = f"{integer_part:,}".replace(",", "\u00a0")
+    return f"{sign}{int_str}{frac}".replace(".", ",")
 
 
 @register.filter

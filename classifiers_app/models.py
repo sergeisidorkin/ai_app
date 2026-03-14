@@ -109,6 +109,39 @@ class TerritorialDivision(models.Model):
         return f"{self.country.short_name} / {self.region_name} ({self.effective_date})"
 
 
+class LegalEntityRecord(models.Model):
+    """База юридических лиц."""
+    short_name = models.CharField("Наименование (краткое)", max_length=512)
+    full_name = models.CharField("Наименование (полное)", max_length=1024, blank=True, default="")
+    identifier = models.CharField("Идентификатор", max_length=255, blank=True, default="")
+    registration_number = models.CharField("Регистрационный номер", max_length=255, blank=True, default="")
+    registration_date = models.DateField("Дата регистрации", blank=True, null=True)
+    registration_country = models.ForeignKey(
+        OKSMCountry,
+        verbose_name="Страна регистрации",
+        on_delete=models.SET_NULL,
+        related_name="legal_entity_records",
+        null=True,
+        blank=True,
+    )
+    record_date = models.DateField("Дата записи", blank=True, null=True)
+    record_author = models.CharField("Автор записи", max_length=255, blank=True, default="")
+    name_received_date = models.DateField("Дата получения наименования", blank=True, null=True)
+    name_changed_date = models.DateField("Дата смены наименования", blank=True, null=True)
+    position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["position", "id"]
+        verbose_name = "Юридическое лицо"
+        verbose_name_plural = "Юридические лица"
+
+    def __str__(self):
+        return self.short_name
+
+
 class LivingWage(models.Model):
     country = models.ForeignKey(
         OKSMCountry, verbose_name="Страна", on_delete=models.CASCADE, related_name="living_wages"

@@ -61,7 +61,46 @@
     if (!panel) return;
     const anyChecked = getRowChecksByName(name).some(b => b.checked);
     panel.classList.toggle('d-none', !anyChecked);
+    panel.classList.toggle('d-flex', anyChecked);
   }
+
+  function getDeleteConfirmationMessage(name, count) {
+    if (name === 'work-select') {
+      return `Удалить ${count} строк(у/и) из "Объем услуг"? Будут также удалены связанные строки в "Юридические лица" и "Исполнители".`;
+    }
+    return `Удалить ${count} строк(у/и)?`;
+  }
+
+  // Кнопка «Редактировать» для таблицы «Условия контракта»
+  function updateContractEditBtn() {
+    const root = pane();
+    if (!root) return;
+    const btn = root.querySelector('#contract-edit-btn');
+    if (!btn) return;
+    const anyChecked = getRowChecksByName('contract-select').some(b => b.checked);
+    btn.disabled = !anyChecked;
+  }
+
+  document.addEventListener('click', async (e) => {
+    const root = pane();
+    if (!root) return;
+    const editBtn = e.target.closest('#contract-edit-btn');
+    if (editBtn && root.contains(editBtn)) {
+      const checked = getCheckedByName('contract-select');
+      if (!checked.length) return;
+      const first = checked[0];
+      const tr = first.closest('tr');
+      const url = tr?.dataset?.editUrl;
+      if (!url) return;
+
+      window.__tableSel['contract-select'] = checked.map(ch => String(ch.value));
+      window.__tableSelLast = 'contract-select';
+
+      await htmx.ajax('GET', url, { target: '#projects-modal .modal-content', swap: 'innerHTML' });
+      updateContractEditBtn();
+      return;
+    }
+  });
 
   // Делегирование: клики по кнопкам панели РЕГИСТРАЦИИ (строго как в products)
   document.addEventListener('click', async (e) => {
@@ -93,17 +132,12 @@
 
       // грузим форму в модалку ПРОЕКТОВ — как в Продуктах
       await htmx.ajax('GET', url, { target: '#projects-modal .modal-content', swap: 'innerHTML' });
-
-      const modalEl = document.getElementById('projects-modal');
-      if (modalEl && window.bootstrap) {
-        window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
-      }
       ensureActionsVisibility(name);
       return;
     }
 
     if (action === 'delete') {
-      if (!confirm(`Удалить ${checked.length} строк(у/и)?`)) return;
+      if (!confirm(getDeleteConfirmationMessage(name, checked.length))) return;
       const urls = checked.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
       for (let i = 0; i < urls.length; i++) {
         const isLast = i === urls.length - 1;
@@ -147,6 +181,7 @@
     updateMasterStateFor(name);
     updateRowHighlightFor(name);
     ensureActionsVisibility(name);
+    if (name === 'contract-select') updateContractEditBtn();
   });
 
   // Чекбоксы строк (один-в-один)
@@ -159,6 +194,7 @@
     updateMasterStateFor(name);
     updateRowHighlightFor(name);
     ensureActionsVisibility(name);
+    if (name === 'contract-select') updateContractEditBtn();
   });
 
   // Восстановление выбора после перерисовки HTMX (один-в-один)
@@ -172,6 +208,7 @@
     updateMasterStateFor(last);
     updateRowHighlightFor(last);
     ensureActionsVisibility(last);
+    if (last === 'contract-select') updateContractEditBtn();
     try { delete window.__tableSel[last]; } catch(e) { window.__tableSel[last] = []; }
     window.__tableSelLast = null;
   });

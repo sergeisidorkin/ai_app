@@ -1,7 +1,9 @@
 from django import forms
+from django.db import models
 from django.db.models import Max
 from django.utils import timezone
 
+from classifiers_app.models import OKSMCountry, OKVCurrency, LegalEntityIdentifier
 from group_app.models import GroupMember
 from policy_app.models import TypicalSection
 from users_app.models import Employee
@@ -104,22 +106,129 @@ def _next_project_number():
         return 3333
     return 9999 if current_max >= 9999 else current_max + 1
 
+def _group_choices(current_value=""):
+    items = (
+        GroupMember.objects
+        .exclude(country_alpha2="")
+        .values_list("country_alpha2", "short_name")
+        .order_by("position", "id")
+    )
+    seen = set()
+    choices = [("", "— Не выбрано —")]
+    for alpha2, short_name in items:
+        if alpha2 in seen:
+            continue
+        seen.add(alpha2)
+        choices.append((alpha2, f"{alpha2} {short_name}"))
+    if current_value and all(value != current_value for value, _label in choices):
+        choices.insert(0, (current_value, current_value))
+    return choices
+
+
 class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
     number = forms.IntegerField(
         label="Номер",
         required=True,
         min_value=3333,
         max_value=9999,
-        widget=forms.NumberInput(attrs={"min": 3333, "max": 9999, "placeholder": "3333–9999"}), 
+        widget=forms.NumberInput(attrs={"min": 3333, "max": 9999, "placeholder": "3333–9999"}),
+    )
+    deadline = forms.DateField(required=False,
+                               widget=forms.TextInput(attrs=DATE_INPUT_ATTRS),
+                               input_formats=DATE_INPUT_FORMATS)
+    group = forms.ChoiceField(
+        label="Группа",
+        choices=(),
+        required=True,
+        widget=forms.Select(attrs={"id": "registration-group-select"}),
+    )
+    country = forms.ModelChoiceField(
+        label="Страна",
+        queryset=OKSMCountry.objects.none(),
+        required=False,
+        widget=forms.Select(attrs={"id": "reg-country-select"}),
+    )
+    identifier = forms.CharField(
+        label="Идентификатор",
+        required=False,
+        widget=forms.TextInput(attrs={
+            "readonly": True,
+            "tabindex": "-1",
+            "class": "form-control readonly-field",
+            "id": "reg-identifier-field",
+        }),
+    )
+    project_manager = forms.ChoiceField(
+        label="Руководитель проекта",
+        required=False,
+        choices=(),
+        widget=forms.Select(),
+    )
+    registration_date = forms.DateField(
+        label="Дата регистр.",
+        required=False,
+        widget=forms.TextInput(attrs=DATE_INPUT_ATTRS),
+        input_formats=DATE_INPUT_FORMATS,
     )
 
-    # даты: текстовый инпут + js-date, чтобы инициализировался календарь
+    class Meta:
+        model = ProjectRegistration
+        fields = [
+            "number", "group", "agreement_type", "type", "name",
+            "status", "deadline", "year",
+            "country", "customer", "identifier", "registration_number",
+            "registration_date", "project_manager",
+        ]
+        widgets = {
+            "year": forms.NumberInput(attrs={"placeholder": "ГГГГ"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        current_group = self.data.get("group") or (self.instance.group if self.instance else "")
+        current_manager = self.data.get("project_manager") or (self.instance.project_manager if self.instance else "")
+        self.fields["group"].choices = _group_choices(current_group)
+        self.fields["project_manager"].choices = _project_manager_choices(current_manager)
+
+        today = timezone.now().date()
+        country_qs = OKSMCountry.objects.filter(
+            models.Q(expiry_date__isnull=True) | models.Q(expiry_date__gte=today)
+        ).order_by("short_name")
+        if self.instance and self.instance.pk and self.instance.country_id:
+            country_qs = (country_qs | OKSMCountry.objects.filter(pk=self.instance.country_id)).distinct().order_by("short_name")
+        self.fields["country"].queryset = country_qs
+        self.fields["country"].label_from_instance = lambda obj: obj.short_name
+
+        if self.instance and self.instance.pk and self.instance.identifier:
+            self.fields["identifier"].initial = self.instance.identifier
+
+        self._bootstrapify()
+        if not self.instance.pk and "group" not in self.data:
+            ru_value = next((value for value, _label in self.fields["group"].choices if value == "RU"), "")
+            self.fields["group"].initial = ru_value
+        if not self.instance.pk and "country" not in self.data:
+            russia = country_qs.filter(short_name="Россия").first()
+            if russia:
+                self.fields["country"].initial = russia.pk
+                lei = LegalEntityIdentifier.objects.filter(country=russia).values_list("identifier", flat=True).first()
+                if lei:
+                    self.fields["identifier"].initial = lei
+        if not self.instance.pk and "year" not in self.data:
+            self.fields["year"].initial = timezone.now().year
+        if not self.instance.pk and "number" not in self.data:
+            self.fields["number"].initial = _next_project_number()
+
+    def clean_project_manager(self):
+        return (self.cleaned_data.get("project_manager") or "").strip()
+
+
+class ContractConditionsForm(BootstrapMixin, forms.ModelForm):
     contract_start = forms.DateField(required=False,
                                      widget=forms.TextInput(attrs=DATE_INPUT_ATTRS),
                                      input_formats=DATE_INPUT_FORMATS)
-    contract_end   = forms.DateField(required=False,
-                                     widget=forms.TextInput(attrs=DATE_INPUT_ATTRS),
-                                     input_formats=DATE_INPUT_FORMATS)
+    contract_end = forms.DateField(required=False,
+                                   widget=forms.TextInput(attrs=DATE_INPUT_ATTRS),
+                                   input_formats=DATE_INPUT_FORMATS)
     input_data = forms.IntegerField(
         label="Исх. данные, дней",
         required=False,
@@ -140,10 +249,7 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         required=False,
         disabled=True,
         widget=forms.TextInput(
-            attrs={
-                "class": "form-control js-stage1-end readonly-field",
-                "readonly": True,
-            }
+            attrs={"class": "form-control js-stage1-end readonly-field", "readonly": True}
         ),
     )
     completion_calc = forms.DateField(
@@ -165,10 +271,15 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         required=False,
         disabled=True,
         widget=forms.TextInput(
-            attrs={
-                "class": "form-control js-stage2-end readonly-field",
-                "readonly": True,
-            }
+            attrs={"class": "form-control js-stage2-end readonly-field", "readonly": True}
+        ),
+    )
+    stage1_date = forms.DateField(
+        label="Этап 1, дата",
+        required=False,
+        disabled=True,
+        widget=forms.TextInput(
+            attrs={"class": "form-control js-stage1-date readonly-field", "readonly": True}
         ),
     )
     stage3_weeks = forms.DecimalField(
@@ -179,6 +290,14 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         decimal_places=1,
         widget=forms.NumberInput(attrs={"min": 0, "step": "0.1", "class": "form-control js-stage3-weeks"}),
     )
+    stage3_end = forms.DateField(
+        label="Этап 3, оконч.",
+        required=False,
+        disabled=True,
+        widget=forms.TextInput(
+            attrs={"class": "form-control js-stage3-end readonly-field", "readonly": True}
+        ),
+    )
     term_weeks = forms.DecimalField(
         label="Срок, недель",
         required=False,
@@ -187,29 +306,17 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         disabled=True,
         widget=forms.NumberInput(attrs={"class": "form-control js-term-weeks readonly-field", "readonly": True}),
     )
-    stage3_end     = forms.DateField(required=False,
-                                     widget=forms.TextInput(attrs=DATE_INPUT_ATTRS),
-                                     input_formats=DATE_INPUT_FORMATS)
-    deadline       = forms.DateField(required=False,
-                                     widget=forms.TextInput(attrs=DATE_INPUT_ATTRS),
-                                     input_formats=DATE_INPUT_FORMATS)
-    group = forms.ChoiceField(
-        label="Группа",
-        choices=(),
-        required=True,
-        widget=forms.Select(attrs={"id": "registration-group-select"}),
-    )
-    project_manager = forms.ChoiceField(
-        label="Руководитель проекта",
-        required=False,
-        choices=(),
-        widget=forms.Select(),
-    )
+
     class Meta:
         model = ProjectRegistration
-        exclude = ("position",)
+        fields = [
+            "agreement_type", "agreement_number",
+            "contract_start", "contract_end", "completion_calc",
+            "input_data", "stage1_weeks", "stage1_end",
+            "stage2_weeks", "stage2_end", "stage3_weeks",
+            "contract_subject",
+        ]
         widgets = {
-            "year": forms.NumberInput(attrs={"placeholder": "ГГГГ"}),
             "contract_subject": forms.Textarea(
                 attrs={"rows": 6, "style": "max-height:36vh; overflow:auto; resize:vertical;"}
             ),
@@ -217,37 +324,7 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        current_group = self.data.get("group") or (self.instance.group if self.instance else "")
-        current_manager = self.data.get("project_manager") or (self.instance.project_manager if self.instance else "")
-        self.fields["group"].choices = self._group_choices(current_group)
-        self.fields["project_manager"].choices = _project_manager_choices(current_manager)
         self._bootstrapify()
-        if not self.instance.pk and "group" not in self.data:
-            ru_value = next((value for value, _label in self.fields["group"].choices if value == "RU"), "")
-            self.fields["group"].initial = ru_value
-        if not self.instance.pk and "year" not in self.data:
-            self.fields["year"].initial = timezone.now().year
-        if not self.instance.pk and "number" not in self.data:
-            self.fields["number"].initial = _next_project_number()
-
-    @staticmethod
-    def _group_choices(current_value=""):
-        items = (
-            GroupMember.objects
-            .exclude(country_alpha2="")
-            .values_list("country_alpha2", "short_name")
-            .order_by("position", "id")
-        )
-        seen = set()
-        choices = [("", "— Не выбрано —")]
-        for alpha2, short_name in items:
-            if alpha2 in seen:
-                continue
-            seen.add(alpha2)
-            choices.append((alpha2, f"{alpha2} {short_name}"))
-        if current_value and all(value != current_value for value, _label in choices):
-            choices.insert(0, (current_value, current_value))
-        return choices
 
     def clean_input_data(self):
         return self.cleaned_data.get("input_data") or 0
@@ -260,9 +337,6 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
 
     def clean_stage3_weeks(self):
         return self.cleaned_data.get("stage3_weeks") or 0
-
-    def clean_project_manager(self):
-        return (self.cleaned_data.get("project_manager") or "").strip()
 
 class ProjectChoiceField(forms.ModelChoiceField):
     def label_from_instance(self, obj):
@@ -281,6 +355,23 @@ class WorkVolumeForm(forms.ModelForm):
         label="Проект",
         widget=forms.Select(attrs=_common_select),
     )
+    country = forms.ModelChoiceField(
+        label="Страна",
+        queryset=OKSMCountry.objects.none(),
+        required=False,
+        widget=forms.Select(attrs={**_common_select, "id": "work-country-select"}),
+    )
+    identifier = forms.CharField(
+        label="Идентификатор",
+        required=False,
+        widget=forms.TextInput(attrs={**READONLY_INPUT, "id": "work-identifier-field"}),
+    )
+    registration_date = forms.DateField(
+        label="Дата",
+        required=False,
+        widget=forms.TextInput(attrs={**_common_input, **DATE_INPUT_ATTRS, "class": _common_input["class"] + " js-date"}),
+        input_formats=DATE_INPUT_FORMATS,
+    )
     manager = forms.ChoiceField(
         label="Менеджер",
         required=False,
@@ -290,7 +381,11 @@ class WorkVolumeForm(forms.ModelForm):
 
     class Meta:
         model = WorkVolume
-        fields = ["project", "type", "name", "asset_name", "registration_number", "manager"]
+        fields = [
+            "project", "type", "name", "asset_name",
+            "country", "identifier",
+            "registration_number", "registration_date", "manager",
+        ]
         widgets = {
             "type": forms.TextInput(attrs=READONLY_INPUT),
             "name": forms.TextInput(attrs=READONLY_INPUT),
@@ -302,6 +397,15 @@ class WorkVolumeForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         current_manager = self.data.get("manager") or (self.instance.manager if self.instance else "")
         self.fields["manager"].choices = _project_manager_choices(current_manager)
+
+        today = timezone.now().date()
+        country_qs = OKSMCountry.objects.filter(
+            models.Q(expiry_date__isnull=True) | models.Q(expiry_date__gte=today)
+        ).order_by("short_name")
+        if self.instance and self.instance.pk and self.instance.country_id:
+            country_qs = (country_qs | OKSMCountry.objects.filter(pk=self.instance.country_id)).distinct().order_by("short_name")
+        self.fields["country"].queryset = country_qs
+        self.fields["country"].label_from_instance = lambda obj: obj.short_name
         if not self.data and not current_manager and getattr(self.instance, "project_id", None):
             self.fields["manager"].initial = self.instance.project.project_manager or ""
 
@@ -333,21 +437,44 @@ class PerformerForm(forms.ModelForm):
         choices=(),
         widget=forms.Select(attrs={"class": "form-select"})
     )
+    currency = forms.ModelChoiceField(
+        label="Валюта",
+        queryset=OKVCurrency.objects.none(),
+        required=False,
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+
+    final_payment = forms.DecimalField(
+        label="Окон. платеж",
+        required=False,
+        disabled=True,
+        widget=forms.NumberInput(attrs={
+            "class": "form-control readonly-field",
+            "readonly": True,
+            "step": "1",
+        }),
+    )
 
     class Meta:
         model = Performer
         fields = [
-            "registration", "asset_name", "executor", "grade", "typical_section",
+            "registration", "asset_name", "executor", "grade", "grade_name",
+            "currency", "typical_section",
             "actual_costs", "estimated_costs", "agreed_amount",
             "prepayment", "final_payment", "contract_number",
         ]
         widgets = {
             "grade": forms.TextInput(attrs={"class": "form-control"}),
-            "actual_costs": forms.NumberInput(attrs={"class": "form-control", "step": "0.01"}),
-            "estimated_costs": forms.NumberInput(attrs={"class": "form-control", "step": "0.01"}),
-            "agreed_amount": forms.NumberInput(attrs={"class": "form-control", "step": "0.01"}),
-            "prepayment": forms.NumberInput(attrs={"class": "form-control", "step": "0.01"}),
-            "final_payment": forms.NumberInput(attrs={"class": "form-control", "step": "0.01"}),
+            "grade_name": forms.TextInput(attrs={"class": "form-control"}),
+            "actual_costs": forms.TextInput(attrs={"class": "form-control js-money-input", "inputmode": "decimal"}),
+            "estimated_costs": forms.TextInput(attrs={"class": "form-control js-money-input", "inputmode": "decimal"}),
+            "agreed_amount": forms.TextInput(attrs={"class": "form-control js-money-input", "inputmode": "decimal"}),
+            "prepayment": forms.NumberInput(attrs={
+                "class": "form-control",
+                "step": "1",
+                "min": "0",
+                "max": "100",
+            }),
             "contract_number": forms.TextInput(attrs={"class": "form-control"}),
         }
 
@@ -355,6 +482,37 @@ class PerformerForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         current_executor = self.data.get("executor") or (self.instance.executor if self.instance else "")
         self.fields["executor"].choices = _all_employee_choices(current_executor)
+
+        today = timezone.now().date()
+        currency_qs = OKVCurrency.objects.filter(
+            models.Q(approval_date__isnull=True) | models.Q(approval_date__lte=today),
+            models.Q(expiry_date__isnull=True) | models.Q(expiry_date__gte=today),
+        ).order_by("code_alpha")
+        if self.instance and self.instance.pk and self.instance.currency_id:
+            currency_qs = (currency_qs | OKVCurrency.objects.filter(pk=self.instance.currency_id)).distinct().order_by("code_alpha")
+        self.fields["currency"].queryset = currency_qs
+        self.fields["currency"].label_from_instance = lambda obj: f"{obj.code_alpha} {obj.name}"
+        if not (self.instance and self.instance.pk):
+            rub = currency_qs.filter(code_alpha="RUB").first()
+            if rub:
+                self.initial["currency"] = rub.pk
+            self.initial["prepayment"] = 50
+            self.initial["final_payment"] = 50
+
+    @staticmethod
+    def _clean_money(value):
+        if not value:
+            return value
+        return str(value).replace("\u00a0", "").replace(" ", "").replace(",", ".")
+
+    def clean_actual_costs(self):
+        return self._clean_money(self.cleaned_data.get("actual_costs"))
+
+    def clean_estimated_costs(self):
+        return self._clean_money(self.cleaned_data.get("estimated_costs"))
+
+    def clean_agreed_amount(self):
+        return self._clean_money(self.cleaned_data.get("agreed_amount"))
 
 class WorkItemChoiceField(forms.ModelChoiceField):
     def label_from_instance(self, obj):
@@ -375,16 +533,48 @@ class LegalEntityForm(forms.ModelForm):
         label="Наименование актива",
         widget=forms.Select(attrs=_common_select),
     )
+    country = forms.ModelChoiceField(
+        label="Страна регистрации",
+        queryset=OKSMCountry.objects.none(),
+        required=False,
+        widget=forms.Select(attrs={**_common_select, "id": "legal-country-select"}),
+    )
+    identifier = forms.CharField(
+        label="Идентификатор",
+        required=False,
+        widget=forms.TextInput(attrs={**READONLY_INPUT, "id": "legal-identifier-field"}),
+    )
+    registration_date = forms.DateField(
+        label="Дата регистрации",
+        required=False,
+        widget=forms.TextInput(attrs={**_common_input, **DATE_INPUT_ATTRS, "class": _common_input["class"] + " js-date"}),
+        input_formats=DATE_INPUT_FORMATS,
+    )
 
     class Meta:
         model = LegalEntity
-        fields = ["work_item", "work_type", "work_name", "legal_name", "registration_number"]
+        fields = [
+            "work_item", "work_type", "work_name", "legal_name",
+            "country", "identifier",
+            "registration_number", "registration_date",
+        ]
         widgets = {
             "work_type": forms.TextInput(attrs=READONLY_INPUT),
             "work_name": forms.TextInput(attrs=READONLY_INPUT),
             "legal_name": forms.TextInput(attrs=_common_input),
             "registration_number": forms.TextInput(attrs=_common_input),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        today = timezone.now().date()
+        country_qs = OKSMCountry.objects.filter(
+            models.Q(expiry_date__isnull=True) | models.Q(expiry_date__gte=today)
+        ).order_by("short_name")
+        if self.instance and self.instance.pk and self.instance.country_id:
+            country_qs = (country_qs | OKSMCountry.objects.filter(pk=self.instance.country_id)).distinct().order_by("short_name")
+        self.fields["country"].queryset = country_qs
+        self.fields["country"].label_from_instance = lambda obj: obj.short_name
 
     def save(self, commit=True):
         instance = super().save(commit=False)

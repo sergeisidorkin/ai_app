@@ -13,8 +13,8 @@
     {% else %}
       hx-post="{% url 'lw_form_edit' lw_item.pk %}"
     {% endif %}
-    hx-target="#classifiers-pane"
-    hx-swap="outerHTML">
+    hx-target="#lw-table-wrap"
+    hx-swap="innerHTML">
   <div class="modal-body" style="overflow-y:auto; flex:1 1 auto; min-height:0;">
     {% csrf_token %}
     <div class="mb-3">

@@ -539,6 +539,13 @@ body .second-sidebar + .flex-grow-1 {
   margin-bottom: 18px;              /* отступ снизу от панели */
 }
 
+
+#projects > .templates-bleed > .section-header {
+  position: sticky;
+  top: 0;
+  z-index: 1020;
+}
+
 #notifications .section-header {
   margin-bottom: 16px;
 }
@@ -814,6 +821,20 @@ body .second-sidebar + .flex-grow-1 {
   background: #adb5bd;
   color: #fff;
 }
+
+
+.projects-outer-scroll {
+  overflow-x: auto;
+  margin-left: -1rem;
+  margin-right: -1rem;
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+.projects-outer-scroll > .card {
+  min-width: 1980px;  /* самая широкая таблица (1940px) + padding карточки (32px) + запас */
+}
+
+
 #projects-pane .registration-table-wrap .products-actions-row {
   margin-bottom: 14px !important;
 }
@@ -1147,18 +1168,30 @@ section#templates .alert.alert-info .text-muted {
    REG TABLE (Регистрация проекта)
    ========================= */
 
-/* 0) Сброс ширин у <col>, кроме 1-й и 2-й */
-#projects-pane table.reg-table col { width: auto !important; }
-#projects-pane table.reg-table col.checkbox    { width: 36px !important; }  /* 1: чекбокс */
-#projects-pane table.reg-table col:nth-child(2){ width: 90px !important; }  /* 2: номер */
+/* 0) Ширины через <col> */
+#projects-pane table.reg-table col.checkbox       { width: 36px  !important; }  /* 1 */
+#projects-pane table.reg-table col.project-number { width: 70px  !important; }  /* 2 */
+#projects-pane table.reg-table col.group          { width: 70px  !important; }  /* 3: Группа */
+#projects-pane table.reg-table col.agreement-type { width: 170px !important; }  /* 4: Вид соглашения */
+#projects-pane table.reg-table col.project-id     { width: 100px !important; }  /* 5: Проект ID */
+#projects-pane table.reg-table col.reg-type       { width: 50px  !important; }  /* 6: Тип */
+#projects-pane table.reg-table col.reg-name       { width: 230px !important; }  /* 7: Название */
+#projects-pane table.reg-table col.reg-status     { width: 120px !important; }  /* 8: Статус */
+#projects-pane table.reg-table col.reg-deadline   { width: 80px  !important; }  /* 9: Дедлайн */
+#projects-pane table.reg-table col.reg-year       { width: 60px  !important; }  /* 10: Год */
+#projects-pane table.reg-table col.reg-country    { width: 110px !important; }  /* 13: Страна */
+#projects-pane table.reg-table col.reg-identifier { width: 70px  !important; }  /* 13: Идент. */
+#projects-pane table.reg-table col.reg-regnumber { width: 150px !important; }  /* 14: Регистр. номер */
+/* reg-regdate — резиновый, без фиксированной ширины */
+#projects-pane table.reg-table col.reg-manager   { width: 200px !important; }  /* 15: Руководитель проекта */
 
-/* 1) Таблица заполняет контейнер */
+/* 1) Таблица: фиксированная раскладка, Заказчик — резиновый */
 #projects-pane table.reg-table{
-  table-layout: auto !important;
+  table-layout: fixed !important;
   width: 100%;
-  max-width: 100%;
-  --bs-table-cell-padding-y: .5rem;  /* для расчётов в шапке */
-  --reg-first-col-pr: .8rem;         /* правый padding 1-го столбца */
+  min-width: 1900px;
+  --bs-table-cell-padding-y: .5rem;
+  --reg-first-col-pr: .8rem;
 }
 #projects-pane table.reg-table.table-sm { --bs-table-cell-padding-y: .25rem; }
 
@@ -1190,58 +1223,17 @@ section#templates .alert.alert-info .text-muted {
   text-overflow: ellipsis !important;
 }
 
-/* 4) Жёстко фиксируем 1-ю и 2-ю колонки */
-#projects-pane table.reg-table th:nth-child(1),
-#projects-pane table.reg-table td:nth-child(1){
-  width: 36px !important;
-  min-width: 36px !important;
-  max-width: 36px !important;
-  box-sizing: border-box;
+/* 4) Стилизация отдельных ячеек */
+#projects-pane table.reg-table tbody td.project-id-cell,
+#projects-pane .contract-table tbody td.completion-calc-cell {
+  color: #a1a9b1 !important;
 }
-#projects-pane table.reg-table col.project-number,
-#projects-pane table.reg-table th.col-project-number,
-#projects-pane table.reg-table td.col-project-number {
-  width: 70px !important;
-  min-width: 70px !important;
-  max-width: 70px !important;
-}
-#projects-pane table.reg-table col.project-id,
-#projects-pane table.reg-table th:nth-child(6),
-#projects-pane table.reg-table td:nth-child(6) {
-    min-width: 100px !important;
-}
-#projects-pane table.reg-table tbody td.project-id-cell {
-  color: #a1a9b1 !important; /* или используйте text-muted */
-}
-
-/* 5) Минимумы по остальным */
-#projects-pane table.reg-table th:nth-child(3),  #projects-pane table.reg-table td:nth-child(3){   min-width: 70px  !important; max-width: 70px !important; }   /* Группа */
-#projects-pane table.reg-table th:nth-child(4),  #projects-pane table.reg-table td:nth-child(4){   min-width: 160px !important; } /* Вид соглашения */
-#projects-pane table.reg-table th:nth-child(5),  #projects-pane table.reg-table td:nth-child(5){   min-width: 140px !important; } /* № соглашения */
-#projects-pane table.reg-table th:nth-child(7),  #projects-pane table.reg-table td:nth-child(7){   min-width: 50px  !important; } /* Тип */
-#projects-pane table.reg-table th:nth-child(8),  #projects-pane table.reg-table td:nth-child(8){   min-width: 220px !important; } /* Название */
-#projects-pane table.reg-table th:nth-child(9),  #projects-pane table.reg-table td:nth-child(9){   min-width: 120px !important; } /* Статус */
-#projects-pane table.reg-table th:nth-child(10), #projects-pane table.reg-table td:nth-child(10){  min-width: 80px  !important; } /* Начало контр. */
-#projects-pane table.reg-table th:nth-child(11), #projects-pane table.reg-table td:nth-child(11){  min-width: 80px  !important; } /* Оконч. контр. */
-#projects-pane table.reg-table th:nth-child(12), #projects-pane table.reg-table td:nth-child(12){  min-width: 80px  !important; } /* Оконч., расчет */
-#projects-pane table.reg-table th:nth-child(13), #projects-pane table.reg-table td:nth-child(13){  min-width: 80px  !important; } /* Исх. данные */
-#projects-pane table.reg-table th:nth-child(14), #projects-pane table.reg-table td:nth-child(14){  min-width: 80px  !important; } /* Этап 1, недель */
-#projects-pane table.reg-table th:nth-child(15), #projects-pane table.reg-table td:nth-child(15){  min-width: 80px  !important; } /* Этап 1, оконч. */
-#projects-pane table.reg-table th:nth-child(16), #projects-pane table.reg-table td:nth-child(16){  min-width: 80px  !important; } /* Этап 2, недель */
-#projects-pane table.reg-table th:nth-child(17), #projects-pane table.reg-table td:nth-child(17){  min-width: 80px  !important; } /* Этап 2, оконч. */
-#projects-pane table.reg-table th:nth-child(18), #projects-pane table.reg-table td:nth-child(18){  min-width: 80px  !important; } /* Этап 3, недель  */
-#projects-pane table.reg-table th:nth-child(19), #projects-pane table.reg-table td:nth-child(19){  min-width: 70px  !important; } /* Срок, недель  */
-#projects-pane table.reg-table th:nth-child(20), #projects-pane table.reg-table td:nth-child(20){  min-width: 90px  !important; } /* Дедлайн  */
-#projects-pane table.reg-table th:nth-child(21), #projects-pane table.reg-table td:nth-child(21){  min-width: 50px  !important; } /* Год */
-#projects-pane table.reg-table th:nth-child(22), #projects-pane table.reg-table td:nth-child(22){  min-width: 160px !important; } /* Заказчик */
-#projects-pane table.reg-table th:nth-child(23), #projects-pane table.reg-table td:nth-child(23){  min-width: 120px !important; } /* Рег. номер */
-#projects-pane table.reg-table th:nth-child(24), #projects-pane table.reg-table td:nth-child(24){  min-width: 150px !important; } /* Руководитель */
-#projects-pane table.reg-table th:nth-child(25), #projects-pane table.reg-table td:nth-child(25){  min-width: 190px !important; } /* Предмет договора */
+#projects-pane table.reg-table col.reg-customer   { /* резиновый — без фиксированной ширины */ }  /* 12: Заказчик */
 
 /* 6) Единый padding по краям 1-го столбца (и в шапке, и в теле) */
 #projects-pane table.reg-table > thead tr > :first-child,
 #projects-pane table.reg-table > tbody tr > :first-child{
-  padding-left: .4rem;
+  padding-left: .75rem;
   padding-right: var(--reg-first-col-pr);
 }
 
@@ -1307,6 +1299,53 @@ section#templates .alert.alert-info .text-muted {
 
 
 
+/* ==== Contract Conditions table (Условия контракта) ==== */
+.contract-table { table-layout: fixed; width: 100%; min-width: 1940px; }
+.contract-table col.checkbox     { width: 30px  !important; }
+.contract-table col.project-id   { width: 100px !important; }
+.contract-table col.group        { width: 50px  !important; }  /* Тип */
+.contract-table col.name         { width: 220px !important; }
+.contract-table col.agreement-type { width: 170px !important; }
+
+.contract-table th:nth-child(5),
+.contract-table td:nth-child(5) { width: 170px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.contract-table col.agreement-number { width: 160px !important; }
+.contract-table th:nth-child(6),
+.contract-table td:nth-child(6) { width: 190px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.contract-table th:nth-child(2),
+.contract-table td:nth-child(2) { width: 110px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.contract-table th:nth-child(3),
+.contract-table td:nth-child(3) { width: 120px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.contract-table th:nth-child(4),
+.contract-table td:nth-child(4) { width: 220px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Столбцы 7–16: даты и числовые (Начало контр. … Срок, недель) */
+.contract-table col.narrow-sm { width: 90px !important; }
+.contract-table col.narrow { width: 110px !important; }
+.contract-table th:nth-child(n+7):nth-child(-n+16) {
+  width: 80px !important;
+  white-space: normal;
+  word-break: break-word;
+}
+.contract-table td:nth-child(n+7):nth-child(-n+16) {
+  width: 80px !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Столбец 17: Предмет договора — занимает оставшееся пространство */
+.contract-table col.col-subject { /* no explicit width — absorbs remaining space */ }
+.contract-table th:nth-child(17),
+.contract-table td:nth-child(17) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+
 /* ==== Work Volume table (Объем работ) ==== */
 .work-table { table-layout: fixed; } /* точно соблюдает ширины колонок */
 .work-table col.col-checkbox { width: 30px  !important; }
@@ -1314,28 +1353,16 @@ section#templates .alert.alert-info .text-muted {
 .work-table col.col-type     { width: 50px  !important; } /* Тип (short_name) */
 .work-table col.col-name     { width: 220px !important; } /* Название */
 .work-table col.col-active   { width: 350px !important; } /* Наименование актива */
-
-/* Fallback на случай, если colgroup переопределяется */
-.work-table th:nth-child(2),
-.work-table td:nth-child(2) { width: 110px !important; }
-.work-table th:nth-child(3),
-.work-table td:nth-child(3) { width: 120px !important; }
-.work-table th:nth-child(4),
-.work-table td:nth-child(4) { width: 280px !important; }
+.work-table col.work-country    { width: 110px !important; }
+.work-table col.work-identifier { width: 70px  !important; }
+.work-table col.work-regnumber  { width: 150px !important; }
+.work-table col.work-regdate    { width: 100px !important; }
 
 /* Чтобы текст не рвал ширину, аккуратно подрезаем */
-.work-table td:nth-child(2),
-.work-table td:nth-child(3),
-.work-table td:nth-child(4) {
+.work-table td {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-@media (max-width: 992px) {
-  .work-table col.col-name { width: 220px !important; }
-  .work-table th:nth-child(4),
-  .work-table td:nth-child(4) { width: 220px !important; }
 }
 
 /* Наименование актива — обрезаем лишний текст троеточием */
@@ -1351,56 +1378,55 @@ section#templates .alert.alert-info .text-muted {
 
 
 /* ==== Legal Entities table (Юридические лица) ==== */
-.legal-table { table-layout: fixed; }
-.legal-table col.col-checkbox { width: 30px  !important; }
-.legal-table col.col-project  { width: 100px !important; }
-.legal-table col.col-type     { width: 50px  !important; }
-.legal-table col.col-name     { width: 220px !important; }
-.legal-table col.col-active   { width: 350px !important; } /* Наименование актива */
+.legal-table { table-layout: fixed; width: 100%; min-width: 1500px; }
+.legal-table col.col-checkbox     { width: 30px  !important; }
+.legal-table col.col-project      { width: 100px !important; }
+.legal-table col.col-type         { width: 50px  !important; }
+.legal-table col.col-name         { width: 220px !important; }
+.legal-table col.col-active       { width: 350px !important; }
+.legal-table col.col-legal-name   { width: 300px !important; }
+.legal-table col.legal-country    { width: 110px !important; }
+.legal-table col.legal-identifier { width: 70px  !important; }
+.legal-table col.legal-regnumber  { width: 150px !important; }
+/* legal-regdate — резиновый, без фиксированной ширины */
 
-.legal-table th:first-child,
-.legal-table td:first-child { width: 30px !important; min-width: 30px !important; max-width: 30px !important; padding-left: .4rem; padding-right: .4rem; }
-.legal-table th:nth-child(2),
-.legal-table td:nth-child(2) { width: 100px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.legal-table th:nth-child(3),
-.legal-table td:nth-child(3) { width: 50px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.legal-table th:nth-child(4),
-.legal-table td:nth-child(4) { width: 220px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.legal-table td {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
-/* Fallback на случай, если colgroup переопределяется */
-.work-table th:nth-child(2),
-.work-table td:nth-child(2) { width: 110px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.work-table th:nth-child(3),
-.work-table td:nth-child(3) { width: 120px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.work-table th:nth-child(4),
-.work-table td:nth-child(4) { width: 220px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 
 
 
 
 /* ==== Performers table ==== */
-.performers-table { table-layout: fixed; }
+.performers-table { table-layout: auto; white-space: nowrap; }
 
 .performers-table col.col-checkbox { width: 30px  !important; }
 .performers-table col.col-number   { width: 100px !important; } /* 4444RU-0 */
 .performers-table col.col-type     { width: 50px  !important; } /* Тип */
 .performers-table col.col-name     { width: 220px !important; } /* Название */
+.performers-table col.col-typical  { width: 200px !important; } /* Типовой раздел */
 .performers-table col.col-active   { width: 350px !important; } /* Наименование актива */
 
+.performers-table .perf-spacer {
+  width: 10px !important;
+  min-width: 10px;
+  max-width: 10px;
+  padding: 0 !important;
+  border-left: none !important;
+  border-right: none !important;
+  border-top: none !important;
+}
 
 .performers-table th:nth-child(2),
-.performers-table td:nth-child(2) { width: 110px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.performers-table td:nth-child(2) { width: 100px !important; min-width: 100px; max-width: 100px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .performers-table th:nth-child(3),
-.performers-table td:nth-child(3) { width: 120px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.performers-table td:nth-child(3) { width: 50px !important; min-width: 50px; max-width: 50px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .performers-table th:nth-child(4),
-.performers-table td:nth-child(4) { width: 280px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-@media (max-width: 992px) {
-  .performers-table col.col-name { width: 220px !important; }
-  .performers-table th:nth-child(4),
-  .performers-table td:nth-child(4) { width: 220px !important; }
-}
+.performers-table td:nth-child(4) { width: 220px !important; min-width: 220px; max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* +0px слева у колонки с чекбоксами во всех 3 таблицах раздела "Проекты" */
 #projects-pane table.table > thead tr > :first-child,
@@ -1417,4 +1443,100 @@ section#templates .alert.alert-info .text-muted {
 #performers-pane table.table > thead tr > :first-child .form-check,
 #performers-pane table.table > tbody tr > :first-child .form-check {
   margin-left: 0;
+}
+
+/* Classifiers wrap/truncate toggle button */
+.clf-wrap-btn {
+  position: absolute;
+  right: 4px;
+  bottom: 6px;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #adb5bd;
+  border-radius: 6px;
+  background: #fff;
+  color: #adb5bd;
+  padding: 0;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.clf-wrap-btn:hover {
+  background: #f8f9fa;
+  border-color: #9ca5ae;
+  color: #9ca5ae;
+}
+.clf-wrap-btn.active {
+  background: #adb5bd;
+  border-color: #adb5bd;
+  color: #fff;
+}
+.clf-wrap-btn.active:hover {
+  background: #9ca5ae;
+  border-color: #9ca5ae;
+}
+#oksm-table-wrap table.clf-truncated td:not(.text-nowrap),
+#okv-table-wrap table.clf-truncated td:not(.text-nowrap),
+#katd-table-wrap table.clf-truncated td:not(.text-nowrap),
+#lw-table-wrap table.clf-truncated td:not(.text-nowrap) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+.okv-countries-cell {
+  max-width: 300px;
+  word-break: break-word;
+}
+#okv-table-wrap table.clf-truncated .okv-countries-cell {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* LER autocomplete dropdown */
+.ler-ac-wrap { position: relative; }
+.ler-ac-list {
+  position: absolute;
+  z-index: 1055;
+  left: 0; right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid rgba(0,0,0,.175);
+  border-radius: .375rem;
+  box-shadow: 0 .5rem 1rem rgba(0,0,0,.15);
+  margin-top: 2px;
+  padding: .25rem 0;
+  display: none;
+}
+.ler-ac-list.show { display: block; }
+.ler-ac-item {
+  display: block;
+  padding: .35rem .75rem;
+  cursor: pointer;
+  font-size: .82rem;
+  line-height: 1.35;
+  color: #212529;
+  white-space: normal;
+  transition: background-color .1s;
+}
+.ler-ac-item:hover {
+  background-color: #e9ecef;
+}
+.ler-ac-item .ler-ac-sub {
+  color: #6c757d;
+  font-size: .78rem;
+}
+.ler-ac-item + .ler-ac-item {
+  border-top: 1px solid #f0f0f0;
+}
+.ler-ac-item mark {
+  background: transparent;
+  font-weight: 700;
+  padding: 0;
+  color: inherit;
 }

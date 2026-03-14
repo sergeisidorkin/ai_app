@@ -1,5 +1,5 @@
 {% load classifiers_filters %}
-<table class="table table-sm align-middle">
+<table class="table table-sm align-middle clf-truncated">
     <thead>
     <tr>
         <th style="width:1%">
@@ -22,7 +22,13 @@
         <th>Валюта</th>
         <th>Дата введения в действие</th>
         <th>Дата прекращения действия</th>
-        <th>Источник</th>
+        <th style="position:relative">
+            <span>Источник</span>
+            <button type="button" class="clf-wrap-btn active" id="lw-wrap-toggle"
+                    title="Свернуть/развернуть строки">
+              <i class="bi bi-text-wrap"></i>
+            </button>
+        </th>
     </tr>
     </thead>
     <tbody>
@@ -52,7 +58,7 @@
             <td class="text-nowrap">{{ w.currency }}</td>
             <td class="text-nowrap">{{ w.approval_date|date:"d.m.Y" }}</td>
             <td class="text-nowrap">{% if w.expiry_date %}{{ w.expiry_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>
-            <td>{{ w.source }}</td>
+            <td class="lw-source-cell" title="{{ w.source }}">{{ w.source }}</td>
         </tr>
     {% empty %}
         <tr><td colspan="10" class="text-muted">Пока нет данных.</td></tr>

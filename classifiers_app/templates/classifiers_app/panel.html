@@ -10,29 +10,6 @@
       <div class="text-muted htmx-indicator">Загрузка справочников…</div>
     </div>
 
-    <div class="modal fade" id="classifiers-modal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog modal-dialog-scrollable">
-        <div class="modal-content">
-        </div>
-      </div>
-    </div>
-
-    <div class="modal fade" id="csv-result-modal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog modal-dialog-scrollable modal-lg">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title">Результат загрузки CSV</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-          </div>
-          <div class="modal-body" id="csv-result-body" style="font-size: 0.82rem; white-space: pre-wrap; max-height: 70vh;">
-          </div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-primary btn-sm" data-bs-dismiss="modal">Закрыть</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
     <script>
       document.body.addEventListener('classifiers-updated', function () {
         const el = document.getElementById('classifiers-modal');

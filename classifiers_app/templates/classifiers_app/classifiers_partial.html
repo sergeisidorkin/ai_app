@@ -93,30 +93,4 @@
         </div>
     </div>
 
-    <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 50px;">
-        <h5 class="table-section-title">
-            <i class="bi bi-table me-2"></i>
-            Величина прожиточного минимума (ВПМ) для трудоспособных граждан
-        </h5>
-        <div class="d-flex align-items-center gap-2">
-            <label class="form-label mb-0 text-nowrap small" for="lw-date-filter">Действителен на дату:</label>
-            <input type="date"
-                   class="form-control form-control-sm"
-                   id="lw-date-filter"
-                   name="lw_date"
-                   value="{{ lw_date_filter }}"
-                   style="width: auto;"
-                   hx-get="{% url 'lw_table_partial' %}"
-                   hx-target="#lw-table-wrap"
-                   hx-swap="innerHTML"
-                   hx-trigger="change"
-                   hx-include="this">
-        </div>
-    </div>
-
-    <div class="table-responsive">
-        <div id="lw-table-wrap">
-            {% include "classifiers_app/lw_table_partial.html" %}
-        </div>
-    </div>
 </div>

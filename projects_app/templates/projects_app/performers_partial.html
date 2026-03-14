@@ -1,5 +1,36 @@
 {% load projects_extras %}
-<div class="table-responsive">
+
+<div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
+  <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
+    <i class="bi bi-table"></i> Исполнители
+  </h5>
+  <div class="dropdown" id="perf-project-filter-dropdown">
+    <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+            id="perf-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+      Проекты: <span class="js-perf-filter-label">Все</span>
+    </button>
+    <div class="dropdown-menu p-3" aria-labelledby="perf-project-filter-toggle" style="min-width: 200px; max-height: 240px; overflow-y: auto;">
+      <div class="form-check mb-2">
+        <input class="form-check-input js-perf-filter" type="checkbox" value="__all__" id="perf-filter-all">
+        <label class="form-check-label" for="perf-filter-all">Все проекты</label>
+      </div>
+      <hr class="dropdown-divider">
+      {% for proj in performer_projects %}
+        <div class="form-check">
+          <input class="form-check-input js-perf-filter" type="checkbox"
+                 value="{{ proj.id }}" id="perf-filter-{{ proj.id }}">
+          <label class="form-check-label" for="perf-filter-{{ proj.id }}">
+            {{ proj.short_uid }}
+          </label>
+        </div>
+      {% empty %}
+        <div class="text-muted small">Нет проектов</div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div style="overflow-x:auto">
   <table class="table table-sm align-middle performers-table">
     <colgroup>
       <col class="col-checkbox">  <!-- чекбокс -->
@@ -9,10 +40,13 @@
       <col class="col-active">    <!-- Актив -->
       <col>                       <!-- Исполнитель -->
       <col>                       <!-- Грейд -->
-      <col>                       <!-- Типовой раздел -->
+      <col class="col-typical">    <!-- Типовой раздел -->
       <col>                       <!-- Факт. затраты -->
+      <col class="perf-spacer">
       <col>                       <!-- Расч. затраты -->
+      <col class="perf-spacer">
       <col>                       <!-- Согласованная -->
+      <col class="perf-spacer">
       <col>                       <!-- Аванс -->
       <col>                       <!-- Окон. платёж -->
       <col>                       <!-- № договора -->
@@ -38,9 +72,12 @@
       <th>Исполнитель</th>
       <th>Грейд</th>
       <th>Типовой раздел</th>
-      <th>Факт. затраты</th>
-      <th>Расч. затраты</th>
-      <th>Согласовано</th>
+      <th class="text-end">Факт. затраты</th>
+      <th class="perf-spacer"></th>
+      <th class="text-end">Расч. затраты</th>
+      <th class="perf-spacer"></th>
+      <th class="text-end">Согласовано</th>
+      <th class="perf-spacer"></th>
       <th>Аванс</th>
       <th>Окон. платёж</th>
       <th>№ договора</th>
@@ -49,6 +86,7 @@
     <tbody>
     {% for p in performers %}
       <tr
+        data-project-id="{{ p.registration_id }}"
         data-edit-url="{% url 'performer_form_edit' p.pk %}"
         data-delete-url="{% url 'performer_delete' p.pk %}"
         data-move-up-url="{% url 'performer_move_up' p.pk %}"
@@ -76,15 +114,18 @@
         <td class="text-nowrap">
           {% if p.typical_section %}{{ p.typical_section|typical_section_short }}{% else %}&mdash;{% endif %}
         </td>
-        <td class="text-nowrap">{{ p.actual_costs }}</td>
-        <td class="text-nowrap">{{ p.estimated_costs }}</td>
-        <td class="text-nowrap">{{ p.agreed_amount }}</td>
-        <td class="text-nowrap">{{ p.prepayment }}</td>
-        <td class="text-nowrap">{{ p.final_payment }}</td>
+        <td class="text-nowrap text-end">{% if p.actual_costs != None %}{{ p.actual_costs|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% endif %}</td>
+        <td class="perf-spacer"></td>
+        <td class="text-nowrap text-end">{% if p.estimated_costs != None %}{{ p.estimated_costs|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% endif %}</td>
+        <td class="perf-spacer"></td>
+        <td class="text-nowrap text-end">{% if p.agreed_amount != None %}{{ p.agreed_amount|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% endif %}</td>
+        <td class="perf-spacer"></td>
+        <td class="text-nowrap">{% if p.prepayment != None %}{{ p.prepayment|floatformat:"0" }}%{% endif %}</td>
+        <td class="text-nowrap">{% if p.final_payment != None %}{{ p.final_payment|floatformat:"0" }}%{% endif %}</td>
         <td class="text-nowrap">{{ p.contract_number }}</td>
       </tr>
     {% empty %}
-      <tr><td colspan="14" class="text-muted">Пока нет данных.</td></tr>
+      <tr><td colspan="17" class="text-muted">Пока нет данных.</td></tr>
     {% endfor %}
     </tbody>
   </table>
@@ -165,7 +206,7 @@
     </div>
   </div>
 
-  <div class="table-responsive">
+  <div>
     <table class="table table-sm align-middle performers-table">
       <colgroup>
         <col class="col-checkbox">
@@ -201,10 +242,10 @@
         <th>Исполнитель</th>
         <th>Грейд</th>
         <th>Типовой раздел</th>
-        <th class="text-nowrap">Дата отправки запроса</th>
+        <th class="text-nowrap">Дата отправки</th>
         <th class="text-nowrap">Срок</th>
         <th>Ответ на запрос</th>
-        <th class="text-nowrap">Дата ответа на запрос</th>
+        <th class="text-nowrap">Дата ответа</th>
         <th>Статус ответа</th>
       </tr>
       </thead>
@@ -363,7 +404,7 @@
     </div>
   </div>
 
-  <div class="table-responsive">
+  <div>
     <table class="table table-sm align-middle performers-table">
       <colgroup>
         <col class="col-checkbox">
@@ -402,7 +443,7 @@
         <th class="text-nowrap">Дата отправки</th>
         <th class="text-nowrap">Срок</th>
         <th>Статус согласования</th>
-        <th class="text-nowrap">Дата ответа на запрос</th>
+        <th class="text-nowrap">Дата ответа</th>
         <th>Статус ответа</th>
       </tr>
       </thead>
@@ -560,3 +601,86 @@
     {% endif %}
   </div>
 </div>
+
+<script>
+(function(){
+  const FILTER_ALL = "__all__";
+  window.__perfProjectFilter = window.__perfProjectFilter || [FILTER_ALL];
+
+  function initPerfFilter() {
+    const pane = document.getElementById("performers-pane");
+    if (!pane) return;
+
+    const dropdown = pane.querySelector("#perf-project-filter-dropdown");
+    const checks = pane.querySelectorAll(".js-perf-filter");
+    const label = pane.querySelector(".js-perf-filter-label");
+    const rows = pane.querySelectorAll("table.performers-table tbody tr");
+
+    if (!dropdown || checks.length === 0 || dropdown.dataset.bound === "1") return;
+    dropdown.dataset.bound = "1";
+
+    function syncCheckboxes(values) {
+      const set = new Set(values);
+      checks.forEach(cb => { cb.checked = set.has(cb.value); });
+    }
+
+    function updateLabel(values) {
+      if (values.includes(FILTER_ALL) || !values.length) { label.textContent = "Все"; return; }
+      if (values.length === 1) {
+        const input = Array.from(checks).find(cb => cb.value === values[0]);
+        label.textContent = input?.nextElementSibling?.textContent?.trim() || "1 проект";
+        return;
+      }
+      label.textContent = values.length + " выбрано";
+    }
+
+    function applyFilter(values) {
+      window.__perfProjectFilter = values.slice();
+      const showAll = values.includes(FILTER_ALL) || values.length === 0;
+      rows.forEach(row => {
+        const pid = row.dataset.projectId || "";
+        row.classList.toggle("d-none", !showAll && !values.includes(pid));
+      });
+      updateLabel(values);
+      if (window.__enforceMasterOnRows) window.__enforceMasterOnRows();
+    }
+
+    function normalizeSelection() {
+      let values = Array.from(checks).filter(cb => cb.checked).map(cb => cb.value);
+      if (!values.length) values = [FILTER_ALL];
+      if (values.includes(FILTER_ALL)) values = [FILTER_ALL];
+      syncCheckboxes(values);
+      return values;
+    }
+
+    checks.forEach(cb => {
+      cb.addEventListener("change", event => {
+        const value = event.target.value;
+        if (value === FILTER_ALL && event.target.checked) {
+          syncCheckboxes([FILTER_ALL]);
+          applyFilter([FILTER_ALL]);
+          return;
+        }
+        if (value === FILTER_ALL && !event.target.checked) {
+          const first = Array.from(checks).find(c => c.value !== FILTER_ALL);
+          if (first) first.checked = true;
+        } else {
+          const allCb = pane.querySelector("#perf-filter-all");
+          if (allCb && allCb.checked) allCb.checked = false;
+        }
+        applyFilter(normalizeSelection());
+      });
+    });
+
+    const initial = window.__perfProjectFilter && window.__perfProjectFilter.length
+      ? window.__perfProjectFilter : [FILTER_ALL];
+    syncCheckboxes(initial);
+    applyFilter(initial);
+  }
+
+  document.addEventListener("DOMContentLoaded", initPerfFilter);
+  document.body.addEventListener("htmx:afterSettle", event => {
+    if (event.target && event.target.id === "performers-pane") initPerfFilter();
+  });
+})();
+</script>

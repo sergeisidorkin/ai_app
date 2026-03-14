@@ -1,4 +1,4 @@
-<table class="table table-sm align-middle">
+<table class="table table-sm align-middle clf-truncated">
     <thead>
     <tr>
         <th style="width:1%">
@@ -19,7 +19,13 @@
         <th>Код региона</th>
         <th>Дата образования</th>
         <th>Дата упразднения</th>
-        <th>Источник</th>
+        <th style="position:relative">
+            <span>Источник</span>
+            <button type="button" class="clf-wrap-btn active" id="katd-wrap-toggle"
+                    title="Свернуть/развернуть строки">
+              <i class="bi bi-text-wrap"></i>
+            </button>
+        </th>
     </tr>
     </thead>
     <tbody>
@@ -47,7 +53,7 @@
             <td class="text-nowrap">{{ d.region_code }}</td>
             <td class="text-nowrap">{{ d.effective_date|date:"d.m.Y" }}</td>
             <td class="text-nowrap">{% if d.abolished_date %}{{ d.abolished_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>
-            <td>{{ d.source }}</td>
+            <td class="katd-source-cell" title="{{ d.source }}">{{ d.source }}</td>
         </tr>
     {% empty %}
         <tr><td colspan="8" class="text-muted">Пока нет данных.</td></tr>

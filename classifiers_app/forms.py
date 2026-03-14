@@ -4,7 +4,7 @@ from decimal import Decimal, InvalidOperation
 from django import forms
 from django.db.models import Q
 
-from .models import OKSMCountry, OKVCurrency, LegalEntityIdentifier, TerritorialDivision, LivingWage
+from .models import OKSMCountry, OKVCurrency, LegalEntityIdentifier, TerritorialDivision, LivingWage, LegalEntityRecord
 
 
 def _active_countries_qs():
@@ -215,3 +215,37 @@ class LivingWageForm(forms.ModelForm):
             return Decimal(cleaned)
         except (InvalidOperation, ValueError):
             raise forms.ValidationError("Введите корректное числовое значение.")
+
+
+class LegalEntityRecordForm(forms.ModelForm):
+    registration_country = forms.ModelChoiceField(
+        label="Страна регистрации",
+        queryset=OKSMCountry.objects.none(),
+        widget=forms.Select(attrs={"class": "form-select"}),
+        required=False,
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        qs = _active_countries_qs()
+        if self.instance and self.instance.pk and self.instance.registration_country_id:
+            qs = (qs | OKSMCountry.objects.filter(pk=self.instance.registration_country_id)).distinct()
+        self.fields["registration_country"].queryset = qs.order_by("short_name")
+        self.fields["registration_country"].label_from_instance = lambda obj: obj.short_name
+
+    class Meta:
+        model = LegalEntityRecord
+        fields = [
+            "short_name", "full_name", "identifier", "registration_number",
+            "registration_date", "registration_country",
+            "name_received_date", "name_changed_date",
+        ]
+        widgets = {
+            "short_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Краткое наименование"}),
+            "full_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Полное наименование"}),
+            "identifier": forms.TextInput(attrs={"class": "form-control", "placeholder": "Идентификатор"}),
+            "registration_number": forms.TextInput(attrs={"class": "form-control", "placeholder": "Регистрационный номер"}),
+            "registration_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
+            "name_received_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
+            "name_changed_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
+        }

@@ -132,7 +132,7 @@
   </aside>
 
   <!-- Контент вкладок -->
-  <main class="flex-grow-1 py-4 px-3" style="min-width:0; overflow-x:hidden;">
+  <main class="flex-grow-1 py-4 px-3" style="min-width:0; overflow-x:clip;">
     <div class="tab-content">
       <!-- Уведомления -->
       <section id="notifications" class="tab-pane fade show active">
@@ -225,7 +225,24 @@
         <div class="templates-bleed">
           <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
             <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
-              <h5 class="mb-0 ps-3 fs-4 pt-2">Проекты</h5>
+              <div class="d-flex align-items-center gap-3">
+                <h5 class="mb-0 ps-3 fs-4 pt-2">Проекты</h5>
+                <div class="dropdown pt-1" id="master-project-filter-dropdown" style="transform: translateY(3px);">
+                  <button class="btn btn-primary btn-sm dropdown-toggle" type="button"
+                          id="master-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                    Проекты: <span class="js-master-filter-label">Все</span>
+                  </button>
+                  <div class="dropdown-menu p-3" aria-labelledby="master-project-filter-toggle"
+                       style="min-width: 200px; max-height: 240px; overflow-y: auto;">
+                    <div class="form-check mb-2">
+                      <input class="form-check-input js-master-filter" type="checkbox" value="__all__" id="master-filter-all" checked>
+                      <label class="form-check-label" for="master-filter-all">Все проекты</label>
+                    </div>
+                    <hr class="dropdown-divider">
+                    <div id="master-filter-projects-list"></div>
+                  </div>
+                </div>
+              </div>
               <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
                  href="#notifications"
                  data-bs-toggle="tab"
@@ -492,26 +509,175 @@
 
       <!-- Справочники -->
       <section id="classifiers" class="tab-pane fade">
-        <div class="templates-bleed">
-          <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
-            <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
-              <h5 class="mb-0 ps-3 fs-4 pt-2">Справочники</h5>
-              <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
-                 href="#notifications"
-                 data-bs-toggle="tab"
-                 aria-label="Открыть уведомления">
-                <i class="bi bi-bell fs-5"></i>
-                <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
-                      data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
+        <div class="d-flex templates-bleed">
+          <!-- Второй уровень сайдбара для раздела "Справочники" -->
+          <aside class="second-sidebar bg-body-tertiary border-end">
+            <div class="second-sidebar-header-spacer"></div>
+            <hr class="my-0">
+            <div class="list-group list-group-flush p-3 m-0" id="classifiers-second-sidebar-list">
+              <a href="#clf-legal-entities"
+                 class="list-group-item list-group-item-action"
+                 data-clf-section="legal-entities">
+                База юрлиц
+              </a>
+              <a href="#clf-classifiers"
+                 class="list-group-item list-group-item-action active"
+                 data-clf-section="classifiers">
+                Классификаторы
+              </a>
+              <a href="#clf-normatives"
+                 class="list-group-item list-group-item-action"
+                 data-clf-section="normatives">
+                Нормативы
               </a>
             </div>
-          </div>
-          <div class="ps-3">
-            {% include "classifiers_app/panel.html" %}
+          </aside>
+
+          <!-- Контент справа -->
+          <div class="flex-grow-1 ps-3 pe-0" style="min-width:0;">
+            <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
+              <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
+                <h5 class="mb-0 ps-3 fs-4 pt-2" id="classifiers-section-title">Классификаторы</h5>
+                <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
+                   href="#notifications"
+                   data-bs-toggle="tab"
+                   aria-label="Открыть уведомления">
+                  <i class="bi bi-bell fs-5"></i>
+                  <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
+                        data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
+                </a>
+              </div>
+            </div>
+
+            <!-- Панели контента -->
+            <div class="ps-3">
+              <div id="clf-content-legal-entities" class="clf-section-content d-none">
+                <div class="card shadow-sm mt-3">
+                  <div class="card-body">
+                    <div id="legal-entities-pane">
+                      <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 0px;">
+                        <h5 class="table-section-title">
+                          <i class="bi bi-table me-2"></i>
+                          Юридические лица
+                        </h5>
+                      </div>
+                      <div class="table-responsive">
+                        <div id="ler-table-wrap"
+                             hx-get="{% url 'ler_table_partial' %}"
+                             hx-trigger="legal-entities:load from:body once"
+                             hx-swap="innerHTML">
+                          <div class="text-muted p-3">Загрузка данных…</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div id="clf-content-classifiers" class="clf-section-content">
+                {% include "classifiers_app/panel.html" %}
+              </div>
+              <div id="clf-content-normatives" class="clf-section-content d-none">
+                <div class="card shadow-sm">
+                  <div class="card-body">
+                    <div id="normatives-pane">
+                      <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 0px;">
+                        <h5 class="table-section-title">
+                          <i class="bi bi-table me-2"></i>
+                          Величина прожиточного минимума (ВПМ) для трудоспособных граждан
+                        </h5>
+                        <div class="d-flex align-items-center gap-2">
+                          <label class="form-label mb-0 text-nowrap small" for="lw-date-filter">Действителен на дату:</label>
+                          <input type="date"
+                                 class="form-control form-control-sm"
+                                 id="lw-date-filter"
+                                 name="lw_date"
+                                 style="width: auto;"
+                                 hx-get="{% url 'lw_table_partial' %}"
+                                 hx-target="#lw-table-wrap"
+                                 hx-swap="innerHTML"
+                                 hx-trigger="change"
+                                 hx-include="this">
+                          <script>document.getElementById('lw-date-filter').valueAsDate = new Date();</script>
+                        </div>
+                      </div>
+                      <div class="table-responsive">
+                        <div id="lw-table-wrap"
+                             hx-get="{% url 'lw_table_partial' %}"
+                             hx-trigger="normatives:load from:body once"
+                             hx-swap="innerHTML">
+                          <div class="text-muted p-3">Загрузка данных…</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Модалки (вне переключаемых div, чтобы работали при любом активном подразделе) -->
+            <div class="modal fade" id="classifiers-modal" tabindex="-1" aria-hidden="true">
+              <div class="modal-dialog modal-dialog-scrollable">
+                <div class="modal-content">
+                </div>
+              </div>
+            </div>
+
+            <div class="modal fade" id="csv-result-modal" tabindex="-1" aria-hidden="true">
+              <div class="modal-dialog modal-dialog-scrollable modal-lg">
+                <div class="modal-content">
+                  <div class="modal-header">
+                    <h5 class="modal-title">Результат загрузки CSV</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                  </div>
+                  <div class="modal-body" id="csv-result-body" style="font-size: 0.82rem; white-space: pre-wrap; max-height: 70vh;">
+                  </div>
+                  <div class="modal-footer">
+                    <button type="button" class="btn btn-primary btn-sm" data-bs-dismiss="modal">Закрыть</button>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </section>
       {% endif %}
+
+        <script>
+        (function () {
+          const SECTION_TITLES = {
+            'legal-entities': 'База юрлиц',
+            'classifiers': 'Классификаторы',
+            'normatives': 'Нормативы',
+          };
+
+          const sidebar = document.getElementById('classifiers-second-sidebar-list');
+          const titleEl = document.getElementById('classifiers-section-title');
+
+          function switchClfSection(key) {
+            document.querySelectorAll('.clf-section-content').forEach(el => el.classList.add('d-none'));
+            const target = document.getElementById('clf-content-' + key);
+            if (target) target.classList.remove('d-none');
+            if (titleEl) titleEl.textContent = SECTION_TITLES[key] || '';
+            if (key === 'normatives') {
+              document.body.dispatchEvent(new CustomEvent('normatives:load'));
+            }
+            if (key === 'legal-entities') {
+              document.body.dispatchEvent(new CustomEvent('legal-entities:load'));
+            }
+          }
+
+          if (sidebar) {
+            sidebar.addEventListener('click', function (e) {
+              const link = e.target.closest('.list-group-item');
+              if (!link) return;
+              e.preventDefault();
+              sidebar.querySelectorAll('.list-group-item').forEach(a => a.classList.remove('active'));
+              link.classList.add('active');
+              switchClfSection(link.dataset.clfSection);
+            });
+          }
+        })();
+        </script>
 
         <script>
         document.addEventListener('DOMContentLoaded', function () {
