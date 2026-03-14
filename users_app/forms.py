@@ -3,7 +3,7 @@ from django.contrib.auth.models import User, Group
 from django.contrib.auth.password_validation import validate_password
 
 from group_app.models import GroupMember, OrgUnit
-from policy_app.models import ADMIN_GROUP
+from policy_app.models import SUPERUSER_GROUPS
 from .models import Employee, PendingRegistration
 
 FREELANCER_LABEL = "Внештатный сотрудник"
@@ -148,7 +148,7 @@ class EmployeeForm(forms.Form):
         else:
             employee.role = ""
 
-        user.is_superuser = bool(group and group.name == ADMIN_GROUP)
+        user.is_superuser = bool(group and group.name in SUPERUSER_GROUPS)
         user.save(update_fields=["is_superuser"])
 
         employee.save()
