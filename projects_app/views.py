@@ -13,6 +13,7 @@ from .forms import ProjectRegistrationForm, ContractConditionsForm, WorkVolumeFo
 
 import json
 import uuid
+from collections import defaultdict
 from datetime import datetime, timedelta
 
 from experts_app.models import ExpertProfile
@@ -1084,49 +1085,57 @@ def contract_request(request):
                 deadline_at=deadline_at,
                 duration_hours=duration_hours,
             )
-            batch_id = uuid.uuid4()
-            rep = selected_performers[0]
-            existing_batch_count = (
-                Performer.objects
-                .filter(
-                    registration_id=rep.registration_id,
-                    executor=rep.executor,
-                    contract_batch_id__isnull=False,
-                )
-                .values("contract_batch_id")
-                .distinct()
-                .count()
-            )
-            is_addendum = existing_batch_count > 0
-            addendum_number = existing_batch_count if is_addendum else None
+            groups = defaultdict(list)
+            for p in selected_performers:
+                groups[(p.registration_id, p.executor)].append(p)
 
-            if is_addendum:
-                first_performer = (
+            updated = 0
+            for (reg_id, executor), group_performers in groups.items():
+                batch_id = uuid.uuid4()
+                rep = group_performers[0]
+
+                existing_batch_count = (
                     Performer.objects
                     .filter(
-                        registration_id=rep.registration_id,
-                        executor=rep.executor,
+                        registration_id=reg_id,
+                        executor=executor,
                         contract_batch_id__isnull=False,
-                        contract_is_addendum=False,
                     )
-                    .order_by("contract_sent_at", "id")
-                    .first()
+                    .values("contract_batch_id")
+                    .distinct()
+                    .count()
                 )
-                base_date = first_performer.contract_sent_at if first_performer else request_sent_at
-            else:
-                base_date = request_sent_at
+                is_addendum = existing_batch_count > 0
+                addendum_number = existing_batch_count if is_addendum else None
 
-            contract_number = _build_contract_number(rep, base_date, addendum_number)
-            update_kwargs = dict(
-                contract_sent_at=request_sent_at,
-                contract_deadline_at=deadline_at,
-                contract_batch_id=batch_id,
-                contract_is_addendum=is_addendum,
-                contract_addendum_number=addendum_number,
-            )
-            if contract_number:
-                update_kwargs["contract_number"] = contract_number
-            updated = Performer.objects.filter(pk__in=performer_ids).update(**update_kwargs)
+                if is_addendum:
+                    first_performer = (
+                        Performer.objects
+                        .filter(
+                            registration_id=reg_id,
+                            executor=executor,
+                            contract_batch_id__isnull=False,
+                            contract_is_addendum=False,
+                        )
+                        .order_by("contract_sent_at", "id")
+                        .first()
+                    )
+                    base_date = first_performer.contract_sent_at if first_performer else request_sent_at
+                else:
+                    base_date = request_sent_at
+
+                contract_number = _build_contract_number(rep, base_date, addendum_number)
+                update_kwargs = dict(
+                    contract_sent_at=request_sent_at,
+                    contract_deadline_at=deadline_at,
+                    contract_batch_id=batch_id,
+                    contract_is_addendum=is_addendum,
+                    contract_addendum_number=addendum_number,
+                )
+                if contract_number:
+                    update_kwargs["contract_number"] = contract_number
+                group_ids = [p.pk for p in group_performers]
+                updated += Performer.objects.filter(pk__in=group_ids).update(**update_kwargs)
     except ValueError as exc:
         return JsonResponse({"ok": False, "error": str(exc)}, status=400)
 
