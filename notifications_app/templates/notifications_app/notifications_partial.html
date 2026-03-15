@@ -73,6 +73,35 @@
                 до {{ card.deadline_at_display }}.
               </p>
               <p class="mb-0">С уважением,<br>IMC Montan AI</p>
+            {% elif notification.notification_type == "project_contract_conclusion" %}
+              <p class="mb-2">Добрый день, {{ card.recipient_name }}</p>
+              <p class="mb-2">
+                В связи с вашим подтверждением готовности принять участие в проекте {{ card.project_label }}
+                направляем проект договора.
+              </p>
+              <div class="mb-2">
+                <div class="mb-2">Состав активов:</div>
+                <ul class="mb-0">
+                  {% for service in card.services %}
+                    <li>{{ service }}</li>
+                  {% empty %}
+                    <li>Без детализации</li>
+                  {% endfor %}
+                </ul>
+              </div>
+              <p class="mb-2">Проект: {{ card.project_label }}</p>
+              <p class="mb-2">Исполнитель: {{ card.executor_fio }}</p>
+              <p class="mb-2">Оплата услуг без учета налогов: {{ card.agreed_amount_display }} {{ card.currency_code }}</p>
+              <p class="mb-2">Порядок оплаты: {{ card.prepayment_display }} аванс, {{ card.final_payment_display }} окончательный платёж</p>
+              <p class="mb-2">Срок исполнения: до {{ card.project_deadline_display }}</p>
+              <p class="mb-2">Документ доступен для скачивания по ссылке: </p>
+              <p class="mb-2">
+                Подписать договор и загрузить подписанную скан-копию в разделе «Договоры»
+                на сайте imcmontanai.ru необходимо в течение
+                {{ card.duration_hours }} часов с момента отправки данного сообщения —
+                до {{ card.deadline_at_display }}.
+              </p>
+              <p class="mb-0">С уважением,<br>IMC Montan AI</p>
             {% elif notification.notification_type == "project_info_request_approval" %}
               <p class="mb-2">Добрый день, {{ card.recipient_name }}!</p>
               <p class="mb-2">

@@ -128,7 +128,10 @@
     </table>
 
     {% if request.user.is_authenticated and request.user.is_staff %}
-      <div class="d-flex align-items-stretch gap-2 products-actions-row">
+      <div class="d-flex align-items-stretch gap-2 products-actions-row"
+           data-create-workspace-url="{% url 'create_registration_workspace' %}"
+           data-workspace-folders-url="{% url 'workspace_folders_list' %}"
+           data-workspace-folders-save-url="{% url 'workspace_folders_save' %}">
         <button
           class="btn btn-primary btn-sm d-flex align-items-center"
           hx-get="{% url 'registration_form_create' %}"
@@ -150,6 +153,96 @@
             <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
               <i class="bi bi-x-square"></i>
             </button>
+          </div>
+        </div>
+        <div class="btn-group">
+          <button type="button"
+                  id="reg-create-workspace-btn"
+                  class="btn btn-primary btn-sm d-flex align-items-center"
+                  data-bs-toggle="modal"
+                  data-bs-target="#reg-create-workspace-modal"
+                  disabled>
+            <i class="bi bi-cloud me-2"></i>Создать рабочее пространство
+          </button>
+          <button type="button"
+                  id="reg-create-workspace-settings-btn"
+                  class="btn btn-primary btn-sm"
+                  data-bs-toggle="modal"
+                  data-bs-target="#reg-workspace-settings-modal"
+                  title="Настройки рабочего пространства">
+            <i class="bi bi-gear"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="modal fade" id="reg-create-workspace-modal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title">Создание рабочего пространства</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+            </div>
+            <div class="modal-body">
+              <p class="mb-2">На Яндекс.Диске будет создана структура папок для выбранного проекта:</p>
+              <ul class="small mb-3">
+                <li>Год / Проект ID Тип Название</li>
+                <li>Типовые папки (Документы, Командировки, Письма, ...)</li>
+              </ul>
+              <div id="reg-create-workspace-status" class="text-muted small"></div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Закрыть</button>
+              <button type="button" id="reg-create-workspace-confirm-btn" class="btn btn-primary btn-sm">
+                <i class="bi bi-cloud me-1"></i>Создать
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal fade" id="reg-workspace-settings-modal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title">Рабочее пространство проекта</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+            </div>
+            <div class="modal-body">
+              <div id="ws-folders-table-wrap">
+                <table class="table table-sm align-middle mb-2" id="ws-folders-table">
+                  <thead>
+                    <tr>
+                      <th class="w-checkbox"></th>
+                      <th style="width:100px;">Уровень</th>
+                      <th>Наименование папки</th>
+                    </tr>
+                  </thead>
+                  <tbody id="ws-folders-tbody"></tbody>
+                </table>
+              </div>
+              <div class="d-flex align-items-stretch gap-2 mt-3">
+                <button type="button" id="ws-folder-add-btn" class="btn btn-primary btn-sm">
+                  <i class="bi bi-plus-circle me-1"></i>Добавить папку
+                </button>
+                <div id="ws-folders-row-actions" class="d-none">
+                  <div class="btn-group">
+                    <button type="button" id="ws-folder-up-btn" class="btn btn-outline-primary btn-sm" title="Переместить вверх">
+                      <i class="bi bi-arrow-up-square"></i>
+                    </button>
+                    <button type="button" id="ws-folder-down-btn" class="btn btn-outline-primary btn-sm" title="Переместить вниз">
+                      <i class="bi bi-arrow-down-square"></i>
+                    </button>
+                    <button type="button" id="ws-folder-delete-btn" class="btn btn-outline-danger btn-sm" title="Удалить">
+                      <i class="bi bi-x-square"></i>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Отмена</button>
+              <button type="button" id="ws-folders-save-btn" class="btn btn-primary btn-sm">Сохранить</button>
+            </div>
           </div>
         </div>
       </div>
@@ -938,7 +1031,7 @@
       });
       var perfPane = document.getElementById("performers-pane");
       if (perfPane) {
-        perfPane.querySelectorAll("table.performers-table tbody tr").forEach(function(r) { allRows.push(r); });
+        perfPane.querySelectorAll("#performers-main-section table.performers-table tbody tr").forEach(function(r) { allRows.push(r); });
       }
       allRows.forEach(function(row) {
         var pid = row.dataset.projectId || "";
@@ -964,7 +1057,7 @@
       });
       var perfPane = document.getElementById("performers-pane");
       if (perfPane) {
-        perfPane.querySelectorAll("table.performers-table tbody tr").forEach(function(row) {
+        perfPane.querySelectorAll("#performers-main-section table.performers-table tbody tr").forEach(function(row) {
           var pid = row.dataset.projectId || "";
           row.classList.toggle("d-none", !showAll && values.indexOf(pid) === -1);
         });
@@ -1036,6 +1129,7 @@
         } else label.textContent = "Все";
       }
       window.__perfProjectFilter = isAll ? [FILTER_ALL] : values.slice();
+      perfPane.dispatchEvent(new CustomEvent('perf-filter-sync'));
     }
 
     function applyMaster() {

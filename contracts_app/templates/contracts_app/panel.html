@@ -1,0 +1,15 @@
+{% load static %}
+<div class="card shadow-sm mt-3">
+  <div class="card-body">
+
+    <div id="contracts-pane"
+         hx-get="{% url 'contracts_partial' %}"
+         hx-trigger="load, contracts-updated from:body"
+         hx-target="#contracts-pane"
+         hx-swap="innerHTML"
+         hx-indicator="#contracts-loading">
+      <div id="contracts-loading" class="text-muted htmx-indicator">Загрузка договоров…</div>
+    </div>
+
+  </div>
+</div>

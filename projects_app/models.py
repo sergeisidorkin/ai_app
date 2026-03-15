@@ -1,7 +1,7 @@
 from django.db import models, transaction
 from django.core.validators import MinValueValidator, MaxValueValidator
 from policy_app.models import Product, TypicalSection
-from classifiers_app.models import OKSMCountry
+from classifiers_app.models import OKSMCountry, OKVCurrency
 from datetime import timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -412,6 +412,17 @@ def ensure_performer_rows(sender, instance, created, **kwargs):
     )
     asset_name = instance.asset_name or instance.name or ""
 
+    today = timezone.now().date()
+    rub = (
+        OKVCurrency.objects
+        .filter(
+            models.Q(approval_date__isnull=True) | models.Q(approval_date__lte=today),
+            models.Q(expiry_date__isnull=True) | models.Q(expiry_date__gte=today),
+            code_alpha="RUB",
+        )
+        .first()
+    )
+
     performers = []
     for section in sections:
         next_position += 1
@@ -422,6 +433,9 @@ def ensure_performer_rows(sender, instance, created, **kwargs):
                 asset_name=asset_name,
                 typical_section=section,
                 position=next_position,
+                currency=rub,
+                prepayment=50,
+                final_payment=50,
             )
         )
 
@@ -522,6 +536,17 @@ class Performer(models.Model):
     )
     info_approval_at = models.DateTimeField("Дата ответа на запрос согласования", null=True, blank=True)
 
+    contract_sent_at = models.DateTimeField("Дата отправки проекта договора", null=True, blank=True)
+    contract_deadline_at = models.DateTimeField("Срок подписания договора", null=True, blank=True)
+    contract_signing_date = models.DateField("Дата подписания", null=True, blank=True)
+    contract_conclusion_status = models.CharField("Статус заключения договора", max_length=100, blank=True, default="")
+    contract_signing_note = models.CharField("Подписание", max_length=255, blank=True, default="")
+    contract_term = models.CharField("Срок договора", max_length=255, blank=True, default="")
+    contract_file = models.CharField("Файл договора", max_length=500, blank=True, default="")
+    contract_batch_id = models.UUIDField("ID батча договора", null=True, blank=True, db_index=True)
+    contract_is_addendum = models.BooleanField("Доп. соглашение", default=False)
+    contract_addendum_number = models.PositiveIntegerField("Номер доп. соглашения", null=True, blank=True)
+
     class Meta:
         ordering = ["position", "id"]
         verbose_name = "Исполнитель"
@@ -574,7 +599,9 @@ class Performer(models.Model):
             return ""
         if self.participation_response_at:
             return "Просрочено" if self.participation_response_at > self.participation_deadline_at else "В срок"
-        return "Просрочено" if timezone.now() > self.participation_deadline_at else "В срок"
+        if timezone.now() > self.participation_deadline_at:
+            return "Просрочено"
+        return ""
 
     @property
     def info_response_status(self):
@@ -582,4 +609,34 @@ class Performer(models.Model):
             return ""
         if self.info_approval_at:
             return "Просрочено" if self.info_approval_at > self.info_request_deadline_at else "В срок"
-        return "Просрочено" if timezone.now() > self.info_request_deadline_at else "В срок"
+        if timezone.now() > self.info_request_deadline_at:
+            return "Просрочено"
+        return ""
+
+    @property
+    def contract_term_days(self):
+        if not self.contract_sent_at or not getattr(self.registration, "deadline", None):
+            return None
+        start = self.contract_sent_at.date() if hasattr(self.contract_sent_at, "date") else self.contract_sent_at
+        return (self.registration.deadline - start).days
+
+    @property
+    def contract_response_status(self):
+        if not self.contract_deadline_at:
+            return ""
+        return "Просрочено" if timezone.now() > self.contract_deadline_at else "В срок"
+
+
+class RegistrationWorkspaceFolder(models.Model):
+    level = models.PositiveSmallIntegerField(
+        default=1,
+        validators=[MinValueValidator(1), MaxValueValidator(3)],
+    )
+    name = models.CharField(max_length=255)
+    position = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["position"]
+
+    def __str__(self):
+        return f"L{self.level}: {self.name}"

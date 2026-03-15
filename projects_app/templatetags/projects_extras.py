@@ -1,8 +1,29 @@
 from decimal import Decimal, InvalidOperation
 
 from django import template
+from django.utils.safestring import mark_safe
 
 register = template.Library()
+
+
+@register.filter
+def grade_stars(performer):
+    raw = getattr(performer, "grade", "") or ""
+    if "/" in raw:
+        parts = raw.split("/", 1)
+        try:
+            qual, levels = int(parts[0]), int(parts[1])
+        except (ValueError, IndexError):
+            return ""
+    elif raw.isdigit():
+        qual, levels = int(raw), 5
+    else:
+        return ""
+    if levels <= 0:
+        return ""
+    filled = '<i class="bi bi-star-fill text-warning"></i>'
+    empty = '<i class="bi bi-star-fill" style="color:#dee2e6;"></i>'
+    return mark_safe("".join(filled if i < qual else empty for i in range(levels)))
 
 @register.filter
 def comma_decimal(value, precision=1):

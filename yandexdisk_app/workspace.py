@@ -157,3 +157,79 @@ def create_project_workspace(user, project: ProjectRegistration) -> WorkspaceRes
         )
 
     return WorkspaceResult(True, "Рабочее пространство успешно создано.", workspace=ws)
+
+
+REGISTRATION_STANDARD_FOLDERS = [
+    "00 Документы",
+    "01 Командировки",
+    "02 Письма",
+    "03 Протоколы",
+    "04 Запросы",
+    "05 Исходные данные",
+    "06 Отчеты",
+    "07 Комментарии",
+    "08 Результат",
+]
+
+
+def _build_folder_tree(rows):
+    """
+    Строит список путей из плоского списка (level, name),
+    где level 2 вкладывается в ближайшую предыдущую level 1,
+    level 3 — в ближайшую предыдущую level 2.
+    """
+    paths = []
+    parent = {1: "", 2: "", 3: ""}
+    for level, name in rows:
+        sanitized = _sanitize(name)
+        if level == 1:
+            parent[1] = sanitized
+            parent[2] = ""
+            parent[3] = ""
+            paths.append(sanitized)
+        elif level == 2:
+            parent[2] = sanitized
+            parent[3] = ""
+            paths.append(f"{parent[1]}/{sanitized}" if parent[1] else sanitized)
+        elif level == 3:
+            base = f"{parent[1]}/{parent[2]}" if parent[1] and parent[2] else (parent[2] or parent[1])
+            paths.append(f"{base}/{sanitized}" if base else sanitized)
+    return paths
+
+
+def create_basic_project_workspace(user, project: ProjectRegistration) -> WorkspaceResult:
+    """
+    Создаёт базовую структуру папок на Яндекс.Диске:
+    Год / Проект ID Тип Название / настраиваемые подпапки.
+    Без чек-листов и записей ProjectWorkspace.
+    """
+    from projects_app.models import RegistrationWorkspaceFolder
+
+    selection = YandexDiskSelection.objects.filter(user=user).first()
+    if not selection or not selection.resource_path:
+        return WorkspaceResult(False, "Не выбрана папка на Яндекс.Диске. Подключите Яндекс.Диск и выберите папку.")
+
+    base = selection.resource_path.rstrip("/")
+
+    year_str = str(project.year) if project.year else "Без года"
+    year_path = f"{base}/{_sanitize(year_str)}"
+    if not create_folder(user, year_path):
+        return WorkspaceResult(False, f"Не удалось создать папку года: {year_path}")
+
+    project_folder = _build_project_folder_name(project)
+    project_path = f"{year_path}/{project_folder}"
+
+    if not create_folder(user, project_path):
+        return WorkspaceResult(False, f"Не удалось создать папку проекта: {project_path}")
+
+    db_rows = list(
+        RegistrationWorkspaceFolder.objects
+        .order_by("position")
+        .values_list("level", "name")
+    )
+    folder_paths = _build_folder_tree(db_rows) if db_rows else [_sanitize(n) for n in REGISTRATION_STANDARD_FOLDERS]
+
+    for rel_path in folder_paths:
+        create_folder(user, f"{project_path}/{rel_path}")
+
+    return WorkspaceResult(True, "Рабочее пространство успешно создано.")

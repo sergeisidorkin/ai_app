@@ -1,0 +1,50 @@
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    {% if action == "create" %}
+      hx-post="{% url 'esp_form_create' %}"
+    {% else %}
+      hx-post="{% url 'esp_form_edit' specialty.pk %}"
+    {% endif %}
+    hx-target="#experts-pane"
+    hx-swap="outerHTML">
+  <div class="modal-body">
+    {% csrf_token %}
+    <div class="mb-3">
+      <label class="form-label">Направление экспертизы</label>
+      {{ form.expertise_direction }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Специальность</label>
+      {{ form.specialty }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Специальность на англ. языке</label>
+      {{ form.specialty_en }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Руководитель направления</label>
+      {{ form.head_of_direction }}
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mb-0">
+        {% for field, errors in form.errors.items %}
+          {% for error in errors %}
+            <div>{{ error }}</div>
+          {% endfor %}
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>
