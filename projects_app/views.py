@@ -8,15 +8,17 @@ from django.db.models.functions import Trim
 from django import forms
 from django.utils import timezone
 from classifiers_app.models import LegalEntityIdentifier, LegalEntityRecord
-from .models import ProjectRegistration, WorkVolume, Performer, WorkVolumeItem, LegalEntity
+from .models import ProjectRegistration, WorkVolume, Performer, WorkVolumeItem, LegalEntity, RegistrationWorkspaceFolder
 from .forms import ProjectRegistrationForm, ContractConditionsForm, WorkVolumeForm, PerformerForm, BootstrapMixin, LegalEntityForm
 
 import json
+import uuid
 from datetime import datetime, timedelta
 
+from experts_app.models import ExpertProfile
 from policy_app.models import TypicalSection
 from users_app.models import Employee
-from notifications_app.services import create_participation_notifications, create_info_request_notifications
+from notifications_app.services import create_participation_notifications, create_info_request_notifications, create_contract_notifications
 
 PROJECTS_PARTIAL_TEMPLATE = "projects_app/projects_partial.html"
 REG_FORM_TEMPLATE       = "projects_app/registration_form.html"
@@ -663,7 +665,7 @@ def _performers_context():
         .annotate(executor_trim=Trim("executor"))
         .filter(registration__status__in=active_participation_statuses)
         .exclude(executor_trim="")
-        .order_by("position", "id")
+        .order_by("registration_id", "executor", "asset_name", "position", "id")
     )
     participation_project_ids = participation_performers.values_list("registration_id", flat=True).distinct()
     participation_projects = (
@@ -680,12 +682,29 @@ def _performers_context():
             participation_response=Performer.ParticipationResponse.CONFIRMED,
         )
         .exclude(executor_trim="")
-        .order_by("position", "id")
+        .order_by("registration_id", "executor", "asset_name", "position", "id")
     )
     info_request_project_ids = info_request_performers.values_list("registration_id", flat=True).distinct()
     info_request_projects = (
         ProjectRegistration.objects
         .filter(id__in=info_request_project_ids)
+        .order_by("-number", "-id")
+    )
+    contract_performers = (
+        Performer.objects
+        .select_related("registration", "registration__type", "typical_section", "employee", "employee__user", "currency")
+        .annotate(executor_trim=Trim("executor"))
+        .filter(
+            registration__status__in=active_participation_statuses,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+        )
+        .exclude(executor_trim="")
+        .order_by("registration_id", "executor", "asset_name", "position", "id")
+    )
+    contract_project_ids = contract_performers.values_list("registration_id", flat=True).distinct()
+    contract_projects = (
+        ProjectRegistration.objects
+        .filter(id__in=contract_project_ids)
         .order_by("-number", "-id")
     )
     request_sent_initial = timezone.localtime().replace(second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M")
@@ -704,12 +723,72 @@ def _performers_context():
         "info_request_performers": info_request_performers,
         "info_request_projects": info_request_projects,
         "info_request_sent_initial": request_sent_initial,
+        "contract_performers": contract_performers,
+        "contract_projects": contract_projects,
+        "contract_request_sent_initial": request_sent_initial,
     }
 
 @login_required
 @require_http_methods(["GET"])
 def performers_partial(request):
     return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context())
+
+def _build_executor_grade_map():
+    profiles = (
+        ExpertProfile.objects
+        .select_related("employee__user", "grade")
+    )
+    result = {}
+    for p in profiles:
+        u = p.employee.user
+        parts = [u.last_name or "", u.first_name or "", p.employee.patronymic or ""]
+        full_name = " ".join(part for part in parts if part)
+        if not full_name:
+            continue
+        g = p.grade
+        entry = {
+            "country_id": p.country_id,
+            "region_id": p.region_id,
+        }
+        if g:
+            entry.update({
+                "grade_name": g.grade_ru or g.grade_en,
+                "qualification": g.qualification,
+                "qualification_levels": g.qualification_levels,
+                "base_rate_share": 0 if g.is_base_rate else g.base_rate_share,
+            })
+        result[full_name] = entry
+    return result
+
+
+def _build_living_wage_map():
+    from classifiers_app.models import LivingWage
+    today = timezone.now().date()
+    wages = (
+        LivingWage.objects
+        .filter(
+            Q(approval_date__lte=today),
+            Q(expiry_date__isnull=True) | Q(expiry_date__gte=today),
+        )
+        .order_by("-approval_date")
+    )
+    result = {}
+    for w in wages:
+        key = f"{w.country_id}_{w.region_id}"
+        if key not in result:
+            result[key] = float(w.amount)
+    return result
+
+
+def _build_tariff_map():
+    from policy_app.models import Tariff
+    tariffs = Tariff.objects.select_related("product", "section").all()
+    result = {}
+    for t in tariffs:
+        key = f"{t.product_id}_{t.section_id}"
+        result[key] = float(t.base_rate_vpm)
+    return result
+
 
 def _performer_form_ctx(form, action: str, performer=None):
     regs = ProjectRegistration.objects.select_related("type").order_by("position", "id")
@@ -719,6 +798,7 @@ def _performer_form_ctx(form, action: str, performer=None):
             "group": r.group,
             "type": str(r.type) if r.type_id else "",
             "type_short": getattr(r.type, "short_name", "") if r.type_id else "",
+            "type_id": r.type_id,
             "name": r.name,
         }
         for r in regs
@@ -750,6 +830,10 @@ def _performer_form_ctx(form, action: str, performer=None):
             for s in qs
         ]
 
+    executor_grade_map = _build_executor_grade_map()
+    living_wage_map = _build_living_wage_map()
+    tariff_map = _build_tariff_map()
+
     return {
         "form": form,
         "action": action,
@@ -757,6 +841,9 @@ def _performer_form_ctx(form, action: str, performer=None):
         "reg_map_json": json.dumps(reg_map, ensure_ascii=False),
         "assets_map_json": json.dumps(assets_map, ensure_ascii=False),
         "sections_map_json": json.dumps(sections_map, ensure_ascii=False),
+        "executor_grade_json": json.dumps(executor_grade_map, ensure_ascii=False),
+        "living_wage_json": json.dumps(living_wage_map, ensure_ascii=False),
+        "tariff_json": json.dumps(tariff_map, ensure_ascii=False),
     }
 
 def _render_performers_updated(request):
@@ -918,6 +1005,128 @@ def participation_request(request):
                 participation_response="",
                 participation_response_at=None,
             )
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "updated": updated,
+            "request_sent_at": timezone.localtime(request_sent_at).strftime("%d.%m.%Y %H:%M"),
+            "deadline_at": timezone.localtime(deadline_at).strftime("%d.%m.%Y %H:%M"),
+        }
+    )
+
+
+def _build_contract_number(performer, sent_at, addendum_number=None):
+    reg = getattr(performer, "registration", None)
+    if not reg or getattr(reg, "group", "") != "RU":
+        return ""
+    parts = (performer.executor or "").split()
+    if len(parts) < 2:
+        return ""
+    initials = parts[0][0] + parts[1][0]
+    local_dt = timezone.localtime(sent_at)
+    base = f"IMCM/{reg.number}-{initials}/{local_dt:%m-%y}"
+    if addendum_number is not None:
+        base = f"{base} ДС{addendum_number}"
+    return base
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def contract_request(request):
+    raw_ids = request.POST.getlist("performer_ids[]") or request.POST.getlist("performer_ids")
+    if not raw_ids:
+        return JsonResponse({"ok": False, "error": "Не выбраны строки для отправки."}, status=400)
+
+    try:
+        performer_ids = sorted({int(value) for value in raw_ids if str(value).strip()})
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Передан некорректный список строк."}, status=400)
+
+    try:
+        duration_hours = int(request.POST.get("duration_hours") or 0)
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Срок должен быть целым числом часов."}, status=400)
+    if duration_hours <= 0:
+        return JsonResponse({"ok": False, "error": "Срок должен быть больше нуля."}, status=400)
+
+    try:
+        request_sent_at = _parse_request_sent_at(request.POST.get("request_sent_at", "").strip())
+    except forms.ValidationError as exc:
+        return JsonResponse({"ok": False, "error": exc.message}, status=400)
+
+    deadline_at = _round_up_to_hour(request_sent_at + timedelta(hours=duration_hours))
+    selected_performers = list(
+        Performer.objects
+        .select_related(
+            "registration",
+            "registration__type",
+            "typical_section",
+            "employee",
+            "employee__user",
+            "currency",
+        )
+        .filter(pk__in=performer_ids)
+        .order_by("position", "id")
+    )
+    if len(selected_performers) != len(performer_ids):
+        return JsonResponse({"ok": False, "error": "Часть выбранных строк не найдена."}, status=400)
+
+    try:
+        with transaction.atomic():
+            create_contract_notifications(
+                performers=selected_performers,
+                sender=request.user,
+                request_sent_at=request_sent_at,
+                deadline_at=deadline_at,
+                duration_hours=duration_hours,
+            )
+            batch_id = uuid.uuid4()
+            rep = selected_performers[0]
+            existing_batch_count = (
+                Performer.objects
+                .filter(
+                    registration_id=rep.registration_id,
+                    executor=rep.executor,
+                    contract_batch_id__isnull=False,
+                )
+                .values("contract_batch_id")
+                .distinct()
+                .count()
+            )
+            is_addendum = existing_batch_count > 0
+            addendum_number = existing_batch_count if is_addendum else None
+
+            if is_addendum:
+                first_performer = (
+                    Performer.objects
+                    .filter(
+                        registration_id=rep.registration_id,
+                        executor=rep.executor,
+                        contract_batch_id__isnull=False,
+                        contract_is_addendum=False,
+                    )
+                    .order_by("contract_sent_at", "id")
+                    .first()
+                )
+                base_date = first_performer.contract_sent_at if first_performer else request_sent_at
+            else:
+                base_date = request_sent_at
+
+            contract_number = _build_contract_number(rep, base_date, addendum_number)
+            update_kwargs = dict(
+                contract_sent_at=request_sent_at,
+                contract_deadline_at=deadline_at,
+                contract_batch_id=batch_id,
+                contract_is_addendum=is_addendum,
+                contract_addendum_number=addendum_number,
+            )
+            if contract_number:
+                update_kwargs["contract_number"] = contract_number
+            updated = Performer.objects.filter(pk__in=performer_ids).update(**update_kwargs)
     except ValueError as exc:
         return JsonResponse({"ok": False, "error": str(exc)}, status=400)
 
@@ -1097,6 +1306,75 @@ def create_workspace(request):
         return JsonResponse({"ok": False, "error": result.message}, status=400)
 
     return JsonResponse({"ok": True, "message": result.message})
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def create_registration_workspace(request):
+    from yandexdisk_app.workspace import create_basic_project_workspace
+
+    project_id = request.POST.get("project_id")
+    if not project_id:
+        return JsonResponse({"ok": False, "error": "Не выбран проект."}, status=400)
+
+    try:
+        project_id = int(project_id)
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Некорректный ID проекта."}, status=400)
+
+    project = (
+        ProjectRegistration.objects
+        .select_related("type")
+        .filter(pk=project_id)
+        .first()
+    )
+    if not project:
+        return JsonResponse({"ok": False, "error": "Проект не найден."}, status=404)
+
+    result = create_basic_project_workspace(request.user, project)
+    if not result.ok:
+        return JsonResponse({"ok": False, "error": result.message}, status=400)
+
+    return JsonResponse({"ok": True, "message": result.message})
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_GET
+def workspace_folders_list(request):
+    folders = RegistrationWorkspaceFolder.objects.all().values("id", "level", "name", "position")
+    return JsonResponse({"folders": list(folders)})
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def workspace_folders_save(request):
+    try:
+        data = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Некорректные данные."}, status=400)
+
+    rows = data.get("folders", [])
+    if not isinstance(rows, list):
+        return JsonResponse({"ok": False, "error": "Некорректный формат."}, status=400)
+
+    objects = []
+    for i, row in enumerate(rows):
+        level = row.get("level", 1)
+        name = (row.get("name") or "").strip()
+        if not name:
+            continue
+        if level not in (1, 2, 3):
+            level = 1
+        objects.append(RegistrationWorkspaceFolder(level=level, name=name, position=i))
+
+    with transaction.atomic():
+        RegistrationWorkspaceFolder.objects.all().delete()
+        RegistrationWorkspaceFolder.objects.bulk_create(objects)
+
+    return JsonResponse({"ok": True})
 
 
 @login_required

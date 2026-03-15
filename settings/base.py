@@ -54,9 +54,11 @@ INSTALLED_APPS = [
     "docops_queue","macroops_app","checklists_app","logs_app.apps.LogsAppConfig","yandexdisk_app",
     "classifiers_app",
     "group_app",
+    "experts_app",
     "users_app",
     "userprofile_app",
     "notifications_app",
+    "contracts_app",
 ]
 
 MIDDLEWARE = [

@@ -8,9 +8,9 @@
 <form
   method="post"
   hx-post="{% if action == 'edit' %}{% url 'performer_form_edit' performer.id %}{% else %}{% url 'performer_form_create' %}{% endif %}"
-  hx-target="#performers-pane"
+  hx-target="#performers-modal .modal-content"
   hx-swap="innerHTML"
-  hx-on::after-request="window.bootstrap?.Modal.getOrCreateInstance(document.getElementById('performers-modal'))?.hide()"
+  hx-on::after-request="if(event.detail.successful) window.bootstrap?.Modal.getOrCreateInstance(document.getElementById('performers-modal'))?.hide()"
 >
   {% csrf_token %}
   <div class="modal-body" data-modal-size="xl">
@@ -44,12 +44,16 @@
         {{ form.executor }}
       </div>
       <div class="col-md-3">
-        <label class="form-label">Грейд (уровень)</label>
-        {{ form.grade }}
+        <label class="form-label">Грейд (наименование)</label>
+        <input type="text" class="form-control readonly-field" id="perf-grade-name-display"
+               value="{{ form.grade_name.value|default:'' }}" readonly>
+        <input type="hidden" name="grade_name" id="perf-grade-name" value="{{ form.grade_name.value|default:'' }}">
       </div>
       <div class="col-md-3">
-        <label class="form-label">Грейд (наименование)</label>
-        {{ form.grade_name }}
+        <label class="form-label">Грейд (уровень)</label>
+        <div class="form-control readonly-field d-flex align-items-center gap-1" id="perf-grade-stars"
+             style="font-size:1.1rem; min-height:calc(1.5em + .75rem + 2px);"></div>
+        <input type="hidden" name="grade" id="perf-grade-value" value="{{ form.grade.value|default:'' }}">
       </div>
 
       <div class="col-md-2">
@@ -57,16 +61,22 @@
         {{ form.currency }}
       </div>
       <div class="col-md-4">
-        <label class="form-label">Фактические затраты</label>
+        <label class="form-label">Скорректированные затраты</label>
         {{ form.actual_costs }}
       </div>
       <div class="col-md-3">
         <label class="form-label">Расчетные затраты</label>
-        {{ form.estimated_costs }}
+        <input type="text" class="form-control readonly-field js-money-input" id="perf-estimated-display"
+               value="{{ form.estimated_costs.value|default:'' }}" readonly>
+        <input type="hidden" name="estimated_costs" id="perf-estimated-value"
+               value="{{ form.estimated_costs.value|default:'' }}">
       </div>
       <div class="col-md-3">
         <label class="form-label">Согласованная сумма</label>
-        {{ form.agreed_amount }}
+        <input type="text" class="form-control readonly-field js-money-input" id="perf-agreed-display"
+               value="{{ form.agreed_amount.value|default:'' }}" readonly>
+        <input type="hidden" name="agreed_amount" id="perf-agreed-value"
+               value="{{ form.agreed_amount.value|default:'' }}">
       </div>
       <div class="w-100"></div>
       <div class="col-md-3">
@@ -107,6 +117,9 @@
 <script id="perf-reg-map" type="application/json">{{ reg_map_json|safe }}</script>
 <script id="perf-assets-map" type="application/json">{{ assets_map_json|safe }}</script>
 <script id="perf-sections-map" type="application/json">{{ sections_map_json|safe }}</script>
+<script id="perf-executor-grade-map" type="application/json">{{ executor_grade_json|safe }}</script>
+<script id="perf-living-wage-map" type="application/json">{{ living_wage_json|safe }}</script>
+<script id="perf-tariff-map" type="application/json">{{ tariff_json|safe }}</script>
 
 <script>
 (function(){
@@ -120,6 +133,9 @@
   const regMap   = JSON.parse(document.getElementById('perf-reg-map').textContent || '{}');
   const assetsMap= JSON.parse(document.getElementById('perf-assets-map').textContent || '{}');
   const sectMap  = JSON.parse(document.getElementById('perf-sections-map').textContent || '{}');
+  const execGradeMap = JSON.parse(document.getElementById('perf-executor-grade-map').textContent || '{}');
+  const lwMap    = JSON.parse(document.getElementById('perf-living-wage-map').textContent || '{}');
+  const tariffMap= JSON.parse(document.getElementById('perf-tariff-map').textContent || '{}');
 
   function refillAssets(regId) {
     if (!assetSel) return;
@@ -165,8 +181,102 @@
     refillSections(regId);
   }
 
-  regSel?.addEventListener('change', () => applyReg(regSel.value));
   if (regSel?.value) applyReg(regSel.value);
+
+  var execSel = formEl.querySelector('select[name="executor"]');
+  var gradeNameDisplay = formEl.querySelector('#perf-grade-name-display');
+  var gradeNameHidden  = formEl.querySelector('#perf-grade-name');
+  var gradeStarsEl     = formEl.querySelector('#perf-grade-stars');
+  var gradeHidden      = formEl.querySelector('#perf-grade-value');
+
+  function renderStars(container, qual, levels) {
+    container.innerHTML = '';
+    if (!levels) return;
+    for (var i = 1; i <= levels; i++) {
+      var s = document.createElement('i');
+      s.className = 'bi bi-star-fill';
+      if (i <= qual) { s.classList.add('text-warning'); s.style.cssText = ''; }
+      else { s.style.cssText = 'color:#dee2e6;'; }
+      container.appendChild(s);
+    }
+  }
+
+  function applyExecutorGrade(name) {
+    var info = execGradeMap[name];
+    if (info && info.grade_name) {
+      if (gradeNameDisplay) gradeNameDisplay.value = info.grade_name;
+      if (gradeNameHidden)  gradeNameHidden.value  = info.grade_name;
+      var q = info.qualification || 0, l = info.qualification_levels || 5;
+      if (gradeHidden) gradeHidden.value = q + '/' + l;
+      if (gradeStarsEl) renderStars(gradeStarsEl, q, l);
+    } else {
+      if (gradeNameDisplay) gradeNameDisplay.value = '';
+      if (gradeNameHidden)  gradeNameHidden.value  = '';
+      if (gradeHidden)      gradeHidden.value      = '';
+      if (gradeStarsEl)     gradeStarsEl.innerHTML = '';
+    }
+  }
+
+  if (execSel) {
+    execSel.addEventListener('change', function() {
+      applyExecutorGrade(execSel.value);
+      calcEstimated();
+    });
+  }
+  if (gradeStarsEl && gradeHidden && gradeHidden.value) {
+    var parts = gradeHidden.value.split('/');
+    if (parts.length === 2) {
+      renderStars(gradeStarsEl, parseInt(parts[0]) || 0, parseInt(parts[1]) || 5);
+    }
+  }
+
+  var estimatedDisplay = formEl.querySelector('#perf-estimated-display');
+  var estimatedHidden  = formEl.querySelector('#perf-estimated-value');
+  var agreedDisplay    = formEl.querySelector('#perf-agreed-display');
+  var agreedHidden     = formEl.querySelector('#perf-agreed-value');
+  var actualCostsEl    = formEl.querySelector('[name="actual_costs"]');
+
+  function calcAgreed() {
+    var actual = parseFloat(rawMoney(actualCostsEl ? actualCostsEl.value : '')) || 0;
+    var estimated = parseFloat(estimatedHidden ? estimatedHidden.value : '') || 0;
+    var result = actual > 0 ? actual : estimated;
+    if (agreedHidden) agreedHidden.value = result ? result.toFixed(2) : '';
+    if (agreedDisplay) agreedDisplay.value = result ? fmtMoney(result.toFixed(2)) : '';
+  }
+
+  function calcEstimated() {
+    var execInfo = execSel ? execGradeMap[execSel.value] : null;
+    if (!execInfo || !execInfo.country_id || !execInfo.region_id || execInfo.base_rate_share == null) {
+      return;
+    }
+    var regId = regSel ? regSel.value : '';
+    var regInfo = regMap[regId] || {};
+    var productId = regInfo.type_id;
+    var sectionId = sectSel ? sectSel.value : '';
+    if (!productId || !sectionId) return;
+
+    var Z = lwMap[execInfo.country_id + '_' + execInfo.region_id];
+    var X = tariffMap[productId + '_' + sectionId];
+    if (Z == null || X == null) return;
+
+    var Y = execInfo.base_rate_share / 100;
+    var result = Math.ceil((Z * X + Z * X * Y) / 1000) * 1000;
+
+    if (estimatedHidden) estimatedHidden.value = result.toFixed(2);
+    if (estimatedDisplay) estimatedDisplay.value = fmtMoney(result.toFixed(2));
+    calcAgreed();
+  }
+
+  if (actualCostsEl) {
+    actualCostsEl.addEventListener('input', calcAgreed);
+    actualCostsEl.addEventListener('change', calcAgreed);
+  }
+
+  if (regSel) regSel.addEventListener('change', function() {
+    applyReg(regSel.value);
+    calcEstimated();
+  });
+  if (sectSel) sectSel.addEventListener('change', calcEstimated);
 
   const prepEl = formEl.querySelector('[name="prepayment"]');
   const finalEl = formEl.querySelector('[name="final_payment"]');

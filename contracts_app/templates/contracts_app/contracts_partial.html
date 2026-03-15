@@ -1,0 +1,211 @@
+{% load projects_extras %}
+
+<div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
+  <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
+    <i class="bi bi-table"></i> Договоры
+  </h5>
+  <div class="dropdown" id="contracts-project-filter-dropdown">
+    <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+            id="contracts-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+      Проекты: <span class="js-contracts-filter-label">Все</span>
+    </button>
+    <div class="dropdown-menu p-3" aria-labelledby="contracts-project-filter-toggle"
+         style="min-width: 200px; max-height: 240px; overflow-y: auto;">
+      <div class="form-check mb-2">
+        <input class="form-check-input js-contracts-filter" type="checkbox" value="__all__" id="contracts-filter-all">
+        <label class="form-check-label" for="contracts-filter-all">Все проекты</label>
+      </div>
+      <hr class="dropdown-divider">
+      {% for proj in contract_projects %}
+        <div class="form-check">
+          <input class="form-check-input js-contracts-filter" type="checkbox"
+                 value="{{ proj.id }}" id="contracts-filter-{{ proj.id }}">
+          <label class="form-check-label" for="contracts-filter-{{ proj.id }}">
+            {{ proj.short_uid }}
+          </label>
+        </div>
+      {% empty %}
+        <div class="text-muted small">Нет проектов</div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div style="overflow-x:auto">
+  <table class="table table-sm align-middle contracts-table mb-0">
+    <colgroup>
+      <col style="width:36px">
+      <col>
+      <col>
+      <col>
+      <col>
+      <col>
+      <col>
+      <col>
+      <col>
+      <col>
+      <col>
+      <col>
+      <col>
+      <col>
+    </colgroup>
+    <thead>
+    <tr>
+      <th>
+        {% if request.user.is_authenticated and request.user.is_staff %}
+          <div class="form-check m-0">
+            <input class="form-check-input"
+                   type="checkbox"
+                   id="contracts-master"
+                   data-target-name="contract-row-select"
+                   data-actions-id="contracts-actions"
+                   aria-label="Выделить все строки договоров">
+          </div>
+        {% endif %}
+      </th>
+      <th class="text-nowrap">Проект</th>
+      <th class="text-nowrap">Тип</th>
+      <th class="text-nowrap">Название</th>
+      <th class="text-nowrap">Исполнитель</th>
+      <th class="text-nowrap">Вид</th>
+      <th class="text-nowrap">Номер договора</th>
+      <th class="text-nowrap">Дата договора</th>
+      <th class="text-nowrap">Срок</th>
+      <th class="text-nowrap">Дедлайн</th>
+      <th class="text-nowrap">Аванс</th>
+      <th class="text-nowrap">Ок. платеж</th>
+      <th class="text-nowrap text-end">Цена</th>
+      <th class="text-nowrap">Файл</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for p in contracts %}
+      <tr data-project-id="{{ p.registration_id }}"
+          data-batch-id="{{ p.contract_batch_id }}"
+          data-edit-url="{% url 'contracts_edit' p.pk %}"
+      >
+        <td class="text-nowrap">
+          {% if request.user.is_authenticated and request.user.is_staff %}
+            <div class="form-check m-0">
+              <input class="form-check-input"
+                     type="checkbox"
+                     id="contract-sel-{{ p.id }}"
+                     name="contract-row-select"
+                     value="{{ p.id }}"
+                     aria-label="Выделить строку договора">
+            </div>
+          {% endif %}
+        </td>
+        <td class="text-nowrap">{% if p.registration %}{{ p.registration.short_uid }}{% endif %}</td>
+        <td class="text-nowrap">
+          {% if p.registration.type %}{{ p.registration.type.short_name|default:p.registration.type }}{% endif %}
+        </td>
+        <td class="text-truncate" style="max-width:200px;">{{ p.registration.name }}</td>
+        <td class="text-nowrap">{{ p.executor|short_fio }}</td>
+        <td class="text-nowrap">{% if p.contract_is_addendum %}ДС{{ p.contract_addendum_number }}{% else %}Договор{% endif %}</td>
+        <td class="text-nowrap">{{ p.contract_number|default:"—" }}</td>
+        <td class="text-nowrap">{{ p.contract_sent_at|date:"d.m.Y"|default:"—" }}</td>
+        <td class="text-nowrap">{% if p.contract_term_days != None %}{{ p.contract_term_days }} дн.{% else %}—{% endif %}</td>
+        <td class="text-nowrap">{% if p.registration.deadline %}{{ p.registration.deadline|date:"d.m.Y" }}{% else %}—{% endif %}</td>
+        <td class="text-nowrap">{% if p.prepayment != None %}{{ p.prepayment|floatformat:"0" }}%{% else %}—{% endif %}</td>
+        <td class="text-nowrap">{% if p.final_payment != None %}{{ p.final_payment|floatformat:"0" }}%{% else %}—{% endif %}</td>
+        <td class="text-nowrap text-end">{% if p.total_price != None %}{{ p.total_price|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% else %}—{% endif %}</td>
+        <td class="text-nowrap">{{ p.contract_file|default:"—" }}</td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="14" class="text-muted">Пока нет данных.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if request.user.is_authenticated and request.user.is_staff %}
+  <div class="d-flex align-items-stretch gap-2 products-actions-row mt-2">
+    <button
+      type="button"
+      id="contracts-edit-btn"
+      class="btn btn-primary btn-sm d-flex align-items-center"
+      disabled>
+      <i class="bi bi-pencil-square me-2"></i>Редактировать
+    </button>
+    <div id="contracts-actions" class="d-none"></div>
+  </div>
+{% endif %}
+
+<script>
+(function(){
+  var FILTER_ALL = "__all__";
+
+  function initContractsFilter() {
+    var pane = document.getElementById("contracts-pane");
+    if (!pane) return;
+
+    var projDropdown = pane.querySelector("#contracts-project-filter-dropdown");
+    var projChecks = pane.querySelectorAll(".js-contracts-filter");
+    var projLabel = pane.querySelector(".js-contracts-filter-label");
+    var rows = pane.querySelectorAll("table.contracts-table tbody tr");
+
+    if (!projDropdown || projChecks.length === 0 || projDropdown.dataset.bound === "1") return;
+    projDropdown.dataset.bound = "1";
+
+    function syncCbs(cbs, values) {
+      var set = new Set(values);
+      cbs.forEach(function(cb) { cb.checked = set.has(cb.value); });
+    }
+
+    function updateFilterLabel(lbl, cbs, values) {
+      if (values.includes(FILTER_ALL) || !values.length) { lbl.textContent = "Все"; return; }
+      if (values.length === 1) {
+        var cb = Array.from(cbs).find(function(c) { return c.value === values[0]; });
+        lbl.textContent = cb ? cb.nextElementSibling.textContent.trim() : "1 проект";
+        return;
+      }
+      lbl.textContent = values.length + " выбрано";
+    }
+
+    function applyFilters() {
+      var pv = window.__contractsProjectFilter || [FILTER_ALL];
+      var showAll = pv.includes(FILTER_ALL) || !pv.length;
+      var projSet = new Set(pv);
+      rows.forEach(function(row) {
+        var match = showAll || projSet.has(row.dataset.projectId || '');
+        row.classList.toggle('d-none', !match);
+      });
+      updateFilterLabel(projLabel, projChecks, pv);
+    }
+
+    function normProj() {
+      var values = Array.from(projChecks).filter(function(cb) { return cb.checked; }).map(function(cb) { return cb.value; });
+      if (!values.length) values = [FILTER_ALL];
+      if (values.includes(FILTER_ALL)) values = [FILTER_ALL];
+      syncCbs(projChecks, values);
+      return values;
+    }
+
+    projChecks.forEach(function(cb) {
+      cb.addEventListener("change", function(e) {
+        if (e.target.value === FILTER_ALL && e.target.checked) {
+          syncCbs(projChecks, [FILTER_ALL]);
+        } else if (e.target.value === FILTER_ALL && !e.target.checked) {
+          var first = Array.from(projChecks).find(function(c) { return c.value !== FILTER_ALL; });
+          if (first) first.checked = true;
+        } else {
+          var allCb = pane.querySelector("#contracts-filter-all");
+          if (allCb && allCb.checked) allCb.checked = false;
+        }
+        window.__contractsProjectFilter = normProj();
+        applyFilters();
+      });
+    });
+
+    window.__contractsProjectFilter = window.__contractsProjectFilter || [FILTER_ALL];
+    syncCbs(projChecks, window.__contractsProjectFilter);
+    applyFilters();
+  }
+
+  document.addEventListener("DOMContentLoaded", initContractsFilter);
+  document.body.addEventListener("htmx:afterSettle", function(event) {
+    if (event.target && event.target.id === "contracts-pane") initContractsFilter();
+  });
+})();
+</script>

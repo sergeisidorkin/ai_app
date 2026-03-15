@@ -28,10 +28,24 @@
       {% endfor %}
     </div>
   </div>
+  <div class="dropdown" id="perf-asset-filter-dropdown">
+    <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+            id="perf-asset-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+      Активы: <span class="js-perf-asset-label">Все</span>
+    </button>
+    <div class="dropdown-menu p-3" aria-labelledby="perf-asset-filter-toggle" style="max-height: 240px; overflow-y: auto; white-space: nowrap;">
+      <div class="form-check mb-2">
+        <input class="form-check-input js-perf-asset-filter" type="checkbox" value="__all__" id="perf-asset-all">
+        <label class="form-check-label" for="perf-asset-all">Все активы</label>
+      </div>
+      <hr class="dropdown-divider">
+      <div id="perf-asset-list"></div>
+    </div>
+  </div>
 </div>
 
-<div style="overflow-x:auto">
-  <table class="table table-sm align-middle performers-table">
+<div id="performers-main-section" style="overflow-x:auto">
+  <table class="table table-sm align-middle performers-table mb-0">
     <colgroup>
       <col class="col-checkbox">  <!-- чекбокс -->
       <col class="col-number">    <!-- Номер (4444RU) -->
@@ -41,7 +55,7 @@
       <col>                       <!-- Исполнитель -->
       <col>                       <!-- Грейд -->
       <col class="col-typical">    <!-- Типовой раздел -->
-      <col>                       <!-- Факт. затраты -->
+      <col>                       <!-- Скоррект. затраты -->
       <col class="perf-spacer">
       <col>                       <!-- Расч. затраты -->
       <col class="perf-spacer">
@@ -72,7 +86,7 @@
       <th>Исполнитель</th>
       <th>Грейд</th>
       <th>Типовой раздел</th>
-      <th class="text-end">Факт. затраты</th>
+      <th class="text-end">Скоррект. затраты</th>
       <th class="perf-spacer"></th>
       <th class="text-end">Расч. затраты</th>
       <th class="perf-spacer"></th>
@@ -87,6 +101,7 @@
     {% for p in performers %}
       <tr
         data-project-id="{{ p.registration_id }}"
+        data-asset-name="{{ p.asset_name }}"
         data-edit-url="{% url 'performer_form_edit' p.pk %}"
         data-delete-url="{% url 'performer_delete' p.pk %}"
         data-move-up-url="{% url 'performer_move_up' p.pk %}"
@@ -110,15 +125,15 @@
         <td class="text-truncate">{{ p.registration.name }}</td>
         <td class="text-nowrap">{{ p.asset_name }}</td>
         <td class="text-nowrap">{{ p.executor|short_fio }}</td>
-        <td class="text-nowrap">{{ p.grade }}</td>
+        <td class="text-nowrap">{{ p|grade_stars }}</td>
         <td class="text-nowrap">
           {% if p.typical_section %}{{ p.typical_section|typical_section_short }}{% else %}&mdash;{% endif %}
         </td>
-        <td class="text-nowrap text-end">{% if p.actual_costs != None %}{{ p.actual_costs|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% endif %}</td>
+        <td class="text-nowrap text-end" data-sum-actual="{{ p.actual_costs|default_if_none:'' }}" data-currency="{% if p.currency %}{{ p.currency.code_alpha }}{% endif %}">{% if p.actual_costs != None %}{{ p.actual_costs|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% endif %}</td>
         <td class="perf-spacer"></td>
-        <td class="text-nowrap text-end">{% if p.estimated_costs != None %}{{ p.estimated_costs|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% endif %}</td>
+        <td class="text-nowrap text-end" data-sum-estimated="{{ p.estimated_costs|default_if_none:'' }}" data-currency="{% if p.currency %}{{ p.currency.code_alpha }}{% endif %}">{% if p.estimated_costs != None %}{{ p.estimated_costs|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% endif %}</td>
         <td class="perf-spacer"></td>
-        <td class="text-nowrap text-end">{% if p.agreed_amount != None %}{{ p.agreed_amount|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% endif %}</td>
+        <td class="text-nowrap text-end" data-sum-agreed="{{ p.agreed_amount|default_if_none:'' }}" data-currency="{% if p.currency %}{{ p.currency.code_alpha }}{% endif %}">{% if p.agreed_amount != None %}{{ p.agreed_amount|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% endif %}</td>
         <td class="perf-spacer"></td>
         <td class="text-nowrap">{% if p.prepayment != None %}{{ p.prepayment|floatformat:"0" }}%{% endif %}</td>
         <td class="text-nowrap">{% if p.final_payment != None %}{{ p.final_payment|floatformat:"0" }}%{% endif %}</td>
@@ -128,36 +143,46 @@
       <tr><td colspan="17" class="text-muted">Пока нет данных.</td></tr>
     {% endfor %}
     </tbody>
+    <tfoot>
+      <tr class="fw-semibold" id="perf-totals-row" style="border-top:1.5px solid #000;">
+        <td colspan="8" style="border-bottom:none; padding-bottom:0;"></td>
+        <td class="text-nowrap text-end" id="perf-total-actual" style="border-bottom:none; padding-bottom:0;"></td>
+        <td class="perf-spacer" style="border-bottom:none; padding-bottom:0;"></td>
+        <td class="text-nowrap text-end" id="perf-total-estimated" style="border-bottom:none; padding-bottom:0;"></td>
+        <td class="perf-spacer" style="border-bottom:none; padding-bottom:0;"></td>
+        <td class="text-nowrap text-end" id="perf-total-agreed" style="border-bottom:none; padding-bottom:0;"></td>
+        <td colspan="4" style="border-bottom:none; padding-bottom:0;"></td>
+      </tr>
+    </tfoot>
   </table>
-
-  {% if request.user.is_authenticated and request.user.is_staff %}
-    <div class="d-flex align-items-stretch gap-2 products-actions-row">
-      <button
-        class="btn btn-primary btn-sm d-flex align-items-center"
-        hx-get="{% url 'performer_form_create' %}"
-        hx-target="#performers-modal .modal-content"
-        hx-swap="innerHTML">
-        <i class="bi bi-plus-circle me-2"></i>Добавить строку
-      </button>
-      <div id="performers-actions" class="d-none">
-        <div class="btn-group">
-          <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх">
-            <i class="bi bi-arrow-up-square"></i>
-          </button>
-          <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз">
-            <i class="bi bi-arrow-down-square"></i>
-          </button>
-          <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить">
-            <i class="bi bi-pencil-square"></i>
-          </button>
-          <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить">
-            <i class="bi bi-x-square"></i>
-          </button>
-        </div>
+</div>
+{% if request.user.is_authenticated and request.user.is_staff %}
+  <div class="d-flex align-items-stretch gap-2 products-actions-row mt-2">
+    <button
+      class="btn btn-primary btn-sm d-flex align-items-center"
+      hx-get="{% url 'performer_form_create' %}"
+      hx-target="#performers-modal .modal-content"
+      hx-swap="innerHTML">
+      <i class="bi bi-plus-circle me-2"></i>Добавить строку
+    </button>
+    <div id="performers-actions" class="d-none">
+      <div class="btn-group">
+        <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх">
+          <i class="bi bi-arrow-up-square"></i>
+        </button>
+        <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз">
+          <i class="bi bi-arrow-down-square"></i>
+        </button>
+        <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить">
+          <i class="bi bi-pencil-square"></i>
+        </button>
+        <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить">
+          <i class="bi bi-x-square"></i>
+        </button>
       </div>
     </div>
-  {% endif %}
-</div>
+  </div>
+{% endif %}
 
 <div id="participation-confirmation-section" class="mt-5">
   <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
@@ -213,10 +238,10 @@
         <col class="col-number">
         <col class="col-type">
         <col class="col-name">
+        <col class="col-executor">
+        <col class="col-grade">
         <col class="col-active">
-        <col>
-        <col>
-        <col>
+        <col class="col-typical">
         <col>
         <col>
         <col>
@@ -238,9 +263,9 @@
         <th class="text-nowrap">Проект</th>
         <th class="text-nowrap">Тип</th>
         <th class="text-nowrap">Название</th>
-        <th>Наименование актива</th>
         <th>Исполнитель</th>
         <th>Грейд</th>
+        <th>Наименование актива</th>
         <th>Типовой раздел</th>
         <th class="text-nowrap">Дата отправки</th>
         <th class="text-nowrap">Срок</th>
@@ -251,8 +276,10 @@
       </thead>
       <tbody>
       {% for p in participation_performers %}
-        <tr data-project-id="{{ p.registration_id }}">
-          <td class="text-nowrap">
+        <tr data-project-id="{{ p.registration_id }}"
+            data-executor="{{ p.executor }}"
+            data-asset-name="{{ p.asset_name }}">
+          <td class="text-nowrap cell-group-val">
             {% if request.user.is_authenticated and request.user.is_staff %}
               <div class="form-check m-0">
                 <input class="form-check-input"
@@ -268,22 +295,22 @@
               </div>
             {% endif %}
           </td>
-          <td class="text-nowrap">{% if p.registration %}{{ p.registration.short_uid }}{% endif %}</td>
-          <td class="text-nowrap">
+          <td class="text-nowrap cell-group-val">{% if p.registration %}{{ p.registration.short_uid }}{% endif %}</td>
+          <td class="text-nowrap cell-group-val">
             {% if p.registration.type %}{{ p.registration.type.short_name|default:p.registration.type }}{% endif %}
           </td>
-          <td class="text-truncate">{{ p.registration.name }}</td>
-          <td class="text-nowrap">{{ p.asset_name }}</td>
-          <td class="text-nowrap">{{ p.executor|short_fio }}</td>
-          <td class="text-nowrap">{{ p.grade }}</td>
+          <td class="text-truncate cell-group-val">{{ p.registration.name }}</td>
+          <td class="text-nowrap cell-group-val">{{ p.executor|short_fio }}</td>
+          <td class="text-nowrap cell-group-val">{{ p|grade_stars }}</td>
+          <td class="text-nowrap cell-asset-val">{{ p.asset_name }}</td>
           <td class="text-nowrap">
             {% if p.typical_section %}{{ p.typical_section|typical_section_short }}{% else %}&mdash;{% endif %}
           </td>
-          <td class="text-nowrap">{{ p.participation_request_sent_at|date:"d.m.Y H:i"|default:"—" }}</td>
-          <td class="text-nowrap">{{ p.participation_deadline_at|date:"d.m.Y H:i"|default:"—" }}</td>
-          <td>{{ p.get_participation_response_display|default:"—" }}</td>
-          <td class="text-nowrap">{{ p.participation_response_at|date:"d.m.Y H:i"|default:"—" }}</td>
-          <td>{{ p.participation_response_status|default:"—" }}</td>
+          <td class="text-nowrap cell-detail-val">{{ p.participation_request_sent_at|date:"d.m.Y H:i"|default:"—" }}</td>
+          <td class="text-nowrap cell-detail-val">{{ p.participation_deadline_at|date:"d.m.Y H:i"|default:"—" }}</td>
+          <td class="cell-detail-val">{{ p.get_participation_response_display|default:"—" }}</td>
+          <td class="text-nowrap cell-detail-val">{{ p.participation_response_at|date:"d.m.Y H:i"|default:"—" }}</td>
+          <td class="cell-detail-val">{{ p.participation_response_status|default:"—" }}</td>
         </tr>
       {% empty %}
         <tr><td colspan="13" class="text-muted">Пока нет данных.</td></tr>
@@ -361,11 +388,215 @@
   </div>
 </div>
 
+<div id="contract-conclusion-section" class="mt-5">
+  <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
+    <div class="d-flex align-items-center gap-3 flex-wrap">
+      <h5 class="table-section-title mb-0">
+        <i class="bi bi-table me-2"></i> Заключение договора
+      </h5>
+      <div class="dropdown">
+        <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+                id="contract-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+          Проекты: <span class="js-contract-filter-label">Все</span>
+        </button>
+        <div class="dropdown-menu p-3" aria-labelledby="contract-project-filter-toggle" style="min-width: 200px; max-height: 240px; overflow-y: auto;">
+          <div class="form-check mb-2">
+            <input class="form-check-input js-contract-filter" type="checkbox" value="__all__" id="contract-filter-all">
+            <label class="form-check-label" for="contract-filter-all">Все проекты</label>
+          </div>
+          <hr class="dropdown-divider">
+          {% for project in contract_projects %}
+            <div class="form-check">
+              <input class="form-check-input js-contract-filter" type="checkbox"
+                     value="{{ project.id }}" id="contract-filter-{{ project.id }}">
+              <label class="form-check-label" for="contract-filter-{{ project.id }}">
+                {{ project.short_uid }}
+              </label>
+            </div>
+          {% empty %}
+            <div class="text-muted small">Нет проектов</div>
+          {% endfor %}
+        </div>
+      </div>
+      {% if request.user.is_authenticated and request.user.is_staff %}
+        <div id="contract-deadline-controls" class="d-flex align-items-center gap-2 invisible pe-none">
+          <span class="small text-muted">В течение:</span>
+          <input type="number"
+                 id="contract-duration-hours"
+                 class="form-control form-control-sm"
+                 min="1"
+                 step="1"
+                 value="96"
+                 style="width: 90px;"
+                 aria-label="Срок подписания в часах">
+          <span class="small text-muted">часов</span>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div>
+    <table class="table table-sm align-middle performers-table">
+      <colgroup>
+        <col class="col-checkbox">
+        <col class="col-number">
+        <col class="col-type">
+        <col class="col-name">
+        <col class="col-executor">
+        <col class="col-grade">
+        <col class="col-active">
+        <col class="col-typical">
+        <col>
+        <col>
+        <col>
+        <col>
+        <col>
+      </colgroup>
+      <thead>
+      <tr>
+        <th class="col-checkbox">
+          {% if request.user.is_authenticated and request.user.is_staff %}
+            <div class="form-check m-0">
+              <input class="form-check-input"
+                     type="checkbox"
+                     id="contract-master"
+                     aria-label="Выделить все строки заключения договора">
+            </div>
+          {% endif %}
+        </th>
+        <th class="text-nowrap">Проект</th>
+        <th class="text-nowrap">Тип</th>
+        <th class="text-nowrap">Название</th>
+        <th>Исполнитель</th>
+        <th>Грейд</th>
+        <th>Наименование актива</th>
+        <th>Типовой раздел</th>
+        <th class="text-nowrap">Дата отправки</th>
+        <th class="text-nowrap">Срок</th>
+        <th class="text-nowrap">Дата подписания</th>
+        <th>Статус</th>
+        <th>Подписание</th>
+      </tr>
+      </thead>
+      <tbody>
+      {% for p in contract_performers %}
+        <tr data-project-id="{{ p.registration_id }}"
+            data-executor="{{ p.executor }}"
+            data-asset-name="{{ p.asset_name }}">
+          <td class="text-nowrap cell-group-val">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+              <div class="form-check m-0">
+                <input class="form-check-input"
+                       type="checkbox"
+                       id="contract-sel-{{ p.id }}"
+                       name="contract-select"
+                       value="{{ p.id }}"
+                       {% if p.contract_sent_at %}
+                         disabled
+                         title="Строка недоступна: проект договора уже отправлен"
+                       {% endif %}
+                       aria-label="Выделить строку заключения договора">
+              </div>
+            {% endif %}
+          </td>
+          <td class="text-nowrap cell-group-val">{% if p.registration %}{{ p.registration.short_uid }}{% endif %}</td>
+          <td class="text-nowrap cell-group-val">
+            {% if p.registration.type %}{{ p.registration.type.short_name|default:p.registration.type }}{% endif %}
+          </td>
+          <td class="text-truncate cell-group-val">{{ p.registration.name }}</td>
+          <td class="text-nowrap cell-group-val">{{ p.executor|short_fio }}</td>
+          <td class="text-nowrap cell-group-val">{{ p|grade_stars }}</td>
+          <td class="text-nowrap cell-asset-val">{{ p.asset_name }}</td>
+          <td class="text-nowrap">
+            {% if p.typical_section %}{{ p.typical_section|typical_section_short }}{% else %}&mdash;{% endif %}
+          </td>
+          <td class="text-nowrap cell-detail-val">{{ p.contract_sent_at|date:"d.m.Y H:i"|default:"—" }}</td>
+          <td class="text-nowrap cell-detail-val">{{ p.contract_deadline_at|date:"d.m.Y H:i"|default:"—" }}</td>
+          <td class="text-nowrap cell-detail-val">{{ p.contract_signing_date|date:"d.m.Y"|default:"—" }}</td>
+          <td class="cell-detail-val">{{ p.contract_conclusion_status|default:"—" }}</td>
+          <td class="cell-detail-val">{{ p.contract_signing_note|default:"—" }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="13" class="text-muted">Пока нет данных.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+
+    {% if request.user.is_authenticated and request.user.is_staff %}
+      <div id="contract-request-actions"
+           class="d-flex align-items-stretch gap-2 products-actions-row"
+           data-request-url="{% url 'contract_request' %}">
+        <div class="btn-group">
+          <button type="button"
+                  id="contract-request-btn"
+                  class="btn btn-primary btn-sm d-flex align-items-center"
+                  disabled>
+            <i class="bi bi-envelope-at me-2"></i>Отправить проект договора
+          </button>
+          <button type="button"
+                  id="contract-request-settings-btn"
+                  class="btn btn-primary btn-sm"
+                  data-bs-toggle="modal"
+                  data-bs-target="#contract-request-modal"
+                  title="Настройки отправки проекта договора">
+            <i class="bi bi-gear"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="modal fade" id="contract-request-modal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title">Настройки отправки проекта договора</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+            </div>
+            <div class="modal-body">
+              <div class="mb-4">
+                <div class="fw-semibold mb-2">Способ отправки</div>
+                <div class="form-check">
+                  <input class="form-check-input js-contract-channel"
+                         type="checkbox"
+                         id="contract-channel-system"
+                         value="system"
+                         checked>
+                  <label class="form-check-label" for="contract-channel-system">
+                    Системные уведомления
+                  </label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input js-contract-channel"
+                         type="checkbox"
+                         id="contract-channel-email"
+                         value="email">
+                  <label class="form-check-label" for="contract-channel-email">
+                    Электронная почта
+                  </label>
+                </div>
+              </div>
+              <div class="mb-0">
+                <label for="contract-request-sent-at" class="form-label">Дата отправки</label>
+                <input type="datetime-local"
+                       id="contract-request-sent-at"
+                       class="form-control"
+                       value="{{ contract_request_sent_initial }}">
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Закрыть</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+</div>
+
 <div id="info-request-approval-section" class="mt-5">
   <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
     <div class="d-flex align-items-center gap-3 flex-wrap">
       <h5 class="table-section-title mb-0">
-        <i class="bi bi-table me-2"></i> Согласование запроса информации
+        <i class="bi bi-table me-2"></i> Согласование запроса
       </h5>
       <div class="dropdown">
         <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
@@ -373,6 +604,13 @@
           Проект: <span class="js-info-request-filter-label">—</span>
         </button>
         <div class="dropdown-menu p-3" aria-labelledby="info-request-project-filter-toggle" style="min-width: 200px; max-height: 240px; overflow-y: auto;">
+          <div class="form-check mb-1">
+            <input class="form-check-input js-info-request-filter" type="radio"
+                   name="info-request-project-radio"
+                   value="" id="info-request-filter-none" checked>
+            <label class="form-check-label" for="info-request-filter-none">Не выбран</label>
+          </div>
+          <hr class="dropdown-divider">
           {% for project in info_request_projects %}
             <div class="form-check">
               <input class="form-check-input js-info-request-filter" type="radio"
@@ -411,9 +649,9 @@
         <col class="col-number">
         <col class="col-type">
         <col class="col-name">
+        <col class="col-executor">
+        <col class="col-grade">
         <col class="col-active">
-        <col>
-        <col>
         <col>
         <col>
         <col>
@@ -436,9 +674,9 @@
         <th class="text-nowrap">Проект</th>
         <th class="text-nowrap">Тип</th>
         <th class="text-nowrap">Название</th>
-        <th>Наименование актива</th>
         <th>Исполнитель</th>
         <th>Грейд</th>
+        <th>Наименование актива</th>
         <th>Типовой раздел</th>
         <th class="text-nowrap">Дата отправки</th>
         <th class="text-nowrap">Срок</th>
@@ -449,8 +687,10 @@
       </thead>
       <tbody>
       {% for p in info_request_performers %}
-        <tr data-project-id="{{ p.registration_id }}">
-          <td class="text-nowrap">
+        <tr data-project-id="{{ p.registration_id }}"
+            data-executor="{{ p.executor }}"
+            data-asset-name="{{ p.asset_name }}">
+          <td class="text-nowrap cell-group-val">
             {% if request.user.is_authenticated and request.user.is_staff %}
               <div class="form-check m-0">
                 <input class="form-check-input"
@@ -466,22 +706,22 @@
               </div>
             {% endif %}
           </td>
-          <td class="text-nowrap">{% if p.registration %}{{ p.registration.short_uid }}{% endif %}</td>
-          <td class="text-nowrap">
+          <td class="text-nowrap cell-group-val">{% if p.registration %}{{ p.registration.short_uid }}{% endif %}</td>
+          <td class="text-nowrap cell-group-val">
             {% if p.registration.type %}{{ p.registration.type.short_name|default:p.registration.type }}{% endif %}
           </td>
-          <td class="text-truncate">{{ p.registration.name }}</td>
-          <td class="text-nowrap">{{ p.asset_name }}</td>
-          <td class="text-nowrap">{{ p.executor|short_fio }}</td>
-          <td class="text-nowrap">{{ p.grade }}</td>
+          <td class="text-truncate cell-group-val">{{ p.registration.name }}</td>
+          <td class="text-nowrap cell-group-val">{{ p.executor|short_fio }}</td>
+          <td class="text-nowrap cell-group-val">{{ p|grade_stars }}</td>
+          <td class="text-nowrap cell-asset-val">{{ p.asset_name }}</td>
           <td class="text-nowrap">
             {% if p.typical_section %}{{ p.typical_section|typical_section_short }}{% else %}&mdash;{% endif %}
           </td>
-          <td class="text-nowrap">{{ p.info_request_sent_at|date:"d.m.Y H:i"|default:"—" }}</td>
-          <td class="text-nowrap">{{ p.info_request_deadline_at|date:"d.m.Y H:i"|default:"—" }}</td>
-          <td>{{ p.get_info_approval_status_display|default:"—" }}</td>
-          <td class="text-nowrap">{{ p.info_approval_at|date:"d.m.Y H:i"|default:"—" }}</td>
-          <td>{{ p.info_response_status|default:"—" }}</td>
+          <td class="text-nowrap cell-detail-val">{{ p.info_request_sent_at|date:"d.m.Y H:i"|default:"—" }}</td>
+          <td class="text-nowrap cell-detail-val">{{ p.info_request_deadline_at|date:"d.m.Y H:i"|default:"—" }}</td>
+          <td class="cell-detail-val">{{ p.get_info_approval_status_display|default:"—" }}</td>
+          <td class="text-nowrap cell-detail-val">{{ p.info_approval_at|date:"d.m.Y H:i"|default:"—" }}</td>
+          <td class="cell-detail-val">{{ p.info_response_status|default:"—" }}</td>
         </tr>
       {% empty %}
         <tr><td colspan="13" class="text-muted">Пока нет данных.</td></tr>
@@ -606,76 +846,200 @@
 (function(){
   const FILTER_ALL = "__all__";
   window.__perfProjectFilter = window.__perfProjectFilter || [FILTER_ALL];
+  window.__perfAssetFilter = window.__perfAssetFilter || [FILTER_ALL];
 
   function initPerfFilter() {
     const pane = document.getElementById("performers-pane");
     if (!pane) return;
 
-    const dropdown = pane.querySelector("#perf-project-filter-dropdown");
-    const checks = pane.querySelectorAll(".js-perf-filter");
-    const label = pane.querySelector(".js-perf-filter-label");
-    const rows = pane.querySelectorAll("table.performers-table tbody tr");
+    const projDropdown = pane.querySelector("#perf-project-filter-dropdown");
+    const projChecks = pane.querySelectorAll(".js-perf-filter");
+    const projLabel = pane.querySelector(".js-perf-filter-label");
 
-    if (!dropdown || checks.length === 0 || dropdown.dataset.bound === "1") return;
-    dropdown.dataset.bound = "1";
+    const assetDropdown = pane.querySelector("#perf-asset-filter-dropdown");
+    const assetChecks = pane.querySelectorAll(".js-perf-asset-filter");
+    const assetLabel = pane.querySelector(".js-perf-asset-label");
+    const assetList = pane.querySelector("#perf-asset-list");
 
-    function syncCheckboxes(values) {
-      const set = new Set(values);
-      checks.forEach(cb => { cb.checked = set.has(cb.value); });
+    const rows = pane.querySelectorAll("#performers-main-section table.performers-table tbody tr");
+
+    if (!projDropdown || projChecks.length === 0 || projDropdown.dataset.bound === "1") return;
+    projDropdown.dataset.bound = "1";
+
+    // --- build asset checkboxes dynamically ---
+    var assetNames = [];
+    rows.forEach(function(r) {
+      var a = r.dataset.assetName || '';
+      if (a && assetNames.indexOf(a) === -1) assetNames.push(a);
+    });
+    if (assetList) {
+      assetList.innerHTML = '';
+      assetNames.forEach(function(name, i) {
+        var div = document.createElement('div');
+        div.className = 'form-check';
+        var id = 'perf-asset-' + i;
+        div.innerHTML = '<input class="form-check-input js-perf-asset-filter" type="checkbox" value="' +
+          name.replace(/"/g, '&quot;') + '" id="' + id + '">' +
+          '<label class="form-check-label" for="' + id + '">' +
+          name.replace(/</g, '&lt;') + '</label>';
+        assetList.appendChild(div);
+      });
+    }
+    var allAssetChecks = pane.querySelectorAll(".js-perf-asset-filter");
+
+    // --- helpers ---
+    function syncCbs(cbs, values) {
+      var set = new Set(values);
+      cbs.forEach(function(cb) { cb.checked = set.has(cb.value); });
     }
 
-    function updateLabel(values) {
-      if (values.includes(FILTER_ALL) || !values.length) { label.textContent = "Все"; return; }
+    function updateFilterLabel(lbl, cbs, values, allWord) {
+      if (values.includes(FILTER_ALL) || !values.length) { lbl.textContent = "Все"; return; }
       if (values.length === 1) {
-        const input = Array.from(checks).find(cb => cb.value === values[0]);
-        label.textContent = input?.nextElementSibling?.textContent?.trim() || "1 проект";
+        var cb = Array.from(cbs).find(function(c) { return c.value === values[0]; });
+        lbl.textContent = cb ? cb.nextElementSibling.textContent.trim() : "1 " + allWord;
         return;
       }
-      label.textContent = values.length + " выбрано";
+      lbl.textContent = values.length + " выбрано";
     }
 
-    function applyFilter(values) {
-      window.__perfProjectFilter = values.slice();
-      const showAll = values.includes(FILTER_ALL) || values.length === 0;
-      rows.forEach(row => {
-        const pid = row.dataset.projectId || "";
-        row.classList.toggle("d-none", !showAll && !values.includes(pid));
+    function fmtTotal(n) {
+      if (!n) return '';
+      var parts = n.toFixed(2).split('.');
+      parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0');
+      return parts.join(',');
+    }
+
+    function updateTotals() {
+      var sums = {actual: {}, estimated: {}, agreed: {}};
+      rows.forEach(function(row) {
+        if (row.classList.contains('d-none')) return;
+        var a = row.querySelector('[data-sum-actual]');
+        var e = row.querySelector('[data-sum-estimated]');
+        var g = row.querySelector('[data-sum-agreed]');
+        [['actual', a, 'sumActual'], ['estimated', e, 'sumEstimated'], ['agreed', g, 'sumAgreed']].forEach(function(t) {
+          var cell = t[1];
+          if (!cell) return;
+          var val = parseFloat(cell.dataset[t[2]]) || 0;
+          if (!val) return;
+          var cur = cell.dataset.currency || '';
+          if (!sums[t[0]][cur]) sums[t[0]][cur] = 0;
+          sums[t[0]][cur] += val;
+        });
       });
-      updateLabel(values);
+      function render(obj) {
+        var parts = [];
+        for (var cur in obj) {
+          if (!obj[cur]) continue;
+          var s = fmtTotal(obj[cur]);
+          if (cur) s += ' ' + cur;
+          parts.push(s);
+        }
+        return parts.join(', ');
+      }
+      var elA = pane.querySelector('#perf-total-actual');
+      var elE = pane.querySelector('#perf-total-estimated');
+      var elG = pane.querySelector('#perf-total-agreed');
+      if (elA) elA.textContent = render(sums.actual);
+      if (elE) elE.textContent = render(sums.estimated);
+      if (elG) elG.textContent = render(sums.agreed);
+    }
+
+    function applyFilters() {
+      var pv = window.__perfProjectFilter;
+      var av = window.__perfAssetFilter;
+      var showAllProj = pv.includes(FILTER_ALL) || !pv.length;
+      var showAllAsset = av.includes(FILTER_ALL) || !av.length;
+      var projSet = new Set(pv);
+      var assetSet = new Set(av);
+      rows.forEach(function(row) {
+        var matchProj = showAllProj || projSet.has(row.dataset.projectId || '');
+        var matchAsset = showAllAsset || assetSet.has(row.dataset.assetName || '');
+        row.classList.toggle('d-none', !(matchProj && matchAsset));
+      });
+      updateFilterLabel(projLabel, projChecks, pv, 'проект');
+      updateFilterLabel(assetLabel, allAssetChecks, av, 'актив');
+      updateTotals();
       if (window.__enforceMasterOnRows) window.__enforceMasterOnRows();
     }
 
-    function normalizeSelection() {
-      let values = Array.from(checks).filter(cb => cb.checked).map(cb => cb.value);
+    // --- project filter ---
+    function normProj() {
+      var values = Array.from(projChecks).filter(function(cb) { return cb.checked; }).map(function(cb) { return cb.value; });
       if (!values.length) values = [FILTER_ALL];
       if (values.includes(FILTER_ALL)) values = [FILTER_ALL];
-      syncCheckboxes(values);
+      syncCbs(projChecks, values);
       return values;
     }
 
-    checks.forEach(cb => {
-      cb.addEventListener("change", event => {
-        const value = event.target.value;
-        if (value === FILTER_ALL && event.target.checked) {
-          syncCheckboxes([FILTER_ALL]);
-          applyFilter([FILTER_ALL]);
-          return;
-        }
-        if (value === FILTER_ALL && !event.target.checked) {
-          const first = Array.from(checks).find(c => c.value !== FILTER_ALL);
+    projChecks.forEach(function(cb) {
+      cb.addEventListener("change", function(e) {
+        if (e.target.value === FILTER_ALL && e.target.checked) {
+          syncCbs(projChecks, [FILTER_ALL]);
+        } else if (e.target.value === FILTER_ALL && !e.target.checked) {
+          var first = Array.from(projChecks).find(function(c) { return c.value !== FILTER_ALL; });
           if (first) first.checked = true;
         } else {
-          const allCb = pane.querySelector("#perf-filter-all");
+          var allCb = pane.querySelector("#perf-filter-all");
           if (allCb && allCb.checked) allCb.checked = false;
         }
-        applyFilter(normalizeSelection());
+        window.__perfProjectFilter = normProj();
+        applyFilters();
       });
     });
 
-    const initial = window.__perfProjectFilter && window.__perfProjectFilter.length
+    // --- asset filter ---
+    function normAsset() {
+      var values = Array.from(allAssetChecks).filter(function(cb) { return cb.checked; }).map(function(cb) { return cb.value; });
+      if (!values.length) values = [FILTER_ALL];
+      if (values.includes(FILTER_ALL)) values = [FILTER_ALL];
+      syncCbs(allAssetChecks, values);
+      return values;
+    }
+
+    pane.querySelector("#perf-asset-filter-dropdown").addEventListener("change", function(e) {
+      if (!e.target.classList.contains("js-perf-asset-filter")) return;
+      if (e.target.value === FILTER_ALL && e.target.checked) {
+        syncCbs(allAssetChecks, [FILTER_ALL]);
+      } else if (e.target.value === FILTER_ALL && !e.target.checked) {
+        var first = Array.from(allAssetChecks).find(function(c) { return c.value !== FILTER_ALL; });
+        if (first) first.checked = true;
+      } else {
+        var allCb = pane.querySelector("#perf-asset-all");
+        if (allCb && allCb.checked) allCb.checked = false;
+      }
+      window.__perfAssetFilter = normAsset();
+      applyFilters();
+    });
+
+    // --- sync from master filter ---
+    pane.addEventListener('perf-filter-sync', function() {
+      syncCbs(projChecks, window.__perfProjectFilter);
+      applyFilters();
+
+      var pf = window.__perfProjectFilter || [FILTER_ALL];
+      var sync = window.__syncInfoRequestFilter;
+      if (typeof sync === 'function') {
+        if (pf.length === 1 && pf[0] !== FILTER_ALL) {
+          sync(pf[0]);
+        } else {
+          sync('');
+        }
+      }
+    });
+
+    // --- init ---
+    var initProj = window.__perfProjectFilter && window.__perfProjectFilter.length
       ? window.__perfProjectFilter : [FILTER_ALL];
-    syncCheckboxes(initial);
-    applyFilter(initial);
+    syncCbs(projChecks, initProj);
+    window.__perfProjectFilter = initProj;
+
+    var initAsset = window.__perfAssetFilter && window.__perfAssetFilter.length
+      ? window.__perfAssetFilter : [FILTER_ALL];
+    syncCbs(allAssetChecks, initAsset);
+    window.__perfAssetFilter = initAsset;
+
+    applyFilters();
   }
 
   document.addEventListener("DOMContentLoaded", initPerfFilter);

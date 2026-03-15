@@ -1,0 +1,78 @@
+<table class="table table-sm align-top">
+    <thead>
+    <tr>
+        <th style="width:1%">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+                <div class="form-check m-0">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           id="esp-master"
+                           data-target-name="esp-select"
+                           data-actions-id="esp-actions"
+                           aria-label="Выделить все строки">
+                </div>
+            {% endif %}
+        </th>
+        <th>Направление экспертизы</th>
+        <th>Специальность</th>
+        <th>Специальность на англ. языке</th>
+        <th>Руководитель направления</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for s in specialties %}
+        <tr data-edit-url="{% url 'esp_form_edit' s.pk %}"
+            data-delete-url="{% url 'esp_delete' s.pk %}"
+            data-move-up-url="{% url 'esp_move_up' s.pk %}"
+            data-move-down-url="{% url 'esp_move_down' s.pk %}">
+
+            <td class="text-nowrap">
+                {% if request.user.is_authenticated and request.user.is_staff %}
+                    <div class="form-check">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="esp-sel-{{ s.id }}"
+                               name="esp-select"
+                               value="{{ s.id }}"
+                               aria-label="Выделить строку">
+                    </div>
+                {% endif %}
+            </td>
+            <td>{% if s.expertise_direction %}{{ s.expertise_direction.department_name }}{% else %}—{% endif %}</td>
+            <td>{{ s.specialty }}</td>
+            <td>{{ s.specialty_en }}</td>
+            <td>{% if s.head_of_direction %}{{ s.head_of_direction.job_title }}{% else %}—{% endif %}</td>
+        </tr>
+    {% empty %}
+        <tr><td colspan="5" class="text-muted">Пока нет данных.</td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+
+{% if request.user.is_authenticated and request.user.is_staff %}
+<div class="d-flex align-items-stretch gap-2 products-actions-row">
+  <button
+          class="btn btn-primary btn-sm d-flex align-items-center"
+          hx-get="{% url 'esp_form_create' %}"
+          hx-target="#experts-modal .modal-content"
+          hx-swap="innerHTML">
+    <i class="bi bi-plus-circle me-2"></i>Добавить строку
+  </button>
+  <div id="esp-actions" class="d-none d-flex">
+    <div class="btn-group">
+      <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+        <i class="bi bi-arrow-up-square"></i>
+      </button>
+      <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+        <i class="bi bi-arrow-down-square"></i>
+      </button>
+      <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+        <i class="bi bi-pencil-square"></i>
+      </button>
+      <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+        <i class="bi bi-x-square"></i>
+      </button>
+    </div>
+  </div>
+</div>
+{% endif %}

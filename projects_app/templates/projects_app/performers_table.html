@@ -51,7 +51,7 @@
             <td class="text-nowrap">{{ reg.name|default:reg.title }}</td>
             <td class="text-nowrap">{{ it.asset_name }}</td>
             <td class="text-nowrap">{{ it.executor|short_fio }}</td>
-            <td class="text-nowrap">{{ it.grade }}</td>
+            <td class="text-nowrap">{{ it|grade_stars }}</td>
             <td class="text-nowrap">{% if it.typical_section %}{{ it.typical_section|typical_section_short }}{% endif %}</td>
             <td class="text-end">{{ it.actual_costs }}</td>
             <td class="text-end">{{ it.estimated_costs }}</td>

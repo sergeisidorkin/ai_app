@@ -464,11 +464,11 @@ class PerformerForm(forms.ModelForm):
             "prepayment", "final_payment", "contract_number",
         ]
         widgets = {
-            "grade": forms.TextInput(attrs={"class": "form-control"}),
-            "grade_name": forms.TextInput(attrs={"class": "form-control"}),
+            "grade": forms.HiddenInput(),
+            "grade_name": forms.HiddenInput(),
             "actual_costs": forms.TextInput(attrs={"class": "form-control js-money-input", "inputmode": "decimal"}),
-            "estimated_costs": forms.TextInput(attrs={"class": "form-control js-money-input", "inputmode": "decimal"}),
-            "agreed_amount": forms.TextInput(attrs={"class": "form-control js-money-input", "inputmode": "decimal"}),
+            "estimated_costs": forms.HiddenInput(),
+            "agreed_amount": forms.HiddenInput(),
             "prepayment": forms.NumberInput(attrs={
                 "class": "form-control",
                 "step": "1",
@@ -478,8 +478,17 @@ class PerformerForm(forms.ModelForm):
             "contract_number": forms.TextInput(attrs={"class": "form-control"}),
         }
 
+    _money_fields = ("actual_costs", "estimated_costs", "agreed_amount")
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        if self.data:
+            data = self.data.copy()
+            for fn in self._money_fields:
+                v = data.get(fn, "")
+                if v:
+                    data[fn] = str(v).replace("\u00a0", "").replace(" ", "").replace(",", ".")
+            self.data = data
         current_executor = self.data.get("executor") or (self.instance.executor if self.instance else "")
         self.fields["executor"].choices = _all_employee_choices(current_executor)
 
@@ -498,6 +507,11 @@ class PerformerForm(forms.ModelForm):
                 self.initial["currency"] = rub.pk
             self.initial["prepayment"] = 50
             self.initial["final_payment"] = 50
+        else:
+            for fn in ("prepayment", "final_payment"):
+                v = self.initial.get(fn)
+                if v is not None:
+                    self.initial[fn] = int(v)
 
     @staticmethod
     def _clean_money(value):

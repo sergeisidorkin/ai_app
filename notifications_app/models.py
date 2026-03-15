@@ -24,6 +24,10 @@ class Notification(models.Model):
             "project_info_request_approval",
             "Согласование запроса информации",
         )
+        PROJECT_CONTRACT_CONCLUSION = (
+            "project_contract_conclusion",
+            "Отправлен проект договора",
+        )
 
     class RelatedSection(models.TextChoices):
         NONE = "none", "Не указан"

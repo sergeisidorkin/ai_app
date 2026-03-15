@@ -348,6 +348,143 @@ def create_info_request_notifications(*, performers, sender, request_sent_at, de
     return created
 
 
+def _short_fio(full_name):
+    raw = " ".join(str(full_name or "").split())
+    if not raw:
+        return ""
+    parts = raw.split(" ")
+    last_name = parts[0]
+    initials = "".join(f"{part[0]}." for part in parts[1:3] if part)
+    return f"{last_name} {initials}".strip()
+
+
+def _build_contract_payload(*, recipient, project, performers, request_sent_at, deadline_at, duration_hours):
+    services = [_service_line(performer) for performer in performers]
+    agreed_amount = sum((performer.agreed_amount or Decimal("0")) for performer in performers)
+
+    project_label_parts = [project.short_uid]
+    if project.type_id:
+        project_label_parts.append(project.type.short_name or str(project.type))
+    if project.name:
+        project_label_parts.append(project.name)
+    project_label = " ".join(part for part in project_label_parts if part)
+
+    recipient_name = _user_full_name(recipient)
+    executor_fio = _short_fio(performers[0].executor) if performers else "—"
+    deadline_label = project.deadline.strftime("%d.%m.%Y") if project.deadline else "—"
+
+    currency_code = ""
+    for p in performers:
+        if p.currency:
+            currency_code = p.currency.code_alpha or ""
+            break
+
+    prepayment_values = [p.prepayment for p in performers if p.prepayment is not None]
+    final_payment_values = [p.final_payment for p in performers if p.final_payment is not None]
+    prepayment_display = f"{int(prepayment_values[0])}%" if prepayment_values else "—"
+    final_payment_display = f"{int(final_payment_values[0])}%" if final_payment_values else "—"
+
+    title_text = f"Отправлен проект договора по проекту {project_label}".strip()
+    content_lines = [
+        f"Добрый день, {recipient_name}",
+        "",
+        f"В связи с вашим подтверждением готовности принять участие в проекте {project_label} "
+        f"направляем проект договора.",
+        "Состав активов:",
+    ]
+    for service in services:
+        content_lines.append(f"- {service}")
+    deadline_at_label = timezone.localtime(deadline_at).strftime("%H:%M %d.%m.%Y") if deadline_at else "—"
+    content_lines.extend(
+        [
+            "",
+            f"Проект: {project_label}",
+            f"Исполнитель: {executor_fio}",
+            f"Оплата услуг без учета налогов: {_display_amount(agreed_amount)} {currency_code}".strip(),
+            f"Порядок оплаты: {prepayment_display} аванс, {final_payment_display} окончательный платёж",
+            f"Срок исполнения: до {deadline_label}",
+            "Документ доступен для скачивания по ссылке: ",
+            "",
+            (
+                f"Подписать договор и загрузить подписанную скан-копию в разделе «Договоры» "
+                f"на сайте imcmontanai.ru необходимо в течение {duration_hours} "
+                f"часов с момента отправки данного сообщения — до {deadline_at_label}."
+            ),
+            "",
+            "С уважением,",
+            "IMC Montan AI",
+        ]
+    )
+    payload = {
+        "recipient_name": recipient_name,
+        "project_label": project_label,
+        "executor_fio": executor_fio,
+        "services": services,
+        "agreed_amount_display": _display_amount(agreed_amount),
+        "currency_code": currency_code,
+        "prepayment_display": prepayment_display,
+        "final_payment_display": final_payment_display,
+        "project_deadline_display": deadline_label,
+        "duration_hours": duration_hours,
+        "request_sent_at_display": timezone.localtime(request_sent_at).strftime("%d.%m.%Y %H:%M"),
+        "deadline_at_display": timezone.localtime(deadline_at).strftime("%H:%M %d.%m.%Y") if deadline_at else "—",
+    }
+    return title_text, "\n".join(content_lines).strip(), payload
+
+
+@transaction.atomic
+def create_contract_notifications(*, performers, sender, request_sent_at, deadline_at, duration_hours):
+    performers = list(performers)
+    missing_employee = [performer for performer in performers if not performer.employee_id]
+    if missing_employee:
+        names = ", ".join(sorted({(performer.executor or f"#{performer.pk}").strip() for performer in missing_employee}))
+        raise ValueError(f"Для части строк не найден сотрудник-получатель: {names}.")
+
+    grouped = defaultdict(list)
+    for performer in performers:
+        grouped[(performer.registration_id, performer.employee_id)].append(performer)
+
+    created = []
+    for (_registration_id, _employee_id), grouped_performers in grouped.items():
+        first = grouped_performers[0]
+        recipient = first.employee.user
+        project = first.registration
+        title_text, content_text, payload = _build_contract_payload(
+            recipient=recipient,
+            project=project,
+            performers=grouped_performers,
+            request_sent_at=request_sent_at,
+            deadline_at=deadline_at,
+            duration_hours=duration_hours,
+        )
+        notification = Notification.objects.create(
+            notification_type=Notification.NotificationType.PROJECT_CONTRACT_CONCLUSION,
+            related_section=Notification.RelatedSection.PROJECTS,
+            recipient=recipient,
+            sender=sender,
+            project=project,
+            title_text=title_text,
+            content_text=content_text,
+            payload=payload,
+            sent_at=request_sent_at,
+            deadline_at=deadline_at,
+            is_read=False,
+            is_processed=False,
+        )
+        NotificationPerformerLink.objects.bulk_create(
+            [
+                NotificationPerformerLink(
+                    notification=notification,
+                    performer=performer,
+                    position=index,
+                )
+                for index, performer in enumerate(grouped_performers, start=1)
+            ]
+        )
+        created.append(notification)
+    return created
+
+
 @transaction.atomic
 def process_info_request_notification(notification, actor):
     if notification.notification_type != Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL:
@@ -409,6 +546,10 @@ def serialize_notification_cards(notifications):
                 "agreed_amount_display": payload.get("agreed_amount_display") or "0,00",
                 "duration_hours": payload.get("duration_hours") or 0,
                 "recipient_name": payload.get("recipient_name") or _user_full_name(notification.recipient),
+                "executor_fio": payload.get("executor_fio") or "—",
+                "currency_code": payload.get("currency_code") or "",
+                "prepayment_display": payload.get("prepayment_display") or "—",
+                "final_payment_display": payload.get("final_payment_display") or "—",
             }
         )
     return cards

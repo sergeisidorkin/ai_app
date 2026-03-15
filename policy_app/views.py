@@ -1,13 +1,16 @@
 import csv
 import io
+import json
 
 from django.contrib.auth.decorators import login_required, user_passes_test
+from django.db.models import Max
 from django.http import JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST
-from django.db.models import Max
+
+from experts_app.models import ExpertSpecialty
 from group_app.models import OrgUnit
-from .models import Product, TypicalSection, SectionStructure, Grade, Tariff, MANAGER_GROUPS
+from .models import Product, TypicalSection, TypicalSectionSpecialty, SectionStructure, Grade, Tariff, MANAGER_GROUPS
 from .forms import ProductForm, TypicalSectionForm, SectionStructureForm, GradeForm, TariffForm
 
 # Вынесенные константы для единообразия шаблонов/заголовков
@@ -50,7 +53,9 @@ def staff_required(user):
 # Вспомогательные функции для устранения дублирования
 def _policy_context(request):
     products = Product.objects.all()
-    sections = TypicalSection.objects.select_related("product", "expertise_direction").all()
+    sections = TypicalSection.objects.select_related("product", "expertise_direction").prefetch_related(
+        "ranked_specialties", "ranked_specialties__specialty"
+    ).all()
     structures = SectionStructure.objects.select_related("product", "section").all()
     grades = _get_grades_for_user(request.user)
     tariffs = _get_tariffs_for_user(request.user)
@@ -129,22 +134,65 @@ def product_delete(request, pk: int):
 
 # --- Типовые разделы ---
 
+def _section_specialty_options():
+    return [
+        {"id": s.pk, "label": s.specialty}
+        for s in ExpertSpecialty.objects.exclude(specialty="").order_by("position")
+    ]
+
+
+def _section_form_context(form, action, section=None):
+    spec_options = _section_specialty_options()
+    ranked = []
+    if section and section.pk:
+        ranked = [
+            {"rank": link.rank, "specialty_id": link.specialty_id}
+            for link in TypicalSectionSpecialty.objects.filter(section=section).order_by("rank")
+        ]
+    ctx = {
+        "form": form,
+        "action": action,
+        "specialty_options": spec_options,
+        "specialty_options_json": json.dumps(spec_options, ensure_ascii=False),
+        "ranked_specialties": ranked,
+    }
+    if section:
+        ctx["section"] = section
+    return ctx
+
+
+def _save_section_specialties(section, post_data):
+    specialty_ids = post_data.getlist("specialty_id")
+    TypicalSectionSpecialty.objects.filter(section=section).delete()
+    to_create = []
+    for rank, raw_id in enumerate(specialty_ids, start=1):
+        if raw_id:
+            try:
+                sid = int(raw_id)
+            except (ValueError, TypeError):
+                continue
+            to_create.append(TypicalSectionSpecialty(
+                section=section, specialty_id=sid, rank=rank,
+            ))
+    if to_create:
+        TypicalSectionSpecialty.objects.bulk_create(to_create)
+
+
 @login_required
 @user_passes_test(staff_required)
 @require_http_methods(["GET", "POST"])
 def section_form_create(request):
     if request.method == "GET":
         form = TypicalSectionForm()
-        return render(request, SECTION_FORM_TEMPLATE, {"form": form, "action": "create"})
-    # POST
+        return render(request, SECTION_FORM_TEMPLATE, _section_form_context(form, "create"))
     form = TypicalSectionForm(request.POST)
     if not form.is_valid():
-        return render(request, SECTION_FORM_TEMPLATE, {"form": form, "action": "create"})
+        return render(request, SECTION_FORM_TEMPLATE, _section_form_context(form, "create"))
     obj = form.save(commit=False)
-    # Новый раздел — в конец списка своего продукта
     if not getattr(obj, "position", 0):
         obj.position = _next_position(TypicalSection, {"product": obj.product})
     obj.save()
+    _save_section_specialties(obj, request.POST)
     return _render_policy_updated(request)
 
 @login_required
@@ -154,12 +202,12 @@ def section_form_edit(request, pk: int):
     section = get_object_or_404(TypicalSection, pk=pk)
     if request.method == "GET":
         form = TypicalSectionForm(instance=section)
-        return render(request, SECTION_FORM_TEMPLATE, {"form": form, "action": "edit", "section": section})
-    # POST
+        return render(request, SECTION_FORM_TEMPLATE, _section_form_context(form, "edit", section))
     form = TypicalSectionForm(request.POST, instance=section)
     if not form.is_valid():
-        return render(request, SECTION_FORM_TEMPLATE, {"form": form, "action": "edit", "section": section})
+        return render(request, SECTION_FORM_TEMPLATE, _section_form_context(form, "edit", section))
     form.save()
+    _save_section_specialties(section, request.POST)
     return _render_policy_updated(request)
 
 @login_required

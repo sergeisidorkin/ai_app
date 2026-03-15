@@ -102,7 +102,7 @@
     </div>
 
     <div class="table-responsive">
-        <table class="table table-sm align-middle">
+        <table class="table table-sm align-top">
             <thead>
             <tr>
                 <th style="width:1%">
@@ -155,7 +155,7 @@
                     <td>{{ s.name_en }}</td>
                     <td>{{ s.name_ru }}</td>
                     <td class="text-nowrap">{{ s.accounting_type }}</td>
-                    <td class="text-nowrap">{{ s.executor }}</td>
+                    <td>{% for rs in s.ranked_specialties.all %}{% if forloop.first %}<span>{{ rs.specialty.specialty }}</span>{% else %}<br><span>{{ rs.specialty.specialty }}</span>{% endif %}{% empty %}—{% endfor %}</td>
                     <td class="text-nowrap">{% if s.expertise_direction %}{{ s.expertise_direction.department_name }}{% endif %}</td>
                 </tr>
             {% empty %}

@@ -627,6 +627,7 @@ body .second-sidebar + .flex-grow-1 {
 }
 
 #participation-confirmation-section .form-check-input:disabled,
+#contract-conclusion-section .form-check-input:disabled,
 #info-request-approval-section .form-check-input:disabled {
   background-color: #e9ecef !important;
   border-color: #d5dbe1 !important;
@@ -638,6 +639,9 @@ body .second-sidebar + .flex-grow-1 {
 /* Отступ сверху для панели действий под таблицей "Продукты" */
 .products-actions-row {
   margin-top: 30px !important;
+}
+#performers-pane > .products-actions-row {
+  margin-top: 0.5rem !important;
 }
 
 .notifications-bell-btn {
@@ -1368,7 +1372,7 @@ section#templates .alert.alert-info .text-muted {
 /* Наименование актива — обрезаем лишний текст троеточием */
 .work-table td:nth-child(5),
 .legal-table td:nth-child(5),
-.performers-table td:nth-child(5) {
+.performers-table tbody td:nth-child(5) {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1408,8 +1412,12 @@ section#templates .alert.alert-info .text-muted {
 .performers-table col.col-number   { width: 100px !important; } /* 4444RU-0 */
 .performers-table col.col-type     { width: 50px  !important; } /* Тип */
 .performers-table col.col-name     { width: 220px !important; } /* Название */
-.performers-table col.col-typical  { width: 200px !important; } /* Типовой раздел */
-.performers-table col.col-active   { width: 350px !important; } /* Наименование актива */
+.performers-table col.col-typical   { width: 200px !important; } /* Типовой раздел */
+.performers-table col.col-active    { width: 350px !important; } /* Наименование актива */
+.performers-table col.col-executor   { width: 150px !important; } /* Исполнитель */
+.performers-table col.col-grade     { width: 80px  !important; } /* Грейд */
+.performers-table col.col-date-sent { width: 140px !important; } /* Дата отправки */
+.performers-table col.col-deadline  { width: 140px !important; } /* Срок */
 
 .performers-table .perf-spacer {
   width: 10px !important;
@@ -1421,12 +1429,54 @@ section#templates .alert.alert-info .text-muted {
   border-top: none !important;
 }
 
-.performers-table th:nth-child(2),
-.performers-table td:nth-child(2) { width: 100px !important; min-width: 100px; max-width: 100px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.performers-table th:nth-child(3),
-.performers-table td:nth-child(3) { width: 50px !important; min-width: 50px; max-width: 50px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.performers-table th:nth-child(4),
-.performers-table td:nth-child(4) { width: 220px !important; min-width: 220px; max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.performers-table thead th:nth-child(2),
+.performers-table tbody td:nth-child(2) { width: 100px !important; min-width: 100px; max-width: 100px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.performers-table thead th:nth-child(3),
+.performers-table tbody td:nth-child(3) { width: 50px !important; min-width: 50px; max-width: 50px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.performers-table thead th:nth-child(4),
+.performers-table tbody td:nth-child(4) { width: 220px !important; min-width: 220px; max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ==== Row grouping in participation / contract / info-request tables ==== */
+
+#participation-confirmation-section .performers-table > tbody > tr > td,
+#contract-conclusion-section       .performers-table > tbody > tr > td,
+#info-request-approval-section     .performers-table > tbody > tr > td {
+  border-bottom: none !important;
+  border-top: 1px solid var(--bs-border-color);
+}
+
+#participation-confirmation-section .performers-table > tbody > tr.group-first > td,
+#contract-conclusion-section       .performers-table > tbody > tr.group-first > td,
+#info-request-approval-section     .performers-table > tbody > tr.group-first > td {
+  border-top: 1px solid var(--bs-border-color) !important;
+}
+
+#participation-confirmation-section .performers-table > tbody > tr.group-cont > .cell-group-val,
+#contract-conclusion-section       .performers-table > tbody > tr.group-cont > .cell-group-val,
+#info-request-approval-section     .performers-table > tbody > tr.group-cont > .cell-group-val {
+  border-top-color: transparent !important;
+  visibility: hidden;
+}
+
+#participation-confirmation-section .performers-table > tbody > tr.asset-cont > .cell-asset-val,
+#contract-conclusion-section       .performers-table > tbody > tr.asset-cont > .cell-asset-val,
+#info-request-approval-section     .performers-table > tbody > tr.asset-cont > .cell-asset-val {
+  border-top-color: transparent !important;
+  visibility: hidden;
+}
+
+#participation-confirmation-section .performers-table > tbody > tr > .cell-detail-val.cell-repeated,
+#contract-conclusion-section       .performers-table > tbody > tr > .cell-detail-val.cell-repeated,
+#info-request-approval-section     .performers-table > tbody > tr > .cell-detail-val.cell-repeated {
+  border-top-color: transparent !important;
+  visibility: hidden;
+}
+
+#participation-confirmation-section .performers-table > tbody > tr.last-visible-row > td,
+#contract-conclusion-section       .performers-table > tbody > tr.last-visible-row > td,
+#info-request-approval-section     .performers-table > tbody > tr.last-visible-row > td {
+  border-bottom: 1px solid var(--bs-border-color) !important;
+}
 
 /* +0px слева у колонки с чекбоксами во всех 3 таблицах раздела "Проекты" */
 #projects-pane table.table > thead tr > :first-child,
@@ -1497,6 +1547,15 @@ section#templates .alert.alert-info .text-muted {
   text-overflow: ellipsis;
 }
 
+/* Expert profiles wrap/truncate toggle */
+#epr-table-wrap table.clf-truncated td {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+#epr-table-wrap table.clf-truncated .epr-spec-rest { display: none; }
+
 /* LER autocomplete dropdown */
 .ler-ac-wrap { position: relative; }
 .ler-ac-list {
@@ -1539,4 +1598,20 @@ section#templates .alert.alert-info .text-muted {
   font-weight: 700;
   padding: 0;
   color: inherit;
+}
+
+/* Модалка настроек рабочего пространства */
+#ws-folders-table td:first-child {
+  padding-left: .5rem;
+  padding-right: .25rem;
+  width: 2rem;
+}
+#ws-folders-table td,
+#ws-folders-table th {
+  padding-top: .55rem;
+  padding-bottom: .55rem;
+}
+#ws-folders-table th:first-child {
+  padding-left: .5rem;
+  padding-right: .25rem;
 }

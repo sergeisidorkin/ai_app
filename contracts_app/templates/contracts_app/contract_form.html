@@ -1,0 +1,95 @@
+{% load projects_extras %}
+<div class="modal-header" data-modal-size="xl">
+  <h5 class="modal-title">Редактировать {% if performer.contract_is_addendum %}доп. соглашение №{{ performer.contract_addendum_number }}{% else %}договор{% endif %}</h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+</div>
+
+<form
+  method="post"
+  hx-post="{% url 'contracts_edit' performer.id %}"
+  hx-target="#contracts-pane"
+  hx-swap="innerHTML"
+  hx-on::after-request="if(event.detail.successful) window.bootstrap?.Modal.getOrCreateInstance(document.getElementById('contracts-modal'))?.hide()"
+>
+  {% csrf_token %}
+  <div class="modal-body">
+    {{ form.non_field_errors }}
+
+    <div class="row g-3">
+      <div class="col-md-3">
+        <label class="form-label">Проект</label>
+        <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+               value="{% if performer.registration %}{{ performer.registration.short_uid }}{% endif %}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Тип</label>
+        <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+               value="{% if performer.registration.type %}{{ performer.registration.type.short_name }}{% endif %}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Название</label>
+        <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+               value="{{ performer.registration.name }}">
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">Исполнитель</label>
+        <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+               value="{{ performer.executor }}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Номер договора</label>
+        {{ form.contract_number }}
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">Дата договора</label>
+        <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+               value="{{ performer.contract_sent_at|date:'d.m.Y'|default:'—' }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Срок</label>
+        <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+               value="{% if performer.contract_term_days != None %}{{ performer.contract_term_days }} дн.{% else %}—{% endif %}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Дедлайн</label>
+        <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+               value="{% if performer.registration.deadline %}{{ performer.registration.deadline|date:'d.m.Y' }}{% else %}—{% endif %}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Цена договора</label>
+        <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+               value="{% if performer.total_price != None %}{{ performer.total_price|money_fmt }}{% if performer.currency %} {{ performer.currency.code_alpha }}{% endif %}{% else %}—{% endif %}">
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">Аванс</label>
+        <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+               value="{% if performer.prepayment != None %}{{ performer.prepayment|floatformat:'0' }}%{% else %}—{% endif %}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Окончательный платёж</label>
+        <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+               value="{% if performer.final_payment != None %}{{ performer.final_payment|floatformat:'0' }}%{% else %}—{% endif %}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Файл</label>
+        {{ form.contract_file }}
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>
+
+<style>
+  #contracts-modal .readonly-field {
+    background-color: #f8f9fa;
+    color: #6c757d;
+    pointer-events: none;
+  }
+</style>

@@ -71,6 +71,14 @@
     return `Удалить ${count} строк(у/и)?`;
   }
 
+  function updateRegWorkspaceBtn() {
+    const root = pane();
+    if (!root) return;
+    const btn = root.querySelector('#reg-create-workspace-btn');
+    const checkedCount = getCheckedByName('registration-select').length;
+    if (btn) btn.disabled = checkedCount !== 1;
+  }
+
   // Кнопка «Редактировать» для таблицы «Условия контракта»
   function updateContractEditBtn() {
     const root = pane();
@@ -182,6 +190,7 @@
     updateRowHighlightFor(name);
     ensureActionsVisibility(name);
     if (name === 'contract-select') updateContractEditBtn();
+    if (name === 'registration-select') updateRegWorkspaceBtn();
   });
 
   // Чекбоксы строк (один-в-один)
@@ -195,6 +204,7 @@
     updateRowHighlightFor(name);
     ensureActionsVisibility(name);
     if (name === 'contract-select') updateContractEditBtn();
+    if (name === 'registration-select') updateRegWorkspaceBtn();
   });
 
   // Восстановление выбора после перерисовки HTMX (один-в-один)
@@ -209,7 +219,233 @@
     updateRowHighlightFor(last);
     ensureActionsVisibility(last);
     if (last === 'contract-select') updateContractEditBtn();
+    if (last === 'registration-select') updateRegWorkspaceBtn();
     try { delete window.__tableSel[last]; } catch(e) { window.__tableSel[last] = []; }
     window.__tableSelLast = null;
+  });
+
+  // «Создать» в модальном окне рабочего пространства регистрации
+  document.addEventListener('click', async (e) => {
+    const root = pane();
+    if (!root) return;
+    const wsConfirmBtn = e.target.closest('#reg-create-workspace-confirm-btn');
+    if (!wsConfirmBtn || !root.contains(wsConfirmBtn)) return;
+
+    const checked = getCheckedByName('registration-select');
+    if (checked.length !== 1) {
+      alert('Выберите ровно один проект.');
+      return;
+    }
+    const tr = checked[0].closest('tr');
+    const projectId = tr?.dataset?.projectId;
+    if (!projectId) return;
+
+    const actionsRow = root.querySelector('[data-create-workspace-url]');
+    const wsUrl = actionsRow?.dataset?.createWorkspaceUrl;
+    if (!wsUrl) return;
+
+    const statusEl = root.querySelector('#reg-create-workspace-status');
+    wsConfirmBtn.disabled = true;
+    if (statusEl) statusEl.textContent = 'Создание папок…';
+
+    try {
+      const formData = new FormData();
+      formData.append('project_id', projectId);
+
+      const response = await fetch(wsUrl, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrftoken },
+        body: formData,
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        throw new Error(data?.error || 'Не удалось создать рабочее пространство.');
+      }
+
+      if (statusEl) statusEl.innerHTML = '<span class="text-success">' + (data.message || 'Готово!') + '</span>';
+
+      const modalEl = root.querySelector('#reg-create-workspace-modal');
+      setTimeout(() => {
+        const modal = modalEl ? window.bootstrap?.Modal.getInstance(modalEl) : null;
+        modal?.hide();
+        if (statusEl) statusEl.textContent = '';
+      }, 2000);
+    } catch (err) {
+      if (statusEl) statusEl.innerHTML = '<span class="text-danger">' + (err.message || 'Ошибка') + '</span>';
+      else alert(err.message || 'Не удалось создать рабочее пространство.');
+    } finally {
+      wsConfirmBtn.disabled = false;
+    }
+  });
+
+  // ── Настройки рабочего пространства (модалка с таблицей папок) ──
+
+  let wsFolders = [];
+
+  function getSettingsModal() { return document.getElementById('reg-workspace-settings-modal'); }
+  function getTbody() { return document.getElementById('ws-folders-tbody'); }
+
+  function renderFolderRows() {
+    const tbody = getTbody();
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    wsFolders.forEach((f, idx) => {
+      const tr = document.createElement('tr');
+      tr.dataset.idx = idx;
+      tr.innerHTML =
+        '<td class="text-nowrap">' +
+          '<div class="form-check">' +
+            '<input class="form-check-input ws-folder-check" type="checkbox" data-idx="' + idx + '">' +
+          '</div>' +
+        '</td>' +
+        '<td>' +
+          '<select class="form-select form-select-sm ws-folder-level" data-idx="' + idx + '">' +
+            '<option value="1"' + (f.level === 1 ? ' selected' : '') + '>1</option>' +
+            '<option value="2"' + (f.level === 2 ? ' selected' : '') + '>2</option>' +
+            '<option value="3"' + (f.level === 3 ? ' selected' : '') + '>3</option>' +
+          '</select>' +
+        '</td>' +
+        '<td>' +
+          '<input type="text" class="form-control form-control-sm ws-folder-name" data-idx="' + idx + '" value="' + escHtml(f.name) + '">' +
+        '</td>';
+      tbody.appendChild(tr);
+    });
+    updateFolderRowActions();
+  }
+
+  function escHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function getCheckedFolderIdxs() {
+    const checks = getTbody()?.querySelectorAll('.ws-folder-check:checked') || [];
+    return Array.from(checks).map(c => parseInt(c.dataset.idx, 10));
+  }
+
+  function updateFolderRowActions() {
+    const panel = document.getElementById('ws-folders-row-actions');
+    if (!panel) return;
+    const anyChecked = getCheckedFolderIdxs().length > 0;
+    panel.classList.toggle('d-none', !anyChecked);
+    panel.classList.toggle('d-flex', anyChecked);
+  }
+
+  function syncFromInputs() {
+    const tbody = getTbody();
+    if (!tbody) return;
+    tbody.querySelectorAll('.ws-folder-level').forEach(sel => {
+      const idx = parseInt(sel.dataset.idx, 10);
+      if (wsFolders[idx]) wsFolders[idx].level = parseInt(sel.value, 10);
+    });
+    tbody.querySelectorAll('.ws-folder-name').forEach(inp => {
+      const idx = parseInt(inp.dataset.idx, 10);
+      if (wsFolders[idx]) wsFolders[idx].name = inp.value;
+    });
+  }
+
+  async function loadFolders() {
+    const root = pane();
+    const url = root?.querySelector('[data-workspace-folders-url]')?.dataset?.workspaceFoldersUrl;
+    if (!url) return;
+    try {
+      const resp = await fetch(url);
+      const data = await resp.json();
+      wsFolders = (data.folders || []).map(f => ({ level: f.level, name: f.name }));
+    } catch { wsFolders = []; }
+    renderFolderRows();
+  }
+
+  const settingsModal = getSettingsModal();
+  if (settingsModal) {
+    settingsModal.addEventListener('show.bs.modal', () => { loadFolders(); });
+  }
+
+  document.addEventListener('change', (e) => {
+    if (e.target.closest('.ws-folder-check')) updateFolderRowActions();
+  });
+
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('#ws-folder-add-btn')) {
+      syncFromInputs();
+      wsFolders.push({ level: 1, name: '' });
+      renderFolderRows();
+      const tbody = getTbody();
+      const lastInput = tbody?.querySelector('tr:last-child .ws-folder-name');
+      if (lastInput) lastInput.focus();
+      return;
+    }
+
+    if (e.target.closest('#ws-folder-delete-btn')) {
+      syncFromInputs();
+      const idxs = new Set(getCheckedFolderIdxs());
+      wsFolders = wsFolders.filter((_, i) => !idxs.has(i));
+      renderFolderRows();
+      return;
+    }
+
+    if (e.target.closest('#ws-folder-up-btn')) {
+      syncFromInputs();
+      const idxs = getCheckedFolderIdxs().sort((a, b) => a - b);
+      for (const idx of idxs) {
+        if (idx > 0 && !idxs.includes(idx - 1)) {
+          [wsFolders[idx - 1], wsFolders[idx]] = [wsFolders[idx], wsFolders[idx - 1]];
+        }
+      }
+      renderFolderRows();
+      const newIdxs = idxs.map(i => (i > 0 && !idxs.includes(i - 1)) ? i - 1 : i);
+      newIdxs.forEach(i => {
+        const cb = getTbody()?.querySelector('.ws-folder-check[data-idx="' + i + '"]');
+        if (cb) cb.checked = true;
+      });
+      updateFolderRowActions();
+      return;
+    }
+
+    if (e.target.closest('#ws-folder-down-btn')) {
+      syncFromInputs();
+      const idxs = getCheckedFolderIdxs().sort((a, b) => b - a);
+      for (const idx of idxs) {
+        if (idx < wsFolders.length - 1 && !idxs.includes(idx + 1)) {
+          [wsFolders[idx], wsFolders[idx + 1]] = [wsFolders[idx + 1], wsFolders[idx]];
+        }
+      }
+      renderFolderRows();
+      const newIdxs = idxs.map(i => (i < wsFolders.length - 1 && !idxs.includes(i + 1)) ? i + 1 : i);
+      newIdxs.forEach(i => {
+        const cb = getTbody()?.querySelector('.ws-folder-check[data-idx="' + i + '"]');
+        if (cb) cb.checked = true;
+      });
+      updateFolderRowActions();
+      return;
+    }
+  });
+
+  document.addEventListener('click', async (e) => {
+    if (!e.target.closest('#ws-folders-save-btn')) return;
+    syncFromInputs();
+
+    const root = pane();
+    const saveUrl = root?.querySelector('[data-workspace-folders-save-url]')?.dataset?.workspaceFoldersSaveUrl;
+    if (!saveUrl) return;
+
+    const btn = e.target.closest('#ws-folders-save-btn');
+    btn.disabled = true;
+
+    try {
+      const resp = await fetch(saveUrl, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrftoken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folders: wsFolders }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) throw new Error(data?.error || 'Ошибка сохранения.');
+
+      const modal = window.bootstrap?.Modal.getInstance(getSettingsModal());
+      modal?.hide();
+    } catch (err) {
+      alert(err.message || 'Не удалось сохранить.');
+    } finally {
+      btn.disabled = false;
+    }
   });
 })();

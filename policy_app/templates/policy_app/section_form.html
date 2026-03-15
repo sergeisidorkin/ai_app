@@ -13,24 +13,29 @@
       hx-post="{% url 'section_form_edit' section.pk %}"
     {% endif %}
     hx-target="#policy-pane"
-    hx-swap="outerHTML">
+    hx-swap="outerHTML"
+    style="display:flex; flex-direction:column; overflow:hidden; flex:1 1 auto; min-height:0;">
   <div class="modal-body">
     {% csrf_token %}
-    <div class="mb-3">
-      <label class="form-label">Продукт</label>
-      {{ form.product }}
+    <div class="row mb-3">
+      <div class="col-6">
+        <label class="form-label">Продукт</label>
+        {{ form.product }}
+      </div>
+      <div class="col-6">
+        <label class="form-label">Код</label>
+        {{ form.code }}
+      </div>
     </div>
-    <div class="mb-3">
-      <label class="form-label">Код</label>
-      {{ form.code }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Краткое имя EN</label>
-      {{ form.short_name }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Краткое имя RU</label>
-      {{ form.short_name_ru }}
+    <div class="row mb-3">
+      <div class="col-6">
+        <label class="form-label">Краткое имя EN</label>
+        {{ form.short_name }}
+      </div>
+      <div class="col-6">
+        <label class="form-label">Краткое имя RU</label>
+        {{ form.short_name_ru }}
+      </div>
     </div>
     <div class="mb-3">
       <label class="form-label">Наименование раздела на английском языке</label>
@@ -46,7 +51,39 @@
     </div>
     <div class="mb-3">
       <label class="form-label">Исполнитель</label>
-      {{ form.executor }}
+      <div id="sec-specialties-container">
+        {% for rs in ranked_specialties %}
+        <div class="d-flex align-items-center gap-2 mb-2 sec-spec-row">
+          <span class="badge rounded-circle d-flex align-items-center justify-content-center"
+                style="width:18px; height:18px; font-size:.65rem; flex-shrink:0; border:1px solid #6c757d; color:#6c757d; background:transparent; font-weight:400; font-family:'SF Pro Text',system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums;">{{ rs.rank }}</span>
+          <select name="specialty_id" class="form-select">
+            <option value="">---------</option>
+            {% for opt in specialty_options %}
+              <option value="{{ opt.id }}" {% if opt.id == rs.specialty_id %}selected{% endif %}>{{ opt.label }}</option>
+            {% endfor %}
+          </select>
+          <button type="button" class="btn btn-sm sec-spec-remove" title="Удалить"
+                  style="flex-shrink:0; color:#adb5bd; border:none; font-size:1.25rem; line-height:1; padding:0 .25rem;" onmouseenter="this.style.color='#dc3545'" onmouseleave="this.style.color='#adb5bd'">&times;</button>
+        </div>
+        {% empty %}
+        <div class="d-flex align-items-center gap-2 mb-2 sec-spec-row">
+          <span class="badge rounded-circle d-flex align-items-center justify-content-center"
+                style="width:18px; height:18px; font-size:.65rem; flex-shrink:0; border:1px solid #6c757d; color:#6c757d; background:transparent; font-weight:400; font-family:'SF Pro Text',system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums;">1</span>
+          <select name="specialty_id" class="form-select">
+            <option value="">---------</option>
+            {% for opt in specialty_options %}
+              <option value="{{ opt.id }}">{{ opt.label }}</option>
+            {% endfor %}
+          </select>
+          <button type="button" class="btn btn-sm sec-spec-remove" title="Удалить"
+                  style="flex-shrink:0; color:#adb5bd; border:none; font-size:1.25rem; line-height:1; padding:0 .25rem;" onmouseenter="this.style.color='#dc3545'" onmouseleave="this.style.color='#adb5bd'">&times;</button>
+        </div>
+        {% endfor %}
+      </div>
+      <button type="button" id="sec-add-specialty" class="btn btn-sm mt-1"
+              style="border:1px solid #ced4da; background-color:#f8f9fa; color:#495057; font-size:1rem; padding:.375rem .75rem; margin-left:26px;">
+        <i class="bi bi-plus-circle me-2"></i>Добавить специальность
+      </button>
     </div>
     <div class="mb-3">
       <label class="form-label">Направление экспертизы</label>
@@ -64,3 +101,52 @@
     <button type="submit" class="btn btn-primary">Сохранить</button>
   </div>
 </form>
+
+<script>
+(function() {
+  var specContainer = document.getElementById('sec-specialties-container');
+  var addSpecBtn = document.getElementById('sec-add-specialty');
+  var specOptions = {{ specialty_options_json|safe }};
+
+  function renumberRows() {
+    specContainer.querySelectorAll('.sec-spec-row').forEach(function(row, idx) {
+      row.querySelector('.badge').textContent = idx + 1;
+    });
+  }
+
+  if (addSpecBtn) {
+    addSpecBtn.addEventListener('click', function() {
+      var rows = specContainer.querySelectorAll('.sec-spec-row');
+      var num = rows.length + 1;
+      var div = document.createElement('div');
+      div.className = 'd-flex align-items-center gap-2 mb-2 sec-spec-row';
+      var html = '<span class="badge rounded-circle d-flex align-items-center justify-content-center" '
+               + 'style="width:18px; height:18px; font-size:.65rem; flex-shrink:0; border:1px solid #6c757d; color:#6c757d; background:transparent; font-weight:400; font-family:SF Pro Text,system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums;">' + num + '</span>'
+               + '<select name="specialty_id" class="form-select"><option value="">---------</option>';
+      specOptions.forEach(function(opt) {
+        html += '<option value="' + opt.id + '">' + opt.label + '</option>';
+      });
+      html += '</select>'
+            + '<button type="button" class="btn btn-sm sec-spec-remove" title="Удалить" '
+            + 'style="flex-shrink:0; color:#adb5bd; border:none; font-size:1.25rem; line-height:1; padding:0 .25rem;" '
+            + 'onmouseenter="this.style.color=\'#dc3545\'" onmouseleave="this.style.color=\'#adb5bd\'">&times;</button>';
+      div.innerHTML = html;
+      specContainer.appendChild(div);
+    });
+  }
+
+  if (specContainer) {
+    specContainer.addEventListener('click', function(e) {
+      var btn = e.target.closest('.sec-spec-remove');
+      if (!btn) return;
+      var rows = specContainer.querySelectorAll('.sec-spec-row');
+      if (rows.length <= 1) {
+        rows[0].querySelector('select').value = '';
+        return;
+      }
+      btn.closest('.sec-spec-row').remove();
+      renumberRows();
+    });
+  }
+})();
+</script>

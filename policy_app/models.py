@@ -47,7 +47,14 @@ class TypicalSection(models.Model):
     name_en = models.CharField("Наименование раздела на английском языке", max_length=255)
     name_ru = models.CharField("Наименование раздела на русском языке", max_length=255)
     accounting_type = models.CharField("Тип учета", max_length=128, choices=ACCOUNTING_TYPE_CHOICES, default="Раздел")
-    executor = models.CharField("Исполнитель", max_length=128)
+    executor = models.CharField("Исполнитель", max_length=128, blank=True, default="")
+    specialties = models.ManyToManyField(
+        "experts_app.ExpertSpecialty",
+        through="TypicalSectionSpecialty",
+        blank=True,
+        related_name="typical_sections",
+        verbose_name="Специальности",
+    )
     expertise_direction = models.ForeignKey(
         "group_app.OrgUnit",
         on_delete=models.SET_NULL,
@@ -64,7 +71,6 @@ class TypicalSection(models.Model):
     class Meta:
         verbose_name = "Типовой раздел"
         verbose_name_plural = "Типовые разделы"
-        # Сортируем по продукту, затем по позиции (для устойчивого порядка), затем по id
         ordering = ["product__short_name", "position", "id"]
 
         constraints = [
@@ -73,6 +79,29 @@ class TypicalSection(models.Model):
 
     def __str__(self):
         return f"{self.product.short_name}:{self.code}"
+
+
+class TypicalSectionSpecialty(models.Model):
+    section = models.ForeignKey(
+        TypicalSection,
+        on_delete=models.CASCADE,
+        related_name="ranked_specialties",
+    )
+    specialty = models.ForeignKey(
+        "experts_app.ExpertSpecialty",
+        on_delete=models.CASCADE,
+        related_name="section_links",
+    )
+    rank = models.PositiveIntegerField("Ранг", default=1)
+
+    class Meta:
+        ordering = ["rank"]
+        unique_together = [("section", "specialty")]
+        verbose_name = "Специальность раздела"
+        verbose_name_plural = "Специальности раздела"
+
+    def __str__(self):
+        return f"{self.section} — {self.specialty} (#{self.rank})"
 
 
 class SectionStructure(models.Model):

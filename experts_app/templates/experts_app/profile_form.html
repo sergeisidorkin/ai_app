@@ -1,0 +1,256 @@
+<div class="modal-header">
+  <h5 class="modal-title">Изменить строку</h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    hx-post="{% url 'epr_form_edit' profile.pk %}"
+    hx-target="#experts-pane"
+    hx-swap="outerHTML"
+    style="display:flex; flex-direction:column; overflow:hidden; flex:1 1 auto; min-height:0;">
+  <div class="modal-body">
+    {% csrf_token %}
+
+    <div class="mb-3">
+      <label class="form-label">ФИО</label>
+      <input type="text" class="form-control" readonly tabindex="-1"
+             style="background-color:#f8f9fa; color:#6c757d;"
+             value="{{ profile.full_name }}">
+    </div>
+    <div class="row mb-3">
+      <div class="col-6">
+        <label class="form-label">Эл. почта (логин)</label>
+        <input type="text" class="form-control" readonly tabindex="-1"
+               style="background-color:#f8f9fa; color:#6c757d;"
+               value="{{ profile.employee.user.email }}">
+      </div>
+      <div class="col-6">
+        <label class="form-label">Дополнительная эл. почта</label>
+        {{ form.extra_email }}
+      </div>
+    </div>
+    <div class="row mb-3">
+      <div class="col-6">
+        <label class="form-label">Телефон</label>
+        <input type="text" class="form-control" readonly tabindex="-1"
+               style="background-color:#f8f9fa; color:#6c757d;"
+               value="{{ profile.employee.phone }}">
+      </div>
+      <div class="col-6">
+        <label class="form-label">Дополнительный телефон</label>
+        {{ form.extra_phone }}
+      </div>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Направление экспертизы</label>
+      {{ form.expertise_direction }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Специальность</label>
+      <div id="ep-specialties-container">
+        {% for rs in ranked_specialties %}
+        <div class="d-flex align-items-center gap-2 mb-2 ep-spec-row">
+          <span class="badge rounded-circle d-flex align-items-center justify-content-center ep-spec-badge"
+                style="width:18px; height:18px; font-size:.65rem; flex-shrink:0; border:1px solid #6c757d; color:#6c757d; background:transparent; font-weight:400; font-family:'SF Pro Text',system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums;">{{ rs.rank }}</span>
+          <select name="specialty_id" class="form-select">
+            <option value="">---------</option>
+            {% for opt in specialty_options %}
+              <option value="{{ opt.id }}" {% if opt.id == rs.specialty_id %}selected{% endif %}>{{ opt.label }}</option>
+            {% endfor %}
+          </select>
+          <button type="button" class="btn btn-sm ep-spec-remove" title="Удалить"
+                  style="flex-shrink:0; color:#adb5bd; border:none; font-size:1.25rem; line-height:1; padding:0 .25rem;" onmouseenter="this.style.color='#dc3545'" onmouseleave="this.style.color='#adb5bd'">&times;</button>
+        </div>
+        {% empty %}
+        <div class="d-flex align-items-center gap-2 mb-2 ep-spec-row">
+          <span class="badge rounded-circle d-flex align-items-center justify-content-center ep-spec-badge"
+                style="width:18px; height:18px; font-size:.65rem; flex-shrink:0; border:1px solid #6c757d; color:#6c757d; background:transparent; font-weight:400; font-family:'SF Pro Text',system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums;">1</span>
+          <select name="specialty_id" class="form-select">
+            <option value="">---------</option>
+            {% for opt in specialty_options %}
+              <option value="{{ opt.id }}">{{ opt.label }}</option>
+            {% endfor %}
+          </select>
+          <button type="button" class="btn btn-sm ep-spec-remove" title="Удалить"
+                  style="flex-shrink:0; color:#adb5bd; border:none; font-size:1.25rem; line-height:1; padding:0 .25rem;" onmouseenter="this.style.color='#dc3545'" onmouseleave="this.style.color='#adb5bd'">&times;</button>
+        </div>
+        {% endfor %}
+      </div>
+      <button type="button" id="ep-add-specialty" class="btn mt-1"
+              style="border:1px solid #ced4da; background-color:#f8f9fa; color:#495057; font-size:1rem; padding:.375rem .75rem; margin-left:26px;">
+        <i class="bi bi-plus-circle me-2"></i>Добавить специальность
+      </button>
+    </div>
+    <div class="row mb-3">
+      <div class="col-6">
+        <label class="form-label">Грейд</label>
+        {{ form.grade }}
+      </div>
+      <div class="col-6">
+        <label class="form-label">Грейд (уровень)</label>
+        <div id="ep-grade-level" class="form-control" readonly tabindex="-1"
+             style="background-color:#f8f9fa; color:#6c757d; font-size:1.1rem; min-height:calc(1.5em + .75rem + 2px); display:flex; align-items:center; gap:2px;">
+        </div>
+      </div>
+    </div>
+    <div class="row mb-3">
+      <div class="col-6">
+        <label class="form-label">Страна</label>
+        {{ form.country }}
+      </div>
+      <div class="col-6">
+        <label class="form-label">Регион</label>
+        {{ form.region }}
+      </div>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Статус</label>
+      {{ form.status }}
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mb-0">
+        {% for field, errors in form.errors.items %}
+          {% for error in errors %}
+            <div>{{ error }}</div>
+          {% endfor %}
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>
+
+<script>
+(function() {
+  var directionEl = document.getElementById('ep-direction-select');
+  var gradeEl = document.getElementById('ep-grade-select');
+  var countryEl = document.getElementById('ep-country-select');
+  var regionEl = document.getElementById('ep-region-select');
+  if (!directionEl || !gradeEl || !countryEl || !regionEl) return;
+
+  var gradeLevelEl = document.getElementById('ep-grade-level');
+  var gradesMap = {{ grades_map_json|safe }};
+  var regionsMap = {{ regions_map_json|safe }};
+
+  var gradeQualMap = {};
+  Object.values(gradesMap).forEach(function(items) {
+    items.forEach(function(item) {
+      gradeQualMap[String(item.id)] = {q: item.qualification, levels: item.qualification_levels};
+    });
+  });
+
+  function updateGradeLevel() {
+    if (!gradeLevelEl) return;
+    gradeLevelEl.innerHTML = '';
+    var val = gradeEl.value;
+    var info = val ? gradeQualMap[val] : null;
+    if (!info) return;
+    for (var i = 1; i <= info.levels; i++) {
+      var star = document.createElement('i');
+      if (i <= info.q) {
+        star.className = 'bi bi-star-fill text-warning';
+      } else {
+        star.className = 'bi bi-star-fill';
+        star.style.color = '#dee2e6';
+      }
+      gradeLevelEl.appendChild(star);
+    }
+  }
+
+  function rebuildGradeOptions() {
+    var dirId = directionEl.value || '__none__';
+    var prevVal = gradeEl.value;
+    var items = gradesMap[dirId] || [];
+
+    gradeEl.innerHTML = '';
+    var empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = '---------';
+    gradeEl.appendChild(empty);
+
+    items.forEach(function(item) {
+      var opt = document.createElement('option');
+      opt.value = item.id;
+      opt.textContent = item.label;
+      if (String(item.id) === String(prevVal)) opt.selected = true;
+      gradeEl.appendChild(opt);
+    });
+    updateGradeLevel();
+  }
+
+  function rebuildRegionOptions() {
+    var countryId = countryEl.value;
+    var prevVal = regionEl.value;
+    var items = countryId ? (regionsMap[countryId] || []) : [];
+
+    regionEl.innerHTML = '';
+    var empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = '---------';
+    regionEl.appendChild(empty);
+
+    items.forEach(function(item) {
+      var opt = document.createElement('option');
+      opt.value = item.id;
+      opt.textContent = item.label;
+      if (String(item.id) === String(prevVal)) opt.selected = true;
+      regionEl.appendChild(opt);
+    });
+  }
+
+  directionEl.addEventListener('change', rebuildGradeOptions);
+  gradeEl.addEventListener('change', updateGradeLevel);
+  countryEl.addEventListener('change', rebuildRegionOptions);
+  updateGradeLevel();
+
+  var specContainer = document.getElementById('ep-specialties-container');
+  var addSpecBtn = document.getElementById('ep-add-specialty');
+  var specOptions = {{ specialty_options_json|safe }};
+
+  function renumberSpecRows() {
+    specContainer.querySelectorAll('.ep-spec-row').forEach(function(row, idx) {
+      row.querySelector('.badge').textContent = idx + 1;
+    });
+  }
+
+  if (addSpecBtn) {
+    addSpecBtn.addEventListener('click', function() {
+      var rows = specContainer.querySelectorAll('.ep-spec-row');
+      var num = rows.length + 1;
+      var div = document.createElement('div');
+      div.className = 'd-flex align-items-center gap-2 mb-2 ep-spec-row';
+      var html = '<span class="badge rounded-circle d-flex align-items-center justify-content-center ep-spec-badge" '
+               + 'style="width:18px; height:18px; font-size:.65rem; flex-shrink:0; border:1px solid #6c757d; color:#6c757d; background:transparent; font-weight:400; font-family:SF Pro Text,system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums;">' + num + '</span>'
+               + '<select name="specialty_id" class="form-select"><option value="">---------</option>';
+      specOptions.forEach(function(opt) {
+        html += '<option value="' + opt.id + '">' + opt.label + '</option>';
+      });
+      html += '</select>'
+            + '<button type="button" class="btn btn-sm ep-spec-remove" title="Удалить" '
+            + 'style="flex-shrink:0; color:#adb5bd; border:none; font-size:1.25rem; line-height:1; padding:0 .25rem;" '
+            + 'onmouseenter="this.style.color=\'#dc3545\'" onmouseleave="this.style.color=\'#adb5bd\'">&times;</button>';
+      div.innerHTML = html;
+      specContainer.appendChild(div);
+    });
+  }
+
+  if (specContainer) {
+    specContainer.addEventListener('click', function(e) {
+      var btn = e.target.closest('.ep-spec-remove');
+      if (!btn) return;
+      var rows = specContainer.querySelectorAll('.ep-spec-row');
+      if (rows.length <= 1) {
+        rows[0].querySelector('select').value = '';
+        return;
+      }
+      btn.closest('.ep-spec-row').remove();
+      renumberSpecRows();
+    });
+  }
+})();
+</script>

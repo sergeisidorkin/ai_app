@@ -9,6 +9,9 @@ urlpatterns = [
     path("projects/registration/<int:pk>/delete/", views.registration_delete, name="registration_delete"),
     path("projects/registration/<int:pk>/move-up/", views.registration_move_up, name="registration_move_up"),
     path("projects/registration/<int:pk>/move-down/", views.registration_move_down, name="registration_move_down"),
+    path("projects/registration/create-workspace/", views.create_registration_workspace, name="create_registration_workspace"),
+    path("projects/registration/workspace-folders/", views.workspace_folders_list, name="workspace_folders_list"),
+    path("projects/registration/workspace-folders/save/", views.workspace_folders_save, name="workspace_folders_save"),
 
     path("projects/contract/<int:pk>/edit/", views.contract_form_edit, name="contract_form_edit"),
 
@@ -25,6 +28,7 @@ urlpatterns = [
     path("projects/performers/<int:pk>/move-up/", views.performer_move_up, name="performer_move_up"),
     path("projects/performers/<int:pk>/move-down/", views.performer_move_down, name="performer_move_down"),
     path("projects/performers/request-confirmation/", views.participation_request, name="participation_request"),
+    path("projects/performers/send-contract/", views.contract_request, name="contract_request"),
     path("projects/performers/request-info-approval/", views.info_request_approval, name="info_request_approval"),
     path("projects/performers/create-workspace/", views.create_workspace, name="create_workspace"),
 
