@@ -1341,17 +1341,29 @@ def create_registration_workspace(request):
     if not project:
         return JsonResponse({"ok": False, "error": "Проект не найден."}, status=404)
 
+    MIN_CHUNK = 256
+
+    def _padded(line):
+        """Pad each line to MIN_CHUNK bytes so proxies flush immediately."""
+        encoded = line.encode()
+        if len(encoded) < MIN_CHUNK:
+            encoded += b" " * (MIN_CHUNK - len(encoded))
+        return encoded
+
     def _stream():
         for item in create_basic_project_workspace_stream(request.user, project):
             if isinstance(item, WorkspaceResult):
                 if item.ok:
-                    yield json.dumps({"ok": True, "message": item.message}) + "\n"
+                    yield _padded(json.dumps({"ok": True, "message": item.message}) + "\n")
                 else:
-                    yield json.dumps({"ok": False, "error": item.message}) + "\n"
+                    yield _padded(json.dumps({"ok": False, "error": item.message}) + "\n")
             else:
-                yield json.dumps(item) + "\n"
+                yield _padded(json.dumps(item) + "\n")
 
-    return StreamingHttpResponse(_stream(), content_type="application/x-ndjson")
+    resp = StreamingHttpResponse(_stream(), content_type="application/x-ndjson")
+    resp["Cache-Control"] = "no-cache, no-store"
+    resp["X-Accel-Buffering"] = "no"
+    return resp
 
 
 @login_required
