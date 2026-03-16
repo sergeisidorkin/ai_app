@@ -402,6 +402,7 @@ class SourceDataSectionFolder(models.Model):
     class Meta:
         verbose_name = "Папка раздела исходных данных"
         verbose_name_plural = "Папки разделов исходных данных"
+        unique_together = [("project", "section", "asset_name")]
 
     def __str__(self):
         return f"SectionFolder:{self.project_id}:{self.section_id}:{self.disk_path[:60]}"
@@ -432,6 +433,7 @@ class SourceDataItemFolder(models.Model):
     class Meta:
         verbose_name = "Папка запроса исходных данных"
         verbose_name_plural = "Папки запросов исходных данных"
+        unique_together = [("project", "checklist_item", "asset_name")]
 
     def __str__(self):
         return f"ItemFolder:{self.project_id}:{self.checklist_item_id}:{self.disk_path[:60]}"

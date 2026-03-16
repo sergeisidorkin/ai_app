@@ -382,8 +382,8 @@ def create_source_data_workspace_stream(user, project: ProjectRegistration):
             total += len(items_by_section.get(sec.id, []))  # item folders
     current = 0
 
-    section_folder_records = []
-    item_folder_records = []
+    section_upserts = []  # (lookup_kwargs, defaults) tuples
+    item_upserts = []     # (lookup_kwargs, defaults) tuples
 
     # -- create folders ---------------------------------------------------
     for asset in (unique_assets if multi_asset else [single_asset_name]):
@@ -412,12 +412,9 @@ def create_source_data_workspace_stream(user, project: ProjectRegistration):
                 return
 
             section_public_url = publish_resource(user, section_disk_path)
-            section_folder_records.append(SourceDataSectionFolder(
-                project=project,
-                section=section,
-                asset_name=asset,
-                disk_path=section_disk_path,
-                public_url=section_public_url,
+            section_upserts.append((
+                {"project": project, "section": section, "asset_name": asset},
+                {"disk_path": section_disk_path, "public_url": section_public_url},
             ))
             current += 1
             yield {"current": current, "total": total}
@@ -432,23 +429,23 @@ def create_source_data_workspace_stream(user, project: ProjectRegistration):
                     return
 
                 item_public_url = publish_resource(user, item_disk_path)
-                item_folder_records.append(SourceDataItemFolder(
-                    project=project,
-                    checklist_item=item,
-                    asset_name=asset,
-                    disk_path=item_disk_path,
-                    public_url=item_public_url,
+                item_upserts.append((
+                    {"project": project, "checklist_item": item, "asset_name": asset},
+                    {"disk_path": item_disk_path, "public_url": item_public_url},
                 ))
                 current += 1
                 yield {"current": current, "total": total}
 
-    # -- persist to DB ----------------------------------------------------
+    # -- persist to DB (upsert: preserve file_count / last_upload_at) -----
     with transaction.atomic():
-        SourceDataSectionFolder.objects.filter(project=project).delete()
-        SourceDataItemFolder.objects.filter(project=project).delete()
-        SourceDataSectionFolder.objects.bulk_create(section_folder_records)
-        SourceDataItemFolder.objects.bulk_create(item_folder_records)
-
+        for lookup, defaults in section_upserts:
+            SourceDataSectionFolder.objects.update_or_create(
+                **lookup, defaults=defaults,
+            )
+        for lookup, defaults in item_upserts:
+            SourceDataItemFolder.objects.update_or_create(
+                **lookup, defaults=defaults,
+            )
         SourceDataWorkspace.objects.update_or_create(
             project=project,
             defaults={"disk_path": base_path, "created_by": user},
