@@ -367,10 +367,12 @@ def create_source_data_workspace_stream(user, project: ProjectRegistration):
         items_by_section.setdefault(item.section_id, []).append(item)
 
     # -- calculate total -------------------------------------------------
+    single_asset_name = unique_assets[0] if not multi_asset else ""
+
     total = 0
     if multi_asset:
         total += len(unique_assets)
-    for asset in (unique_assets if multi_asset else [""]):
+    for asset in (unique_assets if multi_asset else [single_asset_name]):
         for sec in all_sections:
             if sec.id not in approved_section_ids:
                 continue
@@ -384,7 +386,7 @@ def create_source_data_workspace_stream(user, project: ProjectRegistration):
     item_folder_records = []
 
     # -- create folders ---------------------------------------------------
-    for asset in (unique_assets if multi_asset else [""]):
+    for asset in (unique_assets if multi_asset else [single_asset_name]):
         if multi_asset:
             asset_path = f"{base_path}/{_sanitize(asset)}"
             if not create_folder(user, asset_path):
