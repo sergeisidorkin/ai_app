@@ -310,9 +310,16 @@
   // ── Настройки рабочего пространства (модалка с таблицей папок) ──
 
   let wsFolders = [];
+  let wsIsCustom = false;
 
   function getSettingsModal() { return document.getElementById('reg-workspace-settings-modal'); }
   function getTbody() { return document.getElementById('ws-folders-tbody'); }
+
+  function updateResetBtn() {
+    const btn = document.getElementById('ws-folders-reset-btn');
+    if (!btn) return;
+    btn.classList.toggle('d-none', !wsIsCustom);
+  }
 
   function renderFolderRows() {
     const tbody = getTbody();
@@ -380,8 +387,10 @@
       const resp = await fetch(url);
       const data = await resp.json();
       wsFolders = (data.folders || []).map(f => ({ level: f.level, name: f.name }));
-    } catch { wsFolders = []; }
+      wsIsCustom = !!data.is_custom;
+    } catch { wsFolders = []; wsIsCustom = false; }
     renderFolderRows();
+    updateResetBtn();
   }
 
   const settingsModal = getSettingsModal();
@@ -418,6 +427,8 @@
 
     const progressEl = document.getElementById('reg-ws-progress');
     if (progressEl) progressEl.classList.add('d-none');
+    const fillEl = progressEl?.querySelector('.ws-progress-fill');
+    if (fillEl) fillEl.style.width = '0%';
     const statusEl = document.getElementById('reg-create-workspace-status');
     if (statusEl) statusEl.textContent = '';
   });
@@ -502,10 +513,42 @@
       const data = await resp.json();
       if (!resp.ok || !data.ok) throw new Error(data?.error || 'Ошибка сохранения.');
 
+      if (data.is_custom !== undefined) wsIsCustom = data.is_custom;
+      updateResetBtn();
+
       const modal = window.bootstrap?.Modal.getInstance(getSettingsModal());
       modal?.hide();
     } catch (err) {
       alert(err.message || 'Не удалось сохранить.');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  document.addEventListener('click', async (e) => {
+    if (!e.target.closest('#ws-folders-reset-btn')) return;
+
+    const root = pane();
+    const resetUrl = root?.querySelector('[data-workspace-folders-reset-url]')?.dataset?.workspaceFoldersResetUrl;
+    if (!resetUrl) return;
+
+    const btn = e.target.closest('#ws-folders-reset-btn');
+    btn.disabled = true;
+
+    try {
+      const resp = await fetch(resetUrl, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrftoken },
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) throw new Error(data?.error || 'Ошибка сброса.');
+
+      wsFolders = (data.folders || []).map(f => ({ level: f.level, name: f.name }));
+      wsIsCustom = !!data.is_custom;
+      renderFolderRows();
+      updateResetBtn();
+    } catch (err) {
+      alert(err.message || 'Не удалось сбросить.');
     } finally {
       btn.disabled = false;
     }

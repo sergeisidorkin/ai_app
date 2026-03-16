@@ -131,7 +131,8 @@
       <div class="d-flex align-items-stretch gap-2 products-actions-row"
            data-create-workspace-url="{% url 'create_registration_workspace' %}"
            data-workspace-folders-url="{% url 'workspace_folders_list' %}"
-           data-workspace-folders-save-url="{% url 'workspace_folders_save' %}">
+           data-workspace-folders-save-url="{% url 'workspace_folders_save' %}"
+           data-workspace-folders-reset-url="{% url 'workspace_folders_reset' %}">
         <button
           class="btn btn-primary btn-sm d-flex align-items-center"
           hx-get="{% url 'registration_form_create' %}"
@@ -185,12 +186,12 @@
             <div class="modal-body">
               <p class="mb-2">На Яндекс.Диске будет создана структура папок для выбранного проекта:</p>
               <ul id="reg-ws-folder-counts" class="small mb-3"></ul>
-              <div id="reg-create-workspace-status" class="text-muted small"></div>
-              <div id="reg-ws-progress" class="d-none mt-3">
+              <div id="reg-ws-progress" class="d-none">
                 <div class="ws-progress-track">
                   <div class="ws-progress-fill" style="width:0%"></div>
                 </div>
               </div>
+              <div id="reg-create-workspace-status" class="text-muted small mt-2"></div>
             </div>
             <div class="modal-footer">
               <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Закрыть</button>
@@ -243,6 +244,9 @@
             </div>
             <div class="modal-footer">
               <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Отмена</button>
+              <button type="button" id="ws-folders-reset-btn" class="btn btn-outline-danger btn-sm ms-auto d-none">
+                <i class="bi bi-arrow-counterclockwise me-1"></i>Сбросить к общему
+              </button>
               <button type="button" id="ws-folders-save-btn" class="btn btn-primary btn-sm">Сохранить</button>
             </div>
           </div>

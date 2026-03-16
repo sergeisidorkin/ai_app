@@ -1366,12 +1366,21 @@ def create_registration_workspace(request):
     return resp
 
 
+def _get_effective_folders(user):
+    """Return (queryset, is_custom) — user-specific if exists, else global (user=None)."""
+    user_qs = RegistrationWorkspaceFolder.objects.filter(user=user)
+    if user_qs.exists():
+        return user_qs, True
+    return RegistrationWorkspaceFolder.objects.filter(user__isnull=True), False
+
+
 @login_required
 @user_passes_test(staff_required)
 @require_GET
 def workspace_folders_list(request):
-    folders = RegistrationWorkspaceFolder.objects.all().values("id", "level", "name", "position")
-    return JsonResponse({"folders": list(folders)})
+    qs, is_custom = _get_effective_folders(request.user)
+    folders = list(qs.values("id", "level", "name", "position"))
+    return JsonResponse({"folders": folders, "is_custom": is_custom})
 
 
 @login_required
@@ -1387,6 +1396,8 @@ def workspace_folders_save(request):
     if not isinstance(rows, list):
         return JsonResponse({"ok": False, "error": "Некорректный формат."}, status=400)
 
+    owner = None if request.user.is_superuser else request.user
+
     objects = []
     for i, row in enumerate(rows):
         level = row.get("level", 1)
@@ -1395,13 +1406,23 @@ def workspace_folders_save(request):
             continue
         if level not in (1, 2, 3):
             level = 1
-        objects.append(RegistrationWorkspaceFolder(level=level, name=name, position=i))
+        objects.append(RegistrationWorkspaceFolder(user=owner, level=level, name=name, position=i))
 
     with transaction.atomic():
-        RegistrationWorkspaceFolder.objects.all().delete()
+        RegistrationWorkspaceFolder.objects.filter(user=owner).delete()
         RegistrationWorkspaceFolder.objects.bulk_create(objects)
 
-    return JsonResponse({"ok": True})
+    return JsonResponse({"ok": True, "is_custom": owner is not None})
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def workspace_folders_reset(request):
+    RegistrationWorkspaceFolder.objects.filter(user=request.user).delete()
+    qs, is_custom = _get_effective_folders(request.user)
+    folders = list(qs.values("id", "level", "name", "position"))
+    return JsonResponse({"ok": True, "folders": folders, "is_custom": is_custom})
 
 
 @login_required
