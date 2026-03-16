@@ -187,7 +187,9 @@
               <ul id="reg-ws-folder-counts" class="small mb-3"></ul>
               <div id="reg-create-workspace-status" class="text-muted small"></div>
               <div id="reg-ws-progress" class="d-none mt-3">
-                <div class="ws-progress-bar"></div>
+                <div class="ws-progress-track">
+                  <div class="ws-progress-fill" style="width:0%"></div>
+                </div>
               </div>
             </div>
             <div class="modal-footer">
@@ -1135,6 +1137,7 @@
     function applyMaster() {
       var values = getMasterValues();
       window.__masterProjectFilter = values.slice();
+      if (window.UIPref) UIPref.set('projects:masterFilter', values);
       syncMasterLabel(values);
       filterTableRows(values);
       syncTableFilter("js-reg-filter", "reg-filter-all", "__regProjectFilter", values);
@@ -1160,9 +1163,25 @@
       });
     });
 
-    window.__masterProjectFilter = [FILTER_ALL];
-    var allCb = document.getElementById("master-filter-all");
-    if (allCb) allCb.checked = true;
+    var savedMaster = window.UIPref ? UIPref.get('projects:masterFilter', null) : null;
+    if (savedMaster && Array.isArray(savedMaster) && savedMaster.length && savedMaster[0] !== FILTER_ALL) {
+      var validValues = savedMaster.filter(function(v) {
+        return allProjectIds.indexOf(v) !== -1;
+      });
+      if (validValues.length) {
+        var set = new Set(validValues);
+        masterChecks.forEach(function(cb) { cb.checked = set.has(cb.value); });
+        applyMaster();
+      } else {
+        window.__masterProjectFilter = [FILTER_ALL];
+        var allCb = document.getElementById("master-filter-all");
+        if (allCb) allCb.checked = true;
+      }
+    } else {
+      window.__masterProjectFilter = [FILTER_ALL];
+      var allCb = document.getElementById("master-filter-all");
+      if (allCb) allCb.checked = true;
+    }
   })();
   </script>
 </div>

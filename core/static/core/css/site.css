@@ -1694,24 +1694,22 @@ section#templates .alert.alert-info .text-muted {
 }
 
 /* Workspace creation progress indicator */
-.ws-progress-bar {
+.ws-progress-track {
   height: 24px;
   border: 1px solid #adb5bd;
   border-radius: 4px;
   overflow: hidden;
-  position: relative;
   background: #fff;
+}
+.ws-progress-fill {
+  height: 100%;
+  width: 0%;
+  transition: width .3s ease;
   background-image: repeating-linear-gradient(
     90deg,
     var(--bs-primary, #075D94) 0,
     var(--bs-primary, #075D94) 8px,
     transparent 8px,
-    transparent 14px
+    transparent 12px
   );
-  background-size: 200% 100%;
-  animation: ws-progress-slide 1.2s linear infinite;
-}
-@keyframes ws-progress-slide {
-  0%   { background-position: 100% 0; }
-  100% { background-position: 0 0; }
 }

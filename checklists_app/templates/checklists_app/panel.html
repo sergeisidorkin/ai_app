@@ -1304,13 +1304,29 @@
         }
 
         projectSel?.addEventListener('change', async () => {
+            if (window.UIPref) UIPref.set('checklists:project', projectSel.value);
             await loadProjectMeta();
             await reloadTable();
         });
-        sectionSel?.addEventListener('change', reloadTable);
+        sectionSel?.addEventListener('change', function () {
+            if (window.UIPref) UIPref.set('checklists:section', sectionSel.value);
+            reloadTable();
+        });
 
         (async function init() {
+            if (window.UIPref && projectSel) {
+                var savedProject = UIPref.get('checklists:project', null);
+                if (savedProject && projectSel.querySelector('option[value="' + CSS.escape(savedProject) + '"]')) {
+                    projectSel.value = savedProject;
+                }
+            }
             await loadProjectMeta();
+            if (window.UIPref && sectionSel) {
+                var savedSection = UIPref.get('checklists:section', null);
+                if (savedSection && sectionSel.querySelector('option[value="' + CSS.escape(savedSection) + '"]')) {
+                    sectionSel.value = savedSection;
+                }
+            }
             await reloadTable();
         })();
 
@@ -1339,17 +1355,35 @@
             icon.classList.toggle('bi-eye-slash', !isActive);
         }
         if (toggleImcm) {
+            if (window.UIPref) {
+                var savedImcm = UIPref.get('checklists:imcmVisible', true);
+                if (!savedImcm) {
+                    toggleImcm.classList.remove('chk-vis-toggle--active');
+                    swapEyeIcon(toggleImcm, false);
+                    controller.setImcmVisible(false);
+                }
+            }
             toggleImcm.addEventListener('click', () => {
                 const isActive = toggleImcm.classList.toggle('chk-vis-toggle--active');
                 swapEyeIcon(toggleImcm, isActive);
                 controller.setImcmVisible(isActive);
+                if (window.UIPref) UIPref.set('checklists:imcmVisible', isActive);
             });
         }
         if (toggleCs) {
+            if (window.UIPref) {
+                var savedCs = UIPref.get('checklists:csVisible', true);
+                if (!savedCs) {
+                    toggleCs.classList.remove('chk-vis-toggle--active');
+                    swapEyeIcon(toggleCs, false);
+                    controller.setCsVisible(false);
+                }
+            }
             toggleCs.addEventListener('click', () => {
                 const isActive = toggleCs.classList.toggle('chk-vis-toggle--active');
                 swapEyeIcon(toggleCs, isActive);
                 controller.setCsVisible(isActive);
+                if (window.UIPref) UIPref.set('checklists:csVisible', isActive);
             });
         }
 
@@ -1531,6 +1565,7 @@
             const active = table.classList.contains('chk-truncated');
             toggle.classList.toggle('active', active);
             controller.setTruncated(active);
+            if (window.UIPref) UIPref.set('checklists:truncated', active);
 
             nameCells.forEach(td => {
                 if (active) {

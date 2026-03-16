@@ -246,8 +246,10 @@
 
     const statusEl = root.querySelector('#reg-create-workspace-status');
     const progressEl = root.querySelector('#reg-ws-progress');
+    const fillEl = progressEl?.querySelector('.ws-progress-fill');
     wsConfirmBtn.disabled = true;
     if (statusEl) statusEl.textContent = '';
+    if (fillEl) fillEl.style.width = '0%';
     if (progressEl) progressEl.classList.remove('d-none');
 
     try {
@@ -259,13 +261,43 @@
         headers: { 'X-CSRFToken': csrftoken },
         body: formData,
       });
-      const data = await response.json();
-      if (!response.ok || !data.ok) {
-        throw new Error(data?.error || 'Не удалось создать рабочее пространство.');
+
+      if (!response.ok && !response.body) {
+        throw new Error('Не удалось создать рабочее пространство.');
       }
 
-      if (progressEl) progressEl.classList.add('d-none');
-      if (statusEl) statusEl.innerHTML = '<span class="text-success">' + (data.message || 'Готово!') + '</span>';
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let lastResult = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const msg = JSON.parse(line);
+          if (msg.current !== undefined && msg.total) {
+            const pct = Math.round((msg.current / msg.total) * 100);
+            if (fillEl) fillEl.style.width = pct + '%';
+          }
+          if (msg.ok !== undefined) lastResult = msg;
+        }
+      }
+      if (buffer.trim()) {
+        const msg = JSON.parse(buffer);
+        if (msg.ok !== undefined) lastResult = msg;
+      }
+
+      if (!lastResult || !lastResult.ok) {
+        throw new Error(lastResult?.error || 'Не удалось создать рабочее пространство.');
+      }
+
+      if (fillEl) fillEl.style.width = '100%';
+      if (statusEl) statusEl.innerHTML = '<span class="text-success">' + (lastResult.message || 'Готово!') + '</span>';
 
       const modalEl = root.querySelector('#reg-create-workspace-modal');
       setTimeout(() => {
