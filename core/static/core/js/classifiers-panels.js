@@ -126,10 +126,12 @@
     var okvEl = document.getElementById('okv-date-filter');
     var katdEl = document.getElementById('katd-date-filter');
     var lwEl = document.getElementById('lw-date-filter');
+    var lerEl = document.getElementById('ler-date-filter');
     if (oksmEl) parts.push('oksm_date=' + encodeURIComponent(oksmEl.value));
     if (okvEl) parts.push('okv_date=' + encodeURIComponent(okvEl.value));
     if (katdEl) parts.push('date=' + encodeURIComponent(katdEl.value));
     if (lwEl) parts.push('lw_date=' + encodeURIComponent(lwEl.value));
+    if (lerEl) parts.push('ler_date=' + encodeURIComponent(lerEl.value));
     return parts.length ? '?' + parts.join('&') : '';
   }
 
@@ -217,10 +219,12 @@
     var okvEl = document.getElementById('okv-date-filter');
     var katdEl = document.getElementById('katd-date-filter');
     var lwEl = document.getElementById('lw-date-filter');
+    var lerEl = document.getElementById('ler-date-filter');
     if (oksmEl) e.detail.parameters['oksm_date'] = oksmEl.value;
     if (okvEl) e.detail.parameters['okv_date'] = okvEl.value;
     if (katdEl) e.detail.parameters['date'] = katdEl.value;
     if (lwEl) e.detail.parameters['lw_date'] = lwEl.value;
+    if (lerEl) e.detail.parameters['ler_date'] = lerEl.value;
   });
 
   document.addEventListener('change', (e) => {

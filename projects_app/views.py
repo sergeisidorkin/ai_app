@@ -862,6 +862,20 @@ def _next_performer_position():
     return mx + 1
 
 
+def _is_executor_locked(user, performer):
+    """Исполнитель заблокирован для «Руководитель проектов», если раздел привязан к направлению экспертизы."""
+    if not performer.typical_section_id:
+        return False
+    ts = performer.typical_section
+    if not ts or not ts.expertise_direction_id:
+        return False
+    try:
+        emp = user.employee_profile
+    except Exception:
+        return False
+    return emp.role == "Руководитель проектов"
+
+
 def _parse_request_sent_at(raw_value: str):
     if not raw_value:
         return timezone.localtime().replace(second=0, microsecond=0)
@@ -921,28 +935,28 @@ def performer_form_edit(request, pk: int):
     GET:  отдать форму редактирования в модалку (с картами и привязками).
     POST: если невалидно — вернуть форму (200); если ок — 204 + HX-Trigger.
     """
-    p = get_object_or_404(Performer, pk=pk)
+    p = get_object_or_404(Performer.objects.select_related("typical_section"), pk=pk)
+    executor_locked = _is_executor_locked(request.user, p)
 
     if request.method == "GET":
         form = PerformerForm(instance=p)
         _bind_dynamic_performer_fields(form, instance=p)
-        return render(
-            request,
-            PERF_FORM_TEMPLATE,
-            _performer_form_ctx(form, "edit", performer=p),
-        )
+        if executor_locked:
+            form.fields["executor"].widget.attrs["disabled"] = True
+        ctx = _performer_form_ctx(form, "edit", performer=p)
+        ctx["executor_locked"] = executor_locked
+        return render(request, PERF_FORM_TEMPLATE, ctx)
 
     # POST
     form = PerformerForm(request.POST, instance=p)
     _bind_dynamic_performer_fields(form, data=request.POST, instance=p)
 
     if not form.is_valid():
-        return render(
-            request,
-            PERF_FORM_TEMPLATE,
-            _performer_form_ctx(form, "edit", performer=p),
-            status=200,
-        )
+        if executor_locked:
+            form.fields["executor"].widget.attrs["disabled"] = True
+        ctx = _performer_form_ctx(form, "edit", performer=p)
+        ctx["executor_locked"] = executor_locked
+        return render(request, PERF_FORM_TEMPLATE, ctx, status=200)
 
     form.save()
     resp = HttpResponse(status=204)
@@ -1412,7 +1426,7 @@ def workspace_folders_save(request):
         RegistrationWorkspaceFolder.objects.filter(user=owner).delete()
         RegistrationWorkspaceFolder.objects.bulk_create(objects)
 
-    return JsonResponse({"ok": True, "is_custom": owner is not None})
+    return JsonResponse({"ok": True, "is_custom": owner is not None and len(objects) > 0})
 
 
 @login_required

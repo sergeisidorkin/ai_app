@@ -1140,6 +1140,7 @@
 
     function applyMaster() {
       var values = getMasterValues();
+      var isAll = values[0] === FILTER_ALL;
       window.__masterProjectFilter = values.slice();
       if (window.UIPref) UIPref.set('projects:masterFilter', values);
       syncMasterLabel(values);
@@ -1147,7 +1148,13 @@
       syncTableFilter("js-reg-filter", "reg-filter-all", "__regProjectFilter", values);
       syncTableFilter("js-work-filter", "work-filter-all", "__workProjectFilter", values);
       syncTableFilter("js-legal-filter", "legal-filter-all", "__legalProjectFilter", values);
+
+      window.__perfProjectFilter = isAll ? [FILTER_ALL] : values.slice();
+      window.__participationProjectFilter = isAll ? [FILTER_ALL] : values.slice();
+      window.__contractProjectFilter = isAll ? [FILTER_ALL] : values.slice();
       syncPerfFilter(values);
+      if (typeof window.__syncParticipationProjectFilter === 'function') window.__syncParticipationProjectFilter(values);
+      if (typeof window.__syncContractProjectFilter === 'function') window.__syncContractProjectFilter(values);
     }
 
     masterChecks.forEach(function(cb) {

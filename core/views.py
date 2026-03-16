@@ -1,3 +1,5 @@
+from datetime import date
+
 from django.contrib.auth.views import LoginView
 from django.shortcuts import render, redirect
 
@@ -33,4 +35,5 @@ def home_entry(request):
     return render(request, "index.html", {
         "employee": employee,
         "is_expert": is_expert,
+        "ler_date_filter": date.today().isoformat(),
     })

@@ -1406,6 +1406,36 @@ section#templates .alert.alert-info .text-muted {
 
 
 /* ==== Performers table ==== */
+.performer-quick-edit { cursor: pointer; opacity: .45; transition: opacity .15s; }
+.performer-quick-edit:hover { opacity: .85; }
+.performer-locked-icon { opacity: .35; }
+
+.perf-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #000;
+  opacity: .5;
+  border-radius: .375rem;
+  cursor: pointer;
+  font-size: 1.25rem;
+  transition: opacity .15s, background-color .15s;
+}
+.perf-nav-btn i { -webkit-text-stroke: .6px currentColor; }
+.perf-nav-btn:hover:not(:disabled) {
+  opacity: .75;
+  background-color: rgba(0, 0, 0, .06);
+}
+.perf-nav-btn:disabled {
+  opacity: .15;
+  cursor: default;
+}
+
 .performers-table { table-layout: auto; white-space: nowrap; }
 
 .performers-table col.col-checkbox { width: 30px  !important; }
@@ -1561,7 +1591,9 @@ section#templates .alert.alert-info .text-muted {
 .ler-ac-list {
   position: absolute;
   z-index: 1055;
-  left: 0; right: 0;
+  left: 0;
+  width: max-content;
+  min-width: 100%;
   max-height: 240px;
   overflow-y: auto;
   background: #fff;
@@ -1580,11 +1612,19 @@ section#templates .alert.alert-info .text-muted {
   font-size: .82rem;
   line-height: 1.35;
   color: #212529;
-  white-space: normal;
+  white-space: nowrap;
   transition: background-color .1s;
 }
 .ler-ac-item:hover {
   background-color: #e9ecef;
+}
+.ler-ac-item.ler-ac-more {
+  color: #6c757d;
+  cursor: default;
+  font-style: italic;
+}
+.ler-ac-item.ler-ac-more:hover {
+  background-color: transparent;
 }
 .ler-ac-item .ler-ac-sub {
   color: #6c757d;
