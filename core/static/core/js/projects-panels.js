@@ -393,12 +393,11 @@
     updateResetBtn();
   }
 
-  const settingsModal = getSettingsModal();
-  if (settingsModal) {
-    settingsModal.addEventListener('show.bs.modal', () => { loadFolders(); });
-  }
+  // Delegated modal open listeners (partials loaded via HTMX)
+  document.addEventListener('show.bs.modal', (e) => {
+    if (e.target.matches('#reg-workspace-settings-modal')) loadFolders();
+  });
 
-  // Populate folder-level counts when create-workspace modal opens (delegated — partial loaded via HTMX)
   document.addEventListener('show.bs.modal', async (e) => {
     if (!e.target.matches('#reg-create-workspace-modal')) return;
     const root = pane();
