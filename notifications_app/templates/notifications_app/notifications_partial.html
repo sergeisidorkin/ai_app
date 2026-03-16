@@ -48,31 +48,35 @@
           </div>
           <div class="notification-card__details d-none">
             {% if notification.notification_type == "project_participation_confirmation" %}
-              <p class="mb-2">Добрый день, {{ card.recipient_name }}!</p>
-              <p class="mb-2">
-                Приглашаем вас принять участие в новом проекте IMC Montan Group — {{ card.project_label }}.
-              </p>
-              <p class="mb-2">Руководитель проекта: {{ card.project_manager }}.</p>
-              <p class="mb-2">Срок завершения проекта: {{ card.project_deadline_display }}.</p>
-              <p class="mb-2">Тип проекта: {{ card.project_type_display }}.</p>
-              <div class="mb-2">
-                <div class="mb-2">Предлагаемый состав услуг (разделов):</div>
-                <ul class="mb-0">
-                  {% for service in card.services %}
-                    <li>{{ service }}</li>
-                  {% empty %}
-                    <li>Без детализации</li>
-                  {% endfor %}
-                </ul>
-              </div>
-              <p class="mb-2">Предлагаемая оплата услуг: {{ card.agreed_amount_display }}.</p>
-              <p class="mb-2">
-                Принять решение об участии в проекте, кликнув на кнопку
-                «Подтвердить участие» или «Отклонить», необходимо в течение
-                {{ card.duration_hours }} часов с момента отправки данного сообщения —
-                до {{ card.deadline_at_display }}.
-              </p>
-              <p class="mb-0">С уважением,<br>IMC Montan AI</p>
+              {% if card.content_html %}
+                {{ card.content_html|safe }}
+              {% else %}
+                <p class="mb-2">Добрый день, {{ card.recipient_name }}!</p>
+                <p class="mb-2">
+                  Приглашаем вас принять участие в новом проекте IMC Montan Group — {{ card.project_label }}.
+                </p>
+                <p class="mb-2">Руководитель проекта: {{ card.project_manager }}.</p>
+                <p class="mb-2">Срок завершения проекта: {{ card.project_deadline_display }}.</p>
+                <p class="mb-2">Тип проекта: {{ card.project_type_display }}.</p>
+                <div class="mb-2">
+                  <div class="mb-2">Предлагаемый состав услуг (разделов):</div>
+                  <ul class="mb-0">
+                    {% for service in card.services %}
+                      <li>{{ service }}</li>
+                    {% empty %}
+                      <li>Без детализации</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+                <p class="mb-2">Предлагаемая оплата услуг: {{ card.agreed_amount_display }} {{ card.currency_code }}.</p>
+                <p class="mb-2">
+                  Принять решение об участии в проекте, кликнув на кнопку
+                  «Подтвердить участие» или «Отклонить», необходимо в течение
+                  {{ card.duration_hours }} часов с момента отправки данного сообщения —
+                  до {{ card.deadline_at_display }}.
+                </p>
+                <p class="mb-0">С уважением,<br>IMC Montan AI</p>
+              {% endif %}
             {% elif notification.notification_type == "project_contract_conclusion" %}
               <p class="mb-2">Добрый день, {{ card.recipient_name }}</p>
               <p class="mb-2">

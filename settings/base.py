@@ -59,6 +59,7 @@ INSTALLED_APPS = [
     "userprofile_app",
     "notifications_app",
     "contracts_app",
+    "letters_app",
 ]
 
 MIDDLEWARE = [

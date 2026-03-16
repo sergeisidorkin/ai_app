@@ -1,0 +1,257 @@
+{% load static %}
+
+<div id="letter-card-{{ template_type }}">
+
+  <!-- Main template card -->
+  <div class="card shadow-sm mt-3">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-start mb-4">
+        <h5 class="card-title mb-0 d-flex align-items-center"><i class="bi bi-layout-text-window me-2"></i>{{ card_title }}</h5>
+        {% if user_has_custom %}
+          <span class="badge text-bg-primary">
+            Ваш шаблон
+            {% if template.user %}
+              &mdash; {{ template.user.get_full_name|default:template.user.username }}
+            {% endif %}
+          </span>
+        {% else %}
+          <span class="badge text-bg-secondary">Общий шаблон</span>
+        {% endif %}
+      </div>
+
+      <!-- Preview mode -->
+      <div id="letter-preview-area-{{ template_type }}">
+        <!-- CC preview -->
+        <h6 class="card-title mb-3">Копия</h6>
+        <div class="border rounded py-2 bg-light mb-3 d-flex flex-wrap gap-1"
+             id="letter-cc-preview-{{ template_type }}"
+             style="padding-left: .5rem; padding-right: .5rem;">
+          {% if cc_recipients %}
+            {% for r in cc_recipients %}
+              <span class="badge fw-normal py-2 px-2 letter-cc-badge">{{ r.name }}</span>
+            {% endfor %}
+          {% else %}
+            <span class="text-muted">Не указано</span>
+          {% endif %}
+        </div>
+
+        <!-- Subject preview -->
+        <h6 class="card-title mt-4 mb-3">Заголовок</h6>
+        <div class="border rounded px-3 py-2 bg-light mb-3"
+             id="letter-subject-preview-{{ template_type }}">
+          {% if template.subject_template %}
+            {{ template.subject_template }}
+          {% else %}
+            <span class="text-muted">Не задан</span>
+          {% endif %}
+        </div>
+
+        <!-- Body preview -->
+        <h6 class="card-title mt-4 mb-3">Текст письма (уведомления)</h6>
+        <div class="letter-template-preview border rounded p-3 bg-light mb-3"
+             id="letter-preview-{{ template_type }}"
+             style="line-height: 1.2;">
+          {% if template %}
+            {{ template.body_html|safe }}
+          {% else %}
+            <p class="text-muted mb-0">Шаблон ещё не создан</p>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Editor container (hidden by default) -->
+      <div class="letter-editor-wrapper d-none" id="letter-editor-wrapper-{{ template_type }}">
+        <!-- CC editor -->
+        <h6 class="card-title mb-3">Копия</h6>
+        <div class="position-relative mb-3">
+          <div class="border rounded py-2 bg-white d-flex flex-wrap gap-1 align-items-center letter-cc-tags"
+               style="padding-left: .5rem; padding-right: .5rem;"
+               id="letter-cc-tags-{{ template_type }}">
+            {% for r in cc_recipients %}
+              <span class="badge fw-normal d-inline-flex align-items-center gap-1 py-2 px-2 letter-cc-badge letter-cc-tag"
+                    data-user-id="{{ r.id }}">
+                {{ r.name }}
+                <button type="button" class="btn-close btn-close-white ms-1 js-cc-remove"
+                        style="font-size: .55em;" aria-label="Удалить"></button>
+              </span>
+            {% endfor %}
+            <input type="text"
+                   class="border-0 flex-grow-1 letter-cc-input"
+                   id="letter-cc-input-{{ template_type }}"
+                   placeholder="Введите имя сотрудника..."
+                   autocomplete="off"
+                   style="outline:none; min-width:120px;">
+          </div>
+          <div class="dropdown-menu w-100 letter-cc-dropdown"
+               id="letter-cc-dropdown-{{ template_type }}"></div>
+        </div>
+
+        <!-- Subject editor -->
+        <h6 class="card-title mt-4 mb-3">Заголовок</h6>
+        <input type="text"
+               class="form-control mb-3"
+               id="letter-subject-input-{{ template_type }}"
+               value="{{ template.subject_template|default:'' }}"
+               placeholder="Тема письма с {переменными}">
+
+        <!-- Body editor -->
+        <h6 class="card-title mt-4 mb-3">Текст письма (уведомления)</h6>
+        <div id="letter-editor-{{ template_type }}" style="min-height: 250px;"></div>
+
+        <div class="d-flex gap-2 mt-3">
+          <button type="button" class="btn btn-primary btn-sm js-letter-save"
+                  data-template-type="{{ template_type }}"
+                  data-save-url="{% url 'letter_template_save' template_type %}">
+            Сохранить
+          </button>
+          <button type="button" class="btn btn-outline-secondary btn-sm js-letter-cancel"
+                  data-template-type="{{ template_type }}">
+            Отмена
+          </button>
+          {% if user_has_custom and not is_superuser %}
+            <button type="button" class="btn btn-outline-danger btn-sm ms-auto js-letter-reset"
+                    data-template-type="{{ template_type }}"
+                    data-reset-url="{% url 'letter_template_reset' template_type %}">
+              <i class="bi bi-arrow-counterclockwise me-1"></i>Сбросить к общему
+            </button>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Action buttons (shown when not editing) -->
+      <div class="letter-actions" id="letter-actions-{{ template_type }}">
+        <button type="button"
+                class="btn btn-primary btn-sm d-flex align-items-center js-letter-edit"
+                data-template-type="{{ template_type }}"
+                {% if not template %}disabled{% endif %}>
+          <i class="bi bi-pencil-square me-2"></i>Редактировать
+        </button>
+      </div>
+
+      <!-- Variables reference -->
+      {% if variables %}
+        <div class="mt-3">
+          <a class="text-muted small text-decoration-none" data-bs-toggle="collapse"
+             href="#letter-vars-{{ template_type }}" role="button" aria-expanded="false">
+            <i class="bi bi-info-circle me-1"></i>Доступные переменные
+          </a>
+          <div class="collapse mt-2" id="letter-vars-{{ template_type }}">
+            <div class="table-responsive">
+              <table class="table table-bordered mb-0 small">
+                <thead class="table-light">
+                  <tr>
+                    <th class="ps-3 py-2">Переменная</th>
+                    <th class="ps-3 py-2">Описание</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for key, desc in variables %}
+                    <tr>
+                      <td class="ps-3 py-2"><code>{{ key }}</code></td>
+                      <td class="ps-3 py-2">{{ desc }}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- User templates card (superuser only) -->
+  {% if is_superuser and user_templates %}
+    <div class="card shadow-sm mt-3">
+      <div class="card-body">
+        <div class="d-flex align-items-center mb-4">
+          <h5 class="card-title mb-0 d-flex align-items-center">
+            <img src="{% static 'core/icons/layout-text-window-user.svg' %}" alt="" width="20" height="20" class="me-2">
+            Шаблоны пользователей
+            <span class="badge text-bg-secondary fw-normal ms-2">{{ user_templates|length }}</span>
+          </h5>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-bordered table-hover mb-0 small">
+            <thead class="table-light">
+              <tr>
+                <th class="ps-3 py-2">Автор</th>
+                <th class="ps-3 py-2">Заголовок</th>
+                <th class="ps-3 py-2">Копия</th>
+                <th class="ps-3 py-2">Изменён</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for ut in user_templates %}
+                <tr class="js-user-tpl-row" style="cursor:pointer;"
+                    data-target="#user-tpl-detail-{{ template_type }}-{{ ut.id }}">
+                  <td class="ps-3 py-2">{{ ut.author }}</td>
+                  <td class="ps-3 py-2">{{ ut.subject }}</td>
+                  <td class="ps-3 py-2">
+                    {% if ut.cc %}
+                      {% for name in ut.cc %}
+                        <span class="badge fw-normal py-1 px-2 letter-cc-badge-outline">{{ name }}</span>
+                      {% endfor %}
+                    {% else %}
+                      <span class="text-muted">&mdash;</span>
+                    {% endif %}
+                  </td>
+                  <td class="ps-3 py-2">{{ ut.updated_at|date:"d.m.Y H:i" }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        {% for ut in user_templates %}
+          <div class="card shadow-sm mt-3 d-none" id="user-tpl-detail-{{ template_type }}-{{ ut.id }}">
+            <div class="card-body">
+              <div class="d-flex justify-content-between align-items-start mb-4">
+                <h6 class="card-title mb-0">&nbsp;</h6>
+                <span class="badge text-bg-primary fw-normal">{{ ut.author }}</span>
+              </div>
+
+              <h6 class="card-title mb-3">Копия</h6>
+              <div class="border rounded py-2 bg-light mb-3 d-flex flex-wrap gap-1"
+                   style="padding-left: .5rem; padding-right: .5rem;">
+                {% if ut.cc %}
+                  {% for name in ut.cc %}
+                    <span class="badge fw-normal py-2 px-2 letter-cc-badge">{{ name }}</span>
+                  {% endfor %}
+                {% else %}
+                  <span class="text-muted">Не указано</span>
+                {% endif %}
+              </div>
+
+              <h6 class="card-title mt-4 mb-3">Заголовок</h6>
+              <div class="border rounded px-3 py-2 bg-light mb-3">
+                {{ ut.subject }}
+              </div>
+
+              <h6 class="card-title mt-4 mb-3">Текст письма (уведомления)</h6>
+              <div class="letter-template-preview border rounded p-3 bg-light mb-3"
+                   style="line-height: 1.2;">
+                {{ ut.body_html|safe }}
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+</div>
+
+{% if just_saved %}
+<script>
+  (function() {
+    var toast = document.createElement('div');
+    toast.className = 'toast align-items-center text-bg-success border-0 show';
+    toast.setAttribute('role', 'alert');
+    toast.innerHTML = '<div class="d-flex"><div class="toast-body">Шаблон сохранён</div>' +
+      '<button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div>';
+    var root = document.getElementById('toast-root');
+    if (root) { root.appendChild(toast); setTimeout(function() { toast.remove(); }, 3000); }
+  })();
+</script>
+{% endif %}

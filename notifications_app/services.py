@@ -1,3 +1,4 @@
+import logging
 from collections import defaultdict
 from decimal import Decimal
 
@@ -8,6 +9,8 @@ from django.utils import timezone
 from projects_app.models import Performer
 
 from .models import Notification, NotificationPerformerLink
+
+logger = logging.getLogger(__name__)
 
 
 def _user_full_name(user):
@@ -82,7 +85,7 @@ def get_notification_queryset_for_user(user):
     )
 
 
-def _build_participation_payload(*, recipient, project, performers, request_sent_at, deadline_at, duration_hours):
+def _build_participation_payload(*, recipient, project, performers, request_sent_at, deadline_at, duration_hours, sender=None):
     services = [_service_line(performer) for performer in performers]
     agreed_amount = sum((performer.agreed_amount or Decimal("0")) for performer in performers)
     project_label_parts = [project.short_uid]
@@ -97,30 +100,66 @@ def _build_participation_payload(*, recipient, project, performers, request_sent
     deadline_at_label = timezone.localtime(deadline_at).strftime("%H:%M %d.%m.%Y") if deadline_at else "—"
     sent_at_label = timezone.localtime(request_sent_at).strftime("%d.%m.%Y %H:%M")
     title_text = f"Запрос подтверждения участия в проекте {project_label}".strip()
-    content_lines = [
-        f"Добрый день, {recipient_name}!",
-        "",
-        f"Приглашаем вас принять участие в новом проекте IMC Montan Group — {project_label}.",
-        f"Руководитель проекта: {project_manager}.",
-        f"Срок завершения проекта: {deadline_label}.",
-        f"Тип проекта: {_display_project_type(project)}.",
-        "Предлагаемый состав услуг (разделов):",
-    ]
-    for service in services:
-        content_lines.append(f"- {service}")
-    content_lines.extend(
-        [
-            f"Предлагаемая оплата услуг: {_display_amount(agreed_amount)}.",
-            (
-                "Принять решение об участии в проекте, кликнув на кнопку "
-                f"«Подтвердить участие» или «Отклонить», необходимо в течение {duration_hours} "
-                f"часов с момента отправки данного сообщения — до {deadline_at_label}."
-            ),
+
+    services_html = "<ul>" + "".join(f"<li>{s}</li>" for s in services) + "</ul>" if services else "<ul><li>Без детализации</li></ul>"
+
+    currency_code = ""
+    for p in performers:
+        if p.currency:
+            currency_code = p.currency.code_alpha or ""
+            break
+
+    template_vars = {
+        "recipient_name": recipient_name,
+        "project_label": project_label,
+        "project_manager": project_manager,
+        "project_deadline": deadline_label,
+        "project_type": _display_project_type(project),
+        "services_list": services_html,
+        "agreed_amount": _display_amount(agreed_amount),
+        "currency_code": currency_code,
+        "duration_hours": str(duration_hours),
+        "deadline_at": deadline_at_label,
+    }
+
+    content_text = None
+    try:
+        from letters_app.services import get_effective_template, render_template, render_subject
+        tpl = get_effective_template("participation_confirmation", sender)
+        if tpl:
+            content_text = render_template(tpl.body_html, template_vars)
+            if tpl.subject_template:
+                title_text = render_subject(tpl.subject_template, template_vars)
+    except Exception:
+        logger.debug("letters_app template lookup failed, using fallback", exc_info=True)
+
+    if content_text is None:
+        content_lines = [
+            f"Добрый день, {recipient_name}!",
             "",
-            "С уважением,",
-            "IMC Montan AI",
+            f"Приглашаем вас принять участие в новом проекте IMC Montan Group — {project_label}.",
+            f"Руководитель проекта: {project_manager}.",
+            f"Срок завершения проекта: {deadline_label}.",
+            f"Тип проекта: {_display_project_type(project)}.",
+            "Предлагаемый состав услуг (разделов):",
         ]
-    )
+        for service in services:
+            content_lines.append(f"- {service}")
+        content_lines.extend(
+            [
+                f"Предлагаемая оплата услуг: {_display_amount(agreed_amount)} {currency_code}".strip() + ".",
+                (
+                    "Принять решение об участии в проекте, кликнув на кнопку "
+                    f"«Подтвердить участие» или «Отклонить», необходимо в течение {duration_hours} "
+                    f"часов с момента отправки данного сообщения — до {deadline_at_label}."
+                ),
+                "",
+                "С уважением,",
+                "IMC Montan AI",
+            ]
+        )
+        content_text = "\n".join(content_lines).strip()
+
     payload = {
         "recipient_name": recipient_name,
         "project_label": project_label,
@@ -133,7 +172,7 @@ def _build_participation_payload(*, recipient, project, performers, request_sent
         "request_sent_at_display": sent_at_label,
         "deadline_at_display": deadline_at_label,
     }
-    return title_text, "\n".join(content_lines).strip(), payload
+    return title_text, content_text, payload
 
 
 @transaction.atomic
@@ -160,6 +199,7 @@ def create_participation_notifications(*, performers, sender, request_sent_at, d
             request_sent_at=request_sent_at,
             deadline_at=deadline_at,
             duration_hours=duration_hours,
+            sender=sender,
         )
         notification = Notification.objects.create(
             notification_type=Notification.NotificationType.PROJECT_PARTICIPATION_CONFIRMATION,
@@ -550,6 +590,9 @@ def serialize_notification_cards(notifications):
                 "currency_code": payload.get("currency_code") or "",
                 "prepayment_display": payload.get("prepayment_display") or "—",
                 "final_payment_display": payload.get("final_payment_display") or "—",
+                "content_html": (notification.content_text or "")
+                    if (notification.content_text or "").lstrip().startswith("<")
+                    else "",
             }
         )
     return cards
