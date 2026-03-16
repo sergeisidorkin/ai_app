@@ -367,6 +367,10 @@
     function renderTextCell(row, field, className) {
       const value = field === "short_name" ? row.shortName : row.name;
       const label = field === "short_name" ? "Краткое наименование" : "Наименование запроса";
+      let inner = renderTextValue(value);
+      if (field === "short_name" && row.sourceDataUrl) {
+        inner = `<a href="${escapeHtml(row.sourceDataUrl)}" target="_blank" rel="noopener" class="text-reset text-decoration-none">${inner}</a>`;
+      }
       return `<td
         id="grid-text-${field}-${row.id}"
         class="${className} chk-editable-text-cell"
@@ -376,7 +380,7 @@
         data-label="${escapeHtml(label)}"
         title="${escapeHtml(label)}"
         ${state.editMode && !state.payload.readonly ? 'tabindex="0"' : ""}>
-        ${renderTextValue(value)}
+        ${inner}
       </td>`;
     }
 
@@ -1121,7 +1125,11 @@
       if (!row) return;
       const shortNameEl = document.getElementById(`grid-text-short_name-${itemId}`);
       if (shortNameEl) {
-        shortNameEl.innerHTML = renderTextValue(row.shortName || "");
+        let html = renderTextValue(row.shortName || "");
+        if (row.sourceDataUrl) {
+          html = `<a href="${escapeHtml(row.sourceDataUrl)}" target="_blank" rel="noopener" class="text-reset text-decoration-none">${html}</a>`;
+        }
+        shortNameEl.innerHTML = html;
       }
       const nameEl = document.getElementById(`grid-text-name-${itemId}`);
       if (nameEl) {

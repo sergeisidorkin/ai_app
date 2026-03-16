@@ -439,6 +439,18 @@ def _build_table_context(project, section, asset_name, checklist_items, legal_en
         except Exception:
             pass
 
+    sd_url_map = {}
+    if checklist_items:
+        try:
+            from checklists_app.models import SourceDataItemFolder
+            sd_qs = SourceDataItemFolder.objects.filter(
+                checklist_item__in=[it.id for it in checklist_items],
+                asset_name=asset_name,
+            ).exclude(public_url="")
+            sd_url_map = {f.checklist_item_id: f.public_url for f in sd_qs}
+        except Exception:
+            pass
+
     rows = []
     seen_additional_groups = set()
     for item in checklist_items:
@@ -471,6 +483,7 @@ def _build_table_context(project, section, asset_name, checklist_items, legal_en
             "additional_header": additional_header,
             "file_count": folder.file_count if folder else None,
             "last_upload_at": folder.last_upload_at if folder else None,
+            "source_data_url": sd_url_map.get(item.id, ""),
         })
 
     return {
@@ -542,6 +555,18 @@ def _build_all_sections_context(project, section_items_list, asset_name, legal_e
         except Exception:
             pass
 
+    sd_url_map = {}
+    if all_item_ids:
+        try:
+            from checklists_app.models import SourceDataItemFolder
+            sd_qs = SourceDataItemFolder.objects.filter(
+                checklist_item__in=all_item_ids,
+                asset_name=asset_name,
+            ).exclude(public_url="")
+            sd_url_map = {f.checklist_item_id: f.public_url for f in sd_qs}
+        except Exception:
+            pass
+
     rows = []
     for sec, items in section_items_list:
         if not items:
@@ -581,6 +606,7 @@ def _build_all_sections_context(project, section_items_list, asset_name, legal_e
                 "additional_header": additional_header,
                 "file_count": folder.file_count if folder else None,
                 "last_upload_at": folder.last_upload_at if folder else None,
+                "source_data_url": sd_url_map.get(item.id, ""),
             })
 
     return {
@@ -957,6 +983,18 @@ def _build_grid_payload(
         except Exception:
             pass
 
+    sd_url_map = {}
+    if all_item_ids:
+        try:
+            from checklists_app.models import SourceDataItemFolder
+            sd_qs = SourceDataItemFolder.objects.filter(
+                checklist_item__in=all_item_ids,
+                asset_name=asset_name,
+            ).exclude(public_url="")
+            sd_url_map = {f.checklist_item_id: f.public_url for f in sd_qs}
+        except Exception:
+            pass
+
     status_label_map = dict(ChecklistStatus.Status.choices)
     customer_status_label_map = dict(ChecklistCustomerStatus.Status.choices)
     rows = []
@@ -1027,6 +1065,7 @@ def _build_grid_payload(
                     timezone.localtime(folder.last_upload_at).strftime("%d.%m.%y %H:%M")
                     if folder and folder.last_upload_at else None
                 ),
+                "sourceDataUrl": sd_url_map.get(item.id, ""),
                 "cells": cells,
                 "customerCells": customer_cells,
                 "actions": {

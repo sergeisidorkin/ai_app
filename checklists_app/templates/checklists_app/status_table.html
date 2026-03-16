@@ -123,7 +123,7 @@
           {% endif %}
           <td id="chk-code-{{ row.item.id }}" class="col-code text-nowrap {{ row.code_class }}">{{ row.item.code }}</td>
           <td id="chk-num-{{ row.item.id }}" class="col-num text-nowrap">{{ row.item.number|stringformat:"02d" }}</td>
-          <td class="text-nowrap">{{ row.item.short_name }}</td>
+          <td class="text-nowrap">{% if row.source_data_url %}<a href="{{ row.source_data_url }}" target="_blank" rel="noopener" class="text-reset text-decoration-none">{{ row.item.short_name }}</a>{% else %}{{ row.item.short_name }}{% endif %}</td>
           <td class="col-files text-nowrap">
             <div class="chk-files-info">
               <div>Всего файлов: {{ row.file_count|default:"—" }}</div>
