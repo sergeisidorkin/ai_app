@@ -210,12 +210,14 @@
       picking = true;
       var item = e.target.closest('.ler-ac-item');
       if (!item) return;
-      pick(results[parseInt(item.dataset.idx, 10)]);
+      var idx = parseInt(item.dataset.idx, 10);
+      if (results[idx]) pick(results[idx]);
     });
     list.addEventListener('click', function(e) {
       var item = e.target.closest('.ler-ac-item');
       if (!item) return;
-      pick(results[parseInt(item.dataset.idx, 10)]);
+      var idx = parseInt(item.dataset.idx, 10);
+      if (results[idx]) pick(results[idx]);
       picking = false;
     });
     input.addEventListener('blur', function() {
