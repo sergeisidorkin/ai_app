@@ -339,6 +339,7 @@ class ChecklistItemFolder(models.Model):
         related_name="yadisk_folders",
     )
     disk_path = models.CharField("Путь на диске", max_length=2048)
+    public_url = models.URLField("Публичная ссылка", blank=True, default="")
     file_count = models.PositiveIntegerField("Кол-во файлов", default=0)
     last_upload_at = models.DateTimeField("Последняя загрузка", null=True, blank=True)
     synced_at = models.DateTimeField("Последняя синхронизация", null=True, blank=True)
@@ -350,3 +351,55 @@ class ChecklistItemFolder(models.Model):
 
     def __str__(self):
         return f"Folder:{self.checklist_item_id}:{self.disk_path[:60]}"
+
+
+class SourceDataSectionFolder(models.Model):
+    """Папка типового раздела в пространстве исходных данных на Яндекс.Диске."""
+    project = models.ForeignKey(
+        "projects_app.ProjectRegistration",
+        on_delete=models.CASCADE,
+        related_name="source_data_section_folders",
+    )
+    section = models.ForeignKey(
+        "policy_app.TypicalSection",
+        on_delete=models.CASCADE,
+        related_name="source_data_folders",
+    )
+    asset_name = models.CharField("Наименование актива", max_length=255, blank=True, default="")
+    disk_path = models.CharField("Путь на диске", max_length=2048)
+    public_url = models.URLField("Публичная ссылка", blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Папка раздела исходных данных"
+        verbose_name_plural = "Папки разделов исходных данных"
+
+    def __str__(self):
+        return f"SectionFolder:{self.project_id}:{self.section_id}:{self.disk_path[:60]}"
+
+
+class SourceDataItemFolder(models.Model):
+    """Папка пункта чек-листа в пространстве исходных данных на Яндекс.Диске.
+    В отличие от ChecklistItemFolder допускает несколько записей для одного
+    пункта (при наличии нескольких активов в проекте)."""
+    project = models.ForeignKey(
+        "projects_app.ProjectRegistration",
+        on_delete=models.CASCADE,
+        related_name="source_data_item_folders",
+    )
+    checklist_item = models.ForeignKey(
+        ChecklistItem,
+        on_delete=models.CASCADE,
+        related_name="source_data_folders",
+    )
+    asset_name = models.CharField("Наименование актива", max_length=255, blank=True, default="")
+    disk_path = models.CharField("Путь на диске", max_length=2048)
+    public_url = models.URLField("Публичная ссылка", blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Папка запроса исходных данных"
+        verbose_name_plural = "Папки запросов исходных данных"
+
+    def __str__(self):
+        return f"ItemFolder:{self.project_id}:{self.checklist_item_id}:{self.disk_path[:60]}"

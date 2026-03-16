@@ -32,6 +32,9 @@ urlpatterns = [
     path("projects/performers/send-contract/", views.contract_request, name="contract_request"),
     path("projects/performers/request-info-approval/", views.info_request_approval, name="info_request_approval"),
     path("projects/performers/create-workspace/", views.create_workspace, name="create_workspace"),
+    path("projects/performers/create-source-data-workspace/", views.create_source_data_workspace, name="create_source_data_workspace"),
+    path("projects/performers/source-data-target-folder/", views.source_data_target_folder_load, name="source_data_target_folder_load"),
+    path("projects/performers/source-data-target-folder/save/", views.source_data_target_folder_save, name="source_data_target_folder_save"),
 
     path("projects/legal-entities/create/", views.legal_entity_form_create, name="legal_entity_form_create"),
     path("projects/legal-entities/<int:pk>/edit/", views.legal_entity_form_edit, name="legal_entity_form_edit"),

@@ -1440,6 +1440,98 @@ def workspace_folders_reset(request):
 
 
 @login_required
+@user_passes_test(staff_required)
+@require_POST
+def create_source_data_workspace(request):
+    from yandexdisk_app.workspace import create_source_data_workspace_stream, WorkspaceResult
+
+    project_id = request.POST.get("project_id")
+    if not project_id:
+        return JsonResponse({"ok": False, "error": "Не выбран проект."}, status=400)
+
+    try:
+        project_id = int(project_id)
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Некорректный ID проекта."}, status=400)
+
+    project = (
+        ProjectRegistration.objects
+        .select_related("type")
+        .filter(pk=project_id)
+        .first()
+    )
+    if not project:
+        return JsonResponse({"ok": False, "error": "Проект не найден."}, status=404)
+
+    MIN_CHUNK = 256
+
+    def _padded(line):
+        encoded = line.encode()
+        if len(encoded) < MIN_CHUNK:
+            encoded += b" " * (MIN_CHUNK - len(encoded))
+        return encoded
+
+    def _stream():
+        for item in create_source_data_workspace_stream(request.user, project):
+            if isinstance(item, WorkspaceResult):
+                if item.ok:
+                    yield _padded(json.dumps({"ok": True, "message": item.message}) + "\n")
+                else:
+                    yield _padded(json.dumps({"ok": False, "error": item.message}) + "\n")
+            else:
+                yield _padded(json.dumps(item) + "\n")
+
+    resp = StreamingHttpResponse(_stream(), content_type="application/x-ndjson")
+    resp["Cache-Control"] = "no-cache, no-store"
+    resp["X-Accel-Buffering"] = "no"
+    return resp
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_GET
+def source_data_target_folder_load(request):
+    from .models import SourceDataTargetFolder
+    from yandexdisk_app.workspace import REGISTRATION_STANDARD_FOLDERS
+
+    qs, _ = _get_effective_folders(request.user)
+    options = list(
+        qs.filter(level=1)
+        .order_by("position")
+        .values_list("name", flat=True)
+    )
+    if not options:
+        options = list(REGISTRATION_STANDARD_FOLDERS)
+
+    target = SourceDataTargetFolder.objects.filter(user=request.user).first()
+    folder_name = target.folder_name if target else ""
+
+    return JsonResponse({"folder_name": folder_name, "options": options})
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def source_data_target_folder_save(request):
+    from .models import SourceDataTargetFolder
+
+    try:
+        data = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Некорректные данные."}, status=400)
+
+    folder_name = (data.get("folder_name") or "").strip()
+    if not folder_name:
+        return JsonResponse({"ok": False, "error": "Не указано имя папки."}, status=400)
+
+    SourceDataTargetFolder.objects.update_or_create(
+        user=request.user,
+        defaults={"folder_name": folder_name},
+    )
+    return JsonResponse({"ok": True})
+
+
+@login_required
 @require_GET
 def identifier_for_country(request):
     country_id = request.GET.get("country_id")
