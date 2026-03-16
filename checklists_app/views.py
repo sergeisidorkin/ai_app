@@ -446,8 +446,9 @@ def _build_table_context(project, section, asset_name, checklist_items, legal_en
             sd_qs = SourceDataItemFolder.objects.filter(
                 checklist_item__in=[it.id for it in checklist_items],
             )
-            if asset_name and asset_name != "all":
-                sd_qs = sd_qs.filter(Q(asset_name=asset_name) | Q(asset_name=""))
+            resolved = _resolve_asset_names(project, asset_name)
+            if resolved:
+                sd_qs = sd_qs.filter(Q(asset_name__in=resolved) | Q(asset_name=""))
             sd_folder_map = {f.checklist_item_id: f for f in sd_qs}
         except Exception:
             pass
@@ -566,8 +567,9 @@ def _build_all_sections_context(project, section_items_list, asset_name, legal_e
             sd_qs = SourceDataItemFolder.objects.filter(
                 checklist_item__in=all_item_ids,
             )
-            if asset_name and asset_name != "all":
-                sd_qs = sd_qs.filter(Q(asset_name=asset_name) | Q(asset_name=""))
+            resolved = _resolve_asset_names(project, asset_name)
+            if resolved:
+                sd_qs = sd_qs.filter(Q(asset_name__in=resolved) | Q(asset_name=""))
             sd_folder_map = {f.checklist_item_id: f for f in sd_qs}
         except Exception:
             pass
@@ -998,8 +1000,9 @@ def _build_grid_payload(
             sd_qs = SourceDataItemFolder.objects.filter(
                 checklist_item__in=all_item_ids,
             )
-            if asset_name and asset_name != "all":
-                sd_qs = sd_qs.filter(Q(asset_name=asset_name) | Q(asset_name=""))
+            resolved = _resolve_asset_names(project, asset_name)
+            if resolved:
+                sd_qs = sd_qs.filter(Q(asset_name__in=resolved) | Q(asset_name=""))
             sd_folder_map = {f.checklist_item_id: f for f in sd_qs}
         except Exception:
             pass
