@@ -298,13 +298,6 @@
 
       if (fillEl) fillEl.style.width = '100%';
       if (statusEl) statusEl.innerHTML = '<span class="text-success">' + (lastResult.message || 'Готово!') + '</span>';
-
-      const modalEl = root.querySelector('#reg-create-workspace-modal');
-      setTimeout(() => {
-        const modal = modalEl ? window.bootstrap?.Modal.getInstance(modalEl) : null;
-        modal?.hide();
-        if (statusEl) statusEl.textContent = '';
-      }, 2000);
     } catch (err) {
       if (progressEl) progressEl.classList.add('d-none');
       if (statusEl) statusEl.innerHTML = '<span class="text-danger">' + (err.message || 'Ошибка') + '</span>';
