@@ -680,3 +680,21 @@ class RegistrationWorkspaceFolder(models.Model):
 
     def __str__(self):
         return f"L{self.level}: {self.name}"
+
+
+class SourceDataTargetFolder(models.Model):
+    """Хранит выбранную пользователем целевую папку уровня 1
+    для создания пространства исходных данных."""
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="source_data_target_folder",
+    )
+    folder_name = models.CharField(max_length=255)
+
+    class Meta:
+        verbose_name = "Целевая папка исходных данных"
+        verbose_name_plural = "Целевые папки исходных данных"
+
+    def __str__(self):
+        return f"{self.user}: {self.folder_name}"

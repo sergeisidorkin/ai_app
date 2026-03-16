@@ -746,7 +746,9 @@
       <div id="info-request-actions"
            class="d-flex align-items-stretch gap-2 products-actions-row"
            data-request-url="{% url 'info_request_approval' %}"
-           data-create-workspace-url="{% url 'create_workspace' %}">
+           data-create-source-data-url="{% url 'create_source_data_workspace' %}"
+           data-source-data-target-url="{% url 'source_data_target_folder_load' %}"
+           data-source-data-target-save-url="{% url 'source_data_target_folder_save' %}">
         <div class="btn-group">
           <button type="button"
                   id="info-request-btn"
@@ -765,17 +767,19 @@
         </div>
         <div class="btn-group">
           <button type="button"
-                  id="create-workspace-btn"
+                  id="create-source-data-btn"
                   class="btn btn-primary btn-sm d-flex align-items-center"
+                  data-bs-toggle="modal"
+                  data-bs-target="#create-source-data-modal"
                   disabled>
-            <i class="bi bi-cloud me-2"></i>Создать рабочее пространство
+            <i class="bi bi-cloud me-2"></i>Создать пространство исходных данных
           </button>
           <button type="button"
-                  id="create-workspace-settings-btn"
+                  id="source-data-settings-btn"
                   class="btn btn-primary btn-sm"
                   data-bs-toggle="modal"
-                  data-bs-target="#create-workspace-modal"
-                  title="Настройки рабочего пространства">
+                  data-bs-target="#source-data-settings-modal"
+                  title="Настройки пространства исходных данных">
             <i class="bi bi-gear"></i>
           </button>
         </div>
@@ -826,27 +830,48 @@
         </div>
       </div>
 
-      <div class="modal fade" id="create-workspace-modal" tabindex="-1" aria-hidden="true">
+      <div class="modal fade" id="create-source-data-modal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog">
           <div class="modal-content">
             <div class="modal-header">
-              <h5 class="modal-title">Создание рабочего пространства</h5>
+              <h5 class="modal-title">Создание пространства исходных данных</h5>
               <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
             </div>
             <div class="modal-body">
-              <p class="mb-2">На Яндекс.Диске будет создана структура папок для выбранного проекта:</p>
-              <ul class="small mb-3">
-                <li>Год / Проект ID Тип Название</li>
-                <li>Типовые папки (Документы, Командировки, ...)</li>
-                <li>Папки по типовым разделам и пунктам чек-листа</li>
-              </ul>
-              <div id="create-workspace-status" class="text-muted small"></div>
+              <p class="mb-3">На Яндекс.Диске в целевой директории будет создана структура папок для выбранного проекта в соответствии с согласованным информационным запросом.</p>
+              <div id="source-data-progress" class="d-none">
+                <div class="ws-progress-track">
+                  <div class="ws-progress-fill" style="width:0%"></div>
+                </div>
+              </div>
+              <div id="source-data-status" class="text-muted small mt-2"></div>
             </div>
             <div class="modal-footer">
               <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Закрыть</button>
-              <button type="button" id="create-workspace-confirm-btn" class="btn btn-primary btn-sm">
+              <button type="button" id="source-data-confirm-btn" class="btn btn-primary btn-sm">
                 <i class="bi bi-cloud me-1"></i>Создать
               </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal fade" id="source-data-settings-modal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title">Пространство исходных данных</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+            </div>
+            <div class="modal-body">
+              <label for="source-data-target-select" class="form-label">
+                Выбор целевой папки для создания пространства исходных данных:
+              </label>
+              <select id="source-data-target-select" class="form-select"></select>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Отмена</button>
+              <button type="button" id="source-data-target-save-btn" class="btn btn-primary btn-sm">Сохранить</button>
             </div>
           </div>
         </div>

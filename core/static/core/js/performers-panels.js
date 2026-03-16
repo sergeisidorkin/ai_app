@@ -111,8 +111,8 @@
       .map((row) => row.querySelector('input[name="info-request-select"]'))
       .filter((checkbox) => checkbox && !checkbox.disabled);
   }
-  function getCreateWorkspaceBtn() {
-    return pane()?.querySelector('#create-workspace-btn');
+  function getCreateSourceDataBtn() {
+    return pane()?.querySelector('#create-source-data-btn');
   }
 
   function getSelectedInfoRequestProjectId() {
@@ -141,7 +141,7 @@
       controls.classList.toggle('pe-none', !show);
     }
 
-    const wsBtn = getCreateWorkspaceBtn();
+    const wsBtn = getCreateSourceDataBtn();
     if (wsBtn) wsBtn.disabled = !getSelectedInfoRequestProjectId();
   }
 
@@ -614,48 +614,77 @@
       return;
     }
 
-    const wsConfirmBtn = e.target.closest('#create-workspace-confirm-btn');
-    if (wsConfirmBtn && root.contains(wsConfirmBtn)) {
+    const sdConfirmBtn = e.target.closest('#source-data-confirm-btn');
+    if (sdConfirmBtn && root.contains(sdConfirmBtn)) {
       const projectId = getSelectedInfoRequestProjectId();
       if (!projectId) {
         alert('Выберите проект в фильтре.');
         return;
       }
       const panel = getInfoRequestPanel();
-      const wsUrl = panel?.dataset?.createWorkspaceUrl;
-      if (!wsUrl) return;
+      const sdUrl = panel?.dataset?.createSourceDataUrl;
+      if (!sdUrl) return;
 
-      const statusEl = root.querySelector('#create-workspace-status');
-      wsConfirmBtn.disabled = true;
-      if (statusEl) statusEl.textContent = 'Создание папок…';
+      const statusEl = root.querySelector('#source-data-status');
+      const progressEl = root.querySelector('#source-data-progress');
+      const fillEl = progressEl?.querySelector('.ws-progress-fill');
+      sdConfirmBtn.disabled = true;
+      if (statusEl) statusEl.textContent = '';
+      if (fillEl) fillEl.style.width = '0%';
+      if (progressEl) progressEl.classList.remove('d-none');
 
       try {
         const formData = new FormData();
         formData.append('project_id', projectId);
 
-        const response = await fetch(wsUrl, {
+        const response = await fetch(sdUrl, {
           method: 'POST',
           headers: { 'X-CSRFToken': csrftoken },
           body: formData,
         });
-        const data = await response.json();
-        if (!response.ok || !data.ok) {
-          throw new Error(data?.error || 'Не удалось создать рабочее пространство.');
+
+        if (!response.ok && !response.body) {
+          throw new Error('Не удалось создать пространство исходных данных.');
         }
 
-        if (statusEl) statusEl.innerHTML = '<span class="text-success">' + (data.message || 'Готово!') + '</span>';
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let lastResult = null;
 
-        const modalEl = root.querySelector('#create-workspace-modal');
-        setTimeout(() => {
-          const modal = modalEl ? window.bootstrap?.Modal.getInstance(modalEl) : null;
-          modal?.hide();
-          if (statusEl) statusEl.textContent = '';
-        }, 2000);
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop();
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            const msg = JSON.parse(line);
+            if (msg.current !== undefined && msg.total) {
+              const pct = Math.round((msg.current / msg.total) * 100);
+              if (fillEl) fillEl.style.width = pct + '%';
+            }
+            if (msg.ok !== undefined) lastResult = msg;
+          }
+        }
+        if (buffer.trim()) {
+          const msg = JSON.parse(buffer);
+          if (msg.ok !== undefined) lastResult = msg;
+        }
+
+        if (!lastResult || !lastResult.ok) {
+          throw new Error(lastResult?.error || 'Не удалось создать пространство исходных данных.');
+        }
+
+        if (fillEl) fillEl.style.width = '100%';
+        if (statusEl) statusEl.innerHTML = '<span class="text-success">' + (lastResult.message || 'Готово!') + '</span>';
       } catch (err) {
+        if (progressEl) progressEl.classList.add('d-none');
         if (statusEl) statusEl.innerHTML = '<span class="text-danger">' + (err.message || 'Ошибка') + '</span>';
-        else alert(err.message || 'Не удалось создать рабочее пространство.');
+        else alert(err.message || 'Не удалось создать пространство исходных данных.');
       } finally {
-        wsConfirmBtn.disabled = false;
+        sdConfirmBtn.disabled = false;
       }
       return;
     }
@@ -935,6 +964,67 @@
     }
   });
 
+  // ── Source-data settings modal (gear) ──
+
+  function initSourceDataSettingsModal() {
+    const modalEl = document.getElementById('source-data-settings-modal');
+    if (!modalEl || modalEl.dataset.sdBound === '1') return;
+    modalEl.dataset.sdBound = '1';
+
+    modalEl.addEventListener('show.bs.modal', async () => {
+      const panel = document.getElementById('info-request-actions');
+      const url = panel?.dataset?.sourceDataTargetUrl;
+      if (!url) return;
+
+      const select = modalEl.querySelector('#source-data-target-select');
+      if (!select) return;
+
+      try {
+        const resp = await fetch(url, { headers: { 'X-CSRFToken': csrftoken } });
+        const data = await resp.json();
+        select.innerHTML = '';
+        (data.options || []).forEach((name) => {
+          const opt = document.createElement('option');
+          opt.value = name;
+          opt.textContent = name;
+          if (name === data.folder_name) opt.selected = true;
+          select.appendChild(opt);
+        });
+      } catch (_) { /* ignore */ }
+    });
+
+    const saveBtn = modalEl.querySelector('#source-data-target-save-btn');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', async () => {
+        const panel = document.getElementById('info-request-actions');
+        const saveUrl = panel?.dataset?.sourceDataTargetSaveUrl;
+        if (!saveUrl) return;
+
+        const select = modalEl.querySelector('#source-data-target-select');
+        const folderName = select?.value;
+        if (!folderName) return;
+
+        saveBtn.disabled = true;
+        try {
+          const resp = await fetch(saveUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken },
+            body: JSON.stringify({ folder_name: folderName }),
+          });
+          const data = await resp.json();
+          if (!data.ok) throw new Error(data.error || 'Ошибка сохранения');
+          const modal = window.bootstrap?.Modal.getInstance(modalEl);
+          modal?.hide();
+        } catch (err) {
+          alert(err.message || 'Не удалось сохранить.');
+        } finally {
+          saveBtn.disabled = false;
+        }
+      });
+    }
+  }
+  initSourceDataSettingsModal();
+
   function restorePerformersPane(root) {
     // Re-apply main performers filter, labels and totals before the browser
     // paints to avoid a visible flash of unfiltered / empty-totals state.
@@ -1045,6 +1135,7 @@
     getRowChecks('info-request-select').forEach(function(b) { b.checked = infoRequestSet.has(String(b.value)); });
     initInfoRequestProjectFilter();
     updateInfoRequestState();
+    initSourceDataSettingsModal();
     try { delete window.__tableSel['info-request-select']; } catch(_) {}
 
     applyRowGrouping(root.querySelector('#participation-confirmation-section'));

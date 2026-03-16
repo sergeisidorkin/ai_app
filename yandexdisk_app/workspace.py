@@ -10,7 +10,7 @@ from django.db import transaction
 from checklists_app.models import ChecklistItem, ChecklistItemFolder, ProjectWorkspace
 from projects_app.models import Performer, ProjectRegistration
 from yandexdisk_app.models import YandexDiskSelection
-from yandexdisk_app.service import create_folder, get_resource_info
+from yandexdisk_app.service import create_folder, get_resource_info, publish_resource
 
 logger = logging.getLogger(__name__)
 
@@ -263,3 +263,177 @@ def create_basic_project_workspace_stream(user, project: ProjectRegistration):
         yield {"current": current, "total": total}
 
     yield WorkspaceResult(True, "Рабочее пространство успешно создано.")
+
+
+DEFAULT_SOURCE_DATA_FOLDER = "05 Исходные данные"
+
+
+def _build_numbered_section_folder_name(nn: int, section) -> str:
+    code = getattr(section, "code", "") or ""
+    short_name_ru = getattr(section, "short_name_ru", "") or getattr(section, "short_name", "")
+    return _sanitize(f"{nn:02d} {code} {short_name_ru}".strip())
+
+
+def _resolve_source_data_base(user, project: ProjectRegistration):
+    """Return (base_path, error_result).
+
+    base_path is ``<disk_root>/<year>/<project_folder>/<target_folder>``.
+    If something is wrong, *error_result* is a ``WorkspaceResult``.
+    """
+    from projects_app.models import SourceDataTargetFolder
+
+    selection = YandexDiskSelection.objects.filter(user=user).first()
+    if not selection or not selection.resource_path:
+        return None, WorkspaceResult(
+            False, "Не выбрана папка на Яндекс.Диске. Подключите Яндекс.Диск и выберите папку.")
+
+    disk_root = selection.resource_path.rstrip("/")
+    year_str = str(project.year) if project.year else "Без года"
+    project_folder = _build_project_folder_name(project)
+
+    target_obj = SourceDataTargetFolder.objects.filter(user=user).first()
+    target_folder = _sanitize(target_obj.folder_name if target_obj else DEFAULT_SOURCE_DATA_FOLDER)
+
+    base_path = f"{disk_root}/{_sanitize(year_str)}/{project_folder}/{target_folder}"
+    return base_path, None
+
+
+def create_source_data_workspace_stream(user, project: ProjectRegistration):
+    """Generator: yields ``{"current": int, "total": int}`` progress dicts
+    and a final ``WorkspaceResult``."""
+    from collections import OrderedDict
+
+    from policy_app.models import TypicalSection
+    from checklists_app.models import (
+        ChecklistItem, SourceDataSectionFolder, SourceDataItemFolder,
+    )
+
+    base_path, err = _resolve_source_data_base(user, project)
+    if err:
+        yield err
+        return
+
+    # -- approved (asset_name, section_id) pairs -------------------------
+    approved_qs = (
+        Performer.objects
+        .filter(
+            registration=project,
+            info_approval_status=Performer.InfoApprovalStatus.APPROVED,
+            typical_section__isnull=False,
+        )
+        .values_list("asset_name", "typical_section_id")
+        .distinct()
+    )
+    approved_pairs = set(approved_qs)
+
+    if not approved_pairs:
+        yield WorkspaceResult(False, "Нет согласованных строк — папки не созданы.")
+        return
+
+    approved_section_ids = {sid for _, sid in approved_pairs}
+    unique_assets = sorted({a for a, _ in approved_pairs})
+    multi_asset = len(unique_assets) > 1
+
+    # -- numbering: NN by position among ALL product sections -------------
+    all_sections = list(
+        TypicalSection.objects
+        .filter(product=project.type)
+        .order_by("position", "id")
+    )
+    section_nn = {}  # section.id -> ordinal
+    for idx, sec in enumerate(all_sections, start=1):
+        section_nn[sec.id] = idx
+
+    # -- checklist items per section --------------------------------------
+    items_by_section = OrderedDict()
+    items_qs = (
+        ChecklistItem.objects
+        .filter(project=project, section_id__in=approved_section_ids)
+        .select_related("section")
+        .order_by("section__position", "section__id", "position", "id")
+    )
+    for item in items_qs:
+        items_by_section.setdefault(item.section_id, []).append(item)
+
+    # -- calculate total -------------------------------------------------
+    total = 0
+    if multi_asset:
+        total += len(unique_assets)
+    for asset in (unique_assets if multi_asset else [""]):
+        for sec in all_sections:
+            if sec.id not in approved_section_ids:
+                continue
+            if multi_asset and (asset, sec.id) not in approved_pairs:
+                continue
+            total += 1  # section folder
+            total += len(items_by_section.get(sec.id, []))  # item folders
+    current = 0
+
+    section_folder_records = []
+    item_folder_records = []
+
+    # -- create folders ---------------------------------------------------
+    for asset in (unique_assets if multi_asset else [""]):
+        if multi_asset:
+            asset_path = f"{base_path}/{_sanitize(asset)}"
+            if not create_folder(user, asset_path):
+                yield WorkspaceResult(False, f"Не удалось создать папку актива: {asset}")
+                return
+            current += 1
+            yield {"current": current, "total": total}
+        else:
+            asset_path = base_path
+
+        for section in all_sections:
+            if section.id not in approved_section_ids:
+                continue
+            if multi_asset and (asset, section.id) not in approved_pairs:
+                continue
+
+            nn = section_nn[section.id]
+            section_folder = _build_numbered_section_folder_name(nn, section)
+            section_disk_path = f"{asset_path}/{section_folder}"
+
+            if not create_folder(user, section_disk_path):
+                yield WorkspaceResult(False, f"Не удалось создать папку раздела: {section_folder}")
+                return
+
+            section_public_url = publish_resource(user, section_disk_path)
+            section_folder_records.append(SourceDataSectionFolder(
+                project=project,
+                section=section,
+                asset_name=asset,
+                disk_path=section_disk_path,
+                public_url=section_public_url,
+            ))
+            current += 1
+            yield {"current": current, "total": total}
+
+            for item in items_by_section.get(section.id, []):
+                item_folder = _build_item_folder_name(item)
+                item_disk_path = f"{section_disk_path}/{item_folder}"
+
+                if not create_folder(user, item_disk_path):
+                    yield WorkspaceResult(
+                        False, f"Не удалось создать папку запроса: {item_folder}")
+                    return
+
+                item_public_url = publish_resource(user, item_disk_path)
+                item_folder_records.append(SourceDataItemFolder(
+                    project=project,
+                    checklist_item=item,
+                    asset_name=asset,
+                    disk_path=item_disk_path,
+                    public_url=item_public_url,
+                ))
+                current += 1
+                yield {"current": current, "total": total}
+
+    # -- persist to DB ----------------------------------------------------
+    with transaction.atomic():
+        SourceDataSectionFolder.objects.filter(project=project).delete()
+        SourceDataItemFolder.objects.filter(project=project).delete()
+        SourceDataSectionFolder.objects.bulk_create(section_folder_records)
+        SourceDataItemFolder.objects.bulk_create(item_folder_records)
+
+    yield WorkspaceResult(True, "Пространство исходных данных успешно создано.")

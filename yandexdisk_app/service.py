@@ -136,6 +136,37 @@ def create_folder(user, path: str) -> bool:
         return False
 
 
+def publish_resource(user, path: str) -> str:
+    """Опубликовать ресурс и вернуть public_url (или пустую строку при ошибке)."""
+    token = _get_token(user)
+    if not token:
+        return ""
+
+    headers = {"Authorization": f"OAuth {token}"}
+
+    try:
+        resp = requests.put(
+            f"{YANDEX_DISK_API}/resources/publish",
+            headers=headers,
+            params={"path": path},
+            timeout=15,
+        )
+        if resp.status_code not in (200, 201):
+            return ""
+
+        info = requests.get(
+            f"{YANDEX_DISK_API}/resources",
+            headers=headers,
+            params={"path": path, "fields": "public_url,public_key"},
+            timeout=15,
+        )
+        if info.status_code == 200:
+            return info.json().get("public_url", "")
+        return ""
+    except Exception:
+        return ""
+
+
 def get_resource_info(user, path: str) -> Optional[Dict]:
     """Получить информацию о ресурсе (файле/папке)."""
     token = _get_token(user)
