@@ -326,6 +326,31 @@ class ProjectWorkspace(models.Model):
         return f"Workspace:{self.project_id}:{self.disk_path[:60]}"
 
 
+class SourceDataWorkspace(models.Model):
+    """Корневая папка пространства исходных данных проекта на Яндекс.Диске."""
+    project = models.OneToOneField(
+        "projects_app.ProjectRegistration",
+        on_delete=models.CASCADE,
+        related_name="source_data_workspace",
+    )
+    disk_path = models.CharField("Путь на диске", max_length=2048)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_source_data_workspaces",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Пространство исходных данных"
+        verbose_name_plural = "Пространства исходных данных"
+
+    def __str__(self):
+        return f"SourceDataWS:{self.project_id}:{self.disk_path[:60]}"
+
+
 class ChecklistItemFolder(models.Model):
     """Связь пункта чек-листа с папкой на Яндекс.Диске."""
     checklist_item = models.OneToOneField(
@@ -368,6 +393,9 @@ class SourceDataSectionFolder(models.Model):
     asset_name = models.CharField("Наименование актива", max_length=255, blank=True, default="")
     disk_path = models.CharField("Путь на диске", max_length=2048)
     public_url = models.URLField("Публичная ссылка", blank=True, default="")
+    file_count = models.PositiveIntegerField("Кол-во файлов", default=0)
+    last_upload_at = models.DateTimeField("Последняя загрузка", null=True, blank=True)
+    synced_at = models.DateTimeField("Последняя синхронизация", null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -395,6 +423,9 @@ class SourceDataItemFolder(models.Model):
     asset_name = models.CharField("Наименование актива", max_length=255, blank=True, default="")
     disk_path = models.CharField("Путь на диске", max_length=2048)
     public_url = models.URLField("Публичная ссылка", blank=True, default="")
+    file_count = models.PositiveIntegerField("Кол-во файлов", default=0)
+    last_upload_at = models.DateTimeField("Последняя загрузка", null=True, blank=True)
+    synced_at = models.DateTimeField("Последняя синхронизация", null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

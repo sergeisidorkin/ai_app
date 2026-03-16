@@ -31,84 +31,116 @@ def _parse_modified(dt_str: str):
         return None
 
 
+def _sync_folders(user, folders, delay, list_resources):
+    """Sync file_count / last_upload_at for a queryset of folder records.
+
+    Each record must have ``disk_path``, ``file_count``, ``last_upload_at``,
+    ``synced_at`` fields.  Returns the number of actually updated folders.
+    """
+    if not folders.exists():
+        return 0
+
+    parent_paths = set()
+    for f in folders:
+        parts = f.disk_path.rsplit("/", 1)
+        if len(parts) == 2:
+            parent_paths.add(parts[0])
+
+    parent_cache = {}
+    for pp in parent_paths:
+        items = list_resources(user, pp, limit=1000)
+        time.sleep(delay)
+        parent_cache[pp] = {it["path"]: it for it in items}
+
+    now = timezone.now()
+    updated = 0
+
+    for folder in folders:
+        parent_path = folder.disk_path.rsplit("/", 1)[0] if "/" in folder.disk_path else ""
+        item_data = parent_cache.get(parent_path, {})
+
+        folder_info = item_data.get(folder.disk_path)
+        if not folder_info:
+            normalized = folder.disk_path
+            if normalized.startswith("disk:"):
+                normalized = normalized[5:]
+            for key, val in item_data.items():
+                k = key[5:] if key.startswith("disk:") else key
+                if k == normalized:
+                    folder_info = val
+                    break
+
+        if folder_info:
+            contents = list_resources(user, folder.disk_path, limit=1000)
+            time.sleep(delay)
+
+            files_only = [c for c in contents if c.get("type") == "file"]
+            file_count = len(files_only)
+            last_mod = None
+            for f in files_only:
+                mod = _parse_modified(f.get("modified"))
+                if mod and (last_mod is None or mod > last_mod):
+                    last_mod = mod
+
+            folder.file_count = file_count
+            folder.last_upload_at = last_mod
+            folder.synced_at = now
+            folder.save(update_fields=["file_count", "last_upload_at", "synced_at"])
+            updated += 1
+        else:
+            folder.synced_at = now
+            folder.save(update_fields=["synced_at"])
+
+    return updated
+
+
 def run_sync(delay: float = API_DELAY) -> int:
     """
     Один цикл синхронизации. Возвращает число обновлённых папок.
     """
-    from checklists_app.models import ChecklistItemFolder, ProjectWorkspace
+    from checklists_app.models import (
+        ChecklistItemFolder, ProjectWorkspace,
+        SourceDataWorkspace, SourceDataSectionFolder, SourceDataItemFolder,
+    )
     from yandexdisk_app.models import YandexDiskAccount
     from yandexdisk_app.service import list_resources
 
-    workspaces = ProjectWorkspace.objects.select_related("created_by").all()
-    if not workspaces.exists():
-        return 0
+    total_updated = 0
 
+    # ── 1. Рабочие пространства проектов (ChecklistItemFolder) ──────────
+    workspaces = ProjectWorkspace.objects.select_related("created_by").all()
     ws_by_user = defaultdict(list)
     for ws in workspaces:
         if ws.created_by_id:
             ws_by_user[ws.created_by_id].append(ws)
-
-    total_updated = 0
 
     for user_id, user_workspaces in ws_by_user.items():
         user = user_workspaces[0].created_by
         if not YandexDiskAccount.objects.filter(user=user).exists():
             logger.warning("У пользователя %s нет подключения к Яндекс.Диску, пропускаем", user)
             continue
-
         for ws in user_workspaces:
             folders = ChecklistItemFolder.objects.filter(project=ws.project)
-            if not folders.exists():
-                continue
+            total_updated += _sync_folders(user, folders, delay, list_resources)
 
-            section_paths = set()
-            for f in folders:
-                parts = f.disk_path.rsplit("/", 1)
-                if len(parts) == 2:
-                    section_paths.add(parts[0])
+    # ── 2. Пространства исходных данных (SourceData*Folder) ─────────────
+    sd_workspaces = SourceDataWorkspace.objects.select_related("created_by").all()
+    sd_by_user = defaultdict(list)
+    for sdws in sd_workspaces:
+        if sdws.created_by_id:
+            sd_by_user[sdws.created_by_id].append(sdws)
 
-            section_cache = {}
-            for section_path in section_paths:
-                items = list_resources(user, section_path, limit=1000)
-                time.sleep(delay)
-                section_cache[section_path] = {it["path"]: it for it in items}
+    for user_id, user_sd_workspaces in sd_by_user.items():
+        user = user_sd_workspaces[0].created_by
+        if not YandexDiskAccount.objects.filter(user=user).exists():
+            logger.warning("У пользователя %s нет подключения к Яндекс.Диску, пропускаем", user)
+            continue
+        for sdws in user_sd_workspaces:
+            section_folders = SourceDataSectionFolder.objects.filter(project=sdws.project)
+            total_updated += _sync_folders(user, section_folders, delay, list_resources)
 
-            now = timezone.now()
-            for folder in folders:
-                section_path = folder.disk_path.rsplit("/", 1)[0] if "/" in folder.disk_path else ""
-                item_data = section_cache.get(section_path, {})
-
-                folder_info = item_data.get(folder.disk_path)
-                if not folder_info:
-                    normalized = folder.disk_path
-                    if normalized.startswith("disk:"):
-                        normalized = normalized[5:]
-                    for key, val in item_data.items():
-                        k = key[5:] if key.startswith("disk:") else key
-                        if k == normalized:
-                            folder_info = val
-                            break
-
-                if folder_info:
-                    contents = list_resources(user, folder.disk_path, limit=1000)
-                    time.sleep(delay)
-
-                    files_only = [c for c in contents if c.get("type") == "file"]
-                    file_count = len(files_only)
-                    last_mod = None
-                    for f in files_only:
-                        mod = _parse_modified(f.get("modified"))
-                        if mod and (last_mod is None or mod > last_mod):
-                            last_mod = mod
-
-                    folder.file_count = file_count
-                    folder.last_upload_at = last_mod
-                    folder.synced_at = now
-                    folder.save(update_fields=["file_count", "last_upload_at", "synced_at"])
-                    total_updated += 1
-                else:
-                    folder.synced_at = now
-                    folder.save(update_fields=["synced_at"])
+            item_folders = SourceDataItemFolder.objects.filter(project=sdws.project)
+            total_updated += _sync_folders(user, item_folders, delay, list_resources)
 
     return total_updated
 

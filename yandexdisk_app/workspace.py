@@ -306,6 +306,7 @@ def create_source_data_workspace_stream(user, project: ProjectRegistration):
     from policy_app.models import TypicalSection
     from checklists_app.models import (
         ChecklistItem, SourceDataSectionFolder, SourceDataItemFolder,
+        SourceDataWorkspace,
     )
 
     base_path, err = _resolve_source_data_base(user, project)
@@ -435,5 +436,10 @@ def create_source_data_workspace_stream(user, project: ProjectRegistration):
         SourceDataItemFolder.objects.filter(project=project).delete()
         SourceDataSectionFolder.objects.bulk_create(section_folder_records)
         SourceDataItemFolder.objects.bulk_create(item_folder_records)
+
+        SourceDataWorkspace.objects.update_or_create(
+            project=project,
+            defaults={"disk_path": base_path, "created_by": user},
+        )
 
     yield WorkspaceResult(True, "Пространство исходных данных успешно создано.")
