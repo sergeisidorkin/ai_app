@@ -728,6 +728,20 @@
                           <i class="bi bi-table me-2"></i>
                           Юридические лица
                         </h5>
+                        <div class="d-flex align-items-center gap-2">
+                          <label class="form-label mb-0 text-nowrap small" for="ler-date-filter">Действителен на дату:</label>
+                          <input type="date"
+                                 class="form-control form-control-sm"
+                                 id="ler-date-filter"
+                                 name="ler_date"
+                                 value="{{ ler_date_filter }}"
+                                 style="width: auto;"
+                                 hx-get="{% url 'ler_table_partial' %}"
+                                 hx-target="#ler-table-wrap"
+                                 hx-swap="innerHTML"
+                                 hx-trigger="change"
+                                 hx-include="this">
+                        </div>
                       </div>
                       <div class="table-responsive">
                         <div id="ler-table-wrap"

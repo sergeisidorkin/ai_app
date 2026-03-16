@@ -336,6 +336,21 @@
       });
     });
 
+    window.__syncContractProjectFilter = function(values) {
+      var isAll = values[0] === FILTER_ALL;
+      var isSingle = !isAll && values.length === 1;
+      var set = new Set(values);
+      checks.forEach(function(cb) {
+        if (isAll) { cb.checked = cb.value === FILTER_ALL; cb.disabled = false; }
+        else if (isSingle) { cb.checked = cb.value === values[0]; cb.disabled = true; }
+        else {
+          if (cb.value === FILTER_ALL) { cb.checked = true; cb.disabled = false; }
+          else { cb.checked = set.has(cb.value); cb.disabled = !set.has(cb.value); }
+        }
+      });
+      applyFilter(isAll ? [FILTER_ALL] : values.slice());
+    };
+
     const initialValues = window.__contractProjectFilter && window.__contractProjectFilter.length
       ? window.__contractProjectFilter
       : [FILTER_ALL];
@@ -432,6 +447,21 @@
       });
     });
 
+    window.__syncParticipationProjectFilter = function(values) {
+      var isAll = values[0] === FILTER_ALL;
+      var isSingle = !isAll && values.length === 1;
+      var set = new Set(values);
+      checks.forEach(function(cb) {
+        if (isAll) { cb.checked = cb.value === FILTER_ALL; cb.disabled = false; }
+        else if (isSingle) { cb.checked = cb.value === values[0]; cb.disabled = true; }
+        else {
+          if (cb.value === FILTER_ALL) { cb.checked = true; cb.disabled = false; }
+          else { cb.checked = set.has(cb.value); cb.disabled = !set.has(cb.value); }
+        }
+      });
+      applyFilter(isAll ? [FILTER_ALL] : values.slice());
+    };
+
     const initialValues = window.__participationProjectFilter && window.__participationProjectFilter.length
       ? window.__participationProjectFilter
       : [FILTER_ALL];
@@ -503,6 +533,28 @@
 
   document.addEventListener('click', async (e) => {
     const root = pane(); if (!root) return;
+
+    const quickEdit = e.target.closest('.performer-quick-edit');
+    if (quickEdit && root.contains(quickEdit)) {
+      const tr = quickEdit.closest('tr');
+      if (!tr) return;
+      const url = tr.dataset.editUrl;
+      if (!url) return;
+
+      getRowChecks('performer-select').forEach(b => { b.checked = false; });
+      const cb = tr.querySelector('input[name="performer-select"]');
+      if (cb) cb.checked = true;
+
+      window.__tableSel['performer-select'] = cb ? [String(cb.value)] : [];
+      window.__tableSelLast = 'performer-select';
+
+      updatePerformerMasterState();
+      updateRowHighlight('performer-select');
+      ensurePerformerActionsVisibility();
+
+      await htmx.ajax('GET', url, { target: '#performers-modal .modal-content', swap: 'innerHTML' });
+      return;
+    }
 
     const infoRequestBtn = e.target.closest('#info-request-btn');
     if (infoRequestBtn && root.contains(infoRequestBtn)) {
@@ -884,6 +936,88 @@
   });
 
   function restorePerformersPane(root) {
+    // Re-apply main performers filter, labels and totals before the browser
+    // paints to avoid a visible flash of unfiltered / empty-totals state.
+    (function earlyRestore() {
+      var FA = '__all__';
+      var pf = window.__perfProjectFilter || [FA];
+      var af = window.__perfAssetFilter || [FA];
+      var allProj = !pf.length || pf.indexOf(FA) !== -1;
+      var allAsset = !af.length || af.indexOf(FA) !== -1;
+
+      var perfRows = root.querySelectorAll(
+        '#performers-main-section table.performers-table tbody tr[data-project-id]'
+      );
+
+      if (!allProj || !allAsset) {
+        perfRows.forEach(function(row) {
+          var mp = allProj || pf.indexOf(row.dataset.projectId || '') !== -1;
+          var ma = allAsset || af.indexOf(row.dataset.assetName || '') !== -1;
+          if (!(mp && ma)) row.classList.add('d-none');
+        });
+      }
+      if (typeof window.__enforceMasterOnRows === 'function') window.__enforceMasterOnRows();
+
+      // --- filter labels ---
+      var projLabel = root.querySelector('.js-perf-filter-label');
+      if (projLabel) {
+        if (allProj) {
+          projLabel.textContent = 'Все';
+        } else if (pf.length === 1) {
+          var cb = root.querySelector('.js-perf-filter[value="' + CSS.escape(pf[0]) + '"]');
+          projLabel.textContent = cb && cb.nextElementSibling
+            ? cb.nextElementSibling.textContent.trim() : '1 проект';
+        } else {
+          projLabel.textContent = pf.length + ' выбрано';
+        }
+      }
+      var assetLabel = root.querySelector('.js-perf-asset-label');
+      if (assetLabel) {
+        if (allAsset) assetLabel.textContent = 'Все';
+        else if (af.length === 1) assetLabel.textContent = af[0];
+        else assetLabel.textContent = af.length + ' выбрано';
+      }
+
+      // --- totals ---
+      var sums = { actual: {}, estimated: {}, agreed: {} };
+      perfRows.forEach(function(row) {
+        if (row.classList.contains('d-none')) return;
+        var a = row.querySelector('[data-sum-actual]');
+        var e = row.querySelector('[data-sum-estimated]');
+        var g = row.querySelector('[data-sum-agreed]');
+        [['actual', a, 'sumActual'], ['estimated', e, 'sumEstimated'], ['agreed', g, 'sumAgreed']].forEach(function(t) {
+          var cell = t[1];
+          if (!cell) return;
+          var val = parseFloat(cell.dataset[t[2]]) || 0;
+          if (!val) return;
+          var cur = cell.dataset.currency || '';
+          if (!sums[t[0]][cur]) sums[t[0]][cur] = 0;
+          sums[t[0]][cur] += val;
+        });
+      });
+      function fmtT(n) {
+        var p = n.toFixed(2).split('.');
+        p[0] = p[0].replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0');
+        return p.join(',');
+      }
+      function renderS(obj) {
+        var parts = [];
+        for (var c in obj) {
+          if (!obj[c]) continue;
+          var s = fmtT(obj[c]);
+          if (c) s += ' ' + c;
+          parts.push(s);
+        }
+        return parts.join(', ');
+      }
+      var elA = root.querySelector('#perf-total-actual');
+      var elE = root.querySelector('#perf-total-estimated');
+      var elG = root.querySelector('#perf-total-agreed');
+      if (elA) elA.textContent = renderS(sums.actual);
+      if (elE) elE.textContent = renderS(sums.estimated);
+      if (elG) elG.textContent = renderS(sums.agreed);
+    })();
+
     var performerIds = (window.__tableSel && window.__tableSel['performer-select']) || [];
     var performerSet = new Set(performerIds || []);
     getRowChecks('performer-select').forEach(function(b) { b.checked = performerSet.has(String(b.value)); });
@@ -920,10 +1054,153 @@
     window.__tableSelLast = null;
   }
 
+  document.body.addEventListener('htmx:beforeSwap', function (e) {
+    var root = pane(); if (!root) return;
+    if (!(e.target === root || root.contains(e.target))) return;
+    window.__perfScrollY = window.scrollY;
+  });
+
   document.body.addEventListener('htmx:afterSwap', function (e) {
     var root = pane(); if (!root) return;
     if (!(e.target === root || root.contains(e.target))) return;
     restorePerformersPane(root);
+    if (typeof window.__perfScrollY === 'number') {
+      window.scrollTo(0, window.__perfScrollY);
+    }
+  });
+
+  document.body.addEventListener('htmx:afterSettle', function (e) {
+    var root = pane(); if (!root) return;
+    if (!(e.target === root || root.contains(e.target))) return;
+    ensurePerformerActionsVisibility();
+    if (typeof window.__perfScrollY === 'number') {
+      window.scrollTo(0, window.__perfScrollY);
+      delete window.__perfScrollY;
+    }
+  });
+
+  // ---- Prev / Next navigation inside performers modal ----
+
+  function getVisiblePerfRows() {
+    var root = pane();
+    if (!root) return [];
+    return Array.from(root.querySelectorAll(
+      '#performers-main-section table.performers-table tbody tr[data-project-id]'
+    )).filter(function(r) { return !r.classList.contains('d-none'); });
+  }
+
+  function findCurrentPerfIndex(rows) {
+    var checked = getChecked('performer-select');
+    if (!checked.length) return -1;
+    var id = String(checked[0].value);
+    for (var i = 0; i < rows.length; i++) {
+      var cb = rows[i].querySelector('input[name="performer-select"]');
+      if (cb && String(cb.value) === id) return i;
+    }
+    return -1;
+  }
+
+  function updatePerfNavButtons() {
+    var modal = document.getElementById('performers-modal');
+    if (!modal) return;
+    var prevBtn = modal.querySelector('[data-perf-nav="prev"]');
+    var nextBtn = modal.querySelector('[data-perf-nav="next"]');
+    if (!prevBtn && !nextBtn) return;
+    var rows = getVisiblePerfRows();
+    var idx = findCurrentPerfIndex(rows);
+    if (prevBtn) prevBtn.disabled = idx <= 0;
+    if (nextBtn) nextBtn.disabled = idx < 0 || idx >= rows.length - 1;
+  }
+
+  document.body.addEventListener('htmx:afterSwap', function (e) {
+    var modal = document.getElementById('performers-modal');
+    if (!modal) return;
+    var mc = modal.querySelector('.modal-content');
+    if (mc && (e.target === mc || mc.contains(e.target))) updatePerfNavButtons();
+  });
+
+  function rawMoneyValue(v) {
+    return String(v).replace(/\s/g, '').replace(/\u00a0/g, '').replace(',', '.');
+  }
+
+  function swapModalHtml(container, html) {
+    container.innerHTML = html;
+    Array.from(container.querySelectorAll('script')).forEach(function(old) {
+      var s = document.createElement('script');
+      Array.from(old.attributes).forEach(function(a) { s.setAttribute(a.name, a.value); });
+      s.textContent = old.textContent;
+      old.parentNode.replaceChild(s, old);
+    });
+    htmx.process(container);
+  }
+
+  document.addEventListener('click', async function (e) {
+    var navBtn = e.target.closest('[data-perf-nav]');
+    if (!navBtn) return;
+    var modal = document.getElementById('performers-modal');
+    if (!modal || !modal.contains(navBtn)) return;
+
+    var direction = navBtn.dataset.perfNav;
+    var rows = getVisiblePerfRows();
+    var idx = findCurrentPerfIndex(rows);
+    var targetIdx = direction === 'next' ? idx + 1 : idx - 1;
+    if (targetIdx < 0 || targetIdx >= rows.length) return;
+
+    var targetRow = rows[targetIdx];
+    var targetUrl = targetRow.dataset.editUrl;
+    var targetCb = targetRow.querySelector('input[name="performer-select"]');
+    var targetId = targetCb ? String(targetCb.value) : null;
+    if (!targetUrl || !targetId) return;
+
+    var mc = modal.querySelector('.modal-content');
+    var form = mc?.querySelector('form');
+    var postUrl = form?.getAttribute('hx-post');
+
+    if (form && postUrl) {
+      navBtn.disabled = true;
+      mc.querySelectorAll('.js-money-input').forEach(function(inp) {
+        inp.value = rawMoneyValue(inp.value);
+      });
+
+      var formData = new FormData(form);
+
+      try {
+        var resp = await fetch(postUrl, {
+          method: 'POST',
+          headers: { 'X-CSRFToken': csrftoken },
+          body: formData,
+        });
+
+        if (resp.status === 204) {
+          getRowChecks('performer-select').forEach(function(b) { b.checked = false; });
+          if (targetCb) targetCb.checked = true;
+          window.__tableSel['performer-select'] = [targetId];
+          window.__tableSelLast = 'performer-select';
+          updatePerformerMasterState();
+          updateRowHighlight('performer-select');
+          ensurePerformerActionsVisibility();
+
+          var paneEl = document.getElementById('performers-pane');
+          var paneUrl = paneEl?.getAttribute('hx-get');
+
+          await htmx.ajax('GET', targetUrl, {
+            target: '#performers-modal .modal-content', swap: 'innerHTML'
+          });
+
+          if (paneUrl) {
+            htmx.ajax('GET', paneUrl, {
+              target: '#performers-pane', swap: 'innerHTML'
+            });
+          }
+        } else {
+          var html = await resp.text();
+          swapModalHtml(mc, html);
+        }
+      } catch (err) {
+        console.error('perf-nav save error', err);
+        navBtn.disabled = false;
+      }
+    }
   });
 
   document.addEventListener('DOMContentLoaded', () => {
@@ -935,6 +1212,18 @@
       applyRowGrouping(root.querySelector('#participation-confirmation-section'));
       applyRowGrouping(root.querySelector('#contract-conclusion-section'));
       applyRowGrouping(root.querySelector('#info-request-approval-section'));
+    }
+
+    const perfModal = document.getElementById('performers-modal');
+    if (perfModal) {
+      perfModal.addEventListener('hidden.bs.modal', () => {
+        window.__tableSel['performer-select'] = [];
+        window.__tableSelLast = null;
+        getRowChecks('performer-select').forEach(b => { b.checked = false; });
+        updatePerformerMasterState();
+        updateRowHighlight('performer-select');
+        ensurePerformerActionsVisibility();
+      });
     }
   });
 })();

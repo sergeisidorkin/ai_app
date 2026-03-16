@@ -181,9 +181,24 @@ def _lw_context(request, param_name="lw_date"):
 #  LER (База юридических лиц) queryset helpers
 # ---------------------------------------------------------------------------
 
+def _get_ler_queryset(as_of: date_type | None = None):
+    qs = LegalEntityRecord.objects.select_related("registration_country")
+    if as_of is None:
+        return qs
+    return qs.filter(
+        Q(name_received_date__lte=as_of),
+    ).filter(
+        Q(name_changed_date__isnull=True) | Q(name_changed_date__gt=as_of),
+    )
+
+
 def _ler_context(request):
+    date_filter = _parse_date(_req_param(request, "ler_date"))
+    if date_filter is None and not _has_param(request, "ler_date"):
+        date_filter = date_type.today()
     return {
-        "ler_items": LegalEntityRecord.objects.select_related("registration_country").order_by("position", "id"),
+        "ler_items": _get_ler_queryset(date_filter).order_by("position", "id"),
+        "ler_date_filter": date_filter.isoformat() if date_filter else "",
     }
 
 
@@ -1057,18 +1072,23 @@ def country_code_lookup(request):
 
 
 def ler_search(request):
-    """Search LegalEntityRecord by partial short_name match."""
+    """Search LegalEntityRecord by partial short_name / full_name / registration_number match."""
     q = (request.GET.get("q") or "").strip()
     if len(q) < 1:
-        return JsonResponse({"results": []})
-    items = (
-        LegalEntityRecord.objects
-        .select_related("registration_country")
-        .filter(short_name__icontains=q)
-        .order_by("short_name")[:15]
+        return JsonResponse({"results": [], "total_count": 0})
+    today = date_type.today()
+    qs = (
+        _get_ler_queryset(today)
+        .filter(
+            Q(short_name__icontains=q)
+            | Q(full_name__icontains=q)
+            | Q(registration_number__icontains=q)
+        )
+        .order_by("short_name")
     )
+    total_count = qs.count()
     data = []
-    for r in items:
+    for r in qs[:15]:
         data.append({
             "id": r.id,
             "short_name": r.short_name,
@@ -1079,7 +1099,7 @@ def ler_search(request):
             "country_name": r.registration_country.short_name if r.registration_country else "",
             "registration_date": r.registration_date.isoformat() if r.registration_date else "",
         })
-    return JsonResponse({"results": data})
+    return JsonResponse({"results": data, "total_count": total_count})
 
 
 def ler_identifiers_for_country(request):

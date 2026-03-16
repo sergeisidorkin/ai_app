@@ -406,6 +406,22 @@ def ensure_performer_rows(sender, instance, created, **kwargs):
     if not sections:
         return
 
+    from users_app.models import Employee
+
+    direction_ids = {s.expertise_direction_id for s in sections if s.expertise_direction_id}
+    dept_head_map = {}
+    if direction_ids:
+        heads = (
+            Employee.objects
+            .select_related("user")
+            .filter(
+                department_id__in=direction_ids,
+                role="Руководитель направления",
+            )
+        )
+        for emp in heads:
+            dept_head_map[emp.department_id] = emp
+
     next_position = (
         Performer.objects
         .aggregate(max_pos=Max("position"))
@@ -427,6 +443,20 @@ def ensure_performer_rows(sender, instance, created, **kwargs):
     performers = []
     for section in sections:
         next_position += 1
+
+        executor_name = ""
+        employee_obj = None
+        if section.expertise_direction_id:
+            head = dept_head_map.get(section.expertise_direction_id)
+            if head:
+                parts = [
+                    head.user.last_name.strip(),
+                    head.user.first_name.strip(),
+                    head.patronymic.strip(),
+                ]
+                executor_name = " ".join(p for p in parts if p)
+                employee_obj = head
+
         performers.append(
             Performer(
                 work_item=instance,
@@ -437,6 +467,8 @@ def ensure_performer_rows(sender, instance, created, **kwargs):
                 currency=rub,
                 prepayment=50,
                 final_payment=50,
+                executor=executor_name,
+                employee=employee_obj,
             )
         )
 

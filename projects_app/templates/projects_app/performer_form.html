@@ -2,7 +2,19 @@
   <h5 class="modal-title">
     {% if action == "edit" %}Изменить исполнителя{% else %}Добавить исполнителя{% endif %}
   </h5>
-  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+  <div class="d-flex align-items-center gap-0 ms-auto">
+    {% if action == "edit" %}
+      <button type="button" class="perf-nav-btn" data-perf-nav="prev"
+              title="Предыдущая запись" aria-label="Предыдущая запись">
+        <i class="bi bi-chevron-left"></i>
+      </button>
+      <button type="button" class="perf-nav-btn" data-perf-nav="next"
+              title="Следующая запись" aria-label="Следующая запись">
+        <i class="bi bi-chevron-right"></i>
+      </button>
+    {% endif %}
+    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+  </div>
 </div>
 
 <form
@@ -40,8 +52,13 @@
       </div>
 
       <div class="col-md-6">
-        <label class="form-label">Исполнитель</label>
+        <label class="form-label">
+          {% if executor_locked %}<i class="bi bi-lock text-secondary me-1" style="font-size:.85em"></i>{% endif %}Исполнитель
+        </label>
         {{ form.executor }}
+        {% if executor_locked %}
+          <input type="hidden" name="executor" value="{{ form.executor.value }}">
+        {% endif %}
       </div>
       <div class="col-md-3">
         <label class="form-label">Грейд (наименование)</label>

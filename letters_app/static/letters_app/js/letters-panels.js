@@ -285,13 +285,21 @@
 
       saveBtn.disabled = true;
       fetch(url, { method: 'POST', body: fd, headers: { 'X-CSRFToken': token } })
-        .then(function (r) { return r.text(); })
+        .then(function (r) {
+          if (!r.ok) {
+            return r.json().catch(function () { return { error: 'Ошибка сервера' }; }).then(function (data) {
+              throw new Error(data.error || 'Ошибка сохранения (HTTP ' + r.status + ')');
+            });
+          }
+          return r.text();
+        })
         .then(function (html) {
           destroyEditor(ttype);
           cardEl.outerHTML = html;
         })
         .catch(function (err) {
           console.error('Save failed', err);
+          alert(err.message || 'Не удалось сохранить шаблон.');
           saveBtn.disabled = false;
         });
       return;

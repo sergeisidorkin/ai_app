@@ -1,3 +1,5 @@
+from html import escape as _html_escape
+
 from .models import LetterTemplate
 
 
@@ -15,10 +17,10 @@ def get_effective_template(template_type, user):
 
 
 def render_template(body_html, variables: dict) -> str:
-    """Replace {key} placeholders in *body_html* with values from *variables*."""
+    """Replace {key} placeholders in *body_html* with HTML-escaped values from *variables*."""
     result = body_html
     for key, value in variables.items():
-        result = result.replace("{" + key + "}", str(value))
+        result = result.replace("{" + key + "}", _html_escape(str(value)))
     return result
 
 

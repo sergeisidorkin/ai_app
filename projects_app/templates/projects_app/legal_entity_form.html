@@ -1,4 +1,4 @@
-<div data-modal-size="lg"></div>
+<div data-modal-size="xl"></div>
 <div class="modal-header">
     <h5 class="modal-title">
       {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
@@ -147,10 +147,11 @@
           var esc = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           return text.replace(new RegExp('(' + esc + ')', 'gi'), '<mark>$1</mark>');
         }
-        function render(data, q) {
+        function render(data, q, totalCount) {
           results = data;
           if (!data.length) { list.classList.remove('show'); return; }
-          list.innerHTML = data.map(function(r, i) {
+          var visible = data.slice(0, 3);
+          var html = visible.map(function(r, i) {
             var main = hl(r.short_name || '', q);
             var parts = [r.full_name, r.identifier, r.registration_number].filter(Boolean);
             var sub = parts.length ? hl(parts.join(' · '), q) : '';
@@ -159,6 +160,11 @@
               + (sub ? '<div class="ler-ac-sub">' + sub + '</div>' : '')
               + '</div>';
           }).join('');
+          var remaining = totalCount - 3;
+          if (remaining > 0) {
+            html += '<div class="ler-ac-item ler-ac-more">Найдено ещё ' + remaining + ' юрлиц</div>';
+          }
+          list.innerHTML = html;
           list.classList.add('show');
         }
         function pick(r) {
@@ -178,7 +184,7 @@
           debounce = setTimeout(function() {
             fetch('{% url "ler_search" %}?q=' + encodeURIComponent(q))
               .then(function(r) { return r.json(); })
-              .then(function(d) { render(d.results || [], q); })
+              .then(function(d) { render(d.results || [], q, d.total_count || 0); })
               .catch(function() { list.classList.remove('show'); });
           }, 200);
         });
@@ -203,6 +209,36 @@
           if (results.length && input.value.trim().length >= 1) list.classList.add('show');
         });
       })();
+
+      // Show short label for work_item after selection
+      if (workSel) {
+        Array.from(workSel.options).forEach(function(opt) {
+          if (opt.value) opt.dataset.full = opt.textContent;
+        });
+        function showShort() {
+          Array.from(workSel.options).forEach(function(opt) {
+            if (opt.dataset.full) opt.textContent = opt.dataset.full;
+          });
+          var sel = workSel.options[workSel.selectedIndex];
+          if (sel && sel.dataset.full) {
+            var full = sel.dataset.full;
+            var firstWord = full.trim().split(/\s+/)[0];
+            var dashIdx = full.indexOf(' \u2014 ');
+            var afterDash = dashIdx >= 0 ? full.substring(dashIdx + 3) : '';
+            sel.textContent = afterDash ? firstWord + ' \u2014 ' + afterDash : firstWord;
+          }
+        }
+        function showFull() {
+          Array.from(workSel.options).forEach(function(opt) {
+            if (opt.dataset.full) opt.textContent = opt.dataset.full;
+          });
+        }
+        workSel.addEventListener('mousedown', showFull);
+        workSel.addEventListener('focus', showFull);
+        workSel.addEventListener('blur', showShort);
+        workSel.addEventListener('change', showShort);
+        showShort();
+      }
 
       if (countrySel && identField) {
         countrySel.addEventListener('change', function() {

@@ -181,6 +181,7 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         ]
         widgets = {
             "year": forms.NumberInput(attrs={"placeholder": "ГГГГ"}),
+            "customer": forms.TextInput(attrs={"placeholder": "Искать по наименованию и регистрационному номеру"}),
         }
 
     def __init__(self, *args, **kwargs):
@@ -349,34 +350,36 @@ class ProjectChoiceField(forms.ModelChoiceField):
             parts.append(name_label)
         return " ".join(parts)
 
-class WorkVolumeForm(forms.ModelForm):
+class WorkVolumeForm(BootstrapMixin, forms.ModelForm):
     project = ProjectChoiceField(
         queryset=ProjectRegistration.objects.order_by("-id"),
         label="Проект",
-        widget=forms.Select(attrs=_common_select),
     )
     country = forms.ModelChoiceField(
         label="Страна",
         queryset=OKSMCountry.objects.none(),
         required=False,
-        widget=forms.Select(attrs={**_common_select, "id": "work-country-select"}),
+        widget=forms.Select(attrs={"id": "work-country-select"}),
     )
     identifier = forms.CharField(
         label="Идентификатор",
         required=False,
-        widget=forms.TextInput(attrs={**READONLY_INPUT, "id": "work-identifier-field"}),
+        widget=forms.TextInput(attrs={
+            "readonly": True, "tabindex": "-1",
+            "class": "readonly-field",
+            "id": "work-identifier-field",
+        }),
     )
     registration_date = forms.DateField(
         label="Дата",
         required=False,
-        widget=forms.TextInput(attrs={**_common_input, **DATE_INPUT_ATTRS, "class": _common_input["class"] + " js-date"}),
+        widget=forms.TextInput(attrs={**DATE_INPUT_ATTRS}),
         input_formats=DATE_INPUT_FORMATS,
     )
     manager = forms.ChoiceField(
         label="Менеджер",
         required=False,
         choices=(),
-        widget=forms.Select(attrs=_common_select),
     )
 
     class Meta:
@@ -387,10 +390,9 @@ class WorkVolumeForm(forms.ModelForm):
             "registration_number", "registration_date", "manager",
         ]
         widgets = {
-            "type": forms.TextInput(attrs=READONLY_INPUT),
-            "name": forms.TextInput(attrs=READONLY_INPUT),
-            "asset_name": forms.TextInput(attrs=_common_input),
-            "registration_number": forms.TextInput(attrs=_common_input),
+            "type": forms.TextInput(attrs={"readonly": True, "tabindex": "-1", "class": "readonly-field"}),
+            "name": forms.TextInput(attrs={"readonly": True, "tabindex": "-1", "class": "readonly-field"}),
+            "asset_name": forms.TextInput(attrs={"placeholder": "Искать по наименованию и регистрационному номеру"}),
         }
 
     def __init__(self, *args, **kwargs):
@@ -408,6 +410,7 @@ class WorkVolumeForm(forms.ModelForm):
         self.fields["country"].label_from_instance = lambda obj: obj.short_name
         if not self.data and not current_manager and getattr(self.instance, "project_id", None):
             self.fields["manager"].initial = self.instance.project.project_manager or ""
+        self._bootstrapify()
 
 class PerformerForm(forms.ModelForm):
     registration = ProjectChoiceField(
@@ -541,27 +544,30 @@ class WorkItemChoiceField(forms.ModelChoiceField):
         return header or asset_label or f"Актив #{obj.pk}"
 
 
-class LegalEntityForm(forms.ModelForm):
+class LegalEntityForm(BootstrapMixin, forms.ModelForm):
     work_item = WorkItemChoiceField(
         queryset=WorkVolume.objects.select_related("project").order_by("-id"),
         label="Наименование актива",
-        widget=forms.Select(attrs=_common_select),
     )
     country = forms.ModelChoiceField(
         label="Страна регистрации",
         queryset=OKSMCountry.objects.none(),
         required=False,
-        widget=forms.Select(attrs={**_common_select, "id": "legal-country-select"}),
+        widget=forms.Select(attrs={"id": "legal-country-select"}),
     )
     identifier = forms.CharField(
         label="Идентификатор",
         required=False,
-        widget=forms.TextInput(attrs={**READONLY_INPUT, "id": "legal-identifier-field"}),
+        widget=forms.TextInput(attrs={
+            "readonly": True, "tabindex": "-1",
+            "class": "readonly-field",
+            "id": "legal-identifier-field",
+        }),
     )
     registration_date = forms.DateField(
         label="Дата регистрации",
         required=False,
-        widget=forms.TextInput(attrs={**_common_input, **DATE_INPUT_ATTRS, "class": _common_input["class"] + " js-date"}),
+        widget=forms.TextInput(attrs={**DATE_INPUT_ATTRS}),
         input_formats=DATE_INPUT_FORMATS,
     )
 
@@ -573,10 +579,9 @@ class LegalEntityForm(forms.ModelForm):
             "registration_number", "registration_date",
         ]
         widgets = {
-            "work_type": forms.TextInput(attrs=READONLY_INPUT),
-            "work_name": forms.TextInput(attrs=READONLY_INPUT),
-            "legal_name": forms.TextInput(attrs=_common_input),
-            "registration_number": forms.TextInput(attrs=_common_input),
+            "work_type": forms.TextInput(attrs={"readonly": True, "tabindex": "-1", "class": "readonly-field"}),
+            "work_name": forms.TextInput(attrs={"readonly": True, "tabindex": "-1", "class": "readonly-field"}),
+            "legal_name": forms.TextInput(attrs={"placeholder": "Искать по наименованию и регистрационному номеру"}),
         }
 
     def __init__(self, *args, **kwargs):
@@ -589,6 +594,7 @@ class LegalEntityForm(forms.ModelForm):
             country_qs = (country_qs | OKSMCountry.objects.filter(pk=self.instance.country_id)).distinct().order_by("short_name")
         self.fields["country"].queryset = country_qs
         self.fields["country"].label_from_instance = lambda obj: obj.short_name
+        self._bootstrapify()
 
     def save(self, commit=True):
         instance = super().save(commit=False)
