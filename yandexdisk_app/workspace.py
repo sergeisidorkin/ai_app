@@ -203,24 +203,24 @@ def create_basic_project_workspace(user, project: ProjectRegistration) -> Worksp
     Год / Проект ID Тип Название / настраиваемые подпапки.
     Без чек-листов и записей ProjectWorkspace.
     """
+    for item in create_basic_project_workspace_stream(user, project):
+        pass
+    return item  # last yielded value is the final WorkspaceResult
+
+
+def create_basic_project_workspace_stream(user, project: ProjectRegistration):
+    """
+    Generator that yields progress dicts ``{"current": int, "total": int}``
+    after each folder is created, and a final ``WorkspaceResult``.
+    """
     from projects_app.models import RegistrationWorkspaceFolder
 
     selection = YandexDiskSelection.objects.filter(user=user).first()
     if not selection or not selection.resource_path:
-        return WorkspaceResult(False, "Не выбрана папка на Яндекс.Диске. Подключите Яндекс.Диск и выберите папку.")
+        yield WorkspaceResult(False, "Не выбрана папка на Яндекс.Диске. Подключите Яндекс.Диск и выберите папку.")
+        return
 
     base = selection.resource_path.rstrip("/")
-
-    year_str = str(project.year) if project.year else "Без года"
-    year_path = f"{base}/{_sanitize(year_str)}"
-    if not create_folder(user, year_path):
-        return WorkspaceResult(False, f"Не удалось создать папку года: {year_path}")
-
-    project_folder = _build_project_folder_name(project)
-    project_path = f"{year_path}/{project_folder}"
-
-    if not create_folder(user, project_path):
-        return WorkspaceResult(False, f"Не удалось создать папку проекта: {project_path}")
 
     db_rows = list(
         RegistrationWorkspaceFolder.objects
@@ -229,7 +229,29 @@ def create_basic_project_workspace(user, project: ProjectRegistration) -> Worksp
     )
     folder_paths = _build_folder_tree(db_rows) if db_rows else [_sanitize(n) for n in REGISTRATION_STANDARD_FOLDERS]
 
+    total = 2 + len(folder_paths)  # year + project + sub-folders
+    current = 0
+
+    year_str = str(project.year) if project.year else "Без года"
+    year_path = f"{base}/{_sanitize(year_str)}"
+    if not create_folder(user, year_path):
+        yield WorkspaceResult(False, f"Не удалось создать папку года: {year_path}")
+        return
+    current += 1
+    yield {"current": current, "total": total}
+
+    project_folder = _build_project_folder_name(project)
+    project_path = f"{year_path}/{project_folder}"
+
+    if not create_folder(user, project_path):
+        yield WorkspaceResult(False, f"Не удалось создать папку проекта: {project_path}")
+        return
+    current += 1
+    yield {"current": current, "total": total}
+
     for rel_path in folder_paths:
         create_folder(user, f"{project_path}/{rel_path}")
+        current += 1
+        yield {"current": current, "total": total}
 
-    return WorkspaceResult(True, "Рабочее пространство успешно создано.")
+    yield WorkspaceResult(True, "Рабочее пространство успешно создано.")

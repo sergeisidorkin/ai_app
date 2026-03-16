@@ -765,7 +765,13 @@
                                  hx-swap="innerHTML"
                                  hx-trigger="change"
                                  hx-include="this">
-                          <script>document.getElementById('lw-date-filter').valueAsDate = new Date();</script>
+                          <script>(function(){
+                            var el = document.getElementById('lw-date-filter');
+                            if (!el) return;
+                            var saved = window.UIPref ? UIPref.get('normatives:date', null) : null;
+                            if (saved) { el.value = saved; } else { el.valueAsDate = new Date(); }
+                            el.addEventListener('change', function(){ if (window.UIPref) UIPref.set('normatives:date', el.value); });
+                          })();</script>
                         </div>
                       </div>
                       <div class="table-responsive">
@@ -821,6 +827,13 @@
           const sidebar = document.getElementById('classifiers-second-sidebar-list');
           const titleEl = document.getElementById('classifiers-section-title');
 
+          function activateSidebarLink(key) {
+            if (!sidebar) return;
+            sidebar.querySelectorAll('.list-group-item').forEach(a => a.classList.remove('active'));
+            const link = sidebar.querySelector('[data-clf-section="' + key + '"]');
+            if (link) link.classList.add('active');
+          }
+
           function switchClfSection(key) {
             document.querySelectorAll('.clf-section-content').forEach(el => el.classList.add('d-none'));
             const target = document.getElementById('clf-content-' + key);
@@ -842,8 +855,17 @@
               sidebar.querySelectorAll('.list-group-item').forEach(a => a.classList.remove('active'));
               link.classList.add('active');
               switchClfSection(link.dataset.clfSection);
+              if (window.UIPref) UIPref.set('classifiers:section', link.dataset.clfSection);
             });
           }
+
+          document.addEventListener('DOMContentLoaded', function () {
+            var saved = window.UIPref ? UIPref.get('classifiers:section', null) : null;
+            if (saved && SECTION_TITLES[saved]) {
+              activateSidebarLink(saved);
+              switchClfSection(saved);
+            }
+          });
         })();
         </script>
 
@@ -858,6 +880,13 @@
 
           var sidebar = document.getElementById('contracts-second-sidebar-list');
           var titleEl = document.getElementById('contracts-section-title');
+
+          function activateSidebarLink(key) {
+            if (!sidebar) return;
+            sidebar.querySelectorAll('.list-group-item').forEach(function(a) { a.classList.remove('active'); });
+            var link = sidebar.querySelector('[data-contracts-section="' + key + '"]');
+            if (link) link.classList.add('active');
+          }
 
           function switchContractsSection(key) {
             document.querySelectorAll('.contracts-section-content').forEach(function(el) { el.classList.add('d-none'); });
@@ -874,8 +903,17 @@
               sidebar.querySelectorAll('.list-group-item').forEach(function(a) { a.classList.remove('active'); });
               link.classList.add('active');
               switchContractsSection(link.dataset.contractsSection);
+              if (window.UIPref) UIPref.set('contracts:section', link.dataset.contractsSection);
             });
           }
+
+          document.addEventListener('DOMContentLoaded', function () {
+            var saved = window.UIPref ? UIPref.get('contracts:section', null) : null;
+            if (saved && CONTRACTS_TITLES[saved]) {
+              activateSidebarLink(saved);
+              switchContractsSection(saved);
+            }
+          });
         })();
         </script>
 
@@ -892,12 +930,18 @@
           var sidebar = document.getElementById('letters-second-sidebar-list');
           var titleEl = document.getElementById('letters-section-title');
 
+          function activateSidebarLink(key) {
+            if (!sidebar) return;
+            sidebar.querySelectorAll('.list-group-item').forEach(function(a) { a.classList.remove('active'); });
+            var link = sidebar.querySelector('[data-letters-section="' + key + '"]');
+            if (link) link.classList.add('active');
+          }
+
           function switchLettersSection(key) {
             document.querySelectorAll('.letters-section-content').forEach(function(el) { el.classList.add('d-none'); });
             var target = document.getElementById('letters-content-' + key);
             if (target) {
               target.classList.remove('d-none');
-              // lazy-load via HTMX if not yet loaded
               var url = target.getAttribute('data-letters-url');
               if (url && !target.dataset.loaded) {
                 target.dataset.loaded = '1';
@@ -916,8 +960,17 @@
               sidebar.querySelectorAll('.list-group-item').forEach(function(a) { a.classList.remove('active'); });
               link.classList.add('active');
               switchLettersSection(link.dataset.lettersSection);
+              if (window.UIPref) UIPref.set('letters:section', link.dataset.lettersSection);
             });
           }
+
+          document.addEventListener('DOMContentLoaded', function () {
+            var saved = window.UIPref ? UIPref.get('letters:section', null) : null;
+            if (saved && LETTERS_TITLES[saved]) {
+              activateSidebarLink(saved);
+              switchLettersSection(saved);
+            }
+          });
         })();
         </script>
 
@@ -1051,6 +1104,7 @@
               reloadBlocks();
               return;
             }
+            var savedTplSection = window.UIPref ? UIPref.get('templates:section', null) : null;
             items.forEach((item, idx) => {
               const li = document.createElement('li');
               li.className = 'nav-item';
@@ -1059,10 +1113,15 @@
               a.href = '#';
               a.textContent = item.name_ru;
               a.dataset.sectionId = item.id;
+              if (savedTplSection && String(item.id) === String(savedTplSection)) {
+                tabsUl.querySelectorAll('.nav-link').forEach(x => x.classList.remove('active'));
+                a.classList.add('active');
+              }
               a.addEventListener('click', (e) => {
                 e.preventDefault();
                 tabsUl.querySelectorAll('.nav-link').forEach(x => x.classList.remove('active'));
                 a.classList.add('active');
+                if (window.UIPref) UIPref.set('templates:section', a.dataset.sectionId);
                 reloadBlocks();
               });
               li.appendChild(a);
@@ -1093,10 +1152,22 @@
           }
           document.body.addEventListener('products-reordered', reorderSecondSidebar);
 
+          function restoreSavedTemplatesProduct() {
+            var savedId = window.UIPref ? UIPref.get('templates:product', null) : null;
+            if (savedId && sidebar) {
+              var link = sidebar.querySelector('.list-group-item[data-product-id="' + savedId + '"]');
+              if (link) {
+                sidebar.querySelectorAll('.list-group-item').forEach(a => a.classList.remove('active'));
+                link.classList.add('active');
+              }
+            }
+          }
+
           const templatesTabLink = document.querySelector('a[href="#templates"][data-bs-toggle="tab"]') || document.querySelector('a[href="#templates"]');
           if (templatesTabLink && window.bootstrap) {
             templatesTabLink.addEventListener('shown.bs.tab', () => {
               reorderSecondSidebar();
+              restoreSavedTemplatesProduct();
               renderTabs(getActiveProductShort() || firstProductShort());
             });
           } else {
@@ -1108,6 +1179,7 @@
             });
           }
           reorderSecondSidebar();
+          restoreSavedTemplatesProduct();
           renderTabs(getActiveProductShort() || firstProductShort());
 
           sidebar?.addEventListener('click', function(e) {
@@ -1115,6 +1187,7 @@
             e.preventDefault();
             sidebar.querySelectorAll('.list-group-item').forEach(a => a.classList.remove('active'));
             link.classList.add('active');
+            if (window.UIPref) UIPref.set('templates:product', link.dataset.productId);
             renderTabs(link.dataset.product || firstProductShort());
             window.__getCurrentBlockBinding = function () {
               return { productId: getActiveProductId(), productShort: getActiveProductShort() || firstProductShort(), sectionId: getActiveSectionId() };
@@ -1218,10 +1291,12 @@
             allA.addEventListener('click', (e) => {
               e.preventDefault();
               activateTab(allA);
+              if (window.UIPref) UIPref.set('requests:section', 'all');
             });
             allLi.appendChild(allA);
             tabsUl.appendChild(allLi);
 
+            var savedReqSection = window.UIPref ? UIPref.get('requests:section', null) : null;
             items.forEach((item) => {
               const li = document.createElement('li');
               li.className = 'nav-item';
@@ -1230,9 +1305,14 @@
               a.href = '#';
               a.textContent = item.short_name_ru || item.name_ru;
               a.dataset.sectionId = item.id;
+              if (savedReqSection && String(item.id) === String(savedReqSection)) {
+                tabsUl.querySelectorAll('.nav-link').forEach(x => x.classList.remove('active'));
+                a.classList.add('active');
+              }
               a.addEventListener('click', (e) => {
                 e.preventDefault();
                 activateTab(a);
+                if (window.UIPref) UIPref.set('requests:section', a.dataset.sectionId);
               });
               li.appendChild(a);
               tabsUl.appendChild(li);
@@ -1294,13 +1374,31 @@
             sidebar.appendChild(frag);
           }
           document.body.addEventListener('products-reordered', reorderSecondSidebar);
+          function restoreSavedRequestsProduct() {
+            var savedId = window.UIPref ? UIPref.get('requests:product', null) : null;
+            if (savedId && sidebar) {
+              var link = sidebar.querySelector('.list-group-item[data-product-id="' + savedId + '"]');
+              if (link) {
+                sidebar.querySelectorAll('.list-group-item').forEach(a => a.classList.remove('active'));
+                link.classList.add('active');
+              }
+            }
+          }
+
           const reqTabLink = document.querySelector('a[href="#requests"][data-bs-toggle="tab"]') || document.querySelector('a[href="#requests"]');
           if (reqTabLink && window.bootstrap) {
-            reqTabLink.addEventListener('shown.bs.tab', reorderSecondSidebar);
+            reqTabLink.addEventListener('shown.bs.tab', function () {
+              reorderSecondSidebar();
+              restoreSavedRequestsProduct();
+            });
           } else {
-            reqTabLink?.addEventListener('click', () => setTimeout(reorderSecondSidebar, 0));
+            reqTabLink?.addEventListener('click', () => setTimeout(function () {
+              reorderSecondSidebar();
+              restoreSavedRequestsProduct();
+            }, 0));
           }
           reorderSecondSidebar();
+          restoreSavedRequestsProduct();
 
           // init
           renderTabs(getActiveProductShort() || firstProductShort());
@@ -1312,9 +1410,9 @@
             e.preventDefault();
             sidebar.querySelectorAll('.list-group-item').forEach(a => a.classList.remove('active'));
             link.classList.add('active');
+            if (window.UIPref) UIPref.set('requests:product', link.dataset.productId);
             renderTabs(link.dataset.product || null);
 
-            // экспорт текущего выбора (если пригодится где-то ещё)
             window.__getCurrentRequestBinding = function () {
               return {
                 productId: getActiveProductId(),
@@ -1686,12 +1784,35 @@
             }
 
             // события селектов
-            projSel.addEventListener('change', async function(){ await loadProjectMeta(); setGlobalBinding(); reloadBlocks(); });
+            projSel.addEventListener('change', async function(){
+              if (window.UIPref) UIPref.set('debugger:project', projSel.value);
+              await loadProjectMeta(); setGlobalBinding(); reloadBlocks();
+            });
             if (assetSel) assetSel.addEventListener('change', function(){ setGlobalBinding(); reloadBlocks(); });
-            sectSel.addEventListener('change', function(){ setGlobalBinding(); reloadBlocks(); });
+            sectSel.addEventListener('change', function(){
+              if (window.UIPref) UIPref.set('debugger:section', sectSel.value);
+              setGlobalBinding(); reloadBlocks();
+            });
+
+            // restore saved project
+            if (window.UIPref) {
+              var savedProj = UIPref.get('debugger:project', null);
+              if (savedProj && projSel.querySelector('option[value="' + CSS.escape(savedProj) + '"]')) {
+                projSel.value = savedProj;
+              }
+            }
 
             // первый старт
-            try { await loadProjectMeta(); } finally { await reloadBlocks(); }
+            try { await loadProjectMeta(); } finally {
+              // restore saved section after meta loaded the options
+              if (window.UIPref) {
+                var savedSect = UIPref.get('debugger:section', null);
+                if (savedSect && sectSel.querySelector('option[value="' + CSS.escape(savedSect) + '"]')) {
+                  sectSel.value = savedSect;
+                }
+              }
+              await reloadBlocks();
+            }
           };
 
           // Гарантированно дергаем инит в трёх местах:

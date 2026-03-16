@@ -1,5 +1,5 @@
 from django.contrib.auth.decorators import login_required, user_passes_test
-from django.http import HttpResponse, JsonResponse
+from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST, require_GET
 from django.db import transaction
@@ -1321,7 +1321,7 @@ def create_workspace(request):
 @user_passes_test(staff_required)
 @require_POST
 def create_registration_workspace(request):
-    from yandexdisk_app.workspace import create_basic_project_workspace
+    from yandexdisk_app.workspace import create_basic_project_workspace_stream, WorkspaceResult
 
     project_id = request.POST.get("project_id")
     if not project_id:
@@ -1341,11 +1341,17 @@ def create_registration_workspace(request):
     if not project:
         return JsonResponse({"ok": False, "error": "Проект не найден."}, status=404)
 
-    result = create_basic_project_workspace(request.user, project)
-    if not result.ok:
-        return JsonResponse({"ok": False, "error": result.message}, status=400)
+    def _stream():
+        for item in create_basic_project_workspace_stream(request.user, project):
+            if isinstance(item, WorkspaceResult):
+                if item.ok:
+                    yield json.dumps({"ok": True, "message": item.message}) + "\n"
+                else:
+                    yield json.dumps({"ok": False, "error": item.message}) + "\n"
+            else:
+                yield json.dumps(item) + "\n"
 
-    return JsonResponse({"ok": True, "message": result.message})
+    return StreamingHttpResponse(_stream(), content_type="application/x-ndjson")
 
 
 @login_required
