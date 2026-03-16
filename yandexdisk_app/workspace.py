@@ -222,12 +222,20 @@ def create_basic_project_workspace_stream(user, project: ProjectRegistration):
 
     base = selection.resource_path.rstrip("/")
 
-    db_rows = list(
+    user_rows = list(
         RegistrationWorkspaceFolder.objects
+        .filter(user=user)
         .order_by("position")
         .values_list("level", "name")
     )
-    folder_paths = _build_folder_tree(db_rows) if db_rows else [_sanitize(n) for n in REGISTRATION_STANDARD_FOLDERS]
+    if not user_rows:
+        user_rows = list(
+            RegistrationWorkspaceFolder.objects
+            .filter(user__isnull=True)
+            .order_by("position")
+            .values_list("level", "name")
+        )
+    folder_paths = _build_folder_tree(user_rows) if user_rows else [_sanitize(n) for n in REGISTRATION_STANDARD_FOLDERS]
 
     total = 2 + len(folder_paths)  # year + project + sub-folders
     current = 0

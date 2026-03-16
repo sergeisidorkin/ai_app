@@ -12,6 +12,7 @@ urlpatterns = [
     path("projects/registration/create-workspace/", views.create_registration_workspace, name="create_registration_workspace"),
     path("projects/registration/workspace-folders/", views.workspace_folders_list, name="workspace_folders_list"),
     path("projects/registration/workspace-folders/save/", views.workspace_folders_save, name="workspace_folders_save"),
+    path("projects/registration/workspace-folders/reset/", views.workspace_folders_reset, name="workspace_folders_reset"),
 
     path("projects/contract/<int:pk>/edit/", views.contract_form_edit, name="contract_form_edit"),
 
