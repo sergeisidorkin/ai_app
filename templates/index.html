@@ -85,6 +85,12 @@
           </a>
         </li>
         <li class="nav-item">
+          <a class="nav-link d-flex align-items-center" href="#letters" data-bs-toggle="tab">
+            <i class="bi bi-envelope-paper me-2"></i>
+            <span class="link-text">Письма</span>
+          </a>
+        </li>
+        <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#templates" data-bs-toggle="tab">
             <i class="bi bi-puzzle me-2"></i>
             <span class="link-text">Шаблоны</span>
@@ -485,6 +491,69 @@
         </div>
       </section>
 
+      <!-- Письма -->
+      <section id="letters" class="tab-pane fade">
+        <div class="d-flex templates-bleed">
+          <aside class="second-sidebar bg-body-tertiary border-end">
+            <div class="second-sidebar-header-spacer"></div>
+            <hr class="my-0">
+            <div class="list-group list-group-flush p-3 m-0" id="letters-second-sidebar-list">
+              <a href="#" class="list-group-item list-group-item-action active"
+                 data-letters-section="participation-confirmation">
+                Подтверждение участия
+              </a>
+              <a href="#" class="list-group-item list-group-item-action"
+                 data-letters-section="contract-sending">
+                Отправка проекта договора
+              </a>
+              <a href="#" class="list-group-item list-group-item-action"
+                 data-letters-section="project-start">
+                Начало проекта
+              </a>
+              <a href="#" class="list-group-item list-group-item-action"
+                 data-letters-section="request-approval">
+                Согласование запроса
+              </a>
+            </div>
+          </aside>
+
+          <div class="flex-grow-1 ps-3 pe-0" style="min-width:0;">
+            <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
+              <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
+                <h5 class="mb-0 ps-3 fs-4 pt-2" id="letters-section-title">Подтверждение участия</h5>
+                <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
+                   href="#notifications"
+                   data-bs-toggle="tab"
+                   aria-label="Открыть уведомления">
+                  <i class="bi bi-bell fs-5"></i>
+                  <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
+                        data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
+                </a>
+              </div>
+            </div>
+
+            <div class="ps-3">
+              <div id="letters-content-participation-confirmation"
+                   class="letters-section-content"
+                   hx-get="{% url 'letter_template_partial' 'participation_confirmation' %}"
+                   hx-trigger="intersect once"
+                   hx-swap="innerHTML">
+                <div class="text-center py-4"><div class="spinner-border spinner-border-sm text-secondary"></div></div>
+              </div>
+              <div id="letters-content-contract-sending" class="letters-section-content d-none"
+                   data-letters-url="{% url 'letter_template_partial' 'contract_sending' %}">
+              </div>
+              <div id="letters-content-project-start" class="letters-section-content d-none"
+                   data-letters-url="{% url 'letter_template_partial' 'project_start' %}">
+              </div>
+              <div id="letters-content-request-approval" class="letters-section-content d-none"
+                   data-letters-url="{% url 'letter_template_partial' 'request_approval' %}">
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- Шаблоны -->
       <section id="templates" class="tab-pane fade">
         <div class="d-flex templates-bleed">
@@ -805,6 +874,48 @@
               sidebar.querySelectorAll('.list-group-item').forEach(function(a) { a.classList.remove('active'); });
               link.classList.add('active');
               switchContractsSection(link.dataset.contractsSection);
+            });
+          }
+        })();
+        </script>
+
+        <!-- Письма: переключение second-sidebar -->
+        <script>
+        (function () {
+          var LETTERS_TITLES = {
+            'participation-confirmation': 'Подтверждение участия',
+            'contract-sending': 'Отправка проекта договора',
+            'project-start': 'Начало проекта',
+            'request-approval': 'Согласование запроса',
+          };
+
+          var sidebar = document.getElementById('letters-second-sidebar-list');
+          var titleEl = document.getElementById('letters-section-title');
+
+          function switchLettersSection(key) {
+            document.querySelectorAll('.letters-section-content').forEach(function(el) { el.classList.add('d-none'); });
+            var target = document.getElementById('letters-content-' + key);
+            if (target) {
+              target.classList.remove('d-none');
+              // lazy-load via HTMX if not yet loaded
+              var url = target.getAttribute('data-letters-url');
+              if (url && !target.dataset.loaded) {
+                target.dataset.loaded = '1';
+                target.innerHTML = '<div class="text-center py-4"><div class="spinner-border spinner-border-sm text-secondary"></div></div>';
+                htmx.ajax('GET', url, {target: target, swap: 'innerHTML'});
+              }
+            }
+            if (titleEl) titleEl.textContent = LETTERS_TITLES[key] || '';
+          }
+
+          if (sidebar) {
+            sidebar.addEventListener('click', function (e) {
+              var link = e.target.closest('.list-group-item');
+              if (!link) return;
+              e.preventDefault();
+              sidebar.querySelectorAll('.list-group-item').forEach(function(a) { a.classList.remove('active'); });
+              link.classList.add('active');
+              switchLettersSection(link.dataset.lettersSection);
             });
           }
         })();

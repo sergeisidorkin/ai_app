@@ -245,8 +245,10 @@
     if (!wsUrl) return;
 
     const statusEl = root.querySelector('#reg-create-workspace-status');
+    const progressEl = root.querySelector('#reg-ws-progress');
     wsConfirmBtn.disabled = true;
-    if (statusEl) statusEl.textContent = 'Создание папок…';
+    if (statusEl) statusEl.textContent = '';
+    if (progressEl) progressEl.classList.remove('d-none');
 
     try {
       const formData = new FormData();
@@ -262,6 +264,7 @@
         throw new Error(data?.error || 'Не удалось создать рабочее пространство.');
       }
 
+      if (progressEl) progressEl.classList.add('d-none');
       if (statusEl) statusEl.innerHTML = '<span class="text-success">' + (data.message || 'Готово!') + '</span>';
 
       const modalEl = root.querySelector('#reg-create-workspace-modal');
@@ -271,6 +274,7 @@
         if (statusEl) statusEl.textContent = '';
       }, 2000);
     } catch (err) {
+      if (progressEl) progressEl.classList.add('d-none');
       if (statusEl) statusEl.innerHTML = '<span class="text-danger">' + (err.message || 'Ошибка') + '</span>';
       else alert(err.message || 'Не удалось создать рабочее пространство.');
     } finally {
@@ -359,6 +363,39 @@
   if (settingsModal) {
     settingsModal.addEventListener('show.bs.modal', () => { loadFolders(); });
   }
+
+  // Populate folder-level counts when create-workspace modal opens (delegated — partial loaded via HTMX)
+  document.addEventListener('show.bs.modal', async (e) => {
+    if (!e.target.matches('#reg-create-workspace-modal')) return;
+    const root = pane();
+    const url = root?.querySelector('[data-workspace-folders-url]')?.dataset?.workspaceFoldersUrl;
+    const listEl = document.getElementById('reg-ws-folder-counts');
+    if (!listEl) return;
+    listEl.innerHTML = '<li class="text-muted">Загрузка…</li>';
+
+    let folders = [];
+    if (url) {
+      try {
+        const resp = await fetch(url);
+        const data = await resp.json();
+        folders = data.folders || [];
+      } catch { /* ignore */ }
+    }
+
+    const counts = {};
+    folders.forEach(f => { counts[f.level] = (counts[f.level] || 0) + 1; });
+    listEl.innerHTML = '';
+    [1, 2, 3].forEach(lvl => {
+      const li = document.createElement('li');
+      li.textContent = 'директории уровня ' + lvl + ': ' + (counts[lvl] || 0);
+      listEl.appendChild(li);
+    });
+
+    const progressEl = document.getElementById('reg-ws-progress');
+    if (progressEl) progressEl.classList.add('d-none');
+    const statusEl = document.getElementById('reg-create-workspace-status');
+    if (statusEl) statusEl.textContent = '';
+  });
 
   document.addEventListener('change', (e) => {
     if (e.target.closest('.ws-folder-check')) updateFolderRowActions();

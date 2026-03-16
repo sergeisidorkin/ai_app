@@ -1615,3 +1615,103 @@ section#templates .alert.alert-info .text-muted {
   padding-left: .5rem;
   padding-right: .25rem;
 }
+
+/* Letters: убираем абзацные отступы в превью текста письма */
+.letter-template-preview p {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+/* Letters: Quill-редактор — совпадение с превью-полями */
+.letter-editor-wrapper .ql-container {
+  font-size: inherit;
+}
+.letter-editor-wrapper .ql-editor {
+  padding: 1rem;           /* p-3 = 16px, как у превью body */
+  line-height: 1.2;
+}
+.letter-editor-wrapper .ql-editor p {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+/* Letters: input заголовка — совпадение с превью subject (px-3 py-2) */
+.letter-editor-wrapper input.form-control {
+  padding: 0.5rem 1rem;
+}
+
+/* Letters: CC badge — серый */
+.letter-cc-badge {
+  background-color: #8d959d;
+  color: #fff;
+  font-size: .9rem;
+  border-radius: .375rem;
+}
+.letter-cc-badge .js-cc-remove {
+  background: rgba(0,0,0,.25) url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%23fff'%3e%3cpath d='M.293.293a1 1 0 0 1 1.414 0L8 6.586 14.293.293a1 1 0 1 1 1.414 1.414L9.414 8l6.293 6.293a1 1 0 0 1-1.414 1.414L8 9.414l-6.293 6.293a1 1 0 0 1-1.414-1.414L6.586 8 .293 1.707a1 1 0 0 1 0-1.414z'/%3e%3c/svg%3e") center/.6em auto no-repeat;
+  border-radius: 50%;
+  width: 1.9em;
+  height: 1.9em;
+  padding: 0;
+  filter: none;
+  opacity: .85;
+}
+.letter-cc-badge .js-cc-remove:hover {
+  opacity: 1;
+}
+
+/* Letters: CC input placeholder indent */
+.letter-cc-input {
+  padding-left: .75rem;
+}
+
+/* Letters: CC badge outline (в таблице шаблонов пользователей) */
+.letter-cc-badge-outline {
+  background-color: transparent;
+  color: #adb5bd;
+  border: 1px solid #adb5bd;
+  font-size: .9rem;
+}
+
+/* Letters: CC tags */
+.letter-cc-tags {
+  cursor: text;
+  min-height: 38px;
+}
+.letter-cc-tags:focus-within {
+  border-color: #86b7fe !important;
+  box-shadow: 0 0 0 .25rem rgba(13,110,253,.25);
+}
+.letter-cc-input {
+  background: transparent;
+  font-size: inherit;
+  padding: 2px 0;
+}
+.letter-cc-dropdown {
+  max-height: 220px;
+  overflow-y: auto;
+  box-shadow: 0 .5rem 1rem rgba(0,0,0,.15);
+}
+
+/* Workspace creation progress indicator */
+.ws-progress-bar {
+  height: 24px;
+  border: 1px solid #adb5bd;
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+  background: #fff;
+  background-image: repeating-linear-gradient(
+    90deg,
+    var(--bs-primary, #075D94) 0,
+    var(--bs-primary, #075D94) 8px,
+    transparent 8px,
+    transparent 14px
+  );
+  background-size: 200% 100%;
+  animation: ws-progress-slide 1.2s linear infinite;
+}
+@keyframes ws-progress-slide {
+  0%   { background-position: 100% 0; }
+  100% { background-position: 0 0; }
+}

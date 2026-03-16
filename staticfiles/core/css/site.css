@@ -1615,3 +1615,26 @@ section#templates .alert.alert-info .text-muted {
   padding-left: .5rem;
   padding-right: .25rem;
 }
+
+/* Workspace creation progress indicator */
+.ws-progress-bar {
+  height: 24px;
+  border: 1px solid #adb5bd;
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+  background: #fff;
+  background-image: repeating-linear-gradient(
+    90deg,
+    var(--bs-primary, #075D94) 0,
+    var(--bs-primary, #075D94) 8px,
+    transparent 8px,
+    transparent 14px
+  );
+  background-size: 200% 100%;
+  animation: ws-progress-slide 1.2s linear infinite;
+}
+@keyframes ws-progress-slide {
+  0%   { background-position: 100% 0; }
+  100% { background-position: 0 0; }
+}
