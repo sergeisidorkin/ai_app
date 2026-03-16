@@ -439,15 +439,16 @@ def _build_table_context(project, section, asset_name, checklist_items, legal_en
         except Exception:
             pass
 
-    sd_url_map = {}
+    sd_folder_map = {}
     if checklist_items:
         try:
             from checklists_app.models import SourceDataItemFolder
             sd_qs = SourceDataItemFolder.objects.filter(
                 checklist_item__in=[it.id for it in checklist_items],
-                asset_name=asset_name,
-            ).exclude(public_url="")
-            sd_url_map = {f.checklist_item_id: f.public_url for f in sd_qs}
+            ).filter(
+                Q(asset_name=asset_name) | Q(asset_name="")
+            )
+            sd_folder_map = {f.checklist_item_id: f for f in sd_qs}
         except Exception:
             pass
 
@@ -472,6 +473,9 @@ def _build_table_context(project, section, asset_name, checklist_items, legal_en
             for entity in legal_entities
         ]
         folder = folder_map.get(item.id)
+        sd_folder = sd_folder_map.get(item.id)
+        eff_file_count = sd_folder.file_count if sd_folder else (folder.file_count if folder else None)
+        eff_last_upload = sd_folder.last_upload_at if sd_folder else (folder.last_upload_at if folder else None)
         rows.append({
             "item": item,
             "section_obj": section,
@@ -481,9 +485,9 @@ def _build_table_context(project, section, asset_name, checklist_items, legal_en
             "note": note_map.get(item.id),
             "history": history_map.get(item.id, {"imc_comment": [], "customer_comment": []}),
             "additional_header": additional_header,
-            "file_count": folder.file_count if folder else None,
-            "last_upload_at": folder.last_upload_at if folder else None,
-            "source_data_url": sd_url_map.get(item.id, ""),
+            "file_count": eff_file_count,
+            "last_upload_at": eff_last_upload,
+            "source_data_url": sd_folder.public_url if sd_folder and sd_folder.public_url else "",
         })
 
     return {
@@ -555,15 +559,16 @@ def _build_all_sections_context(project, section_items_list, asset_name, legal_e
         except Exception:
             pass
 
-    sd_url_map = {}
+    sd_folder_map = {}
     if all_item_ids:
         try:
             from checklists_app.models import SourceDataItemFolder
             sd_qs = SourceDataItemFolder.objects.filter(
                 checklist_item__in=all_item_ids,
-                asset_name=asset_name,
-            ).exclude(public_url="")
-            sd_url_map = {f.checklist_item_id: f.public_url for f in sd_qs}
+            ).filter(
+                Q(asset_name=asset_name) | Q(asset_name="")
+            )
+            sd_folder_map = {f.checklist_item_id: f for f in sd_qs}
         except Exception:
             pass
 
@@ -595,6 +600,9 @@ def _build_all_sections_context(project, section_items_list, asset_name, legal_e
                 for entity in legal_entities
             ]
             folder = folder_map.get(item.id)
+            sd_folder = sd_folder_map.get(item.id)
+            eff_file_count = sd_folder.file_count if sd_folder else (folder.file_count if folder else None)
+            eff_last_upload = sd_folder.last_upload_at if sd_folder else (folder.last_upload_at if folder else None)
             rows.append({
                 "item": item,
                 "section_obj": sec,
@@ -604,9 +612,9 @@ def _build_all_sections_context(project, section_items_list, asset_name, legal_e
                 "note": note_map.get(item.id),
                 "history": history_map.get(item.id, {"imc_comment": [], "customer_comment": []}),
                 "additional_header": additional_header,
-                "file_count": folder.file_count if folder else None,
-                "last_upload_at": folder.last_upload_at if folder else None,
-                "source_data_url": sd_url_map.get(item.id, ""),
+                "file_count": eff_file_count,
+                "last_upload_at": eff_last_upload,
+                "source_data_url": sd_folder.public_url if sd_folder and sd_folder.public_url else "",
             })
 
     return {
@@ -983,15 +991,16 @@ def _build_grid_payload(
         except Exception:
             pass
 
-    sd_url_map = {}
+    sd_folder_map = {}
     if all_item_ids:
         try:
             from checklists_app.models import SourceDataItemFolder
             sd_qs = SourceDataItemFolder.objects.filter(
                 checklist_item__in=all_item_ids,
-                asset_name=asset_name,
-            ).exclude(public_url="")
-            sd_url_map = {f.checklist_item_id: f.public_url for f in sd_qs}
+            ).filter(
+                Q(asset_name=asset_name) | Q(asset_name="")
+            )
+            sd_folder_map = {f.checklist_item_id: f for f in sd_qs}
         except Exception:
             pass
 
@@ -1049,6 +1058,9 @@ def _build_grid_payload(
                 })
 
             folder = folder_map.get(item.id)
+            sd_folder = sd_folder_map.get(item.id)
+            eff_file_count = sd_folder.file_count if sd_folder else (folder.file_count if folder else None)
+            eff_last_upload = sd_folder.last_upload_at if sd_folder else (folder.last_upload_at if folder else None)
             rows.append({
                 "kind": "item",
                 "id": item.id,
@@ -1060,12 +1072,12 @@ def _build_grid_payload(
                 "name": item.name,
                 "codeClass": _code_cell_class(row_statuses),
                 "comments": comment_summary_map.get(item.id, _comment_flags(None)),
-                "fileCount": folder.file_count if folder else None,
+                "fileCount": eff_file_count,
                 "lastUploadAt": (
-                    timezone.localtime(folder.last_upload_at).strftime("%d.%m.%y %H:%M")
-                    if folder and folder.last_upload_at else None
+                    timezone.localtime(eff_last_upload).strftime("%d.%m.%y %H:%M")
+                    if eff_last_upload else None
                 ),
-                "sourceDataUrl": sd_url_map.get(item.id, ""),
+                "sourceDataUrl": sd_folder.public_url if sd_folder and sd_folder.public_url else "",
                 "cells": cells,
                 "customerCells": customer_cells,
                 "actions": {
