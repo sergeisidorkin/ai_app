@@ -309,6 +309,7 @@ class ProjectWorkspace(models.Model):
         related_name="yadisk_workspace",
     )
     disk_path = models.CharField("Путь на диске", max_length=2048)
+    public_url = models.URLField("Публичная ссылка", blank=True, default="")
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,

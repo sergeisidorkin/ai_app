@@ -170,6 +170,11 @@
         };
         reindexRows();
         render();
+        const yadiskBtn = document.getElementById("chk-yadisk-btn");
+        if (yadiskBtn) {
+          const projUrl = (state.payload.ui || {}).yadiskProjectUrl || "";
+          if (projUrl) yadiskBtn.dataset.yadiskUrl = projUrl;
+        }
       } catch (error) {
         if (error.name === "AbortError") return;
         clearSticky();

@@ -262,6 +262,16 @@ def create_basic_project_workspace_stream(user, project: ProjectRegistration):
         current += 1
         yield {"current": current, "total": total}
 
+    project_public_url = publish_resource(user, project_path)
+    ProjectWorkspace.objects.update_or_create(
+        project=project,
+        defaults={
+            "disk_path": project_path,
+            "public_url": project_public_url,
+            "created_by": user,
+        },
+    )
+
     yield WorkspaceResult(True, "Рабочее пространство успешно создано.")
 
 

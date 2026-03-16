@@ -1076,6 +1076,15 @@ def _build_grid_payload(
                 },
             })
 
+    yadisk_project_url = ""
+    try:
+        from checklists_app.models import ProjectWorkspace
+        pw = ProjectWorkspace.objects.filter(project=project).only("public_url").first()
+        if pw and pw.public_url:
+            yadisk_project_url = pw.public_url
+    except Exception:
+        pass
+
     section = scope["section"]
     create_href = ""
     if create_url and section:
@@ -1121,6 +1130,7 @@ def _build_grid_payload(
             "xlsxUrl": xlsx_url,
             "approveInfoRequestUrl": approve_info_request_url,
             "projectUid": (project.short_uid or "").strip(),
+            "yadiskProjectUrl": yadisk_project_url,
         },
         "virtualization": {
             "enabled": False,
@@ -1342,12 +1352,21 @@ def panel(request):
 
     yadisk_url = ""
     if request.user.is_authenticated:
-        yadisk_sel = YandexDiskSelection.objects.filter(user=request.user).first()
-        if yadisk_sel and yadisk_sel.resource_path:
-            path = yadisk_sel.resource_path.strip("/")
-            yadisk_url = f"https://disk.yandex.ru/client/disk/{path}" if path else "https://disk.yandex.ru/client/disk"
-        elif YandexDiskAccount.objects.filter(user=request.user).exists():
-            yadisk_url = "https://disk.yandex.ru/client/disk"
+        if selected_project:
+            try:
+                from checklists_app.models import ProjectWorkspace
+                pw = ProjectWorkspace.objects.filter(project=selected_project).only("public_url").first()
+                if pw and pw.public_url:
+                    yadisk_url = pw.public_url
+            except Exception:
+                pass
+        if not yadisk_url:
+            yadisk_sel = YandexDiskSelection.objects.filter(user=request.user).first()
+            if yadisk_sel and yadisk_sel.resource_path:
+                path = yadisk_sel.resource_path.strip("/")
+                yadisk_url = f"https://disk.yandex.ru/client/disk/{path}" if path else "https://disk.yandex.ru/client/disk"
+            elif YandexDiskAccount.objects.filter(user=request.user).exists():
+                yadisk_url = "https://disk.yandex.ru/client/disk"
 
     return render(
         request,
