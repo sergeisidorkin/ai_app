@@ -1,6 +1,6 @@
 from django.db import models
 
-from group_app.models import OrgUnit
+from group_app.models import GroupMember, OrgUnit
 from users_app.models import Employee
 
 
@@ -14,7 +14,7 @@ class ExpertSpecialty(models.Model):
         verbose_name="Направление экспертизы",
     )
     specialty = models.CharField(
-        "Специальность", max_length=512, blank=True, default=""
+        "Специальность", max_length=512, blank=True, default="", unique=True
     )
     specialty_en = models.CharField(
         "Специальность на англ. языке", max_length=512, blank=True, default=""
@@ -27,6 +27,21 @@ class ExpertSpecialty(models.Model):
         related_name="headed_specialties",
         verbose_name="Руководитель направления",
     )
+    expertise_dir = models.ForeignKey(
+        "policy_app.ExpertiseDirection",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="expert_specialties_linked",
+        verbose_name="Направление экспертизы (политика)",
+    )
+    owners = models.ManyToManyField(
+        GroupMember,
+        blank=True,
+        related_name="expert_specialties_owned",
+        verbose_name="Владельцы",
+    )
+    is_group_owner = models.BooleanField("Группа (все компании)", default=False)
     position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -39,6 +54,13 @@ class ExpertSpecialty(models.Model):
 
     def __str__(self):
         return self.specialty or f"Специальность #{self.pk}"
+
+    @property
+    def owner_display(self):
+        if self.is_group_owner:
+            return "Группа"
+        names = list(self.owners.order_by("position").values_list("short_name", flat=True))
+        return ", ".join(names) if names else ""
 
 
 EXCLUDED_ROLES = ("Директор", "Администратор", "Руководитель проектов")
@@ -100,6 +122,43 @@ class ExpertProfile(models.Model):
         "Статус", max_length=255, blank=True, default=""
     )
     position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
+
+    # --- Реквизиты для договора ---
+    GENDER_CHOICES = [
+        ("male", "Мужской"),
+        ("female", "Женский"),
+    ]
+    full_name_genitive = models.CharField(
+        "ФИО (полное) родительный падеж", max_length=512, blank=True, default=""
+    )
+    self_employed = models.BooleanField("Само-занятость", default=False)
+    tax_rate = models.PositiveIntegerField("Ставка налога, %", null=True, blank=True)
+    citizenship = models.CharField("Гражданство", max_length=255, blank=True, default="")
+    gender = models.CharField(
+        "Пол", max_length=10, choices=GENDER_CHOICES, blank=True, default=""
+    )
+    inn = models.CharField("ИНН", max_length=50, blank=True, default="")
+    snils = models.DateField("СНИЛС", null=True, blank=True)
+    birth_date = models.DateField("Дата рождения", null=True, blank=True)
+    passport_series = models.CharField("Паспорт: серия", max_length=50, blank=True, default="")
+    passport_number = models.CharField("Паспорт: номер", max_length=50, blank=True, default="")
+    passport_issued_by = models.CharField("Паспорт: кем выдан", max_length=512, blank=True, default="")
+    passport_issue_date = models.DateField("Паспорт: дата выдачи", null=True, blank=True)
+    passport_expiry_date = models.DateField("Паспорт: срок действия", null=True, blank=True)
+    passport_division_code = models.CharField("Паспорт: код подразделения", max_length=50, blank=True, default="")
+    registration_address = models.CharField("Регистрация: адрес", max_length=512, blank=True, default="")
+    bank_name = models.CharField("Наименование банка", max_length=255, blank=True, default="")
+    bank_swift = models.CharField("SWIFT", max_length=50, blank=True, default="")
+    bank_inn = models.CharField("ИНН банка", max_length=50, blank=True, default="")
+    bank_bik = models.CharField("БИК", max_length=50, blank=True, default="")
+    settlement_account = models.CharField("Рас. счет", max_length=50, blank=True, default="")
+    corr_account = models.CharField("Кор. счет", max_length=50, blank=True, default="")
+    bank_address = models.CharField("Адрес банка", max_length=512, blank=True, default="")
+    corr_bank_name = models.CharField("Наименование банка-корреспондента", max_length=255, blank=True, default="")
+    corr_bank_bik = models.CharField("БИК банка-корреспондента", max_length=50, blank=True, default="")
+    corr_bank_swift = models.CharField("SWIFT банка-корреспондента", max_length=50, blank=True, default="")
+    corr_bank_settlement_account = models.CharField("Рас. счет банка-корреспондента", max_length=50, blank=True, default="")
+    corr_bank_corr_account = models.CharField("Кор. счет банка-корреспондента", max_length=50, blank=True, default="")
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

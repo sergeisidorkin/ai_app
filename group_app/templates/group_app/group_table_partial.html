@@ -16,10 +16,11 @@
         <th>Наименование компании (краткое)</th>
         <th>Наименование компании (полное)</th>
         <th>Наименование на английском языке</th>
-        <th>Страна регистрации</th>
-        <th>Идентификатор</th>
-        <th>Регистрационный номер</th>
-        <th>Дата регистрации</th>
+        <th>№</th>
+        <th>Страна регистр.</th>
+        <th>Идент.</th>
+        <th>Регистр. номер</th>
+        <th>Дата регистр.</th>
     </tr>
     </thead>
     <tbody>
@@ -44,13 +45,14 @@
             <td class="text-nowrap">{{ m.short_name }}</td>
             <td>{{ m.full_name }}</td>
             <td>{{ m.name_en }}</td>
+            <td class="text-nowrap">{{ m.country_order_number }}</td>
             <td class="text-nowrap">{{ m.country_name }}</td>
             <td class="text-nowrap">{{ m.identifier }}</td>
             <td class="text-nowrap">{{ m.registration_number }}</td>
             <td class="text-nowrap">{% if m.registration_date %}{{ m.registration_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>
         </tr>
     {% empty %}
-        <tr><td colspan="8" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="9" class="text-muted">Пока нет данных.</td></tr>
     {% endfor %}
     </tbody>
 </table>

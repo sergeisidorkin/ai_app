@@ -8,7 +8,7 @@ from django.db.models.functions import Trim
 from django import forms
 from django.utils import timezone
 from classifiers_app.models import LegalEntityIdentifier, LegalEntityRecord
-from .models import ProjectRegistration, WorkVolume, Performer, WorkVolumeItem, LegalEntity, RegistrationWorkspaceFolder
+from .models import ProjectRegistration, WorkVolume, Performer, WorkVolumeItem, LegalEntity, RegistrationWorkspaceFolder, PerformerParticipationSnapshot
 from .forms import ProjectRegistrationForm, ContractConditionsForm, WorkVolumeForm, PerformerForm, BootstrapMixin, LegalEntityForm
 
 import json
@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 from experts_app.models import ExpertProfile
 from policy_app.models import TypicalSection
 from users_app.models import Employee
+from users_app.forms import FREELANCER_LABEL
 from notifications_app.services import create_participation_notifications, create_info_request_notifications, create_contract_notifications
 
 PROJECTS_PARTIAL_TEMPLATE = "projects_app/projects_partial.html"
@@ -653,16 +654,16 @@ def _bind_dynamic_performer_fields(form, *, data=None, instance=None):
         except Exception:
             pass
 
-def _performers_context():
+def _performers_context(user=None):
     active_participation_statuses = ["Не начат", "В работе"]
     performers = (
         Performer.objects
-        .select_related("registration", "registration__type", "typical_section", "employee", "employee__user", "currency")
+        .select_related("registration", "registration__type", "typical_section", "typical_section__expertise_direction", "employee", "employee__user", "currency")
         .order_by("position", "id")
     )
     participation_performers = (
         Performer.objects
-        .select_related("registration", "registration__type", "typical_section", "employee", "employee__user")
+        .select_related("registration", "registration__type", "typical_section", "typical_section__expertise_direction", "employee", "employee__user")
         .annotate(executor_trim=Trim("executor"))
         .filter(registration__status__in=active_participation_statuses)
         .exclude(executor_trim="")
@@ -698,6 +699,7 @@ def _performers_context():
         .filter(
             registration__status__in=active_participation_statuses,
             participation_response=Performer.ParticipationResponse.CONFIRMED,
+            employee__employment=FREELANCER_LABEL,
         )
         .exclude(executor_trim="")
         .order_by("registration_id", "executor", "asset_name", "position", "id")
@@ -715,10 +717,97 @@ def _performers_context():
         .filter(id__in=performer_project_ids)
         .order_by("-number", "-id")
     )
+    user_is_direction_head = False
+    if user:
+        try:
+            from policy_app.models import DEPARTMENT_HEAD_GROUP
+            user_is_direction_head = getattr(user.employee_profile, "role", "") == DEPARTMENT_HEAD_GROUP
+        except Exception:
+            pass
+
+    if user:
+        performers = list(performers)
+        for p in performers:
+            p.executor_locked = _is_executor_locked(user, p)
+
+    if user_is_direction_head:
+        from notifications_app.models import NotificationPerformerLink as NPL
+        from django.db.models import F
+        dh_notified_ids = set(
+            NPL.objects
+            .filter(
+                notification__notification_type="project_participation_confirmation",
+                notification__recipient_id=F("performer__employee__user_id"),
+            )
+            .values_list("performer_id", flat=True)
+        )
+        dh_department_id = getattr(user.employee_profile, "department_id", None)
+        participation_performers = list(participation_performers)
+        for p in participation_performers:
+            ts_dir = _effective_direction_id(p.typical_section)
+            in_dh_direction = bool(ts_dir and ts_dir == dh_department_id)
+            p.dh_checkbox_locked = (
+                not in_dh_direction
+                or (p.employee_id and p.employee.user_id == user.id)
+                or p.pk in dh_notified_ids
+            )
+
+    if not isinstance(participation_performers, list):
+        participation_performers = list(participation_performers)
+    from collections import defaultdict
+    from types import SimpleNamespace
+    snapshot_map = defaultdict(list)
+    perf_ids = [p.pk for p in participation_performers]
+    if perf_ids:
+        for s in (
+            PerformerParticipationSnapshot.objects
+            .filter(performer_id__in=perf_ids)
+            .select_related("employee", "employee__user")
+            .order_by("request_sent_at", "id")
+        ):
+            snapshot_map[s.performer_id].append(s)
+
+    participation_display_rows = []
+    for p in participation_performers:
+        p.is_snapshot = False
+        for snap in snapshot_map.get(p.pk, []):
+            row = SimpleNamespace(
+                is_snapshot=True,
+                registration_id=p.registration_id,
+                registration=p.registration,
+                executor=snap.executor_name,
+                asset_name=p.asset_name,
+                typical_section=p.typical_section,
+                request_sent_at=snap.request_sent_at,
+                deadline_at=snap.deadline_at,
+                response_display=snap.get_response_display(),
+                response_at=snap.response_at,
+                response_status=snap.response_status,
+            )
+            participation_display_rows.append(row)
+        participation_display_rows.append(p)
+    def _participation_sort_key(r):
+        if r.is_snapshot:
+            status_order = 3
+        elif not getattr(r, "participation_request_sent_at", None):
+            status_order = 0
+        elif not getattr(r, "participation_response", ""):
+            status_order = 1
+        else:
+            status_order = 2
+        return (
+            r.registration_id or 0,
+            r.executor or "",
+            status_order,
+            getattr(r, "asset_name", "") or "",
+        )
+    participation_display_rows.sort(key=_participation_sort_key)
+
     return {
         "performers": performers,
         "performer_projects": performer_projects,
         "participation_performers": participation_performers,
+        "participation_display_rows": participation_display_rows,
         "participation_projects": participation_projects,
         "participation_request_sent_initial": request_sent_initial,
         "info_request_performers": info_request_performers,
@@ -727,12 +816,13 @@ def _performers_context():
         "contract_performers": contract_performers,
         "contract_projects": contract_projects,
         "contract_request_sent_initial": request_sent_initial,
+        "user_is_direction_head": user_is_direction_head,
     }
 
 @login_required
 @require_http_methods(["GET"])
 def performers_partial(request):
-    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context())
+    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user))
 
 def _build_executor_grade_map():
     profiles = (
@@ -791,6 +881,35 @@ def _build_tariff_map():
     return result
 
 
+def _build_tariff_hours_map():
+    from policy_app.models import Tariff
+    tariffs = Tariff.objects.select_related("product", "section").all()
+    result = {}
+    for t in tariffs:
+        key = f"{t.product_id}_{t.section_id}"
+        result[key] = t.service_hours or 0
+    return result
+
+
+def _build_direction_hourly_rate_map():
+    """Base-rate hourly rate per OrgUnit (direction).
+
+    Returns {str(org_unit_id): float(hourly_rate)} from Grades where
+    is_base_rate=True, keyed by the grade creator's department.
+    """
+    from policy_app.models import Grade
+    result = {}
+    for g in (
+        Grade.objects
+        .filter(is_base_rate=True, hourly_rate__isnull=False)
+        .select_related("created_by__employee_profile")
+    ):
+        emp = getattr(g.created_by, "employee_profile", None)
+        if emp and emp.department_id:
+            result[str(emp.department_id)] = float(g.hourly_rate)
+    return result
+
+
 def _performer_form_ctx(form, action: str, performer=None):
     regs = ProjectRegistration.objects.select_related("type").order_by("position", "id")
 
@@ -822,18 +941,24 @@ def _performer_form_ctx(form, action: str, performer=None):
         qs = (
             TypicalSection.objects
             .filter(product=r.type)
-            .select_related("product")
-            .only("id", "code", "short_name_ru", "product__short_name", "position")
+            .select_related("product", "expertise_dir")
             .order_by("position", "id")
         )
         sections_map[str(r.id)] = [
-            {"id": s.id, "label": _typical_section_option_label(s)}
+            {
+                "id": s.id,
+                "label": _typical_section_option_label(s),
+                "pricing_method": (s.expertise_dir.pricing_method or "") if s.expertise_dir_id else "",
+                "direction_id": s.expertise_direction_id,
+            }
             for s in qs
         ]
 
     executor_grade_map = _build_executor_grade_map()
     living_wage_map = _build_living_wage_map()
     tariff_map = _build_tariff_map()
+    tariff_hours_map = _build_tariff_hours_map()
+    direction_hourly_rate_map = _build_direction_hourly_rate_map()
 
     return {
         "form": form,
@@ -845,35 +970,69 @@ def _performer_form_ctx(form, action: str, performer=None):
         "executor_grade_json": json.dumps(executor_grade_map, ensure_ascii=False),
         "living_wage_json": json.dumps(living_wage_map, ensure_ascii=False),
         "tariff_json": json.dumps(tariff_map, ensure_ascii=False),
+        "tariff_hours_json": json.dumps(tariff_hours_map, ensure_ascii=False),
+        "direction_hourly_rate_json": json.dumps(direction_hourly_rate_map, ensure_ascii=False),
     }
 
 def _render_performers_updated(request):
-    resp = render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context())
+    resp = render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user))
     resp[HX_TRIGGER_HEADER] = HX_PERFORMERS_UPDATED_EVENT
     return resp
 
 @login_required
 @require_http_methods(["GET"])
 def performers_partial(request):
-    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context())
+    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user))
 
 def _next_performer_position():
     mx = Performer.objects.aggregate(Max("position")).get("position__max") or 0
     return mx + 1
 
 
+def _effective_direction_id(typical_section):
+    """Return the OrgUnit PK of the expertise direction, or None if absent or 'директорское' (level 1)."""
+    if not typical_section:
+        return None
+    direction = getattr(typical_section, "expertise_direction", None)
+    if not direction:
+        return None
+    if direction.level == 1:
+        return None
+    return direction.pk
+
+
 def _is_executor_locked(user, performer):
-    """Исполнитель заблокирован для «Руководитель проектов», если раздел привязан к направлению экспертизы."""
-    if not performer.typical_section_id:
-        return False
-    ts = performer.typical_section
-    if not ts or not ts.expertise_direction_id:
-        return False
+    """Исполнитель заблокирован:
+    - «Руководитель проектов»: если раздел привязан к (не-директорскому) направлению экспертизы.
+    - «Руководитель направления»: если раздел НЕ относится к его направлению,
+      или если запрос подтверждения отправлен и эксперт ещё не отклонил.
+    Директорские направления (OrgUnit.level == 1) считаются отсутствующими.
+    """
     try:
         emp = user.employee_profile
     except Exception:
         return False
-    return emp.role == "Руководитель проектов"
+    ts_direction_id = _effective_direction_id(performer.typical_section)
+    if emp.role == "Руководитель проектов":
+        if ts_direction_id:
+            return True
+        if (performer.participation_request_sent_at
+                and performer.participation_response != Performer.ParticipationResponse.DECLINED):
+            return True
+        return False
+    if emp.role == "Руководитель направления":
+        if not ts_direction_id:
+            return True
+        if ts_direction_id != emp.department_id:
+            return True
+        dh_is_executor = performer.employee_id and performer.employee.user_id == user.id
+        if dh_is_executor:
+            return performer.participation_response == Performer.ParticipationResponse.CONFIRMED
+        if (performer.participation_request_sent_at
+                and performer.participation_response != Performer.ParticipationResponse.DECLINED):
+            return True
+        return False
+    return False
 
 
 def _parse_request_sent_at(raw_value: str):
@@ -935,14 +1094,16 @@ def performer_form_edit(request, pk: int):
     GET:  отдать форму редактирования в модалку (с картами и привязками).
     POST: если невалидно — вернуть форму (200); если ок — 204 + HX-Trigger.
     """
-    p = get_object_or_404(Performer.objects.select_related("typical_section"), pk=pk)
+    p = get_object_or_404(Performer.objects.select_related("typical_section", "typical_section__expertise_direction", "employee", "employee__user"), pk=pk)
     executor_locked = _is_executor_locked(request.user, p)
 
     if request.method == "GET":
         form = PerformerForm(instance=p)
         _bind_dynamic_performer_fields(form, instance=p)
         if executor_locked:
-            form.fields["executor"].widget.attrs["disabled"] = True
+            attrs = form.fields["executor"].widget.attrs
+            attrs["readonly"] = True
+            attrs["class"] = attrs.get("class", "") + " readonly-field"
         ctx = _performer_form_ctx(form, "edit", performer=p)
         ctx["executor_locked"] = executor_locked
         return render(request, PERF_FORM_TEMPLATE, ctx)
@@ -953,7 +1114,9 @@ def performer_form_edit(request, pk: int):
 
     if not form.is_valid():
         if executor_locked:
-            form.fields["executor"].widget.attrs["disabled"] = True
+            attrs = form.fields["executor"].widget.attrs
+            attrs["readonly"] = True
+            attrs["class"] = attrs.get("class", "") + " readonly-field"
         ctx = _performer_form_ctx(form, "edit", performer=p)
         ctx["executor_locked"] = executor_locked
         return render(request, PERF_FORM_TEMPLATE, ctx, status=200)
@@ -1257,7 +1420,7 @@ def performer_move_up(request, pk: int):
         Performer.objects.filter(pk=prev.id).update(position=cur.position)
         _normalize_performer_positions()
     # ВОЗВРАЩАЕМ ТОЛЬКО ФРАГМЕНТ, БЕЗ HX-Trigger
-    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context())
+    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user))
 
 @login_required
 @require_http_methods(["POST", "GET"])
@@ -1271,7 +1434,7 @@ def performer_move_down(request, pk: int):
         Performer.objects.filter(pk=nxt.id).update(position=cur.position)
         _normalize_performer_positions()
     # ВОЗВРАЩАЕМ ТОЛЬКО ФРАГМЕНТ, БЕЗ HX-Trigger
-    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context())
+    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user))
 
 @login_required
 @require_GET

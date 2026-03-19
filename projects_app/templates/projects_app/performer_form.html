@@ -56,9 +56,6 @@
           {% if executor_locked %}<i class="bi bi-lock text-secondary me-1" style="font-size:.85em"></i>{% endif %}Исполнитель
         </label>
         {{ form.executor }}
-        {% if executor_locked %}
-          <input type="hidden" name="executor" value="{{ form.executor.value }}">
-        {% endif %}
       </div>
       <div class="col-md-3">
         <label class="form-label">Грейд (наименование)</label>
@@ -137,6 +134,8 @@
 <script id="perf-executor-grade-map" type="application/json">{{ executor_grade_json|safe }}</script>
 <script id="perf-living-wage-map" type="application/json">{{ living_wage_json|safe }}</script>
 <script id="perf-tariff-map" type="application/json">{{ tariff_json|safe }}</script>
+<script id="perf-tariff-hours-map" type="application/json">{{ tariff_hours_json|safe }}</script>
+<script id="perf-direction-hourly-rate-map" type="application/json">{{ direction_hourly_rate_json|safe }}</script>
 
 <script>
 (function(){
@@ -153,6 +152,8 @@
   const execGradeMap = JSON.parse(document.getElementById('perf-executor-grade-map').textContent || '{}');
   const lwMap    = JSON.parse(document.getElementById('perf-living-wage-map').textContent || '{}');
   const tariffMap= JSON.parse(document.getElementById('perf-tariff-map').textContent || '{}');
+  const tariffHoursMap = JSON.parse(document.getElementById('perf-tariff-hours-map').textContent || '{}');
+  const dirHourlyRateMap = JSON.parse(document.getElementById('perf-direction-hourly-rate-map').textContent || '{}');
 
   function refillAssets(regId) {
     if (!assetSel) return;
@@ -263,21 +264,38 @@
 
   function calcEstimated() {
     var execInfo = execSel ? execGradeMap[execSel.value] : null;
-    if (!execInfo || !execInfo.country_id || !execInfo.region_id || execInfo.base_rate_share == null) {
-      return;
-    }
+    if (!execInfo || execInfo.base_rate_share == null) return;
+
     var regId = regSel ? regSel.value : '';
     var regInfo = regMap[regId] || {};
     var productId = regInfo.type_id;
     var sectionId = sectSel ? sectSel.value : '';
     if (!productId || !sectionId) return;
 
-    var Z = lwMap[execInfo.country_id + '_' + execInfo.region_id];
-    var X = tariffMap[productId + '_' + sectionId];
-    if (Z == null || X == null) return;
+    var sectList = sectMap[regId] || [];
+    var sectInfo = null;
+    for (var i = 0; i < sectList.length; i++) {
+      if (String(sectList[i].id) === String(sectionId)) { sectInfo = sectList[i]; break; }
+    }
+    var pricingMethod = sectInfo ? (sectInfo.pricing_method || '') : '';
 
     var Y = execInfo.base_rate_share / 100;
-    var result = Math.ceil((Z * X + Z * X * Y) / 1000) * 1000;
+    var Z, X, result;
+
+    if (pricingMethod === 'vpm') {
+      if (!execInfo.country_id || !execInfo.region_id) return;
+      Z = lwMap[execInfo.country_id + '_' + execInfo.region_id];
+      X = tariffMap[productId + '_' + sectionId];
+      if (Z == null || X == null) return;
+    } else {
+      var dirId = sectInfo ? sectInfo.direction_id : null;
+      if (!dirId) return;
+      Z = dirHourlyRateMap[String(dirId)];
+      X = tariffHoursMap[productId + '_' + sectionId];
+      if (Z == null || X == null || X <= 0) return;
+    }
+
+    result = Math.ceil((Z * X * (1 + Y)) / 1000) * 1000;
 
     if (estimatedHidden) estimatedHidden.value = result.toFixed(2);
     if (estimatedDisplay) estimatedDisplay.value = fmtMoney(result.toFixed(2));

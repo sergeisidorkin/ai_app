@@ -4,6 +4,7 @@ from django import forms
 from django.db.models import Q
 
 from classifiers_app.models import LegalEntityIdentifier, OKSMCountry
+from policy_app.models import ExpertiseDirection
 from .models import GroupMember, OrgUnit
 
 
@@ -24,6 +25,21 @@ def _identifier_for_country_code(country_code: str) -> str:
 
 
 class GroupMemberForm(forms.ModelForm):
+    order_number = forms.IntegerField(
+        label="Порядковый номер",
+        required=False,
+        disabled=True,
+        widget=forms.NumberInput(
+            attrs={
+                "class": "form-control",
+                "id": "gm-order-number",
+                "readonly": True,
+                "tabindex": "-1",
+                "style": "background-color:#f8f9fa; color:#6c757d;",
+            }
+        ),
+    )
+
     country = forms.ModelChoiceField(
         label="Страна регистрации",
         queryset=OKSMCountry.objects.none(),
@@ -31,7 +47,9 @@ class GroupMemberForm(forms.ModelForm):
     )
 
     def __init__(self, *args, **kwargs):
+        current_order_number = kwargs.pop("current_order_number", 0)
         super().__init__(*args, **kwargs)
+        self.fields["order_number"].initial = current_order_number
         qs = _active_countries_qs()
         if self.instance and self.instance.pk and self.instance.country_code:
             qs = (qs | OKSMCountry.objects.filter(code=self.instance.country_code)).distinct()
@@ -85,9 +103,16 @@ class GroupMemberForm(forms.ModelForm):
 
 
 class OrgUnitForm(forms.ModelForm):
+    expertise = forms.ModelChoiceField(
+        label="Экспертиза",
+        queryset=ExpertiseDirection.objects.order_by("position", "id"),
+        required=False,
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+
     class Meta:
         model = OrgUnit
-        fields = ["company", "level", "department_name", "short_name", "functional_subordination", "unit_type"]
+        fields = ["company", "level", "department_name", "expertise", "functional_subordination", "unit_type"]
         widgets = {
             "company": forms.Select(attrs={
                 "class": "form-select",
@@ -103,10 +128,6 @@ class OrgUnitForm(forms.ModelForm):
                 "class": "form-control",
                 "placeholder": "Наименование подразделения",
             }),
-            "short_name": forms.TextInput(attrs={
-                "class": "form-control",
-                "placeholder": "Краткое имя",
-            }),
             "functional_subordination": forms.Select(attrs={
                 "class": "form-select",
                 "id": "org-func-sub",
@@ -121,6 +142,12 @@ class OrgUnitForm(forms.ModelForm):
         self.fields["company"].queryset = GroupMember.objects.all()
         self.fields["company"].label_from_instance = lambda obj: obj.short_name
         self.fields["company"].empty_label = "---------"
+
+        self.fields["expertise"].queryset = ExpertiseDirection.objects.order_by("position", "id")
+        self.fields["expertise"].label_from_instance = (
+            lambda obj: f"{obj.short_name} {obj.name}"
+        )
+        self.fields["expertise"].empty_label = "---------"
 
         qs = OrgUnit.objects.select_related("company").all()
         if self.instance and self.instance.pk:

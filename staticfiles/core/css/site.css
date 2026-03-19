@@ -546,7 +546,10 @@ body .second-sidebar + .flex-grow-1 {
   z-index: 1020;
 }
 
-#notifications .section-header {
+#notifications > .templates-bleed > .section-header {
+  position: sticky;
+  top: 0;
+  z-index: 1020;
   margin-bottom: 16px;
 }
 
@@ -626,6 +629,7 @@ body .second-sidebar + .flex-grow-1 {
   filter: none;
 }
 
+#performers-main-section .form-check-input:disabled,
 #participation-confirmation-section .form-check-input:disabled,
 #contract-conclusion-section .form-check-input:disabled,
 #info-request-approval-section .form-check-input:disabled {
@@ -720,6 +724,30 @@ body .second-sidebar + .flex-grow-1 {
   overflow: hidden;
 }
 
+#projects-pending-notifications:has(.notification-card) {
+  margin-bottom: 1rem;
+}
+
+#projects-pending-notifications .notifications-list {
+  border-radius: 0.7rem;
+  overflow: hidden;
+  box-shadow: 0 .125rem .25rem rgba(0, 0, 0, .075);
+}
+
+#projects-pending-notifications .notification-card {
+  border-color: var(--bs-border-color-translucent, rgba(0, 0, 0, 0.175));
+}
+
+#projects-pending-notifications .notification-card:first-child {
+  border-top-left-radius: 0.7rem;
+  border-top-right-radius: 0.7rem;
+}
+
+#projects-pending-notifications .notification-card:last-child {
+  border-bottom-left-radius: 0.7rem;
+  border-bottom-right-radius: 0.7rem;
+}
+
 .notification-card {
   border: 1px solid #e9ecef;
   margin: 0;
@@ -801,6 +829,12 @@ body .second-sidebar + .flex-grow-1 {
   color: #212529;
   background: #f7f8fa;
 }
+.notification-card__details p {
+  margin-bottom: 0.35rem;
+}
+.notification-card__details ul {
+  margin-bottom: 0.35rem;
+}
 
 .notification-marker {
   width: 1.16rem;
@@ -824,6 +858,20 @@ body .second-sidebar + .flex-grow-1 {
 .notification-marker--processed {
   background: #adb5bd;
   color: #fff;
+}
+
+.notification-card--processed .notification-card__title {
+  font-weight: 400;
+}
+
+.notification-card__checkbox {
+  flex: 0 0 auto;
+}
+
+.notification-card__checkbox .form-check-input:disabled {
+  background-color: #e9ecef !important;
+  border-color: #d5dbe1 !important;
+  opacity: 1 !important;
 }
 
 
@@ -1406,6 +1454,36 @@ section#templates .alert.alert-info .text-muted {
 
 
 /* ==== Performers table ==== */
+.performer-quick-edit { cursor: pointer; opacity: .45; transition: opacity .15s; }
+.performer-quick-edit:hover { opacity: .85; }
+.performer-locked-icon { opacity: .35; }
+
+.perf-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #000;
+  opacity: .5;
+  border-radius: .375rem;
+  cursor: pointer;
+  font-size: 1.25rem;
+  transition: opacity .15s, background-color .15s;
+}
+.perf-nav-btn i { -webkit-text-stroke: .6px currentColor; }
+.perf-nav-btn:hover:not(:disabled) {
+  opacity: .75;
+  background-color: rgba(0, 0, 0, .06);
+}
+.perf-nav-btn:disabled {
+  opacity: .15;
+  cursor: default;
+}
+
 .performers-table { table-layout: auto; white-space: nowrap; }
 
 .performers-table col.col-checkbox { width: 30px  !important; }
@@ -1478,6 +1556,11 @@ section#templates .alert.alert-info .text-muted {
   border-bottom: 1px solid var(--bs-border-color) !important;
 }
 
+#participation-confirmation-section .performers-table > tbody > tr.snapshot-row > td {
+  --bs-table-color: #adb5bd;
+  color: #adb5bd;
+}
+
 /* +0px слева у колонки с чекбоксами во всех 3 таблицах раздела "Проекты" */
 #projects-pane table.table > thead tr > :first-child,
 #projects-pane table.table > tbody tr > :first-child,
@@ -1528,6 +1611,25 @@ section#templates .alert.alert-info .text-muted {
   background: #9ca5ae;
   border-color: #9ca5ae;
 }
+#participation-section-toggle,
+#participation-asset-toggle,
+#contract-section-toggle,
+#contract-asset-toggle,
+#info-request-section-toggle,
+#info-request-asset-toggle,
+#epr-wrap-toggle {
+  position: relative;
+  display: inline-flex;
+  vertical-align: text-top;
+  top: 1px;
+  right: auto;
+  bottom: auto;
+  width: 16px;
+  height: 16px;
+  font-size: .65rem;
+  border-radius: 3px;
+  margin-left: 8px;
+}
 #oksm-table-wrap table.clf-truncated td:not(.text-nowrap),
 #okv-table-wrap table.clf-truncated td:not(.text-nowrap),
 #katd-table-wrap table.clf-truncated td:not(.text-nowrap),
@@ -1561,7 +1663,9 @@ section#templates .alert.alert-info .text-muted {
 .ler-ac-list {
   position: absolute;
   z-index: 1055;
-  left: 0; right: 0;
+  left: 0;
+  width: max-content;
+  min-width: 100%;
   max-height: 240px;
   overflow-y: auto;
   background: #fff;
@@ -1580,11 +1684,19 @@ section#templates .alert.alert-info .text-muted {
   font-size: .82rem;
   line-height: 1.35;
   color: #212529;
-  white-space: normal;
+  white-space: nowrap;
   transition: background-color .1s;
 }
 .ler-ac-item:hover {
   background-color: #e9ecef;
+}
+.ler-ac-item.ler-ac-more {
+  color: #6c757d;
+  cursor: default;
+  font-style: italic;
+}
+.ler-ac-item.ler-ac-more:hover {
+  background-color: transparent;
 }
 .ler-ac-item .ler-ac-sub {
   color: #6c757d;
@@ -1714,4 +1826,21 @@ section#templates .alert.alert-info .text-muted {
     transparent 8px,
     transparent 12px
   );
+}
+
+.modal-dialog.modal-xxl { max-width: 45%; }
+
+.ct-download-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: #6c757d;
+  text-decoration: none;
+  border-radius: .375rem;
+}
+.ct-download-link:hover {
+  color: #212529;
+  background-color: rgba(0, 0, 0, .08);
 }

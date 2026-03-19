@@ -21,6 +21,13 @@ class Product(models.Model):
     display_name = models.CharField("Отображаемое в системе имя", max_length=255, blank=True, default="")
     name_ru = models.CharField("Наименование на русском языке", max_length=255)
     service_type = models.CharField("Тип услуги", max_length=128)
+    owners = models.ManyToManyField(
+        "group_app.GroupMember",
+        blank=True,
+        related_name="products",
+        verbose_name="Владельцы",
+    )
+    is_group_owner = models.BooleanField("Группа (все компании)", default=False)
     position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -33,6 +40,13 @@ class Product(models.Model):
 
     def __str__(self):
         return self.short_name
+
+    @property
+    def owner_display(self):
+        if self.is_group_owner:
+            return "Группа"
+        names = list(self.owners.order_by("position").values_list("short_name", flat=True))
+        return ", ".join(names) if names else ""
 
 class TypicalSection(models.Model):
     ACCOUNTING_TYPE_CHOICES = [
@@ -54,6 +68,14 @@ class TypicalSection(models.Model):
         blank=True,
         related_name="typical_sections",
         verbose_name="Специальности",
+    )
+    expertise_dir = models.ForeignKey(
+        "policy_app.ExpertiseDirection",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="typical_sections_dir",
+        verbose_name="Экспертиза",
     )
     expertise_direction = models.ForeignKey(
         "group_app.OrgUnit",
@@ -126,6 +148,49 @@ class SectionStructure(models.Model):
         return f"{self.product.short_name} / {self.section.short_name}"
 
 
+class ExpertiseDirection(models.Model):
+    PRICING_METHOD_CHOICES = [
+        ("vpm", "Ставка в ВПМ"),
+        ("hours", "Объем услуг в часах"),
+    ]
+
+    name = models.CharField("Наименование направления", max_length=255)
+    short_name = models.CharField("Краткое обозначение", max_length=128)
+    pricing_method = models.CharField(
+        "Расчет стоимости услуг",
+        max_length=16,
+        choices=PRICING_METHOD_CHOICES,
+        blank=True,
+        default="",
+    )
+    owners = models.ManyToManyField(
+        "group_app.GroupMember",
+        blank=True,
+        related_name="expertise_directions",
+        verbose_name="Владельцы",
+    )
+    is_group_owner = models.BooleanField("Группа (все компании)", default=False)
+    position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["position", "id"]
+        verbose_name = "Направление экспертизы"
+        verbose_name_plural = "Направления экспертизы"
+
+    def __str__(self):
+        return self.name
+
+    @property
+    def owner_display(self):
+        if self.is_group_owner:
+            return "Группа"
+        names = list(self.owners.order_by("position").values_list("short_name", flat=True))
+        return ", ".join(names) if names else ""
+
+
 class Grade(models.Model):
     grade_en = models.CharField("Грейд на английском языке", max_length=255)
     grade_ru = models.CharField("Грейд на русском языке", max_length=255)
@@ -133,6 +198,17 @@ class Grade(models.Model):
     qualification = models.PositiveIntegerField("Квалификация", default=0)
     is_base_rate = models.BooleanField("Базовая ставка", default=False)
     base_rate_share = models.IntegerField("Доля базовой ставки, %", default=0)
+    hourly_rate = models.DecimalField(
+        "Часовая ставка", max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    currency = models.ForeignKey(
+        "classifiers_app.OKVCurrency",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="grades",
+        verbose_name="Валюта",
+    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -163,8 +239,8 @@ class Tariff(models.Model):
     base_rate_vpm = models.DecimalField(
         "Базовая ставка в ВПМ", max_digits=10, decimal_places=2, default=1
     )
-    recommended_specialist = models.CharField(
-        "Рекомендуемый специалист", max_length=255, blank=True, default=""
+    service_hours = models.PositiveIntegerField(
+        "Объем услуг в часах", default=0
     )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

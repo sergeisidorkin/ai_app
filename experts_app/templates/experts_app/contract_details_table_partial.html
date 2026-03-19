@@ -1,0 +1,109 @@
+<table class="table table-sm align-top" id="ecd-table">
+    <thead>
+    <tr>
+        <th style="width:1%">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+                <div class="form-check m-0">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           id="ecd-master"
+                           data-target-name="ecd-select"
+                           data-actions-id="ecd-actions"
+                           aria-label="Выделить все строки">
+                </div>
+            {% endif %}
+        </th>
+        <th style="min-width:280px">ФИО</th>
+        <th>ФИО (полное) род. п.</th>
+        <th style="width:1%">Само-занятость</th>
+        <th>Ставка налога, %</th>
+        <th>Гражданство</th>
+        <th>Пол</th>
+        <th>ИНН</th>
+        <th>СНИЛС</th>
+        <th>Дата рождения</th>
+        <th>Паспорт: серия</th>
+        <th>Паспорт: номер</th>
+        <th>Паспорт: кем выдан</th>
+        <th>Паспорт: дата выдачи</th>
+        <th>Паспорт: срок действия</th>
+        <th>Паспорт: код подр.</th>
+        <th>Регистрация: адрес</th>
+        <th>Наименование банка</th>
+        <th>SWIFT</th>
+        <th>ИНН банка</th>
+        <th>БИК</th>
+        <th>Рас. счет</th>
+        <th>Кор. счет</th>
+        <th>Адрес банка</th>
+        <th>Наим. банка-корр.</th>
+        <th>БИК банка-корр.</th>
+        <th>SWIFT банка-корр.</th>
+        <th>Рас. счет банка-корр.</th>
+        <th>Кор. счет банка-корр.</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for p in profiles %}
+        <tr data-edit-url="{% url 'epr_contract_details_edit' p.pk %}"
+            data-profile-id="{{ p.pk }}">
+
+            <td class="text-nowrap">
+                {% if request.user.is_authenticated and request.user.is_staff %}
+                    <div class="form-check">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="ecd-sel-{{ p.id }}"
+                               name="ecd-select"
+                               value="{{ p.id }}"
+                               aria-label="Выделить строку">
+                    </div>
+                {% endif %}
+            </td>
+            <td class="text-nowrap">{{ p.full_name }}</td>
+            <td class="text-nowrap">{{ p.full_name_genitive }}</td>
+            <td class="text-center">{% if p.self_employed %}<i class="bi bi-check-lg text-success"></i>{% endif %}</td>
+            <td class="text-nowrap">{% if p.tax_rate != None %}{{ p.tax_rate }}%{% endif %}</td>
+            <td class="text-nowrap">{{ p.citizenship }}</td>
+            <td class="text-nowrap">{{ p.get_gender_display }}</td>
+            <td class="text-nowrap">{{ p.inn }}</td>
+            <td class="text-nowrap">{% if p.snils %}{{ p.snils|date:"d.m.Y" }}{% endif %}</td>
+            <td class="text-nowrap">{% if p.birth_date %}{{ p.birth_date|date:"d.m.Y" }}{% endif %}</td>
+            <td class="text-nowrap">{{ p.passport_series }}</td>
+            <td class="text-nowrap">{{ p.passport_number }}</td>
+            <td class="text-nowrap">{{ p.passport_issued_by }}</td>
+            <td class="text-nowrap">{% if p.passport_issue_date %}{{ p.passport_issue_date|date:"d.m.Y" }}{% endif %}</td>
+            <td class="text-nowrap">{% if p.passport_expiry_date %}{{ p.passport_expiry_date|date:"d.m.Y" }}{% endif %}</td>
+            <td class="text-nowrap">{{ p.passport_division_code }}</td>
+            <td class="text-nowrap">{{ p.registration_address }}</td>
+            <td class="text-nowrap">{{ p.bank_name }}</td>
+            <td class="text-nowrap">{{ p.bank_swift }}</td>
+            <td class="text-nowrap">{{ p.bank_inn }}</td>
+            <td class="text-nowrap">{{ p.bank_bik }}</td>
+            <td class="text-nowrap">{{ p.settlement_account }}</td>
+            <td class="text-nowrap">{{ p.corr_account }}</td>
+            <td class="text-nowrap">{{ p.bank_address }}</td>
+            <td class="text-nowrap">{{ p.corr_bank_name }}</td>
+            <td class="text-nowrap">{{ p.corr_bank_bik }}</td>
+            <td class="text-nowrap">{{ p.corr_bank_swift }}</td>
+            <td class="text-nowrap">{{ p.corr_bank_settlement_account }}</td>
+            <td class="text-nowrap">{{ p.corr_bank_corr_account }}</td>
+        </tr>
+    {% empty %}
+        <tr><td colspan="29" class="text-muted">Пока нет данных.</td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+
+{% if request.user.is_authenticated and request.user.is_staff %}
+<div class="d-flex align-items-stretch gap-2 products-actions-row">
+  <button
+          type="button"
+          id="ecd-edit-btn"
+          class="btn btn-primary btn-sm d-flex align-items-center"
+          disabled>
+    <i class="bi bi-pencil-square me-2"></i>Редактировать
+  </button>
+  <div id="ecd-actions" class="d-none"></div>
+</div>
+{% endif %}

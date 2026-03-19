@@ -1,0 +1,64 @@
+<div class="modal-header" data-modal-size="xxl">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    enctype="multipart/form-data"
+    {% if action == "create" %}
+      hx-post="{% url 'ct_form_create' %}"
+    {% else %}
+      hx-post="{% url 'ct_form_edit' template_obj.pk %}"
+    {% endif %}
+    hx-target="#contract-templates-pane"
+    hx-swap="outerHTML"
+    hx-encoding="multipart/form-data">
+  <div class="modal-body modal-body-scroll">
+    {% csrf_token %}
+    <div class="row g-2">
+      <div class="col-6">
+        <label class="form-label">Продукт</label>
+        {{ form.product }}
+      </div>
+      <div class="col-6">
+        <label class="form-label">Вид</label>
+        {{ form.contract_type }}
+      </div>
+
+      <div class="col-6">
+        <label class="form-label">Сторона</label>
+        {{ form.party }}
+      </div>
+      <div class="col-6">
+        <label class="form-label">Страна</label>
+        {{ form.country }}
+      </div>
+
+      <div class="col-6">
+        <label class="form-label">Наименование образца</label>
+        {{ form.sample_name }}
+      </div>
+      <div class="col-6">
+        <label class="form-label">Версия</label>
+        {{ form.version }}
+      </div>
+
+      <div class="col-12 mb-3">
+        <label class="form-label">Файл</label>
+        {{ form.file }}
+        {% if template_obj and template_obj.file %}
+          <div class="form-text">
+            Текущий файл: {{ template_obj.file.name|cut:"contract_templates/" }}
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>

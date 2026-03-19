@@ -17,16 +17,55 @@
   <div class="modal-body">
     {% csrf_token %}
     <div class="mb-3">
-      <label class="form-label">Направление экспертизы</label>
-      {{ form.expertise_direction }}
-    </div>
-    <div class="mb-3">
       <label class="form-label">Специальность</label>
       {{ form.specialty }}
+      {% if form.specialty.errors %}
+        <div class="text-danger small mt-1">{{ form.specialty.errors.0 }}</div>
+      {% endif %}
     </div>
     <div class="mb-3">
       <label class="form-label">Специальность на англ. языке</label>
       {{ form.specialty_en }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Владелец</label>
+      <div class="dropdown" id="esp-owner-dropdown">
+        <button class="form-select text-start" type="button"
+                id="esp-owner-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
+                style="cursor:pointer; background-color:#fff;">
+          <span class="js-esp-owner-label">Группа</span>
+        </button>
+        <div class="dropdown-menu p-3" aria-labelledby="esp-owner-toggle"
+             style="min-width: 100%; max-height: 240px; overflow-y: auto;">
+          <div class="form-check mb-2">
+            <input class="form-check-input js-esp-owner" type="checkbox"
+                   name="owner_ids" value="__group__" id="esp-owner-group"
+                   {% if form.is_group_selected or not form.selected_owner_ids and not form.instance.pk %}checked{% endif %}>
+            <label class="form-check-label" for="esp-owner-group">Группа</label>
+          </div>
+          <hr class="dropdown-divider">
+          {% for opt in form.owner_options %}
+            <div class="form-check">
+              <input class="form-check-input js-esp-owner" type="checkbox"
+                     name="owner_ids" value="{{ opt.pk }}" id="esp-owner-{{ opt.pk }}"
+                     {% if opt.pk in form.selected_owner_ids %}checked{% endif %}>
+              <label class="form-check-label" for="esp-owner-{{ opt.pk }}">
+                {{ opt.short_name }}
+              </label>
+            </div>
+          {% empty %}
+            <div class="text-muted small">Нет компаний</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Направление экспертизы</label>
+      {{ form.expertise_dir }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Подразделение</label>
+      {{ form.expertise_direction }}
     </div>
     <div class="mb-3">
       <label class="form-label">Руководитель направления</label>
@@ -35,11 +74,7 @@
 
     {% if form.errors %}
       <div class="alert alert-danger mb-0">
-        {% for field, errors in form.errors.items %}
-          {% for error in errors %}
-            <div>{{ error }}</div>
-          {% endfor %}
-        {% endfor %}
+        Проверьте введенные данные.
       </div>
     {% endif %}
   </div>
@@ -48,3 +83,127 @@
     <button type="submit" class="btn btn-primary">Сохранить</button>
   </div>
 </form>
+
+<script>
+(function() {
+  const GROUP_VAL = "__group__";
+  const DIR_OWNERS = {{ form.dir_owners_json|safe }};
+  const ORG_UNIT_INFO = {{ form.org_unit_info_json|safe }};
+
+  const dropdown = document.getElementById("esp-owner-dropdown");
+  if (!dropdown) return;
+  const checks = dropdown.querySelectorAll(".js-esp-owner");
+  const label = dropdown.querySelector(".js-esp-owner-label");
+  const groupCb = document.getElementById("esp-owner-group");
+
+  const dirSelect = document.getElementById("esp-dir-select");
+  const allDirOptions = dirSelect
+    ? Array.from(dirSelect.options).slice(1).map(o => ({ value: o.value, text: o.textContent }))
+    : [];
+
+  const deptSelect = document.getElementById("esp-dept-select");
+  const allDeptOptions = deptSelect
+    ? Array.from(deptSelect.options).slice(1).map(o => ({ value: o.value, text: o.textContent }))
+    : [];
+
+  function updateLabel() {
+    const selected = Array.from(checks).filter(cb => cb.checked);
+    if (!selected.length) { label.textContent = "Группа"; return; }
+    if (groupCb && groupCb.checked) { label.textContent = "Группа"; return; }
+    if (selected.length === 1) {
+      label.textContent = selected[0].nextElementSibling?.textContent?.trim() || "1";
+      return;
+    }
+    label.textContent = selected.length + " выбрано";
+  }
+
+  function filterDirections() {
+    if (!dirSelect) return;
+    const isGroup = groupCb && groupCb.checked;
+    const selectedIds = new Set(
+      Array.from(checks)
+        .filter(cb => cb.checked && cb.value !== GROUP_VAL)
+        .map(cb => parseInt(cb.value))
+    );
+    const currentVal = dirSelect.value;
+    while (dirSelect.options.length > 1) dirSelect.remove(1);
+
+    allDirOptions.forEach(opt => {
+      const info = DIR_OWNERS[opt.value];
+      if (!info) return;
+      let matches = false;
+      if (isGroup || selectedIds.size === 0) {
+        matches = true;
+      } else if (info.is_group) {
+        matches = true;
+      } else {
+        matches = info.owner_ids.some(id => selectedIds.has(id));
+      }
+      if (matches) {
+        const el = document.createElement("option");
+        el.value = opt.value;
+        el.textContent = opt.text;
+        if (opt.value === currentVal) el.selected = true;
+        dirSelect.appendChild(el);
+      }
+    });
+
+    filterDepartments();
+  }
+
+  function filterDepartments() {
+    if (!deptSelect) return;
+    const dirVal = dirSelect ? dirSelect.value : "";
+    const hasDirection = dirVal !== "";
+    const dirId = hasDirection ? parseInt(dirVal) : null;
+    const isGroup = groupCb && groupCb.checked;
+    const selectedOwnerIds = new Set(
+      Array.from(checks)
+        .filter(cb => cb.checked && cb.value !== GROUP_VAL)
+        .map(cb => parseInt(cb.value))
+    );
+    const currentVal = deptSelect.value;
+    while (deptSelect.options.length > 1) deptSelect.remove(1);
+
+    allDeptOptions.forEach(opt => {
+      const info = ORG_UNIT_INFO[opt.value];
+      if (!info) return;
+      const unitType = info.type || "";
+      if (hasDirection) {
+        if (unitType !== "expertise") return;
+        if (info.expertise_id !== dirId) return;
+      } else {
+        if (unitType === "expertise") return;
+      }
+      let showByOwner = isGroup || selectedOwnerIds.size === 0
+        || selectedOwnerIds.has(info.company_id);
+      if (showByOwner) {
+        const el = document.createElement("option");
+        el.value = opt.value;
+        el.textContent = opt.text;
+        if (opt.value === currentVal) el.selected = true;
+        deptSelect.appendChild(el);
+      }
+    });
+  }
+
+  if (dirSelect) {
+    dirSelect.addEventListener("change", filterDepartments);
+  }
+
+  checks.forEach(cb => {
+    cb.addEventListener("change", function() {
+      if (this.value === GROUP_VAL && this.checked) {
+        checks.forEach(c => { if (c.value !== GROUP_VAL) c.checked = false; });
+      } else if (this.value !== GROUP_VAL && this.checked) {
+        if (groupCb) groupCb.checked = false;
+      }
+      updateLabel();
+      filterDirections();
+    });
+  });
+
+  updateLabel();
+  filterDirections();
+})();
+</script>

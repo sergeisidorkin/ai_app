@@ -48,6 +48,18 @@
       {{ form.is_base_rate }}
       <label class="form-check-label" for="id_is_base_rate">Базовая ставка</label>
     </div>
+    <div class="mb-3">
+      <div class="row g-2" id="hourly-rate-wrap">
+        <div class="col">
+          <label class="form-label">Часовая ставка</label>
+          {{ form.hourly_rate }}
+        </div>
+        <div class="col-auto" style="min-width:160px;">
+          <label class="form-label">Валюта</label>
+          {{ form.currency }}
+        </div>
+      </div>
+    </div>
     <div class="mb-3" id="share-field-wrap">
       <label class="form-label">Доля базовой ставки, %</label>
       <div class="input-group" style="max-width:160px;">
@@ -133,9 +145,20 @@
 
   var baseRateCb = document.getElementById('id_is_base_rate');
   var shareInput = document.getElementById('id_base_rate_share');
+  var hourlyInput = document.querySelector('.js-grade-money');
+  var currencySelect = document.getElementById('id_currency');
+
+  function setDisabled(el, disabled) {
+    if (!el) return;
+    el.disabled = disabled;
+    el.style.backgroundColor = disabled ? '#e9ecef' : '';
+    el.style.color = disabled ? '#6c757d' : '';
+  }
+
   if (baseRateCb && shareInput) {
     function toggleShare() {
-      if (baseRateCb.checked) {
+      var checked = baseRateCb.checked;
+      if (checked) {
         shareInput.value = '';
         shareInput.readOnly = true;
         shareInput.tabIndex = -1;
@@ -147,9 +170,52 @@
         shareInput.style.backgroundColor = '';
         shareInput.style.color = '';
       }
+      setDisabled(hourlyInput, !checked);
+      setDisabled(currencySelect, !checked);
+      if (!checked && hourlyInput) hourlyInput.value = '';
     }
     toggleShare();
     baseRateCb.addEventListener('change', toggleShare);
+  }
+
+  if (hourlyInput) {
+    function fmtMoney(v) {
+      var s = String(v).replace(/[^\d.,-]/g, '').replace(',', '.');
+      var n = parseFloat(s);
+      if (isNaN(n)) return '';
+      var parts = n.toFixed(2).split('.');
+      parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0');
+      return parts.join(',');
+    }
+    hourlyInput.addEventListener('blur', function() {
+      if (this.value.trim()) this.value = fmtMoney(this.value);
+    });
+    if (hourlyInput.value.trim()) hourlyInput.value = fmtMoney(hourlyInput.value);
+  }
+
+  if (currencySelect) {
+    (function setupShortSelect(sel) {
+      Array.from(sel.options).forEach(function(opt) {
+        if (opt.value) opt.dataset.full = opt.textContent;
+      });
+      function showShort() {
+        Array.from(sel.options).forEach(function(opt) {
+          if (opt.dataset.full) opt.textContent = opt.dataset.full;
+        });
+        var cur = sel.options[sel.selectedIndex];
+        if (cur && cur.dataset.full) cur.textContent = cur.dataset.full.trim().split(/\s+/)[0];
+      }
+      function showFull() {
+        Array.from(sel.options).forEach(function(opt) {
+          if (opt.dataset.full) opt.textContent = opt.dataset.full;
+        });
+      }
+      sel.addEventListener('mousedown', showFull);
+      sel.addEventListener('focus', showFull);
+      sel.addEventListener('blur', showShort);
+      sel.addEventListener('change', showShort);
+      showShort();
+    })(currencySelect);
   }
 })();
 </script>

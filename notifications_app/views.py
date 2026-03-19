@@ -1,3 +1,5 @@
+import json
+
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, render
@@ -37,6 +39,22 @@ def notifications_partial(request):
 @login_required
 @user_passes_test(staff_required)
 @require_GET
+def project_pending_notifications_partial(request):
+    notifications = list(
+        get_notification_queryset_for_user(request.user).filter(
+            notification_type=Notification.NotificationType.PROJECT_PARTICIPATION_CONFIRMATION,
+            is_processed=False,
+        )
+    )
+    return render(request, NOTIFICATIONS_PARTIAL_TEMPLATE, {
+        "notification_cards": serialize_notification_cards(notifications),
+        "hide_empty_state": True,
+    })
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_GET
 def notifications_counters(request):
     return JsonResponse(build_notification_counters(request.user))
 
@@ -60,4 +78,19 @@ def notification_participation_action(request, pk):
         process_participation_notification(notification, request.user, action_choice)
     except ValueError as exc:
         return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+    return JsonResponse({"ok": True, **build_notification_counters(request.user)})
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def notification_bulk_delete(request):
+    try:
+        ids = json.loads(request.body).get("ids", [])
+    except (json.JSONDecodeError, AttributeError):
+        ids = request.POST.getlist("ids")
+    ids = [int(i) for i in ids if str(i).isdigit()]
+    if not ids:
+        return JsonResponse({"ok": False, "error": "Не указаны уведомления."}, status=400)
+    Notification.objects.filter(pk__in=ids, recipient=request.user, is_processed=True).delete()
     return JsonResponse({"ok": True, **build_notification_counters(request.user)})

@@ -137,6 +137,101 @@
     }
   });
 
+  /* ── Edit mode: checkboxes + bulk delete ── */
+
+  let editMode = false;
+
+  function getEditBtn() {
+    return document.getElementById("notifications-edit-btn");
+  }
+
+  function getDeleteActions() {
+    return document.getElementById("notifications-delete-actions");
+  }
+
+  function getDeleteBtn() {
+    return document.getElementById("notifications-delete-btn");
+  }
+
+  function setEditMode(on) {
+    editMode = on;
+    const btn = getEditBtn();
+    if (btn) {
+      if (on) {
+        btn.classList.remove("btn-primary");
+        btn.classList.add("btn-outline-secondary");
+        btn.innerHTML = '<i class="bi bi-x-lg me-2"></i>Отмена';
+      } else {
+        btn.classList.add("btn-primary");
+        btn.classList.remove("btn-outline-secondary");
+        btn.innerHTML = '<i class="bi bi-pencil-square me-2"></i>Редактировать';
+      }
+    }
+    document.querySelectorAll(".notification-card__checkbox").forEach(function (el) {
+      el.classList.toggle("d-none", !on);
+      if (!on) {
+        var cb = el.querySelector(".js-notification-select");
+        if (cb) cb.checked = false;
+      }
+    });
+    syncDeleteActions();
+  }
+
+  function syncDeleteActions() {
+    var actions = getDeleteActions();
+    if (!actions) return;
+    var anyChecked = Array.from(
+      document.querySelectorAll(".js-notification-select:checked")
+    ).length > 0;
+    actions.classList.toggle("d-none", !editMode || !anyChecked);
+  }
+
+  document.addEventListener("click", function (event) {
+    if (event.target.closest("#notifications-edit-btn")) {
+      setEditMode(!editMode);
+      return;
+    }
+  });
+
+  document.addEventListener("change", function (event) {
+    if (event.target.classList.contains("js-notification-select")) {
+      syncDeleteActions();
+    }
+  });
+
+  document.addEventListener("click", async function (event) {
+    var btn = event.target.closest("#notifications-delete-btn");
+    if (!btn) return;
+    var ids = Array.from(
+      document.querySelectorAll(".js-notification-select:checked")
+    ).map(function (cb) { return Number(cb.value); });
+    if (!ids.length) return;
+    if (!window.confirm("Удалить выбранные уведомления (" + ids.length + ")?")) return;
+
+    var url = btn.dataset.url;
+    if (!url) return;
+    btn.disabled = true;
+    try {
+      var csrftoken = getCookie("csrftoken");
+      var response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "X-CSRFToken": csrftoken,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ ids: ids }),
+      });
+      var data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data?.error || "Ошибка удаления");
+      setEditMode(false);
+      document.body.dispatchEvent(new Event("notifications-updated"));
+    } catch (err) {
+      alert(err.message || "Не удалось удалить уведомления.");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
   document.addEventListener("DOMContentLoaded", refreshCounters);
   document.body.addEventListener("notifications-updated", refreshCounters);
 })();

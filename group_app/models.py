@@ -45,6 +45,14 @@ class OrgUnit(models.Model):
     short_name = models.CharField(
         "Краткое имя", max_length=128, blank=True, default=""
     )
+    expertise = models.ForeignKey(
+        "policy_app.ExpertiseDirection",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="org_units",
+        verbose_name="Экспертиза",
+    )
     functional_subordination = models.ForeignKey(
         "self",
         on_delete=models.SET_NULL,

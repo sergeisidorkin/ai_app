@@ -26,6 +26,12 @@
       modalId: 'experts-profile-modal',
       deleteLabel: 'строк(у/и)',
     },
+    'ecd-actions': {
+      name: 'ecd-select',
+      modal: '#experts-contract-details-modal .modal-content',
+      modalId: 'experts-contract-details-modal',
+      deleteLabel: 'строк(у/и)',
+    },
   };
 
   function getRowChecksByName(name) {
@@ -71,9 +77,19 @@
     const root = pane();
     if (!root) return;
     const btn = root.querySelector('#epr-edit-btn');
+    if (btn) {
+      const checked = getCheckedByName('epr-select');
+      btn.disabled = checked.length !== 1;
+    }
+  }
+
+  function updateContractDetailsEditBtn() {
+    const root = pane();
+    if (!root) return;
+    const btn = root.querySelector('#ecd-edit-btn');
     if (!btn) return;
-    const checked = getCheckedByName('epr-select');
-    btn.disabled = checked.length !== 1;
+    const anyChecked = getRowChecksByName('ecd-select').some(b => b.checked);
+    btn.disabled = !anyChecked;
   }
 
   function findPanelConfig(btn) {
@@ -108,6 +124,28 @@
       const config = PANELS['epr-actions'];
       window.__espTableSel['epr-select'] = getCheckedByName('epr-select').map(ch => String(ch.value));
       await doEdit('epr-select', config);
+      return;
+    }
+
+    const ecdEditBtn = e.target.closest('#ecd-edit-btn');
+    if (ecdEditBtn && root.contains(ecdEditBtn)) {
+      e.preventDefault();
+      const checked = getCheckedByName('ecd-select');
+      if (!checked.length) return;
+      const first = checked[0];
+      const tr = first.closest('tr');
+      const url = tr?.dataset?.editUrl;
+      if (!url) return;
+
+      window.__espTableSel['ecd-select'] = checked.map(ch => String(ch.value));
+
+      const config = PANELS['ecd-actions'];
+      await htmx.ajax('GET', url, { target: config.modal, swap: 'innerHTML' });
+      const modalEl = document.getElementById(config.modalId);
+      if (modalEl && window.bootstrap) {
+        window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+      }
+      updateContractDetailsEditBtn();
       return;
     }
 
@@ -175,6 +213,7 @@
     updateRowHighlightFor(name);
     ensureActionsVisibility(name);
     if (name === 'epr-select') updateEditBtnState();
+    if (name === 'ecd-select') updateContractDetailsEditBtn();
   });
 
   document.addEventListener('change', (e) => {
@@ -187,6 +226,7 @@
     updateRowHighlightFor(name);
     ensureActionsVisibility(name);
     if (name === 'epr-select') updateEditBtnState();
+    if (name === 'ecd-select') updateContractDetailsEditBtn();
   });
 
   document.body.addEventListener('htmx:afterSettle', function (e) {
@@ -201,11 +241,13 @@
       ensureActionsVisibility(name);
     });
     updateEditBtnState();
+    updateContractDetailsEditBtn();
     window.__espTableSel = {};
     initWrapToggle();
   });
 
-  window.__eprWrapActive = true;
+  var P = window.UIPref;
+  window.__eprWrapActive = P ? P.get('experts:wrapActive', true) : true;
 
   function initWrapToggle() {
     const toggle = document.getElementById('epr-wrap-toggle');
@@ -226,5 +268,6 @@
     const active = table.classList.contains('clf-truncated');
     toggle.classList.toggle('active', active);
     window.__eprWrapActive = active;
+    if (P) P.set('experts:wrapActive', active);
   });
 })();
