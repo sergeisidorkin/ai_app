@@ -3,25 +3,33 @@ import io
 import json
 
 from django.contrib.auth.decorators import login_required, user_passes_test
-from django.db.models import Max
+from django.db.models import Max, Q
 from django.http import JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST
 
 from experts_app.models import ExpertSpecialty
 from group_app.models import OrgUnit
-from .models import Product, TypicalSection, TypicalSectionSpecialty, SectionStructure, Grade, Tariff, MANAGER_GROUPS
-from .forms import ProductForm, TypicalSectionForm, SectionStructureForm, GradeForm, TariffForm
+from .models import Product, TypicalSection, TypicalSectionSpecialty, SectionStructure, ExpertiseDirection, Grade, Tariff, MANAGER_GROUPS
+from .forms import ProductForm, TypicalSectionForm, SectionStructureForm, ExpertiseDirectionForm, GradeForm, TariffForm
 
 # Вынесенные константы для единообразия шаблонов/заголовков
 POLICY_PARTIAL_TEMPLATE = "policy_app/policy_partial.html"
 PRODUCT_FORM_TEMPLATE = "policy_app/product_form.html"
 SECTION_FORM_TEMPLATE = "policy_app/section_form.html"
 STRUCTURE_FORM_TEMPLATE = "policy_app/structure_form.html"
+EXPERTISE_DIR_FORM_TEMPLATE = "policy_app/expertise_direction_form.html"
 GRADE_FORM_TEMPLATE = "policy_app/grade_form.html"
 TARIFF_FORM_TEMPLATE = "policy_app/tariff_form.html"
 HX_TRIGGER_HEADER = "HX-Trigger"
 HX_POLICY_UPDATED_EVENT = "policy-updated"
+
+
+def _render_form_with_errors(request, template, context):
+    response = render(request, template, context)
+    response["HX-Retarget"] = "#policy-modal .modal-content"
+    response["HX-Reswap"] = "innerHTML"
+    return response
 
 
 def _is_department_head(user):
@@ -29,7 +37,7 @@ def _is_department_head(user):
 
 
 def _get_grades_for_user(user):
-    qs = Grade.objects.select_related("created_by", "created_by__employee_profile")
+    qs = Grade.objects.select_related("created_by", "created_by__employee_profile", "currency")
     if user.is_superuser:
         return qs
     if _is_department_head(user):
@@ -52,11 +60,12 @@ def staff_required(user):
 
 # Вспомогательные функции для устранения дублирования
 def _policy_context(request):
-    products = Product.objects.all()
-    sections = TypicalSection.objects.select_related("product", "expertise_direction").prefetch_related(
+    products = Product.objects.prefetch_related("owners").all()
+    sections = TypicalSection.objects.select_related("product", "expertise_dir", "expertise_direction").prefetch_related(
         "ranked_specialties", "ranked_specialties__specialty"
     ).all()
     structures = SectionStructure.objects.select_related("product", "section").all()
+    expertise_directions = ExpertiseDirection.objects.prefetch_related("owners").all()
     grades = _get_grades_for_user(request.user)
     tariffs = _get_tariffs_for_user(request.user)
     is_dept_head = _is_department_head(request.user)
@@ -64,6 +73,7 @@ def _policy_context(request):
         "products": products,
         "sections": sections,
         "structures": structures,
+        "expertise_directions": expertise_directions,
         "grades": grades,
         "tariffs": tariffs,
         "is_admin": request.user.is_superuser,
@@ -101,7 +111,7 @@ def product_form_create(request):
     # POST
     form = ProductForm(request.POST)
     if not form.is_valid():
-        return render(request, PRODUCT_FORM_TEMPLATE, {"form": form, "action": "create"})
+        return _render_form_with_errors(request, PRODUCT_FORM_TEMPLATE, {"form": form, "action": "create"})
     obj = form.save(commit=False)
     # Если позиция не задана/нулевая — ставим в конец списка
     if not getattr(obj, "position", 0):
@@ -120,7 +130,7 @@ def product_form_edit(request, pk: int):
     # POST
     form = ProductForm(request.POST, instance=product)
     if not form.is_valid():
-        return render(request, PRODUCT_FORM_TEMPLATE, {"form": form, "action": "edit", "product": product})
+        return _render_form_with_errors(request, PRODUCT_FORM_TEMPLATE, {"form": form, "action": "edit", "product": product})
     form.save()
     return _render_policy_updated(request)
 
@@ -345,7 +355,7 @@ def section_csv_upload(request):
     products_by_name = {p.short_name.strip().lower(): p for p in Product.objects.all()}
     expertise_units = {
         u.department_name.strip().lower(): u
-        for u in OrgUnit.objects.filter(unit_type="expertise")
+        for u in OrgUnit.objects.filter(Q(unit_type="expertise") | Q(unit_type="administrative", level=1))
     }
     data_rows = rows[1:]
     created = 0
@@ -500,6 +510,88 @@ def structure_move_down(request, pk: int):
         SectionStructure.objects.filter(pk=cur.id).update(position=next_pos)
         SectionStructure.objects.filter(pk=nxt.id).update(position=cur_pos)
         _normalize_structure_positions()
+    return _render_policy_updated(request)
+
+
+# --- Направления экспертизы ---
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def expertise_dir_form_create(request):
+    if request.method == "GET":
+        form = ExpertiseDirectionForm()
+        return render(request, EXPERTISE_DIR_FORM_TEMPLATE, {"form": form, "action": "create"})
+    form = ExpertiseDirectionForm(request.POST)
+    if not form.is_valid():
+        return render(request, EXPERTISE_DIR_FORM_TEMPLATE, {"form": form, "action": "create"})
+    obj = form.save(commit=False)
+    if not getattr(obj, "position", 0):
+        obj.position = _next_position(ExpertiseDirection)
+    obj.save()
+    return _render_policy_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def expertise_dir_form_edit(request, pk: int):
+    direction = get_object_or_404(ExpertiseDirection, pk=pk)
+    if request.method == "GET":
+        form = ExpertiseDirectionForm(instance=direction)
+        return render(request, EXPERTISE_DIR_FORM_TEMPLATE, {"form": form, "action": "edit", "direction": direction})
+    form = ExpertiseDirectionForm(request.POST, instance=direction)
+    if not form.is_valid():
+        return render(request, EXPERTISE_DIR_FORM_TEMPLATE, {"form": form, "action": "edit", "direction": direction})
+    form.save()
+    return _render_policy_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def expertise_dir_delete(request, pk: int):
+    direction = get_object_or_404(ExpertiseDirection, pk=pk)
+    direction.delete()
+    return _render_policy_updated(request)
+
+
+def _normalize_expertise_dir_positions():
+    items = ExpertiseDirection.objects.order_by("position", "id").only("id", "position")
+    for idx, it in enumerate(items, start=1):
+        if it.position != idx:
+            ExpertiseDirection.objects.filter(pk=it.pk).update(position=idx)
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+def expertise_dir_move_up(request, pk: int):
+    _normalize_expertise_dir_positions()
+    items = list(ExpertiseDirection.objects.order_by("position", "id").only("id", "position"))
+    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+    if idx is not None and idx > 0:
+        cur = items[idx]
+        prev = items[idx - 1]
+        cur_pos, prev_pos = cur.position, prev.position
+        ExpertiseDirection.objects.filter(pk=cur.id).update(position=prev_pos)
+        ExpertiseDirection.objects.filter(pk=prev.id).update(position=cur_pos)
+        _normalize_expertise_dir_positions()
+    return _render_policy_updated(request)
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+def expertise_dir_move_down(request, pk: int):
+    _normalize_expertise_dir_positions()
+    items = list(ExpertiseDirection.objects.order_by("position", "id").only("id", "position"))
+    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+    if idx is not None and idx < len(items) - 1:
+        cur = items[idx]
+        nxt = items[idx + 1]
+        cur_pos, next_pos = cur.position, nxt.position
+        ExpertiseDirection.objects.filter(pk=cur.id).update(position=next_pos)
+        ExpertiseDirection.objects.filter(pk=nxt.id).update(position=cur_pos)
+        _normalize_expertise_dir_positions()
     return _render_policy_updated(request)
 
 

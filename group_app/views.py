@@ -22,31 +22,66 @@ def staff_required(u):
 
 
 def _group_context():
+    members = list(GroupMember.objects.all())
+    country_counters = {}
+    for member in members:
+        country_key = member.country_code or member.country_name or ""
+        current_index = country_counters.get(country_key, 0)
+        member.country_order_number = current_index
+        country_counters[country_key] = current_index + 1
     return {
-        "members": GroupMember.objects.all(),
+        "members": members,
         "org_units": OrgUnit.objects.select_related(
-            "company", "functional_subordination"
+            "company", "functional_subordination", "expertise"
         ).all(),
     }
+
+
+def _country_next_order_map(exclude_member_pk=None):
+    qs = GroupMember.objects.all()
+    if exclude_member_pk is not None:
+        qs = qs.exclude(pk=exclude_member_pk)
+    counters = {}
+    for member in qs:
+        country_key = member.country_code or member.country_name or ""
+        counters[country_key] = counters.get(country_key, 0) + 1
+    return counters
+
+
+def _member_country_order_number(member):
+    counters = {}
+    for candidate in GroupMember.objects.all():
+        country_key = candidate.country_code or candidate.country_name or ""
+        current_index = counters.get(country_key, 0)
+        if candidate.pk == member.pk:
+            return current_index
+        counters[country_key] = current_index + 1
+    return 0
 
 
 def _member_form_context(form, action, member=None):
     identifier_map = {}
     country_qs = form.fields["country"].queryset
+    member_order_number = _member_country_order_number(member) if member is not None else 0
+    next_order_map = _country_next_order_map(exclude_member_pk=member.pk if member is not None else None)
     lei_by_code = {}
     for item in LegalEntityIdentifier.objects.filter(code__in=country_qs.values("code")).order_by("position", "id").values("code", "identifier"):
         lei_by_code.setdefault(item["code"], item["identifier"])
     for country in country_qs:
+        country_key = country.code or country.short_name
         identifier_map[str(country.pk)] = {
             "code": country.code,
             "alpha2": country.alpha2,
             "identifier": lei_by_code.get(country.code, ""),
+            "order_number": next_order_map.get(country_key, 0),
         }
 
     context = {
         "form": form,
         "action": action,
         "country_identifier_map_json": json.dumps(identifier_map),
+        "member_country_code_json": json.dumps(member.country_code if member is not None else None),
+        "member_order_number_json": json.dumps(member_order_number),
     }
     if member is not None:
         context["member"] = member
@@ -89,9 +124,9 @@ def group_partial(request):
 @require_http_methods(["GET", "POST"])
 def member_form_create(request):
     if request.method == "GET":
-        form = GroupMemberForm()
+        form = GroupMemberForm(current_order_number=0)
         return render(request, FORM_TEMPLATE, _member_form_context(form, "create"))
-    form = GroupMemberForm(request.POST)
+    form = GroupMemberForm(request.POST, current_order_number=0)
     if not form.is_valid():
         return render(request, FORM_TEMPLATE, _member_form_context(form, "create"))
     obj = form.save(commit=False)
@@ -105,10 +140,11 @@ def member_form_create(request):
 @require_http_methods(["GET", "POST"])
 def member_form_edit(request, pk: int):
     member = get_object_or_404(GroupMember, pk=pk)
+    current_order_number = _member_country_order_number(member)
     if request.method == "GET":
-        form = GroupMemberForm(instance=member)
+        form = GroupMemberForm(instance=member, current_order_number=current_order_number)
         return render(request, FORM_TEMPLATE, _member_form_context(form, "edit", member))
-    form = GroupMemberForm(request.POST, instance=member)
+    form = GroupMemberForm(request.POST, instance=member, current_order_number=current_order_number)
     if not form.is_valid():
         return render(request, FORM_TEMPLATE, _member_form_context(form, "edit", member))
     form.save()

@@ -5,6 +5,25 @@
   window.__tableSel = window.__tableSel || {};
   window.__tableSelLast = window.__tableSelLast || null;
 
+  var P = window.UIPref;
+  if (P) {
+    window.__participationSectionCollapsed = P.get('perf:partSectionCollapsed', false);
+    window.__participationAssetCollapsed = P.get('perf:partAssetCollapsed', false);
+    window.__contractSectionCollapsed = P.get('perf:contrSectionCollapsed', false);
+    window.__contractAssetCollapsed = P.get('perf:contrAssetCollapsed', false);
+    window.__infoRequestSectionCollapsed = P.get('perf:irSectionCollapsed', false);
+    window.__infoRequestAssetCollapsed = P.get('perf:irAssetCollapsed', false);
+  }
+  function saveCollapsePrefs() {
+    if (!P) return;
+    P.set('perf:partSectionCollapsed', !!window.__participationSectionCollapsed);
+    P.set('perf:partAssetCollapsed', !!window.__participationAssetCollapsed);
+    P.set('perf:contrSectionCollapsed', !!window.__contractSectionCollapsed);
+    P.set('perf:contrAssetCollapsed', !!window.__contractAssetCollapsed);
+    P.set('perf:irSectionCollapsed', !!window.__infoRequestSectionCollapsed);
+    P.set('perf:irAssetCollapsed', !!window.__infoRequestAssetCollapsed);
+  }
+
   function pane() { return document.getElementById('performers-pane'); }
   const qa = (sel, root) => Array.from((root || document).querySelectorAll(sel));
 
@@ -247,6 +266,294 @@
     }
   }
 
+  function applyParticipationSentState() {
+    var root = pane();
+    var section = root ? root.querySelector('#participation-confirmation-section') : null;
+    if (!section) return;
+    var tbody = section.querySelector('table.performers-table tbody');
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll('tr[data-project-id]'));
+    rows.forEach(function(row) {
+      var cb = row.querySelector('input[name="participation-select"]');
+      if (cb && cb.dataset.requestSent === '1') {
+        cb.disabled = true;
+        cb.title = 'Запрос уже отправлен';
+      }
+    });
+    var i = 0;
+    while (i < rows.length) {
+      if (rows[i].classList.contains('d-none') || !rows[i].classList.contains('group-first')) { i++; continue; }
+      var group = [rows[i]];
+      var j = i + 1;
+      while (j < rows.length && rows[j].classList.contains('group-cont')) {
+        group.push(rows[j]);
+        j++;
+      }
+      var hasUnsent = group.some(function(r) {
+        var cb = r.querySelector('input[name="participation-select"]');
+        return cb && cb.dataset.requestSent !== '1';
+      });
+      var firstCb = group[0].querySelector('input[name="participation-select"]');
+      if (firstCb && firstCb.disabled && hasUnsent) {
+        firstCb.disabled = false;
+        firstCb.title = '';
+      }
+      i = j;
+    }
+  }
+
+  function pluralSections(n) {
+    var mod10 = n % 10, mod100 = n % 100;
+    if (mod10 === 1 && mod100 !== 11) return n + ' раздел';
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return n + ' раздела';
+    return n + ' разделов';
+  }
+
+  function restoreParticipationSectionText(sectionEl) {
+    if (!sectionEl) return;
+    var tbody = sectionEl.querySelector('table.performers-table tbody');
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll('tr[data-project-id]'));
+    var filterValues = window.__participationProjectFilter || ['__all__'];
+    var showAll = !filterValues.length || filterValues.indexOf('__all__') !== -1;
+    rows.forEach(function(row) {
+      var td = row.querySelector('.cell-typical-val');
+      if (td && td.dataset.originalTypical !== undefined) {
+        td.innerHTML = td.dataset.originalTypical;
+        delete td.dataset.originalTypical;
+      }
+      if (row.classList.contains('section-collapsed')) {
+        row.classList.remove('section-collapsed');
+        var pid = row.dataset.projectId || '';
+        if (showAll || filterValues.indexOf(pid) !== -1) {
+          row.classList.remove('d-none');
+        }
+      }
+    });
+  }
+
+  function collapseParticipationSections(sectionEl) {
+    if (!sectionEl) return;
+    var tbody = sectionEl.querySelector('table.performers-table tbody');
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll('tr[data-project-id]'));
+    var currentFirst = null;
+    var currentCount = 0;
+    function finishGroup() {
+      if (!currentFirst) return;
+      var td = currentFirst.querySelector('.cell-typical-val');
+      if (td) {
+        td.dataset.originalTypical = td.innerHTML;
+        td.textContent = pluralSections(currentCount);
+      }
+    }
+    rows.forEach(function(row) {
+      if (row.classList.contains('d-none')) return;
+      if (!row.classList.contains('asset-cont')) {
+        finishGroup();
+        currentFirst = row;
+        currentCount = 1;
+      } else {
+        currentCount++;
+        row.classList.add('d-none', 'section-collapsed');
+      }
+    });
+    finishGroup();
+    applyRowGrouping(sectionEl);
+  }
+
+  function expandParticipationSections(sectionEl) {
+    restoreParticipationSectionText(sectionEl);
+    applyRowGrouping(sectionEl);
+  }
+
+  function reapplyParticipationCollapse() {
+    if (!window.__participationSectionCollapsed && !window.__participationAssetCollapsed) return;
+    var root = pane();
+    if (!root) return;
+    var section = root.querySelector('#participation-confirmation-section');
+    if (!section) return;
+    restoreParticipationAssetText(section);
+    restoreParticipationSectionText(section);
+    applyRowGrouping(section);
+    if (window.__participationAssetCollapsed) {
+      collapseParticipationAssets(section);
+      var assetToggle = section.querySelector('#participation-asset-toggle');
+      if (assetToggle) {
+        assetToggle.classList.add('active');
+        var aIcon = assetToggle.querySelector('i');
+        if (aIcon) aIcon.className = 'bi bi-arrows-expand';
+      }
+    } else if (window.__participationSectionCollapsed) {
+      collapseParticipationSections(section);
+      var sectionToggle = section.querySelector('#participation-section-toggle');
+      if (sectionToggle) {
+        sectionToggle.classList.add('active');
+        var sIcon = sectionToggle.querySelector('i');
+        if (sIcon) sIcon.className = 'bi bi-arrows-expand';
+      }
+    }
+  }
+
+  function toggleParticipationCollapse() {
+    var root = pane();
+    if (!root) return;
+    var section = root.querySelector('#participation-confirmation-section');
+    if (!section) return;
+    var toggle = section.querySelector('#participation-section-toggle');
+    var collapsed = !!window.__participationSectionCollapsed;
+    if (window.__participationAssetCollapsed) {
+      window.__participationSectionCollapsed = !collapsed;
+      if (toggle) {
+        toggle.classList.toggle('active', !collapsed);
+        var icon = toggle.querySelector('i');
+        if (icon) icon.className = !collapsed ? 'bi bi-arrows-expand' : 'bi bi-arrows-collapse';
+      }
+      saveCollapsePrefs();
+      return;
+    }
+    if (collapsed) {
+      expandParticipationSections(section);
+      window.__participationSectionCollapsed = false;
+      if (toggle) {
+        toggle.classList.remove('active');
+        var icon = toggle.querySelector('i');
+        if (icon) icon.className = 'bi bi-arrows-collapse';
+      }
+    } else {
+      collapseParticipationSections(section);
+      window.__participationSectionCollapsed = true;
+      if (toggle) {
+        toggle.classList.add('active');
+        var icon = toggle.querySelector('i');
+        if (icon) icon.className = 'bi bi-arrows-expand';
+      }
+    }
+    applyParticipationSentState();
+    updateParticipationState();
+    saveCollapsePrefs();
+  }
+
+  function pluralAssets(n) {
+    var mod10 = n % 10, mod100 = n % 100;
+    if (mod10 === 1 && mod100 !== 11) return n + ' актив';
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return n + ' актива';
+    return n + ' активов';
+  }
+
+  function restoreParticipationAssetText(sectionEl) {
+    if (!sectionEl) return;
+    var tbody = sectionEl.querySelector('table.performers-table tbody');
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll('tr[data-project-id]'));
+    var filterValues = window.__participationProjectFilter || ['__all__'];
+    var showAll = !filterValues.length || filterValues.indexOf('__all__') !== -1;
+    rows.forEach(function(row) {
+      var assetTd = row.querySelector('.cell-asset-val');
+      if (assetTd && assetTd.dataset.originalAsset !== undefined) {
+        assetTd.innerHTML = assetTd.dataset.originalAsset;
+        delete assetTd.dataset.originalAsset;
+      }
+      var typicalTd = row.querySelector('.cell-typical-val');
+      if (typicalTd && typicalTd.dataset.originalTypicalAsset !== undefined) {
+        typicalTd.innerHTML = typicalTd.dataset.originalTypicalAsset;
+        delete typicalTd.dataset.originalTypicalAsset;
+      }
+      if (row.classList.contains('asset-collapsed')) {
+        row.classList.remove('asset-collapsed');
+        var pid = row.dataset.projectId || '';
+        if (showAll || filterValues.indexOf(pid) !== -1) {
+          row.classList.remove('d-none');
+        }
+      }
+    });
+  }
+
+  function collapseParticipationAssets(sectionEl) {
+    if (!sectionEl) return;
+    var tbody = sectionEl.querySelector('table.performers-table tbody');
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll('tr[data-project-id]'));
+    var i = 0;
+    while (i < rows.length) {
+      var row = rows[i];
+      if (row.classList.contains('d-none') || !row.classList.contains('group-first')) { i++; continue; }
+      var groupRows = [row];
+      var j = i + 1;
+      while (j < rows.length && !rows[j].classList.contains('group-first')) {
+        groupRows.push(rows[j]);
+        j++;
+      }
+      var assetSet = new Set();
+      var totalSections = 0;
+      groupRows.forEach(function(r) {
+        if (r.classList.contains('d-none')) return;
+        assetSet.add(r.dataset.assetName || '');
+        totalSections++;
+      });
+      for (var k = 1; k < groupRows.length; k++) {
+        if (!groupRows[k].classList.contains('d-none')) {
+          groupRows[k].classList.add('d-none', 'asset-collapsed');
+        }
+      }
+      var assetTd = row.querySelector('.cell-asset-val');
+      if (assetTd) {
+        assetTd.dataset.originalAsset = assetTd.innerHTML;
+        assetTd.textContent = pluralAssets(assetSet.size);
+      }
+      var typicalTd = row.querySelector('.cell-typical-val');
+      if (typicalTd) {
+        typicalTd.dataset.originalTypicalAsset = typicalTd.innerHTML;
+        typicalTd.textContent = pluralSections(totalSections);
+      }
+      i = j;
+    }
+    applyRowGrouping(sectionEl);
+  }
+
+  function toggleParticipationAssetCollapse() {
+    var root = pane();
+    if (!root) return;
+    var section = root.querySelector('#participation-confirmation-section');
+    if (!section) return;
+    var toggle = section.querySelector('#participation-asset-toggle');
+    var collapsed = !!window.__participationAssetCollapsed;
+    if (collapsed) {
+      restoreParticipationAssetText(section);
+      applyRowGrouping(section);
+      window.__participationAssetCollapsed = false;
+      if (toggle) {
+        toggle.classList.remove('active');
+        var icon = toggle.querySelector('i');
+        if (icon) icon.className = 'bi bi-arrows-collapse';
+      }
+      if (window.__participationSectionCollapsed) {
+        collapseParticipationSections(section);
+        var sectionToggle = section.querySelector('#participation-section-toggle');
+        if (sectionToggle) {
+          sectionToggle.classList.add('active');
+          var sIcon = sectionToggle.querySelector('i');
+          if (sIcon) sIcon.className = 'bi bi-arrows-expand';
+        }
+      }
+    } else {
+      if (window.__participationSectionCollapsed) {
+        restoreParticipationSectionText(section);
+        applyRowGrouping(section);
+      }
+      collapseParticipationAssets(section);
+      window.__participationAssetCollapsed = true;
+      if (toggle) {
+        toggle.classList.add('active');
+        var icon = toggle.querySelector('i');
+        if (icon) icon.className = 'bi bi-arrows-expand';
+      }
+    }
+    applyParticipationSentState();
+    updateParticipationState();
+    saveCollapsePrefs();
+  }
+
   function initContractProjectFilter() {
     const root = pane();
     if (!root) return;
@@ -301,6 +608,7 @@
       updateLabel(values);
       updateContractState();
       applyRowGrouping(root.querySelector('#contract-conclusion-section'));
+      reapplyContractCollapse();
     }
 
     function normalizeSelection() {
@@ -358,6 +666,326 @@
     applyFilter(initialValues);
   }
 
+  function restoreContractSectionText(sectionEl) {
+    if (!sectionEl) return;
+    var tbody = sectionEl.querySelector('table.performers-table tbody');
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll('tr[data-project-id]'));
+    var filterValues = window.__contractProjectFilter || ['__all__'];
+    var showAll = !filterValues.length || filterValues.indexOf('__all__') !== -1;
+    rows.forEach(function(row) {
+      var td = row.querySelector('.cell-typical-val');
+      if (td && td.dataset.originalTypical !== undefined) {
+        td.innerHTML = td.dataset.originalTypical;
+        delete td.dataset.originalTypical;
+      }
+      if (row.classList.contains('section-collapsed')) {
+        row.classList.remove('section-collapsed');
+        var pid = row.dataset.projectId || '';
+        if (showAll || filterValues.indexOf(pid) !== -1) {
+          row.classList.remove('d-none');
+        }
+      }
+    });
+  }
+
+  function restoreContractAssetText(sectionEl) {
+    if (!sectionEl) return;
+    var tbody = sectionEl.querySelector('table.performers-table tbody');
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll('tr[data-project-id]'));
+    var filterValues = window.__contractProjectFilter || ['__all__'];
+    var showAll = !filterValues.length || filterValues.indexOf('__all__') !== -1;
+    rows.forEach(function(row) {
+      var assetTd = row.querySelector('.cell-asset-val');
+      if (assetTd && assetTd.dataset.originalAsset !== undefined) {
+        assetTd.innerHTML = assetTd.dataset.originalAsset;
+        delete assetTd.dataset.originalAsset;
+      }
+      var typicalTd = row.querySelector('.cell-typical-val');
+      if (typicalTd && typicalTd.dataset.originalTypicalAsset !== undefined) {
+        typicalTd.innerHTML = typicalTd.dataset.originalTypicalAsset;
+        delete typicalTd.dataset.originalTypicalAsset;
+      }
+      if (row.classList.contains('asset-collapsed')) {
+        row.classList.remove('asset-collapsed');
+        var pid = row.dataset.projectId || '';
+        if (showAll || filterValues.indexOf(pid) !== -1) {
+          row.classList.remove('d-none');
+        }
+      }
+    });
+  }
+
+  function reapplyContractCollapse() {
+    if (!window.__contractSectionCollapsed && !window.__contractAssetCollapsed) return;
+    var root = pane();
+    if (!root) return;
+    var section = root.querySelector('#contract-conclusion-section');
+    if (!section) return;
+    restoreContractAssetText(section);
+    restoreContractSectionText(section);
+    applyRowGrouping(section);
+    if (window.__contractAssetCollapsed) {
+      collapseParticipationAssets(section);
+      var assetToggle = section.querySelector('#contract-asset-toggle');
+      if (assetToggle) {
+        assetToggle.classList.add('active');
+        var aIcon = assetToggle.querySelector('i');
+        if (aIcon) aIcon.className = 'bi bi-arrows-expand';
+      }
+    } else if (window.__contractSectionCollapsed) {
+      collapseParticipationSections(section);
+      var sectionToggle = section.querySelector('#contract-section-toggle');
+      if (sectionToggle) {
+        sectionToggle.classList.add('active');
+        var sIcon = sectionToggle.querySelector('i');
+        if (sIcon) sIcon.className = 'bi bi-arrows-expand';
+      }
+    }
+  }
+
+  function toggleContractCollapse() {
+    var root = pane();
+    if (!root) return;
+    var section = root.querySelector('#contract-conclusion-section');
+    if (!section) return;
+    var toggle = section.querySelector('#contract-section-toggle');
+    var collapsed = !!window.__contractSectionCollapsed;
+    if (window.__contractAssetCollapsed) {
+      window.__contractSectionCollapsed = !collapsed;
+      if (toggle) {
+        toggle.classList.toggle('active', !collapsed);
+        var icon = toggle.querySelector('i');
+        if (icon) icon.className = !collapsed ? 'bi bi-arrows-expand' : 'bi bi-arrows-collapse';
+      }
+      saveCollapsePrefs();
+      return;
+    }
+    if (collapsed) {
+      restoreContractSectionText(section);
+      applyRowGrouping(section);
+      window.__contractSectionCollapsed = false;
+      if (toggle) {
+        toggle.classList.remove('active');
+        var icon = toggle.querySelector('i');
+        if (icon) icon.className = 'bi bi-arrows-collapse';
+      }
+    } else {
+      collapseParticipationSections(section);
+      window.__contractSectionCollapsed = true;
+      if (toggle) {
+        toggle.classList.add('active');
+        var icon = toggle.querySelector('i');
+        if (icon) icon.className = 'bi bi-arrows-expand';
+      }
+    }
+    updateContractState();
+    saveCollapsePrefs();
+  }
+
+  function toggleContractAssetCollapse() {
+    var root = pane();
+    if (!root) return;
+    var section = root.querySelector('#contract-conclusion-section');
+    if (!section) return;
+    var toggle = section.querySelector('#contract-asset-toggle');
+    var collapsed = !!window.__contractAssetCollapsed;
+    if (collapsed) {
+      restoreContractAssetText(section);
+      applyRowGrouping(section);
+      window.__contractAssetCollapsed = false;
+      if (toggle) {
+        toggle.classList.remove('active');
+        var icon = toggle.querySelector('i');
+        if (icon) icon.className = 'bi bi-arrows-collapse';
+      }
+      if (window.__contractSectionCollapsed) {
+        collapseParticipationSections(section);
+        var sectionToggle = section.querySelector('#contract-section-toggle');
+        if (sectionToggle) {
+          sectionToggle.classList.add('active');
+          var sIcon = sectionToggle.querySelector('i');
+          if (sIcon) sIcon.className = 'bi bi-arrows-expand';
+        }
+      }
+    } else {
+      if (window.__contractSectionCollapsed) {
+        restoreContractSectionText(section);
+        applyRowGrouping(section);
+      }
+      collapseParticipationAssets(section);
+      window.__contractAssetCollapsed = true;
+      if (toggle) {
+        toggle.classList.add('active');
+        var icon = toggle.querySelector('i');
+        if (icon) icon.className = 'bi bi-arrows-expand';
+      }
+    }
+    updateContractState();
+    saveCollapsePrefs();
+  }
+
+  function restoreInfoRequestSectionText(sectionEl) {
+    if (!sectionEl) return;
+    var tbody = sectionEl.querySelector('table.performers-table tbody');
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll('tr[data-project-id]'));
+    var filterValues = window.__infoRequestProjectFilter || [];
+    var showAll = !filterValues.length || (filterValues.length === 1 && filterValues[0] === '');
+    rows.forEach(function(row) {
+      var td = row.querySelector('.cell-typical-val');
+      if (td && td.dataset.originalTypical !== undefined) {
+        td.innerHTML = td.dataset.originalTypical;
+        delete td.dataset.originalTypical;
+      }
+      if (row.classList.contains('section-collapsed')) {
+        row.classList.remove('section-collapsed');
+        var pid = row.dataset.projectId || '';
+        if (showAll || filterValues.indexOf(pid) !== -1) {
+          row.classList.remove('d-none');
+        }
+      }
+    });
+  }
+
+  function restoreInfoRequestAssetText(sectionEl) {
+    if (!sectionEl) return;
+    var tbody = sectionEl.querySelector('table.performers-table tbody');
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll('tr[data-project-id]'));
+    var filterValues = window.__infoRequestProjectFilter || [];
+    var showAll = !filterValues.length || (filterValues.length === 1 && filterValues[0] === '');
+    rows.forEach(function(row) {
+      var assetTd = row.querySelector('.cell-asset-val');
+      if (assetTd && assetTd.dataset.originalAsset !== undefined) {
+        assetTd.innerHTML = assetTd.dataset.originalAsset;
+        delete assetTd.dataset.originalAsset;
+      }
+      var typicalTd = row.querySelector('.cell-typical-val');
+      if (typicalTd && typicalTd.dataset.originalTypicalAsset !== undefined) {
+        typicalTd.innerHTML = typicalTd.dataset.originalTypicalAsset;
+        delete typicalTd.dataset.originalTypicalAsset;
+      }
+      if (row.classList.contains('asset-collapsed')) {
+        row.classList.remove('asset-collapsed');
+        var pid = row.dataset.projectId || '';
+        if (showAll || filterValues.indexOf(pid) !== -1) {
+          row.classList.remove('d-none');
+        }
+      }
+    });
+  }
+
+  function reapplyInfoRequestCollapse() {
+    if (!window.__infoRequestSectionCollapsed && !window.__infoRequestAssetCollapsed) return;
+    var root = pane();
+    if (!root) return;
+    var section = root.querySelector('#info-request-approval-section');
+    if (!section) return;
+    restoreInfoRequestAssetText(section);
+    restoreInfoRequestSectionText(section);
+    applyRowGrouping(section);
+    if (window.__infoRequestAssetCollapsed) {
+      collapseParticipationAssets(section);
+      var assetToggle = section.querySelector('#info-request-asset-toggle');
+      if (assetToggle) {
+        assetToggle.classList.add('active');
+        var aIcon = assetToggle.querySelector('i');
+        if (aIcon) aIcon.className = 'bi bi-arrows-expand';
+      }
+    } else if (window.__infoRequestSectionCollapsed) {
+      collapseParticipationSections(section);
+      var sectionToggle = section.querySelector('#info-request-section-toggle');
+      if (sectionToggle) {
+        sectionToggle.classList.add('active');
+        var sIcon = sectionToggle.querySelector('i');
+        if (sIcon) sIcon.className = 'bi bi-arrows-expand';
+      }
+    }
+  }
+
+  function toggleInfoRequestCollapse() {
+    var root = pane();
+    if (!root) return;
+    var section = root.querySelector('#info-request-approval-section');
+    if (!section) return;
+    var toggle = section.querySelector('#info-request-section-toggle');
+    var collapsed = !!window.__infoRequestSectionCollapsed;
+    if (window.__infoRequestAssetCollapsed) {
+      window.__infoRequestSectionCollapsed = !collapsed;
+      if (toggle) {
+        toggle.classList.toggle('active', !collapsed);
+        var icon = toggle.querySelector('i');
+        if (icon) icon.className = !collapsed ? 'bi bi-arrows-expand' : 'bi bi-arrows-collapse';
+      }
+      saveCollapsePrefs();
+      return;
+    }
+    if (collapsed) {
+      restoreInfoRequestSectionText(section);
+      applyRowGrouping(section);
+      window.__infoRequestSectionCollapsed = false;
+      if (toggle) {
+        toggle.classList.remove('active');
+        var icon = toggle.querySelector('i');
+        if (icon) icon.className = 'bi bi-arrows-collapse';
+      }
+    } else {
+      collapseParticipationSections(section);
+      window.__infoRequestSectionCollapsed = true;
+      if (toggle) {
+        toggle.classList.add('active');
+        var icon = toggle.querySelector('i');
+        if (icon) icon.className = 'bi bi-arrows-expand';
+      }
+    }
+    updateInfoRequestState();
+    saveCollapsePrefs();
+  }
+
+  function toggleInfoRequestAssetCollapse() {
+    var root = pane();
+    if (!root) return;
+    var section = root.querySelector('#info-request-approval-section');
+    if (!section) return;
+    var toggle = section.querySelector('#info-request-asset-toggle');
+    var collapsed = !!window.__infoRequestAssetCollapsed;
+    if (collapsed) {
+      restoreInfoRequestAssetText(section);
+      applyRowGrouping(section);
+      window.__infoRequestAssetCollapsed = false;
+      if (toggle) {
+        toggle.classList.remove('active');
+        var icon = toggle.querySelector('i');
+        if (icon) icon.className = 'bi bi-arrows-collapse';
+      }
+      if (window.__infoRequestSectionCollapsed) {
+        collapseParticipationSections(section);
+        var sectionToggle = section.querySelector('#info-request-section-toggle');
+        if (sectionToggle) {
+          sectionToggle.classList.add('active');
+          var sIcon = sectionToggle.querySelector('i');
+          if (sIcon) sIcon.className = 'bi bi-arrows-expand';
+        }
+      }
+    } else {
+      if (window.__infoRequestSectionCollapsed) {
+        restoreInfoRequestSectionText(section);
+        applyRowGrouping(section);
+      }
+      collapseParticipationAssets(section);
+      window.__infoRequestAssetCollapsed = true;
+      if (toggle) {
+        toggle.classList.add('active');
+        var icon = toggle.querySelector('i');
+        if (icon) icon.className = 'bi bi-arrows-expand';
+      }
+    }
+    updateInfoRequestState();
+    saveCollapsePrefs();
+  }
+
   function initParticipationProjectFilter() {
     const root = pane();
     if (!root) return;
@@ -412,6 +1040,8 @@
       updateLabel(values);
       updateParticipationState();
       applyRowGrouping(root.querySelector('#participation-confirmation-section'));
+      applyParticipationSentState();
+      reapplyParticipationCollapse();
     }
 
     function normalizeSelection() {
@@ -504,6 +1134,7 @@
         : 'Не выбран';
       updateInfoRequestState();
       applyRowGrouping(root.querySelector('#info-request-approval-section'));
+      reapplyInfoRequestCollapse();
     }
 
     function selectProject(projectId) {
@@ -533,6 +1164,42 @@
 
   document.addEventListener('click', async (e) => {
     const root = pane(); if (!root) return;
+
+    var sectionToggle = e.target.closest('#participation-section-toggle');
+    if (sectionToggle && root.contains(sectionToggle)) {
+      toggleParticipationCollapse();
+      return;
+    }
+
+    var assetToggle = e.target.closest('#participation-asset-toggle');
+    if (assetToggle && root.contains(assetToggle)) {
+      toggleParticipationAssetCollapse();
+      return;
+    }
+
+    var contractSectionToggle = e.target.closest('#contract-section-toggle');
+    if (contractSectionToggle && root.contains(contractSectionToggle)) {
+      toggleContractCollapse();
+      return;
+    }
+
+    var contractAssetToggle = e.target.closest('#contract-asset-toggle');
+    if (contractAssetToggle && root.contains(contractAssetToggle)) {
+      toggleContractAssetCollapse();
+      return;
+    }
+
+    var irSectionToggle = e.target.closest('#info-request-section-toggle');
+    if (irSectionToggle && root.contains(irSectionToggle)) {
+      toggleInfoRequestCollapse();
+      return;
+    }
+
+    var irAssetToggle = e.target.closest('#info-request-asset-toggle');
+    if (irAssetToggle && root.contains(irAssetToggle)) {
+      toggleInfoRequestAssetCollapse();
+      return;
+    }
 
     const quickEdit = e.target.closest('.performer-quick-edit');
     if (quickEdit && root.contains(quickEdit)) {
@@ -750,7 +1417,7 @@
 
     const requestBtn = e.target.closest('#participation-request-btn');
     if (requestBtn && root.contains(requestBtn)) {
-      const checked = getVisibleParticipationChecks().filter((cb) => cb.checked);
+      const checked = getVisibleParticipationChecks().filter((cb) => cb.checked && cb.dataset.requestSent !== '1');
       if (!checked.length || requestBtn.disabled) return;
 
       const requestPanel = getParticipationRequestPanel();
@@ -1139,8 +1806,12 @@
     try { delete window.__tableSel['info-request-select']; } catch(_) {}
 
     applyRowGrouping(root.querySelector('#participation-confirmation-section'));
+    applyParticipationSentState();
+    reapplyParticipationCollapse();
     applyRowGrouping(root.querySelector('#contract-conclusion-section'));
+    reapplyContractCollapse();
     applyRowGrouping(root.querySelector('#info-request-approval-section'));
+    reapplyInfoRequestCollapse();
 
     window.__tableSelLast = null;
   }
@@ -1177,7 +1848,11 @@
     if (!root) return [];
     return Array.from(root.querySelectorAll(
       '#performers-main-section table.performers-table tbody tr[data-project-id]'
-    )).filter(function(r) { return !r.classList.contains('d-none'); });
+    )).filter(function(r) {
+      if (r.classList.contains('d-none')) return false;
+      var cb = r.querySelector('input[name="performer-select"]');
+      return !cb || !cb.disabled;
+    });
   }
 
   function findCurrentPerfIndex(rows) {
@@ -1301,8 +1976,12 @@
     var root = pane();
     if (root) {
       applyRowGrouping(root.querySelector('#participation-confirmation-section'));
+      applyParticipationSentState();
+      reapplyParticipationCollapse();
       applyRowGrouping(root.querySelector('#contract-conclusion-section'));
+      reapplyContractCollapse();
       applyRowGrouping(root.querySelector('#info-request-approval-section'));
+      reapplyInfoRequestCollapse();
     }
 
     const perfModal = document.getElementById('performers-modal');

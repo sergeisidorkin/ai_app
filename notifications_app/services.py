@@ -6,6 +6,7 @@ from django.db import transaction
 from django.db.models import Count, Prefetch
 from django.utils import timezone
 
+from policy_app.models import DEPARTMENT_HEAD_GROUP as DEPARTMENT_HEAD_ROLE
 from projects_app.models import Performer
 
 from .models import Notification, NotificationPerformerLink
@@ -72,6 +73,7 @@ def get_notification_queryset_for_user(user):
         NotificationPerformerLink.objects
         .select_related(
             "performer",
+            "performer__employee",
             "performer__registration",
             "performer__registration__type",
             "performer__typical_section",
@@ -85,7 +87,7 @@ def get_notification_queryset_for_user(user):
     )
 
 
-def _build_participation_payload(*, recipient, project, performers, request_sent_at, deadline_at, duration_hours, sender=None):
+def _build_participation_payload(*, recipient, project, performers, request_sent_at, deadline_at, duration_hours, sender=None, template_type="participation_confirmation"):
     services = [_service_line(performer) for performer in performers]
     agreed_amount = sum((performer.agreed_amount or Decimal("0")) for performer in performers)
     project_label_parts = [project.short_uid]
@@ -125,9 +127,9 @@ def _build_participation_payload(*, recipient, project, performers, request_sent
     content_text = None
     try:
         from letters_app.services import get_effective_template, render_template, render_subject
-        tpl = get_effective_template("participation_confirmation", sender)
+        tpl = get_effective_template(template_type, sender)
         if tpl:
-            content_text = render_template(tpl.body_html, template_vars)
+            content_text = render_template(tpl.body_html, template_vars, safe_keys={"services_list"})
             if tpl.subject_template:
                 title_text = render_subject(tpl.subject_template, template_vars)
     except Exception:
@@ -171,6 +173,7 @@ def _build_participation_payload(*, recipient, project, performers, request_sent
         "duration_hours": duration_hours,
         "request_sent_at_display": sent_at_label,
         "deadline_at_display": deadline_at_label,
+        "letter_template_type": template_type,
     }
     return title_text, content_text, payload
 
@@ -192,6 +195,12 @@ def create_participation_notifications(*, performers, sender, request_sent_at, d
         first = grouped_performers[0]
         recipient = first.employee.user
         project = first.registration
+        employee_role = getattr(first.employee, "role", "") or ""
+        template_type = (
+            "direction_confirmation"
+            if employee_role == DEPARTMENT_HEAD_ROLE
+            else "participation_confirmation"
+        )
         title_text, content_text, payload = _build_participation_payload(
             recipient=recipient,
             project=project,
@@ -200,6 +209,7 @@ def create_participation_notifications(*, performers, sender, request_sent_at, d
             deadline_at=deadline_at,
             duration_hours=duration_hours,
             sender=sender,
+            template_type=template_type,
         )
         notification = Notification.objects.create(
             notification_type=Notification.NotificationType.PROJECT_PARTICIPATION_CONFIRMATION,
@@ -240,6 +250,36 @@ def mark_notification_as_read(notification, actor):
     return notification
 
 
+def check_direction_notifications_completion(performer_ids):
+    """Auto-complete direction_confirmation notifications where all linked performers are confirmed."""
+    if not performer_ids:
+        return
+    candidate_notification_ids = set(
+        NotificationPerformerLink.objects
+        .filter(
+            performer_id__in=performer_ids,
+            notification__is_processed=False,
+            notification__notification_type=Notification.NotificationType.PROJECT_PARTICIPATION_CONFIRMATION,
+        )
+        .values_list("notification_id", flat=True)
+    )
+    for nid in candidate_notification_ids:
+        notification = Notification.objects.get(pk=nid)
+        if (notification.payload or {}).get("letter_template_type") != "direction_confirmation":
+            continue
+        all_ids = list(
+            notification.performer_links.values_list("performer_id", flat=True)
+        )
+        all_done = not Performer.objects.filter(pk__in=all_ids).exclude(
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+        ).exists()
+        if all_done:
+            now = timezone.now()
+            notification.is_processed = True
+            notification.action_at = notification.action_at or now
+            notification.save(update_fields=["is_processed", "action_at", "updated_at"])
+
+
 @transaction.atomic
 def process_participation_notification(notification, actor, action_choice):
     if notification.notification_type != Notification.NotificationType.PROJECT_PARTICIPATION_CONFIRMATION:
@@ -253,21 +293,43 @@ def process_participation_notification(notification, actor, action_choice):
         return notification
 
     now = timezone.now()
-    response_value = Performer.ParticipationResponse.CONFIRMED
-    if action_choice == Notification.ActionChoice.DECLINED:
-        response_value = Performer.ParticipationResponse.DECLINED
+    is_direction = (notification.payload or {}).get("letter_template_type") == "direction_confirmation"
+    all_performer_ids = list(notification.performer_links.values_list("performer_id", flat=True))
 
-    performer_ids = list(notification.performer_links.values_list("performer_id", flat=True))
-    Performer.objects.filter(pk__in=performer_ids).update(
-        participation_response=response_value,
-        participation_response_at=now,
-    )
+    if is_direction and action_choice == Notification.ActionChoice.CONFIRMED:
+        dh_employee_id = notification.recipient.employee_profile.pk
+        self_performer_ids = list(
+            notification.performer_links
+            .filter(performer__employee_id=dh_employee_id)
+            .exclude(performer__participation_response=Performer.ParticipationResponse.CONFIRMED)
+            .values_list("performer_id", flat=True)
+        )
+        if self_performer_ids:
+            Performer.objects.filter(pk__in=self_performer_ids).update(
+                participation_response=Performer.ParticipationResponse.CONFIRMED,
+                participation_response_at=now,
+            )
+        all_confirmed = not Performer.objects.filter(
+            pk__in=all_performer_ids,
+        ).exclude(
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+        ).exists()
+        is_fully_processed = all_confirmed
+    else:
+        response_value = Performer.ParticipationResponse.CONFIRMED
+        if action_choice == Notification.ActionChoice.DECLINED:
+            response_value = Performer.ParticipationResponse.DECLINED
+        Performer.objects.filter(pk__in=all_performer_ids).update(
+            participation_response=response_value,
+            participation_response_at=now,
+        )
+        is_fully_processed = True
 
     if not notification.is_read:
         notification.is_read = True
         notification.read_at = now
         notification.read_by = actor
-    notification.is_processed = True
+    notification.is_processed = is_fully_processed
     notification.action_at = now
     notification.action_by = actor
     notification.action_choice = action_choice
@@ -283,6 +345,9 @@ def process_participation_notification(notification, actor, action_choice):
             "updated_at",
         ]
     )
+
+    check_direction_notifications_completion(all_performer_ids)
+
     return notification
 
 
@@ -570,6 +635,19 @@ def serialize_notification_cards(notifications):
     cards = []
     for notification in notifications:
         payload = notification.payload or {}
+        is_direction = payload.get("letter_template_type") == "direction_confirmation"
+
+        show_self_confirm = False
+        if is_direction and not notification.is_processed:
+            recipient_user_id = notification.recipient_id
+            for link in notification.performer_links.all():
+                perf = link.performer
+                if (perf.employee_id
+                        and perf.employee.user_id == recipient_user_id
+                        and perf.participation_response != Performer.ParticipationResponse.CONFIRMED):
+                    show_self_confirm = True
+                    break
+
         cards.append(
             {
                 "notification": notification,
@@ -593,6 +671,8 @@ def serialize_notification_cards(notifications):
                 "content_html": (notification.content_text or "")
                     if (notification.content_text or "").lstrip().startswith("<")
                     else "",
+                "is_direction_confirmation": is_direction,
+                "show_self_confirm_button": show_self_confirm,
             }
         )
     return cards

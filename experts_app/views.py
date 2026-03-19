@@ -9,14 +9,22 @@ from django.views.decorators.http import require_http_methods, require_POST
 
 from classifiers_app.models import TerritorialDivision
 from policy_app.models import Grade
-from .forms import ExpertSpecialtyForm, ExpertProfileForm, _active_regions_qs
+from .forms import ExpertSpecialtyForm, ExpertProfileForm, ExpertContractDetailsForm, _active_regions_qs
 from .models import ExpertSpecialty, ExpertProfile, ExpertProfileSpecialty, EXCLUDED_ROLES
 
 PARTIAL_TEMPLATE = "experts_app/experts_partial.html"
 FORM_TEMPLATE = "experts_app/specialty_form.html"
 PROFILE_FORM_TEMPLATE = "experts_app/profile_form.html"
+CONTRACT_DETAILS_FORM_TEMPLATE = "experts_app/contract_details_form.html"
 HX_TRIGGER_HEADER = "HX-Trigger"
 HX_EVENT = "experts-updated"
+
+
+def _render_form_with_errors(request, template, context):
+    response = render(request, template, context)
+    response["HX-Retarget"] = "#experts-modal .modal-content"
+    response["HX-Reswap"] = "innerHTML"
+    return response
 
 
 def staff_required(u):
@@ -45,8 +53,9 @@ def _experts_context():
     _ensure_profiles()
     return {
         "specialties": ExpertSpecialty.objects.select_related(
-            "expertise_direction", "head_of_direction", "head_of_direction__user"
-        ).all(),
+            "expertise_direction", "expertise_dir",
+            "head_of_direction", "head_of_direction__user",
+        ).prefetch_related("owners").all(),
         "profiles": ExpertProfile.objects.select_related(
             "employee", "employee__user",
             "expertise_direction",
@@ -100,7 +109,7 @@ def specialty_form_create(request):
         return render(request, FORM_TEMPLATE, {"form": form, "action": "create"})
     form = ExpertSpecialtyForm(request.POST)
     if not form.is_valid():
-        return render(request, FORM_TEMPLATE, {"form": form, "action": "create"})
+        return _render_form_with_errors(request, FORM_TEMPLATE, {"form": form, "action": "create"})
     obj = form.save(commit=False)
     obj.position = _next_position()
     obj.save()
@@ -117,7 +126,7 @@ def specialty_form_edit(request, pk: int):
         return render(request, FORM_TEMPLATE, {"form": form, "action": "edit", "specialty": specialty})
     form = ExpertSpecialtyForm(request.POST, instance=specialty)
     if not form.is_valid():
-        return render(request, FORM_TEMPLATE, {"form": form, "action": "edit", "specialty": specialty})
+        return _render_form_with_errors(request, FORM_TEMPLATE, {"form": form, "action": "edit", "specialty": specialty})
     form.save()
     return _render_updated(request)
 
@@ -244,6 +253,29 @@ def profile_move_down(request, pk: int):
         obj.position, nxt.position = nxt.position, obj.position
         ExpertProfile.objects.filter(pk=obj.pk).update(position=obj.position)
         ExpertProfile.objects.filter(pk=nxt.pk).update(position=nxt.position)
+    return _render_updated(request)
+
+
+# ---------------------------------------------------------------------------
+#  ExpertProfile Contract Details
+# ---------------------------------------------------------------------------
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def contract_details_form_edit(request, pk: int):
+    profile = get_object_or_404(ExpertProfile, pk=pk)
+    if request.method == "GET":
+        form = ExpertContractDetailsForm(instance=profile)
+        return render(request, CONTRACT_DETAILS_FORM_TEMPLATE, {
+            "form": form, "profile": profile,
+        })
+    form = ExpertContractDetailsForm(request.POST, instance=profile)
+    if not form.is_valid():
+        return render(request, CONTRACT_DETAILS_FORM_TEMPLATE, {
+            "form": form, "profile": profile,
+        })
+    form.save()
     return _render_updated(request)
 
 

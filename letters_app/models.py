@@ -4,7 +4,8 @@ from django.db import models
 
 class LetterTemplate(models.Model):
     TEMPLATE_TYPE_CHOICES = [
-        ("participation_confirmation", "Подтверждение участия"),
+        ("participation_confirmation", "Подтверждение участия эксперта"),
+        ("direction_confirmation", "Подтверждение по направлению"),
         ("contract_sending", "Отправка проекта договора"),
         ("project_start", "Начало проекта"),
         ("request_approval", "Согласование запроса"),
@@ -12,6 +13,7 @@ class LetterTemplate(models.Model):
 
     TEMPLATE_CARD_TITLES = {
         "participation_confirmation": "Шаблон запроса подтверждения участия в проекте",
+        "direction_confirmation": "Шаблон запроса подтверждения по направлению",
         "contract_sending": "Шаблон отправки проекта договора",
         "project_start": "Шаблон уведомления о начале проекта",
         "request_approval": "Шаблон согласования запроса",
@@ -19,6 +21,22 @@ class LetterTemplate(models.Model):
 
     TEMPLATE_VARIABLES = {
         "participation_confirmation": [
+            ("{recipient_name}", "Имя и отчество получателя"),
+            ("{project_label}",
+             "Обозначение проекта в формате «XXXXNZZ Тип Название проекта», где: "
+             "XXXX — четырехзначный номер проекта, "
+             "N — порядковый номер соглашения, начиная с 0, "
+             "ZZ — двузначный код страны регистрации компании группы IMC Montan"),
+            ("{project_manager}", "Руководитель проекта"),
+            ("{project_deadline}", "Срок завершения проекта (дедлайн)"),
+            ("{project_type}", "Тип проекта"),
+            ("{services_list}", "Список разделов исполнителя с указанием активов"),
+            ("{agreed_amount}", "Согласованная оплата услуг"),
+            ("{currency_code}", "Валюта договора"),
+            ("{duration_hours}", "Срок для принятия решения (часов)"),
+            ("{deadline_at}", "Крайний срок ответа"),
+        ],
+        "direction_confirmation": [
             ("{recipient_name}", "Имя и отчество получателя"),
             ("{project_label}",
              "Обозначение проекта в формате «XXXXNZZ Тип Название проекта», где: "

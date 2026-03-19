@@ -13,4 +13,6 @@ urlpatterns = [
     path("profile/<int:pk>/edit/", views.profile_form_edit, name="epr_form_edit"),
     path("profile/<int:pk>/move-up/", views.profile_move_up, name="epr_move_up"),
     path("profile/<int:pk>/move-down/", views.profile_move_down, name="epr_move_down"),
+    # Contract Details
+    path("profile/<int:pk>/contract-details/", views.contract_details_form_edit, name="epr_contract_details_edit"),
 ]

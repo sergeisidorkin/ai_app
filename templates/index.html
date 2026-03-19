@@ -158,14 +158,19 @@
           <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
             <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
               <h5 class="mb-0 ps-3 fs-4 pt-2">Уведомления</h5>
-              <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
-                 href="#notifications"
-                 data-bs-toggle="tab"
-                 aria-label="Открыть уведомления">
-                <i class="bi bi-bell fs-5"></i>
-                <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
-                      data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
-              </a>
+              <div class="d-flex align-items-center gap-2">
+                <div id="notifications-delete-actions" class="d-none">
+                  <button type="button" id="notifications-delete-btn"
+                          class="btn btn-outline-danger btn-sm d-flex align-items-center"
+                          data-url="{% url 'notification_bulk_delete' %}">
+                    <i class="bi bi-x-square me-2"></i>Удалить
+                  </button>
+                </div>
+                <button type="button" id="notifications-edit-btn"
+                        class="btn btn-primary btn-sm d-flex align-items-center">
+                  <i class="bi bi-pencil-square me-2"></i>Редактировать
+                </button>
+              </div>
             </div>
           </div>
           <div class="ps-3">
@@ -471,9 +476,7 @@
                 {% include "contracts_app/panel.html" %}
               </div>
               <div id="contracts-content-templates" class="contracts-section-content d-none">
-                <div class="card shadow-sm mt-3">
-                  <div class="card-body text-muted">Образцы шаблонов (в разработке)</div>
-                </div>
+                {% include "contracts_app/templates_panel.html" %}
               </div>
               <div id="contracts-content-field-params" class="contracts-section-content d-none">
                 <div class="card shadow-sm mt-3">
@@ -500,7 +503,11 @@
             <div class="list-group list-group-flush p-3 m-0" id="letters-second-sidebar-list">
               <a href="#" class="list-group-item list-group-item-action active"
                  data-letters-section="participation-confirmation">
-                Подтверждение участия
+                Подтверждение участия эксперта
+              </a>
+              <a href="#" class="list-group-item list-group-item-action"
+                 data-letters-section="direction-confirmation">
+                Подтверждение по направлению
               </a>
               <a href="#" class="list-group-item list-group-item-action"
                  data-letters-section="contract-sending">
@@ -520,7 +527,7 @@
           <div class="flex-grow-1 ps-3 pe-0" style="min-width:0;">
             <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
               <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
-                <h5 class="mb-0 ps-3 fs-4 pt-2" id="letters-section-title">Подтверждение участия</h5>
+                <h5 class="mb-0 ps-3 fs-4 pt-2" id="letters-section-title">Подтверждение участия эксперта</h5>
                 <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
                    href="#notifications"
                    data-bs-toggle="tab"
@@ -539,6 +546,9 @@
                    hx-trigger="intersect once"
                    hx-swap="innerHTML">
                 <div class="text-center py-4"><div class="spinner-border spinner-border-sm text-secondary"></div></div>
+              </div>
+              <div id="letters-content-direction-confirmation" class="letters-section-content d-none"
+                   data-letters-url="{% url 'letter_template_partial' 'direction_confirmation' %}">
               </div>
               <div id="letters-content-contract-sending" class="letters-section-content d-none"
                    data-letters-url="{% url 'letter_template_partial' 'contract_sending' %}">
@@ -935,7 +945,8 @@
         <script>
         (function () {
           var LETTERS_TITLES = {
-            'participation-confirmation': 'Подтверждение участия',
+            'participation-confirmation': 'Подтверждение участия эксперта',
+            'direction-confirmation': 'Подтверждение по направлению',
             'contract-sending': 'Отправка проекта договора',
             'project-start': 'Начало проекта',
             'request-approval': 'Согласование запроса',

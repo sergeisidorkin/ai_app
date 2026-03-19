@@ -13,12 +13,16 @@
       hx-post="{% url 'product_form_edit' product.pk %}"
     {% endif %}
     hx-target="#policy-pane"
-    hx-swap="outerHTML">
+    hx-swap="outerHTML"
+    id="product-form">
   <div class="modal-body">
     {% csrf_token %}
     <div class="mb-3">
       <label class="form-label">Краткое имя</label>
       {{ form.short_name }}
+      {% if form.short_name.errors %}
+        <div class="text-danger small mt-1">{{ form.short_name.errors.0 }}</div>
+      {% endif %}
     </div>
     <div class="mb-3">
       <label class="form-label">Наименование на английском языке</label>
@@ -36,6 +40,38 @@
       <label class="form-label">Тип услуги</label>
       {{ form.service_type }}
     </div>
+    <div class="mb-3">
+      <label class="form-label">Владелец</label>
+      <div class="dropdown" id="product-owner-dropdown">
+        <button class="form-select text-start" type="button"
+                id="product-owner-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
+                style="cursor:pointer; background-color:#fff;">
+          <span class="js-product-owner-label">Группа</span>
+        </button>
+        <div class="dropdown-menu p-3" aria-labelledby="product-owner-toggle"
+             style="min-width: 100%; max-height: 240px; overflow-y: auto;">
+          <div class="form-check mb-2">
+            <input class="form-check-input js-product-owner" type="checkbox"
+                   name="owner_ids" value="__group__" id="product-owner-group"
+                   {% if form.is_group_selected or not form.selected_owner_ids and not form.instance.pk %}checked{% endif %}>
+            <label class="form-check-label" for="product-owner-group">Группа</label>
+          </div>
+          <hr class="dropdown-divider">
+          {% for opt in form.owner_options %}
+            <div class="form-check">
+              <input class="form-check-input js-product-owner" type="checkbox"
+                     name="owner_ids" value="{{ opt.pk }}" id="product-owner-{{ opt.pk }}"
+                     {% if opt.pk in form.selected_owner_ids %}checked{% endif %}>
+              <label class="form-check-label" for="product-owner-{{ opt.pk }}">
+                {{ opt.short_name }}
+              </label>
+            </div>
+          {% empty %}
+            <div class="text-muted small">Нет компаний</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
 
     {% if form.errors %}
       <div class="alert alert-danger mb-0">
@@ -48,3 +84,38 @@
     <button type="submit" class="btn btn-primary">Сохранить</button>
   </div>
 </form>
+
+<script>
+(function() {
+  const GROUP_VAL = "__group__";
+  const dropdown = document.getElementById("product-owner-dropdown");
+  if (!dropdown) return;
+  const checks = dropdown.querySelectorAll(".js-product-owner");
+  const label = dropdown.querySelector(".js-product-owner-label");
+  const groupCb = document.getElementById("product-owner-group");
+
+  function updateLabel() {
+    const selected = Array.from(checks).filter(cb => cb.checked);
+    if (!selected.length) { label.textContent = "Группа"; return; }
+    if (groupCb && groupCb.checked) { label.textContent = "Группа"; return; }
+    if (selected.length === 1) {
+      label.textContent = selected[0].nextElementSibling?.textContent?.trim() || "1";
+      return;
+    }
+    label.textContent = selected.length + " выбрано";
+  }
+
+  checks.forEach(cb => {
+    cb.addEventListener("change", function() {
+      if (this.value === GROUP_VAL && this.checked) {
+        checks.forEach(c => { if (c.value !== GROUP_VAL) c.checked = false; });
+      } else if (this.value !== GROUP_VAL && this.checked) {
+        if (groupCb) groupCb.checked = false;
+      }
+      updateLabel();
+    });
+  });
+
+  updateLabel();
+})();
+</script>

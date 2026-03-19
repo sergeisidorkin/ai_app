@@ -1,0 +1,46 @@
+{% load static %}
+<div class="card shadow-sm mt-3">
+  <div class="card-body">
+
+    <div id="contract-templates-pane"
+         hx-get="{% url 'ct_partial' %}"
+         hx-trigger="load, contract-templates-updated from:body"
+         hx-target="#contract-templates-pane"
+         hx-swap="innerHTML"
+         hx-indicator="#ct-loading">
+      <div id="ct-loading" class="text-muted htmx-indicator">Загрузка образцов шаблонов…</div>
+    </div>
+
+  </div>
+</div>
+
+<div class="modal fade" id="contract-templates-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable">
+    <div class="modal-content">
+    </div>
+  </div>
+</div>
+
+<script>
+  document.body.addEventListener('contract-templates-updated', function () {
+    var el = document.getElementById('contract-templates-modal');
+    if (!el) return;
+    var modal = bootstrap.Modal.getInstance(el) || bootstrap.Modal.getOrCreateInstance(el);
+    modal.hide();
+  });
+
+  document.addEventListener('htmx:afterSwap', function (e) {
+    var modalContent = document.querySelector('#contract-templates-modal .modal-content');
+    if (!modalContent || !modalContent.contains(e.target) && e.target !== modalContent) return;
+
+    var dlg = document.querySelector('#contract-templates-modal .modal-dialog');
+    if (dlg) {
+      dlg.classList.remove('modal-sm', 'modal-lg', 'modal-xl', 'modal-fullscreen', 'modal-xxl');
+      var sz = modalContent.querySelector('[data-modal-size]');
+      if (sz) dlg.classList.add('modal-' + sz.dataset.modalSize);
+    }
+
+    var m = bootstrap.Modal.getOrCreateInstance(document.getElementById('contract-templates-modal'));
+    m.show();
+  });
+</script>

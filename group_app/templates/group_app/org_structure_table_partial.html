@@ -16,7 +16,7 @@
         <th>Наименование компании (краткое)</th>
         <th>Уровень</th>
         <th>Наименование структурного подразделения</th>
-        <th>Краткое имя</th>
+        <th>Экспертиза</th>
         <th>Функциональное подчинение</th>
         <th>Тип подразделения</th>
     </tr>
@@ -43,7 +43,7 @@
             <td class="text-nowrap">{{ u.company.short_name }}</td>
             <td class="text-nowrap">{{ u.level }}</td>
             <td>{{ u.department_name }}</td>
-            <td class="text-nowrap">{{ u.short_name }}</td>
+            <td class="text-nowrap">{% if u.expertise %}{{ u.expertise.short_name }}{% endif %}</td>
             <td>{% if u.functional_subordination %}{{ u.functional_subordination.department_name }}{% else %}—{% endif %}</td>
             <td class="text-nowrap">{{ u.get_unit_type_display }}</td>
         </tr>

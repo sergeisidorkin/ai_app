@@ -401,6 +401,7 @@ def ensure_performer_rows(sender, instance, created, **kwargs):
     sections = list(
         TypicalSection.objects
         .filter(product_id=product_id)
+        .select_related("expertise_dir")
         .order_by("position", "id")
     )
     if not sections:
@@ -422,6 +423,50 @@ def ensure_performer_rows(sender, instance, created, **kwargs):
         for emp in heads:
             dept_head_map[emp.department_id] = emp
 
+    # Pre-fetch expert profiles with grades for all department heads
+    from experts_app.models import ExpertProfile
+    head_employee_ids = [emp.pk for emp in dept_head_map.values()]
+    expert_profile_map = {}
+    if head_employee_ids:
+        for p in ExpertProfile.objects.select_related("grade").filter(employee_id__in=head_employee_ids):
+            expert_profile_map[p.employee_id] = p
+
+    # Pre-fetch tariffs for all sections of this product
+    from policy_app.models import Tariff, Grade
+    tariff_map = {}
+    tariff_hours_map = {}
+    for t in Tariff.objects.filter(product_id=product_id, section_id__in=[s.id for s in sections]):
+        tariff_map[t.section_id] = float(t.base_rate_vpm)
+        tariff_hours_map[t.section_id] = t.service_hours or 0
+
+    # Pre-fetch base-rate hourly rates per OrgUnit (direction)
+    base_hourly_rate_map = {}
+    for bg in (
+        Grade.objects
+        .filter(is_base_rate=True, hourly_rate__isnull=False)
+        .select_related("created_by__employee_profile")
+    ):
+        emp = getattr(bg.created_by, "employee_profile", None)
+        if emp and emp.department_id:
+            base_hourly_rate_map[emp.department_id] = float(bg.hourly_rate)
+
+    # Pre-fetch living wages
+    import math
+    from classifiers_app.models import LivingWage
+    today = timezone.now().date()
+    living_wage_map = {}
+    for w in (
+        LivingWage.objects
+        .filter(
+            models.Q(approval_date__lte=today),
+            models.Q(expiry_date__isnull=True) | models.Q(expiry_date__gte=today),
+        )
+        .order_by("-approval_date")
+    ):
+        key = (w.country_id, w.region_id)
+        if key not in living_wage_map:
+            living_wage_map[key] = float(w.amount)
+
     next_position = (
         Performer.objects
         .aggregate(max_pos=Max("position"))
@@ -429,7 +474,6 @@ def ensure_performer_rows(sender, instance, created, **kwargs):
     )
     asset_name = instance.asset_name or instance.name or ""
 
-    today = timezone.now().date()
     rub = (
         OKVCurrency.objects
         .filter(
@@ -446,6 +490,11 @@ def ensure_performer_rows(sender, instance, created, **kwargs):
 
         executor_name = ""
         employee_obj = None
+        grade_value = ""
+        grade_name_value = ""
+        estimated_costs_value = None
+        agreed_amount_value = None
+
         if section.expertise_direction_id:
             head = dept_head_map.get(section.expertise_direction_id)
             if head:
@@ -456,6 +505,36 @@ def ensure_performer_rows(sender, instance, created, **kwargs):
                 ]
                 executor_name = " ".join(p for p in parts if p)
                 employee_obj = head
+
+                profile = expert_profile_map.get(head.pk)
+                if profile and profile.grade:
+                    g = profile.grade
+                    grade_name_value = g.grade_ru or g.grade_en or ""
+                    q = g.qualification or 0
+                    lvl = g.qualification_levels or 5
+                    grade_value = f"{q}/{lvl}"
+
+                    base_rate_share = 0 if g.is_base_rate else (g.base_rate_share or 0)
+                    Y = base_rate_share / 100
+                    pricing_method = ""
+                    if section.expertise_dir_id:
+                        pricing_method = section.expertise_dir.pricing_method or ""
+
+                    if pricing_method == "vpm":
+                        if profile.country_id and profile.region_id:
+                            Z = living_wage_map.get((profile.country_id, profile.region_id))
+                            X = tariff_map.get(section.id)
+                            if Z is not None and X is not None:
+                                result = math.ceil((Z * X * (1 + Y)) / 1000) * 1000
+                                estimated_costs_value = Decimal(str(result))
+                                agreed_amount_value = estimated_costs_value
+                    else:
+                        Z = base_hourly_rate_map.get(section.expertise_direction_id)
+                        X = tariff_hours_map.get(section.id)
+                        if Z is not None and X is not None and X > 0:
+                            result = math.ceil((Z * X * (1 + Y)) / 1000) * 1000
+                            estimated_costs_value = Decimal(str(result))
+                            agreed_amount_value = estimated_costs_value
 
         performers.append(
             Performer(
@@ -469,6 +548,10 @@ def ensure_performer_rows(sender, instance, created, **kwargs):
                 final_payment=50,
                 executor=executor_name,
                 employee=employee_obj,
+                grade=grade_value,
+                grade_name=grade_name_value,
+                estimated_costs=estimated_costs_value,
+                agreed_amount=agreed_amount_value,
             )
         )
 
@@ -580,6 +663,11 @@ class Performer(models.Model):
     contract_is_addendum = models.BooleanField("Доп. соглашение", default=False)
     contract_addendum_number = models.PositiveIntegerField("Номер доп. соглашения", null=True, blank=True)
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._original_employee_id = self.employee_id
+        self._original_executor = self.executor
+
     class Meta:
         ordering = ["position", "id"]
         verbose_name = "Исполнитель"
@@ -622,9 +710,30 @@ class Performer(models.Model):
                 self.employee = resolved_employee
         elif self.employee_id:
             self.executor = self.employee_full_name(self.employee)
+        if (
+            self.pk
+            and self._original_employee_id is not None
+            and self.employee_id != self._original_employee_id
+        ):
+            if self.participation_request_sent_at and self.participation_response:
+                PerformerParticipationSnapshot.objects.create(
+                    performer=self,
+                    executor_name=self._original_executor or self.executor,
+                    employee_id=self._original_employee_id,
+                    request_sent_at=self.participation_request_sent_at,
+                    deadline_at=self.participation_deadline_at,
+                    response=self.participation_response,
+                    response_at=self.participation_response_at,
+                )
+            self.participation_request_sent_at = None
+            self.participation_deadline_at = None
+            self.participation_response = ""
+            self.participation_response_at = None
         if self.prepayment is not None:
             self.final_payment = Decimal("100") - Decimal(str(self.prepayment))
         super().save(*args, **kwargs)
+        self._original_employee_id = self.employee_id
+        self._original_executor = self.executor
 
     @property
     def participation_response_status(self):
@@ -658,6 +767,54 @@ class Performer(models.Model):
         if not self.contract_deadline_at:
             return ""
         return "Просрочено" if timezone.now() > self.contract_deadline_at else "В срок"
+
+
+class PerformerParticipationSnapshot(models.Model):
+    """Snapshot of participation data preserved when the executor changes on a Performer."""
+
+    performer = models.ForeignKey(
+        Performer,
+        on_delete=models.CASCADE,
+        related_name="participation_snapshots",
+        verbose_name="Исполнитель",
+    )
+    executor_name = models.CharField("Исполнитель (ФИО)", max_length=255)
+    employee = models.ForeignKey(
+        "users_app.Employee",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="participation_snapshots",
+        verbose_name="Сотрудник",
+    )
+    request_sent_at = models.DateTimeField("Дата отправки запроса", null=True, blank=True)
+    deadline_at = models.DateTimeField("Срок подтверждения", null=True, blank=True)
+    response = models.CharField(
+        "Ответ на запрос",
+        max_length=20,
+        choices=Performer.ParticipationResponse.choices,
+        blank=True,
+        default="",
+    )
+    response_at = models.DateTimeField("Дата ответа", null=True, blank=True)
+
+    class Meta:
+        ordering = ["request_sent_at", "id"]
+        verbose_name = "Снимок подтверждения участия"
+        verbose_name_plural = "Снимки подтверждений участия"
+
+    def __str__(self):
+        return f"Snapshot {self.pk}: {self.executor_name} → {self.get_response_display() or '—'}"
+
+    @property
+    def response_status(self):
+        if not self.deadline_at:
+            return ""
+        if self.response_at:
+            return "Просрочено" if self.response_at > self.deadline_at else "В срок"
+        if timezone.now() > self.deadline_at:
+            return "Просрочено"
+        return ""
 
 
 class RegistrationWorkspaceFolder(models.Model):

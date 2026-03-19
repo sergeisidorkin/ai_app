@@ -29,6 +29,10 @@
       {{ form.name_en }}
     </div>
     <div class="mb-3">
+      <label class="form-label">Порядковый номер</label>
+      {{ form.order_number }}
+    </div>
+    <div class="mb-3">
       <label class="form-label">Страна регистрации</label>
       {{ form.country }}
     </div>
@@ -75,15 +79,23 @@
   var codeEl = document.getElementById('gm-country-code');
   var alpha2El = document.getElementById('gm-country-alpha2');
   var identifierEl = document.getElementById('gm-identifier');
-  if (!countryEl || !codeEl || !alpha2El || !identifierEl) return;
+  var orderNumberEl = document.getElementById('gm-order-number');
+  if (!countryEl || !codeEl || !alpha2El || !identifierEl || !orderNumberEl) return;
 
   var countryMap = {{ country_identifier_map_json|safe }};
+  var currentCountryCode = {{ member_country_code_json|safe }};
+  var currentOrderNumber = {{ member_order_number_json|safe }};
 
   function updateCountryMeta() {
     var meta = countryMap[countryEl.value] || {};
     codeEl.value = meta.code || '';
     alpha2El.value = meta.alpha2 || '';
     identifierEl.value = meta.identifier || '';
+    if (meta.code && currentCountryCode && meta.code === currentCountryCode) {
+      orderNumberEl.value = currentOrderNumber;
+      return;
+    }
+    orderNumberEl.value = (meta.order_number != null) ? meta.order_number : 0;
   }
 
   countryEl.addEventListener('change', updateCountryMeta);

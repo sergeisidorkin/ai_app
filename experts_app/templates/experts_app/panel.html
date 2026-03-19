@@ -47,9 +47,16 @@
       </div>
     </div>
 
+    <div class="modal fade" id="experts-contract-details-modal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+        </div>
+      </div>
+    </div>
+
     <script>
       document.body.addEventListener('experts-updated', function () {
-        ['experts-modal', 'experts-profile-modal'].forEach(function (id) {
+        ['experts-modal', 'experts-profile-modal', 'experts-contract-details-modal'].forEach(function (id) {
           var el = document.getElementById(id);
           if (!el) return;
           var modal = bootstrap.Modal.getInstance(el) || bootstrap.Modal.getOrCreateInstance(el);
@@ -58,7 +65,7 @@
       });
 
       document.addEventListener('htmx:afterSwap', function (e) {
-        ['experts-modal', 'experts-profile-modal'].forEach(function (id) {
+        ['experts-modal', 'experts-profile-modal', 'experts-contract-details-modal'].forEach(function (id) {
           if (e.target && e.target.matches('#' + id + ' .modal-content')) {
             var m = bootstrap.Modal.getOrCreateInstance(document.getElementById(id));
             m.show();
@@ -69,7 +76,12 @@
 
     <script>
     (function() {
-      var hiddenCols = {};
+      var P = window.UIPref;
+      var hiddenCols = P ? P.get('experts:hiddenCols', {}) : {};
+
+      function saveHiddenCols() {
+        if (P) P.set('experts:hiddenCols', hiddenCols);
+      }
 
       function initColpicker() {
         var wrap = document.getElementById('epr-colpicker-wrap');
@@ -109,6 +121,7 @@
           }
           hiddenCols = {};
           items.forEach(function(c) { if (!c.checked) hiddenCols[c.value] = true; });
+          saveHiddenCols();
           updateBtnLabel(btn, menu);
           applyVisibility(menu);
         });

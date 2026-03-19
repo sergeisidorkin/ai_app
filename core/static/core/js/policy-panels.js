@@ -2,11 +2,13 @@
   if (window.__policyPanelBound) return;
   window.__policyPanelBound = true;
 
-  // Кеш выбора по имени чекбоксов таблицы
   window.__tableSel = window.__tableSel || {};
   window.__tableSelLast = window.__tableSelLast || null;
 
-  function pane() { return document.getElementById('policy-pane'); }
+  function pane() {
+    var all = document.querySelectorAll('#policy-pane');
+    return all.length > 1 ? all[all.length - 1] : all[0] || null;
+  }
   const qa = (sel, root) => Array.from((root || document).querySelectorAll(sel));
 
   function getCookie(name) {
@@ -69,7 +71,7 @@
     if (!root) return;
     const btn = e.target.closest('button[data-panel-action]');
     if (!btn || !root.contains(btn)) return;
-    const panel = btn.closest('#products-actions, #sections-actions, #structures-actions, #grades-actions, #tariffs-actions');
+    const panel = btn.closest('#products-actions, #expdir-actions, #sections-actions, #structures-actions, #grades-actions, #tariffs-actions');
     if (!panel) return;
     const action = btn.dataset.panelAction; // "up" | "down" | "edit" | "delete"
     const name = getNameForPanel(panel);

@@ -1,0 +1,123 @@
+<table class="table table-sm align-top">
+    <thead>
+    <tr>
+        <th style="width:1%">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+                <div class="form-check m-0">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           id="ct-master"
+                           data-target-name="ct-select"
+                           data-actions-id="ct-actions"
+                           aria-label="Выделить все строки">
+                </div>
+            {% endif %}
+        </th>
+        <th>Продукт</th>
+        <th>Вид</th>
+        <th>Сторона</th>
+        <th>Страна</th>
+        <th>Наименование образца</th>
+        <th>Версия</th>
+        <th>Загрузка</th>
+        <th>Скачать</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for t in templates %}
+        <tr data-edit-url="{% url 'ct_form_edit' t.pk %}"
+            data-delete-url="{% url 'ct_delete' t.pk %}"
+            data-move-up-url="{% url 'ct_move_up' t.pk %}"
+            data-move-down-url="{% url 'ct_move_down' t.pk %}">
+
+            <td class="text-nowrap">
+                {% if request.user.is_authenticated and request.user.is_staff %}
+                    <div class="form-check">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="ct-sel-{{ t.id }}"
+                               name="ct-select"
+                               value="{{ t.id }}"
+                               aria-label="Выделить строку">
+                    </div>
+                {% endif %}
+            </td>
+            <td class="text-nowrap">{{ t.product.short_name }}</td>
+            <td class="text-nowrap">{{ t.get_contract_type_display }}</td>
+            <td class="text-nowrap">{{ t.get_party_display }}</td>
+            <td class="text-nowrap">{{ t.country_name }}</td>
+            <td>{{ t.sample_name }}</td>
+            <td class="text-nowrap">{{ t.version }}</td>
+            <td class="text-nowrap">{% if t.file %}{{ t.file.name|cut:"contract_templates/" }}{% else %}—{% endif %}</td>
+            <td class="text-nowrap">
+                {% if t.file %}
+                    <a href="{% url 'ct_download' t.pk %}" class="ct-download-link" title="Скачать файл">
+                        <i class="bi bi-download"></i>
+                    </a>
+                {% else %}
+                    —
+                {% endif %}
+            </td>
+        </tr>
+    {% empty %}
+        <tr><td colspan="9" class="text-muted">Пока нет данных.</td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+
+{% if request.user.is_authenticated and request.user.is_staff %}
+<div class="d-flex align-items-stretch gap-2 products-actions-row">
+  <button
+          class="btn btn-primary btn-sm d-flex align-items-center"
+          hx-get="{% url 'ct_form_create' %}"
+          hx-target="#contract-templates-modal .modal-content"
+          hx-swap="innerHTML">
+    <i class="bi bi-plus-circle me-2"></i>Добавить строку
+  </button>
+  <div id="ct-actions" class="d-none d-flex">
+    <div class="btn-group">
+      <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+        <i class="bi bi-arrow-up-square"></i>
+      </button>
+      <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+        <i class="bi bi-arrow-down-square"></i>
+      </button>
+      <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+        <i class="bi bi-pencil-square"></i>
+      </button>
+      <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+        <i class="bi bi-x-square"></i>
+      </button>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if ct_variables %}
+<div class="mt-3">
+  <a class="text-muted small text-decoration-none" data-bs-toggle="collapse"
+     href="#ct-variables" role="button" aria-expanded="false">
+    <i class="bi bi-info-circle me-1"></i>Доступные переменные
+  </a>
+  <div class="collapse mt-2" id="ct-variables">
+    <div class="table-responsive">
+      <table class="table table-bordered mb-0 small">
+        <thead class="table-light">
+          <tr>
+            <th class="ps-3 py-2">Переменная</th>
+            <th class="ps-3 py-2">Описание</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for key, desc in ct_variables %}
+            <tr>
+              <td class="ps-3 py-2"><code>{{ key }}</code></td>
+              <td class="ps-3 py-2">{{ desc }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}

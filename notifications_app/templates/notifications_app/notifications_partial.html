@@ -6,6 +6,14 @@
                  data-notification-id="{{ notification.id }}"
                  data-unread="{% if notification.is_read %}0{% else %}1{% endif %}">
           <div class="notification-card__row js-notification-row">
+            <div class="notification-card__checkbox d-none">
+              <div class="form-check m-0">
+                <input class="form-check-input js-notification-select"
+                       type="checkbox"
+                       value="{{ notification.id }}"
+                       {% if not notification.is_processed %}disabled{% endif %}>
+              </div>
+            </div>
             <div class="notification-card__main">
               <div class="notification-card__marker">
                 {% if notification.is_processed %}
@@ -25,6 +33,14 @@
             </div>
             <div class="notification-card__actions">
               {% if notification.notification_type == "project_participation_confirmation" and not notification.is_processed %}
+                {% if card.is_direction_confirmation and card.show_self_confirm_button %}
+                <button type="button"
+                        class="btn btn-primary btn-sm js-notification-action"
+                        data-action="confirmed"
+                        data-url="{% url 'notification_participation_action' notification.id %}">
+                  Самостоятельно готовлю раздел(ы)
+                </button>
+                {% elif not card.is_direction_confirmation %}
                 <button type="button"
                         class="btn btn-primary btn-sm js-notification-action"
                         data-action="confirmed"
@@ -37,6 +53,7 @@
                         data-url="{% url 'notification_participation_action' notification.id %}">
                   Отклонить
                 </button>
+                {% endif %}
               {% endif %}
               <button type="button"
                       class="btn btn-link btn-sm text-decoration-none js-notification-toggle"
@@ -138,6 +155,8 @@
       {% endwith %}
     {% endfor %}
   {% else %}
+    {% if not hide_empty_state %}
     <div class="p-4 text-muted">Уведомлений пока нет.</div>
+    {% endif %}
   {% endif %}
 </div>

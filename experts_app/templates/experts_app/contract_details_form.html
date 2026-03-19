@@ -1,0 +1,189 @@
+<div class="modal-header">
+  <h5 class="modal-title">Реквизиты для договора</h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    hx-post="{% url 'epr_contract_details_edit' profile.pk %}"
+    hx-target="#experts-pane"
+    hx-swap="outerHTML"
+    style="display:flex; flex-direction:column; overflow:hidden; flex:1 1 auto; min-height:0;">
+  <div class="modal-body">
+    {% csrf_token %}
+
+    <div class="mb-3">
+      <label class="form-label">ФИО</label>
+      <input type="text" class="form-control" readonly tabindex="-1"
+             style="background-color:#f8f9fa; color:#6c757d;"
+             value="{{ profile.full_name }}">
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">{{ form.full_name_genitive.label }}</label>
+      {{ form.full_name_genitive }}
+    </div>
+
+    <div class="row mb-3">
+      <div class="col-4">
+        <div class="form-check mt-4">
+          {{ form.self_employed }}
+          <label class="form-check-label" for="{{ form.self_employed.id_for_label }}">{{ form.self_employed.label }}</label>
+        </div>
+      </div>
+      <div class="col-4">
+        <label class="form-label">{{ form.tax_rate.label }}</label>
+        {{ form.tax_rate }}
+      </div>
+      <div class="col-4">
+        <label class="form-label">{{ form.gender.label }}</label>
+        {{ form.gender }}
+      </div>
+    </div>
+
+    <div class="row mb-3">
+      <div class="col-6">
+        <label class="form-label">{{ form.citizenship.label }}</label>
+        {{ form.citizenship }}
+      </div>
+      <div class="col-6">
+        <label class="form-label">{{ form.inn.label }}</label>
+        {{ form.inn }}
+      </div>
+    </div>
+
+    <div class="row mb-3">
+      <div class="col-6">
+        <label class="form-label">{{ form.snils.label }}</label>
+        {{ form.snils }}
+      </div>
+      <div class="col-6">
+        <label class="form-label">{{ form.birth_date.label }}</label>
+        {{ form.birth_date }}
+      </div>
+    </div>
+
+    <hr>
+    <h6 class="text-muted mb-3">Паспортные данные</h6>
+
+    <div class="row mb-3">
+      <div class="col-4">
+        <label class="form-label">{{ form.passport_series.label }}</label>
+        {{ form.passport_series }}
+      </div>
+      <div class="col-4">
+        <label class="form-label">{{ form.passport_number.label }}</label>
+        {{ form.passport_number }}
+      </div>
+      <div class="col-4">
+        <label class="form-label">{{ form.passport_division_code.label }}</label>
+        {{ form.passport_division_code }}
+      </div>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">{{ form.passport_issued_by.label }}</label>
+      {{ form.passport_issued_by }}
+    </div>
+
+    <div class="row mb-3">
+      <div class="col-6">
+        <label class="form-label">{{ form.passport_issue_date.label }}</label>
+        {{ form.passport_issue_date }}
+      </div>
+      <div class="col-6">
+        <label class="form-label">{{ form.passport_expiry_date.label }}</label>
+        {{ form.passport_expiry_date }}
+      </div>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">{{ form.registration_address.label }}</label>
+      {{ form.registration_address }}
+    </div>
+
+    <hr>
+    <h6 class="text-muted mb-3">Банковские реквизиты</h6>
+
+    <div class="row mb-3">
+      <div class="col-6">
+        <label class="form-label">{{ form.bank_name.label }}</label>
+        {{ form.bank_name }}
+      </div>
+      <div class="col-6">
+        <label class="form-label">{{ form.bank_inn.label }}</label>
+        {{ form.bank_inn }}
+      </div>
+    </div>
+
+    <div class="row mb-3">
+      <div class="col-4">
+        <label class="form-label">{{ form.bank_bik.label }}</label>
+        {{ form.bank_bik }}
+      </div>
+      <div class="col-4">
+        <label class="form-label">{{ form.bank_swift.label }}</label>
+        {{ form.bank_swift }}
+      </div>
+      <div class="col-4">
+        <label class="form-label">{{ form.bank_address.label }}</label>
+        {{ form.bank_address }}
+      </div>
+    </div>
+
+    <div class="row mb-3">
+      <div class="col-6">
+        <label class="form-label">{{ form.settlement_account.label }}</label>
+        {{ form.settlement_account }}
+      </div>
+      <div class="col-6">
+        <label class="form-label">{{ form.corr_account.label }}</label>
+        {{ form.corr_account }}
+      </div>
+    </div>
+
+    <hr>
+    <h6 class="text-muted mb-3">Банк-корреспондент</h6>
+
+    <div class="row mb-3">
+      <div class="col-6">
+        <label class="form-label">{{ form.corr_bank_name.label }}</label>
+        {{ form.corr_bank_name }}
+      </div>
+      <div class="col-6">
+        <label class="form-label">{{ form.corr_bank_bik.label }}</label>
+        {{ form.corr_bank_bik }}
+      </div>
+    </div>
+
+    <div class="row mb-3">
+      <div class="col-6">
+        <label class="form-label">{{ form.corr_bank_swift.label }}</label>
+        {{ form.corr_bank_swift }}
+      </div>
+      <div class="col-6">
+        <label class="form-label">{{ form.corr_bank_settlement_account.label }}</label>
+        {{ form.corr_bank_settlement_account }}
+      </div>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">{{ form.corr_bank_corr_account.label }}</label>
+      {{ form.corr_bank_corr_account }}
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mb-0">
+        {% for field, errors in form.errors.items %}
+          {% for error in errors %}
+            <div>{{ error }}</div>
+          {% endfor %}
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>

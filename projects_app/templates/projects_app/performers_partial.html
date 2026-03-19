@@ -116,6 +116,7 @@
                      id="perf-sel-{{ p.id }}"
                      name="performer-select"
                      value="{{ p.id }}"
+                     {% if user_is_direction_head and p.executor_locked %}disabled{% endif %}
                      aria-label="Выделить строку исполнителя">
             </div>
           {% endif %}
@@ -128,9 +129,9 @@
         <td class="text-nowrap">{{ p.asset_name }}</td>
         <td class="text-center p-0">
           {% if request.user.is_authenticated and request.user.is_staff %}
-            {% if request.user.employee_profile.role == "Руководитель проектов" and p.typical_section.expertise_direction_id %}
+            {% if p.executor_locked %}
               <i class="bi bi-lock text-secondary performer-locked-icon"
-                 title="Исполнитель назначен руководителем направления"></i>
+                 title="Редактирование исполнителя заблокировано"></i>
             {% else %}
               <i class="bi bi-pencil-square text-secondary performer-quick-edit"
                  role="button" title="Редактировать"></i>
@@ -169,7 +170,7 @@
     </tfoot>
   </table>
 </div>
-{% if request.user.is_authenticated and request.user.is_staff %}
+{% if request.user.is_authenticated and request.user.is_staff and not user_is_direction_head %}
   <div class="d-flex align-items-stretch gap-2 products-actions-row mt-2">
     <button
       class="btn btn-primary btn-sm d-flex align-items-center"
@@ -278,8 +279,18 @@
         <th class="text-nowrap">Название</th>
         <th>Исполнитель</th>
         <th>Грейд</th>
-        <th>Наименование актива</th>
-        <th>Типовой раздел</th>
+        <th class="text-nowrap">Наименование актива
+          <button type="button" class="clf-wrap-btn" id="participation-asset-toggle"
+                  title="Свернуть/развернуть строки">
+            <i class="bi bi-arrows-collapse"></i>
+          </button>
+        </th>
+        <th class="text-nowrap">Типовой раздел
+          <button type="button" class="clf-wrap-btn" id="participation-section-toggle"
+                  title="Свернуть/развернуть строки">
+            <i class="bi bi-arrows-collapse"></i>
+          </button>
+        </th>
         <th class="text-nowrap">Дата отправки</th>
         <th class="text-nowrap">Срок</th>
         <th>Ответ на запрос</th>
@@ -288,43 +299,71 @@
       </tr>
       </thead>
       <tbody>
-      {% for p in participation_performers %}
-        <tr data-project-id="{{ p.registration_id }}"
-            data-executor="{{ p.executor }}"
-            data-asset-name="{{ p.asset_name }}">
+      {% for row in participation_display_rows %}
+        {% if row.is_snapshot %}
+        <tr class="snapshot-row"
+            data-project-id="{{ row.registration_id }}"
+            data-executor="{{ row.executor }}"
+            data-asset-name="{{ row.asset_name }}">
+          <td class="text-nowrap cell-group-val">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+              <div class="form-check m-0">
+                <input class="form-check-input" type="checkbox" disabled aria-label="Архивная строка">
+              </div>
+            {% endif %}
+          </td>
+          <td class="text-nowrap cell-group-val">{% if row.registration %}{{ row.registration.short_uid }}{% endif %}</td>
+          <td class="text-nowrap cell-group-val">
+            {% if row.registration.type %}{{ row.registration.type.short_name|default:row.registration.type }}{% endif %}
+          </td>
+          <td class="text-truncate cell-group-val">{{ row.registration.name }}</td>
+          <td class="text-nowrap cell-group-val">{{ row.executor|short_fio }}</td>
+          <td class="text-nowrap cell-group-val">&mdash;</td>
+          <td class="text-nowrap cell-asset-val">{{ row.asset_name }}</td>
+          <td class="text-nowrap cell-typical-val">
+            {% if row.typical_section %}{{ row.typical_section|typical_section_short }}{% else %}&mdash;{% endif %}
+          </td>
+          <td class="text-nowrap cell-detail-val">{{ row.request_sent_at|date:"d.m.Y H:i"|default:"—" }}</td>
+          <td class="text-nowrap cell-detail-val">{{ row.deadline_at|date:"d.m.Y H:i"|default:"—" }}</td>
+          <td class="cell-detail-val">{{ row.response_display|default:"—" }}</td>
+          <td class="text-nowrap cell-detail-val">{{ row.response_at|date:"d.m.Y H:i"|default:"—" }}</td>
+          <td class="cell-detail-val">{{ row.response_status|default:"—" }}</td>
+        </tr>
+        {% else %}
+        <tr data-project-id="{{ row.registration_id }}"
+            data-executor="{{ row.executor }}"
+            data-asset-name="{{ row.asset_name }}">
           <td class="text-nowrap cell-group-val">
             {% if request.user.is_authenticated and request.user.is_staff %}
               <div class="form-check m-0">
                 <input class="form-check-input"
                        type="checkbox"
-                       id="participation-sel-{{ p.id }}"
+                       id="participation-sel-{{ row.id }}"
                        name="participation-select"
-                       value="{{ p.id }}"
-                       {% if p.participation_request_sent_at %}
-                         disabled
-                         title="Строка недоступна: запрос уже отправлен"
-                       {% endif %}
+                       value="{{ row.id }}"
+                       {% if user_is_direction_head and row.dh_checkbox_locked %}data-request-sent="1"{% elif not user_is_direction_head and row.participation_request_sent_at %}data-request-sent="1"{% endif %}
                        aria-label="Выделить строку подтверждения участия">
               </div>
             {% endif %}
           </td>
-          <td class="text-nowrap cell-group-val">{% if p.registration %}{{ p.registration.short_uid }}{% endif %}</td>
+          <td class="text-nowrap cell-group-val">{% if row.registration %}{{ row.registration.short_uid }}{% endif %}</td>
           <td class="text-nowrap cell-group-val">
-            {% if p.registration.type %}{{ p.registration.type.short_name|default:p.registration.type }}{% endif %}
+            {% if row.registration.type %}{{ row.registration.type.short_name|default:row.registration.type }}{% endif %}
           </td>
-          <td class="text-truncate cell-group-val">{{ p.registration.name }}</td>
-          <td class="text-nowrap cell-group-val">{{ p.executor|short_fio }}</td>
-          <td class="text-nowrap cell-group-val">{{ p|grade_stars }}</td>
-          <td class="text-nowrap cell-asset-val">{{ p.asset_name }}</td>
-          <td class="text-nowrap">
-            {% if p.typical_section %}{{ p.typical_section|typical_section_short }}{% else %}&mdash;{% endif %}
+          <td class="text-truncate cell-group-val">{{ row.registration.name }}</td>
+          <td class="text-nowrap cell-group-val">{{ row.executor|short_fio }}</td>
+          <td class="text-nowrap cell-group-val">{{ row|grade_stars }}</td>
+          <td class="text-nowrap cell-asset-val">{{ row.asset_name }}</td>
+          <td class="text-nowrap cell-typical-val">
+            {% if row.typical_section %}{{ row.typical_section|typical_section_short }}{% else %}&mdash;{% endif %}
           </td>
-          <td class="text-nowrap cell-detail-val">{{ p.participation_request_sent_at|date:"d.m.Y H:i"|default:"—" }}</td>
-          <td class="text-nowrap cell-detail-val">{{ p.participation_deadline_at|date:"d.m.Y H:i"|default:"—" }}</td>
-          <td class="cell-detail-val">{{ p.get_participation_response_display|default:"—" }}</td>
-          <td class="text-nowrap cell-detail-val">{{ p.participation_response_at|date:"d.m.Y H:i"|default:"—" }}</td>
-          <td class="cell-detail-val">{{ p.participation_response_status|default:"—" }}</td>
+          <td class="text-nowrap cell-detail-val">{{ row.participation_request_sent_at|date:"d.m.Y H:i"|default:"—" }}</td>
+          <td class="text-nowrap cell-detail-val">{{ row.participation_deadline_at|date:"d.m.Y H:i"|default:"—" }}</td>
+          <td class="cell-detail-val">{{ row.get_participation_response_display|default:"—" }}</td>
+          <td class="text-nowrap cell-detail-val">{{ row.participation_response_at|date:"d.m.Y H:i"|default:"—" }}</td>
+          <td class="cell-detail-val">{{ row.participation_response_status|default:"—" }}</td>
         </tr>
+        {% endif %}
       {% empty %}
         <tr><td colspan="13" class="text-muted">Пока нет данных.</td></tr>
       {% endfor %}
@@ -482,8 +521,18 @@
         <th class="text-nowrap">Название</th>
         <th>Исполнитель</th>
         <th>Грейд</th>
-        <th>Наименование актива</th>
-        <th>Типовой раздел</th>
+        <th class="text-nowrap">Наименование актива
+          <button type="button" class="clf-wrap-btn" id="contract-asset-toggle"
+                  title="Свернуть/развернуть строки">
+            <i class="bi bi-arrows-collapse"></i>
+          </button>
+        </th>
+        <th class="text-nowrap">Типовой раздел
+          <button type="button" class="clf-wrap-btn" id="contract-section-toggle"
+                  title="Свернуть/развернуть строки">
+            <i class="bi bi-arrows-collapse"></i>
+          </button>
+        </th>
         <th class="text-nowrap">Дата отправки</th>
         <th class="text-nowrap">Срок</th>
         <th class="text-nowrap">Дата подписания</th>
@@ -520,7 +569,7 @@
           <td class="text-nowrap cell-group-val">{{ p.executor|short_fio }}</td>
           <td class="text-nowrap cell-group-val">{{ p|grade_stars }}</td>
           <td class="text-nowrap cell-asset-val">{{ p.asset_name }}</td>
-          <td class="text-nowrap">
+          <td class="text-nowrap cell-typical-val">
             {% if p.typical_section %}{{ p.typical_section|typical_section_short }}{% else %}&mdash;{% endif %}
           </td>
           <td class="text-nowrap cell-detail-val">{{ p.contract_sent_at|date:"d.m.Y H:i"|default:"—" }}</td>
@@ -689,8 +738,18 @@
         <th class="text-nowrap">Название</th>
         <th>Исполнитель</th>
         <th>Грейд</th>
-        <th>Наименование актива</th>
-        <th>Типовой раздел</th>
+        <th class="text-nowrap">Наименование актива
+          <button type="button" class="clf-wrap-btn" id="info-request-asset-toggle"
+                  title="Свернуть/развернуть строки">
+            <i class="bi bi-arrows-collapse"></i>
+          </button>
+        </th>
+        <th class="text-nowrap">Типовой раздел
+          <button type="button" class="clf-wrap-btn" id="info-request-section-toggle"
+                  title="Свернуть/развернуть строки">
+            <i class="bi bi-arrows-collapse"></i>
+          </button>
+        </th>
         <th class="text-nowrap">Дата отправки</th>
         <th class="text-nowrap">Срок</th>
         <th>Статус согласования</th>
@@ -727,7 +786,7 @@
           <td class="text-nowrap cell-group-val">{{ p.executor|short_fio }}</td>
           <td class="text-nowrap cell-group-val">{{ p|grade_stars }}</td>
           <td class="text-nowrap cell-asset-val">{{ p.asset_name }}</td>
-          <td class="text-nowrap">
+          <td class="text-nowrap cell-typical-val">
             {% if p.typical_section %}{{ p.typical_section|typical_section_short }}{% else %}&mdash;{% endif %}
           </td>
           <td class="text-nowrap cell-detail-val">{{ p.info_request_sent_at|date:"d.m.Y H:i"|default:"—" }}</td>

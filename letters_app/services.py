@@ -16,11 +16,15 @@ def get_effective_template(template_type, user):
     ).first()
 
 
-def render_template(body_html, variables: dict) -> str:
-    """Replace {key} placeholders in *body_html* with HTML-escaped values from *variables*."""
+def render_template(body_html, variables: dict, safe_keys=frozenset()) -> str:
+    """Replace {key} placeholders in *body_html* with HTML-escaped values from *variables*.
+
+    Keys listed in *safe_keys* are inserted as-is (already trusted HTML).
+    """
     result = body_html
     for key, value in variables.items():
-        result = result.replace("{" + key + "}", _html_escape(str(value)))
+        replacement = str(value) if key in safe_keys else _html_escape(str(value))
+        result = result.replace("{" + key + "}", replacement)
     return result
 
 

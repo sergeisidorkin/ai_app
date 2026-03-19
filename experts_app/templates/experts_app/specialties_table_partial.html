@@ -13,9 +13,11 @@
                 </div>
             {% endif %}
         </th>
-        <th>Направление экспертизы</th>
         <th>Специальность</th>
         <th>Специальность на англ. языке</th>
+        <th>Владелец</th>
+        <th>Направление экспертизы</th>
+        <th>Подразделение</th>
         <th>Руководитель направления</th>
     </tr>
     </thead>
@@ -38,13 +40,15 @@
                     </div>
                 {% endif %}
             </td>
-            <td>{% if s.expertise_direction %}{{ s.expertise_direction.department_name }}{% else %}—{% endif %}</td>
             <td>{{ s.specialty }}</td>
             <td>{{ s.specialty_en }}</td>
+            <td>{{ s.owner_display }}</td>
+            <td>{% if s.expertise_dir %}{{ s.expertise_dir.short_name }}{% else %}—{% endif %}</td>
+            <td>{% if s.expertise_direction %}{{ s.expertise_direction.department_name }}{% else %}—{% endif %}</td>
             <td>{% if s.head_of_direction %}{{ s.head_of_direction.job_title }}{% else %}—{% endif %}</td>
         </tr>
     {% empty %}
-        <tr><td colspan="5" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="7" class="text-muted">Пока нет данных.</td></tr>
     {% endfor %}
     </tbody>
 </table>

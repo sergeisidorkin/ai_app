@@ -1,5 +1,12 @@
 {% load static %}
 <div class="projects-outer-scroll">
+<div id="projects-pending-notifications"
+     hx-get="{% url 'project_pending_notifications' %}"
+     hx-trigger="load, notifications-updated from:body, performers-updated from:body"
+     hx-target="#projects-pending-notifications"
+     hx-swap="innerHTML"
+     >
+</div>
 <div class="card shadow-sm">
   <div class="card-body">
     <div id="projects-pane"
