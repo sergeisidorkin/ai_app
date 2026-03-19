@@ -110,9 +110,8 @@ def specialty_form_create(request):
     form = ExpertSpecialtyForm(request.POST)
     if not form.is_valid():
         return _render_form_with_errors(request, FORM_TEMPLATE, {"form": form, "action": "create"})
-    obj = form.save(commit=False)
-    obj.position = _next_position()
-    obj.save()
+    form.instance.position = _next_position()
+    form.save()
     return _render_updated(request)
 
 

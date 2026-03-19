@@ -167,6 +167,13 @@ def _ct_form_context(form, action, template_obj=None):
     return ctx
 
 
+def _ct_render_form_with_errors(request, template, context):
+    response = render(request, template, context)
+    response["HX-Retarget"] = "#contract-templates-modal .modal-content"
+    response["HX-Reswap"] = "innerHTML"
+    return response
+
+
 @login_required
 @require_http_methods(["GET"])
 def contract_templates_partial(request):
@@ -182,10 +189,9 @@ def ct_form_create(request):
         return render(request, CT_FORM_TEMPLATE, _ct_form_context(form, "create"))
     form = ContractTemplateForm(request.POST, request.FILES)
     if not form.is_valid():
-        return render(request, CT_FORM_TEMPLATE, _ct_form_context(form, "create"))
-    obj = form.save(commit=False)
-    obj.position = _ct_next_position()
-    obj.save()
+        return _ct_render_form_with_errors(request, CT_FORM_TEMPLATE, _ct_form_context(form, "create"))
+    form.instance.position = _ct_next_position()
+    form.save()
     return _ct_render_updated(request)
 
 
@@ -199,7 +205,7 @@ def ct_form_edit(request, pk):
         return render(request, CT_FORM_TEMPLATE, _ct_form_context(form, "edit", template_obj))
     form = ContractTemplateForm(request.POST, request.FILES, instance=template_obj)
     if not form.is_valid():
-        return render(request, CT_FORM_TEMPLATE, _ct_form_context(form, "edit", template_obj))
+        return _ct_render_form_with_errors(request, CT_FORM_TEMPLATE, _ct_form_context(form, "edit", template_obj))
     form.save()
     return _ct_render_updated(request)
 
