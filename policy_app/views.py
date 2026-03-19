@@ -112,11 +112,9 @@ def product_form_create(request):
     form = ProductForm(request.POST)
     if not form.is_valid():
         return _render_form_with_errors(request, PRODUCT_FORM_TEMPLATE, {"form": form, "action": "create"})
-    obj = form.save(commit=False)
-    # Если позиция не задана/нулевая — ставим в конец списка
-    if not getattr(obj, "position", 0):
-        obj.position = _next_position(Product)
-    obj.save()
+    if not form.instance.position:
+        form.instance.position = _next_position(Product)
+    form.save()
     return _render_policy_updated(request)
 
 @login_required
@@ -524,11 +522,10 @@ def expertise_dir_form_create(request):
         return render(request, EXPERTISE_DIR_FORM_TEMPLATE, {"form": form, "action": "create"})
     form = ExpertiseDirectionForm(request.POST)
     if not form.is_valid():
-        return render(request, EXPERTISE_DIR_FORM_TEMPLATE, {"form": form, "action": "create"})
-    obj = form.save(commit=False)
-    if not getattr(obj, "position", 0):
-        obj.position = _next_position(ExpertiseDirection)
-    obj.save()
+        return _render_form_with_errors(request, EXPERTISE_DIR_FORM_TEMPLATE, {"form": form, "action": "create"})
+    if not form.instance.position:
+        form.instance.position = _next_position(ExpertiseDirection)
+    form.save()
     return _render_policy_updated(request)
 
 
