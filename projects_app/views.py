@@ -1793,14 +1793,15 @@ def create_contract_project(request):
 
     seen_executors = set()
     unique_entries = []
+    executor_to_ids = {}
     for perf in performers:
         key = (perf.registration_id, perf.executor)
+        executor_to_ids.setdefault(key, []).append(perf.pk)
         if key in seen_executors:
             continue
         seen_executors.add(key)
         unique_entries.append(perf)
 
-    all_performer_ids = [p.pk for p in performers]
     total = len(unique_entries)
 
     MIN_CHUNK = 256
@@ -1813,6 +1814,7 @@ def create_contract_project(request):
 
     def _stream():
         errors = []
+        created_ids = []
         current = 0
 
         for perf in unique_entries:
@@ -1832,13 +1834,17 @@ def create_contract_project(request):
             folder_name = _sanitize(f"{next_number:03d} {_executor_short(perf.executor)}")
             folder_path = f"{base_path}/{folder_name}"
 
-            if not create_folder(request.user, folder_path):
+            key = (perf.registration_id, perf.executor)
+            if create_folder(request.user, folder_path):
+                created_ids.extend(executor_to_ids[key])
+            else:
                 errors.append(folder_name)
 
             current += 1
             yield _padded(json.dumps({"current": current, "total": total}) + "\n")
 
-        Performer.objects.filter(pk__in=all_performer_ids).update(contract_project_created=True)
+        if created_ids:
+            Performer.objects.filter(pk__in=created_ids).update(contract_project_created=True)
 
         if errors:
             yield _padded(json.dumps({
