@@ -181,22 +181,38 @@ def _replace_list_in_paragraph(paragraph, list_replacements: dict) -> bool:
     return True
 
 
+_BULLET_NUM_ID = "1"
+
+
 def _ensure_bullet_numbering(doc):
     """Ensure the document has an abstract numbering definition for bullet
     lists (numId=1) so that ``w:numPr`` references work correctly.
+
+    Picks a unique ``abstractNumId`` that does not collide with any
+    existing definitions in the template.
     """
     from docx.oxml import OxmlElement
 
     numbering_part = doc.part.numbering_part
     numbering_elm = numbering_part._element
 
-    for abstract in numbering_elm.findall(qn("w:abstractNum")):
-        abs_id = abstract.get(qn("w:abstractNumId"))
-        if abs_id == "0":
-            return
+    used_abs_ids = {
+        int(a.get(qn("w:abstractNumId")))
+        for a in numbering_elm.findall(qn("w:abstractNum"))
+        if a.get(qn("w:abstractNumId"), "").isdigit()
+    }
+    new_abs_id = str(max(used_abs_ids, default=-1) + 1)
+
+    for num_el in numbering_elm.findall(qn("w:num")):
+        if num_el.get(qn("w:numId")) == _BULLET_NUM_ID:
+            ref = num_el.find(qn("w:abstractNumId"))
+            if ref is not None and ref.get(qn("w:val")) == new_abs_id:
+                return
+            numbering_elm.remove(num_el)
+            break
 
     abstract_num = OxmlElement("w:abstractNum")
-    abstract_num.set(qn("w:abstractNumId"), "0")
+    abstract_num.set(qn("w:abstractNumId"), new_abs_id)
     lvl = OxmlElement("w:lvl")
     lvl.set(qn("w:ilvl"), "0")
     num_fmt = OxmlElement("w:numFmt")
@@ -224,16 +240,15 @@ def _ensure_bullet_numbering(doc):
     abstract_num.append(lvl)
     numbering_elm.insert(0, abstract_num)
 
-    for num_el in numbering_elm.findall(qn("w:num")):
-        if num_el.get(qn("w:numId")) == "1":
-            return
-
     num_el = OxmlElement("w:num")
-    num_el.set(qn("w:numId"), "1")
+    num_el.set(qn("w:numId"), _BULLET_NUM_ID)
     abstract_ref = OxmlElement("w:abstractNumId")
-    abstract_ref.set(qn("w:val"), "0")
+    abstract_ref.set(qn("w:val"), new_abs_id)
     num_el.append(abstract_ref)
     numbering_elm.append(num_el)
+
+
+_MULTILEVEL_NUM_ID = "2"
 
 
 def _ensure_multilevel_numbering(doc):
@@ -241,18 +256,32 @@ def _ensure_multilevel_numbering(doc):
     (numId=2) for multi-level lists like ``[[chapters_name]]``.
 
     Levels: ``1.``, ``1.1``, ``1.1.1`` with increasing indentation.
+
+    Picks an ``abstractNumId`` that does not collide with any existing
+    definitions in the template so we never shadow a pre-existing style.
     """
     from docx.oxml import OxmlElement
 
     numbering_part = doc.part.numbering_part
     numbering_elm = numbering_part._element
 
-    for abstract in numbering_elm.findall(qn("w:abstractNum")):
-        if abstract.get(qn("w:abstractNumId")) == "1":
-            return
+    used_abs_ids = {
+        int(a.get(qn("w:abstractNumId")))
+        for a in numbering_elm.findall(qn("w:abstractNum"))
+        if a.get(qn("w:abstractNumId"), "").isdigit()
+    }
+    new_abs_id = str(max(used_abs_ids, default=-1) + 1)
+
+    for num_el in numbering_elm.findall(qn("w:num")):
+        if num_el.get(qn("w:numId")) == _MULTILEVEL_NUM_ID:
+            ref = num_el.find(qn("w:abstractNumId"))
+            if ref is not None and ref.get(qn("w:val")) == new_abs_id:
+                return
+            numbering_elm.remove(num_el)
+            break
 
     abstract_num = OxmlElement("w:abstractNum")
-    abstract_num.set(qn("w:abstractNumId"), "1")
+    abstract_num.set(qn("w:abstractNumId"), new_abs_id)
     multi_lvl = OxmlElement("w:multiLevelType")
     multi_lvl.set(qn("w:val"), "multilevel")
     abstract_num.append(multi_lvl)
@@ -287,14 +316,10 @@ def _ensure_multilevel_numbering(doc):
 
     numbering_elm.insert(0, abstract_num)
 
-    for num_el in numbering_elm.findall(qn("w:num")):
-        if num_el.get(qn("w:numId")) == "2":
-            return
-
     num_el = OxmlElement("w:num")
-    num_el.set(qn("w:numId"), "2")
+    num_el.set(qn("w:numId"), _MULTILEVEL_NUM_ID)
     abstract_ref = OxmlElement("w:abstractNumId")
-    abstract_ref.set(qn("w:val"), "1")
+    abstract_ref.set(qn("w:val"), new_abs_id)
     num_el.append(abstract_ref)
     numbering_elm.append(num_el)
 

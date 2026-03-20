@@ -495,6 +495,7 @@ def _computed_chapters_name(_ep, _p, all_performers):
     from collections import OrderedDict
     from policy_app.models import SectionStructure
 
+    product_id = None
     assets_sections: OrderedDict[str, list] = OrderedDict()
     seen_pairs = set()
     for p in all_performers:
@@ -502,6 +503,8 @@ def _computed_chapters_name(_ep, _p, all_performers):
         sec = p.typical_section
         if not asset or not sec:
             continue
+        if product_id is None and p.registration_id:
+            product_id = p.registration.type_id
         pair = (asset, sec.pk)
         if pair in seen_pairs:
             continue
@@ -511,7 +514,10 @@ def _computed_chapters_name(_ep, _p, all_performers):
     section_ids = {sec.pk for secs in assets_sections.values() for sec in secs}
     subsections_map: dict[int, list[str]] = {}
     if section_ids:
-        for ss in SectionStructure.objects.filter(section_id__in=section_ids).select_related("section"):
+        qs = SectionStructure.objects.filter(section_id__in=section_ids)
+        if product_id:
+            qs = qs.filter(product_id=product_id)
+        for ss in qs.order_by("position"):
             lines = [ln.strip() for ln in ss.subsections.split("\n") if ln.strip()]
             if lines:
                 subsections_map[ss.section_id] = lines
