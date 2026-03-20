@@ -5,7 +5,7 @@
     {{ widget.initial_text }}
   </span>
   <span class="px-3 d-flex align-items-center flex-grow-1" style="min-width: 0;">
-    <a href="{{ widget.value.url }}" class="text-truncate">{% if widget.file_basename %}{{ widget.file_basename }}{% else %}{{ widget.value }}{% endif %}</a>
+    <a href="{{ widget.value.url }}" download class="text-truncate">{% if widget.file_basename %}{{ widget.file_basename }}{% else %}{{ widget.value }}{% endif %}</a>
     {% if not widget.required %}
     <span class="form-check d-inline-flex align-items-center ms-auto" style="white-space: nowrap;">
       <input class="form-check-input mt-0" type="checkbox" name="{{ widget.checkbox_name }}" id="{{ widget.checkbox_id }}"{% if widget.attrs.disabled %} disabled{% endif %}{% if widget.attrs.checked %} checked{% endif %}>
