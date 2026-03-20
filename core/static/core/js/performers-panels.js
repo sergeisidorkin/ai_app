@@ -170,6 +170,9 @@
   function getContractRequestBtn() {
     return pane()?.querySelector('#contract-request-btn');
   }
+  function getCreateContractBtn() {
+    return pane()?.querySelector('#create-contract-btn');
+  }
   function getContractRequestPanel() {
     return pane()?.querySelector('#contract-request-actions');
   }
@@ -201,6 +204,9 @@
 
     const requestBtn = getContractRequestBtn();
     if (requestBtn) requestBtn.disabled = checkedCount === 0;
+
+    const createBtn = getCreateContractBtn();
+    if (createBtn) createBtn.disabled = checkedCount === 0;
 
     const controls = getContractDeadlineControls();
     if (controls) {
@@ -1356,6 +1362,40 @@
       return;
     }
 
+    const createContractBtn = e.target.closest('#create-contract-btn');
+    if (createContractBtn && root.contains(createContractBtn)) {
+      const checked = getVisibleContractChecks().filter((cb) => cb.checked);
+      if (!checked.length || createContractBtn.disabled) return;
+
+      const panel = getContractRequestPanel();
+      const createUrl = panel?.dataset?.createContractUrl;
+      if (!createUrl) return;
+
+      const formData = new FormData();
+      checked.forEach((cb) => formData.append('performer_ids[]', cb.value));
+
+      createContractBtn.disabled = true;
+      try {
+        const response = await fetch(createUrl, {
+          method: 'POST',
+          headers: { 'X-CSRFToken': csrftoken },
+          body: formData,
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+          throw new Error(data?.error || 'Не удалось создать проект договора.');
+        }
+
+        window.__tableSel['contract-select'] = [];
+        window.__tableSelLast = null;
+        document.body.dispatchEvent(new Event('performers-updated'));
+      } catch (err) {
+        alert(err.message || 'Не удалось создать проект договора.');
+        updateContractState();
+      }
+      return;
+    }
+
     const contractBtn = e.target.closest('#contract-request-btn');
     if (contractBtn && root.contains(contractBtn)) {
       const checked = getVisibleContractChecks().filter((cb) => cb.checked);
@@ -1692,6 +1732,67 @@
   }
   initSourceDataSettingsModal();
 
+  // ── Create-contract settings modal (gear) ──
+
+  function initCreateContractSettingsModal() {
+    const modalEl = document.getElementById('create-contract-modal');
+    if (!modalEl || modalEl.dataset.ccBound === '1') return;
+    modalEl.dataset.ccBound = '1';
+
+    modalEl.addEventListener('show.bs.modal', async () => {
+      const panel = document.getElementById('contract-request-actions');
+      const url = panel?.dataset?.contractTargetUrl;
+      if (!url) return;
+
+      const select = modalEl.querySelector('#create-contract-target-select');
+      if (!select) return;
+
+      try {
+        const resp = await fetch(url, { headers: { 'X-CSRFToken': csrftoken } });
+        const data = await resp.json();
+        select.innerHTML = '';
+        (data.options || []).forEach((name) => {
+          const opt = document.createElement('option');
+          opt.value = name;
+          opt.textContent = name;
+          if (name === data.folder_name) opt.selected = true;
+          select.appendChild(opt);
+        });
+      } catch (_) { /* ignore */ }
+    });
+
+    const saveBtn = modalEl.querySelector('#create-contract-target-save-btn');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', async () => {
+        const panel = document.getElementById('contract-request-actions');
+        const saveUrl = panel?.dataset?.contractTargetSaveUrl;
+        if (!saveUrl) return;
+
+        const select = modalEl.querySelector('#create-contract-target-select');
+        const folderName = select?.value;
+        if (!folderName) return;
+
+        saveBtn.disabled = true;
+        try {
+          const resp = await fetch(saveUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken },
+            body: JSON.stringify({ folder_name: folderName }),
+          });
+          const data = await resp.json();
+          if (!data.ok) throw new Error(data.error || 'Ошибка сохранения');
+          const modal = window.bootstrap?.Modal.getInstance(modalEl);
+          modal?.hide();
+        } catch (err) {
+          alert(err.message || 'Не удалось сохранить.');
+        } finally {
+          saveBtn.disabled = false;
+        }
+      });
+    }
+  }
+  initCreateContractSettingsModal();
+
   function restorePerformersPane(root) {
     // Re-apply main performers filter, labels and totals before the browser
     // paints to avoid a visible flash of unfiltered / empty-totals state.
@@ -1803,6 +1904,7 @@
     initInfoRequestProjectFilter();
     updateInfoRequestState();
     initSourceDataSettingsModal();
+    initCreateContractSettingsModal();
     try { delete window.__tableSel['info-request-select']; } catch(_) {}
 
     applyRowGrouping(root.querySelector('#participation-confirmation-section'));

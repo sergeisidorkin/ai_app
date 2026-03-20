@@ -48,7 +48,7 @@
     </div>
 
     <div class="modal fade" id="experts-contract-details-modal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-dialog modal-xl modal-dialog-scrollable">
         <div class="modal-content">
         </div>
       </div>
@@ -77,54 +77,18 @@
     <script>
     (function() {
       var P = window.UIPref;
-      var hiddenCols = P ? P.get('experts:hiddenCols', {}) : {};
 
-      function saveHiddenCols() {
-        if (P) P.set('experts:hiddenCols', hiddenCols);
-      }
+      var pickers = [
+        { prefKey: 'experts:hiddenCols',    wrapId: 'epr-colpicker-wrap', btnId: 'epr-colpicker-btn', menuId: 'epr-colpicker-menu', allId: 'epr-col-all', tableId: 'epr-table' },
+        { prefKey: 'experts:ecdHiddenCols', wrapId: 'ecd-colpicker-wrap', btnId: 'ecd-colpicker-btn', menuId: 'ecd-colpicker-menu', allId: 'ecd-col-all', tableId: 'ecd-table' },
+      ];
 
-      function initColpicker() {
-        var wrap = document.getElementById('epr-colpicker-wrap');
-        var btn = document.getElementById('epr-colpicker-btn');
-        var menu = document.getElementById('epr-colpicker-menu');
-        if (!wrap || !btn || !menu) return;
+      pickers.forEach(function(cfg) {
+        cfg.hidden = P ? P.get(cfg.prefKey, {}) : {};
+      });
 
-        btn.addEventListener('click', function(e) {
-          e.stopPropagation();
-          menu.classList.toggle('show');
-        });
-
-        var cbs = menu.querySelectorAll('input.form-check-input:not([value="all"])');
-        cbs.forEach(function(cb) {
-          if (hiddenCols[cb.value]) cb.checked = false;
-        });
-        var allCb = document.getElementById('epr-col-all');
-        if (allCb) {
-          var allChecked = true;
-          cbs.forEach(function(c) { if (!c.checked) allChecked = false; });
-          allCb.checked = allChecked;
-        }
-        updateBtnLabel(btn, menu);
-        applyVisibility(menu);
-
-        menu.addEventListener('change', function(e) {
-          var cb = e.target;
-          if (!cb.classList.contains('form-check-input')) return;
-          var items = menu.querySelectorAll('input.form-check-input:not([value="all"])');
-          if (cb.value === 'all') {
-            items.forEach(function(c) { c.checked = cb.checked; });
-          } else {
-            var ac = document.getElementById('epr-col-all');
-            var all = true;
-            items.forEach(function(c) { if (!c.checked) all = false; });
-            if (ac) ac.checked = all;
-          }
-          hiddenCols = {};
-          items.forEach(function(c) { if (!c.checked) hiddenCols[c.value] = true; });
-          saveHiddenCols();
-          updateBtnLabel(btn, menu);
-          applyVisibility(menu);
-        });
+      function saveHidden(cfg) {
+        if (P) P.set(cfg.prefKey, cfg.hidden);
       }
 
       function updateBtnLabel(btn, menu) {
@@ -134,24 +98,74 @@
         btn.textContent = checked === cbs.length ? 'Все поля' : checked + ' из ' + cbs.length;
       }
 
-      function applyVisibility(menu) {
-        var table = document.getElementById('epr-table');
+      function applyVisibility(cfg) {
+        var table = document.getElementById(cfg.tableId);
         if (!table) return;
-        var hidden = Object.keys(hiddenCols);
+        var hidden = Object.keys(cfg.hidden);
         table.querySelectorAll('[data-col]').forEach(function(cell) {
           cell.style.display = hidden.indexOf(cell.getAttribute('data-col')) !== -1 ? 'none' : '';
         });
       }
 
+      function initPicker(cfg) {
+        var wrap = document.getElementById(cfg.wrapId);
+        var btn = document.getElementById(cfg.btnId);
+        var menu = document.getElementById(cfg.menuId);
+        if (!wrap || !btn || !menu) return;
+
+        btn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          menu.classList.toggle('show');
+        });
+
+        var cbs = menu.querySelectorAll('input.form-check-input:not([value="all"])');
+        cbs.forEach(function(cb) {
+          if (cfg.hidden[cb.value]) cb.checked = false;
+        });
+        var allCb = document.getElementById(cfg.allId);
+        if (allCb) {
+          var allChecked = true;
+          cbs.forEach(function(c) { if (!c.checked) allChecked = false; });
+          allCb.checked = allChecked;
+        }
+        updateBtnLabel(btn, menu);
+        applyVisibility(cfg);
+
+        menu.addEventListener('change', function(e) {
+          var cb = e.target;
+          if (!cb.classList.contains('form-check-input')) return;
+          var items = menu.querySelectorAll('input.form-check-input:not([value="all"])');
+          if (cb.value === 'all') {
+            items.forEach(function(c) { c.checked = cb.checked; });
+          } else {
+            var ac = document.getElementById(cfg.allId);
+            var all = true;
+            items.forEach(function(c) { if (!c.checked) all = false; });
+            if (ac) ac.checked = all;
+          }
+          cfg.hidden = {};
+          items.forEach(function(c) { if (!c.checked) cfg.hidden[c.value] = true; });
+          saveHidden(cfg);
+          updateBtnLabel(btn, menu);
+          applyVisibility(cfg);
+        });
+      }
+
+      function initAllPickers() {
+        pickers.forEach(initPicker);
+      }
+
       document.addEventListener('click', function(e) {
-        var wrap = document.getElementById('epr-colpicker-wrap');
-        var menu = document.getElementById('epr-colpicker-menu');
-        if (wrap && menu && !wrap.contains(e.target)) menu.classList.remove('show');
+        pickers.forEach(function(cfg) {
+          var wrap = document.getElementById(cfg.wrapId);
+          var menu = document.getElementById(cfg.menuId);
+          if (wrap && menu && !wrap.contains(e.target)) menu.classList.remove('show');
+        });
       });
 
       document.body.addEventListener('htmx:afterSettle', function(e) {
         var pane = document.getElementById('experts-pane');
-        if (pane && pane.contains(e.target)) initColpicker();
+        if (pane && pane.contains(e.target)) initAllPickers();
       });
     })();
     </script>

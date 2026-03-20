@@ -14,7 +14,7 @@
       hx-post="{% url 'ct_form_edit' template_obj.pk %}"
     {% endif %}
     hx-target="#contract-templates-pane"
-    hx-swap="outerHTML"
+    hx-swap="innerHTML"
     hx-encoding="multipart/form-data">
   <div class="modal-body modal-body-scroll">
     {% csrf_token %}

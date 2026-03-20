@@ -65,6 +65,18 @@ def short_fio(value):
 
 
 @register.filter
+def short_fio_no_dots(value):
+    """Фамилия ИО (without dots after initials)."""
+    raw = " ".join(str(value or "").split())
+    if not raw:
+        return ""
+    parts = raw.split(" ")
+    last_name = parts[0]
+    initials = "".join(part[0] for part in parts[1:3] if part)
+    return f"{last_name} {initials}".strip()
+
+
+@register.filter
 def typical_section_short(section):
     if not section:
         return ""

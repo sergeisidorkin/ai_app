@@ -1,0 +1,142 @@
+<div class="modal-header" data-modal-size="xl">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить переменную{% else %}Изменить переменную{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    hx-post="{% if action == 'create' %}{% url 'ctv_form_create' %}{% else %}{% url 'ctv_form_edit' variable.pk %}{% endif %}"
+    hx-target="#contract-templates-pane"
+    hx-swap="innerHTML">
+  <div class="modal-body">
+    {% csrf_token %}
+
+    <div class="row mb-3">
+      <div class="col-4">
+        <label class="form-label">{{ form.key.label }}</label>
+        {{ form.key }}
+      </div>
+      <div class="col">
+        <label class="form-label">{{ form.description.label }}</label>
+        {{ form.description }}
+      </div>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">Связь</label>
+      <input type="text" class="form-control" id="id_binding_display" readonly tabindex="-1"
+             style="background-color:#f8f9fa; color:#6c757d;"
+             value="{{ variable.binding_display|default:'' }}">
+    </div>
+
+    <hr style="margin: 1.5rem -1rem 1rem -1rem;">
+
+    <div class="row mb-3">
+      <div class="col-4">
+        <label class="form-label">{{ form.source_section.label }}</label>
+        {{ form.source_section }}
+      </div>
+      <div class="col-4">
+        <label class="form-label">{{ form.source_table.label }}</label>
+        {{ form.source_table }}
+      </div>
+      <div class="col-4">
+        <label class="form-label">{{ form.source_column.label }}</label>
+        {{ form.source_column }}
+      </div>
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mb-0">
+        {% for field, errors in form.errors.items %}
+          {% for error in errors %}
+            <div>{{ error }}</div>
+          {% endfor %}
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>
+
+<script type="application/json" id="ctv-col-registry">{{ registry_json|safe }}</script>
+<script>
+(function() {
+  var reg = JSON.parse(document.getElementById('ctv-col-registry').textContent);
+  var secSel = document.getElementById('id_source_section');
+  var tblSel = document.getElementById('id_source_table');
+  var colSel = document.getElementById('id_source_column');
+  var bindingInput = document.getElementById('id_binding_display');
+  if (!secSel || !tblSel || !colSel) return;
+
+  function selectedText(sel) {
+    return sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex].text : '';
+  }
+
+  function updateBinding() {
+    if (!bindingInput) return;
+    var secVal = secSel.value, tblVal = tblSel.value, colVal = colSel.value;
+    if (secVal && tblVal && colVal) {
+      bindingInput.value = 'Значения столбца \u00ab' + selectedText(colSel) +
+        '\u00bb из таблицы \u00ab' + selectedText(tblSel) +
+        '\u00bb раздела \u00ab' + selectedText(secSel) + '\u00bb';
+    } else {
+      bindingInput.value = '';
+    }
+  }
+
+  function populateSelect(sel, items, keepValue) {
+    var cur = keepValue || '';
+    sel.innerHTML = '';
+    var opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = '---';
+    sel.appendChild(opt);
+    for (var key in items) {
+      var o = document.createElement('option');
+      o.value = key;
+      o.textContent = typeof items[key] === 'string' ? items[key] : items[key].label;
+      if (key === cur) o.selected = true;
+      sel.appendChild(o);
+    }
+  }
+
+  function onSectionChange() {
+    var sec = reg[secSel.value];
+    if (sec) {
+      populateSelect(tblSel, sec.tables);
+    } else {
+      tblSel.innerHTML = '<option value="">---</option>';
+    }
+    colSel.innerHTML = '<option value="">---</option>';
+    updateBinding();
+  }
+
+  function onTableChange() {
+    var sec = reg[secSel.value];
+    if (sec) {
+      var tbl = sec.tables[tblSel.value];
+      if (tbl) {
+        populateSelect(colSel, tbl.columns);
+        updateBinding();
+        return;
+      }
+    }
+    colSel.innerHTML = '<option value="">---</option>';
+    updateBinding();
+  }
+
+  function onColumnChange() {
+    updateBinding();
+  }
+
+  secSel.addEventListener('change', onSectionChange);
+  tblSel.addEventListener('change', onTableChange);
+  colSel.addEventListener('change', onColumnChange);
+})();
+</script>

@@ -139,6 +139,12 @@
       modalId: 'contract-templates-modal',
       deleteLabel: 'строк(у/и)',
     },
+    'ctv-actions': {
+      name: 'ctv-select',
+      modal: '#contract-templates-modal .modal-content',
+      modalId: 'contract-templates-modal',
+      deleteLabel: 'переменных',
+    },
   };
 
   function getRowChecksByName(name) {
@@ -205,6 +211,9 @@
 
     window.__ctTableSel[name] = checked.map(function(ch) { return String(ch.value); });
 
+    var ctVarsEl = document.getElementById('ct-variables');
+    window.__ctVarsOpen = !!(ctVarsEl && ctVarsEl.classList.contains('show'));
+
     if (action === 'edit') {
       var first = checked[0];
       var tr = first.closest('tr');
@@ -225,14 +234,15 @@
       var urls = checked.map(function(ch) { return ch.closest('tr') && ch.closest('tr').dataset.deleteUrl; }).filter(Boolean);
       (function deleteSequential(i) {
         if (i >= urls.length) return;
-        var isLast = i === urls.length - 1;
-        if (isLast) {
-          htmx.ajax('POST', urls[i], { target: '#contract-templates-pane', swap: 'outerHTML' });
-        } else {
-          fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } })
-            .catch(function() {})
-            .then(function() { deleteSequential(i + 1); });
-        }
+        fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } })
+          .catch(function() {})
+          .then(function() {
+            if (i < urls.length - 1) {
+              deleteSequential(i + 1);
+            } else {
+              htmx.trigger(document.body, 'contract-templates-updated');
+            }
+          });
       })(0);
       return;
     }
@@ -247,16 +257,16 @@
       if (action === 'down') moveUrls = moveUrls.reverse();
       (function moveSequential(i) {
         if (i >= moveUrls.length) return;
-        var isLast = i === moveUrls.length - 1;
-        if (isLast) {
-          htmx.ajax('POST', moveUrls[i], { target: '#contract-templates-pane', swap: 'outerHTML' });
-        } else {
-          fetch(moveUrls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } })
-            .catch(function() {})
-            .then(function() { moveSequential(i + 1); });
-        }
+        fetch(moveUrls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } })
+          .catch(function() {})
+          .then(function() {
+            if (i < moveUrls.length - 1) {
+              moveSequential(i + 1);
+            } else {
+              htmx.trigger(document.body, 'contract-templates-updated');
+            }
+          });
       })(0);
-      ensureActionsVisibility(name);
       return;
     }
   });
@@ -285,6 +295,14 @@
     }
   });
 
+  document.body.addEventListener('htmx:beforeRequest', function(e) {
+    var tgt = e.detail && e.detail.target;
+    if (tgt && tgt.id === 'contract-templates-pane') {
+      var v = document.getElementById('ct-variables');
+      if (v && v.classList.contains('show')) window.__ctVarsOpen = true;
+    }
+  });
+
   document.body.addEventListener('htmx:afterSettle', function(e) {
     if (!(e.target && e.target.id === 'contract-templates-pane')) return;
     var sel = window.__ctTableSel || {};
@@ -298,5 +316,11 @@
       ensureActionsVisibility(name);
     }
     window.__ctTableSel = {};
+    if (window.__ctVarsOpen) {
+      var ctVars = document.getElementById('ct-variables');
+      if (ctVars) ctVars.classList.add('show');
+      clearTimeout(window.__ctVarsOpenTimer);
+      window.__ctVarsOpenTimer = setTimeout(function() { window.__ctVarsOpen = false; }, 1000);
+    }
   });
 })();
