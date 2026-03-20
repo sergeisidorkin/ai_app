@@ -1424,7 +1424,15 @@
         }
 
         if (fillEl) fillEl.style.width = '100%';
-        if (statusEl) statusEl.innerHTML = '<span class="text-success">' + (lastResult.message || 'Готово!') + '</span>';
+        var resultHtml = '<span class="text-success">' + (lastResult.message || 'Готово!') + '</span>';
+        if (lastResult.warnings && lastResult.warnings.length) {
+          resultHtml += '<ul class="text-warning small mt-2 mb-0">';
+          lastResult.warnings.forEach(function(w) {
+            resultHtml += '<li>' + w.replace(/</g, '&lt;') + '</li>';
+          });
+          resultHtml += '</ul>';
+        }
+        if (statusEl) statusEl.innerHTML = resultHtml;
 
         window.__tableSel['contract-select'] = [];
         window.__tableSelLast = null;
