@@ -1985,12 +1985,15 @@ def create_contract_project(request):
                         tmpl.file.close()
 
                     if all_variables:
-                        replacements = resolve_variables(
+                        scalars, lists = resolve_variables(
                             perf, all_variables,
                             all_performers=all_perfs_for_executor,
                         )
-                        if replacements:
-                            file_data = process_template(file_data, replacements)
+                        if scalars or lists:
+                            file_data = process_template(
+                                file_data, scalars,
+                                list_replacements=lists or None,
+                            )
 
                     original_name = tmpl.file.name.split("/")[-1]
                     upload_path = f"{folder_path}/{original_name}"

@@ -469,6 +469,26 @@ def _computed_named(ep, _p, _all_performers) -> str:
     return "именуемый" if ep.gender == "male" else "именуемая"
 
 
+# ---------------------------------------------------------------------------
+#  List computed resolvers  (is_computed=True, key uses [[...]])
+#  Signature: (ep, performer, all_performers) → list[str]
+# ---------------------------------------------------------------------------
+
+def _computed_actives_name(_ep, _p, all_performers) -> list[str]:
+    seen = set()
+    result = []
+    for p in all_performers:
+        name = p.asset_name or ""
+        if name and name not in seen:
+            seen.add(name)
+            result.append(name)
+    return result
+
+
+COMPUTED_LIST_MAP: dict[str, callable] = {
+    "[[actives_name]]": _computed_actives_name,
+}
+
 COMPUTED_MAP: dict[str, callable] = {
     "{{contract_price}}": _computed_contract_price,
     "{{avansplat_sum}}": _computed_avansplat_sum,
@@ -488,8 +508,14 @@ COMPUTED_MAP: dict[str, callable] = {
 }
 
 
-def resolve_variables(performer, variables, all_performers=None) -> dict[str, str]:
-    """Build {placeholder_key: resolved_value} for every bound variable.
+def resolve_variables(
+    performer, variables, all_performers=None,
+) -> tuple[dict[str, str], dict[str, list[str]]]:
+    """Build resolved values for every bound variable.
+
+    Returns ``(scalars, lists)`` where:
+    - *scalars*: ``{"{{key}}": "value", ...}``
+    - *lists*:   ``{"[[key]]": ["item1", "item2", ...], ...}``
 
     *performer* must have ``employee`` pre-fetched (``select_related``).
     *variables* is an iterable of ``ContractVariable`` instances.
@@ -511,15 +537,24 @@ def resolve_variables(performer, variables, all_performers=None) -> dict[str, st
     if all_performers is None:
         all_performers = [performer]
 
-    result: dict[str, str] = {}
+    scalars: dict[str, str] = {}
+    lists: dict[str, list[str]] = {}
+
     for var in variables:
         if var.is_computed:
+            list_fn = COMPUTED_LIST_MAP.get(var.key)
+            if list_fn:
+                try:
+                    lists[var.key] = list_fn(expert, performer, all_performers)
+                except Exception:
+                    lists[var.key] = []
+                continue
             computed_fn = COMPUTED_MAP.get(var.key)
             if computed_fn:
                 try:
-                    result[var.key] = computed_fn(expert, performer, all_performers)
+                    scalars[var.key] = computed_fn(expert, performer, all_performers)
                 except Exception:
-                    result[var.key] = ""
+                    scalars[var.key] = ""
             continue
 
         coord = (var.source_section, var.source_table, var.source_column)
@@ -530,6 +565,6 @@ def resolve_variables(performer, variables, all_performers=None) -> dict[str, st
             value = resolver(expert, performer)
         except Exception:
             value = ""
-        result[var.key] = value
+        scalars[var.key] = value
 
-    return result
+    return scalars, lists
