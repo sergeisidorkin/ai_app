@@ -1362,36 +1362,79 @@
       return;
     }
 
-    const createContractBtn = e.target.closest('#create-contract-btn');
-    if (createContractBtn && root.contains(createContractBtn)) {
+    const createContractConfirm = e.target.closest('#create-contract-confirm-btn');
+    if (createContractConfirm && root.contains(createContractConfirm)) {
       const checked = getVisibleContractChecks().filter((cb) => cb.checked);
-      if (!checked.length || createContractBtn.disabled) return;
+      if (!checked.length) return;
 
       const panel = getContractRequestPanel();
       const createUrl = panel?.dataset?.createContractUrl;
       if (!createUrl) return;
 
+      const statusEl = root.querySelector('#create-contract-status');
+      const progressEl = root.querySelector('#create-contract-progress');
+      const fillEl = progressEl?.querySelector('.ws-progress-fill');
+      createContractConfirm.disabled = true;
+      if (statusEl) statusEl.textContent = '';
+      if (fillEl) fillEl.style.width = '0%';
+      if (progressEl) progressEl.classList.remove('d-none');
+
       const formData = new FormData();
       checked.forEach((cb) => formData.append('performer_ids[]', cb.value));
 
-      createContractBtn.disabled = true;
       try {
         const response = await fetch(createUrl, {
           method: 'POST',
           headers: { 'X-CSRFToken': csrftoken },
           body: formData,
         });
-        const data = await response.json();
-        if (!response.ok || !data.ok) {
-          throw new Error(data?.error || 'Не удалось создать проект договора.');
+
+        if (!response.ok && !response.body) {
+          throw new Error('Не удалось создать проект договора.');
         }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let lastResult = null;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop();
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            const msg = JSON.parse(line);
+            if (msg.current !== undefined && msg.total) {
+              const pct = Math.round((msg.current / msg.total) * 100);
+              if (fillEl) fillEl.style.width = pct + '%';
+            }
+            if (msg.ok !== undefined) lastResult = msg;
+          }
+        }
+        if (buffer.trim()) {
+          const msg = JSON.parse(buffer);
+          if (msg.ok !== undefined) lastResult = msg;
+        }
+
+        if (!lastResult || !lastResult.ok) {
+          throw new Error(lastResult?.error || 'Не удалось создать проект договора.');
+        }
+
+        if (fillEl) fillEl.style.width = '100%';
+        if (statusEl) statusEl.innerHTML = '<span class="text-success">' + (lastResult.message || 'Готово!') + '</span>';
 
         window.__tableSel['contract-select'] = [];
         window.__tableSelLast = null;
         document.body.dispatchEvent(new Event('performers-updated'));
       } catch (err) {
-        alert(err.message || 'Не удалось создать проект договора.');
-        updateContractState();
+        if (progressEl) progressEl.classList.add('d-none');
+        if (statusEl) statusEl.innerHTML = '<span class="text-danger">' + (err.message || 'Ошибка') + '</span>';
+        else alert(err.message || 'Не удалось создать проект договора.');
+      } finally {
+        createContractConfirm.disabled = false;
       }
       return;
     }
@@ -1792,6 +1835,16 @@
     }
   }
   initCreateContractSettingsModal();
+
+  document.addEventListener('show.bs.modal', (e) => {
+    if (!e.target.matches('#create-contract-progress-modal')) return;
+    const progressEl = e.target.querySelector('#create-contract-progress');
+    const fillEl = progressEl?.querySelector('.ws-progress-fill');
+    const statusEl = e.target.querySelector('#create-contract-status');
+    if (progressEl) progressEl.classList.add('d-none');
+    if (fillEl) fillEl.style.width = '0%';
+    if (statusEl) statusEl.textContent = '';
+  });
 
   function restorePerformersPane(root) {
     // Re-apply main performers filter, labels and totals before the browser
