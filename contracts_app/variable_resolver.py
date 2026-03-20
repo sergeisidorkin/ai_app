@@ -440,6 +440,35 @@ def _computed_finplat_sum_kop_text(ep, _p, all_performers) -> str:
     return number_to_words_ru(int(_kopecks(_calc_finplat(ep, all_performers))))
 
 
+def _computed_deadline_ru(_ep, p, _all_performers) -> str:
+    from core.dates import format_date_ru
+    if not p.registration or not p.registration.deadline:
+        return ""
+    return format_date_ru(p.registration.deadline, "j E Y") + " г."
+
+
+def _computed_year(_ep, _p, _all_performers) -> str:
+    from datetime import date
+    return str(date.today().year)
+
+
+def _computed_day(_ep, _p, _all_performers) -> str:
+    from datetime import date
+    return f"{date.today().day:02d}"
+
+
+def _computed_month(_ep, _p, _all_performers) -> str:
+    from core.dates import MONTHS_RU_GENITIVE
+    from datetime import date
+    return MONTHS_RU_GENITIVE[date.today().month]
+
+
+def _computed_named(ep, _p, _all_performers) -> str:
+    if not ep or not ep.gender:
+        return ""
+    return "именуемый" if ep.gender == "male" else "именуемая"
+
+
 COMPUTED_MAP: dict[str, callable] = {
     "{{contract_price}}": _computed_contract_price,
     "{{avansplat_sum}}": _computed_avansplat_sum,
@@ -451,6 +480,11 @@ COMPUTED_MAP: dict[str, callable] = {
     "{{avansplat_sum_kop_text}}": _computed_avansplat_sum_kop_text,
     "{{finplat_sum_text}}": _computed_finplat_sum_text,
     "{{finplat_sum_kop_text}}": _computed_finplat_sum_kop_text,
+    "{{deadline_ru}}": _computed_deadline_ru,
+    "{{year}}": _computed_year,
+    "{{day}}": _computed_day,
+    "{{month}}": _computed_month,
+    "{{named}}": _computed_named,
 }
 
 
