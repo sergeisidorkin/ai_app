@@ -1773,7 +1773,7 @@ def create_contract_project(request):
         Performer.objects
         .filter(pk__in=ids)
         .select_related(
-            "registration", "registration__type",
+            "registration", "registration__type", "registration__country",
             "typical_section", "employee",
         )
         .order_by("position", "id")

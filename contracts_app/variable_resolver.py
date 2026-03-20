@@ -182,6 +182,44 @@ def _perf_percent(field_name: str):
     return _resolver
 
 
+# ---- Registration-level helpers (projects.registration.* / contract_terms.*) ----
+
+def _reg_date(field_name: str):
+    """Format a DateField from ProjectRegistration as ``dd.mm.yy``."""
+    def _resolver(_ep: ExpertProfile, p: Performer) -> str:
+        if not p.registration:
+            return ""
+        val = getattr(p.registration, field_name, None)
+        return val.strftime("%d.%m.%y") if val else ""
+    return _resolver
+
+
+def _reg_short_fio(field_name: str):
+    """Format a CharField from ProjectRegistration as ``Фамилия И.О.``."""
+    def _resolver(_ep: ExpertProfile, p: Performer) -> str:
+        if not p.registration:
+            return ""
+        raw = " ".join(str(getattr(p.registration, field_name, "") or "").split())
+        if not raw:
+            return ""
+        parts = raw.split(" ")
+        initials = "".join(f"{part[0]}." for part in parts[1:3] if part)
+        return f"{parts[0]} {initials}".strip()
+    return _resolver
+
+
+def _reg_decimal(field_name: str):
+    """Format a DecimalField from ProjectRegistration as ``N,N`` (1 decimal, comma)."""
+    def _resolver(_ep: ExpertProfile, p: Performer) -> str:
+        if not p.registration:
+            return ""
+        val = getattr(p.registration, field_name, None)
+        if val is None:
+            return ""
+        return f"{float(val):.1f}".replace(".", ",")
+    return _resolver
+
+
 # ---------------------------------------------------------------------------
 #  (section, table, column) → callable(expert_profile, performer) → str
 # ---------------------------------------------------------------------------
@@ -229,6 +267,41 @@ FIELD_MAP: dict[tuple[str, str, str], callable] = {
     ("experts", "contract_details", "corr_bank_swift"): _str_field("corr_bank_swift"),
     ("experts", "contract_details", "corr_bank_settlement"): _str_field("corr_bank_settlement_account"),
     ("experts", "contract_details", "corr_bank_correspondent"): _str_field("corr_bank_corr_account"),
+
+    # ---- projects.registration ----
+    ("projects", "registration", "number"): lambda _ep, p: str(p.registration.number) if p.registration else "",
+    ("projects", "registration", "group"): lambda _ep, p: p.registration.group if p.registration else "",
+    ("projects", "registration", "agreement_type"): lambda _ep, p: p.registration.get_agreement_type_display() if p.registration else "",
+    ("projects", "registration", "project_id"): _perf_project,
+    ("projects", "registration", "type"): _perf_type,
+    ("projects", "registration", "name"): _perf_name,
+    ("projects", "registration", "status"): lambda _ep, p: p.registration.status if p.registration else "",
+    ("projects", "registration", "deadline"): _reg_date("deadline"),
+    ("projects", "registration", "year"): lambda _ep, p: str(p.registration.year) if p.registration and p.registration.year else "",
+    ("projects", "registration", "project_manager"): _reg_short_fio("project_manager"),
+    ("projects", "registration", "customer"): lambda _ep, p: p.registration.customer if p.registration else "",
+    ("projects", "registration", "country"): lambda _ep, p: p.registration.country.short_name if p.registration and p.registration.country_id else "",
+    ("projects", "registration", "identifier"): lambda _ep, p: p.registration.identifier if p.registration else "",
+    ("projects", "registration", "registration_number"): lambda _ep, p: p.registration.registration_number if p.registration else "",
+    ("projects", "registration", "date"): _reg_date("registration_date"),
+
+    # ---- projects.contract_terms ----
+    ("projects", "contract_terms", "project"): _perf_project,
+    ("projects", "contract_terms", "type"): _perf_type,
+    ("projects", "contract_terms", "name"): _perf_name,
+    ("projects", "contract_terms", "agreement_type"): lambda _ep, p: p.registration.get_agreement_type_display() if p.registration else "",
+    ("projects", "contract_terms", "agreement_number"): lambda _ep, p: p.registration.agreement_number if p.registration else "",
+    ("projects", "contract_terms", "start_date"): _reg_date("contract_start"),
+    ("projects", "contract_terms", "end_date"): _reg_date("contract_end"),
+    ("projects", "contract_terms", "end_date_locked"): _reg_date("completion_calc"),
+    ("projects", "contract_terms", "source_data"): lambda _ep, p: str(p.registration.input_data) if p.registration and p.registration.input_data is not None else "",
+    ("projects", "contract_terms", "stage1_weeks"): _reg_decimal("stage1_weeks"),
+    ("projects", "contract_terms", "stage1_end"): _reg_date("stage1_end"),
+    ("projects", "contract_terms", "stage2_weeks"): _reg_decimal("stage2_weeks"),
+    ("projects", "contract_terms", "stage2_end"): _reg_date("stage2_end"),
+    ("projects", "contract_terms", "stage3_weeks"): _reg_decimal("stage3_weeks"),
+    ("projects", "contract_terms", "total_weeks"): _reg_decimal("term_weeks"),
+    ("projects", "contract_terms", "contract_subject"): lambda _ep, p: p.registration.contract_subject if p.registration else "",
 
     # ---- projects.performers ----
     ("projects", "performers", "project"): _perf_project,
@@ -367,6 +440,35 @@ def _computed_finplat_sum_kop_text(ep, _p, all_performers) -> str:
     return number_to_words_ru(int(_kopecks(_calc_finplat(ep, all_performers))))
 
 
+def _computed_deadline_ru(_ep, p, _all_performers) -> str:
+    from core.dates import format_date_ru
+    if not p.registration or not p.registration.deadline:
+        return ""
+    return format_date_ru(p.registration.deadline, "j E Y") + " г."
+
+
+def _computed_year(_ep, _p, _all_performers) -> str:
+    from datetime import date
+    return str(date.today().year)
+
+
+def _computed_day(_ep, _p, _all_performers) -> str:
+    from datetime import date
+    return f"{date.today().day:02d}"
+
+
+def _computed_month(_ep, _p, _all_performers) -> str:
+    from core.dates import MONTHS_RU_GENITIVE
+    from datetime import date
+    return MONTHS_RU_GENITIVE[date.today().month]
+
+
+def _computed_named(ep, _p, _all_performers) -> str:
+    if not ep or not ep.gender:
+        return ""
+    return "именуемый" if ep.gender == "male" else "именуемая"
+
+
 COMPUTED_MAP: dict[str, callable] = {
     "{{contract_price}}": _computed_contract_price,
     "{{avansplat_sum}}": _computed_avansplat_sum,
@@ -378,6 +480,11 @@ COMPUTED_MAP: dict[str, callable] = {
     "{{avansplat_sum_kop_text}}": _computed_avansplat_sum_kop_text,
     "{{finplat_sum_text}}": _computed_finplat_sum_text,
     "{{finplat_sum_kop_text}}": _computed_finplat_sum_kop_text,
+    "{{deadline_ru}}": _computed_deadline_ru,
+    "{{year}}": _computed_year,
+    "{{day}}": _computed_day,
+    "{{month}}": _computed_month,
+    "{{named}}": _computed_named,
 }
 
 
