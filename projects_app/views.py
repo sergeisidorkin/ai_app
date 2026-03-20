@@ -1744,10 +1744,11 @@ def contract_project_target_folder_save(request):
 def create_contract_project(request):
     """Create folders on Yandex.Disk for selected contract performers.
 
-    Path: <disk_root>/<year>/<project_folder>/<target_folder>/
-    Folder names: ``XXX Фамилия ИО`` where XXX is a zero-padded sequence
-    number starting at 000, in the same order the rows appear in the table.
+    One folder per unique executor within each project (deduplicated across
+    assets / typical sections).  Returns an NDJSON streaming response with
+    progress updates, identical to the workspace-creation pattern.
     """
+    import re
     from .models import ContractProjectTargetFolder
     from yandexdisk_app.workspace import _build_project_folder_name, _sanitize
     from yandexdisk_app.models import YandexDiskSelection
@@ -1771,8 +1772,6 @@ def create_contract_project(request):
     if not performers:
         return JsonResponse({"ok": False, "error": "Исполнители не найдены."}, status=404)
 
-    project = performers[0].registration
-
     selection = YandexDiskSelection.objects.filter(user=request.user).first()
     if not selection or not selection.resource_path:
         return JsonResponse({"ok": False, "error": "Не выбрана папка на Яндекс.Диске."}, status=400)
@@ -1782,13 +1781,8 @@ def create_contract_project(request):
         return JsonResponse({"ok": False, "error": "Не выбрана целевая папка в настройках."}, status=400)
 
     disk_root = selection.resource_path.rstrip("/")
-    year_str = _sanitize(str(project.year) if project.year else "Без года")
-    project_folder = _build_project_folder_name(project)
-    target_folder = _sanitize(target_obj.folder_name)
 
-    base_path = f"{disk_root}/{year_str}/{project_folder}/{target_folder}"
-
-    def _executor_folder_name(executor_full_name):
+    def _executor_short(executor_full_name):
         raw = " ".join(str(executor_full_name or "").split())
         if not raw:
             return "Unknown"
@@ -1797,38 +1791,70 @@ def create_contract_project(request):
         initials = "".join(part[0] for part in parts[1:3] if part)
         return f"{last_name} {initials}".strip()
 
-    import re
-    existing = list_resources(request.user, base_path, limit=1000)
-    next_number = 0
-    for item in existing:
-        match = re.match(r"^(\d{3})\s", item.get("name", ""))
-        if match:
-            next_number = max(next_number, int(match.group(1)) + 1)
+    seen_executors = set()
+    unique_entries = []
+    for perf in performers:
+        key = (perf.registration_id, perf.executor)
+        if key in seen_executors:
+            continue
+        seen_executors.add(key)
+        unique_entries.append(perf)
 
-    errors = []
-    created = 0
-    created_ids = []
-    for idx, perf in enumerate(performers):
-        num = next_number + idx
-        folder_name = _sanitize(f"{num:03d} {_executor_folder_name(perf.executor)}")
-        folder_path = f"{base_path}/{folder_name}"
-        if create_folder(request.user, folder_path):
-            created += 1
-            created_ids.append(perf.pk)
+    all_performer_ids = [p.pk for p in performers]
+    total = len(unique_entries)
+
+    MIN_CHUNK = 256
+
+    def _padded(line):
+        encoded = line.encode()
+        if len(encoded) < MIN_CHUNK:
+            encoded += b" " * (MIN_CHUNK - len(encoded))
+        return encoded
+
+    def _stream():
+        errors = []
+        current = 0
+
+        for perf in unique_entries:
+            project = perf.registration
+            year_str = _sanitize(str(project.year) if project.year else "Без года")
+            project_folder = _build_project_folder_name(project)
+            target_folder = _sanitize(target_obj.folder_name)
+            base_path = f"{disk_root}/{year_str}/{project_folder}/{target_folder}"
+
+            existing = list_resources(request.user, base_path, limit=1000)
+            next_number = 0
+            for item in existing:
+                match = re.match(r"^(\d{3})\s", item.get("name", ""))
+                if match:
+                    next_number = max(next_number, int(match.group(1)) + 1)
+
+            folder_name = _sanitize(f"{next_number:03d} {_executor_short(perf.executor)}")
+            folder_path = f"{base_path}/{folder_name}"
+
+            if not create_folder(request.user, folder_path):
+                errors.append(folder_name)
+
+            current += 1
+            yield _padded(json.dumps({"current": current, "total": total}) + "\n")
+
+        Performer.objects.filter(pk__in=all_performer_ids).update(contract_project_created=True)
+
+        if errors:
+            yield _padded(json.dumps({
+                "ok": False,
+                "error": f"Не удалось создать папки: {', '.join(errors)}",
+            }) + "\n")
         else:
-            errors.append(folder_name)
+            yield _padded(json.dumps({
+                "ok": True,
+                "message": "Проекты договоров успешно созданы.",
+            }) + "\n")
 
-    if created_ids:
-        Performer.objects.filter(pk__in=created_ids).update(contract_project_created=True)
-
-    if errors:
-        return JsonResponse({
-            "ok": False,
-            "error": f"Не удалось создать папки: {', '.join(errors)}",
-            "created": created,
-        })
-
-    return JsonResponse({"ok": True, "created": created})
+    resp = StreamingHttpResponse(_stream(), content_type="application/x-ndjson")
+    resp["Cache-Control"] = "no-cache, no-store"
+    resp["X-Accel-Buffering"] = "no"
+    return resp
 
 
 @login_required
