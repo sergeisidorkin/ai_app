@@ -1,4 +1,3 @@
-import json
 from datetime import date as date_type
 
 from django import forms
@@ -100,6 +99,12 @@ class ContractTemplateForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+        self._orig_sample_name = ""
+        self._orig_version = ""
+        if self.instance and self.instance.pk:
+            self._orig_sample_name = self.instance.sample_name or ""
+            self._orig_version = self.instance.version or ""
+
         order_map = _group_member_order_map()
         members_qs = GroupMember.objects.all()
         self.fields["group_member"].queryset = members_qs
@@ -108,10 +113,9 @@ class ContractTemplateForm(forms.ModelForm):
 
         self.fields["file"].required = not (self.instance and self.instance.pk and self.instance.file)
 
-        self.group_short_map_json = json.dumps(
-            {str(m.pk): _group_member_short(m, order_map.get(m.pk, 0)) for m in members_qs},
-            ensure_ascii=False,
-        )
+        self.group_short_map = {
+            str(m.pk): _group_member_short(m, order_map.get(m.pk, 0)) for m in members_qs
+        }
 
         self.fields["product"].queryset = Product.objects.order_by("position", "id")
         self.fields["product"].label_from_instance = lambda obj: obj.short_name
@@ -133,10 +137,9 @@ class ContractTemplateForm(forms.ModelForm):
             except OKSMCountry.DoesNotExist:
                 pass
 
-        self.country_alpha3_json = json.dumps(
-            {str(c.pk): c.alpha3 for c in self.fields["country"].queryset},
-            ensure_ascii=False,
-        )
+        self.country_alpha3 = {
+            str(c.pk): c.alpha3 for c in self.fields["country"].queryset
+        }
 
         sections = (
             TypicalSection.objects
@@ -174,15 +177,13 @@ class ContractTemplateForm(forms.ModelForm):
             except (ValueError, TypeError):
                 v = 0
             version_map[base] = max(version_map.get(base, 0), v)
-        self.version_map_json = json.dumps(version_map, ensure_ascii=False)
+        self.version_map = version_map
 
-        current_base = ""
-        current_version = ""
+        self.current_base = ""
+        self.current_version = ""
         if self.instance and self.instance.pk and self.instance.sample_name:
-            current_base = self.instance.sample_name.rsplit("_v", 1)[0]
-            current_version = self.instance.version or ""
-        self.current_base_json = json.dumps(current_base, ensure_ascii=False)
-        self.current_version_json = json.dumps(current_version, ensure_ascii=False)
+            self.current_base = self.instance.sample_name.rsplit("_v", 1)[0]
+            self.current_version = self.instance.version or ""
 
     def save(self, commit=True):
         instance = super().save(commit=False)
@@ -233,9 +234,9 @@ class ContractTemplateForm(forms.ModelForm):
 
         existing = ContractTemplate.objects.all()
         if instance.pk:
-            old_base = instance.sample_name.rsplit("_v", 1)[0] if instance.sample_name else ""
-            if old_base == base_name:
-                version = instance.version or "1"
+            orig_base = self._orig_sample_name.rsplit("_v", 1)[0] if self._orig_sample_name else ""
+            if orig_base == base_name:
+                version = self._orig_version or "1"
             else:
                 existing = existing.exclude(pk=instance.pk)
                 version = str(self._next_version(existing, base_name))

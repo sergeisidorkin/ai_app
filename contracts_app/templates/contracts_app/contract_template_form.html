@@ -92,16 +92,23 @@
   </div>
 </form>
 
+{{ form.country_alpha3|json_script:"ct-data-country-alpha3" }}
+{{ form.group_short_map|json_script:"ct-data-group-short-map" }}
+{{ form.version_map|json_script:"ct-data-version-map" }}
+{{ form.current_base|json_script:"ct-data-current-base" }}
+{{ form.current_version|json_script:"ct-data-current-ver" }}
+
 <script>
 (function() {
+  function _jsonEl(id) { return JSON.parse(document.getElementById(id).textContent); }
   const ALL_VAL = "__all__";
   const PARTY_SHORT = {"individual": "ФЗЛ", "legal_entity": "ЮРЛ", "ip": "ИП"};
   const TYPE_SHORT  = {"gph": "ГПХ", "smz": "СМЗ"};
-  const countryAlpha3 = {{ form.country_alpha3_json|safe }};
-  const groupShortMap = {{ form.group_short_map_json|safe }};
-  const versionMap    = {{ form.version_map_json|safe }};
-  const currentBase   = {{ form.current_base_json|safe }};
-  const currentVer    = {{ form.current_version_json|safe }};
+  const countryAlpha3 = _jsonEl("ct-data-country-alpha3");
+  const groupShortMap = _jsonEl("ct-data-group-short-map");
+  const versionMap    = _jsonEl("ct-data-version-map");
+  const currentBase   = _jsonEl("ct-data-current-base");
+  const currentVer    = _jsonEl("ct-data-current-ver");
 
   const dropdown = document.getElementById("ct-section-dropdown");
   if (!dropdown) return;
