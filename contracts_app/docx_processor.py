@@ -3,41 +3,89 @@ Process a .docx template: replace ``{{variable}}`` placeholders with values.
 
 Handles the common Word issue where a single placeholder like ``{{inn}}``
 is split across multiple XML runs (e.g. run1="{{", run2="inn", run3="}}").
+
+Replacement text inherits the formatting of the run that contains the
+opening ``{{`` of the placeholder, so bold/italic/font/size are preserved.
 """
 
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 from io import BytesIO
 
 from docx import Document
+from docx.oxml.ns import qn
 
 
 _PLACEHOLDER_RE = re.compile(r"\{\{[a-zA-Z][a-zA-Z0-9_]*\}\}")
 
 
 def _replace_in_paragraph(paragraph, replacements: dict[str, str]) -> None:
-    """Replace placeholders in a single paragraph, handling split runs."""
-    full_text = "".join(run.text for run in paragraph.runs)
-    if not _PLACEHOLDER_RE.search(full_text):
-        return
+    """Replace placeholders in a single paragraph, preserving run formatting.
 
-    new_text = full_text
-    for key, value in replacements.items():
-        if key in new_text:
-            new_text = new_text.replace(key, value)
-
-    if new_text == full_text:
-        return
-
+    The algorithm:
+    1. Build a mapping from character offset → run index.
+    2. Find each placeholder span in the joined text.
+    3. For each match, identify which runs it spans.
+    4. Put the replacement value into the run where ``{{`` starts
+       (preserving that run's formatting), then trim/clear the other
+       runs that were consumed by the placeholder.
+    """
     runs = paragraph.runs
     if not runs:
         return
 
-    # Preserve formatting of the first run; clear the rest.
-    runs[0].text = new_text
-    for run in runs[1:]:
-        run.text = ""
+    full_text = "".join(r.text for r in runs)
+    if not _PLACEHOLDER_RE.search(full_text):
+        return
+
+    run_texts = [r.text for r in runs]
+    run_starts: list[int] = []
+    offset = 0
+    for t in run_texts:
+        run_starts.append(offset)
+        offset += len(t)
+
+    def _run_at(char_pos: int) -> int:
+        for i in range(len(run_starts) - 1, -1, -1):
+            if char_pos >= run_starts[i]:
+                return i
+        return 0
+
+    matches = list(_PLACEHOLDER_RE.finditer(full_text))
+    if not matches:
+        return
+
+    for m in reversed(matches):
+        key = m.group()
+        value = replacements.get(key)
+        if value is None:
+            continue
+
+        start, end = m.start(), m.end()
+        first_run_idx = _run_at(start)
+        last_run_idx = _run_at(end - 1)
+
+        if first_run_idx == last_run_idx:
+            local_start = start - run_starts[first_run_idx]
+            local_end = end - run_starts[first_run_idx]
+            t = run_texts[first_run_idx]
+            run_texts[first_run_idx] = t[:local_start] + value + t[local_end:]
+        else:
+            ft = run_texts[first_run_idx]
+            local_start = start - run_starts[first_run_idx]
+            run_texts[first_run_idx] = ft[:local_start] + value
+
+            lt = run_texts[last_run_idx]
+            local_end = end - run_starts[last_run_idx]
+            run_texts[last_run_idx] = lt[local_end:]
+
+            for mid in range(first_run_idx + 1, last_run_idx):
+                run_texts[mid] = ""
+
+    for i, run in enumerate(runs):
+        run.text = run_texts[i]
 
 
 def _process_paragraphs(paragraphs, replacements: dict[str, str]) -> None:

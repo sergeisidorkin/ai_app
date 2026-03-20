@@ -73,14 +73,16 @@ def _str_field(field_name: str):
 
 
 def _date_field(field_name: str):
-    """Return a resolver that formats a DateField from ExpertProfile."""
+    """Return a resolver that formats a DateField as shown in the UI:
+    ``15 марта 2026 г.`` (day + genitive month + year + «г.»)."""
     def _resolver(ep: ExpertProfile, _p: Performer) -> str:
         if not ep:
             return ""
         val = getattr(ep, field_name, None)
         if val is None:
             return ""
-        return val.strftime("%d.%m.%Y")
+        from core.dates import format_date_ru
+        return format_date_ru(val, "j E Y") + " г."
     return _resolver
 
 
