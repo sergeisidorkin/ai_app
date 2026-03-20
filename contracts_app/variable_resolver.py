@@ -297,39 +297,57 @@ def _calc_contract_price(ep, all_performers):
     return result.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
 
 
+def _calc_avansplat(ep, all_performers):
+    """Raw Decimal avansplat_sum rounded to 1 decimal place."""
+    from decimal import Decimal, ROUND_HALF_UP
+    price = _calc_contract_price(ep, all_performers)
+    pct = Decimal("0")
+    for p in all_performers:
+        if p.prepayment is not None:
+            pct = p.prepayment
+            break
+    return (price * pct / 100).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+
+
+def _calc_finplat(ep, all_performers):
+    """Raw Decimal finplat_sum = contract_price − avansplat_sum."""
+    return _calc_contract_price(ep, all_performers) - _calc_avansplat(ep, all_performers)
+
+
+def _kopecks(value) -> str:
+    """Extract 2-digit fractional part from a Decimal, e.g. 35294.1 → '10'."""
+    from decimal import Decimal
+    d = value.quantize(Decimal("0.01"))
+    frac = abs(d) - int(abs(d))
+    return f"{frac:.2f}"[2:]
+
+
 def _computed_contract_price(ep, _p, all_performers) -> str:
-    return _money_no_currency(_calc_contract_price(ep, all_performers))
+    return _money_no_currency_int(_calc_contract_price(ep, all_performers))
 
 
 def _computed_avansplat_sum(ep, _p, all_performers) -> str:
-    from decimal import Decimal, ROUND_HALF_UP
-    price = _calc_contract_price(ep, all_performers)
-    pct = Decimal("0")
-    for p in all_performers:
-        if p.prepayment is not None:
-            pct = p.prepayment
-            break
-    result = (price * pct / 100).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
-    return _money_no_currency(result)
+    return _money_no_currency_int(int(_calc_avansplat(ep, all_performers)))
 
 
 def _computed_finplat_sum(ep, _p, all_performers) -> str:
-    from decimal import Decimal, ROUND_HALF_UP
-    price = _calc_contract_price(ep, all_performers)
-    pct = Decimal("0")
-    for p in all_performers:
-        if p.prepayment is not None:
-            pct = p.prepayment
-            break
-    avans = (price * pct / 100).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
-    result = price - avans
-    return _money_no_currency(result)
+    return _money_no_currency_int(int(_calc_finplat(ep, all_performers)))
+
+
+def _computed_avansplat_sum_kop(ep, _p, all_performers) -> str:
+    return _kopecks(_calc_avansplat(ep, all_performers))
+
+
+def _computed_finplat_sum_kop(ep, _p, all_performers) -> str:
+    return _kopecks(_calc_finplat(ep, all_performers))
 
 
 COMPUTED_MAP: dict[str, callable] = {
     "{{contract_price}}": _computed_contract_price,
     "{{avansplat_sum}}": _computed_avansplat_sum,
     "{{finplat_sum}}": _computed_finplat_sum,
+    "{{avansplat_sum_kop}}": _computed_avansplat_sum_kop,
+    "{{finplat_sum_kop}}": _computed_finplat_sum_kop,
 }
 
 
