@@ -64,6 +64,7 @@ class ContractTemplate(models.Model):
 class ContractVariable(models.Model):
     key = models.CharField("Переменная", max_length=255)
     description = models.CharField("Описание", max_length=512, blank=True, default="")
+    is_computed = models.BooleanField("Расчётное поле", default=False)
     position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
 
     source_section = models.CharField("Раздел", max_length=50, blank=True, default="")
@@ -80,6 +81,8 @@ class ContractVariable(models.Model):
 
     @property
     def binding_display(self):
+        if self.is_computed:
+            return "Расчётное поле"
         if not (self.source_section and self.source_table and self.source_column):
             return ""
         from core.column_registry import COLUMN_REGISTRY

@@ -2,7 +2,7 @@ from django.contrib.auth.decorators import login_required, user_passes_test
 from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST, require_GET
-from django.db import transaction
+from django.db import models, transaction
 from django.db.models import Max, Q
 from django.db.models.functions import Trim
 from django import forms
@@ -1798,10 +1798,14 @@ def create_contract_project(request):
     )
 
     all_variables = list(
-        ContractVariable.objects
-        .exclude(source_section="")
-        .exclude(source_table="")
-        .exclude(source_column="")
+        ContractVariable.objects.filter(
+            models.Q(is_computed=True)
+            | (
+                ~models.Q(source_section="")
+                & ~models.Q(source_table="")
+                & ~models.Q(source_column="")
+            )
+        )
     )
 
     expert_cache = {}
@@ -1981,7 +1985,10 @@ def create_contract_project(request):
                         tmpl.file.close()
 
                     if all_variables:
-                        replacements = resolve_variables(perf, all_variables)
+                        replacements = resolve_variables(
+                            perf, all_variables,
+                            all_performers=all_perfs_for_executor,
+                        )
                         if replacements:
                             file_data = process_template(file_data, replacements)
 

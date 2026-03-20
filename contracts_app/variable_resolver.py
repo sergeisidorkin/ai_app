@@ -111,6 +111,77 @@ def _gender_display(ep: ExpertProfile, _p: Performer) -> str:
     return ep.get_gender_display()
 
 
+# ---- Performer-level helpers (projects.performers.*) ----
+
+def _perf_project(_ep: ExpertProfile, p: Performer) -> str:
+    return p.registration.short_uid if p.registration else ""
+
+
+def _perf_type(_ep: ExpertProfile, p: Performer) -> str:
+    if not p.registration or not p.registration.type:
+        return ""
+    return p.registration.type.short_name or str(p.registration.type)
+
+
+def _perf_name(_ep: ExpertProfile, p: Performer) -> str:
+    return p.registration.name if p.registration else ""
+
+
+def _perf_performer(_ep: ExpertProfile, p: Performer) -> str:
+    raw = " ".join(str(p.executor or "").split())
+    if not raw:
+        return ""
+    parts = raw.split(" ")
+    initials = "".join(f"{part[0]}." for part in parts[1:3] if part)
+    return f"{parts[0]} {initials}".strip()
+
+
+def _perf_grade(_ep: ExpertProfile, p: Performer) -> str:
+    return p.grade_name or p.grade or ""
+
+
+def _perf_typical_section(_ep: ExpertProfile, p: Performer) -> str:
+    s = p.typical_section
+    if not s:
+        return ""
+    code = getattr(s, "code", "") or ""
+    short_name_ru = getattr(s, "short_name_ru", "") or ""
+    return " ".join(part for part in (code, short_name_ru) if part).strip()
+
+
+def _perf_money(field_name: str):
+    """Format a Decimal field as ``1 234 567,89 CUR`` matching the UI."""
+    def _resolver(_ep: ExpertProfile, p: Performer) -> str:
+        from decimal import Decimal, InvalidOperation
+        val = getattr(p, field_name, None)
+        if val is None:
+            return ""
+        try:
+            d = Decimal(str(val))
+        except (InvalidOperation, TypeError, ValueError):
+            return ""
+        sign = "-" if d < 0 else ""
+        d = abs(d)
+        integer_part = int(d)
+        frac = f"{d - integer_part:.2f}"[1:]
+        int_str = f"{integer_part:,}".replace(",", "\u00a0")
+        result = f"{sign}{int_str}{frac}".replace(".", ",")
+        if p.currency:
+            result += f" {p.currency.code_alpha}"
+        return result
+    return _resolver
+
+
+def _perf_percent(field_name: str):
+    """Format a numeric field as ``NN%`` matching the UI."""
+    def _resolver(_ep: ExpertProfile, p: Performer) -> str:
+        val = getattr(p, field_name, None)
+        if val is None:
+            return ""
+        return f"{int(val)}%"
+    return _resolver
+
+
 # ---------------------------------------------------------------------------
 #  (section, table, column) → callable(expert_profile, performer) → str
 # ---------------------------------------------------------------------------
@@ -158,15 +229,67 @@ FIELD_MAP: dict[tuple[str, str, str], callable] = {
     ("experts", "contract_details", "corr_bank_swift"): _str_field("corr_bank_swift"),
     ("experts", "contract_details", "corr_bank_settlement"): _str_field("corr_bank_settlement_account"),
     ("experts", "contract_details", "corr_bank_correspondent"): _str_field("corr_bank_corr_account"),
+
+    # ---- projects.performers ----
+    ("projects", "performers", "project"): _perf_project,
+    ("projects", "performers", "type"): _perf_type,
+    ("projects", "performers", "name"): _perf_name,
+    ("projects", "performers", "asset_name"): lambda _ep, p: p.asset_name or "",
+    ("projects", "performers", "performer"): _perf_performer,
+    ("projects", "performers", "grade"): _perf_grade,
+    ("projects", "performers", "typical_section"): _perf_typical_section,
+    ("projects", "performers", "adjusted_costs"): _perf_money("actual_costs"),
+    ("projects", "performers", "calculated_costs"): _perf_money("estimated_costs"),
+    ("projects", "performers", "approved"): _perf_money("agreed_amount"),
+    ("projects", "performers", "advance"): _perf_percent("prepayment"),
+    ("projects", "performers", "final_payment"): _perf_percent("final_payment"),
+    ("projects", "performers", "contract_number"): lambda _ep, p: p.contract_number or "",
 }
 
 
-def resolve_variables(performer, variables) -> dict[str, str]:
+# ---------------------------------------------------------------------------
+#  Computed variable resolvers  (is_computed=True)
+#  Signature: (ep, performer, all_performers) → str
+# ---------------------------------------------------------------------------
+
+def _money_no_currency(value) -> str:
+    """Format a Decimal as ``1 234 567,89`` (no currency code)."""
+    from decimal import Decimal, InvalidOperation
+    if value is None:
+        return ""
+    try:
+        d = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return ""
+    sign = "-" if d < 0 else ""
+    d = abs(d)
+    integer_part = int(d)
+    frac = f"{d - integer_part:.2f}"[1:]
+    int_str = f"{integer_part:,}".replace(",", "\u00a0")
+    return f"{sign}{int_str}{frac}".replace(".", ",")
+
+
+def _computed_contract_price(_ep, _p, all_performers) -> str:
+    from decimal import Decimal
+    total = Decimal("0")
+    for p in all_performers:
+        if p.agreed_amount is not None:
+            total += p.agreed_amount
+    return _money_no_currency(total)
+
+
+COMPUTED_MAP: dict[str, callable] = {
+    "{{contract_price}}": _computed_contract_price,
+}
+
+
+def resolve_variables(performer, variables, all_performers=None) -> dict[str, str]:
     """Build {placeholder_key: resolved_value} for every bound variable.
 
     *performer* must have ``employee`` pre-fetched (``select_related``).
-    *variables* is an iterable of ``ContractVariable`` instances whose
-    ``source_section``, ``source_table``, ``source_column`` are non-empty.
+    *variables* is an iterable of ``ContractVariable`` instances.
+    *all_performers* is the list of all selected Performer rows for this
+    executor+project pair (needed for computed / aggregate variables).
     """
     from experts_app.models import ExpertProfile
 
@@ -180,8 +303,20 @@ def resolve_variables(performer, variables) -> dict[str, str]:
             .first()
         )
 
+    if all_performers is None:
+        all_performers = [performer]
+
     result: dict[str, str] = {}
     for var in variables:
+        if var.is_computed:
+            computed_fn = COMPUTED_MAP.get(var.key)
+            if computed_fn:
+                try:
+                    result[var.key] = computed_fn(expert, performer, all_performers)
+                except Exception:
+                    result[var.key] = ""
+            continue
+
         coord = (var.source_section, var.source_table, var.source_column)
         resolver = FIELD_MAP.get(coord)
         if resolver is None:
