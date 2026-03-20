@@ -90,13 +90,18 @@ def _replace_in_paragraph(paragraph, replacements: dict[str, str]) -> None:
         run.text = run_texts[i]
 
 
-def _replace_list_in_paragraph(paragraph, list_replacements: dict) -> bool:
+def _replace_list_in_paragraph(
+    paragraph,
+    list_replacements: dict,
+    bullet_num_id: str,
+    multilevel_num_id: str,
+) -> bool:
     """If the paragraph contains a ``[[list_var]]`` placeholder, replace the
     entire paragraph with a list of items.  Returns True if replaced.
 
     Items may be:
-    - ``list[str]`` — flat bullet list (numId=1, ilvl=0)
-    - ``list[tuple[int, str]]`` — multi-level numbered list (numId=2, ilvl=level)
+    - ``list[str]`` — flat bullet list
+    - ``list[tuple[int, str]]`` — multi-level numbered list
 
     Formatting (font, size, bold, italic) is copied from the run containing
     the opening ``[[`` of the placeholder.
@@ -141,11 +146,11 @@ def _replace_list_in_paragraph(paragraph, list_replacements: dict) -> bool:
     for item in items:
         if is_multilevel:
             level, item_text = item
-            num_id_val = "2"
+            num_id_val = multilevel_num_id
         else:
             level = 0
             item_text = item
-            num_id_val = "1"
+            num_id_val = bullet_num_id
 
         new_p = OxmlElement("w:p")
         pPr = OxmlElement("w:pPr")
@@ -181,35 +186,43 @@ def _replace_list_in_paragraph(paragraph, list_replacements: dict) -> bool:
     return True
 
 
-_BULLET_NUM_ID = "1"
+# ---------------------------------------------------------------------------
+#  Numbering helpers — always allocate NEW numIds / abstractNumIds so that
+#  existing template numbering definitions are never altered.
+# ---------------------------------------------------------------------------
+
+def _max_num_id(numbering_elm) -> int:
+    """Return the highest w:numId currently in the numbering part."""
+    ids = [
+        int(n.get(qn("w:numId")))
+        for n in numbering_elm.findall(qn("w:num"))
+        if n.get(qn("w:numId"), "").isdigit()
+    ]
+    return max(ids, default=0)
 
 
-def _ensure_bullet_numbering(doc):
-    """Ensure the document has an abstract numbering definition for bullet
-    lists (numId=1) so that ``w:numPr`` references work correctly.
+def _max_abstract_num_id(numbering_elm) -> int:
+    """Return the highest w:abstractNumId currently in the numbering part."""
+    ids = [
+        int(a.get(qn("w:abstractNumId")))
+        for a in numbering_elm.findall(qn("w:abstractNum"))
+        if a.get(qn("w:abstractNumId"), "").isdigit()
+    ]
+    return max(ids, default=0)
 
-    Picks a unique ``abstractNumId`` that does not collide with any
-    existing definitions in the template.
+
+def _ensure_bullet_numbering(doc) -> str:
+    """Create a new bullet numbering definition and return its ``numId``.
+
+    Never reuses or modifies existing definitions.
     """
     from docx.oxml import OxmlElement
 
     numbering_part = doc.part.numbering_part
     numbering_elm = numbering_part._element
 
-    used_abs_ids = {
-        int(a.get(qn("w:abstractNumId")))
-        for a in numbering_elm.findall(qn("w:abstractNum"))
-        if a.get(qn("w:abstractNumId"), "").isdigit()
-    }
-    new_abs_id = str(max(used_abs_ids, default=-1) + 1)
-
-    for num_el in numbering_elm.findall(qn("w:num")):
-        if num_el.get(qn("w:numId")) == _BULLET_NUM_ID:
-            ref = num_el.find(qn("w:abstractNumId"))
-            if ref is not None and ref.get(qn("w:val")) == new_abs_id:
-                return
-            numbering_elm.remove(num_el)
-            break
+    new_abs_id = str(_max_abstract_num_id(numbering_elm) + 1)
+    new_num_id = str(_max_num_id(numbering_elm) + 1)
 
     abstract_num = OxmlElement("w:abstractNum")
     abstract_num.set(qn("w:abstractNumId"), new_abs_id)
@@ -238,47 +251,31 @@ def _ensure_bullet_numbering(doc):
     rPr.append(rFonts)
     lvl.append(rPr)
     abstract_num.append(lvl)
-    numbering_elm.insert(0, abstract_num)
+    numbering_elm.append(abstract_num)
 
     num_el = OxmlElement("w:num")
-    num_el.set(qn("w:numId"), _BULLET_NUM_ID)
+    num_el.set(qn("w:numId"), new_num_id)
     abstract_ref = OxmlElement("w:abstractNumId")
     abstract_ref.set(qn("w:val"), new_abs_id)
     num_el.append(abstract_ref)
     numbering_elm.append(num_el)
 
+    return new_num_id
 
-_MULTILEVEL_NUM_ID = "2"
 
-
-def _ensure_multilevel_numbering(doc):
-    """Ensure the document has a 3-level decimal numbering definition
-    (numId=2) for multi-level lists like ``[[chapters_name]]``.
+def _ensure_multilevel_numbering(doc) -> str:
+    """Create a new 3-level decimal numbering definition and return its ``numId``.
 
     Levels: ``1.``, ``1.1``, ``1.1.1`` with increasing indentation.
-
-    Picks an ``abstractNumId`` that does not collide with any existing
-    definitions in the template so we never shadow a pre-existing style.
+    Never reuses or modifies existing definitions.
     """
     from docx.oxml import OxmlElement
 
     numbering_part = doc.part.numbering_part
     numbering_elm = numbering_part._element
 
-    used_abs_ids = {
-        int(a.get(qn("w:abstractNumId")))
-        for a in numbering_elm.findall(qn("w:abstractNum"))
-        if a.get(qn("w:abstractNumId"), "").isdigit()
-    }
-    new_abs_id = str(max(used_abs_ids, default=-1) + 1)
-
-    for num_el in numbering_elm.findall(qn("w:num")):
-        if num_el.get(qn("w:numId")) == _MULTILEVEL_NUM_ID:
-            ref = num_el.find(qn("w:abstractNumId"))
-            if ref is not None and ref.get(qn("w:val")) == new_abs_id:
-                return
-            numbering_elm.remove(num_el)
-            break
+    new_abs_id = str(_max_abstract_num_id(numbering_elm) + 1)
+    new_num_id = str(_max_num_id(numbering_elm) + 1)
 
     abstract_num = OxmlElement("w:abstractNum")
     abstract_num.set(qn("w:abstractNumId"), new_abs_id)
@@ -314,15 +311,19 @@ def _ensure_multilevel_numbering(doc):
         lvl.append(pPr)
         abstract_num.append(lvl)
 
-    numbering_elm.insert(0, abstract_num)
+    numbering_elm.append(abstract_num)
 
     num_el = OxmlElement("w:num")
-    num_el.set(qn("w:numId"), _MULTILEVEL_NUM_ID)
+    num_el.set(qn("w:numId"), new_num_id)
     abstract_ref = OxmlElement("w:abstractNumId")
     abstract_ref.set(qn("w:val"), new_abs_id)
     num_el.append(abstract_ref)
     numbering_elm.append(num_el)
 
+    return new_num_id
+
+
+# ---------------------------------------------------------------------------
 
 def _process_paragraphs(paragraphs, replacements: dict[str, str]) -> None:
     for para in paragraphs:
@@ -330,30 +331,43 @@ def _process_paragraphs(paragraphs, replacements: dict[str, str]) -> None:
 
 
 def _process_list_paragraphs(
-    paragraphs, list_replacements: dict[str, list[str]],
+    paragraphs,
+    list_replacements: dict,
+    bullet_num_id: str,
+    multilevel_num_id: str,
 ) -> None:
     for para in list(paragraphs):
-        _replace_list_in_paragraph(para, list_replacements)
+        _replace_list_in_paragraph(
+            para, list_replacements, bullet_num_id, multilevel_num_id,
+        )
 
 
 def _process_tables(
     tables,
     replacements: dict[str, str],
-    list_replacements: dict[str, list[str]] | None = None,
+    list_replacements: dict | None = None,
+    bullet_num_id: str = "",
+    multilevel_num_id: str = "",
 ) -> None:
     for table in tables:
         for row in table.rows:
             for cell in row.cells:
                 if list_replacements:
-                    _process_list_paragraphs(cell.paragraphs, list_replacements)
+                    _process_list_paragraphs(
+                        cell.paragraphs, list_replacements,
+                        bullet_num_id, multilevel_num_id,
+                    )
                 _process_paragraphs(cell.paragraphs, replacements)
-                _process_tables(cell.tables, replacements, list_replacements)
+                _process_tables(
+                    cell.tables, replacements, list_replacements,
+                    bullet_num_id, multilevel_num_id,
+                )
 
 
 def process_template(
     file_bytes: bytes,
     replacements: dict[str, str],
-    list_replacements: dict[str, list[str]] | None = None,
+    list_replacements: dict | None = None,
 ) -> bytes:
     """Return modified .docx bytes with all placeholders substituted.
 
@@ -366,21 +380,30 @@ def process_template(
 
     doc = Document(BytesIO(file_bytes))
 
+    bullet_num_id = ""
+    multilevel_num_id = ""
+
     if list_replacements:
         has_multilevel = any(
             items and isinstance(items[0], (tuple, list))
             for items in list_replacements.values()
         )
         try:
-            _ensure_bullet_numbering(doc)
+            bullet_num_id = _ensure_bullet_numbering(doc)
             if has_multilevel:
-                _ensure_multilevel_numbering(doc)
+                multilevel_num_id = _ensure_multilevel_numbering(doc)
         except Exception:
             pass
-        _process_list_paragraphs(doc.paragraphs, list_replacements)
+        _process_list_paragraphs(
+            doc.paragraphs, list_replacements,
+            bullet_num_id, multilevel_num_id,
+        )
 
     _process_paragraphs(doc.paragraphs, replacements)
-    _process_tables(doc.tables, replacements, list_replacements)
+    _process_tables(
+        doc.tables, replacements, list_replacements,
+        bullet_num_id, multilevel_num_id,
+    )
 
     for section in doc.sections:
         for header_footer in (section.header, section.footer,
@@ -392,10 +415,12 @@ def process_template(
                 if list_replacements:
                     _process_list_paragraphs(
                         header_footer.paragraphs, list_replacements,
+                        bullet_num_id, multilevel_num_id,
                     )
                 _process_paragraphs(header_footer.paragraphs, replacements)
                 _process_tables(
                     header_footer.tables, replacements, list_replacements,
+                    bullet_num_id, multilevel_num_id,
                 )
 
     out = BytesIO()

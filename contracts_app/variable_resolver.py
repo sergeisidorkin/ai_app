@@ -520,7 +520,7 @@ def _computed_chapters_name(_ep, _p, all_performers):
         for ss in qs.order_by("position"):
             lines = [ln.strip() for ln in ss.subsections.split("\n") if ln.strip()]
             if lines:
-                subsections_map[ss.section_id] = lines
+                subsections_map.setdefault(ss.section_id, []).extend(lines)
 
     multi_asset = len(assets_sections) > 1
     items: list[tuple[int, str]] = []
