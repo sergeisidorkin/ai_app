@@ -1742,17 +1742,21 @@ def contract_project_target_folder_save(request):
 @user_passes_test(staff_required)
 @require_POST
 def create_contract_project(request):
-    """Create folders on Yandex.Disk for selected contract performers.
+    """Create folders on Yandex.Disk for selected contract performers and
+    populate them with .docx files from matching contract templates.
 
     One folder per unique executor within each project (deduplicated across
     assets / typical sections).  Returns an NDJSON streaming response with
-    progress updates, identical to the workspace-creation pattern.
+    progress updates.
     """
     import re
     from .models import ContractProjectTargetFolder
+    from contracts_app.models import ContractTemplate
+    from experts_app.models import ExpertProfile
+    from group_app.models import GroupMember
     from yandexdisk_app.workspace import _build_project_folder_name, _sanitize
     from yandexdisk_app.models import YandexDiskSelection
-    from yandexdisk_app.service import create_folder, list_resources
+    from yandexdisk_app.service import create_folder, list_resources, upload_file
 
     raw_ids = request.POST.getlist("performer_ids[]") or request.POST.getlist("performer_ids")
     if not raw_ids:
@@ -1766,7 +1770,10 @@ def create_contract_project(request):
     performers = list(
         Performer.objects
         .filter(pk__in=ids)
-        .select_related("registration", "registration__type")
+        .select_related(
+            "registration", "registration__type",
+            "typical_section", "employee",
+        )
         .order_by("position", "id")
     )
     if not performers:
@@ -1782,6 +1789,22 @@ def create_contract_project(request):
 
     disk_root = selection.resource_path.rstrip("/")
 
+    all_templates = list(
+        ContractTemplate.objects
+        .select_related("product", "group_member")
+        .filter(file__gt="")
+    )
+
+    expert_cache = {}
+    employee_ids = {p.employee_id for p in performers if p.employee_id}
+    if employee_ids:
+        for ep in ExpertProfile.objects.select_related("country").filter(employee_id__in=employee_ids):
+            expert_cache[ep.employee_id] = ep
+
+    group_member_map = {}
+    for gm in GroupMember.objects.all():
+        group_member_map.setdefault(gm.country_alpha2, []).append(gm)
+
     def _executor_short(executor_full_name):
         raw = " ".join(str(executor_full_name or "").split())
         if not raw:
@@ -1791,12 +1814,87 @@ def create_contract_project(request):
         initials = "".join(part[0] for part in parts[1:3] if part)
         return f"{last_name} {initials}".strip()
 
+    def _find_template(perf):
+        """Find the best matching ContractTemplate for a Performer row."""
+        project = perf.registration
+        product = project.type
+        if not product:
+            return None
+
+        group_alpha2 = project.group or ""
+        group_member_ids = {gm.pk for gm in group_member_map.get(group_alpha2, [])}
+
+        expert = expert_cache.get(perf.employee_id) if perf.employee_id else None
+
+        is_self_employed = bool(expert and expert.self_employed)
+        expected_contract_type = "smz" if is_self_employed else "gph"
+
+        expected_party = "individual"
+
+        expert_country_name = ""
+        if expert and expert.country:
+            expert_country_name = expert.country.short_name
+
+        section_code = ""
+        if perf.typical_section:
+            section_code = perf.typical_section.code or ""
+
+        candidates = []
+        for t in all_templates:
+            if t.group_member_id and t.group_member_id not in group_member_ids:
+                continue
+            if t.product_id != product.pk:
+                continue
+            if t.contract_type != expected_contract_type:
+                continue
+            if t.party != expected_party:
+                continue
+            if expert_country_name and t.country_name != expert_country_name:
+                continue
+
+            section_match_exact = False
+            if t.is_all_sections:
+                section_match = True
+            else:
+                codes_in_template = {
+                    entry.get("code", "") for entry in (t.typical_sections_json or [])
+                }
+                if section_code and section_code in codes_in_template:
+                    section_match = True
+                    section_match_exact = True
+                else:
+                    section_match = False
+
+            if not section_match:
+                continue
+
+            candidates.append((t, section_match_exact))
+
+        if not candidates:
+            return None
+
+        exact = [t for t, exact in candidates if exact]
+        if exact:
+            candidates = [(t, True) for t in exact]
+
+        def _version_key(item):
+            t = item[0]
+            try:
+                return int(t.version)
+            except (ValueError, TypeError):
+                return 0
+
+        candidates.sort(key=_version_key, reverse=True)
+        return candidates[0][0]
+
     seen_executors = set()
     unique_entries = []
     executor_to_ids = {}
+    executor_to_perfs = {}
     for perf in performers:
         key = (perf.registration_id, perf.executor)
         executor_to_ids.setdefault(key, []).append(perf.pk)
+        executor_to_perfs.setdefault(key, []).append(perf)
         if key in seen_executors:
             continue
         seen_executors.add(key)
@@ -1814,6 +1912,7 @@ def create_contract_project(request):
 
     def _stream():
         errors = []
+        warnings = []
         created_ids = []
         current = 0
 
@@ -1831,14 +1930,48 @@ def create_contract_project(request):
                 if match:
                     next_number = max(next_number, int(match.group(1)) + 1)
 
-            folder_name = _sanitize(f"{next_number:03d} {_executor_short(perf.executor)}")
+            executor_name = _executor_short(perf.executor)
+            folder_name = _sanitize(f"{next_number:03d} {executor_name}")
             folder_path = f"{base_path}/{folder_name}"
 
             key = (perf.registration_id, perf.executor)
-            if create_folder(request.user, folder_path):
-                created_ids.extend(executor_to_ids[key])
-            else:
+            if not create_folder(request.user, folder_path):
                 errors.append(folder_name)
+                current += 1
+                yield _padded(json.dumps({"current": current, "total": total}) + "\n")
+                continue
+
+            created_ids.extend(executor_to_ids[key])
+
+            seen_templates = set()
+            all_perfs_for_executor = executor_to_perfs[key]
+            unique_section_perfs = {}
+            for p in all_perfs_for_executor:
+                sec_id = p.typical_section_id
+                if sec_id not in unique_section_perfs:
+                    unique_section_perfs[sec_id] = p
+
+            for p in unique_section_perfs.values():
+                tmpl = _find_template(p)
+                if not tmpl:
+                    warnings.append(
+                        f"Образец шаблона не найден: {executor_name}"
+                        + (f" ({p.typical_section.code})" if p.typical_section else "")
+                    )
+                    continue
+
+                if tmpl.pk in seen_templates:
+                    continue
+                seen_templates.add(tmpl.pk)
+
+                try:
+                    file_data = tmpl.file.read()
+                    original_name = tmpl.file.name.split("/")[-1]
+                    upload_path = f"{folder_path}/{original_name}"
+                    if not upload_file(request.user, upload_path, file_data):
+                        errors.append(f"Загрузка файла: {original_name} → {folder_name}")
+                except Exception:
+                    errors.append(f"Чтение файла: {tmpl.sample_name}")
 
             current += 1
             yield _padded(json.dumps({"current": current, "total": total}) + "\n")
@@ -1847,9 +1980,15 @@ def create_contract_project(request):
             Performer.objects.filter(pk__in=created_ids).update(contract_project_created=True)
 
         if errors:
+            msg = f"Ошибки: {'; '.join(errors)}"
+            if warnings:
+                msg += f"\nПредупреждения: {'; '.join(warnings)}"
+            yield _padded(json.dumps({"ok": False, "error": msg}) + "\n")
+        elif warnings:
             yield _padded(json.dumps({
-                "ok": False,
-                "error": f"Не удалось создать папки: {', '.join(errors)}",
+                "ok": True,
+                "message": "Проекты договоров созданы.",
+                "warnings": warnings,
             }) + "\n")
         else:
             yield _padded(json.dumps({
