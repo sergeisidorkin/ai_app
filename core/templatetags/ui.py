@@ -5,6 +5,11 @@ from django.contrib.staticfiles import finders
 
 register = template.Library()
 
+@register.filter
+def date_ru(value, fmt="j E Y"):
+    from core.dates import format_date_ru
+    return format_date_ru(value, fmt)
+
 @register.simple_tag
 def svg_icon(name: str, cls: str = ""):
     """

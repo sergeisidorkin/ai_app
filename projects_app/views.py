@@ -1695,6 +1695,84 @@ def source_data_target_folder_save(request):
 
 
 @login_required
+@user_passes_test(staff_required)
+@require_POST
+def create_contract_project(request):
+    """Create folders on Yandex.Disk for selected contract performers.
+
+    Folder names: ``XXX Фамилия ИО`` where XXX is a zero-padded sequence
+    number starting at 000, in the same order the rows appear in the table.
+    """
+    from yandexdisk_app.workspace import _resolve_source_data_base, _sanitize
+    from yandexdisk_app.service import create_folder, list_resources
+
+    raw_ids = request.POST.getlist("performer_ids[]") or request.POST.getlist("performer_ids")
+    if not raw_ids:
+        return JsonResponse({"ok": False, "error": "Не выбраны строки."}, status=400)
+
+    try:
+        ids = [int(i) for i in raw_ids]
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Некорректные ID."}, status=400)
+
+    performers = list(
+        Performer.objects
+        .filter(pk__in=ids)
+        .select_related("registration", "registration__type")
+        .order_by("position", "id")
+    )
+    if not performers:
+        return JsonResponse({"ok": False, "error": "Исполнители не найдены."}, status=404)
+
+    project = performers[0].registration
+    base_path, err = _resolve_source_data_base(request.user, project)
+    if err:
+        return JsonResponse({"ok": False, "error": err.message}, status=400)
+
+    def _executor_folder_name(executor_full_name):
+        raw = " ".join(str(executor_full_name or "").split())
+        if not raw:
+            return "Unknown"
+        parts = raw.split(" ")
+        last_name = parts[0]
+        initials = "".join(part[0] for part in parts[1:3] if part)
+        return f"{last_name} {initials}".strip()
+
+    import re
+    existing = list_resources(request.user, base_path, limit=1000)
+    next_number = 0
+    for item in existing:
+        match = re.match(r"^(\d{3})\s", item.get("name", ""))
+        if match:
+            next_number = max(next_number, int(match.group(1)) + 1)
+
+    errors = []
+    created = 0
+    created_ids = []
+    for idx, perf in enumerate(performers):
+        num = next_number + idx
+        folder_name = _sanitize(f"{num:03d} {_executor_folder_name(perf.executor)}")
+        folder_path = f"{base_path}/{folder_name}"
+        if create_folder(request.user, folder_path):
+            created += 1
+            created_ids.append(perf.pk)
+        else:
+            errors.append(folder_name)
+
+    if created_ids:
+        Performer.objects.filter(pk__in=created_ids).update(contract_project_created=True)
+
+    if errors:
+        return JsonResponse({
+            "ok": False,
+            "error": f"Не удалось создать папки: {', '.join(errors)}",
+            "created": created,
+        })
+
+    return JsonResponse({"ok": True, "created": created})
+
+
+@login_required
 @require_GET
 def identifier_for_country(request):
     country_id = request.GET.get("country_id")

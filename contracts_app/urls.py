@@ -13,4 +13,11 @@ urlpatterns = [
     path("templates/<int:pk>/move-up/", views.ct_move_up, name="ct_move_up"),
     path("templates/<int:pk>/move-down/", views.ct_move_down, name="ct_move_down"),
     path("templates/<int:pk>/download/", views.ct_download, name="ct_download"),
+
+    # Contract variables ("Доступные переменные")
+    path("variables/create/", views.ctv_form_create, name="ctv_form_create"),
+    path("variables/<int:pk>/edit/", views.ctv_form_edit, name="ctv_form_edit"),
+    path("variables/<int:pk>/delete/", views.ctv_delete, name="ctv_delete"),
+    path("variables/<int:pk>/move-up/", views.ctv_move_up, name="ctv_move_up"),
+    path("variables/<int:pk>/move-down/", views.ctv_move_down, name="ctv_move_down"),
 ]

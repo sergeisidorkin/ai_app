@@ -8,8 +8,8 @@ from django.shortcuts import render, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST
 
 from projects_app.models import Performer, ProjectRegistration
-from .forms import ContractEditForm, ContractTemplateForm
-from .models import ContractTemplate
+from .forms import ContractEditForm, ContractTemplateForm, ContractVariableForm
+from .models import ContractTemplate, ContractVariable
 
 
 def staff_required(user):
@@ -122,24 +122,13 @@ def contract_form_edit(request, pk):
 #  Contract Templates ("Образцы шаблонов")
 # ---------------------------------------------------------------------------
 
-CT_VARIABLES = [
-    ("{recipient_name}", "Имя и отчество получателя (исполнителя)"),
-    ("{project_label}", "Обозначение проекта"),
-    ("{product_name}", "Наименование продукта"),
-    ("{contract_type}", "Вид договора (ГПХ / СМЗ)"),
-    ("{party}", "Сторона (Физлицо / Юрлицо)"),
-    ("{country}", "Страна"),
-    ("{agreed_amount}", "Согласованная сумма"),
-    ("{currency_code}", "Валюта договора"),
-    ("{start_date}", "Дата начала"),
-    ("{end_date}", "Дата окончания"),
-]
+CTV_FORM_TEMPLATE = "contracts_app/contract_variable_form.html"
 
 
 def _ct_context():
     return {
         "templates": ContractTemplate.objects.select_related("product").all(),
-        "ct_variables": CT_VARIABLES,
+        "ct_variables": ContractVariable.objects.all(),
     }
 
 
@@ -261,3 +250,101 @@ def ct_download(request, pk):
     response = FileResponse(open(file_path, "rb"), content_type=content_type or "application/octet-stream")
     response["Content-Disposition"] = f'attachment; filename="{os.path.basename(file_path)}"'
     return response
+
+
+# ---------------------------------------------------------------------------
+#  Contract Variables ("Доступные переменные")
+# ---------------------------------------------------------------------------
+
+def _ctv_form_ctx(**extra):
+    from core.column_registry import get_registry_json
+    ctx = {"registry_json": get_registry_json()}
+    ctx.update(extra)
+    return ctx
+
+
+def _ctv_next_position():
+    mx = ContractVariable.objects.aggregate(m=Max("position"))["m"]
+    return (mx or 0) + 1
+
+
+def _ctv_normalize_positions():
+    for idx, obj in enumerate(ContractVariable.objects.all()):
+        if obj.position != idx:
+            ContractVariable.objects.filter(pk=obj.pk).update(position=idx)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def ctv_form_create(request):
+    if request.method == "GET":
+        form = ContractVariableForm()
+        return render(request, CTV_FORM_TEMPLATE, _ctv_form_ctx(form=form, action="create"))
+    form = ContractVariableForm(request.POST)
+    if not form.is_valid():
+        resp = render(request, CTV_FORM_TEMPLATE, _ctv_form_ctx(form=form, action="create"))
+        resp["HX-Retarget"] = "#contract-templates-modal .modal-content"
+        resp["HX-Reswap"] = "innerHTML"
+        return resp
+    obj = form.save(commit=False)
+    obj.position = _ctv_next_position()
+    obj.save()
+    return _ct_render_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def ctv_form_edit(request, pk):
+    obj = get_object_or_404(ContractVariable, pk=pk)
+    if request.method == "GET":
+        form = ContractVariableForm(instance=obj)
+        return render(request, CTV_FORM_TEMPLATE, _ctv_form_ctx(
+            form=form, action="edit", variable=obj,
+        ))
+    form = ContractVariableForm(request.POST, instance=obj)
+    if not form.is_valid():
+        resp = render(request, CTV_FORM_TEMPLATE, _ctv_form_ctx(
+            form=form, action="edit", variable=obj,
+        ))
+        resp["HX-Retarget"] = "#contract-templates-modal .modal-content"
+        resp["HX-Reswap"] = "innerHTML"
+        return resp
+    form.save()
+    return _ct_render_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def ctv_delete(request, pk):
+    get_object_or_404(ContractVariable, pk=pk).delete()
+    _ctv_normalize_positions()
+    return _ct_render_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def ctv_move_up(request, pk):
+    obj = get_object_or_404(ContractVariable, pk=pk)
+    prev = ContractVariable.objects.filter(position__lt=obj.position).order_by("-position").first()
+    if prev:
+        obj.position, prev.position = prev.position, obj.position
+        ContractVariable.objects.filter(pk=obj.pk).update(position=obj.position)
+        ContractVariable.objects.filter(pk=prev.pk).update(position=prev.position)
+    return _ct_render_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def ctv_move_down(request, pk):
+    obj = get_object_or_404(ContractVariable, pk=pk)
+    nxt = ContractVariable.objects.filter(position__gt=obj.position).order_by("position").first()
+    if nxt:
+        obj.position, nxt.position = nxt.position, obj.position
+        ContractVariable.objects.filter(pk=obj.pk).update(position=obj.position)
+        ContractVariable.objects.filter(pk=nxt.pk).update(position=nxt.position)
+    return _ct_render_updated(request)

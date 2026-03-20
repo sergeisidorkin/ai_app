@@ -6,7 +6,7 @@ from django.db.models import Q
 from classifiers_app.models import OKSMCountry
 from policy_app.models import Product
 from projects_app.models import Performer
-from .models import ContractTemplate
+from .models import ContractTemplate, ContractVariable
 
 
 class ContractEditForm(forms.ModelForm):
@@ -82,3 +82,86 @@ class ContractTemplateForm(forms.ModelForm):
         if commit:
             instance.save()
         return instance
+
+
+class ContractVariableForm(forms.ModelForm):
+    source_section = forms.ChoiceField(
+        label="Раздел", required=False,
+        widget=forms.Select(attrs={"class": "form-select", "id": "id_source_section"}),
+    )
+    source_table = forms.ChoiceField(
+        label="Таблица", required=False,
+        widget=forms.Select(attrs={"class": "form-select", "id": "id_source_table"}),
+    )
+    source_column = forms.ChoiceField(
+        label="Столбец", required=False,
+        widget=forms.Select(attrs={"class": "form-select", "id": "id_source_column"}),
+    )
+
+    class Meta:
+        model = ContractVariable
+        fields = [
+            "key", "description",
+            "source_section", "source_table", "source_column",
+        ]
+        widgets = {
+            "key": forms.TextInput(attrs={"class": "form-control", "placeholder": "{{variable_name}}"}),
+            "description": forms.TextInput(attrs={"class": "form-control", "placeholder": "Описание переменной"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from core.column_registry import (
+            get_section_choices, get_table_choices, get_column_choices,
+        )
+        self.fields["source_section"].choices = get_section_choices()
+
+        sec = (
+            self.data.get("source_section", "")
+            or self.initial.get("source_section", "")
+            or (self.instance.source_section if self.instance and self.instance.pk else "")
+        )
+        tbl = (
+            self.data.get("source_table", "")
+            or self.initial.get("source_table", "")
+            or (self.instance.source_table if self.instance and self.instance.pk else "")
+        )
+        if sec:
+            self.fields["source_table"].choices = get_table_choices(sec)
+        else:
+            self.fields["source_table"].choices = [("", "---")]
+        if sec and tbl:
+            self.fields["source_column"].choices = get_column_choices(sec, tbl)
+        else:
+            self.fields["source_column"].choices = [("", "---")]
+
+    def clean_key(self):
+        import re
+        raw = self.cleaned_data.get("key", "").strip()
+        inner = raw.removeprefix("{{").removesuffix("}}")
+        inner = inner.removeprefix("{").removesuffix("}")
+        inner = inner.strip()
+        if not inner:
+            raise forms.ValidationError("Поле не может быть пустым.")
+        if not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_]*", inner):
+            raise forms.ValidationError(
+                "Допускаются только латинские буквы, цифры и подчёркивания. "
+                "Значение должно начинаться с буквы."
+            )
+        return "{{" + inner + "}}"
+
+    def clean(self):
+        cleaned = super().clean()
+        sec = cleaned.get("source_section", "")
+        tbl = cleaned.get("source_table", "")
+        col = cleaned.get("source_column", "")
+        filled = [f for f in (sec, tbl, col) if f]
+        if filled and len(filled) != 3:
+            raise forms.ValidationError(
+                "Необходимо заполнить все три поля: Раздел, Таблица и Столбец."
+            )
+        if sec and tbl and col:
+            from core.column_registry import validate_column_ref
+            if not validate_column_ref(sec, tbl, col):
+                raise forms.ValidationError("Указанная комбинация Раздел/Таблица/Столбец не существует.")
+        return cleaned

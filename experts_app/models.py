@@ -131,14 +131,14 @@ class ExpertProfile(models.Model):
     full_name_genitive = models.CharField(
         "ФИО (полное) родительный падеж", max_length=512, blank=True, default=""
     )
-    self_employed = models.BooleanField("Само-занятость", default=False)
+    self_employed = models.DateField("Самозанятость (дата постановки на учет)", null=True, blank=True)
     tax_rate = models.PositiveIntegerField("Ставка налога, %", null=True, blank=True)
     citizenship = models.CharField("Гражданство", max_length=255, blank=True, default="")
     gender = models.CharField(
         "Пол", max_length=10, choices=GENDER_CHOICES, blank=True, default=""
     )
     inn = models.CharField("ИНН", max_length=50, blank=True, default="")
-    snils = models.DateField("СНИЛС", null=True, blank=True)
+    snils = models.CharField("СНИЛС", max_length=14, blank=True, default="")
     birth_date = models.DateField("Дата рождения", null=True, blank=True)
     passport_series = models.CharField("Паспорт: серия", max_length=50, blank=True, default="")
     passport_number = models.CharField("Паспорт: номер", max_length=50, blank=True, default="")
@@ -155,6 +155,7 @@ class ExpertProfile(models.Model):
     corr_account = models.CharField("Кор. счет", max_length=50, blank=True, default="")
     bank_address = models.CharField("Адрес банка", max_length=512, blank=True, default="")
     corr_bank_name = models.CharField("Наименование банка-корреспондента", max_length=255, blank=True, default="")
+    corr_bank_address = models.CharField("Адрес банка-корреспондента", max_length=512, blank=True, default="")
     corr_bank_bik = models.CharField("БИК банка-корреспондента", max_length=50, blank=True, default="")
     corr_bank_swift = models.CharField("SWIFT банка-корреспондента", max_length=50, blank=True, default="")
     corr_bank_settlement_account = models.CharField("Рас. счет банка-корреспондента", max_length=50, blank=True, default="")

@@ -1,3 +1,4 @@
+{% load ui %}
 <table class="table table-sm align-top" id="ecd-table">
     <thead>
     <tr>
@@ -13,34 +14,35 @@
                 </div>
             {% endif %}
         </th>
-        <th style="min-width:280px">ФИО</th>
-        <th>ФИО (полное) род. п.</th>
-        <th style="width:1%">Само-занятость</th>
-        <th>Ставка налога, %</th>
-        <th>Гражданство</th>
-        <th>Пол</th>
-        <th>ИНН</th>
-        <th>СНИЛС</th>
-        <th>Дата рождения</th>
-        <th>Паспорт: серия</th>
-        <th>Паспорт: номер</th>
-        <th>Паспорт: кем выдан</th>
-        <th>Паспорт: дата выдачи</th>
-        <th>Паспорт: срок действия</th>
-        <th>Паспорт: код подр.</th>
-        <th>Регистрация: адрес</th>
-        <th>Наименование банка</th>
-        <th>SWIFT</th>
-        <th>ИНН банка</th>
-        <th>БИК</th>
-        <th>Рас. счет</th>
-        <th>Кор. счет</th>
-        <th>Адрес банка</th>
-        <th>Наим. банка-корр.</th>
-        <th>БИК банка-корр.</th>
-        <th>SWIFT банка-корр.</th>
-        <th>Рас. счет банка-корр.</th>
-        <th>Кор. счет банка-корр.</th>
+        <th class="text-nowrap" data-col="1" style="min-width:280px">ФИО</th>
+        <th class="text-nowrap" data-col="2">ФИО (полное) род. падеж</th>
+        <th class="text-nowrap" data-col="3">Самозан.</th>
+        <th class="text-nowrap" data-col="4">Налог</th>
+        <th class="text-nowrap" data-col="5">Гражданство</th>
+        <th class="text-nowrap" data-col="6">Пол</th>
+        <th class="text-nowrap" data-col="7">ИНН</th>
+        <th class="text-nowrap" data-col="8">СНИЛС</th>
+        <th class="text-nowrap" data-col="9">Дата рожд.</th>
+        <th class="text-nowrap" data-col="10">Паспорт: серия</th>
+        <th class="text-nowrap" data-col="11">номер</th>
+        <th class="text-nowrap" data-col="12">кем выдан</th>
+        <th class="text-nowrap" data-col="13">дата выдачи</th>
+        <th class="text-nowrap" data-col="14">срок действия</th>
+        <th class="text-nowrap" data-col="15">код подразд.</th>
+        <th class="text-nowrap" data-col="16">адрес регистрации</th>
+        <th class="text-nowrap" data-col="17">Наименование банка</th>
+        <th class="text-nowrap" data-col="18">SWIFT</th>
+        <th class="text-nowrap" data-col="19">ИНН банка</th>
+        <th class="text-nowrap" data-col="20">БИК</th>
+        <th class="text-nowrap" data-col="21">Рас. счет</th>
+        <th class="text-nowrap" data-col="22">Кор. счет</th>
+        <th class="text-nowrap" data-col="23">Адрес банка</th>
+        <th class="text-nowrap" data-col="24">Наим. банка-корр.</th>
+        <th class="text-nowrap" data-col="25">Адрес банка-корр.</th>
+        <th class="text-nowrap" data-col="26">БИК банка-корр.</th>
+        <th class="text-nowrap" data-col="27">SWIFT банка-корр.</th>
+        <th class="text-nowrap" data-col="28">Рас. счет банка-корр.</th>
+        <th class="text-nowrap" data-col="29">Кор. счет банка-корр.</th>
     </tr>
     </thead>
     <tbody>
@@ -60,43 +62,44 @@
                     </div>
                 {% endif %}
             </td>
-            <td class="text-nowrap">{{ p.full_name }}</td>
-            <td class="text-nowrap">{{ p.full_name_genitive }}</td>
-            <td class="text-center">{% if p.self_employed %}<i class="bi bi-check-lg text-success"></i>{% endif %}</td>
-            <td class="text-nowrap">{% if p.tax_rate != None %}{{ p.tax_rate }}%{% endif %}</td>
-            <td class="text-nowrap">{{ p.citizenship }}</td>
-            <td class="text-nowrap">{{ p.get_gender_display }}</td>
-            <td class="text-nowrap">{{ p.inn }}</td>
-            <td class="text-nowrap">{% if p.snils %}{{ p.snils|date:"d.m.Y" }}{% endif %}</td>
-            <td class="text-nowrap">{% if p.birth_date %}{{ p.birth_date|date:"d.m.Y" }}{% endif %}</td>
-            <td class="text-nowrap">{{ p.passport_series }}</td>
-            <td class="text-nowrap">{{ p.passport_number }}</td>
-            <td class="text-nowrap">{{ p.passport_issued_by }}</td>
-            <td class="text-nowrap">{% if p.passport_issue_date %}{{ p.passport_issue_date|date:"d.m.Y" }}{% endif %}</td>
-            <td class="text-nowrap">{% if p.passport_expiry_date %}{{ p.passport_expiry_date|date:"d.m.Y" }}{% endif %}</td>
-            <td class="text-nowrap">{{ p.passport_division_code }}</td>
-            <td class="text-nowrap">{{ p.registration_address }}</td>
-            <td class="text-nowrap">{{ p.bank_name }}</td>
-            <td class="text-nowrap">{{ p.bank_swift }}</td>
-            <td class="text-nowrap">{{ p.bank_inn }}</td>
-            <td class="text-nowrap">{{ p.bank_bik }}</td>
-            <td class="text-nowrap">{{ p.settlement_account }}</td>
-            <td class="text-nowrap">{{ p.corr_account }}</td>
-            <td class="text-nowrap">{{ p.bank_address }}</td>
-            <td class="text-nowrap">{{ p.corr_bank_name }}</td>
-            <td class="text-nowrap">{{ p.corr_bank_bik }}</td>
-            <td class="text-nowrap">{{ p.corr_bank_swift }}</td>
-            <td class="text-nowrap">{{ p.corr_bank_settlement_account }}</td>
-            <td class="text-nowrap">{{ p.corr_bank_corr_account }}</td>
+            <td class="text-nowrap" data-col="1">{{ p.full_name }}</td>
+            <td class="text-nowrap" data-col="2">{{ p.full_name_genitive }}</td>
+            <td class="text-nowrap" data-col="3">{% if p.self_employed %}{{ p.self_employed|date:"d.m.y" }}{% endif %}</td>
+            <td class="text-nowrap" data-col="4">{% if p.tax_rate != None %}{{ p.tax_rate }}%{% endif %}</td>
+            <td class="text-nowrap" data-col="5">{{ p.citizenship }}</td>
+            <td class="text-nowrap" data-col="6">{{ p.get_gender_display }}</td>
+            <td class="text-nowrap" data-col="7">{{ p.inn }}</td>
+            <td class="text-nowrap" data-col="8">{{ p.snils }}</td>
+            <td class="text-nowrap" data-col="9">{% if p.birth_date %}{{ p.birth_date|date:"d.m.Y" }}{% endif %}</td>
+            <td class="text-nowrap text-end" data-col="10">{{ p.passport_series }}</td>
+            <td class="text-nowrap" data-col="11">{{ p.passport_number }}</td>
+            <td class="text-nowrap" data-col="12">{{ p.passport_issued_by }}</td>
+            <td class="text-nowrap" data-col="13">{% if p.passport_issue_date %}{{ p.passport_issue_date|date_ru:"j E Y" }} г.{% endif %}</td>
+            <td class="text-nowrap" data-col="14">{% if p.passport_expiry_date %}{{ p.passport_expiry_date|date:"d.m.Y" }}{% endif %}</td>
+            <td class="text-nowrap" data-col="15">{{ p.passport_division_code }}</td>
+            <td class="text-nowrap" data-col="16">{{ p.registration_address }}</td>
+            <td class="text-nowrap" data-col="17">{{ p.bank_name }}</td>
+            <td class="text-nowrap" data-col="18">{{ p.bank_swift }}</td>
+            <td class="text-nowrap" data-col="19">{{ p.bank_inn }}</td>
+            <td class="text-nowrap" data-col="20">{{ p.bank_bik }}</td>
+            <td class="text-nowrap" data-col="21">{{ p.settlement_account }}</td>
+            <td class="text-nowrap" data-col="22">{{ p.corr_account }}</td>
+            <td class="text-nowrap" data-col="23">{{ p.bank_address }}</td>
+            <td class="text-nowrap" data-col="24">{{ p.corr_bank_name }}</td>
+            <td class="text-nowrap" data-col="25">{{ p.corr_bank_address }}</td>
+            <td class="text-nowrap" data-col="26">{{ p.corr_bank_bik }}</td>
+            <td class="text-nowrap" data-col="27">{{ p.corr_bank_swift }}</td>
+            <td class="text-nowrap" data-col="28">{{ p.corr_bank_settlement_account }}</td>
+            <td class="text-nowrap" data-col="29">{{ p.corr_bank_corr_account }}</td>
         </tr>
     {% empty %}
-        <tr><td colspan="29" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="30" class="text-muted">Пока нет данных.</td></tr>
     {% endfor %}
     </tbody>
 </table>
 
 {% if request.user.is_authenticated and request.user.is_staff %}
-<div class="d-flex align-items-stretch gap-2 products-actions-row">
+<div class="d-flex align-items-stretch gap-2 products-actions-row mb-3">
   <button
           type="button"
           id="ecd-edit-btn"

@@ -114,6 +114,196 @@
             <i class="bi bi-table me-2"></i>
             Реквизиты для договора
         </h5>
+        <div class="d-flex align-items-center gap-2">
+            <span class="small text-muted text-nowrap">Отображаемые поля:</span>
+            <div class="epr-colpicker" id="ecd-colpicker-wrap">
+                <button type="button" class="form-select form-select-sm text-start epr-colpicker-btn" id="ecd-colpicker-btn">
+                    Все поля
+                </button>
+                <div class="epr-colpicker-menu" id="ecd-colpicker-menu">
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="all" id="ecd-col-all" checked>
+                            <label class="form-check-label" for="ecd-col-all">Все поля</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="1" id="ecd-col-1" checked>
+                            <label class="form-check-label" for="ecd-col-1">ФИО</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="2" id="ecd-col-2" checked>
+                            <label class="form-check-label" for="ecd-col-2">ФИО (полное) род. падеж</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="3" id="ecd-col-3" checked>
+                            <label class="form-check-label" for="ecd-col-3">Самозан.</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="4" id="ecd-col-4" checked>
+                            <label class="form-check-label" for="ecd-col-4">Налог</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="5" id="ecd-col-5" checked>
+                            <label class="form-check-label" for="ecd-col-5">Гражданство</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="6" id="ecd-col-6" checked>
+                            <label class="form-check-label" for="ecd-col-6">Пол</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="7" id="ecd-col-7" checked>
+                            <label class="form-check-label" for="ecd-col-7">ИНН</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="8" id="ecd-col-8" checked>
+                            <label class="form-check-label" for="ecd-col-8">СНИЛС</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="9" id="ecd-col-9" checked>
+                            <label class="form-check-label" for="ecd-col-9">Дата рожд.</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="10" id="ecd-col-10" checked>
+                            <label class="form-check-label" for="ecd-col-10">Паспорт: серия</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="11" id="ecd-col-11" checked>
+                            <label class="form-check-label" for="ecd-col-11">номер</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="12" id="ecd-col-12" checked>
+                            <label class="form-check-label" for="ecd-col-12">кем выдан</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="13" id="ecd-col-13" checked>
+                            <label class="form-check-label" for="ecd-col-13">дата выдачи</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="14" id="ecd-col-14" checked>
+                            <label class="form-check-label" for="ecd-col-14">срок действия</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="15" id="ecd-col-15" checked>
+                            <label class="form-check-label" for="ecd-col-15">код подразд.</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="16" id="ecd-col-16" checked>
+                            <label class="form-check-label" for="ecd-col-16">адрес регистрации</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="17" id="ecd-col-17" checked>
+                            <label class="form-check-label" for="ecd-col-17">Наименование банка</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="18" id="ecd-col-18" checked>
+                            <label class="form-check-label" for="ecd-col-18">SWIFT</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="19" id="ecd-col-19" checked>
+                            <label class="form-check-label" for="ecd-col-19">ИНН банка</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="20" id="ecd-col-20" checked>
+                            <label class="form-check-label" for="ecd-col-20">БИК</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="21" id="ecd-col-21" checked>
+                            <label class="form-check-label" for="ecd-col-21">Рас. счет</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="22" id="ecd-col-22" checked>
+                            <label class="form-check-label" for="ecd-col-22">Кор. счет</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="23" id="ecd-col-23" checked>
+                            <label class="form-check-label" for="ecd-col-23">Адрес банка</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="24" id="ecd-col-24" checked>
+                            <label class="form-check-label" for="ecd-col-24">Наим. банка-корр.</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="25" id="ecd-col-25" checked>
+                            <label class="form-check-label" for="ecd-col-25">Адрес банка-корр.</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="26" id="ecd-col-26" checked>
+                            <label class="form-check-label" for="ecd-col-26">БИК банка-корр.</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="27" id="ecd-col-27" checked>
+                            <label class="form-check-label" for="ecd-col-27">SWIFT банка-корр.</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="28" id="ecd-col-28" checked>
+                            <label class="form-check-label" for="ecd-col-28">Рас. счет банка-корр.</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="29" id="ecd-col-29" checked>
+                            <label class="form-check-label" for="ecd-col-29">Кор. счет банка-корр.</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div class="table-responsive" id="ecd-table-wrap">

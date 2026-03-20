@@ -93,7 +93,6 @@
 </div>
 {% endif %}
 
-{% if ct_variables %}
 <div class="mt-3">
   <a class="text-muted small text-decoration-none" data-bs-toggle="collapse"
      href="#ct-variables" role="button" aria-expanded="false">
@@ -101,23 +100,77 @@
   </a>
   <div class="collapse mt-2" id="ct-variables">
     <div class="table-responsive">
-      <table class="table table-bordered mb-0 small">
+      <table class="table table-bordered mb-0 small align-top">
         <thead class="table-light">
           <tr>
+            <th style="width:1%; vertical-align:middle !important; padding:.5rem .5rem;" class="text-center">
+              {% if request.user.is_authenticated and request.user.is_staff %}
+                <input class="form-check-input" style="margin:0 !important; float:none !important; vertical-align:middle !important;"
+                       type="checkbox"
+                       id="ctv-master"
+                       data-target-name="ctv-select"
+                       data-actions-id="ctv-actions"
+                       aria-label="Выделить все строки">
+              {% endif %}
+            </th>
             <th class="ps-3 py-2">Переменная</th>
             <th class="ps-3 py-2">Описание</th>
+            <th class="ps-3 py-2">Связь</th>
           </tr>
         </thead>
         <tbody>
-          {% for key, desc in ct_variables %}
-            <tr>
-              <td class="ps-3 py-2"><code>{{ key }}</code></td>
-              <td class="ps-3 py-2">{{ desc }}</td>
+          {% for v in ct_variables %}
+            <tr data-edit-url="{% url 'ctv_form_edit' v.pk %}"
+                data-delete-url="{% url 'ctv_delete' v.pk %}"
+                data-move-up-url="{% url 'ctv_move_up' v.pk %}"
+                data-move-down-url="{% url 'ctv_move_down' v.pk %}">
+              <td style="vertical-align:middle !important; padding:.5rem .5rem;" class="text-center">
+                {% if request.user.is_authenticated and request.user.is_staff %}
+                  <input class="form-check-input" style="margin:0 !important; float:none !important; vertical-align:middle !important;"
+                         type="checkbox"
+                         id="ctv-sel-{{ v.id }}"
+                         name="ctv-select"
+                         value="{{ v.id }}"
+                         aria-label="Выделить строку">
+                {% endif %}
+              </td>
+              <td class="ps-3 py-2"><code>{{ v.key }}</code></td>
+              <td class="ps-3 py-2">{{ v.description }}</td>
+              <td class="ps-3 py-2 text-muted">{{ v.binding_display }}</td>
             </tr>
+          {% empty %}
+            <tr><td colspan="4" class="text-muted py-2">Пока нет данных.</td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
+
+    {% if request.user.is_authenticated and request.user.is_staff %}
+    <div class="d-flex align-items-stretch gap-2 products-actions-row mt-2">
+      <button
+              class="btn btn-primary btn-sm d-flex align-items-center"
+              hx-get="{% url 'ctv_form_create' %}"
+              hx-target="#contract-templates-modal .modal-content"
+              hx-swap="innerHTML">
+        <i class="bi bi-plus-circle me-2"></i>Добавить строку
+      </button>
+      <div id="ctv-actions" class="d-none d-flex">
+        <div class="btn-group">
+          <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+            <i class="bi bi-arrow-up-square"></i>
+          </button>
+          <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+            <i class="bi bi-arrow-down-square"></i>
+          </button>
+          <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+            <i class="bi bi-pencil-square"></i>
+          </button>
+          <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+            <i class="bi bi-x-square"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+    {% endif %}
   </div>
 </div>
-{% endif %}
