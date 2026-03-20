@@ -269,17 +269,67 @@ def _money_no_currency(value) -> str:
     return f"{sign}{int_str}{frac}".replace(".", ",")
 
 
-def _computed_contract_price(_ep, _p, all_performers) -> str:
-    from decimal import Decimal
+def _money_no_currency_int(value) -> str:
+    """Format an integer as ``1 234 567`` (no decimals, no currency code)."""
+    if value is None:
+        return ""
+    n = int(value)
+    sign = "-" if n < 0 else ""
+    int_str = f"{abs(n):,}".replace(",", "\u00a0")
+    return f"{sign}{int_str}"
+
+
+def _calc_contract_price(ep, all_performers):
+    """Raw Decimal contract_price rounded to integer."""
+    from decimal import Decimal, ROUND_HALF_UP
     total = Decimal("0")
     for p in all_performers:
         if p.agreed_amount is not None:
             total += p.agreed_amount
-    return _money_no_currency(total)
+    tax_rate = 0
+    if ep and ep.tax_rate is not None:
+        tax_rate = int(ep.tax_rate)
+    divisor = 1 - Decimal(tax_rate) / 100
+    if divisor:
+        result = total / divisor
+    else:
+        result = total
+    return result.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+
+
+def _computed_contract_price(ep, _p, all_performers) -> str:
+    return _money_no_currency(_calc_contract_price(ep, all_performers))
+
+
+def _computed_avansplat_sum(ep, _p, all_performers) -> str:
+    from decimal import Decimal, ROUND_HALF_UP
+    price = _calc_contract_price(ep, all_performers)
+    pct = Decimal("0")
+    for p in all_performers:
+        if p.prepayment is not None:
+            pct = p.prepayment
+            break
+    result = (price * pct / 100).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+    return _money_no_currency(result)
+
+
+def _computed_finplat_sum(ep, _p, all_performers) -> str:
+    from decimal import Decimal, ROUND_HALF_UP
+    price = _calc_contract_price(ep, all_performers)
+    pct = Decimal("0")
+    for p in all_performers:
+        if p.prepayment is not None:
+            pct = p.prepayment
+            break
+    avans = (price * pct / 100).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+    result = price - avans
+    return _money_no_currency(result)
 
 
 COMPUTED_MAP: dict[str, callable] = {
     "{{contract_price}}": _computed_contract_price,
+    "{{avansplat_sum}}": _computed_avansplat_sum,
+    "{{finplat_sum}}": _computed_finplat_sum,
 }
 
 
