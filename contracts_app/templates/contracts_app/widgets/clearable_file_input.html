@@ -1,0 +1,18 @@
+{% if widget.is_initial %}
+<div class="form-control d-flex align-items-center mb-4" style="padding: 0; overflow: hidden; min-height: calc(1.5em + 0.75rem + 2px);">
+  <span class="d-flex align-items-center px-3"
+        style="background-color: #f8f9fa; border-right: 1px solid #dee2e6; align-self: stretch; white-space: nowrap;">
+    {{ widget.initial_text }}
+  </span>
+  <span class="px-3 d-flex align-items-center flex-grow-1" style="min-width: 0;">
+    <a href="{{ widget.value.url }}" class="text-truncate">{% if widget.file_basename %}{{ widget.file_basename }}{% else %}{{ widget.value }}{% endif %}</a>
+    {% if not widget.required %}
+    <span class="form-check d-inline-flex align-items-center ms-auto" style="white-space: nowrap;">
+      <input class="form-check-input mt-0" type="checkbox" name="{{ widget.checkbox_name }}" id="{{ widget.checkbox_id }}"{% if widget.attrs.disabled %} disabled{% endif %}{% if widget.attrs.checked %} checked{% endif %}>
+      <label class="form-check-label ms-2" for="{{ widget.checkbox_id }}">{{ widget.clear_checkbox_label }}</label>
+    </span>
+    {% endif %}
+  </span>
+</div>
+{% endif %}
+<input type="{{ widget.type }}" name="{{ widget.name }}"{% include "django/forms/widgets/attrs.html" %}>

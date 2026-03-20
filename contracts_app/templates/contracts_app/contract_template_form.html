@@ -19,15 +19,51 @@
   <div class="modal-body modal-body-scroll">
     {% csrf_token %}
     <div class="row g-2">
-      <div class="col-6">
+      <div class="col-12">
+        <label class="form-label">Группа</label>
+        {{ form.group_member }}
+      </div>
+      <div class="col-3">
         <label class="form-label">Продукт</label>
         {{ form.product }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Типовой раздел (услуги)</label>
+        <div class="dropdown" id="ct-section-dropdown">
+          <button class="form-select text-start" type="button"
+                  id="ct-section-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
+                  style="cursor:pointer; background-color:#fff;">
+            <span class="js-ct-section-label">Все</span>
+          </button>
+          <div class="dropdown-menu p-3" aria-labelledby="ct-section-toggle"
+               style="min-width: 100%; max-height: 240px; overflow-y: auto;">
+            <div class="form-check mb-2">
+              <input class="form-check-input js-ct-section" type="checkbox"
+                     name="section_ids" value="__all__" id="ct-section-all"
+                     {% if form.is_all_selected or not form.selected_section_codes and not form.instance.pk %}checked{% endif %}>
+              <label class="form-check-label" for="ct-section-all">Все</label>
+            </div>
+            <hr class="dropdown-divider">
+            {% for opt in form.section_options %}
+              <div class="form-check">
+                <input class="form-check-input js-ct-section" type="checkbox"
+                       name="section_ids" value="{{ opt.id }}" id="ct-section-{{ opt.id }}"
+                       data-code="{{ opt.code }}"
+                       {% if opt.code in form.selected_section_codes %}checked{% endif %}>
+                <label class="form-check-label" for="ct-section-{{ opt.id }}">
+                  {{ opt.label }}
+                </label>
+              </div>
+            {% empty %}
+              <div class="text-muted small">Нет разделов</div>
+            {% endfor %}
+          </div>
+        </div>
       </div>
       <div class="col-6">
         <label class="form-label">Вид</label>
         {{ form.contract_type }}
       </div>
-
       <div class="col-6">
         <label class="form-label">Сторона</label>
         {{ form.party }}
@@ -36,24 +72,17 @@
         <label class="form-label">Страна</label>
         {{ form.country }}
       </div>
-
-      <div class="col-6">
+      <div class="col-10">
         <label class="form-label">Наименование образца</label>
         {{ form.sample_name }}
       </div>
-      <div class="col-6">
+      <div class="col-2">
         <label class="form-label">Версия</label>
         {{ form.version }}
       </div>
 
-      <div class="col-12 mb-3">
-        <label class="form-label">Файл</label>
+      <div class="col-12 mt-4 mb-3">
         {{ form.file }}
-        {% if template_obj and template_obj.file %}
-          <div class="form-text">
-            Текущий файл: {{ template_obj.file.name|cut:"contract_templates/" }}
-          </div>
-        {% endif %}
       </div>
     </div>
   </div>
@@ -62,3 +91,99 @@
     <button type="submit" class="btn btn-primary">Сохранить</button>
   </div>
 </form>
+
+<script>
+(function() {
+  const ALL_VAL = "__all__";
+  const PARTY_SHORT = {"individual": "ФЗЛ", "legal_entity": "ЮРЛ", "ip": "ИП"};
+  const TYPE_SHORT  = {"gph": "ГПХ", "smz": "СМЗ"};
+  const countryAlpha3 = {{ form.country_alpha3_json|safe }};
+  const groupShortMap = {{ form.group_short_map_json|safe }};
+  const versionMap    = {{ form.version_map_json|safe }};
+  const currentBase   = {{ form.current_base_json|safe }};
+  const currentVer    = {{ form.current_version_json|safe }};
+
+  const dropdown = document.getElementById("ct-section-dropdown");
+  if (!dropdown) return;
+  const checks  = dropdown.querySelectorAll(".js-ct-section");
+  const label   = dropdown.querySelector(".js-ct-section-label");
+  const allCb   = document.getElementById("ct-section-all");
+
+  const groupSel    = document.getElementById("id_group_member");
+  const productSel  = document.getElementById("id_product");
+  const typeSel     = document.getElementById("id_contract_type");
+  const partySel    = document.getElementById("id_party");
+  const countrySel  = document.getElementById("id_country");
+  const versionInp  = document.getElementById("id_version");
+  const sampleInp   = document.getElementById("id_sample_name");
+
+  function shortLabel(cb) {
+    const full = cb.nextElementSibling?.textContent?.trim() || "";
+    const idx = full.indexOf(":");
+    return idx >= 0 ? full.substring(idx + 1).trim() : full;
+  }
+
+  function updateLabel() {
+    const selected = Array.from(checks).filter(cb => cb.checked);
+    if (!selected.length)          { label.textContent = "Все"; return; }
+    if (allCb && allCb.checked)    { label.textContent = "Все"; return; }
+    if (selected.length === 1)     { label.textContent = shortLabel(selected[0]); return; }
+    label.textContent = selected.length + " выбрано";
+  }
+
+  function computeBase() {
+    const groupShort = groupShortMap[groupSel?.value] || "";
+    const party   = PARTY_SHORT[partySel?.value]  || "";
+    const ctype   = TYPE_SHORT[typeSel?.value]     || "";
+    const alpha3  = countryAlpha3[countrySel?.value] || "";
+    const rawProduct = productSel?.value ? productSel.selectedOptions[0]?.textContent?.trim() : "";
+    const product = rawProduct || "";
+
+    let sectionsPart = "Общий";
+    if (!(allCb && allCb.checked)) {
+      const codes = Array.from(checks)
+        .filter(cb => cb.checked && cb.value !== ALL_VAL)
+        .map(cb => cb.dataset.code)
+        .filter(Boolean);
+      if (codes.length) sectionsPart = codes.join("-");
+    }
+
+    const prefix = groupShort ? groupShort + " " : "";
+    return prefix + "Шаблон договора " + party + " " + ctype + " " +
+      alpha3 + "_" + product + "-" + sectionsPart;
+  }
+
+  function getNextVersion(base) {
+    if (currentBase && base === currentBase) return currentVer || "1";
+    const maxV = versionMap[base] || 0;
+    return String(maxV + 1);
+  }
+
+  function buildSampleName() {
+    if (!sampleInp || !versionInp) return;
+    const base = computeBase();
+    const version = getNextVersion(base);
+    versionInp.value = version;
+    sampleInp.value = base + "_v" + version;
+  }
+
+  checks.forEach(cb => {
+    cb.addEventListener("change", function() {
+      if (this.value === ALL_VAL && this.checked) {
+        checks.forEach(c => { if (c.value !== ALL_VAL) c.checked = false; });
+      } else if (this.value !== ALL_VAL && this.checked) {
+        if (allCb) allCb.checked = false;
+      }
+      updateLabel();
+      buildSampleName();
+    });
+  });
+
+  [groupSel, productSel, typeSel, partySel, countrySel].forEach(el => {
+    if (el) el.addEventListener("change", buildSampleName);
+  });
+
+  updateLabel();
+  buildSampleName();
+})();
+</script>

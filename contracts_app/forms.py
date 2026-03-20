@@ -1,12 +1,33 @@
+import json
 from datetime import date as date_type
 
 from django import forms
 from django.db.models import Q
 
 from classifiers_app.models import OKSMCountry
-from policy_app.models import Product
+from group_app.models import GroupMember
+from policy_app.models import Product, TypicalSection
 from projects_app.models import Performer
 from .models import ContractTemplate, ContractVariable
+
+SECTION_ALL_VALUE = "__all__"
+
+
+class _ContractFileInput(forms.ClearableFileInput):
+    initial_text = "Текущий файл"
+    input_text = "Загрузить другой"
+    clear_checkbox_label = "Удалить"
+    template_name = "contracts_app/widgets/clearable_file_input.html"
+
+    def get_context(self, name, value, attrs):
+        ctx = super().get_context(name, value, attrs)
+        if ctx["widget"].get("is_initial") and value and hasattr(value, "name"):
+            import os
+            ctx["widget"]["file_basename"] = os.path.basename(value.name)
+        return ctx
+
+PARTY_SHORT = {"individual": "ФЗЛ", "legal_entity": "ЮРЛ", "ip": "ИП"}
+TYPE_SHORT = {"gph": "ГПХ", "smz": "СМЗ"}
 
 
 class ContractEditForm(forms.ModelForm):
@@ -31,6 +52,28 @@ def _active_countries_qs():
     ).order_by("short_name")
 
 
+def _group_member_order_map():
+    counters = {}
+    result = {}
+    for m in GroupMember.objects.all():
+        key = m.country_code or m.country_name or ""
+        idx = counters.get(key, 0)
+        result[m.pk] = idx
+        counters[key] = idx + 1
+    return result
+
+
+def _group_member_label(member, order):
+    alpha2 = member.country_alpha2 or ""
+    prefix = f"{alpha2}-{order}" if order else alpha2
+    return f"{prefix} {member.short_name}"
+
+
+def _group_member_short(member, order):
+    alpha2 = member.country_alpha2 or ""
+    return f"{alpha2}-{order}" if order else alpha2
+
+
 class ContractTemplateForm(forms.ModelForm):
     country = forms.ModelChoiceField(
         label="Страна",
@@ -41,20 +84,35 @@ class ContractTemplateForm(forms.ModelForm):
     class Meta:
         model = ContractTemplate
         fields = [
-            "product", "contract_type", "party",
+            "group_member", "product", "contract_type", "party",
             "sample_name", "version", "file",
         ]
         widgets = {
+            "group_member": forms.Select(attrs={"class": "form-select"}),
             "product": forms.Select(attrs={"class": "form-select"}),
             "contract_type": forms.Select(attrs={"class": "form-select"}),
             "party": forms.Select(attrs={"class": "form-select"}),
-            "sample_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Наименование образца"}),
-            "version": forms.TextInput(attrs={"class": "form-control", "placeholder": "Версия"}),
-            "file": forms.ClearableFileInput(attrs={"class": "form-control"}),
+            "sample_name": forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
+            "version": forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
+            "file": _ContractFileInput(attrs={"class": "form-control"}),
         }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
+        order_map = _group_member_order_map()
+        members_qs = GroupMember.objects.all()
+        self.fields["group_member"].queryset = members_qs
+        self.fields["group_member"].label_from_instance = lambda obj: _group_member_label(obj, order_map.get(obj.pk, 0))
+        self.fields["group_member"].required = True
+
+        self.fields["file"].required = not (self.instance and self.instance.pk and self.instance.file)
+
+        self.group_short_map_json = json.dumps(
+            {str(m.pk): _group_member_short(m, order_map.get(m.pk, 0)) for m in members_qs},
+            ensure_ascii=False,
+        )
+
         self.fields["product"].queryset = Product.objects.order_by("position", "id")
         self.fields["product"].label_from_instance = lambda obj: obj.short_name
 
@@ -62,13 +120,69 @@ class ContractTemplateForm(forms.ModelForm):
         if self.instance and self.instance.pk and self.instance.country_code:
             qs = (qs | OKSMCountry.objects.filter(code=self.instance.country_code)).distinct().order_by("short_name")
         self.fields["country"].queryset = qs
-        self.fields["country"].label_from_instance = lambda obj: obj.short_name
+        self.fields["country"].label_from_instance = lambda obj: f"{obj.alpha3} {obj.short_name}"
 
         if self.instance and self.instance.pk and self.instance.country_code:
             try:
                 self.initial["country"] = OKSMCountry.objects.get(code=self.instance.country_code).pk
             except OKSMCountry.DoesNotExist:
                 pass
+        elif not self.instance.pk:
+            try:
+                self.initial["country"] = qs.get(alpha3="RUS").pk
+            except OKSMCountry.DoesNotExist:
+                pass
+
+        self.country_alpha3_json = json.dumps(
+            {str(c.pk): c.alpha3 for c in self.fields["country"].queryset},
+            ensure_ascii=False,
+        )
+
+        sections = (
+            TypicalSection.objects
+            .select_related("product")
+            .order_by("product__position", "position", "id")
+        )
+        self.section_options = [
+            {
+                "id": s.id,
+                "code": s.code,
+                "short_name": s.short_name,
+                "short_name_ru": s.short_name_ru,
+                "label": f"{s.product.short_name}:{s.code} {s.short_name_ru}",
+            }
+            for s in sections
+        ]
+
+        self.is_all_selected = True
+        self.selected_section_codes = set()
+        if self.instance and self.instance.pk:
+            self.is_all_selected = self.instance.is_all_sections
+            if not self.is_all_selected:
+                self.selected_section_codes = {
+                    entry.get("code") for entry in (self.instance.typical_sections_json or [])
+                }
+
+        existing = ContractTemplate.objects.all()
+        if self.instance and self.instance.pk:
+            existing = existing.exclude(pk=self.instance.pk)
+        version_map = {}
+        for t in existing:
+            base = t.sample_name.rsplit("_v", 1)[0] if t.sample_name else ""
+            try:
+                v = int(t.version)
+            except (ValueError, TypeError):
+                v = 0
+            version_map[base] = max(version_map.get(base, 0), v)
+        self.version_map_json = json.dumps(version_map, ensure_ascii=False)
+
+        current_base = ""
+        current_version = ""
+        if self.instance and self.instance.pk and self.instance.sample_name:
+            current_base = self.instance.sample_name.rsplit("_v", 1)[0]
+            current_version = self.instance.version or ""
+        self.current_base_json = json.dumps(current_base, ensure_ascii=False)
+        self.current_version_json = json.dumps(current_version, ensure_ascii=False)
 
     def save(self, commit=True):
         instance = super().save(commit=False)
@@ -79,9 +193,92 @@ class ContractTemplateForm(forms.ModelForm):
         else:
             instance.country_name = ""
             instance.country_code = ""
+
+        section_values = self.data.getlist("section_ids")
+        if SECTION_ALL_VALUE in section_values or not section_values:
+            instance.is_all_sections = True
+            instance.typical_sections_json = []
+        else:
+            instance.is_all_sections = False
+            selected_ids = {int(v) for v in section_values if v.isdigit()}
+            chosen = (
+                TypicalSection.objects
+                .filter(pk__in=selected_ids)
+                .order_by("product__position", "position", "id")
+            )
+            instance.typical_sections_json = [
+                {"code": s.code, "short_name": s.short_name}
+                for s in chosen
+            ]
+
+        party_short = PARTY_SHORT.get(instance.party, "")
+        type_short = TYPE_SHORT.get(instance.contract_type, "")
+        alpha3 = country.alpha3 if country else ""
+        product_name = ""
+        if instance.product_id:
+            product_name = instance.product.short_name
+        if instance.is_all_sections:
+            sections_part = "Общий"
+        else:
+            codes = [e.get("code", "") for e in instance.typical_sections_json or [] if e.get("code")]
+            sections_part = "-".join(codes) if codes else "Общий"
+        group_prefix = ""
+        if instance.group_member_id:
+            order_map = _group_member_order_map()
+            group_prefix = _group_member_short(instance.group_member, order_map.get(instance.group_member_id, 0)) + " "
+        base_name = (
+            f"{group_prefix}Шаблон договора {party_short} {type_short} "
+            f"{alpha3}_{product_name}-{sections_part}"
+        )
+
+        existing = ContractTemplate.objects.all()
+        if instance.pk:
+            old_base = instance.sample_name.rsplit("_v", 1)[0] if instance.sample_name else ""
+            if old_base == base_name:
+                version = instance.version or "1"
+            else:
+                existing = existing.exclude(pk=instance.pk)
+                version = str(self._next_version(existing, base_name))
+        else:
+            version = str(self._next_version(existing, base_name))
+
+        instance.version = version
+        instance.sample_name = f"{base_name}_v{version}"
+
+        import os
+        uploaded = self.cleaned_data.get("file")
+        if uploaded:
+            ext = os.path.splitext(uploaded.name)[1]
+            instance.file.name = instance.sample_name + ext
+        elif instance.pk and instance.file:
+            old_path = instance.file.name
+            ext = os.path.splitext(old_path)[1]
+            new_name = "contract_templates/" + instance.sample_name + ext
+            if old_path != new_name:
+                storage = instance.file.storage
+                if storage.exists(old_path):
+                    old_full = storage.path(old_path)
+                    new_full = storage.path(new_name)
+                    os.makedirs(os.path.dirname(new_full), exist_ok=True)
+                    os.rename(old_full, new_full)
+                instance.file.name = new_name
+
         if commit:
             instance.save()
         return instance
+
+    @staticmethod
+    def _next_version(qs, base_name):
+        max_v = 0
+        for t in qs:
+            t_base = t.sample_name.rsplit("_v", 1)[0] if t.sample_name else ""
+            if t_base == base_name:
+                try:
+                    v = int(t.version)
+                except (ValueError, TypeError):
+                    v = 0
+                max_v = max(max_v, v)
+        return max_v + 1
 
 
 class ContractVariableForm(forms.ModelForm):
