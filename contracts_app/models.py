@@ -7,12 +7,20 @@ CONTRACT_TYPE_CHOICES = [
 ]
 
 PARTY_CHOICES = [
-    ("individual", "Физлицо"),
-    ("legal_entity", "Юрлицо"),
+    ("individual", "ФЗЛ Физлицо"),
+    ("legal_entity", "ЮРЛ Юрлицо"),
+    ("ip", "ИП Индивидуальный предприниматель"),
 ]
 
 
 class ContractTemplate(models.Model):
+    group_member = models.ForeignKey(
+        "group_app.GroupMember",
+        verbose_name="Группа",
+        on_delete=models.SET_NULL,
+        related_name="contract_templates",
+        null=True,
+    )
     product = models.ForeignKey(
         "policy_app.Product",
         verbose_name="Продукт",
@@ -30,6 +38,8 @@ class ContractTemplate(models.Model):
     sample_name = models.CharField("Наименование образца", max_length=512)
     version = models.CharField("Версия", max_length=128, blank=True, default="")
     file = models.FileField("Файл", upload_to="contract_templates/", blank=True, default="")
+    is_all_sections = models.BooleanField("Все разделы", default=True)
+    typical_sections_json = models.JSONField("Типовые разделы (услуги)", default=list, blank=True)
     position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -39,6 +49,13 @@ class ContractTemplate(models.Model):
         ordering = ["position", "id"]
         verbose_name = "Образец шаблона договора"
         verbose_name_plural = "Образцы шаблонов договоров"
+
+    @property
+    def typical_sections_display(self):
+        if self.is_all_sections:
+            return "Все"
+        codes = [entry.get("code", "") for entry in self.typical_sections_json or [] if entry.get("code")]
+        return ", ".join(codes) if codes else ""
 
     def __str__(self):
         return self.sample_name
