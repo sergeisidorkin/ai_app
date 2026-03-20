@@ -599,6 +599,8 @@
           <button type="button"
                   id="create-contract-btn"
                   class="btn btn-primary btn-sm d-flex align-items-center"
+                  data-bs-toggle="modal"
+                  data-bs-target="#create-contract-progress-modal"
                   disabled>
             <i class="bi bi-file-earmark-plus me-2"></i>Создать проект договора
           </button>
@@ -645,6 +647,32 @@
             <div class="modal-footer">
               <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Отмена</button>
               <button type="button" id="create-contract-target-save-btn" class="btn btn-primary btn-sm">Сохранить</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal fade" id="create-contract-progress-modal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title">Создание проектов договоров</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+            </div>
+            <div class="modal-body">
+              <p class="mb-3">На Яндекс.Диске в целевой папке будут созданы папки исполнителей с проектами договоров.</p>
+              <div id="create-contract-progress" class="d-none">
+                <div class="ws-progress-track">
+                  <div class="ws-progress-fill" style="width:0%"></div>
+                </div>
+              </div>
+              <div id="create-contract-status" class="text-muted small mt-2"></div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Закрыть</button>
+              <button type="button" id="create-contract-confirm-btn" class="btn btn-primary btn-sm">
+                <i class="bi bi-file-earmark-plus me-1"></i>Создать
+              </button>
             </div>
           </div>
         </div>
