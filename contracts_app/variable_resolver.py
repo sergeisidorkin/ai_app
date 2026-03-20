@@ -288,9 +288,13 @@ def _computed_contract_price(ep, _p, all_performers) -> str:
     tax_rate = 0
     if ep and ep.tax_rate is not None:
         tax_rate = int(ep.tax_rate)
-    result = total * (1 - Decimal(tax_rate) / 100)
+    divisor = 1 - Decimal(tax_rate) / 100
+    if divisor:
+        result = total / divisor
+    else:
+        result = total
     result = result.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
-    return _money_no_currency_int(result)
+    return _money_no_currency(result)
 
 
 COMPUTED_MAP: dict[str, callable] = {
