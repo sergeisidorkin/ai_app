@@ -35,20 +35,20 @@ def _ep_phone(ep: ExpertProfile, _p: Performer) -> str:
 def _ep_expertise_direction(ep: ExpertProfile, _p: Performer) -> str:
     if not ep or not ep.expertise_direction_id:
         return ""
-    return str(ep.expertise_direction)
+    return getattr(ep.expertise_direction, "department_name", "") or ""
 
 
 def _ep_specialty(ep: ExpertProfile, _p: Performer) -> str:
     if not ep:
         return ""
-    first = ep.specialties.first()
-    return str(first) if first else ""
+    first_ranked = ep.ranked_specialties.select_related("specialty").first()
+    return first_ranked.specialty.specialty if first_ranked else ""
 
 
 def _ep_grade(ep: ExpertProfile, _p: Performer) -> str:
     if not ep or not ep.grade_id:
         return ""
-    return str(ep.grade)
+    return getattr(ep.grade, "grade_ru", "") or ""
 
 
 def _ep_country(ep: ExpertProfile, _p: Performer) -> str:
@@ -60,7 +60,7 @@ def _ep_country(ep: ExpertProfile, _p: Performer) -> str:
 def _ep_region(ep: ExpertProfile, _p: Performer) -> str:
     if not ep or not ep.region_id:
         return ""
-    return str(ep.region)
+    return getattr(ep.region, "region_name", "") or ""
 
 
 def _str_field(field_name: str):
@@ -72,27 +72,36 @@ def _str_field(field_name: str):
     return _resolver
 
 
-def _date_field(field_name: str):
-    """Return a resolver that formats a DateField as shown in the UI:
-    ``15 марта 2026 г.`` (day + genitive month + year + «г.»)."""
+def _date_field(field_name: str, fmt: str = "dd.mm.YYYY"):
+    """Return a resolver that formats a DateField matching the UI table.
+
+    Supported *fmt* values (mirroring Django template filters used in tables):
+      ``"dd.mm.YYYY"``  → ``15.03.2026``   (``date:"d.m.Y"``)
+      ``"dd.mm.yy"``    → ``15.03.26``     (``date:"d.m.y"``)
+      ``"j E Y г."``    → ``15 марта 2026 г.`` (``date_ru:"j E Y"`` + " г.")
+    """
     def _resolver(ep: ExpertProfile, _p: Performer) -> str:
         if not ep:
             return ""
         val = getattr(ep, field_name, None)
         if val is None:
             return ""
-        from core.dates import format_date_ru
-        return format_date_ru(val, "j E Y") + " г."
+        if fmt == "j E Y г.":
+            from core.dates import format_date_ru
+            return format_date_ru(val, "j E Y") + " г."
+        if fmt == "dd.mm.yy":
+            return val.strftime("%d.%m.%y")
+        return val.strftime("%d.%m.%Y")
     return _resolver
 
 
-def _int_field(field_name: str):
+def _int_field(field_name: str, suffix: str = ""):
     """Return a resolver that reads an integer field from ExpertProfile."""
     def _resolver(ep: ExpertProfile, _p: Performer) -> str:
         if not ep:
             return ""
         val = getattr(ep, field_name, None)
-        return str(val) if val is not None else ""
+        return f"{val}{suffix}" if val is not None else ""
     return _resolver
 
 
@@ -122,18 +131,18 @@ FIELD_MAP: dict[tuple[str, str, str], callable] = {
     # ---- experts.contract_details ----
     ("experts", "contract_details", "full_name"): _ep_full_name,
     ("experts", "contract_details", "full_name_genitive"): _str_field("full_name_genitive"),
-    ("experts", "contract_details", "self_employed"): _date_field("self_employed"),
-    ("experts", "contract_details", "tax_rate"): _int_field("tax_rate"),
+    ("experts", "contract_details", "self_employed"): _date_field("self_employed", "dd.mm.yy"),
+    ("experts", "contract_details", "tax_rate"): _int_field("tax_rate", "%"),
     ("experts", "contract_details", "citizenship"): _str_field("citizenship"),
     ("experts", "contract_details", "gender"): _gender_display,
     ("experts", "contract_details", "inn"): _str_field("inn"),
     ("experts", "contract_details", "snils"): _str_field("snils"),
-    ("experts", "contract_details", "birth_date"): _date_field("birth_date"),
+    ("experts", "contract_details", "birth_date"): _date_field("birth_date", "dd.mm.YYYY"),
     ("experts", "contract_details", "passport_series"): _str_field("passport_series"),
     ("experts", "contract_details", "passport_number"): _str_field("passport_number"),
     ("experts", "contract_details", "passport_issued_by"): _str_field("passport_issued_by"),
-    ("experts", "contract_details", "passport_issue_date"): _date_field("passport_issue_date"),
-    ("experts", "contract_details", "passport_expiry"): _date_field("passport_expiry_date"),
+    ("experts", "contract_details", "passport_issue_date"): _date_field("passport_issue_date", "j E Y г."),
+    ("experts", "contract_details", "passport_expiry"): _date_field("passport_expiry_date", "dd.mm.YYYY"),
     ("experts", "contract_details", "passport_division_code"): _str_field("passport_division_code"),
     ("experts", "contract_details", "registration_address"): _str_field("registration_address"),
     ("experts", "contract_details", "bank_name"): _str_field("bank_name"),
