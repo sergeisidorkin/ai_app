@@ -1696,14 +1696,61 @@ def source_data_target_folder_save(request):
 
 @login_required
 @user_passes_test(staff_required)
+@require_GET
+def contract_project_target_folder_load(request):
+    from .models import ContractProjectTargetFolder
+    from yandexdisk_app.workspace import REGISTRATION_STANDARD_FOLDERS
+
+    qs, _ = _get_effective_folders(request.user)
+    options = list(
+        qs.filter(level=1)
+        .order_by("position")
+        .values_list("name", flat=True)
+    )
+    if not options:
+        options = list(REGISTRATION_STANDARD_FOLDERS)
+
+    target = ContractProjectTargetFolder.objects.filter(user=request.user).first()
+    folder_name = target.folder_name if target else ""
+
+    return JsonResponse({"folder_name": folder_name, "options": options})
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def contract_project_target_folder_save(request):
+    from .models import ContractProjectTargetFolder
+
+    try:
+        data = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Некорректные данные."}, status=400)
+
+    folder_name = (data.get("folder_name") or "").strip()
+    if not folder_name:
+        return JsonResponse({"ok": False, "error": "Не указано имя папки."}, status=400)
+
+    ContractProjectTargetFolder.objects.update_or_create(
+        user=request.user,
+        defaults={"folder_name": folder_name},
+    )
+    return JsonResponse({"ok": True})
+
+
+@login_required
+@user_passes_test(staff_required)
 @require_POST
 def create_contract_project(request):
     """Create folders on Yandex.Disk for selected contract performers.
 
+    Path: <disk_root>/<year>/<project_folder>/<target_folder>/
     Folder names: ``XXX Фамилия ИО`` where XXX is a zero-padded sequence
     number starting at 000, in the same order the rows appear in the table.
     """
-    from yandexdisk_app.workspace import _resolve_source_data_base, _sanitize
+    from .models import ContractProjectTargetFolder
+    from yandexdisk_app.workspace import _build_project_folder_name, _sanitize
+    from yandexdisk_app.models import YandexDiskSelection
     from yandexdisk_app.service import create_folder, list_resources
 
     raw_ids = request.POST.getlist("performer_ids[]") or request.POST.getlist("performer_ids")
@@ -1725,9 +1772,21 @@ def create_contract_project(request):
         return JsonResponse({"ok": False, "error": "Исполнители не найдены."}, status=404)
 
     project = performers[0].registration
-    base_path, err = _resolve_source_data_base(request.user, project)
-    if err:
-        return JsonResponse({"ok": False, "error": err.message}, status=400)
+
+    selection = YandexDiskSelection.objects.filter(user=request.user).first()
+    if not selection or not selection.resource_path:
+        return JsonResponse({"ok": False, "error": "Не выбрана папка на Яндекс.Диске."}, status=400)
+
+    target_obj = ContractProjectTargetFolder.objects.filter(user=request.user).first()
+    if not target_obj or not target_obj.folder_name:
+        return JsonResponse({"ok": False, "error": "Не выбрана целевая папка в настройках."}, status=400)
+
+    disk_root = selection.resource_path.rstrip("/")
+    year_str = _sanitize(str(project.year) if project.year else "Без года")
+    project_folder = _build_project_folder_name(project)
+    target_folder = _sanitize(target_obj.folder_name)
+
+    base_path = f"{disk_root}/{year_str}/{project_folder}/{target_folder}"
 
     def _executor_folder_name(executor_full_name):
         raw = " ".join(str(executor_full_name or "").split())
