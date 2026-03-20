@@ -342,12 +342,42 @@ def _computed_finplat_sum_kop(ep, _p, all_performers) -> str:
     return _kopecks(_calc_finplat(ep, all_performers))
 
 
+def _computed_contract_price_text(ep, _p, all_performers) -> str:
+    from core.num2words_ru import number_to_words_ru
+    return number_to_words_ru(int(_calc_contract_price(ep, all_performers)))
+
+
+def _computed_avansplat_sum_text(ep, _p, all_performers) -> str:
+    from core.num2words_ru import number_to_words_ru
+    return number_to_words_ru(int(_calc_avansplat(ep, all_performers)))
+
+
+def _computed_avansplat_sum_kop_text(ep, _p, all_performers) -> str:
+    from core.num2words_ru import number_to_words_ru
+    return number_to_words_ru(int(_kopecks(_calc_avansplat(ep, all_performers))))
+
+
+def _computed_finplat_sum_text(ep, _p, all_performers) -> str:
+    from core.num2words_ru import number_to_words_ru
+    return number_to_words_ru(int(_calc_finplat(ep, all_performers)))
+
+
+def _computed_finplat_sum_kop_text(ep, _p, all_performers) -> str:
+    from core.num2words_ru import number_to_words_ru
+    return number_to_words_ru(int(_kopecks(_calc_finplat(ep, all_performers))))
+
+
 COMPUTED_MAP: dict[str, callable] = {
     "{{contract_price}}": _computed_contract_price,
     "{{avansplat_sum}}": _computed_avansplat_sum,
     "{{finplat_sum}}": _computed_finplat_sum,
     "{{avansplat_sum_kop}}": _computed_avansplat_sum_kop,
     "{{finplat_sum_kop}}": _computed_finplat_sum_kop,
+    "{{contract_price_text}}": _computed_contract_price_text,
+    "{{avansplat_sum_text}}": _computed_avansplat_sum_text,
+    "{{avansplat_sum_kop_text}}": _computed_avansplat_sum_kop_text,
+    "{{finplat_sum_text}}": _computed_finplat_sum_text,
+    "{{finplat_sum_kop_text}}": _computed_finplat_sum_kop_text,
 }
 
 
