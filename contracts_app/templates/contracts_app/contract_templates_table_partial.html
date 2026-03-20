@@ -55,7 +55,7 @@
             <td class="text-nowrap">{% if t.file %}{{ t.file.name|cut:"contract_templates/" }}{% else %}—{% endif %}</td>
             <td class="text-nowrap">
                 {% if t.file %}
-                    <a href="{% url 'ct_download' t.pk %}" class="ct-download-link" title="Скачать файл">
+                    <a href="{% url 'ct_download' t.pk %}" download class="ct-download-link" title="Скачать файл">
                         <i class="bi bi-download"></i>
                     </a>
                 {% else %}

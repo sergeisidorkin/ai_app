@@ -1,4 +1,3 @@
-import mimetypes
 import os
 
 from django.contrib.auth.decorators import login_required, user_passes_test
@@ -254,9 +253,15 @@ def ct_download(request, pk):
     file_path = obj.file.path
     if not os.path.isfile(file_path):
         raise Http404("Файл не найден на диске")
-    content_type, _ = mimetypes.guess_type(file_path)
-    response = FileResponse(open(file_path, "rb"), content_type=content_type or "application/octet-stream")
-    response["Content-Disposition"] = f'attachment; filename="{os.path.basename(file_path)}"'
+    from urllib.parse import quote
+    basename = os.path.basename(file_path)
+    response = FileResponse(
+        open(file_path, "rb"),
+        content_type="application/octet-stream",
+    )
+    response["Content-Disposition"] = (
+        f"attachment; filename*=UTF-8''{quote(basename)}"
+    )
     return response
 
 
