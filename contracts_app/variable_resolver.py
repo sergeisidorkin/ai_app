@@ -485,8 +485,56 @@ def _computed_actives_name(_ep, _p, all_performers) -> list[str]:
     return result
 
 
+def _computed_chapters_name(_ep, _p, all_performers):
+    """Build a multi-level numbered list: assets → sections → subsections.
+
+    Returns ``list[tuple[int, str]]`` where int is nesting level (0, 1, 2).
+    If only 1 asset: sections at level 0, subsections at level 1.
+    If N assets: assets at level 0, sections at level 1, subsections at level 2.
+    """
+    from collections import OrderedDict
+    from policy_app.models import SectionStructure
+
+    assets_sections: OrderedDict[str, list] = OrderedDict()
+    seen_pairs = set()
+    for p in all_performers:
+        asset = p.asset_name or ""
+        sec = p.typical_section
+        if not asset or not sec:
+            continue
+        pair = (asset, sec.pk)
+        if pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
+        assets_sections.setdefault(asset, []).append(sec)
+
+    section_ids = {sec.pk for secs in assets_sections.values() for sec in secs}
+    subsections_map: dict[int, list[str]] = {}
+    if section_ids:
+        for ss in SectionStructure.objects.filter(section_id__in=section_ids).select_related("section"):
+            lines = [ln.strip() for ln in ss.subsections.split("\n") if ln.strip()]
+            if lines:
+                subsections_map[ss.section_id] = lines
+
+    multi_asset = len(assets_sections) > 1
+    items: list[tuple[int, str]] = []
+
+    for asset_name, sections in assets_sections.items():
+        if multi_asset:
+            items.append((0, asset_name))
+        sec_lvl = 1 if multi_asset else 0
+        sub_lvl = 2 if multi_asset else 1
+        for sec in sections:
+            items.append((sec_lvl, sec.name_ru))
+            for sub in subsections_map.get(sec.pk, []):
+                items.append((sub_lvl, sub))
+
+    return items
+
+
 COMPUTED_LIST_MAP: dict[str, callable] = {
     "[[actives_name]]": _computed_actives_name,
+    "[[chapters_name]]": _computed_chapters_name,
 }
 
 COMPUTED_MAP: dict[str, callable] = {

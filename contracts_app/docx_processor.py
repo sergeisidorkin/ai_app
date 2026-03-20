@@ -90,9 +90,13 @@ def _replace_in_paragraph(paragraph, replacements: dict[str, str]) -> None:
         run.text = run_texts[i]
 
 
-def _replace_list_in_paragraph(paragraph, list_replacements: dict[str, list[str]]) -> bool:
+def _replace_list_in_paragraph(paragraph, list_replacements: dict) -> bool:
     """If the paragraph contains a ``[[list_var]]`` placeholder, replace the
-    entire paragraph with a bulleted list of items.  Returns True if replaced.
+    entire paragraph with a list of items.  Returns True if replaced.
+
+    Items may be:
+    - ``list[str]`` — flat bullet list (numId=1, ilvl=0)
+    - ``list[tuple[int, str]]`` — multi-level numbered list (numId=2, ilvl=level)
 
     Formatting (font, size, bold, italic) is copied from the run containing
     the opening ``[[`` of the placeholder.
@@ -127,19 +131,29 @@ def _replace_list_in_paragraph(paragraph, list_replacements: dict[str, list[str]
     source_run = runs[_run_at(m.start())]
     source_rPr = source_run._element.find(qn("w:rPr"))
 
+    is_multilevel = items and isinstance(items[0], (tuple, list))
+
     parent = paragraph._element.getparent()
     anchor = paragraph._element
 
     from docx.oxml import OxmlElement
 
-    for item_text in items:
+    for item in items:
+        if is_multilevel:
+            level, item_text = item
+            num_id_val = "2"
+        else:
+            level = 0
+            item_text = item
+            num_id_val = "1"
+
         new_p = OxmlElement("w:p")
         pPr = OxmlElement("w:pPr")
         numPr = OxmlElement("w:numPr")
         ilvl = OxmlElement("w:ilvl")
-        ilvl.set(qn("w:val"), "0")
+        ilvl.set(qn("w:val"), str(level))
         numId = OxmlElement("w:numId")
-        numId.set(qn("w:val"), "1")
+        numId.set(qn("w:val"), num_id_val)
         numPr.append(ilvl)
         numPr.append(numId)
         pPr.append(numPr)
@@ -150,7 +164,7 @@ def _replace_list_in_paragraph(paragraph, list_replacements: dict[str, list[str]
             new_r.append(deepcopy(source_rPr))
         new_t = OxmlElement("w:t")
         new_t.set(qn("xml:space"), "preserve")
-        new_t.text = item_text
+        new_t.text = str(item_text)
         new_r.append(new_t)
         new_p.append(new_r)
 
@@ -216,6 +230,69 @@ def _ensure_bullet_numbering(doc):
     numbering_elm.append(num_el)
 
 
+def _ensure_multilevel_numbering(doc):
+    """Ensure the document has a 3-level decimal numbering definition
+    (numId=2) for multi-level lists like ``[[chapters_name]]``.
+
+    Levels: ``1.``, ``1.1``, ``1.1.1`` with increasing indentation.
+    """
+    from docx.oxml import OxmlElement
+
+    numbering_part = doc.part.numbering_part
+    numbering_elm = numbering_part._element
+
+    for abstract in numbering_elm.findall(qn("w:abstractNum")):
+        if abstract.get(qn("w:abstractNumId")) == "1":
+            return
+
+    abstract_num = OxmlElement("w:abstractNum")
+    abstract_num.set(qn("w:abstractNumId"), "1")
+    multi_lvl = OxmlElement("w:multiLevelType")
+    multi_lvl.set(qn("w:val"), "multilevel")
+    abstract_num.append(multi_lvl)
+
+    level_defs = [
+        {"ilvl": "0", "fmt": "decimal", "text": "%1.", "indent": "360", "hanging": "360"},
+        {"ilvl": "1", "fmt": "decimal", "text": "%1.%2", "indent": "720", "hanging": "360"},
+        {"ilvl": "2", "fmt": "decimal", "text": "%1.%2.%3", "indent": "1080", "hanging": "360"},
+    ]
+    for ld in level_defs:
+        lvl = OxmlElement("w:lvl")
+        lvl.set(qn("w:ilvl"), ld["ilvl"])
+        start = OxmlElement("w:start")
+        start.set(qn("w:val"), "1")
+        lvl.append(start)
+        num_fmt = OxmlElement("w:numFmt")
+        num_fmt.set(qn("w:val"), ld["fmt"])
+        lvl.append(num_fmt)
+        lvl_text = OxmlElement("w:lvlText")
+        lvl_text.set(qn("w:val"), ld["text"])
+        lvl.append(lvl_text)
+        lvl_jc = OxmlElement("w:lvlJc")
+        lvl_jc.set(qn("w:val"), "left")
+        lvl.append(lvl_jc)
+        pPr = OxmlElement("w:pPr")
+        ind = OxmlElement("w:ind")
+        ind.set(qn("w:left"), ld["indent"])
+        ind.set(qn("w:hanging"), ld["hanging"])
+        pPr.append(ind)
+        lvl.append(pPr)
+        abstract_num.append(lvl)
+
+    numbering_elm.insert(0, abstract_num)
+
+    for num_el in numbering_elm.findall(qn("w:num")):
+        if num_el.get(qn("w:numId")) == "2":
+            return
+
+    num_el = OxmlElement("w:num")
+    num_el.set(qn("w:numId"), "2")
+    abstract_ref = OxmlElement("w:abstractNumId")
+    abstract_ref.set(qn("w:val"), "1")
+    num_el.append(abstract_ref)
+    numbering_elm.append(num_el)
+
+
 def _process_paragraphs(paragraphs, replacements: dict[str, str]) -> None:
     for para in paragraphs:
         _replace_in_paragraph(para, replacements)
@@ -259,8 +336,14 @@ def process_template(
     doc = Document(BytesIO(file_bytes))
 
     if list_replacements:
+        has_multilevel = any(
+            items and isinstance(items[0], (tuple, list))
+            for items in list_replacements.values()
+        )
         try:
             _ensure_bullet_numbering(doc)
+            if has_multilevel:
+                _ensure_multilevel_numbering(doc)
         except Exception:
             pass
         _process_list_paragraphs(doc.paragraphs, list_replacements)
