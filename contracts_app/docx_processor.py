@@ -149,6 +149,12 @@ def _replace_list_in_paragraph(paragraph, list_replacements: dict) -> bool:
 
         new_p = OxmlElement("w:p")
         pPr = OxmlElement("w:pPr")
+
+        if not is_multilevel:
+            pStyle = OxmlElement("w:pStyle")
+            pStyle.set(qn("w:val"), "ListBullet")
+            pPr.append(pStyle)
+
         numPr = OxmlElement("w:numPr")
         ilvl = OxmlElement("w:ilvl")
         ilvl.set(qn("w:val"), str(level))
