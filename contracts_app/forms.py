@@ -318,10 +318,14 @@ class ContractVariableForm(forms.ModelForm):
         )
 
         if self.is_computed:
-            self.fields["key"].widget.attrs["readonly"] = True
-            self.fields["key"].widget.attrs["tabindex"] = "-1"
+            locked_style = "background-color:#f8f9fa; color:#6c757d;"
+            self.fields["key"].widget.attrs.update({
+                "readonly": True, "tabindex": "-1", "style": locked_style,
+            })
             for fname in ("source_section", "source_table", "source_column"):
-                self.fields[fname].widget.attrs["disabled"] = True
+                self.fields[fname].widget.attrs.update({
+                    "disabled": True, "style": locked_style,
+                })
 
         self.fields["source_section"].choices = get_section_choices()
 
