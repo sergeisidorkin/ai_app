@@ -1791,7 +1791,7 @@ def create_contract_project(request):
 
     all_templates = list(
         ContractTemplate.objects
-        .select_related("product", "group_member")
+        .select_related("product")
         .filter(file__gt="")
     )
 
@@ -1965,7 +1965,11 @@ def create_contract_project(request):
                 seen_templates.add(tmpl.pk)
 
                 try:
-                    file_data = tmpl.file.read()
+                    tmpl.file.open("rb")
+                    try:
+                        file_data = tmpl.file.read()
+                    finally:
+                        tmpl.file.close()
                     original_name = tmpl.file.name.split("/")[-1]
                     upload_path = f"{folder_path}/{original_name}"
                     if not upload_file(request.user, upload_path, file_data):
