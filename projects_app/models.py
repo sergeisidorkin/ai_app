@@ -856,3 +856,21 @@ class SourceDataTargetFolder(models.Model):
 
     def __str__(self):
         return f"{self.user}: {self.folder_name}"
+
+
+class ContractProjectTargetFolder(models.Model):
+    """Хранит выбранную пользователем целевую папку уровня 1
+    для создания проекта договора."""
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="contract_project_target_folder",
+    )
+    folder_name = models.CharField(max_length=255)
+
+    class Meta:
+        verbose_name = "Целевая папка проекта договора"
+        verbose_name_plural = "Целевые папки проекта договора"
+
+    def __str__(self):
+        return f"{self.user}: {self.folder_name}"
