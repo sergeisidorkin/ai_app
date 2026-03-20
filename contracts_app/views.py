@@ -126,8 +126,16 @@ CTV_FORM_TEMPLATE = "contracts_app/contract_variable_form.html"
 
 
 def _ct_context():
+    from .forms import _group_member_order_map, _group_member_short
+    templates = list(ContractTemplate.objects.select_related("product", "group_member").all())
+    order_map = _group_member_order_map()
+    for t in templates:
+        if t.group_member_id:
+            t.group_display = _group_member_short(t.group_member, order_map.get(t.group_member_id, 0))
+        else:
+            t.group_display = ""
     return {
-        "templates": ContractTemplate.objects.select_related("product").all(),
+        "templates": templates,
         "ct_variables": ContractVariable.objects.all(),
     }
 
