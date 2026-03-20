@@ -1751,7 +1751,9 @@ def create_contract_project(request):
     """
     import re
     from .models import ContractProjectTargetFolder
-    from contracts_app.models import ContractTemplate
+    from contracts_app.models import ContractTemplate, ContractVariable
+    from contracts_app.variable_resolver import resolve_variables
+    from contracts_app.docx_processor import process_template
     from experts_app.models import ExpertProfile
     from group_app.models import GroupMember
     from yandexdisk_app.workspace import _build_project_folder_name, _sanitize
@@ -1793,6 +1795,13 @@ def create_contract_project(request):
         ContractTemplate.objects
         .select_related("product")
         .filter(file__gt="")
+    )
+
+    all_variables = list(
+        ContractVariable.objects
+        .exclude(source_section="")
+        .exclude(source_table="")
+        .exclude(source_column="")
     )
 
     expert_cache = {}
@@ -1970,6 +1979,12 @@ def create_contract_project(request):
                         file_data = tmpl.file.read()
                     finally:
                         tmpl.file.close()
+
+                    if all_variables:
+                        replacements = resolve_variables(perf, all_variables)
+                        if replacements:
+                            file_data = process_template(file_data, replacements)
+
                     original_name = tmpl.file.name.split("/")[-1]
                     upload_path = f"{folder_path}/{original_name}"
                     if not upload_file(request.user, upload_path, file_data):
