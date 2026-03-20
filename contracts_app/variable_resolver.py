@@ -269,13 +269,28 @@ def _money_no_currency(value) -> str:
     return f"{sign}{int_str}{frac}".replace(".", ",")
 
 
-def _computed_contract_price(_ep, _p, all_performers) -> str:
-    from decimal import Decimal
+def _money_no_currency_int(value) -> str:
+    """Format an integer as ``1 234 567`` (no decimals, no currency code)."""
+    if value is None:
+        return ""
+    n = int(value)
+    sign = "-" if n < 0 else ""
+    int_str = f"{abs(n):,}".replace(",", "\u00a0")
+    return f"{sign}{int_str}"
+
+
+def _computed_contract_price(ep, _p, all_performers) -> str:
+    from decimal import Decimal, ROUND_HALF_UP
     total = Decimal("0")
     for p in all_performers:
         if p.agreed_amount is not None:
             total += p.agreed_amount
-    return _money_no_currency(total)
+    tax_rate = 0
+    if ep and ep.tax_rate is not None:
+        tax_rate = int(ep.tax_rate)
+    result = total * (1 - Decimal(tax_rate) / 100)
+    result = result.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    return _money_no_currency_int(result)
 
 
 COMPUTED_MAP: dict[str, callable] = {
