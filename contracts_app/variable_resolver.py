@@ -247,12 +247,49 @@ FIELD_MAP: dict[tuple[str, str, str], callable] = {
 }
 
 
-def resolve_variables(performer, variables) -> dict[str, str]:
+# ---------------------------------------------------------------------------
+#  Computed variable resolvers  (is_computed=True)
+#  Signature: (ep, performer, all_performers) → str
+# ---------------------------------------------------------------------------
+
+def _money_no_currency(value) -> str:
+    """Format a Decimal as ``1 234 567,89`` (no currency code)."""
+    from decimal import Decimal, InvalidOperation
+    if value is None:
+        return ""
+    try:
+        d = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return ""
+    sign = "-" if d < 0 else ""
+    d = abs(d)
+    integer_part = int(d)
+    frac = f"{d - integer_part:.2f}"[1:]
+    int_str = f"{integer_part:,}".replace(",", "\u00a0")
+    return f"{sign}{int_str}{frac}".replace(".", ",")
+
+
+def _computed_contract_price(_ep, _p, all_performers) -> str:
+    from decimal import Decimal
+    total = Decimal("0")
+    for p in all_performers:
+        if p.agreed_amount is not None:
+            total += p.agreed_amount
+    return _money_no_currency(total)
+
+
+COMPUTED_MAP: dict[str, callable] = {
+    "{{contract_price}}": _computed_contract_price,
+}
+
+
+def resolve_variables(performer, variables, all_performers=None) -> dict[str, str]:
     """Build {placeholder_key: resolved_value} for every bound variable.
 
     *performer* must have ``employee`` pre-fetched (``select_related``).
-    *variables* is an iterable of ``ContractVariable`` instances whose
-    ``source_section``, ``source_table``, ``source_column`` are non-empty.
+    *variables* is an iterable of ``ContractVariable`` instances.
+    *all_performers* is the list of all selected Performer rows for this
+    executor+project pair (needed for computed / aggregate variables).
     """
     from experts_app.models import ExpertProfile
 
@@ -266,8 +303,20 @@ def resolve_variables(performer, variables) -> dict[str, str]:
             .first()
         )
 
+    if all_performers is None:
+        all_performers = [performer]
+
     result: dict[str, str] = {}
     for var in variables:
+        if var.is_computed:
+            computed_fn = COMPUTED_MAP.get(var.key)
+            if computed_fn:
+                try:
+                    result[var.key] = computed_fn(expert, performer, all_performers)
+                except Exception:
+                    result[var.key] = ""
+            continue
+
         coord = (var.source_section, var.source_table, var.source_column)
         resolver = FIELD_MAP.get(coord)
         if resolver is None:

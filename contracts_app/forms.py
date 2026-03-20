@@ -312,6 +312,17 @@ class ContractVariableForm(forms.ModelForm):
         from core.column_registry import (
             get_section_choices, get_table_choices, get_column_choices,
         )
+
+        self.is_computed = bool(
+            self.instance and self.instance.pk and self.instance.is_computed
+        )
+
+        if self.is_computed:
+            self.fields["key"].widget.attrs["readonly"] = True
+            self.fields["key"].widget.attrs["tabindex"] = "-1"
+            for fname in ("source_section", "source_table", "source_column"):
+                self.fields[fname].widget.attrs["disabled"] = True
+
         self.fields["source_section"].choices = get_section_choices()
 
         sec = (
@@ -335,6 +346,8 @@ class ContractVariableForm(forms.ModelForm):
 
     def clean_key(self):
         import re
+        if self.is_computed:
+            return self.instance.key
         raw = self.cleaned_data.get("key", "").strip()
         inner = raw.removeprefix("{{").removesuffix("}}")
         inner = inner.removeprefix("{").removesuffix("}")
@@ -350,6 +363,8 @@ class ContractVariableForm(forms.ModelForm):
 
     def clean(self):
         cleaned = super().clean()
+        if self.is_computed:
+            return cleaned
         sec = cleaned.get("source_section", "")
         tbl = cleaned.get("source_table", "")
         col = cleaned.get("source_column", "")
