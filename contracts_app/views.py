@@ -72,6 +72,33 @@ def contracts_partial(request):
 
 @login_required
 @user_passes_test(staff_required)
+@require_POST
+def contracts_signing_update(request, pk):
+    performer = get_object_or_404(
+        Performer, pk=pk, contract_batch_id__isnull=False,
+    )
+    field = request.POST.get("field", "")
+    value = request.POST.get("value", "").strip()
+    ALLOWED = {
+        "contract_employee_scan", "contract_send_date",
+        "contract_signed_scan", "contract_upload_date",
+    }
+    if field not in ALLOWED:
+        return HttpResponse(status=400)
+    if "date" in field:
+        setattr(performer, field, value or None)
+    else:
+        setattr(performer, field, value)
+    performer.save(update_fields=[field])
+    if performer.contract_batch_id:
+        Performer.objects.filter(
+            contract_batch_id=performer.contract_batch_id,
+        ).exclude(pk=pk).update(**{field: getattr(performer, field)})
+    return HttpResponse(status=204)
+
+
+@login_required
+@user_passes_test(staff_required)
 @require_http_methods(["GET", "POST"])
 def contract_form_edit(request, pk):
     performer = get_object_or_404(

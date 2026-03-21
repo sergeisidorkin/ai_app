@@ -4,6 +4,7 @@ from . import views
 urlpatterns = [
     path("partial/", views.contracts_partial, name="contracts_partial"),
     path("<int:pk>/edit/", views.contract_form_edit, name="contracts_edit"),
+    path("signing/<int:pk>/update/", views.contracts_signing_update, name="contracts_signing_update"),
 
     # Contract templates ("Образцы шаблонов")
     path("templates/partial/", views.contract_templates_partial, name="ct_partial"),

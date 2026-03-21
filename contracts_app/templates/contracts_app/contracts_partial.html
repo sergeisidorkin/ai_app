@@ -2,7 +2,7 @@
 
 <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
   <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
-    <i class="bi bi-table"></i> Договоры
+    <i class="bi bi-table"></i> Проекты договоров
   </h5>
   <div class="dropdown" id="contracts-project-filter-dropdown">
     <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
@@ -132,6 +132,135 @@
   </div>
 {% endif %}
 
+<div class="d-flex align-items-center gap-3 mb-3 mt-4 table-section-header flex-wrap">
+  <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
+    <i class="bi bi-table"></i> Подписание договора
+  </h5>
+</div>
+
+<div style="overflow-x:auto">
+  <table class="table table-sm align-middle signing-table mb-0">
+    <colgroup>
+      <col style="width:36px">
+      <col>
+      <col>
+      <col>
+      <col>
+      <col>
+      <col>
+      <col style="min-width:180px">
+      <col style="min-width:140px">
+      <col style="min-width:180px">
+      <col style="min-width:140px">
+    </colgroup>
+    <thead>
+    <tr>
+      <th>
+        {% if request.user.is_authenticated and request.user.is_staff %}
+          <div class="form-check m-0">
+            <input class="form-check-input"
+                   type="checkbox"
+                   id="signing-master"
+                   data-target-name="signing-row-select"
+                   data-actions-id="signing-actions"
+                   aria-label="Выделить все строки подписания">
+          </div>
+        {% endif %}
+      </th>
+      <th class="text-nowrap">Проект</th>
+      <th class="text-nowrap">Тип</th>
+      <th class="text-nowrap">Название</th>
+      <th class="text-nowrap">Исполнитель</th>
+      <th class="text-nowrap">Вид</th>
+      <th class="text-nowrap">Номер договора</th>
+      <th class="text-nowrap">Скан с подписью сотрудника</th>
+      <th class="text-nowrap">Дата отправки</th>
+      <th class="text-nowrap">Скан подписанного договора</th>
+      <th class="text-nowrap">Дата загрузки</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for p in contracts %}
+      <tr data-project-id="{{ p.registration_id }}"
+          data-batch-id="{{ p.contract_batch_id }}"
+      >
+        <td class="text-nowrap">
+          {% if request.user.is_authenticated and request.user.is_staff %}
+            <div class="form-check m-0">
+              <input class="form-check-input"
+                     type="checkbox"
+                     id="signing-sel-{{ p.id }}"
+                     name="signing-row-select"
+                     value="{{ p.id }}"
+                     aria-label="Выделить строку подписания">
+            </div>
+          {% endif %}
+        </td>
+        <td class="text-nowrap">{% if p.registration %}{{ p.registration.short_uid }}{% endif %}</td>
+        <td class="text-nowrap">
+          {% if p.registration.type %}{{ p.registration.type.short_name|default:p.registration.type }}{% endif %}
+        </td>
+        <td class="text-truncate" style="max-width:200px;">{{ p.registration.name }}</td>
+        <td class="text-nowrap">{{ p.executor|short_fio }}</td>
+        <td class="text-nowrap">{% if p.contract_is_addendum %}ДС{{ p.contract_addendum_number }}{% else %}Договор{% endif %}</td>
+        <td class="text-nowrap">{{ p.contract_number|default:"—" }}</td>
+        {% if request.user.is_authenticated and request.user.is_staff %}
+        <td>
+          <input type="text" class="form-control form-control-sm"
+                 value="{{ p.contract_employee_scan }}"
+                 hx-post="{% url 'contracts_signing_update' p.pk %}"
+                 hx-trigger="change"
+                 hx-swap="none"
+                 hx-vals='{"field":"contract_employee_scan"}'
+                 hx-include="[name=csrfmiddlewaretoken]"
+                 name="value">
+        </td>
+        <td>
+          <input type="date" class="form-control form-control-sm"
+                 value="{{ p.contract_send_date|date:'Y-m-d' }}"
+                 hx-post="{% url 'contracts_signing_update' p.pk %}"
+                 hx-trigger="change"
+                 hx-swap="none"
+                 hx-vals='{"field":"contract_send_date"}'
+                 hx-include="[name=csrfmiddlewaretoken]"
+                 name="value">
+        </td>
+        <td>
+          <input type="text" class="form-control form-control-sm"
+                 value="{{ p.contract_signed_scan }}"
+                 hx-post="{% url 'contracts_signing_update' p.pk %}"
+                 hx-trigger="change"
+                 hx-swap="none"
+                 hx-vals='{"field":"contract_signed_scan"}'
+                 hx-include="[name=csrfmiddlewaretoken]"
+                 name="value">
+        </td>
+        <td>
+          <input type="date" class="form-control form-control-sm"
+                 value="{{ p.contract_upload_date|date:'Y-m-d' }}"
+                 hx-post="{% url 'contracts_signing_update' p.pk %}"
+                 hx-trigger="change"
+                 hx-swap="none"
+                 hx-vals='{"field":"contract_upload_date"}'
+                 hx-include="[name=csrfmiddlewaretoken]"
+                 name="value">
+        </td>
+        {% else %}
+        <td class="text-nowrap">{{ p.contract_employee_scan|default:"—" }}</td>
+        <td class="text-nowrap">{{ p.contract_send_date|date:"d.m.Y"|default:"—" }}</td>
+        <td class="text-nowrap">{{ p.contract_signed_scan|default:"—" }}</td>
+        <td class="text-nowrap">{{ p.contract_upload_date|date:"d.m.Y"|default:"—" }}</td>
+        {% endif %}
+      </tr>
+    {% empty %}
+      <tr><td colspan="11" class="text-muted">Пока нет данных.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% csrf_token %}
+
 <script>
 (function(){
   var FILTER_ALL = "__all__";
@@ -143,7 +272,8 @@
     var projDropdown = pane.querySelector("#contracts-project-filter-dropdown");
     var projChecks = pane.querySelectorAll(".js-contracts-filter");
     var projLabel = pane.querySelector(".js-contracts-filter-label");
-    var rows = pane.querySelectorAll("table.contracts-table tbody tr");
+    var contractRows = pane.querySelectorAll("table.contracts-table tbody tr");
+    var signingRows = pane.querySelectorAll("table.signing-table tbody tr");
 
     if (!projDropdown || projChecks.length === 0 || projDropdown.dataset.bound === "1") return;
     projDropdown.dataset.bound = "1";
@@ -167,10 +297,12 @@
       var pv = window.__contractsProjectFilter || [FILTER_ALL];
       var showAll = pv.includes(FILTER_ALL) || !pv.length;
       var projSet = new Set(pv);
-      rows.forEach(function(row) {
+      function filterRow(row) {
         var match = showAll || projSet.has(row.dataset.projectId || '');
         row.classList.toggle('d-none', !match);
-      });
+      }
+      contractRows.forEach(filterRow);
+      signingRows.forEach(filterRow);
       updateFilterLabel(projLabel, projChecks, pv);
     }
 
