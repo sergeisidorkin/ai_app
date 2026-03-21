@@ -509,7 +509,7 @@ def _build_contract_payload(*, recipient, project, performers, request_sent_at, 
         "currency_code": currency_code,
         "prepayment_percent": prepayment_display,
         "final_payment_percent": final_payment_display,
-        "document_link": f'<a href="{document_link}" target="_blank" rel="noopener">{document_link}</a>' if document_link else "",
+        "document_link": document_link,
         "project_deadline": deadline_label,
         "duration_hours": str(duration_hours),
         "deadline_at": deadline_at_label,
@@ -520,7 +520,12 @@ def _build_contract_payload(*, recipient, project, performers, request_sent_at, 
         from letters_app.services import get_effective_template, render_template, render_subject
         tpl = get_effective_template("contract_sending", sender)
         if tpl:
-            content_text = render_template(tpl.body_html, template_vars, safe_keys={"services_list", "document_link"})
+            document_link_html = (
+                f'<a href="{document_link}" target="_blank" rel="noopener">{document_link}</a>'
+                if document_link else ""
+            )
+            body_vars = {**template_vars, "document_link": document_link_html}
+            content_text = render_template(tpl.body_html, body_vars, safe_keys={"services_list", "document_link"})
             if tpl.subject_template:
                 title_text = render_subject(tpl.subject_template, template_vars)
     except Exception:
