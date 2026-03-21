@@ -463,7 +463,7 @@ def _short_fio(full_name):
     return f"{last_name} {initials}".strip()
 
 
-def _build_contract_payload(*, recipient, project, performers, request_sent_at, deadline_at, duration_hours):
+def _build_contract_payload(*, recipient, project, performers, request_sent_at, deadline_at, duration_hours, sender=None):
     services = [_service_line(performer) for performer in performers]
     agreed_amount = sum((performer.agreed_amount or Decimal("0")) for performer in performers)
 
@@ -489,37 +489,75 @@ def _build_contract_payload(*, recipient, project, performers, request_sent_at, 
     prepayment_display = f"{int(prepayment_values[0])}%" if prepayment_values else "—"
     final_payment_display = f"{int(final_payment_values[0])}%" if final_payment_values else "—"
 
-    title_text = f"Отправлен проект договора по проекту {project_label}".strip()
-    content_lines = [
-        f"Добрый день, {recipient_name}",
-        "",
-        f"В связи с вашим подтверждением готовности принять участие в проекте {project_label} "
-        f"направляем проект договора.",
-        "Состав активов:",
-    ]
-    for service in services:
-        content_lines.append(f"- {service}")
+    document_link = ""
+    for p in performers:
+        if p.contract_project_link:
+            document_link = p.contract_project_link
+            break
+
     deadline_at_label = timezone.localtime(deadline_at).strftime("%H:%M %d.%m.%Y") if deadline_at else "—"
-    content_lines.extend(
-        [
+    services_html = "<ul>" + "".join(f"<li>{s}</li>" for s in services) + "</ul>" if services else "<ul><li>—</li></ul>"
+
+    title_text = f"Отправлен проект договора по проекту {project_label}".strip()
+
+    template_vars = {
+        "recipient_name": recipient_name,
+        "project_label": project_label,
+        "executor": executor_fio,
+        "services_list": services_html,
+        "agreed_amount": f"{_display_amount(agreed_amount)} {currency_code}".strip(),
+        "currency_code": currency_code,
+        "prepayment_percent": prepayment_display,
+        "final_payment_percent": final_payment_display,
+        "document_link": document_link,
+        "project_deadline": deadline_label,
+        "duration_hours": str(duration_hours),
+        "deadline_at": deadline_at_label,
+    }
+
+    content_text = None
+    try:
+        from letters_app.services import get_effective_template, render_template, render_subject
+        tpl = get_effective_template("contract_sending", sender)
+        if tpl:
+            content_text = render_template(tpl.body_html, template_vars, safe_keys={"services_list"})
+            if tpl.subject_template:
+                title_text = render_subject(tpl.subject_template, template_vars)
+    except Exception:
+        logger.debug("letters_app template lookup failed for contract_sending, using fallback", exc_info=True)
+
+    if content_text is None:
+        content_lines = [
+            f"Добрый день, {recipient_name}",
             "",
-            f"Проект: {project_label}",
-            f"Исполнитель: {executor_fio}",
-            f"Оплата услуг без учета налогов: {_display_amount(agreed_amount)} {currency_code}".strip(),
-            f"Порядок оплаты: {prepayment_display} аванс, {final_payment_display} окончательный платёж",
-            f"Срок исполнения: до {deadline_label}",
-            "Документ доступен для скачивания по ссылке: ",
-            "",
-            (
-                f"Подписать договор и загрузить подписанную скан-копию в разделе «Договоры» "
-                f"на сайте imcmontanai.ru необходимо в течение {duration_hours} "
-                f"часов с момента отправки данного сообщения — до {deadline_at_label}."
-            ),
-            "",
-            "С уважением,",
-            "IMC Montan AI",
+            f"В связи с вашим подтверждением готовности принять участие в проекте {project_label} "
+            f"направляем проект договора.",
+            "Состав активов:",
         ]
-    )
+        for service in services:
+            content_lines.append(f"- {service}")
+        content_lines.extend(
+            [
+                "",
+                f"Проект: {project_label}",
+                f"Исполнитель: {executor_fio}",
+                f"Оплата услуг без учета налогов: {_display_amount(agreed_amount)} {currency_code}".strip(),
+                f"Порядок оплаты: {prepayment_display} аванс, {final_payment_display} окончательный платёж",
+                f"Срок исполнения: до {deadline_label}",
+                f"Документ доступен для скачивания по ссылке: {document_link}",
+                "",
+                (
+                    f"Подписать договор и загрузить подписанную скан-копию в разделе «Договоры» "
+                    f"на сайте imcmontanai.ru необходимо в течение {duration_hours} "
+                    f"часов с момента отправки данного сообщения — до {deadline_at_label}."
+                ),
+                "",
+                "С уважением,",
+                "IMC Montan AI",
+            ]
+        )
+        content_text = "\n".join(content_lines).strip()
+
     payload = {
         "recipient_name": recipient_name,
         "project_label": project_label,
@@ -529,12 +567,13 @@ def _build_contract_payload(*, recipient, project, performers, request_sent_at, 
         "currency_code": currency_code,
         "prepayment_display": prepayment_display,
         "final_payment_display": final_payment_display,
+        "document_link": document_link,
         "project_deadline_display": deadline_label,
         "duration_hours": duration_hours,
         "request_sent_at_display": timezone.localtime(request_sent_at).strftime("%d.%m.%Y %H:%M"),
-        "deadline_at_display": timezone.localtime(deadline_at).strftime("%H:%M %d.%m.%Y") if deadline_at else "—",
+        "deadline_at_display": deadline_at_label,
     }
-    return title_text, "\n".join(content_lines).strip(), payload
+    return title_text, content_text, payload
 
 
 @transaction.atomic
@@ -561,10 +600,11 @@ def create_contract_notifications(*, performers, sender, request_sent_at, deadli
             request_sent_at=request_sent_at,
             deadline_at=deadline_at,
             duration_hours=duration_hours,
+            sender=sender,
         )
         notification = Notification.objects.create(
             notification_type=Notification.NotificationType.PROJECT_CONTRACT_CONCLUSION,
-            related_section=Notification.RelatedSection.PROJECTS,
+            related_section=Notification.RelatedSection.CONTRACTS,
             recipient=recipient,
             sender=sender,
             project=project,
