@@ -100,13 +100,6 @@
       if (this.files && this.files.length) {
         clearCb.checked = true;
         clearCb.disabled = true;
-        if (!form.querySelector('input[type="hidden"][name="contract_employee_scan-clear"]')) {
-          var h = document.createElement('input');
-          h.type = 'hidden';
-          h.name = 'contract_employee_scan-clear';
-          h.value = 'on';
-          clearCb.parentNode.appendChild(h);
-        }
       }
     });
   }
