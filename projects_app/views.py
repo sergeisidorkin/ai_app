@@ -1262,57 +1262,11 @@ def contract_request(request):
                 deadline_at=deadline_at,
                 duration_hours=duration_hours,
             )
-            groups = defaultdict(list)
-            for p in selected_performers:
-                groups[(p.registration_id, p.executor)].append(p)
-
-            updated = 0
-            for (reg_id, executor), group_performers in groups.items():
-                batch_id = uuid.uuid4()
-                rep = group_performers[0]
-
-                existing_batch_count = (
-                    Performer.objects
-                    .filter(
-                        registration_id=reg_id,
-                        executor=executor,
-                        contract_batch_id__isnull=False,
-                    )
-                    .values("contract_batch_id")
-                    .distinct()
-                    .count()
-                )
-                is_addendum = existing_batch_count > 0
-                addendum_number = existing_batch_count if is_addendum else None
-
-                if is_addendum:
-                    first_performer = (
-                        Performer.objects
-                        .filter(
-                            registration_id=reg_id,
-                            executor=executor,
-                            contract_batch_id__isnull=False,
-                            contract_is_addendum=False,
-                        )
-                        .order_by("contract_sent_at", "id")
-                        .first()
-                    )
-                    base_date = first_performer.contract_sent_at if first_performer else request_sent_at
-                else:
-                    base_date = request_sent_at
-
-                contract_number = _build_contract_number(rep, base_date, addendum_number)
-                update_kwargs = dict(
-                    contract_sent_at=request_sent_at,
-                    contract_deadline_at=deadline_at,
-                    contract_batch_id=batch_id,
-                    contract_is_addendum=is_addendum,
-                    contract_addendum_number=addendum_number,
-                )
-                if contract_number:
-                    update_kwargs["contract_number"] = contract_number
-                group_ids = [p.pk for p in group_performers]
-                updated += Performer.objects.filter(pk__in=group_ids).update(**update_kwargs)
+            all_ids = [p.pk for p in selected_performers]
+            updated = Performer.objects.filter(pk__in=all_ids).update(
+                contract_sent_at=request_sent_at,
+                contract_deadline_at=deadline_at,
+            )
     except ValueError as exc:
         return JsonResponse({"ok": False, "error": str(exc)}, status=400)
 
@@ -2006,7 +1960,65 @@ def create_contract_project(request):
             yield _padded(json.dumps({"current": current, "total": total}) + "\n")
 
         if created_ids:
-            Performer.objects.filter(pk__in=created_ids).update(contract_project_created=True)
+            created_set = set(created_ids)
+            Performer.objects.filter(pk__in=created_set).update(contract_project_created=True)
+
+            now = timezone.now()
+            for key in seen_executors:
+                group_ids = [
+                    pid for pid in executor_to_ids.get(key, [])
+                    if pid in created_set
+                ]
+                if not group_ids:
+                    continue
+                reg_id, executor = key
+                group_perfs = executor_to_perfs[key]
+                batch_id = uuid.uuid4()
+                rep = group_perfs[0]
+
+                existing_batch_count = (
+                    Performer.objects
+                    .filter(
+                        registration_id=reg_id,
+                        executor=executor,
+                        contract_batch_id__isnull=False,
+                    )
+                    .values("contract_batch_id")
+                    .distinct()
+                    .count()
+                )
+                is_addendum = existing_batch_count > 0
+                addendum_number = existing_batch_count if is_addendum else None
+
+                if is_addendum:
+                    first_performer = (
+                        Performer.objects
+                        .filter(
+                            registration_id=reg_id,
+                            executor=executor,
+                            contract_batch_id__isnull=False,
+                            contract_is_addendum=False,
+                        )
+                        .order_by("contract_sent_at", "id")
+                        .first()
+                    )
+                    base_date = (
+                        first_performer.contract_sent_at
+                        if first_performer and first_performer.contract_sent_at
+                        else now
+                    )
+                else:
+                    base_date = now
+
+                contract_number = _build_contract_number(rep, base_date, addendum_number)
+                update_kwargs = dict(
+                    contract_batch_id=batch_id,
+                    contract_is_addendum=is_addendum,
+                    contract_addendum_number=addendum_number,
+                )
+                if contract_number:
+                    update_kwargs["contract_number"] = contract_number
+                Performer.objects.filter(pk__in=group_ids).update(**update_kwargs)
 
         if errors:
             msg = f"Ошибки: {'; '.join(errors)}"
