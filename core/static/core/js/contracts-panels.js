@@ -115,7 +115,7 @@
 
 
 /* -----------------------------------------------------------------------
-   Signing table ("Подписание договора") checkboxes
+   Signing table ("Подписание договора") panel
    ----------------------------------------------------------------------- */
 (function () {
   if (window.__signingPanelBound) return;
@@ -126,6 +126,9 @@
 
   function getSigningChecks() {
     return qa('tbody input.form-check-input[name="signing-row-select"]', pane());
+  }
+  function getSigningChecked() {
+    return getSigningChecks().filter(function(b) { return b.checked; });
   }
   function updateSigningHighlight() {
     getSigningChecks().forEach(function(b) {
@@ -141,11 +144,51 @@
     master.checked = boxes.length > 0 && checkedCount === boxes.length;
     master.indeterminate = checkedCount > 0 && checkedCount < boxes.length;
   }
+  function updateSigningEditBtn() {
+    var root = pane();
+    if (!root) return;
+    var btn = root.querySelector('#signing-edit-btn');
+    if (!btn) return;
+    btn.disabled = !getSigningChecks().some(function(b) { return b.checked; });
+  }
+
+  function showContractsModal() {
+    var modalEl = document.getElementById('contracts-modal');
+    if (!modalEl || !window.bootstrap) return;
+    var dlg = modalEl.querySelector('.modal-dialog');
+    if (dlg) {
+      dlg.classList.remove('modal-sm', 'modal-lg', 'modal-xl');
+      var sizeEl = modalEl.querySelector('[data-modal-size]');
+      if (sizeEl) dlg.classList.add('modal-' + sizeEl.dataset.modalSize);
+    }
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+  }
 
   function refreshSigning() {
     updateSigningMaster();
     updateSigningHighlight();
+    updateSigningEditBtn();
   }
+
+  document.addEventListener('click', function(e) {
+    var root = pane(); if (!root) return;
+
+    var editBtn = e.target.closest('#signing-edit-btn');
+    if (editBtn && root.contains(editBtn)) {
+      var checked = getSigningChecked();
+      if (!checked.length) return;
+      var tr = checked[0].closest('tr');
+      var url = tr && tr.dataset.signingEditUrl;
+      if (!url) return;
+      var target = document.querySelector('#contracts-modal .modal-content');
+      if (!target) return;
+      htmx.ajax('GET', url, target).then(function() {
+        showContractsModal();
+      });
+      updateSigningEditBtn();
+      return;
+    }
+  });
 
   document.addEventListener('change', function(e) {
     var root = pane(); if (!root) return;

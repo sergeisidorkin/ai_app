@@ -44,6 +44,23 @@ class ContractEditForm(forms.ModelForm):
         }
 
 
+class ContractSigningForm(forms.ModelForm):
+    class Meta:
+        model = Performer
+        fields = [
+            "contract_employee_scan",
+            "contract_send_date",
+            "contract_signed_scan",
+            "contract_upload_date",
+        ]
+        widgets = {
+            "contract_employee_scan": forms.TextInput(attrs={"class": "form-control"}),
+            "contract_send_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
+            "contract_signed_scan": forms.TextInput(attrs={"class": "form-control"}),
+            "contract_upload_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
+        }
+
+
 def _active_countries_qs():
     today = date_type.today()
     return OKSMCountry.objects.filter(
