@@ -580,10 +580,10 @@
           <td class="text-nowrap text-end cell-detail-val">
             {% if p.contract_project_link %}
               <a href="{{ p.contract_project_link }}" target="_blank" rel="noopener" title="Открыть проект договора">
-                <i class="bi bi-link-45deg" style="color: #0d6efd;"></i>
+                <i class="bi bi-link-45deg" style="color: var(--bs-primary, #075D94);"></i>
               </a>
             {% else %}
-              <i class="bi bi-link-45deg text-muted"></i>
+              <i class="bi bi-link-45deg" style="color: #ccc;"></i>
             {% endif %}
           </td>
           <td class="text-nowrap cell-detail-val">{% if p.contract_project_created %}Создан{% else %}Не создан{% endif %}</td>

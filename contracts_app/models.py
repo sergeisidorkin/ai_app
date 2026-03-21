@@ -103,3 +103,27 @@ class ContractVariable(models.Model):
 
     def __str__(self):
         return self.key
+
+
+class ContractSubject(models.Model):
+    product = models.ForeignKey(
+        "policy_app.Product",
+        verbose_name="Продукт",
+        on_delete=models.CASCADE,
+        related_name="contract_subjects",
+    )
+    subject_text = models.CharField(
+        "Предмет договора", max_length=1024, blank=True, default=""
+    )
+    position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["position", "id"]
+        verbose_name = "Предмет договора"
+        verbose_name_plural = "Предметы договора"
+
+    def __str__(self):
+        return self.subject_text or f"Предмет #{self.pk}"

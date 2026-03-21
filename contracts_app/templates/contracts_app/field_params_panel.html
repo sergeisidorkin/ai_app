@@ -1,0 +1,38 @@
+{% load static %}
+<div class="card shadow-sm mt-3">
+  <div class="card-body">
+
+    <div id="field-params-pane"
+         hx-get="{% url 'fp_partial' %}"
+         hx-trigger="load, field-params-updated from:body"
+         hx-target="#field-params-pane"
+         hx-swap="innerHTML"
+         hx-indicator="#fp-loading">
+      <div id="fp-loading" class="text-muted htmx-indicator">Загрузка параметров полей…</div>
+    </div>
+
+  </div>
+</div>
+
+<div class="modal fade" id="field-params-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable">
+    <div class="modal-content">
+    </div>
+  </div>
+</div>
+
+<script>
+  document.body.addEventListener('field-params-updated', function () {
+    var el = document.getElementById('field-params-modal');
+    if (!el) return;
+    var modal = bootstrap.Modal.getInstance(el) || bootstrap.Modal.getOrCreateInstance(el);
+    modal.hide();
+  });
+
+  document.addEventListener('htmx:afterSwap', function (e) {
+    var modalContent = document.querySelector('#field-params-modal .modal-content');
+    if (!modalContent || (!modalContent.contains(e.target) && e.target !== modalContent)) return;
+    var m = bootstrap.Modal.getOrCreateInstance(document.getElementById('field-params-modal'));
+    m.show();
+  });
+</script>

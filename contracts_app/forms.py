@@ -7,7 +7,7 @@ from classifiers_app.models import OKSMCountry
 from group_app.models import GroupMember
 from policy_app.models import Product, TypicalSection
 from projects_app.models import Performer
-from .models import ContractTemplate, ContractVariable
+from .models import ContractSubject, ContractTemplate, ContractVariable
 
 SECTION_ALL_VALUE = "__all__"
 
@@ -34,10 +34,12 @@ class ContractEditForm(forms.ModelForm):
         model = Performer
         fields = [
             "contract_number",
+            "contract_date",
             "contract_file",
         ]
         widgets = {
             "contract_number": forms.TextInput(attrs={"class": "form-control"}),
+            "contract_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
             "contract_file": forms.TextInput(attrs={"class": "form-control"}),
         }
 
@@ -382,3 +384,23 @@ class ContractVariableForm(forms.ModelForm):
             if not validate_column_ref(sec, tbl, col):
                 raise forms.ValidationError("Указанная комбинация Раздел/Таблица/Столбец не существует.")
         return cleaned
+
+
+class ContractSubjectForm(forms.ModelForm):
+    class Meta:
+        model = ContractSubject
+        fields = ["product", "subject_text"]
+        widgets = {
+            "product": forms.Select(attrs={"class": "form-select"}),
+            "subject_text": forms.Textarea(attrs={
+                "class": "form-control",
+                "placeholder": "Предмет договора",
+                "rows": 4,
+                "style": "resize: vertical;",
+            }),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["product"].queryset = Product.objects.order_by("position", "id")
+        self.fields["product"].label_from_instance = lambda obj: obj.short_name

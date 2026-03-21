@@ -663,7 +663,9 @@ class Performer(models.Model):
     contract_is_addendum = models.BooleanField("Доп. соглашение", default=False)
     contract_addendum_number = models.PositiveIntegerField("Номер доп. соглашения", null=True, blank=True)
     contract_project_created = models.BooleanField("Проект договора создан", default=False)
+    contract_project_created_at = models.DateTimeField("Дата создания проекта договора", null=True, blank=True)
     contract_project_link = models.URLField("Ссылка на проект договора", blank=True, default="")
+    contract_date = models.DateField("Дата договора", null=True, blank=True)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -759,10 +761,9 @@ class Performer(models.Model):
 
     @property
     def contract_term_days(self):
-        if not self.contract_sent_at or not getattr(self.registration, "deadline", None):
+        if not self.contract_date or not getattr(self.registration, "deadline", None):
             return None
-        start = self.contract_sent_at.date() if hasattr(self.contract_sent_at, "date") else self.contract_sent_at
-        return (self.registration.deadline - start).days
+        return (self.registration.deadline - self.contract_date).days
 
     @property
     def contract_response_status(self):
