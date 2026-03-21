@@ -89,3 +89,26 @@
     pointer-events: none;
   }
 </style>
+<script>
+(function() {
+  var form = document.querySelector('#contracts-modal form');
+  if (!form) return;
+  var fileInput = form.querySelector('input[type="file"][name="contract_employee_scan"]');
+  var clearCb = form.querySelector('input[type="checkbox"][name="contract_employee_scan-clear"]');
+  if (fileInput && clearCb) {
+    fileInput.addEventListener('change', function() {
+      if (this.files && this.files.length) {
+        clearCb.checked = true;
+        clearCb.disabled = true;
+        if (!form.querySelector('input[type="hidden"][name="contract_employee_scan-clear"]')) {
+          var h = document.createElement('input');
+          h.type = 'hidden';
+          h.name = 'contract_employee_scan-clear';
+          h.value = 'on';
+          clearCb.parentNode.appendChild(h);
+        }
+      }
+    });
+  }
+})();
+</script>

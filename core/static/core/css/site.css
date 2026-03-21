@@ -1860,6 +1860,12 @@ section#templates .alert.alert-info .text-muted {
   background-color: rgba(0, 0, 0, .08);
 }
 
+.signing-table.table-sm td {
+  vertical-align: middle;
+}
+.signing-table.table-sm td:not(.text-truncate) {
+  overflow: visible;
+}
 .signing-table td .badge.rounded-pill {
   display: inline-flex;
   align-items: center;

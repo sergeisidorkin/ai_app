@@ -56,37 +56,6 @@ def _contracts_context(user=None):
     for p in contracts:
         p.total_price = price_map.get(p.contract_batch_id)
 
-    pending_notifications = list(
-        Notification.objects
-        .filter(
-            notification_type=Notification.NotificationType.PROJECT_CONTRACT_CONCLUSION,
-        )
-        .pending_attention()
-        .order_by("-sent_at", "-id")
-    )
-    pending_numbers = {
-        n.pk: len(pending_notifications) - idx
-        for idx, n in enumerate(pending_notifications)
-    }
-
-    batch_badge_map = {}
-    if pending_notifications:
-        for n in pending_notifications:
-            perf_ids = set(
-                NotificationPerformerLink.objects
-                .filter(notification_id=n.pk)
-                .values_list("performer_id", flat=True)
-            )
-            batch_ids = set(
-                Performer.objects
-                .filter(pk__in=perf_ids, contract_batch_id__isnull=False)
-                .values_list("contract_batch_id", flat=True)
-            )
-            marker = pending_numbers[n.pk]
-            for bid in batch_ids:
-                if bid not in batch_badge_map:
-                    batch_badge_map[bid] = marker
-
     is_expert = False
     is_lawyer = False
     if user and getattr(user, "is_authenticated", False):
@@ -94,30 +63,46 @@ def _contracts_context(user=None):
         is_expert = user.groups.filter(name=EXPERT_GROUP).exists()
         is_lawyer = user.groups.filter(name=LAWYER_GROUP).exists()
 
-    lawyer_badge_map = {}
-    if is_lawyer:
-        lawyer_pending = list(
+    def _build_badge_map(notification_type):
+        qs = (
             Notification.objects
-            .filter(notification_type=Notification.NotificationType.EMPLOYEE_SCAN_SENT)
+            .filter(notification_type=notification_type, recipient=user)
             .pending_attention()
             .order_by("-sent_at", "-id")
         )
-        lawyer_numbers = {n.pk: len(lawyer_pending) - idx for idx, n in enumerate(lawyer_pending)}
-        for n in lawyer_pending:
-            perf_ids = set(
-                NotificationPerformerLink.objects
-                .filter(notification_id=n.pk)
-                .values_list("performer_id", flat=True)
-            )
-            bids = set(
-                Performer.objects
-                .filter(pk__in=perf_ids, contract_batch_id__isnull=False)
-                .values_list("contract_batch_id", flat=True)
-            )
-            marker = lawyer_numbers[n.pk]
-            for bid in bids:
-                if bid not in lawyer_badge_map:
-                    lawyer_badge_map[bid] = marker
+        pending_list = list(qs)
+        if not pending_list:
+            return {}
+        numbers = {n.pk: len(pending_list) - idx for idx, n in enumerate(pending_list)}
+        nids = [n.pk for n in pending_list]
+        links = (
+            NotificationPerformerLink.objects
+            .filter(notification_id__in=nids)
+            .values_list("notification_id", "performer_id")
+        )
+        nid_to_perfs = {}
+        all_perf_ids = set()
+        for nid, pid in links:
+            nid_to_perfs.setdefault(nid, []).append(pid)
+            all_perf_ids.add(pid)
+        perf_batch = dict(
+            Performer.objects
+            .filter(pk__in=all_perf_ids, contract_batch_id__isnull=False)
+            .values_list("pk", "contract_batch_id")
+        )
+        badge_map = {}
+        for n in pending_list:
+            marker = numbers[n.pk]
+            for pid in nid_to_perfs.get(n.pk, []):
+                bid = perf_batch.get(pid)
+                if bid and bid not in badge_map:
+                    badge_map[bid] = marker
+        return badge_map
+
+    batch_badge_map = _build_badge_map(Notification.NotificationType.PROJECT_CONTRACT_CONCLUSION)
+    lawyer_badge_map = (
+        _build_badge_map(Notification.NotificationType.EMPLOYEE_SCAN_SENT) if is_lawyer else {}
+    )
 
     contract_project_ids = {p.registration_id for p in contracts}
     contract_projects = (
@@ -174,6 +159,12 @@ def contract_signing_edit(request, pk):
         if form.is_valid():
             has_new_scan = "contract_employee_scan" in request.FILES
             if has_new_scan:
+                old_scan = performer.contract_employee_scan
+                if old_scan:
+                    try:
+                        old_scan.storage.delete(old_scan.name)
+                    except Exception:
+                        pass
                 scan_name = _compute_scan_name(performer)
                 _rename_uploaded_file(request.FILES["contract_employee_scan"], scan_name)
                 form.instance.contract_scan_document = scan_name
@@ -687,13 +678,19 @@ def send_scan(request):
     if not performer_ids:
         return JsonResponse({"ok": False, "error": "Не выбраны строки."}, status=400)
 
-    performers = list(
+    representative_performers = list(
         Performer.objects
         .filter(pk__in=performer_ids, contract_batch_id__isnull=False)
+    )
+    if not representative_performers:
+        return JsonResponse({"ok": False, "error": "Исполнители не найдены."}, status=400)
+
+    batch_ids = {p.contract_batch_id for p in representative_performers}
+    performers = list(
+        Performer.objects
+        .filter(contract_batch_id__in=batch_ids)
         .select_related("registration", "registration__type", "currency", "employee", "typical_section")
     )
-    if not performers:
-        return JsonResponse({"ok": False, "error": "Исполнители не найдены."}, status=400)
 
     try:
         create_scan_notifications(performers=performers, sender=request.user)

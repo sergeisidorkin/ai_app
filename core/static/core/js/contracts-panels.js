@@ -288,17 +288,50 @@
           progressBar.style.width = pct + '%';
         }
       });
+      var _uploadScanName = '';
       xhr.addEventListener('load', function() {
         if (progressBar) progressBar.style.width = '100%';
         if (xhr.status >= 200 && xhr.status < 300) {
           try {
             var data = JSON.parse(xhr.responseText);
             if (data.ok && data.scan_name && statusEl) {
-              statusEl.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>'
-                + 'Документ успешно загружен на Яндекс.Диск в папку с проектом договора и переименован в «'
-                + data.scan_name + '».</span>';
+              _uploadScanName = data.scan_name;
+              var icon = document.createElement('i');
+              icon.className = 'bi bi-check-circle me-1';
+              var span = document.createElement('span');
+              span.className = 'text-success';
+              span.appendChild(icon);
+              span.appendChild(document.createTextNode(
+                'Документ успешно загружен на Яндекс.Диск в папку с проектом договора и переименован в \u00ab'
+                + data.scan_name + '\u00bb.'));
+              statusEl.textContent = '';
+              statusEl.appendChild(span);
             }
           } catch (_) {}
+        } else {
+          if (statusEl) {
+            statusEl.textContent = '';
+            var errSpan = document.createElement('span');
+            errSpan.className = 'text-danger';
+            errSpan.textContent = 'Ошибка при загрузке файла.';
+            statusEl.appendChild(errSpan);
+          }
+        }
+        if (closeBtn) closeBtn.disabled = false;
+      });
+      xhr.addEventListener('error', function() {
+        if (statusEl) {
+          statusEl.textContent = '';
+          var errSpan = document.createElement('span');
+          errSpan.className = 'text-danger';
+          errSpan.textContent = 'Ошибка сети при загрузке файла.';
+          statusEl.appendChild(errSpan);
+        }
+        if (closeBtn) closeBtn.disabled = false;
+      });
+      if (modalEl) {
+        modalEl.addEventListener('hidden.bs.modal', function onHidden() {
+          modalEl.removeEventListener('hidden.bs.modal', onHidden);
           var contractsPane = document.getElementById('contracts-pane');
           if (contractsPane) {
             var refreshUrl = contractsPane.getAttribute('hx-get') || contractsPane.dataset.refreshUrl;
@@ -311,15 +344,8 @@
               });
             }
           }
-        } else {
-          if (statusEl) statusEl.innerHTML = '<span class="text-danger">Ошибка при загрузке файла.</span>';
-        }
-        if (closeBtn) closeBtn.disabled = false;
-      });
-      xhr.addEventListener('error', function() {
-        if (statusEl) statusEl.innerHTML = '<span class="text-danger">Ошибка сети при загрузке файла.</span>';
-        if (closeBtn) closeBtn.disabled = false;
-      });
+        }, { once: true });
+      }
       xhr.send(fd);
       scanInput.value = '';
       return;
