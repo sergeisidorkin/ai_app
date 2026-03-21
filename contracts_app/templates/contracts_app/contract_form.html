@@ -44,8 +44,7 @@
 
       <div class="col-md-3">
         <label class="form-label">Дата договора</label>
-        <input type="text" class="form-control readonly-field" readonly tabindex="-1"
-               value="{{ performer.contract_sent_at|date:'d.m.Y'|default:'—' }}">
+        {{ form.contract_date }}
       </div>
       <div class="col-md-3">
         <label class="form-label">Срок</label>

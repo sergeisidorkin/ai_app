@@ -104,7 +104,7 @@
         <td class="text-nowrap">{{ p.executor|short_fio }}</td>
         <td class="text-nowrap">{% if p.contract_is_addendum %}ДС{{ p.contract_addendum_number }}{% else %}Договор{% endif %}</td>
         <td class="text-nowrap">{{ p.contract_number|default:"—" }}</td>
-        <td class="text-nowrap">{{ p.contract_sent_at|date:"d.m.Y"|default:"—" }}</td>
+        <td class="text-nowrap">{{ p.contract_date|date:"d.m.Y"|default:"—" }}</td>
         <td class="text-nowrap">{% if p.contract_term_days != None %}{{ p.contract_term_days }} дн.{% else %}—{% endif %}</td>
         <td class="text-nowrap">{% if p.registration.deadline %}{{ p.registration.deadline|date:"d.m.Y" }}{% else %}—{% endif %}</td>
         <td class="text-nowrap">{% if p.prepayment != None %}{{ p.prepayment|floatformat:"0" }}%{% else %}—{% endif %}</td>

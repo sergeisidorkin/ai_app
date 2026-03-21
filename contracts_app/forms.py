@@ -34,10 +34,12 @@ class ContractEditForm(forms.ModelForm):
         model = Performer
         fields = [
             "contract_number",
+            "contract_date",
             "contract_file",
         ]
         widgets = {
             "contract_number": forms.TextInput(attrs={"class": "form-control"}),
+            "contract_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
             "contract_file": forms.TextInput(attrs={"class": "form-control"}),
         }
 

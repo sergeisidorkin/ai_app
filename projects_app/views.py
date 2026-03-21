@@ -1973,6 +1973,7 @@ def create_contract_project(request):
             Performer.objects.filter(pk__in=created_set).update(
                 contract_project_created=True,
                 contract_project_created_at=timezone.now(),
+                contract_date=timezone.now().date(),
             )
 
             now = timezone.now()
