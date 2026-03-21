@@ -90,3 +90,13 @@ def get_item(dictionary, key):
     if isinstance(dictionary, dict):
         return dictionary.get(key, "")
     return ""
+
+
+@register.filter
+def disk_folder_url(path):
+    """Convert Yandex.Disk API path (disk:/…) to a web-client URL."""
+    if not path:
+        return ""
+    from urllib.parse import quote
+    clean = path.removeprefix("disk:")
+    return "https://disk.yandex.ru/client/disk" + quote(clean)
