@@ -248,7 +248,10 @@ def _compute_scan_name(performer):
         executor_short = f"{last_name} {initials}".strip()
     else:
         executor_short = "Unknown"
-    return f"Договор {project_number}_{executor_short}_1п".strip()
+    addendum_suffix = ""
+    if performer.contract_is_addendum:
+        addendum_suffix = f"_ДС{performer.contract_addendum_number or ''}"
+    return f"Договор {project_number}_{executor_short}{addendum_suffix}_1п".strip()
 
 
 def _rename_uploaded_file(uploaded_file, new_basename):
