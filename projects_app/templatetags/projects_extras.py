@@ -83,3 +83,10 @@ def typical_section_short(section):
     code = getattr(section, "code", "") or ""
     short_name_ru = getattr(section, "short_name_ru", "") or ""
     return " ".join(part for part in (code, short_name_ru) if part).strip()
+
+
+@register.filter
+def get_item(dictionary, key):
+    if isinstance(dictionary, dict):
+        return dictionary.get(key, "")
+    return ""
