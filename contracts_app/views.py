@@ -7,8 +7,8 @@ from django.shortcuts import render, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST
 
 from projects_app.models import Performer, ProjectRegistration
-from .forms import ContractEditForm, ContractTemplateForm, ContractVariableForm
-from .models import ContractTemplate, ContractVariable
+from .forms import ContractEditForm, ContractSubjectForm, ContractTemplateForm, ContractVariableForm
+from .models import ContractSubject, ContractTemplate, ContractVariable
 
 
 def staff_required(user):
@@ -361,3 +361,119 @@ def ctv_move_down(request, pk):
         ContractVariable.objects.filter(pk=obj.pk).update(position=obj.position)
         ContractVariable.objects.filter(pk=nxt.pk).update(position=nxt.position)
     return _ct_render_updated(request)
+
+
+# ---------------------------------------------------------------------------
+#  Field Parameters / Contract Subject ("Предмет договора")
+# ---------------------------------------------------------------------------
+
+FP_PARTIAL_TEMPLATE = "contracts_app/field_params_partial.html"
+CS_FORM_TEMPLATE = "contracts_app/contract_subject_form.html"
+FP_HX_EVENT = "field-params-updated"
+
+
+def _fp_context():
+    return {
+        "subjects": ContractSubject.objects.select_related("product").all(),
+    }
+
+
+def _fp_next_position():
+    mx = ContractSubject.objects.aggregate(m=Max("position"))["m"]
+    return (mx or 0) + 1
+
+
+def _fp_normalize_positions():
+    for idx, obj in enumerate(ContractSubject.objects.all()):
+        if obj.position != idx:
+            ContractSubject.objects.filter(pk=obj.pk).update(position=idx)
+
+
+def _fp_render_updated(request):
+    response = render(request, FP_PARTIAL_TEMPLATE, _fp_context())
+    response["HX-Trigger"] = FP_HX_EVENT
+    return response
+
+
+def _cs_render_form_with_errors(request, form, action, subject_obj=None):
+    ctx = {"form": form, "action": action}
+    if subject_obj is not None:
+        ctx["subject_obj"] = subject_obj
+    response = render(request, CS_FORM_TEMPLATE, ctx)
+    response["HX-Retarget"] = "#field-params-modal .modal-content"
+    response["HX-Reswap"] = "innerHTML"
+    return response
+
+
+@login_required
+@require_http_methods(["GET"])
+def field_params_partial(request):
+    return render(request, FP_PARTIAL_TEMPLATE, _fp_context())
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def cs_form_create(request):
+    if request.method == "GET":
+        form = ContractSubjectForm()
+        return render(request, CS_FORM_TEMPLATE, {"form": form, "action": "create"})
+    form = ContractSubjectForm(request.POST)
+    if not form.is_valid():
+        return _cs_render_form_with_errors(request, form, "create")
+    obj = form.save(commit=False)
+    obj.position = _fp_next_position()
+    obj.save()
+    return _fp_render_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def cs_form_edit(request, pk):
+    subject_obj = get_object_or_404(ContractSubject, pk=pk)
+    if request.method == "GET":
+        form = ContractSubjectForm(instance=subject_obj)
+        return render(request, CS_FORM_TEMPLATE, {
+            "form": form, "action": "edit", "subject_obj": subject_obj,
+        })
+    form = ContractSubjectForm(request.POST, instance=subject_obj)
+    if not form.is_valid():
+        return _cs_render_form_with_errors(request, form, "edit", subject_obj)
+    form.save()
+    return _fp_render_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def cs_delete(request, pk):
+    get_object_or_404(ContractSubject, pk=pk).delete()
+    _fp_normalize_positions()
+    return _fp_render_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def cs_move_up(request, pk):
+    obj = get_object_or_404(ContractSubject, pk=pk)
+    prev = ContractSubject.objects.filter(position__lt=obj.position).order_by("-position").first()
+    if prev:
+        obj.position, prev.position = prev.position, obj.position
+        ContractSubject.objects.filter(pk=obj.pk).update(position=obj.position)
+        ContractSubject.objects.filter(pk=prev.pk).update(position=prev.position)
+    return _fp_render_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def cs_move_down(request, pk):
+    obj = get_object_or_404(ContractSubject, pk=pk)
+    nxt = ContractSubject.objects.filter(position__gt=obj.position).order_by("position").first()
+    if nxt:
+        obj.position, nxt.position = nxt.position, obj.position
+        ContractSubject.objects.filter(pk=obj.pk).update(position=obj.position)
+        ContractSubject.objects.filter(pk=nxt.pk).update(position=nxt.position)
+    return _fp_render_updated(request)

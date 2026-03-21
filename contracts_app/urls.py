@@ -20,4 +20,12 @@ urlpatterns = [
     path("variables/<int:pk>/delete/", views.ctv_delete, name="ctv_delete"),
     path("variables/<int:pk>/move-up/", views.ctv_move_up, name="ctv_move_up"),
     path("variables/<int:pk>/move-down/", views.ctv_move_down, name="ctv_move_down"),
+
+    # Field parameters / Contract subject ("Предмет договора")
+    path("field-params/partial/", views.field_params_partial, name="fp_partial"),
+    path("field-params/subject/create/", views.cs_form_create, name="cs_form_create"),
+    path("field-params/subject/<int:pk>/edit/", views.cs_form_edit, name="cs_form_edit"),
+    path("field-params/subject/<int:pk>/delete/", views.cs_delete, name="cs_delete"),
+    path("field-params/subject/<int:pk>/move-up/", views.cs_move_up, name="cs_move_up"),
+    path("field-params/subject/<int:pk>/move-down/", views.cs_move_down, name="cs_move_down"),
 ]
