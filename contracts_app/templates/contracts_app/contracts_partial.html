@@ -75,7 +75,7 @@
       <th class="text-nowrap">Аванс</th>
       <th class="text-nowrap">Ок. платеж</th>
       <th class="text-nowrap text-end">Цена</th>
-      <th class="text-nowrap">Файл</th>
+      <th class="text-nowrap">Ссылка</th>
     </tr>
     </thead>
     <tbody>
@@ -110,7 +110,15 @@
         <td class="text-nowrap">{% if p.prepayment != None %}{{ p.prepayment|floatformat:"0" }}%{% else %}—{% endif %}</td>
         <td class="text-nowrap">{% if p.final_payment != None %}{{ p.final_payment|floatformat:"0" }}%{% else %}—{% endif %}</td>
         <td class="text-nowrap text-end">{% if p.total_price != None %}{{ p.total_price|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% else %}—{% endif %}</td>
-        <td class="text-nowrap">{{ p.contract_file|default:"—" }}</td>
+        <td class="text-nowrap">
+          {% if p.contract_project_link %}
+            <a href="{{ p.contract_project_link }}" target="_blank" rel="noopener" title="Открыть проект договора">
+              <i class="bi bi-link-45deg" style="color: var(--bs-primary, #075D94);"></i>
+            </a>
+          {% else %}
+            <i class="bi bi-link-45deg" style="color: #ccc;"></i>
+          {% endif %}
+        </td>
       </tr>
     {% empty %}
       <tr><td colspan="14" class="text-muted">Пока нет данных.</td></tr>
@@ -258,7 +266,7 @@
         <td class="text-nowrap">{% if p.contract_upload_date %}{{ p.contract_upload_date|date:"d.m.Y H:i" }}{% else %}—{% endif %}</td>
         <td class="text-nowrap">{% if p.contract_send_date %}{{ p.contract_send_date|date:"d.m.Y H:i" }}{% else %}—{% endif %}</td>
         <td class="text-center p-0">
-          {% if request.user.is_staff %}
+          {% if request.user.is_staff and not is_expert %}
             {% if p.contract_signed_scan_file %}
               <a href="{{ p.contract_signed_scan_file.url }}" download class="ct-download-link" title="Скачать подписанный договор">
                 <i class="bi bi-download"></i>
