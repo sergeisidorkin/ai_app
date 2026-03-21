@@ -95,6 +95,9 @@
                 <p class="mb-0">С уважением,<br>IMC Montan AI</p>
               {% endif %}
             {% elif notification.notification_type == "project_contract_conclusion" %}
+              {% if card.content_html %}
+                {{ card.content_html|safe }}
+              {% else %}
               <p class="mb-2">Добрый день, {{ card.recipient_name }}</p>
               <p class="mb-2">
                 В связи с вашим подтверждением готовности принять участие в проекте {{ card.project_label }}
@@ -115,7 +118,7 @@
               <p class="mb-2">Оплата услуг без учета налогов: {{ card.agreed_amount_display }} {{ card.currency_code }}</p>
               <p class="mb-2">Порядок оплаты: {{ card.prepayment_display }} аванс, {{ card.final_payment_display }} окончательный платёж</p>
               <p class="mb-2">Срок исполнения: до {{ card.project_deadline_display }}</p>
-              <p class="mb-2">Документ доступен для скачивания по ссылке: </p>
+              <p class="mb-2">Документ доступен для скачивания по ссылке: {% if card.document_link %}<a href="{{ card.document_link }}" target="_blank" rel="noopener">{{ card.document_link }}</a>{% endif %}</p>
               <p class="mb-2">
                 Подписать договор и загрузить подписанную скан-копию в разделе «Договоры»
                 на сайте imcmontanai.ru необходимо в течение
@@ -123,6 +126,7 @@
                 до {{ card.deadline_at_display }}.
               </p>
               <p class="mb-0">С уважением,<br>IMC Montan AI</p>
+              {% endif %}
             {% elif notification.notification_type == "project_info_request_approval" %}
               <p class="mb-2">Добрый день, {{ card.recipient_name }}!</p>
               <p class="mb-2">
