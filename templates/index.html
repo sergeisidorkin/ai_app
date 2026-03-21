@@ -77,13 +77,15 @@
                   data-notification-counter-section="checklists">{{ NOTIFICATION_SECTION_COUNTS.checklists|default:0 }}</span>
           </a>
         </li>
-        {% if not is_expert %}
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#contracts" data-bs-toggle="tab">
             <i class="bi bi-files me-2"></i>
             <span class="link-text">Договоры</span>
+            <span class="badge rounded-pill text-bg-danger ms-2 {% if NOTIFICATION_SECTION_COUNTS.contracts|default:0 <= 0 %}d-none{% endif %}"
+                  data-notification-counter-section="contracts">{{ NOTIFICATION_SECTION_COUNTS.contracts|default:0 }}</span>
           </a>
         </li>
+        {% if not is_expert %}
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#letters" data-bs-toggle="tab">
             <i class="bi bi-envelope-paper me-2"></i>
@@ -429,7 +431,6 @@
           </div>
         </div>
       </section>
-      {% if not is_expert %}
       <!-- Договоры -->
       <section id="contracts" class="tab-pane fade">
         <div class="d-flex templates-bleed">
@@ -441,6 +442,7 @@
                  data-contracts-section="in-progress">
                 В работе
               </a>
+              {% if not is_expert %}
               <a href="#" class="list-group-item list-group-item-action"
                  data-contracts-section="templates">
                 Образцы шаблонов
@@ -453,6 +455,7 @@
                  data-contracts-section="archive">
                 Архив
               </a>
+              {% endif %}
             </div>
           </aside>
 
@@ -475,6 +478,7 @@
               <div id="contracts-content-in-progress" class="contracts-section-content">
                 {% include "contracts_app/panel.html" %}
               </div>
+              {% if not is_expert %}
               <div id="contracts-content-templates" class="contracts-section-content d-none">
                 {% include "contracts_app/templates_panel.html" %}
               </div>
@@ -486,12 +490,14 @@
                   <div class="card-body text-muted">Архив (в разработке)</div>
                 </div>
               </div>
+              {% endif %}
             </div>
 
           </div>
         </div>
       </section>
 
+      {% if not is_expert %}
       <!-- Письма -->
       <section id="letters" class="tab-pane fade">
         <div class="d-flex templates-bleed">
