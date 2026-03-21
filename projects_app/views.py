@@ -1970,7 +1970,10 @@ def create_contract_project(request):
 
         if created_ids:
             created_set = set(created_ids)
-            Performer.objects.filter(pk__in=created_set).update(contract_project_created=True)
+            Performer.objects.filter(pk__in=created_set).update(
+                contract_project_created=True,
+                contract_project_created_at=timezone.now(),
+            )
 
             now = timezone.now()
             for key in seen_executors:

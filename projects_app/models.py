@@ -663,6 +663,7 @@ class Performer(models.Model):
     contract_is_addendum = models.BooleanField("Доп. соглашение", default=False)
     contract_addendum_number = models.PositiveIntegerField("Номер доп. соглашения", null=True, blank=True)
     contract_project_created = models.BooleanField("Проект договора создан", default=False)
+    contract_project_created_at = models.DateTimeField("Дата создания проекта договора", null=True, blank=True)
     contract_project_link = models.URLField("Ссылка на проект договора", blank=True, default="")
 
     def __init__(self, *args, **kwargs):
