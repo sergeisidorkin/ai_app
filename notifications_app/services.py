@@ -246,7 +246,15 @@ def mark_notification_as_read(notification, actor):
     notification.is_read = True
     notification.read_at = timezone.now()
     notification.read_by = actor
-    notification.save(update_fields=["is_read", "read_at", "read_by", "updated_at"])
+    update_fields = ["is_read", "read_at", "read_by", "updated_at"]
+    auto_process_types = {
+        Notification.NotificationType.EMPLOYEE_SCAN_SENT,
+    }
+    if notification.notification_type in auto_process_types and not notification.is_processed:
+        notification.is_processed = True
+        notification.action_at = notification.read_at
+        update_fields += ["is_processed", "action_at"]
+    notification.save(update_fields=update_fields)
     return notification
 
 

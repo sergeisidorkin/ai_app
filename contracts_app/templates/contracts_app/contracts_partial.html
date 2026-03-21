@@ -218,7 +218,7 @@
           {% endif %}
         </td>
         <td class="text-center p-0">
-          {% if request.user.is_staff %}
+          {% if request.user.is_staff and not p.contract_employee_scan %}
             <label class="ct-upload-link" title="Загрузить скан">
               <i class="bi bi-upload"></i>
               <input type="file" class="d-none js-scan-upload"
@@ -228,7 +228,7 @@
             </label>
           {% endif %}
         </td>
-        <td class="text-nowrap">{{ p.contract_scan_document|default:"—" }}</td>
+        <td class="text-nowrap">{% if p.contract_employee_scan %}<a href="{{ p.contract_employee_scan.url }}" download class="text-truncate">{{ p.contract_scan_document }}</a>{% else %}{{ p.contract_scan_document|default:"—" }}{% endif %}</td>
         <td class="text-nowrap">{% if p.contract_upload_date %}{{ p.contract_upload_date|date:"d.m.Y H:i" }}{% else %}—{% endif %}</td>
         <td class="text-nowrap">{{ p.contract_send_date|date:"d.m.Y"|default:"—" }}</td>
         <td class="text-nowrap">{{ p.contract_signed_scan|default:"—" }}</td>
@@ -263,26 +263,23 @@
   </div>
 {% endif %}
 
-<div class="modal fade" id="scan-upload-progress-modal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title">Загрузка скана</h5>
-      </div>
-      <div class="modal-body">
-        <div id="scan-upload-progress">
-          <div class="ws-progress-track">
-            <div class="ws-progress-fill" id="scan-upload-progress-bar" style="width:0%"></div>
-          </div>
-        </div>
-        <div id="scan-upload-status" class="text-muted small mt-2"></div>
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-outline-secondary btn-sm" id="scan-upload-close-btn" data-bs-dismiss="modal" disabled>Закрыть</button>
-      </div>
-    </div>
-  </div>
-</div>
+<script>
+(function() {
+  if (!document.getElementById('scan-upload-progress-modal')) {
+    document.body.insertAdjacentHTML('beforeend',
+      '<div class="modal fade" id="scan-upload-progress-modal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">'
+      + '<div class="modal-dialog"><div class="modal-content">'
+      + '<div class="modal-header"><h5 class="modal-title">Загрузка скана</h5></div>'
+      + '<div class="modal-body">'
+      + '<div id="scan-upload-progress"><div class="ws-progress-track"><div class="ws-progress-fill" id="scan-upload-progress-bar" style="width:0%"></div></div></div>'
+      + '<div id="scan-upload-status" class="small mt-2"></div>'
+      + '</div>'
+      + '<div class="modal-footer"><button type="button" class="btn btn-outline-secondary btn-sm" id="scan-upload-close-btn" data-bs-dismiss="modal" disabled>Закрыть</button></div>'
+      + '</div></div></div>'
+    );
+  }
+})();
+</script>
 
 <script>
 (function(){
