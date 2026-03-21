@@ -1861,12 +1861,15 @@ section#templates .alert.alert-info .text-muted {
 }
 
 .signing-table td .badge.rounded-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: .65em;
-  padding: .2em .5em;
+  min-width: 1.4em;
+  height: 1.4em;
+  padding: 0 .4em;
   line-height: 1;
-  vertical-align: middle;
-}
-.signing-table.table-sm td {
-  vertical-align: middle;
-  overflow: visible;
+  vertical-align: baseline;
+  position: relative;
+  top: -.1em;
 }
