@@ -669,9 +669,10 @@ class Performer(models.Model):
     contract_date = models.DateField("Дата договора", null=True, blank=True)
 
     contract_employee_scan = models.FileField("Скан с подписью сотрудника", upload_to="contract_employee_scans/", blank=True, default="")
+    contract_scan_document = models.CharField("Скан договора", max_length=500, blank=True, default="")
+    contract_upload_date = models.DateTimeField("Дата загрузки", null=True, blank=True)
     contract_send_date = models.DateField("Дата отправки", null=True, blank=True)
     contract_signed_scan = models.CharField("Скан подписанного договора", max_length=500, blank=True, default="")
-    contract_upload_date = models.DateField("Дата загрузки", null=True, blank=True)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

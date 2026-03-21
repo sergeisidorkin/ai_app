@@ -50,22 +50,26 @@
                value="{{ performer.contract_number|default:'—' }}">
       </div>
 
-      <div class="col-md-6">
+      <div class="col-md-4">
         <label class="form-label">Скан с подписью сотрудника</label>
         {{ form.contract_employee_scan }}
       </div>
-      <div class="col-md-6">
+      <div class="col-md-4">
+        <label class="form-label">Скан договора</label>
+        {{ form.contract_scan_document }}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Дата загрузки</label>
+        {{ form.contract_upload_date }}
+      </div>
+
+      <div class="col-md-4">
         <label class="form-label">Дата отправки</label>
         {{ form.contract_send_date }}
       </div>
-
-      <div class="col-md-6">
+      <div class="col-md-4">
         <label class="form-label">Скан подписанного договора</label>
         {{ form.contract_signed_scan }}
-      </div>
-      <div class="col-md-6">
-        <label class="form-label">Дата загрузки</label>
-        {{ form.contract_upload_date }}
       </div>
     </div>
   </div>

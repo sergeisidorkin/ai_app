@@ -149,9 +149,10 @@
       <col>
       <col>
       <col style="min-width:180px">
+      <col style="min-width:160px">
+      <col style="min-width:160px">
       <col style="min-width:140px">
       <col style="min-width:180px">
-      <col style="min-width:140px">
     </colgroup>
     <thead>
     <tr>
@@ -174,9 +175,10 @@
       <th class="text-nowrap">Вид</th>
       <th class="text-nowrap">Номер договора</th>
       <th class="text-nowrap">Скан с подписью сотрудника</th>
+      <th class="text-nowrap">Скан договора</th>
+      <th class="text-nowrap">Дата загрузки</th>
       <th class="text-nowrap">Дата отправки</th>
       <th class="text-nowrap">Скан подписанного договора</th>
-      <th class="text-nowrap">Дата загрузки</th>
     </tr>
     </thead>
     <tbody>
@@ -204,7 +206,12 @@
         <td class="text-truncate" style="max-width:200px;">{{ p.registration.name }}</td>
         <td class="text-nowrap">{{ p.executor|short_fio }}</td>
         <td class="text-nowrap">{% if p.contract_is_addendum %}ДС{{ p.contract_addendum_number }}{% else %}Договор{% endif %}</td>
-        <td class="text-nowrap">{{ p.contract_number|default:"—" }}</td>
+        <td class="text-nowrap">
+          {{ p.contract_number|default:"—" }}
+          {% if p.contract_batch_id in notified_batch_ids %}
+            <span class="badge rounded-pill text-bg-danger ms-1">!</span>
+          {% endif %}
+        </td>
         <td class="text-nowrap">
           {% if p.contract_employee_scan %}
             <a href="{{ p.contract_employee_scan.url }}" download class="ct-download-link" title="Скачать скан">
@@ -220,12 +227,13 @@
             </label>
           {% endif %}
         </td>
+        <td class="text-nowrap">{{ p.contract_scan_document|default:"—" }}</td>
+        <td class="text-nowrap">{% if p.contract_upload_date %}{{ p.contract_upload_date|date:"d.m.Y H:i" }}{% else %}—{% endif %}</td>
         <td class="text-nowrap">{{ p.contract_send_date|date:"d.m.Y"|default:"—" }}</td>
         <td class="text-nowrap">{{ p.contract_signed_scan|default:"—" }}</td>
-        <td class="text-nowrap">{{ p.contract_upload_date|date:"d.m.Y"|default:"—" }}</td>
       </tr>
     {% empty %}
-      <tr><td colspan="11" class="text-muted">Пока нет данных.</td></tr>
+      <tr><td colspan="13" class="text-muted">Пока нет данных.</td></tr>
     {% endfor %}
     </tbody>
   </table>
