@@ -1712,7 +1712,7 @@ def create_contract_project(request):
     from group_app.models import GroupMember
     from yandexdisk_app.workspace import _build_project_folder_name, _sanitize
     from yandexdisk_app.models import YandexDiskSelection
-    from yandexdisk_app.service import create_folder, list_resources, upload_file
+    from yandexdisk_app.service import create_folder, list_resources, upload_file, publish_resource
 
     raw_ids = request.POST.getlist("performer_ids[]") or request.POST.getlist("performer_ids")
     if not raw_ids:
@@ -1953,6 +1953,15 @@ def create_contract_project(request):
                     upload_path = f"{folder_path}/{original_name}"
                     if not upload_file(request.user, upload_path, file_data):
                         errors.append(f"Загрузка файла: {original_name} → {folder_name}")
+                    else:
+                        try:
+                            public_url = publish_resource(request.user, upload_path)
+                            if public_url:
+                                Performer.objects.filter(
+                                    pk__in=executor_to_ids[key],
+                                ).update(contract_project_link=public_url)
+                        except Exception:
+                            pass
                 except Exception:
                     errors.append(f"Чтение файла: {tmpl.sample_name}")
 
