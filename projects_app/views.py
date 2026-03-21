@@ -2009,6 +2009,7 @@ def create_contract_project(request):
                 contract_batch_id=batch_id,
                 contract_is_addendum=is_addendum,
                 contract_addendum_number=addendum_number,
+                contract_project_disk_folder=folder_path,
             )
             if pre_contract_number:
                 update_kwargs["contract_number"] = pre_contract_number

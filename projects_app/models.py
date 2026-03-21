@@ -665,9 +665,10 @@ class Performer(models.Model):
     contract_project_created = models.BooleanField("Проект договора создан", default=False)
     contract_project_created_at = models.DateTimeField("Дата создания проекта договора", null=True, blank=True)
     contract_project_link = models.URLField("Ссылка на проект договора", blank=True, default="")
+    contract_project_disk_folder = models.CharField("Папка проекта на Яндекс.Диске", max_length=500, blank=True, default="")
     contract_date = models.DateField("Дата договора", null=True, blank=True)
 
-    contract_employee_scan = models.CharField("Скан с подписью сотрудника", max_length=500, blank=True, default="")
+    contract_employee_scan = models.FileField("Скан с подписью сотрудника", upload_to="contract_employee_scans/", blank=True, default="")
     contract_send_date = models.DateField("Дата отправки", null=True, blank=True)
     contract_signed_scan = models.CharField("Скан подписанного договора", max_length=500, blank=True, default="")
     contract_upload_date = models.DateField("Дата загрузки", null=True, blank=True)
