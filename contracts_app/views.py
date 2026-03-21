@@ -28,7 +28,7 @@ def _contracts_context():
             "registration", "registration__type", "typical_section",
             "employee", "employee__user", "currency",
         )
-        .filter(contract_sent_at__isnull=False, contract_batch_id__isnull=False)
+        .filter(contract_batch_id__isnull=False)
         .order_by("contract_batch_id", "position", "id")
     )
 
