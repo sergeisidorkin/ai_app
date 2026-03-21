@@ -504,6 +504,7 @@
         <col>
         <col>
         <col>
+        <col>
       </colgroup>
       <thead>
       <tr>
@@ -534,6 +535,7 @@
             <i class="bi bi-arrows-collapse"></i>
           </button>
         </th>
+        <th class="text-nowrap text-end">Ссылка</th>
         <th class="text-nowrap">Создание проекта</th>
         <th class="text-nowrap">Дата отправки</th>
         <th class="text-nowrap">Срок</th>
@@ -575,6 +577,15 @@
           <td class="text-nowrap cell-typical-val">
             {% if p.typical_section %}{{ p.typical_section|typical_section_short }}{% else %}&mdash;{% endif %}
           </td>
+          <td class="text-nowrap text-end cell-detail-val">
+            {% if p.contract_project_link %}
+              <a href="{{ p.contract_project_link }}" target="_blank" rel="noopener" title="Открыть проект договора">
+                <i class="bi bi-link-45deg" style="color: #0d6efd;"></i>
+              </a>
+            {% else %}
+              <i class="bi bi-link-45deg text-muted"></i>
+            {% endif %}
+          </td>
           <td class="text-nowrap cell-detail-val">{% if p.contract_project_created %}Создан{% else %}Не создан{% endif %}</td>
           <td class="text-nowrap cell-detail-val">{{ p.contract_sent_at|date:"d.m.Y H:i"|default:"—" }}</td>
           <td class="text-nowrap cell-detail-val">{{ p.contract_deadline_at|date:"d.m.Y H:i"|default:"—" }}</td>
@@ -583,7 +594,7 @@
           <td class="cell-detail-val">{{ p.contract_signing_note|default:"—" }}</td>
         </tr>
       {% empty %}
-        <tr><td colspan="14" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="15" class="text-muted">Пока нет данных.</td></tr>
       {% endfor %}
       </tbody>
     </table>
