@@ -127,19 +127,19 @@ def contracts_partial(request):
     return render(request, CONTRACTS_PARTIAL_TEMPLATE, _contracts_context(request.user))
 
 
-def _upload_scan_to_yandex_disk(user, performer, uploaded_file):
-    """Upload scan to Yandex.Disk, publish it, and return the public URL."""
+def _upload_scan_to_yandex_disk_bytes(user, performer, filename, file_bytes):
+    """Upload scan bytes to Yandex.Disk, publish the resource, and return the public URL."""
     if not performer.contract_project_disk_folder:
+        logger.warning("Yandex.Disk upload skipped: no disk folder for performer %s", performer.pk)
         return ""
     try:
         from yandexdisk_app.service import upload_file, publish_resource
-        disk_path = f"{performer.contract_project_disk_folder}/{uploaded_file.name}"
-        uploaded_file.seek(0)
-        upload_file(user, disk_path, uploaded_file.read())
+        disk_path = f"{performer.contract_project_disk_folder}/{filename}"
+        upload_file(user, disk_path, file_bytes)
         public_url = publish_resource(user, disk_path)
         return public_url or ""
     except Exception:
-        logger.debug("Yandex.Disk upload failed for scan %s", uploaded_file.name, exc_info=True)
+        logger.exception("Yandex.Disk upload failed for scan %s", filename)
         return ""
 
 
@@ -155,23 +155,43 @@ def contract_signing_edit(request, pk):
         contract_batch_id__isnull=False,
     )
     if request.method == "POST":
+        has_new_scan = "contract_employee_scan" in request.FILES
+        old_scan_path = performer.contract_employee_scan.name if performer.contract_employee_scan else ""
+
+        if has_new_scan:
+            scan_name = _compute_scan_name(performer)
+            _rename_uploaded_file(request.FILES["contract_employee_scan"], scan_name)
+        else:
+            scan_name = ""
+
         form = ContractSigningForm(request.POST, request.FILES, instance=performer)
         if form.is_valid():
-            has_new_scan = "contract_employee_scan" in request.FILES
             if has_new_scan:
-                old_scan = performer.contract_employee_scan
-                if old_scan:
+                if old_scan_path:
                     try:
-                        old_scan.storage.delete(old_scan.name)
+                        from django.core.files.storage import default_storage
+                        default_storage.delete(old_scan_path)
                     except Exception:
                         pass
-                scan_name = _compute_scan_name(performer)
-                _rename_uploaded_file(request.FILES["contract_employee_scan"], scan_name)
                 form.instance.contract_scan_document = scan_name
                 form.instance.contract_upload_date = timezone.now()
-            obj = form.save()
+            elif not form.cleaned_data.get("contract_employee_scan"):
+                form.instance.contract_scan_document = ""
+                form.instance.contract_upload_date = None
+                form.instance.contract_employee_scan_link = ""
+
+            scan_file_data = None
             if has_new_scan:
-                scan_url = _upload_scan_to_yandex_disk(request.user, obj, request.FILES["contract_employee_scan"])
+                f = request.FILES["contract_employee_scan"]
+                f.seek(0)
+                scan_file_data = f.read()
+
+            obj = form.save()
+
+            if has_new_scan and scan_file_data is not None:
+                scan_url = _upload_scan_to_yandex_disk_bytes(
+                    request.user, obj, request.FILES["contract_employee_scan"].name, scan_file_data,
+                )
                 if scan_url:
                     obj.contract_employee_scan_link = scan_url
                     obj.save(update_fields=["contract_employee_scan_link"])
@@ -235,12 +255,15 @@ def contract_scan_upload(request, pk):
 
     scan_name = _compute_scan_name(performer)
     _rename_uploaded_file(uploaded_file, scan_name)
+    uploaded_file.seek(0)
+    file_bytes = uploaded_file.read()
+    uploaded_file.seek(0)
     performer.contract_employee_scan = uploaded_file
     performer.contract_scan_document = scan_name
     performer.contract_upload_date = timezone.now()
     performer.save(update_fields=["contract_employee_scan", "contract_scan_document", "contract_upload_date"])
 
-    scan_url = _upload_scan_to_yandex_disk(request.user, performer, uploaded_file)
+    scan_url = _upload_scan_to_yandex_disk_bytes(request.user, performer, uploaded_file.name, file_bytes)
     if scan_url:
         performer.contract_employee_scan_link = scan_url
         performer.save(update_fields=["contract_employee_scan_link"])

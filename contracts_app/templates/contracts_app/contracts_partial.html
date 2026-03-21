@@ -177,7 +177,7 @@
       <th class="text-nowrap">Номер договора</th>
       <th></th>
       <th class="text-nowrap">Скан с подписью сотрудника</th>
-      <th class="text-nowrap text-end">Ссылка</th>
+      <th class="text-nowrap text-end">Диск</th>
       <th class="text-nowrap">Дата загрузки</th>
       <th class="text-nowrap">Дата отправки</th>
       <th class="text-nowrap">Скан подписанного договора</th>
@@ -238,13 +238,15 @@
         </td>
         <td class="text-nowrap">{{ p.contract_scan_document|default:"—" }}</td>
         <td class="text-nowrap text-end">
-          {% if p.contract_project_link %}
-            <a href="{{ p.contract_project_link }}" target="_blank" rel="noopener" title="Открыть папку на Яндекс.Диске">
+          {% with folder_url=p.contract_project_disk_folder|disk_folder_url %}
+          {% if folder_url %}
+            <a href="{{ folder_url }}" target="_blank" rel="noopener" title="Открыть папку на Яндекс.Диске">
               <i class="bi bi-link-45deg" style="color: var(--bs-primary, #075D94);"></i>
             </a>
           {% else %}
             <i class="bi bi-link-45deg" style="color: #ccc;"></i>
           {% endif %}
+          {% endwith %}
         </td>
         <td class="text-nowrap">{% if p.contract_upload_date %}{{ p.contract_upload_date|date:"d.m.Y H:i" }}{% else %}—{% endif %}</td>
         <td class="text-nowrap">{{ p.contract_send_date|date:"d.m.Y"|default:"—" }}</td>
