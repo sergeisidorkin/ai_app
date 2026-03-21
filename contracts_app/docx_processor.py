@@ -1,6 +1,6 @@
 """
 Process a .docx template: replace ``{{variable}}`` placeholders with values
-and ``[[variable]]`` placeholders with bulleted lists.
+and ``[[variable]]`` placeholders with bulleted/numbered lists.
 
 Handles the common Word issue where a single placeholder like ``{{inn}}``
 is split across multiple XML runs (e.g. run1="{{", run2="inn", run3="}}").
@@ -12,6 +12,7 @@ opening ``{{`` of the placeholder, so bold/italic/font/size are preserved.
 from __future__ import annotations
 
 import re
+import uuid
 from copy import deepcopy
 from io import BytesIO
 
@@ -95,6 +96,7 @@ def _replace_list_in_paragraph(
     list_replacements: dict,
     bullet_num_id: str,
     multilevel_num_id: str,
+    bullet_style_id: str,
 ) -> bool:
     """If the paragraph contains a ``[[list_var]]`` placeholder, replace the
     entire paragraph with a list of items.  Returns True if replaced.
@@ -120,6 +122,13 @@ def _replace_list_in_paragraph(
     if items is None:
         return False
 
+    is_multilevel = items and isinstance(items[0], (tuple, list))
+
+    if is_multilevel and not multilevel_num_id:
+        return False
+    if not is_multilevel and not bullet_num_id:
+        return False
+
     run_texts = [r.text for r in runs]
     run_starts: list[int] = []
     offset = 0
@@ -135,8 +144,6 @@ def _replace_list_in_paragraph(
 
     source_run = runs[_run_at(m.start())]
     source_rPr = source_run._element.find(qn("w:rPr"))
-
-    is_multilevel = items and isinstance(items[0], (tuple, list))
 
     parent = paragraph._element.getparent()
     anchor = paragraph._element
@@ -155,9 +162,9 @@ def _replace_list_in_paragraph(
         new_p = OxmlElement("w:p")
         pPr = OxmlElement("w:pPr")
 
-        if not is_multilevel:
+        if not is_multilevel and bullet_style_id:
             pStyle = OxmlElement("w:pStyle")
-            pStyle.set(qn("w:val"), "ListBullet")
+            pStyle.set(qn("w:val"), bullet_style_id)
             pPr.append(pStyle)
 
         numPr = OxmlElement("w:numPr")
@@ -191,8 +198,12 @@ def _replace_list_in_paragraph(
 #  existing template numbering definitions are never altered.
 # ---------------------------------------------------------------------------
 
+def _unique_nsid() -> str:
+    """Return an 8-char uppercase hex suitable for ``w:nsid``."""
+    return uuid.uuid4().hex[:8].upper()
+
+
 def _max_num_id(numbering_elm) -> int:
-    """Return the highest w:numId currently in the numbering part."""
     ids = [
         int(n.get(qn("w:numId")))
         for n in numbering_elm.findall(qn("w:num"))
@@ -202,7 +213,6 @@ def _max_num_id(numbering_elm) -> int:
 
 
 def _max_abstract_num_id(numbering_elm) -> int:
-    """Return the highest w:abstractNumId currently in the numbering part."""
     ids = [
         int(a.get(qn("w:abstractNumId")))
         for a in numbering_elm.findall(qn("w:abstractNum"))
@@ -211,11 +221,17 @@ def _max_abstract_num_id(numbering_elm) -> int:
     return max(ids, default=0)
 
 
-def _ensure_bullet_numbering(doc) -> str:
-    """Create a new bullet numbering definition and return its ``numId``.
+def _insert_abstract_num(numbering_elm, abstract_num):
+    """Insert ``w:abstractNum`` before the first ``w:num`` for valid OOXML."""
+    first_num = numbering_elm.find(qn("w:num"))
+    if first_num is not None:
+        first_num.addprevious(abstract_num)
+    else:
+        numbering_elm.append(abstract_num)
 
-    Never reuses or modifies existing definitions.
-    """
+
+def _ensure_bullet_numbering(doc) -> str:
+    """Create a new bullet numbering definition and return its ``numId``."""
     from docx.oxml import OxmlElement
 
     numbering_part = doc.part.numbering_part
@@ -226,8 +242,22 @@ def _ensure_bullet_numbering(doc) -> str:
 
     abstract_num = OxmlElement("w:abstractNum")
     abstract_num.set(qn("w:abstractNumId"), new_abs_id)
+
+    nsid = OxmlElement("w:nsid")
+    nsid.set(qn("w:val"), _unique_nsid())
+    abstract_num.append(nsid)
+    tmpl = OxmlElement("w:tmpl")
+    tmpl.set(qn("w:val"), _unique_nsid())
+    abstract_num.append(tmpl)
+    ml_type = OxmlElement("w:multiLevelType")
+    ml_type.set(qn("w:val"), "singleLevel")
+    abstract_num.append(ml_type)
+
     lvl = OxmlElement("w:lvl")
     lvl.set(qn("w:ilvl"), "0")
+    start = OxmlElement("w:start")
+    start.set(qn("w:val"), "1")
+    lvl.append(start)
     num_fmt = OxmlElement("w:numFmt")
     num_fmt.set(qn("w:val"), "bullet")
     lvl.append(num_fmt)
@@ -251,7 +281,8 @@ def _ensure_bullet_numbering(doc) -> str:
     rPr.append(rFonts)
     lvl.append(rPr)
     abstract_num.append(lvl)
-    numbering_elm.append(abstract_num)
+
+    _insert_abstract_num(numbering_elm, abstract_num)
 
     num_el = OxmlElement("w:num")
     num_el.set(qn("w:numId"), new_num_id)
@@ -267,7 +298,6 @@ def _ensure_multilevel_numbering(doc) -> str:
     """Create a new 3-level decimal numbering definition and return its ``numId``.
 
     Levels: ``1.``, ``1.1``, ``1.1.1`` with increasing indentation.
-    Never reuses or modifies existing definitions.
     """
     from docx.oxml import OxmlElement
 
@@ -279,9 +309,16 @@ def _ensure_multilevel_numbering(doc) -> str:
 
     abstract_num = OxmlElement("w:abstractNum")
     abstract_num.set(qn("w:abstractNumId"), new_abs_id)
-    multi_lvl = OxmlElement("w:multiLevelType")
-    multi_lvl.set(qn("w:val"), "multilevel")
-    abstract_num.append(multi_lvl)
+
+    nsid = OxmlElement("w:nsid")
+    nsid.set(qn("w:val"), _unique_nsid())
+    abstract_num.append(nsid)
+    tmpl = OxmlElement("w:tmpl")
+    tmpl.set(qn("w:val"), _unique_nsid())
+    abstract_num.append(tmpl)
+    ml_type = OxmlElement("w:multiLevelType")
+    ml_type.set(qn("w:val"), "multilevel")
+    abstract_num.append(ml_type)
 
     level_defs = [
         {"ilvl": "0", "fmt": "decimal", "text": "%1.", "indent": "360", "hanging": "360"},
@@ -311,7 +348,7 @@ def _ensure_multilevel_numbering(doc) -> str:
         lvl.append(pPr)
         abstract_num.append(lvl)
 
-    numbering_elm.append(abstract_num)
+    _insert_abstract_num(numbering_elm, abstract_num)
 
     num_el = OxmlElement("w:num")
     num_el.set(qn("w:numId"), new_num_id)
@@ -321,6 +358,29 @@ def _ensure_multilevel_numbering(doc) -> str:
     numbering_elm.append(num_el)
 
     return new_num_id
+
+
+# ---------------------------------------------------------------------------
+#  Style helpers
+# ---------------------------------------------------------------------------
+
+def _find_bullet_style_id(doc) -> str:
+    """Find the built-in 'List Bullet' style ID in the document.
+
+    Searches by canonical name (works for both English and Russian Word).
+    If absent, creates the style so paragraphs display as
+    "Маркированный список" / "List Bullet".
+    """
+    for style in doc.styles:
+        if style.name == "List Bullet":
+            return style.style_id
+    try:
+        from docx.enum.style import WD_STYLE_TYPE
+        style = doc.styles.add_style("List Bullet", WD_STYLE_TYPE.PARAGRAPH)
+        style.base_style = doc.styles["Normal"]
+        return style.style_id
+    except Exception:
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -335,10 +395,12 @@ def _process_list_paragraphs(
     list_replacements: dict,
     bullet_num_id: str,
     multilevel_num_id: str,
+    bullet_style_id: str,
 ) -> None:
     for para in list(paragraphs):
         _replace_list_in_paragraph(
-            para, list_replacements, bullet_num_id, multilevel_num_id,
+            para, list_replacements,
+            bullet_num_id, multilevel_num_id, bullet_style_id,
         )
 
 
@@ -348,6 +410,7 @@ def _process_tables(
     list_replacements: dict | None = None,
     bullet_num_id: str = "",
     multilevel_num_id: str = "",
+    bullet_style_id: str = "",
 ) -> None:
     for table in tables:
         for row in table.rows:
@@ -355,12 +418,12 @@ def _process_tables(
                 if list_replacements:
                     _process_list_paragraphs(
                         cell.paragraphs, list_replacements,
-                        bullet_num_id, multilevel_num_id,
+                        bullet_num_id, multilevel_num_id, bullet_style_id,
                     )
                 _process_paragraphs(cell.paragraphs, replacements)
                 _process_tables(
                     cell.tables, replacements, list_replacements,
-                    bullet_num_id, multilevel_num_id,
+                    bullet_num_id, multilevel_num_id, bullet_style_id,
                 )
 
 
@@ -382,6 +445,7 @@ def process_template(
 
     bullet_num_id = ""
     multilevel_num_id = ""
+    bullet_style_id = ""
 
     if list_replacements:
         has_multilevel = any(
@@ -390,19 +454,23 @@ def process_template(
         )
         try:
             bullet_num_id = _ensure_bullet_numbering(doc)
-            if has_multilevel:
-                multilevel_num_id = _ensure_multilevel_numbering(doc)
         except Exception:
             pass
+        if has_multilevel:
+            try:
+                multilevel_num_id = _ensure_multilevel_numbering(doc)
+            except Exception:
+                pass
+        bullet_style_id = _find_bullet_style_id(doc)
         _process_list_paragraphs(
             doc.paragraphs, list_replacements,
-            bullet_num_id, multilevel_num_id,
+            bullet_num_id, multilevel_num_id, bullet_style_id,
         )
 
     _process_paragraphs(doc.paragraphs, replacements)
     _process_tables(
         doc.tables, replacements, list_replacements,
-        bullet_num_id, multilevel_num_id,
+        bullet_num_id, multilevel_num_id, bullet_style_id,
     )
 
     for section in doc.sections:
@@ -415,12 +483,12 @@ def process_template(
                 if list_replacements:
                     _process_list_paragraphs(
                         header_footer.paragraphs, list_replacements,
-                        bullet_num_id, multilevel_num_id,
+                        bullet_num_id, multilevel_num_id, bullet_style_id,
                     )
                 _process_paragraphs(header_footer.paragraphs, replacements)
                 _process_tables(
                     header_footer.tables, replacements, list_replacements,
-                    bullet_num_id, multilevel_num_id,
+                    bullet_num_id, multilevel_num_id, bullet_style_id,
                 )
 
     out = BytesIO()
