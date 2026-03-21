@@ -7,6 +7,7 @@ class LetterTemplate(models.Model):
         ("participation_confirmation", "Подтверждение участия эксперта"),
         ("direction_confirmation", "Подтверждение по направлению"),
         ("contract_sending", "Отправка проекта договора"),
+        ("scan_sending", "Отправка скана сотрудника"),
         ("project_start", "Начало проекта"),
         ("request_approval", "Согласование запроса"),
     ]
@@ -15,6 +16,7 @@ class LetterTemplate(models.Model):
         "participation_confirmation": "Шаблон запроса подтверждения участия в проекте",
         "direction_confirmation": "Шаблон запроса подтверждения по направлению",
         "contract_sending": "Шаблон отправки проекта договора",
+        "scan_sending": "Шаблон отправки скана сотрудника",
         "project_start": "Шаблон уведомления о начале проекта",
         "request_approval": "Шаблон согласования запроса",
     }
@@ -67,6 +69,17 @@ class LetterTemplate(models.Model):
             ("{project_deadline}", "Срок завершения проекта (дедлайн)"),
             ("{duration_hours}", "Срок для принятия решения (часов)"),
             ("{deadline_at}", "Крайний срок ответа"),
+        ],
+        "scan_sending": [
+            ("{recipient_name_lawer}", "Имя Отчество пользователя с ролью «Юрист»"),
+            ("{project_label}",
+             "Обозначение проекта в формате «XXXXNZZ Тип Название проекта»"),
+            ("{executor}", "Исполнитель"),
+            ("{agreed_amount}", "Согласованная оплата услуг"),
+            ("{prepayment_percent}", "Размер аванса в процентах"),
+            ("{final_payment_percent}", "Размер окончательного платежа в процентах"),
+            ("{project_deadline}", "Срок завершения проекта (дедлайн)"),
+            ("{document_link_scan}", "Скан-копия договора, подписанная исполнителем"),
         ],
         "project_start": [
             ("{recipient_name}", "Имя получателя"),

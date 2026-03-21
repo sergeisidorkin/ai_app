@@ -88,9 +88,36 @@ def _contracts_context(user=None):
                     batch_badge_map[bid] = marker
 
     is_expert = False
+    is_lawyer = False
     if user and getattr(user, "is_authenticated", False):
-        from policy_app.models import EXPERT_GROUP
+        from policy_app.models import EXPERT_GROUP, LAWYER_GROUP
         is_expert = user.groups.filter(name=EXPERT_GROUP).exists()
+        is_lawyer = user.groups.filter(name=LAWYER_GROUP).exists()
+
+    lawyer_badge_map = {}
+    if is_lawyer:
+        lawyer_pending = list(
+            Notification.objects
+            .filter(notification_type=Notification.NotificationType.EMPLOYEE_SCAN_SENT)
+            .pending_attention()
+            .order_by("-sent_at", "-id")
+        )
+        lawyer_numbers = {n.pk: len(lawyer_pending) - idx for idx, n in enumerate(lawyer_pending)}
+        for n in lawyer_pending:
+            perf_ids = set(
+                NotificationPerformerLink.objects
+                .filter(notification_id=n.pk)
+                .values_list("performer_id", flat=True)
+            )
+            bids = set(
+                Performer.objects
+                .filter(pk__in=perf_ids, contract_batch_id__isnull=False)
+                .values_list("contract_batch_id", flat=True)
+            )
+            marker = lawyer_numbers[n.pk]
+            for bid in bids:
+                if bid not in lawyer_badge_map:
+                    lawyer_badge_map[bid] = marker
 
     contract_project_ids = {p.registration_id for p in contracts}
     contract_projects = (
@@ -103,7 +130,9 @@ def _contracts_context(user=None):
         "contracts": contracts,
         "contract_projects": contract_projects,
         "batch_badge_map": batch_badge_map,
+        "lawyer_badge_map": lawyer_badge_map,
         "is_expert": is_expert,
+        "is_lawyer": is_lawyer,
     }
 
 
@@ -114,15 +143,19 @@ def contracts_partial(request):
 
 
 def _upload_scan_to_yandex_disk(user, performer, uploaded_file):
+    """Upload scan to Yandex.Disk, publish it, and return the public URL."""
     if not performer.contract_project_disk_folder:
-        return
+        return ""
     try:
-        from yandexdisk_app.service import upload_file
+        from yandexdisk_app.service import upload_file, publish_resource
         disk_path = f"{performer.contract_project_disk_folder}/{uploaded_file.name}"
         uploaded_file.seek(0)
         upload_file(user, disk_path, uploaded_file.read())
+        public_url = publish_resource(user, disk_path)
+        return public_url or ""
     except Exception:
         logger.debug("Yandex.Disk upload failed for scan %s", uploaded_file.name, exc_info=True)
+        return ""
 
 
 @login_required
@@ -147,12 +180,16 @@ def contract_signing_edit(request, pk):
                 form.instance.contract_upload_date = timezone.now()
             obj = form.save()
             if has_new_scan:
-                _upload_scan_to_yandex_disk(request.user, obj, request.FILES["contract_employee_scan"])
+                scan_url = _upload_scan_to_yandex_disk(request.user, obj, request.FILES["contract_employee_scan"])
+                if scan_url:
+                    obj.contract_employee_scan_link = scan_url
+                    obj.save(update_fields=["contract_employee_scan_link"])
             if obj.contract_batch_id:
                 Performer.objects.filter(
                     contract_batch_id=obj.contract_batch_id,
                 ).exclude(pk=obj.pk).update(
                     contract_employee_scan=obj.contract_employee_scan,
+                    contract_employee_scan_link=obj.contract_employee_scan_link,
                     contract_scan_document=obj.contract_scan_document,
                     contract_upload_date=obj.contract_upload_date,
                     contract_send_date=obj.contract_send_date,
@@ -212,13 +249,17 @@ def contract_scan_upload(request, pk):
     performer.contract_upload_date = timezone.now()
     performer.save(update_fields=["contract_employee_scan", "contract_scan_document", "contract_upload_date"])
 
-    _upload_scan_to_yandex_disk(request.user, performer, uploaded_file)
+    scan_url = _upload_scan_to_yandex_disk(request.user, performer, uploaded_file)
+    if scan_url:
+        performer.contract_employee_scan_link = scan_url
+        performer.save(update_fields=["contract_employee_scan_link"])
 
     if performer.contract_batch_id:
         Performer.objects.filter(
             contract_batch_id=performer.contract_batch_id,
         ).exclude(pk=performer.pk).update(
             contract_employee_scan=performer.contract_employee_scan,
+            contract_employee_scan_link=performer.contract_employee_scan_link,
             contract_scan_document=performer.contract_scan_document,
             contract_upload_date=performer.contract_upload_date,
         )
@@ -635,3 +676,54 @@ def cs_move_down(request, pk):
         ContractSubject.objects.filter(pk=obj.pk).update(position=obj.position)
         ContractSubject.objects.filter(pk=nxt.pk).update(position=nxt.position)
     return _fp_render_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def send_scan(request):
+    from notifications_app.services import create_scan_notifications
+
+    performer_ids = request.POST.getlist("performer_ids[]")
+    performer_ids = [int(pid) for pid in performer_ids if pid.isdigit()]
+    if not performer_ids:
+        return JsonResponse({"ok": False, "error": "Не выбраны строки."}, status=400)
+
+    performers = list(
+        Performer.objects
+        .filter(pk__in=performer_ids, contract_batch_id__isnull=False)
+        .select_related("registration", "registration__type", "currency", "employee", "typical_section")
+    )
+    if not performers:
+        return JsonResponse({"ok": False, "error": "Исполнители не найдены."}, status=400)
+
+    try:
+        create_scan_notifications(performers=performers, sender=request.user)
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+
+    batch_ids = {p.contract_batch_id for p in performers if p.contract_batch_id}
+    if batch_ids:
+        batch_performer_ids = set(
+            Performer.objects
+            .filter(contract_batch_id__in=batch_ids)
+            .values_list("pk", flat=True)
+        )
+        expert_notif_ids = set(
+            NotificationPerformerLink.objects
+            .filter(
+                performer_id__in=batch_performer_ids,
+                notification__notification_type=Notification.NotificationType.PROJECT_CONTRACT_CONCLUSION,
+                notification__is_processed=False,
+            )
+            .values_list("notification_id", flat=True)
+        )
+        if expert_notif_ids:
+            now = timezone.now()
+            Notification.objects.filter(pk__in=expert_notif_ids).update(
+                is_processed=True,
+                action_at=now,
+                updated_at=now,
+            )
+
+    return JsonResponse({"ok": True})

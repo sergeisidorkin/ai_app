@@ -518,6 +518,10 @@
                 Отправка проекта договора
               </a>
               <a href="#" class="list-group-item list-group-item-action"
+                 data-letters-section="scan-sending">
+                Отправка скана сотрудника
+              </a>
+              <a href="#" class="list-group-item list-group-item-action"
                  data-letters-section="project-start">
                 Начало проекта
               </a>
@@ -556,6 +560,9 @@
               </div>
               <div id="letters-content-contract-sending" class="letters-section-content d-none"
                    data-letters-url="{% url 'letter_template_partial' 'contract_sending' %}">
+              </div>
+              <div id="letters-content-scan-sending" class="letters-section-content d-none"
+                   data-letters-url="{% url 'letter_template_partial' 'scan_sending' %}">
               </div>
               <div id="letters-content-project-start" class="letters-section-content d-none"
                    data-letters-url="{% url 'letter_template_partial' 'project_start' %}">
@@ -952,6 +959,7 @@
             'participation-confirmation': 'Подтверждение участия эксперта',
             'direction-confirmation': 'Подтверждение по направлению',
             'contract-sending': 'Отправка проекта договора',
+            'scan-sending': 'Отправка скана сотрудника',
             'project-start': 'Начало проекта',
             'request-approval': 'Согласование запроса',
           };

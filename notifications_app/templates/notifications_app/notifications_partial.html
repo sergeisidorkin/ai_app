@@ -127,6 +127,28 @@
               </p>
               <p class="mb-0">С уважением,<br>IMC Montan AI</p>
               {% endif %}
+            {% elif notification.notification_type == "employee_scan_sent" %}
+              {% if card.content_html %}
+                {{ card.content_html|safe }}
+              {% else %}
+              <p class="mb-2">Добрый день, {{ card.recipient_name_lawer }}</p>
+              <p class="mb-2">
+                Вам отправлена подписанная исполнителем скан-копия договора
+                по проекту {{ card.project_label }}.
+              </p>
+              <p class="mb-2">Проект: {{ card.project_label }}</p>
+              <p class="mb-2">Исполнитель: {{ card.executor_fio }}</p>
+              <p class="mb-2">Оплата услуг без учета налогов: {{ card.agreed_amount_display }} {{ card.currency_code }}</p>
+              <p class="mb-2">Порядок оплаты: {{ card.prepayment_display }} аванс, {{ card.final_payment_display }} окончательный платёж</p>
+              <p class="mb-2">Срок исполнения: до {{ card.project_deadline_display }}</p>
+              <p class="mb-2">Документ доступен для скачивания по ссылке: {% if card.document_link_scan %}<a href="{{ card.document_link_scan }}" target="_blank" rel="noopener">{{ card.document_link_scan }}</a>{% endif %}</p>
+              <p class="mb-2">
+                Необходимо подписать договор и загрузить скан-копию итогового варианта
+                договора, подписанного двумя сторонами, на сайт imcmontanai.ru
+                в таблицу «Договоры» раздела «Договоры».
+              </p>
+              <p class="mb-0">С уважением,<br>IMC Montan AI</p>
+              {% endif %}
             {% elif notification.notification_type == "project_info_request_approval" %}
               <p class="mb-2">Добрый день, {{ card.recipient_name }}!</p>
               <p class="mb-2">

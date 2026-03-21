@@ -147,7 +147,7 @@
       <col>
       <col>
       <col>
-      <col>
+      <col style="min-width:140px">
       <col style="min-width:180px">
       <col style="min-width:160px">
       <col style="min-width:160px">
@@ -208,12 +208,12 @@
         <td class="text-nowrap">{% if p.contract_is_addendum %}ДС{{ p.contract_addendum_number }}{% else %}Договор{% endif %}</td>
         <td class="text-nowrap">
           {{ p.contract_number|default:"—" }}
-          {% if batch_badge_map|get_item:p.contract_batch_id %}
-            {% if is_expert %}
-              <span class="badge rounded-pill text-bg-danger ms-1">{{ batch_badge_map|get_item:p.contract_batch_id }}</span>
-            {% else %}
-              <span class="badge rounded-pill text-bg-danger ms-1">!</span>
-            {% endif %}
+          {% if is_expert and batch_badge_map|get_item:p.contract_batch_id %}
+            <span class="badge rounded-pill text-bg-danger ms-1">{{ batch_badge_map|get_item:p.contract_batch_id }}</span>
+          {% elif is_lawyer and lawyer_badge_map|get_item:p.contract_batch_id %}
+            <span class="badge rounded-pill text-bg-danger ms-1">{{ lawyer_badge_map|get_item:p.contract_batch_id }}</span>
+          {% elif not is_expert and not is_lawyer and batch_badge_map|get_item:p.contract_batch_id %}
+            <span class="badge rounded-pill text-bg-danger ms-1">!</span>
           {% endif %}
         </td>
         <td class="text-nowrap">
@@ -252,6 +252,16 @@
       disabled>
       <i class="bi bi-pencil-square me-2"></i>Редактировать
     </button>
+    {% if is_expert %}
+    <button
+      type="button"
+      id="signing-send-scan-btn"
+      class="btn btn-outline-primary btn-sm d-flex align-items-center"
+      data-url="{% url 'signing_send_scan' %}"
+      disabled>
+      <i class="bi bi-envelope-at me-2"></i>Отправить скан
+    </button>
+    {% endif %}
     <div id="signing-actions" class="d-none"></div>
   </div>
 {% endif %}

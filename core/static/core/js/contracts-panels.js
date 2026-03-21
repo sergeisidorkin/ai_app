@@ -147,9 +147,11 @@
   function updateSigningEditBtn() {
     var root = pane();
     if (!root) return;
+    var anyChecked = getSigningChecks().some(function(b) { return b.checked; });
     var btn = root.querySelector('#signing-edit-btn');
-    if (!btn) return;
-    btn.disabled = !getSigningChecks().some(function(b) { return b.checked; });
+    if (btn) btn.disabled = !anyChecked;
+    var sendBtn = root.querySelector('#signing-send-scan-btn');
+    if (sendBtn) sendBtn.disabled = !anyChecked;
   }
 
   function showContractsModal() {
@@ -186,6 +188,43 @@
         showContractsModal();
       });
       updateSigningEditBtn();
+      return;
+    }
+
+    var sendScanBtn = e.target.closest('#signing-send-scan-btn');
+    if (sendScanBtn && root.contains(sendScanBtn)) {
+      var checked = getSigningChecked();
+      if (!checked.length) return;
+      var url = sendScanBtn.dataset.url;
+      if (!url) return;
+      sendScanBtn.disabled = true;
+      var fd = new FormData();
+      checked.forEach(function(cb) { fd.append('performer_ids[]', cb.value); });
+      fetch(url, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': getCookie('csrftoken') },
+        body: fd,
+      }).then(function(resp) {
+        return resp.json();
+      }).then(function(data) {
+        if (data.ok) {
+          htmx.trigger(document.body, 'contracts-updated');
+          htmx.trigger(document.body, 'notifications-updated');
+          var contractsPane = document.getElementById('contracts-pane');
+          if (contractsPane) {
+            var refreshUrl = contractsPane.getAttribute('hx-get') || contractsPane.dataset.refreshUrl;
+            if (refreshUrl) {
+              htmx.ajax('GET', refreshUrl, { target: '#contracts-pane', swap: 'innerHTML' });
+            }
+          }
+        } else {
+          alert(data.error || 'Ошибка при отправке скана.');
+        }
+      }).catch(function() {
+        alert('Ошибка сети при отправке скана.');
+      }).finally(function() {
+        updateSigningEditBtn();
+      });
       return;
     }
   });

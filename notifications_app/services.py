@@ -673,6 +673,161 @@ def process_info_request_notification(notification, actor):
     return notification
 
 
+def _build_scan_payload(*, recipient, project, performers, sender=None):
+    agreed_amount = sum((performer.agreed_amount or Decimal("0")) for performer in performers)
+
+    project_label_parts = [project.short_uid]
+    if project.type_id:
+        project_label_parts.append(project.type.short_name or str(project.type))
+    if project.name:
+        project_label_parts.append(project.name)
+    project_label = " ".join(part for part in project_label_parts if part)
+
+    executor_fio = _short_fio(performers[0].executor) if performers else "—"
+    deadline_label = project.deadline.strftime("%d.%m.%Y") if project.deadline else "—"
+
+    currency_code = ""
+    for p in performers:
+        if p.currency:
+            currency_code = p.currency.code_alpha or ""
+            break
+
+    prepayment_values = [p.prepayment for p in performers if p.prepayment is not None]
+    final_payment_values = [p.final_payment for p in performers if p.final_payment is not None]
+    prepayment_display = f"{int(prepayment_values[0])}%" if prepayment_values else "—"
+    final_payment_display = f"{int(final_payment_values[0])}%" if final_payment_values else "—"
+
+    document_link_scan = ""
+    for p in performers:
+        if p.contract_employee_scan_link:
+            document_link_scan = p.contract_employee_scan_link
+            break
+
+    recipient_name_lawer = _user_full_name(recipient)
+
+    title_text = f"Исполнитель ({executor_fio}) отправил скан договора по проекту {project_label}".strip()
+
+    template_vars = {
+        "recipient_name_lawer": recipient_name_lawer,
+        "project_label": project_label,
+        "executor": executor_fio,
+        "agreed_amount": f"{_display_amount(agreed_amount)} {currency_code}".strip(),
+        "prepayment_percent": prepayment_display,
+        "final_payment_percent": final_payment_display,
+        "project_deadline": deadline_label,
+        "document_link_scan": document_link_scan,
+    }
+
+    content_text = None
+    try:
+        from letters_app.services import get_effective_template, render_template, render_subject
+        tpl = get_effective_template("scan_sending", sender)
+        if tpl:
+            scan_link_html = (
+                f'<a href="{document_link_scan}" target="_blank" rel="noopener">{document_link_scan}</a>'
+                if document_link_scan else ""
+            )
+            body_vars = {**template_vars, "document_link_scan": scan_link_html}
+            content_text = render_template(tpl.body_html, body_vars, safe_keys={"document_link_scan"})
+            if tpl.subject_template:
+                title_text = render_subject(tpl.subject_template, template_vars)
+    except Exception:
+        logger.debug("letters_app template lookup failed for scan_sending, using fallback", exc_info=True)
+
+    if content_text is None:
+        content_lines = [
+            f"Добрый день, {recipient_name_lawer}",
+            "",
+            f"Вам отправлена подписанная исполнителем скан-копия договора по проекту {project_label}.",
+            "",
+            f"Проект: {project_label}",
+            f"Исполнитель: {executor_fio}",
+            f"Оплата услуг без учета налогов: {_display_amount(agreed_amount)} {currency_code}".strip(),
+            f"Порядок оплаты: {prepayment_display} аванс, {final_payment_display} окончательный платёж",
+            f"Срок исполнения: до {deadline_label}",
+            f"Документ доступен для скачивания по ссылке: {document_link_scan}",
+            "",
+            "Необходимо подписать договор и загрузить скан-копию итогового варианта "
+            "договора, подписанного двумя сторонами, на сайт imcmontanai.ru "
+            "в таблицу «Договоры» раздела «Договоры».",
+            "",
+            "С уважением,",
+            "IMC Montan AI",
+        ]
+        content_text = "\n".join(content_lines).strip()
+
+    payload = {
+        "recipient_name_lawer": recipient_name_lawer,
+        "project_label": project_label,
+        "executor_fio": executor_fio,
+        "agreed_amount_display": _display_amount(agreed_amount),
+        "currency_code": currency_code,
+        "prepayment_display": prepayment_display,
+        "final_payment_display": final_payment_display,
+        "document_link_scan": document_link_scan,
+        "project_deadline_display": deadline_label,
+    }
+    return title_text, content_text, payload
+
+
+@transaction.atomic
+def create_scan_notifications(*, performers, sender):
+    from django.contrib.auth import get_user_model
+    from policy_app.models import LAWYER_GROUP
+    User = get_user_model()
+
+    lawyer_user = (
+        User.objects
+        .filter(groups__name=LAWYER_GROUP, is_staff=True, is_active=True)
+        .order_by("pk")
+        .first()
+    )
+    if not lawyer_user:
+        raise ValueError("Не найден пользователь с ролью «Юрист».")
+
+    performers = list(performers)
+    grouped = defaultdict(list)
+    for performer in performers:
+        grouped[(performer.registration_id, performer.employee_id)].append(performer)
+
+    created = []
+    now = timezone.now()
+    for (_registration_id, _employee_id), grouped_performers in grouped.items():
+        first = grouped_performers[0]
+        project = first.registration
+        title_text, content_text, payload = _build_scan_payload(
+            recipient=lawyer_user,
+            project=project,
+            performers=grouped_performers,
+            sender=sender,
+        )
+        notification = Notification.objects.create(
+            notification_type=Notification.NotificationType.EMPLOYEE_SCAN_SENT,
+            related_section=Notification.RelatedSection.CONTRACTS,
+            recipient=lawyer_user,
+            sender=sender,
+            project=project,
+            title_text=title_text,
+            content_text=content_text,
+            payload=payload,
+            sent_at=now,
+            is_read=False,
+            is_processed=False,
+        )
+        NotificationPerformerLink.objects.bulk_create(
+            [
+                NotificationPerformerLink(
+                    notification=notification,
+                    performer=performer,
+                    position=index,
+                )
+                for index, performer in enumerate(grouped_performers, start=1)
+            ]
+        )
+        created.append(notification)
+    return created
+
+
 def serialize_notification_cards(notifications):
     pending_notifications = [item for item in notifications if item.requires_attention]
     pending_numbers = {item.pk: len(pending_notifications) - index for index, item in enumerate(pending_notifications)}
@@ -714,6 +869,8 @@ def serialize_notification_cards(notifications):
                 "prepayment_display": payload.get("prepayment_display") or "—",
                 "final_payment_display": payload.get("final_payment_display") or "—",
                 "document_link": payload.get("document_link") or "",
+                "document_link_scan": payload.get("document_link_scan") or "",
+                "recipient_name_lawer": payload.get("recipient_name_lawer") or "",
                 "content_html": (notification.content_text or "")
                     if (notification.content_text or "").lstrip().startswith("<")
                     else "",
