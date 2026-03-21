@@ -237,7 +237,9 @@ def contract_signing_edit(request, pk):
 
 
 def _compute_scan_name(performer):
-    number = (performer.contract_number or "").replace("/", "-")
+    project_number = ""
+    if performer.registration:
+        project_number = str(performer.registration.number or "")
     executor_raw = " ".join(str(performer.executor or "").split())
     if executor_raw:
         parts = executor_raw.split(" ")
@@ -246,7 +248,7 @@ def _compute_scan_name(performer):
         executor_short = f"{last_name} {initials}".strip()
     else:
         executor_short = "Unknown"
-    return f"Договор {number}_{executor_short}".strip()
+    return f"Договор {project_number}_{executor_short}_1п".strip()
 
 
 def _rename_uploaded_file(uploaded_file, new_basename):
@@ -259,7 +261,7 @@ def _rename_uploaded_file(uploaded_file, new_basename):
 @require_POST
 def contract_scan_upload(request, pk):
     performer = get_object_or_404(
-        Performer,
+        Performer.objects.select_related("registration"),
         pk=pk,
         contract_batch_id__isnull=False,
     )
@@ -734,6 +736,12 @@ def send_scan(request):
     except ValueError as exc:
         return JsonResponse({"ok": False, "error": str(exc)}, status=400)
 
+    now = timezone.now()
+    Performer.objects.filter(
+        contract_batch_id__in=batch_ids,
+        contract_send_date__isnull=True,
+    ).update(contract_send_date=now)
+
     batch_ids = {p.contract_batch_id for p in performers if p.contract_batch_id}
     if batch_ids:
         batch_performer_ids = set(
@@ -751,7 +759,6 @@ def send_scan(request):
             .values_list("notification_id", flat=True)
         )
         if expert_notif_ids:
-            now = timezone.now()
             Notification.objects.filter(pk__in=expert_notif_ids).update(
                 is_processed=True,
                 action_at=now,
