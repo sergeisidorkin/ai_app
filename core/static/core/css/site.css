@@ -1859,3 +1859,14 @@ section#templates .alert.alert-info .text-muted {
   color: #212529;
   background-color: rgba(0, 0, 0, .08);
 }
+
+.signing-table td .badge.rounded-pill {
+  font-size: .65em;
+  padding: .2em .5em;
+  line-height: 1;
+  vertical-align: middle;
+}
+.signing-table.table-sm td {
+  vertical-align: middle;
+  overflow: visible;
+}
