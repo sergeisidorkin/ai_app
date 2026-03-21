@@ -33,6 +33,7 @@ class Notification(models.Model):
         NONE = "none", "Не указан"
         PROJECTS = "projects", "Проекты"
         CHECKLISTS = "checklists", "Чек-листы"
+        CONTRACTS = "contracts", "Договоры"
 
     class ActionChoice(models.TextChoices):
         NONE = "", "Не выбрано"
