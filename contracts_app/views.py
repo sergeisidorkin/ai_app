@@ -79,7 +79,7 @@ def contract_form_edit(request, pk):
             "registration", "registration__type", "currency",
         ),
         pk=pk,
-        contract_sent_at__isnull=False,
+        contract_batch_id__isnull=False,
     )
     if request.method == "POST":
         form = ContractEditForm(request.POST, instance=performer)
@@ -101,7 +101,7 @@ def contract_form_edit(request, pk):
     batch_filter = (
         Q(contract_batch_id=performer.contract_batch_id)
         if performer.contract_batch_id
-        else Q(registration_id=performer.registration_id, executor=performer.executor, contract_sent_at__isnull=False)
+        else Q(registration_id=performer.registration_id, executor=performer.executor, contract_batch_id__isnull=False)
     )
     total_price = (
         Performer.objects
