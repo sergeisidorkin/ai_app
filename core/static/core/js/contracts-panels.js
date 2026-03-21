@@ -127,8 +127,11 @@
   function getSigningChecks() {
     return qa('tbody input.form-check-input[name="signing-row-select"]', pane());
   }
+  function getSigningActiveChecks() {
+    return getSigningChecks().filter(function(b) { return !b.disabled; });
+  }
   function getSigningChecked() {
-    return getSigningChecks().filter(function(b) { return b.checked; });
+    return getSigningActiveChecks().filter(function(b) { return b.checked; });
   }
   function updateSigningHighlight() {
     getSigningChecks().forEach(function(b) {
@@ -137,7 +140,7 @@
     });
   }
   function updateSigningMaster() {
-    var boxes = getSigningChecks();
+    var boxes = getSigningActiveChecks();
     var master = pane() && pane().querySelector('#signing-master');
     if (!master) return;
     var checkedCount = boxes.filter(function(b) { return b.checked; }).length;
@@ -147,12 +150,11 @@
   function updateSigningEditBtn() {
     var root = pane();
     if (!root) return;
-    var anyChecked = getSigningChecks().some(function(b) { return b.checked; });
+    var checked = getSigningChecked();
     var btn = root.querySelector('#signing-edit-btn');
-    if (btn) btn.disabled = !anyChecked;
+    if (btn) btn.disabled = checked.length !== 1;
     var sendBtn = root.querySelector('#signing-send-scan-btn');
     if (sendBtn) {
-      var checked = getSigningChecked();
       var enabled = checked.length === 1
         && checked[0].closest('tr') && checked[0].closest('tr').dataset.hasScan === '1';
       sendBtn.disabled = !enabled;
@@ -244,7 +246,7 @@
 
     var master = e.target.closest('#signing-master');
     if (master && root.contains(master)) {
-      getSigningChecks().forEach(function(b) { b.checked = master.checked; });
+      getSigningActiveChecks().forEach(function(b) { b.checked = master.checked; });
       master.indeterminate = false;
       refreshSigning();
       return;

@@ -189,6 +189,7 @@
           data-batch-id="{{ p.contract_batch_id }}"
           data-signing-edit-url="{% url 'contracts_signing_edit' p.pk %}"
           {% if p.contract_employee_scan %}data-has-scan="1"{% endif %}
+          {% if p.contract_send_date %}data-scan-sent="1"{% endif %}
       >
         <td class="text-nowrap">
           {% if request.user.is_authenticated and request.user.is_staff %}
@@ -198,6 +199,7 @@
                      id="signing-sel-{{ p.id }}"
                      name="signing-row-select"
                      value="{{ p.id }}"
+                     {% if is_expert and p.contract_send_date %}disabled{% endif %}
                      aria-label="Выделить строку подписания">
             </div>
           {% endif %}
@@ -249,7 +251,7 @@
           {% endwith %}
         </td>
         <td class="text-nowrap">{% if p.contract_upload_date %}{{ p.contract_upload_date|date:"d.m.Y H:i" }}{% else %}—{% endif %}</td>
-        <td class="text-nowrap">{{ p.contract_send_date|date:"d.m.Y"|default:"—" }}</td>
+        <td class="text-nowrap">{% if p.contract_send_date %}{{ p.contract_send_date|date:"d.m.Y H:i" }}{% else %}—{% endif %}</td>
         <td class="text-nowrap">{{ p.contract_signed_scan|default:"—" }}</td>
       </tr>
     {% empty %}

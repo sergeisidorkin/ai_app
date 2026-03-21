@@ -50,25 +50,26 @@
                value="{{ performer.contract_number|default:'—' }}">
       </div>
 
-      <div class="col-md-8">
+      <div class="col-md-6">
         <label class="form-label">Скан с подписью сотрудника</label>
         <input type="text" class="form-control readonly-field" readonly tabindex="-1"
                value="{{ performer.contract_scan_document|default:'' }}">
       </div>
-      <div class="col-md-4">
+      <div class="col-md-3">
         <label class="form-label">Дата загрузки</label>
         <input type="text" class="form-control readonly-field" readonly tabindex="-1"
                value="{% if performer.contract_upload_date %}{{ performer.contract_upload_date|date:'d.m.Y H:i' }}{% endif %}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Дата отправки</label>
+        <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+               value="{% if performer.contract_send_date %}{{ performer.contract_send_date|date:'d.m.Y H:i' }}{% endif %}">
       </div>
 
       <div class="col-12">
         {{ form.contract_employee_scan }}
       </div>
 
-      <div class="col-md-4">
-        <label class="form-label">Дата отправки</label>
-        {{ form.contract_send_date }}
-      </div>
       <div class="col-md-4">
         <label class="form-label">Скан подписанного договора</label>
         {{ form.contract_signed_scan }}

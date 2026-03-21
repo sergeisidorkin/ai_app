@@ -632,10 +632,15 @@ body .second-sidebar + .flex-grow-1 {
 #performers-main-section .form-check-input:disabled,
 #participation-confirmation-section .form-check-input:disabled,
 #contract-conclusion-section .form-check-input:disabled,
-#info-request-approval-section .form-check-input:disabled {
+#info-request-approval-section .form-check-input:disabled,
+.signing-table .form-check-input:disabled {
   background-color: #e9ecef !important;
   border-color: #d5dbe1 !important;
   opacity: 1 !important;
+}
+
+.signing-table tr[data-scan-sent="1"] td:not(:first-child) {
+  opacity: 0.55;
 }
 
 
