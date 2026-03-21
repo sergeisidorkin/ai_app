@@ -174,8 +174,8 @@
       <th class="text-nowrap">Исполнитель</th>
       <th class="text-nowrap">Вид</th>
       <th class="text-nowrap">Номер договора</th>
+      <th></th>
       <th class="text-nowrap">Скан с подписью сотрудника</th>
-      <th class="text-nowrap">Скан договора</th>
       <th class="text-nowrap">Дата загрузки</th>
       <th class="text-nowrap">Дата отправки</th>
       <th class="text-nowrap">Скан подписанного договора</th>
@@ -208,8 +208,12 @@
         <td class="text-nowrap">{% if p.contract_is_addendum %}ДС{{ p.contract_addendum_number }}{% else %}Договор{% endif %}</td>
         <td class="text-nowrap">
           {{ p.contract_number|default:"—" }}
-          {% if p.contract_batch_id in notified_batch_ids %}
-            <span class="badge rounded-pill text-bg-danger ms-1">!</span>
+          {% if batch_badge_map|get_item:p.contract_batch_id %}
+            {% if is_expert %}
+              <span class="badge rounded-pill text-bg-danger ms-1">{{ batch_badge_map|get_item:p.contract_batch_id }}</span>
+            {% else %}
+              <span class="badge rounded-pill text-bg-danger ms-1">!</span>
+            {% endif %}
           {% endif %}
         </td>
         <td class="text-nowrap">
