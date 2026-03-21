@@ -26,7 +26,7 @@ CT_FORM_TEMPLATE = "contracts_app/contract_template_form.html"
 CT_HX_EVENT = "contract-templates-updated"
 
 
-def _contracts_context():
+def _contracts_context(user=None):
     all_performers = (
         Performer.objects
         .select_related(
@@ -56,27 +56,41 @@ def _contracts_context():
     for p in contracts:
         p.total_price = price_map.get(p.contract_batch_id)
 
-    pending_notification_ids = set(
+    pending_notifications = list(
         Notification.objects
         .filter(
             notification_type=Notification.NotificationType.PROJECT_CONTRACT_CONCLUSION,
         )
         .pending_attention()
-        .values_list("id", flat=True)
+        .order_by("-sent_at", "-id")
     )
-    notified_batch_ids = set()
-    if pending_notification_ids:
-        notified_performer_ids = set(
-            NotificationPerformerLink.objects
-            .filter(notification_id__in=pending_notification_ids)
-            .values_list("performer_id", flat=True)
-        )
-        if notified_performer_ids:
-            notified_batch_ids = set(
+    pending_numbers = {
+        n.pk: len(pending_notifications) - idx
+        for idx, n in enumerate(pending_notifications)
+    }
+
+    batch_badge_map = {}
+    if pending_notifications:
+        for n in pending_notifications:
+            perf_ids = set(
+                NotificationPerformerLink.objects
+                .filter(notification_id=n.pk)
+                .values_list("performer_id", flat=True)
+            )
+            batch_ids = set(
                 Performer.objects
-                .filter(pk__in=notified_performer_ids, contract_batch_id__isnull=False)
+                .filter(pk__in=perf_ids, contract_batch_id__isnull=False)
                 .values_list("contract_batch_id", flat=True)
             )
+            marker = pending_numbers[n.pk]
+            for bid in batch_ids:
+                if bid not in batch_badge_map:
+                    batch_badge_map[bid] = marker
+
+    is_expert = False
+    if user and getattr(user, "is_authenticated", False):
+        from policy_app.models import EXPERT_GROUP
+        is_expert = user.groups.filter(name=EXPERT_GROUP).exists()
 
     contract_project_ids = {p.registration_id for p in contracts}
     contract_projects = (
@@ -88,14 +102,15 @@ def _contracts_context():
     return {
         "contracts": contracts,
         "contract_projects": contract_projects,
-        "notified_batch_ids": notified_batch_ids,
+        "batch_badge_map": batch_badge_map,
+        "is_expert": is_expert,
     }
 
 
 @login_required
 @require_http_methods(["GET"])
 def contracts_partial(request):
-    return render(request, CONTRACTS_PARTIAL_TEMPLATE, _contracts_context())
+    return render(request, CONTRACTS_PARTIAL_TEMPLATE, _contracts_context(request.user))
 
 
 def _upload_scan_to_yandex_disk(user, performer, uploaded_file):
@@ -124,10 +139,14 @@ def contract_signing_edit(request, pk):
     if request.method == "POST":
         form = ContractSigningForm(request.POST, request.FILES, instance=performer)
         if form.is_valid():
-            if "contract_employee_scan" in request.FILES:
+            has_new_scan = "contract_employee_scan" in request.FILES
+            if has_new_scan:
+                scan_name = _compute_scan_name(performer)
+                _rename_uploaded_file(request.FILES["contract_employee_scan"], scan_name)
+                form.instance.contract_scan_document = scan_name
                 form.instance.contract_upload_date = timezone.now()
             obj = form.save()
-            if "contract_employee_scan" in request.FILES:
+            if has_new_scan:
                 _upload_scan_to_yandex_disk(request.user, obj, request.FILES["contract_employee_scan"])
             if obj.contract_batch_id:
                 Performer.objects.filter(
@@ -139,7 +158,7 @@ def contract_signing_edit(request, pk):
                     contract_send_date=obj.contract_send_date,
                     contract_signed_scan=obj.contract_signed_scan,
                 )
-            resp = render(request, CONTRACTS_PARTIAL_TEMPLATE, _contracts_context())
+            resp = render(request, CONTRACTS_PARTIAL_TEMPLATE, _contracts_context(request.user))
             resp["HX-Trigger"] = "contracts-updated"
             return resp
     else:
@@ -155,6 +174,24 @@ def contract_signing_edit(request, pk):
     return resp
 
 
+def _compute_scan_name(performer):
+    number = (performer.contract_number or "").replace("/", "-")
+    executor_raw = " ".join(str(performer.executor or "").split())
+    if executor_raw:
+        parts = executor_raw.split(" ")
+        last_name = parts[0]
+        initials = "".join(p[0] for p in parts[1:3] if p)
+        executor_short = f"{last_name} {initials}".strip()
+    else:
+        executor_short = "Unknown"
+    return f"Договор {number}_{executor_short}".strip()
+
+
+def _rename_uploaded_file(uploaded_file, new_basename):
+    ext = os.path.splitext(uploaded_file.name)[1]
+    uploaded_file.name = new_basename + ext
+
+
 @login_required
 @user_passes_test(staff_required)
 @require_POST
@@ -168,9 +205,12 @@ def contract_scan_upload(request, pk):
     if not uploaded_file:
         return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
 
+    scan_name = _compute_scan_name(performer)
+    _rename_uploaded_file(uploaded_file, scan_name)
     performer.contract_employee_scan = uploaded_file
+    performer.contract_scan_document = scan_name
     performer.contract_upload_date = timezone.now()
-    performer.save(update_fields=["contract_employee_scan", "contract_upload_date"])
+    performer.save(update_fields=["contract_employee_scan", "contract_scan_document", "contract_upload_date"])
 
     _upload_scan_to_yandex_disk(request.user, performer, uploaded_file)
 
@@ -179,10 +219,11 @@ def contract_scan_upload(request, pk):
             contract_batch_id=performer.contract_batch_id,
         ).exclude(pk=performer.pk).update(
             contract_employee_scan=performer.contract_employee_scan,
+            contract_scan_document=performer.contract_scan_document,
             contract_upload_date=performer.contract_upload_date,
         )
 
-    resp = render(request, CONTRACTS_PARTIAL_TEMPLATE, _contracts_context())
+    resp = render(request, CONTRACTS_PARTIAL_TEMPLATE, _contracts_context(request.user))
     resp["HX-Trigger"] = "contracts-updated"
     return resp
 
@@ -209,7 +250,7 @@ def contract_form_edit(request, pk):
                     contract_number=obj.contract_number,
                     contract_file=obj.contract_file,
                 )
-            resp = render(request, CONTRACTS_PARTIAL_TEMPLATE, _contracts_context())
+            resp = render(request, CONTRACTS_PARTIAL_TEMPLATE, _contracts_context(request.user))
             resp["HX-Trigger"] = "contracts-updated"
             return resp
     else:
