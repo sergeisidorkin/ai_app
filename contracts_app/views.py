@@ -264,9 +264,7 @@ def contract_scan_upload(request, pk):
             contract_upload_date=performer.contract_upload_date,
         )
 
-    resp = render(request, CONTRACTS_PARTIAL_TEMPLATE, _contracts_context(request.user))
-    resp["HX-Trigger"] = "contracts-updated"
-    return resp
+    return JsonResponse({"ok": True, "scan_name": scan_name})
 
 
 @login_required
