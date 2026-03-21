@@ -674,6 +674,9 @@ class Performer(models.Model):
     contract_send_date = models.DateTimeField("Дата отправки", null=True, blank=True)
     contract_employee_scan_link = models.URLField("Ссылка на скан сотрудника", max_length=500, blank=True, default="")
     contract_signed_scan = models.CharField("Скан подписанного договора", max_length=500, blank=True, default="")
+    contract_signed_scan_file = models.FileField("Файл подписанного договора", upload_to="contract_signed_scans/", blank=True, default="")
+    contract_signed_scan_upload_date = models.DateTimeField("Дата загрузки подписанного договора", null=True, blank=True)
+    contract_signed_scan_link = models.URLField("Ссылка на подписанный договор", max_length=500, blank=True, default="")
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

@@ -169,8 +169,13 @@ def contract_signing_edit(request, pk):
         contract_batch_id__isnull=False,
     )
     if request.method == "POST":
+        from django.core.files.storage import default_storage
+
         has_new_scan = "contract_employee_scan" in request.FILES
         old_scan_path = performer.contract_employee_scan.name if performer.contract_employee_scan else ""
+
+        has_new_signed = "contract_signed_scan_file" in request.FILES
+        old_signed_path = performer.contract_signed_scan_file.name if performer.contract_signed_scan_file else ""
 
         if has_new_scan:
             scan_name = _compute_scan_name(performer)
@@ -178,12 +183,17 @@ def contract_signing_edit(request, pk):
         else:
             scan_name = ""
 
+        if has_new_signed:
+            signed_name = _compute_signed_scan_name(performer)
+            _rename_uploaded_file(request.FILES["contract_signed_scan_file"], signed_name)
+        else:
+            signed_name = ""
+
         form = ContractSigningForm(request.POST, request.FILES, instance=performer)
         if form.is_valid():
             if has_new_scan:
                 if old_scan_path:
                     try:
-                        from django.core.files.storage import default_storage
                         default_storage.delete(old_scan_path)
                     except Exception:
                         pass
@@ -194,11 +204,30 @@ def contract_signing_edit(request, pk):
                 form.instance.contract_upload_date = None
                 form.instance.contract_employee_scan_link = ""
 
+            if has_new_signed:
+                if old_signed_path:
+                    try:
+                        default_storage.delete(old_signed_path)
+                    except Exception:
+                        pass
+                form.instance.contract_signed_scan = signed_name
+                form.instance.contract_signed_scan_upload_date = timezone.now()
+            elif not form.cleaned_data.get("contract_signed_scan_file"):
+                form.instance.contract_signed_scan = ""
+                form.instance.contract_signed_scan_upload_date = None
+                form.instance.contract_signed_scan_link = ""
+
             scan_file_data = None
             if has_new_scan:
                 f = request.FILES["contract_employee_scan"]
                 f.seek(0)
                 scan_file_data = f.read()
+
+            signed_file_data = None
+            if has_new_signed:
+                f = request.FILES["contract_signed_scan_file"]
+                f.seek(0)
+                signed_file_data = f.read()
 
             obj = form.save()
 
@@ -209,6 +238,15 @@ def contract_signing_edit(request, pk):
                 if scan_url:
                     obj.contract_employee_scan_link = scan_url
                     obj.save(update_fields=["contract_employee_scan_link"])
+
+            if has_new_signed and signed_file_data is not None:
+                signed_url = _upload_scan_to_yandex_disk_bytes(
+                    request.user, obj, request.FILES["contract_signed_scan_file"].name, signed_file_data,
+                )
+                if signed_url:
+                    obj.contract_signed_scan_link = signed_url
+                    obj.save(update_fields=["contract_signed_scan_link"])
+
             if obj.contract_batch_id:
                 Performer.objects.filter(
                     contract_batch_id=obj.contract_batch_id,
@@ -219,6 +257,9 @@ def contract_signing_edit(request, pk):
                     contract_upload_date=obj.contract_upload_date,
                     contract_send_date=obj.contract_send_date,
                     contract_signed_scan=obj.contract_signed_scan,
+                    contract_signed_scan_file=obj.contract_signed_scan_file,
+                    contract_signed_scan_link=obj.contract_signed_scan_link,
+                    contract_signed_scan_upload_date=obj.contract_signed_scan_upload_date,
                 )
             resp = render(request, CONTRACTS_PARTIAL_TEMPLATE, _contracts_context(request.user))
             resp["HX-Trigger"] = "contracts-updated"
@@ -236,7 +277,7 @@ def contract_signing_edit(request, pk):
     return resp
 
 
-def _compute_scan_name(performer):
+def _compute_scan_name_base(performer, suffix):
     project_number = ""
     if performer.registration:
         project_number = str(performer.registration.number or "")
@@ -248,7 +289,18 @@ def _compute_scan_name(performer):
         executor_short = f"{last_name} {initials}".strip()
     else:
         executor_short = "Unknown"
-    return f"Договор {project_number}_{executor_short}_1п".strip()
+    addendum_suffix = ""
+    if performer.contract_is_addendum:
+        addendum_suffix = f"_ДС{performer.contract_addendum_number or ''}"
+    return f"Договор {project_number}_{executor_short}{addendum_suffix}_{suffix}".strip()
+
+
+def _compute_scan_name(performer):
+    return _compute_scan_name_base(performer, "1п")
+
+
+def _compute_signed_scan_name(performer):
+    return _compute_scan_name_base(performer, "2п")
 
 
 def _rename_uploaded_file(uploaded_file, new_basename):
@@ -292,6 +344,52 @@ def contract_scan_upload(request, pk):
             contract_employee_scan_link=performer.contract_employee_scan_link,
             contract_scan_document=performer.contract_scan_document,
             contract_upload_date=performer.contract_upload_date,
+        )
+
+    return JsonResponse({"ok": True, "scan_name": scan_name})
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def contract_signed_scan_upload(request, pk):
+    performer = get_object_or_404(
+        Performer.objects.select_related("registration"),
+        pk=pk,
+        contract_batch_id__isnull=False,
+    )
+    uploaded_file = request.FILES.get("contract_signed_scan_file")
+    if not uploaded_file:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+
+    scan_name = _compute_signed_scan_name(performer)
+    _rename_uploaded_file(uploaded_file, scan_name)
+    uploaded_file.seek(0)
+    file_bytes = uploaded_file.read()
+    uploaded_file.seek(0)
+    performer.contract_signed_scan_file = uploaded_file
+    performer.contract_signed_scan = scan_name
+    performer.contract_signed_scan_upload_date = timezone.now()
+    performer.save(update_fields=[
+        "contract_signed_scan_file", "contract_signed_scan",
+        "contract_signed_scan_upload_date",
+    ])
+
+    scan_url = _upload_scan_to_yandex_disk_bytes(
+        request.user, performer, uploaded_file.name, file_bytes,
+    )
+    if scan_url:
+        performer.contract_signed_scan_link = scan_url
+        performer.save(update_fields=["contract_signed_scan_link"])
+
+    if performer.contract_batch_id:
+        Performer.objects.filter(
+            contract_batch_id=performer.contract_batch_id,
+        ).exclude(pk=performer.pk).update(
+            contract_signed_scan_file=performer.contract_signed_scan_file,
+            contract_signed_scan_link=performer.contract_signed_scan_link,
+            contract_signed_scan=performer.contract_signed_scan,
+            contract_signed_scan_upload_date=performer.contract_signed_scan_upload_date,
         )
 
     return JsonResponse({"ok": True, "scan_name": scan_name})

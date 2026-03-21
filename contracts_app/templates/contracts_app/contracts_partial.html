@@ -153,7 +153,9 @@
       <col style="width:28px">
       <col style="min-width:160px">
       <col style="min-width:160px">
-      <col style="min-width:140px">
+      <col style="width:28px">
+      <col style="min-width:180px">
+      <col style="min-width:160px">
     </colgroup>
     <thead>
     <tr>
@@ -180,7 +182,9 @@
       <th class="text-nowrap">Диск</th>
       <th class="text-nowrap">Дата загрузки</th>
       <th class="text-nowrap">Дата отправки</th>
+      <th></th>
       <th class="text-nowrap">Скан подписанного договора</th>
+      <th class="text-nowrap">Дата загрузки</th>
     </tr>
     </thead>
     <tbody>
@@ -189,6 +193,7 @@
           data-batch-id="{{ p.contract_batch_id }}"
           data-signing-edit-url="{% url 'contracts_signing_edit' p.pk %}"
           {% if p.contract_employee_scan %}data-has-scan="1"{% endif %}
+          {% if p.contract_signed_scan_file %}data-has-signed-scan="1"{% endif %}
           {% if p.contract_send_date %}data-scan-sent="1"{% endif %}
       >
         <td class="text-nowrap">
@@ -252,10 +257,28 @@
         </td>
         <td class="text-nowrap">{% if p.contract_upload_date %}{{ p.contract_upload_date|date:"d.m.Y H:i" }}{% else %}—{% endif %}</td>
         <td class="text-nowrap">{% if p.contract_send_date %}{{ p.contract_send_date|date:"d.m.Y H:i" }}{% else %}—{% endif %}</td>
+        <td class="text-center p-0">
+          {% if request.user.is_staff %}
+            {% if p.contract_signed_scan_file %}
+              <a href="{{ p.contract_signed_scan_file.url }}" download class="ct-download-link" title="Скачать подписанный договор">
+                <i class="bi bi-download"></i>
+              </a>
+            {% else %}
+              <label class="ct-upload-link" title="Загрузить подписанный договор">
+                <i class="bi bi-upload"></i>
+                <input type="file" class="d-none js-signed-scan-upload"
+                       data-upload-url="{% url 'contract_signed_scan_upload' p.pk %}"
+                       data-performer-id="{{ p.pk }}"
+                       accept=".pdf,.jpg,.jpeg,.png,.tiff,.tif">
+              </label>
+            {% endif %}
+          {% endif %}
+        </td>
         <td class="text-nowrap">{{ p.contract_signed_scan|default:"—" }}</td>
+        <td class="text-nowrap">{% if p.contract_signed_scan_upload_date %}{{ p.contract_signed_scan_upload_date|date:"d.m.Y H:i" }}{% else %}—{% endif %}</td>
       </tr>
     {% empty %}
-      <tr><td colspan="13" class="text-muted">Пока нет данных.</td></tr>
+      <tr><td colspan="16" class="text-muted">Пока нет данных.</td></tr>
     {% endfor %}
     </tbody>
   </table>

@@ -70,9 +70,19 @@
         {{ form.contract_employee_scan }}
       </div>
 
-      <div class="col-md-4">
+      <div class="col-md-6">
         <label class="form-label">Скан подписанного договора</label>
-        {{ form.contract_signed_scan }}
+        <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+               value="{{ performer.contract_signed_scan|default:'' }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Дата загрузки</label>
+        <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+               value="{% if performer.contract_signed_scan_upload_date %}{{ performer.contract_signed_scan_upload_date|date:'d.m.Y H:i' }}{% endif %}">
+      </div>
+
+      <div class="col-12">
+        {{ form.contract_signed_scan_file }}
       </div>
     </div>
   </div>
@@ -94,15 +104,19 @@
 (function() {
   var form = document.querySelector('#contracts-modal form');
   if (!form) return;
-  var fileInput = form.querySelector('input[type="file"][name="contract_employee_scan"]');
-  var clearCb = form.querySelector('input[type="checkbox"][name="contract_employee_scan-clear"]');
-  if (fileInput && clearCb) {
-    fileInput.addEventListener('change', function() {
-      if (this.files && this.files.length) {
-        clearCb.checked = true;
-        clearCb.disabled = true;
-      }
-    });
+  function bindClearOnUpload(fileName, clearName) {
+    var fileInput = form.querySelector('input[type="file"][name="' + fileName + '"]');
+    var clearCb = form.querySelector('input[type="checkbox"][name="' + clearName + '"]');
+    if (fileInput && clearCb) {
+      fileInput.addEventListener('change', function() {
+        if (this.files && this.files.length) {
+          clearCb.checked = true;
+          clearCb.disabled = true;
+        }
+      });
+    }
   }
+  bindClearOnUpload('contract_employee_scan', 'contract_employee_scan-clear');
+  bindClearOnUpload('contract_signed_scan_file', 'contract_signed_scan_file-clear');
 })();
 </script>
