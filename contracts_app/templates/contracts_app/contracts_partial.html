@@ -183,6 +183,7 @@
     {% for p in contracts %}
       <tr data-project-id="{{ p.registration_id }}"
           data-batch-id="{{ p.contract_batch_id }}"
+          data-signing-edit-url="{% url 'contracts_signing_edit' p.pk %}"
       >
         <td class="text-nowrap">
           {% if request.user.is_authenticated and request.user.is_staff %}
@@ -204,53 +205,10 @@
         <td class="text-nowrap">{{ p.executor|short_fio }}</td>
         <td class="text-nowrap">{% if p.contract_is_addendum %}ДС{{ p.contract_addendum_number }}{% else %}Договор{% endif %}</td>
         <td class="text-nowrap">{{ p.contract_number|default:"—" }}</td>
-        {% if request.user.is_authenticated and request.user.is_staff %}
-        <td>
-          <input type="text" class="form-control form-control-sm"
-                 value="{{ p.contract_employee_scan }}"
-                 hx-post="{% url 'contracts_signing_update' p.pk %}"
-                 hx-trigger="change"
-                 hx-swap="none"
-                 hx-vals='{"field":"contract_employee_scan"}'
-                 hx-include="[name=csrfmiddlewaretoken]"
-                 name="value">
-        </td>
-        <td>
-          <input type="date" class="form-control form-control-sm"
-                 value="{{ p.contract_send_date|date:'Y-m-d' }}"
-                 hx-post="{% url 'contracts_signing_update' p.pk %}"
-                 hx-trigger="change"
-                 hx-swap="none"
-                 hx-vals='{"field":"contract_send_date"}'
-                 hx-include="[name=csrfmiddlewaretoken]"
-                 name="value">
-        </td>
-        <td>
-          <input type="text" class="form-control form-control-sm"
-                 value="{{ p.contract_signed_scan }}"
-                 hx-post="{% url 'contracts_signing_update' p.pk %}"
-                 hx-trigger="change"
-                 hx-swap="none"
-                 hx-vals='{"field":"contract_signed_scan"}'
-                 hx-include="[name=csrfmiddlewaretoken]"
-                 name="value">
-        </td>
-        <td>
-          <input type="date" class="form-control form-control-sm"
-                 value="{{ p.contract_upload_date|date:'Y-m-d' }}"
-                 hx-post="{% url 'contracts_signing_update' p.pk %}"
-                 hx-trigger="change"
-                 hx-swap="none"
-                 hx-vals='{"field":"contract_upload_date"}'
-                 hx-include="[name=csrfmiddlewaretoken]"
-                 name="value">
-        </td>
-        {% else %}
         <td class="text-nowrap">{{ p.contract_employee_scan|default:"—" }}</td>
         <td class="text-nowrap">{{ p.contract_send_date|date:"d.m.Y"|default:"—" }}</td>
         <td class="text-nowrap">{{ p.contract_signed_scan|default:"—" }}</td>
         <td class="text-nowrap">{{ p.contract_upload_date|date:"d.m.Y"|default:"—" }}</td>
-        {% endif %}
       </tr>
     {% empty %}
       <tr><td colspan="11" class="text-muted">Пока нет данных.</td></tr>
@@ -259,7 +217,18 @@
   </table>
 </div>
 
-{% csrf_token %}
+{% if request.user.is_authenticated and request.user.is_staff %}
+  <div class="d-flex align-items-stretch gap-2 products-actions-row mt-2">
+    <button
+      type="button"
+      id="signing-edit-btn"
+      class="btn btn-primary btn-sm d-flex align-items-center"
+      disabled>
+      <i class="bi bi-pencil-square me-2"></i>Редактировать
+    </button>
+    <div id="signing-actions" class="d-none"></div>
+  </div>
+{% endif %}
 
 <script>
 (function(){

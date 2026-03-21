@@ -7,7 +7,7 @@ from django.shortcuts import render, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST
 
 from projects_app.models import Performer, ProjectRegistration
-from .forms import ContractEditForm, ContractSubjectForm, ContractTemplateForm, ContractVariableForm
+from .forms import ContractEditForm, ContractSigningForm, ContractSubjectForm, ContractTemplateForm, ContractVariableForm
 from .models import ContractSubject, ContractTemplate, ContractVariable
 
 
@@ -72,29 +72,38 @@ def contracts_partial(request):
 
 @login_required
 @user_passes_test(staff_required)
-@require_POST
-def contracts_signing_update(request, pk):
+@require_http_methods(["GET", "POST"])
+def contract_signing_edit(request, pk):
     performer = get_object_or_404(
-        Performer, pk=pk, contract_batch_id__isnull=False,
+        Performer.objects.select_related(
+            "registration", "registration__type", "currency",
+        ),
+        pk=pk,
+        contract_batch_id__isnull=False,
     )
-    field = request.POST.get("field", "")
-    value = request.POST.get("value", "").strip()
-    ALLOWED = {
-        "contract_employee_scan", "contract_send_date",
-        "contract_signed_scan", "contract_upload_date",
-    }
-    if field not in ALLOWED:
-        return HttpResponse(status=400)
-    if "date" in field:
-        setattr(performer, field, value or None)
+    if request.method == "POST":
+        form = ContractSigningForm(request.POST, instance=performer)
+        if form.is_valid():
+            obj = form.save()
+            if obj.contract_batch_id:
+                Performer.objects.filter(
+                    contract_batch_id=obj.contract_batch_id,
+                ).exclude(pk=obj.pk).update(
+                    contract_employee_scan=obj.contract_employee_scan,
+                    contract_send_date=obj.contract_send_date,
+                    contract_signed_scan=obj.contract_signed_scan,
+                    contract_upload_date=obj.contract_upload_date,
+                )
+            resp = render(request, CONTRACTS_PARTIAL_TEMPLATE, _contracts_context())
+            resp["HX-Trigger"] = "contracts-updated"
+            return resp
     else:
-        setattr(performer, field, value)
-    performer.save(update_fields=[field])
-    if performer.contract_batch_id:
-        Performer.objects.filter(
-            contract_batch_id=performer.contract_batch_id,
-        ).exclude(pk=pk).update(**{field: getattr(performer, field)})
-    return HttpResponse(status=204)
+        form = ContractSigningForm(instance=performer)
+
+    return render(request, "contracts_app/signing_form.html", {
+        "form": form,
+        "performer": performer,
+    })
 
 
 @login_required
