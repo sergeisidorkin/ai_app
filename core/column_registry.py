@@ -319,6 +319,18 @@ COLUMN_REGISTRY = {
             },
         },
     },
+    "contracts": {
+        "label": "Договоры",
+        "tables": {
+            "contract_subject": {
+                "label": "Предмет договора",
+                "columns": {
+                    "product": "Продукт",
+                    "subject_text": "Предмет договора",
+                },
+            },
+        },
+    },
 }
 
 

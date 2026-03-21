@@ -538,6 +538,19 @@ def _computed_chapters_name(_ep, _p, all_performers):
     return items
 
 
+def _computed_number_of_contract(_ep, performer, _all_performers) -> str:
+    return performer.contract_number or ""
+
+
+def _computed_contract_name(_ep, performer, _all_performers) -> str:
+    from contracts_app.models import ContractSubject
+    product_id = getattr(getattr(performer, "registration", None), "type_id", None)
+    if not product_id:
+        return ""
+    cs = ContractSubject.objects.filter(product_id=product_id).first()
+    return cs.subject_text if cs else ""
+
+
 COMPUTED_LIST_MAP: dict[str, callable] = {
     "[[actives_name]]": _computed_actives_name,
     "[[chapters_name]]": _computed_chapters_name,
@@ -559,6 +572,8 @@ COMPUTED_MAP: dict[str, callable] = {
     "{{day}}": _computed_day,
     "{{month}}": _computed_month,
     "{{named}}": _computed_named,
+    "{{number_of_contract}}": _computed_number_of_contract,
+    "{{contract_name}}": _computed_contract_name,
 }
 
 
