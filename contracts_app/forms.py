@@ -49,13 +49,11 @@ class ContractSigningForm(forms.ModelForm):
         model = Performer
         fields = [
             "contract_employee_scan",
-            "contract_send_date",
-            "contract_signed_scan",
+            "contract_signed_scan_file",
         ]
         widgets = {
             "contract_employee_scan": _ContractFileInput(attrs={"class": "form-control"}),
-            "contract_send_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
-            "contract_signed_scan": forms.TextInput(attrs={"class": "form-control"}),
+            "contract_signed_scan_file": _ContractFileInput(attrs={"class": "form-control"}),
         }
 
 

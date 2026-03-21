@@ -256,16 +256,15 @@
       return;
     }
 
-    var scanInput = e.target.closest('.js-scan-upload');
-    if (scanInput && root.contains(scanInput)) {
-      var file = scanInput.files && scanInput.files[0];
+    function handleScanUpload(inputEl, fieldName) {
+      var file = inputEl.files && inputEl.files[0];
       if (!file) return;
-      var url = scanInput.dataset.uploadUrl;
+      var url = inputEl.dataset.uploadUrl;
       if (!url) return;
 
-      var tr = scanInput.closest('tr');
+      var tr = inputEl.closest('tr');
       var rowCb = tr && tr.querySelector('input[name="signing-row-select"]');
-      if (rowCb && !rowCb.checked) {
+      if (rowCb && !rowCb.disabled && !rowCb.checked) {
         rowCb.checked = true;
         refreshSigning();
       }
@@ -283,7 +282,7 @@
       }
 
       var fd = new FormData();
-      fd.append('contract_employee_scan', file);
+      fd.append(fieldName, file);
       var xhr = new XMLHttpRequest();
       xhr.open('POST', url, true);
       xhr.setRequestHeader('X-CSRFToken', getCookie('csrftoken'));
@@ -293,14 +292,12 @@
           progressBar.style.width = pct + '%';
         }
       });
-      var _uploadScanName = '';
       xhr.addEventListener('load', function() {
         if (progressBar) progressBar.style.width = '100%';
         if (xhr.status >= 200 && xhr.status < 300) {
           try {
             var data = JSON.parse(xhr.responseText);
             if (data.ok && data.scan_name && statusEl) {
-              _uploadScanName = data.scan_name;
               var icon = document.createElement('i');
               icon.className = 'bi bi-check-circle me-1';
               var span = document.createElement('span');
@@ -352,7 +349,18 @@
         }, { once: true });
       }
       xhr.send(fd);
-      scanInput.value = '';
+      inputEl.value = '';
+    }
+
+    var scanInput = e.target.closest('.js-scan-upload');
+    if (scanInput && root.contains(scanInput)) {
+      handleScanUpload(scanInput, 'contract_employee_scan');
+      return;
+    }
+
+    var signedScanInput = e.target.closest('.js-signed-scan-upload');
+    if (signedScanInput && root.contains(signedScanInput)) {
+      handleScanUpload(signedScanInput, 'contract_signed_scan_file');
       return;
     }
   });
