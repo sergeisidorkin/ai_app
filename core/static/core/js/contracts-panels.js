@@ -151,7 +151,12 @@
     var btn = root.querySelector('#signing-edit-btn');
     if (btn) btn.disabled = !anyChecked;
     var sendBtn = root.querySelector('#signing-send-scan-btn');
-    if (sendBtn) sendBtn.disabled = !anyChecked;
+    if (sendBtn) {
+      var checked = getSigningChecked();
+      var enabled = checked.length === 1
+        && checked[0].closest('tr') && checked[0].closest('tr').dataset.hasScan === '1';
+      sendBtn.disabled = !enabled;
+    }
   }
 
   function showContractsModal() {

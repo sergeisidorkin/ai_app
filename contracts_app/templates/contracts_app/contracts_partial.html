@@ -150,10 +150,10 @@
       <col style="min-width:140px">
       <col style="width:28px">
       <col style="min-width:180px">
+      <col style="width:28px">
       <col style="min-width:160px">
       <col style="min-width:160px">
       <col style="min-width:140px">
-      <col style="min-width:180px">
     </colgroup>
     <thead>
     <tr>
@@ -177,6 +177,7 @@
       <th class="text-nowrap">Номер договора</th>
       <th></th>
       <th class="text-nowrap">Скан с подписью сотрудника</th>
+      <th class="text-nowrap text-end">Ссылка</th>
       <th class="text-nowrap">Дата загрузки</th>
       <th class="text-nowrap">Дата отправки</th>
       <th class="text-nowrap">Скан подписанного договора</th>
@@ -187,6 +188,7 @@
       <tr data-project-id="{{ p.registration_id }}"
           data-batch-id="{{ p.contract_batch_id }}"
           data-signing-edit-url="{% url 'contracts_signing_edit' p.pk %}"
+          {% if p.contract_employee_scan %}data-has-scan="1"{% endif %}
       >
         <td class="text-nowrap">
           {% if request.user.is_authenticated and request.user.is_staff %}
@@ -218,17 +220,32 @@
           {% endif %}
         </td>
         <td class="text-center p-0">
-          {% if request.user.is_staff and not p.contract_employee_scan %}
-            <label class="ct-upload-link" title="Загрузить скан">
-              <i class="bi bi-upload"></i>
-              <input type="file" class="d-none js-scan-upload"
-                     data-upload-url="{% url 'contract_scan_upload' p.pk %}"
-                     data-performer-id="{{ p.pk }}"
-                     accept=".pdf,.jpg,.jpeg,.png,.tiff,.tif">
-            </label>
+          {% if request.user.is_staff %}
+            {% if p.contract_employee_scan %}
+              <a href="{{ p.contract_employee_scan.url }}" download class="ct-download-link" title="Скачать скан">
+                <i class="bi bi-download"></i>
+              </a>
+            {% else %}
+              <label class="ct-upload-link" title="Загрузить скан">
+                <i class="bi bi-upload"></i>
+                <input type="file" class="d-none js-scan-upload"
+                       data-upload-url="{% url 'contract_scan_upload' p.pk %}"
+                       data-performer-id="{{ p.pk }}"
+                       accept=".pdf,.jpg,.jpeg,.png,.tiff,.tif">
+              </label>
+            {% endif %}
           {% endif %}
         </td>
-        <td class="text-nowrap">{% if p.contract_employee_scan %}<a href="{{ p.contract_employee_scan.url }}" download class="text-truncate">{{ p.contract_scan_document }}</a>{% else %}{{ p.contract_scan_document|default:"—" }}{% endif %}</td>
+        <td class="text-nowrap">{{ p.contract_scan_document|default:"—" }}</td>
+        <td class="text-nowrap text-end">
+          {% if p.contract_project_link %}
+            <a href="{{ p.contract_project_link }}" target="_blank" rel="noopener" title="Открыть папку на Яндекс.Диске">
+              <i class="bi bi-link-45deg" style="color: var(--bs-primary, #075D94);"></i>
+            </a>
+          {% else %}
+            <i class="bi bi-link-45deg" style="color: #ccc;"></i>
+          {% endif %}
+        </td>
         <td class="text-nowrap">{% if p.contract_upload_date %}{{ p.contract_upload_date|date:"d.m.Y H:i" }}{% else %}—{% endif %}</td>
         <td class="text-nowrap">{{ p.contract_send_date|date:"d.m.Y"|default:"—" }}</td>
         <td class="text-nowrap">{{ p.contract_signed_scan|default:"—" }}</td>
@@ -253,7 +270,7 @@
     <button
       type="button"
       id="signing-send-scan-btn"
-      class="btn btn-outline-primary btn-sm d-flex align-items-center"
+      class="btn btn-primary btn-sm d-flex align-items-center"
       data-url="{% url 'signing_send_scan' %}"
       disabled>
       <i class="bi bi-envelope-at me-2"></i>Отправить скан
