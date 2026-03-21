@@ -937,7 +937,7 @@
 
           document.addEventListener('DOMContentLoaded', function () {
             var saved = window.UIPref ? UIPref.get('contracts:section', null) : null;
-            if (saved && CONTRACTS_TITLES[saved]) {
+            if (saved && CONTRACTS_TITLES[saved] && document.getElementById('contracts-content-' + saved)) {
               activateSidebarLink(saved);
               switchContractsSection(saved);
             }
