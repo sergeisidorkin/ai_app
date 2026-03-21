@@ -205,7 +205,21 @@
         <td class="text-nowrap">{{ p.executor|short_fio }}</td>
         <td class="text-nowrap">{% if p.contract_is_addendum %}ДС{{ p.contract_addendum_number }}{% else %}Договор{% endif %}</td>
         <td class="text-nowrap">{{ p.contract_number|default:"—" }}</td>
-        <td class="text-nowrap">{{ p.contract_employee_scan|default:"—" }}</td>
+        <td class="text-nowrap">
+          {% if p.contract_employee_scan %}
+            <a href="{{ p.contract_employee_scan.url }}" download class="ct-download-link" title="Скачать скан">
+              <i class="bi bi-download"></i>
+            </a>
+          {% endif %}
+          {% if request.user.is_staff %}
+            <label class="ct-upload-link" title="Загрузить скан">
+              <i class="bi bi-upload"></i>
+              <input type="file" class="d-none js-scan-upload"
+                     data-upload-url="{% url 'contract_scan_upload' p.pk %}"
+                     accept=".pdf,.jpg,.jpeg,.png,.tiff,.tif">
+            </label>
+          {% endif %}
+        </td>
         <td class="text-nowrap">{{ p.contract_send_date|date:"d.m.Y"|default:"—" }}</td>
         <td class="text-nowrap">{{ p.contract_signed_scan|default:"—" }}</td>
         <td class="text-nowrap">{{ p.contract_upload_date|date:"d.m.Y"|default:"—" }}</td>

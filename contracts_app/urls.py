@@ -5,6 +5,7 @@ urlpatterns = [
     path("partial/", views.contracts_partial, name="contracts_partial"),
     path("<int:pk>/edit/", views.contract_form_edit, name="contracts_edit"),
     path("signing/<int:pk>/edit/", views.contract_signing_edit, name="contracts_signing_edit"),
+    path("signing/<int:pk>/upload-scan/", views.contract_scan_upload, name="contract_scan_upload"),
 
     # Contract templates ("Образцы шаблонов")
     path("templates/partial/", views.contract_templates_partial, name="ct_partial"),

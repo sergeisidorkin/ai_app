@@ -190,6 +190,11 @@
     }
   });
 
+  function getCookie(name) {
+    var m = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
+    return m ? m.pop() : '';
+  }
+
   document.addEventListener('change', function(e) {
     var root = pane(); if (!root) return;
 
@@ -204,6 +209,34 @@
     var rowCb = e.target.closest('tbody input.form-check-input[name="signing-row-select"]');
     if (rowCb && root.contains(rowCb)) {
       refreshSigning();
+      return;
+    }
+
+    var scanInput = e.target.closest('.js-scan-upload');
+    if (scanInput && root.contains(scanInput)) {
+      var file = scanInput.files && scanInput.files[0];
+      if (!file) return;
+      var url = scanInput.dataset.uploadUrl;
+      if (!url) return;
+      var fd = new FormData();
+      fd.append('contract_employee_scan', file);
+      fetch(url, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': getCookie('csrftoken') },
+        body: fd,
+      }).then(function(resp) {
+        if (resp.ok) return resp.text();
+        throw new Error('Upload failed');
+      }).then(function(html) {
+        var target = document.getElementById('contracts-pane');
+        if (target) {
+          target.innerHTML = html;
+          htmx.process(target);
+          document.body.dispatchEvent(new Event('contracts-updated'));
+        }
+      }).catch(function() {}).finally(function() {
+        scanInput.value = '';
+      });
       return;
     }
   });

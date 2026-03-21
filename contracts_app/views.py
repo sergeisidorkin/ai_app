@@ -1,14 +1,17 @@
+import logging
 import os
 
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.db.models import Max, Sum, Q
-from django.http import FileResponse, Http404, HttpResponse
+from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.shortcuts import render, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST
 
 from projects_app.models import Performer, ProjectRegistration
 from .forms import ContractEditForm, ContractSigningForm, ContractSubjectForm, ContractTemplateForm, ContractVariableForm
 from .models import ContractSubject, ContractTemplate, ContractVariable
+
+logger = logging.getLogger(__name__)
 
 
 def staff_required(user):
@@ -73,6 +76,18 @@ def contracts_partial(request):
 @login_required
 @user_passes_test(staff_required)
 @require_http_methods(["GET", "POST"])
+def _upload_scan_to_yandex_disk(user, performer, uploaded_file):
+    if not performer.contract_project_disk_folder:
+        return
+    try:
+        from yandexdisk_app.service import upload_file
+        disk_path = f"{performer.contract_project_disk_folder}/{uploaded_file.name}"
+        uploaded_file.seek(0)
+        upload_file(user, disk_path, uploaded_file.read())
+    except Exception:
+        logger.debug("Yandex.Disk upload failed for scan %s", uploaded_file.name, exc_info=True)
+
+
 def contract_signing_edit(request, pk):
     performer = get_object_or_404(
         Performer.objects.select_related(
@@ -82,9 +97,11 @@ def contract_signing_edit(request, pk):
         contract_batch_id__isnull=False,
     )
     if request.method == "POST":
-        form = ContractSigningForm(request.POST, instance=performer)
+        form = ContractSigningForm(request.POST, request.FILES, instance=performer)
         if form.is_valid():
             obj = form.save()
+            if "contract_employee_scan" in request.FILES:
+                _upload_scan_to_yandex_disk(request.user, obj, request.FILES["contract_employee_scan"])
             if obj.contract_batch_id:
                 Performer.objects.filter(
                     contract_batch_id=obj.contract_batch_id,
@@ -104,6 +121,36 @@ def contract_signing_edit(request, pk):
         "form": form,
         "performer": performer,
     })
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def contract_scan_upload(request, pk):
+    performer = get_object_or_404(
+        Performer,
+        pk=pk,
+        contract_batch_id__isnull=False,
+    )
+    uploaded_file = request.FILES.get("contract_employee_scan")
+    if not uploaded_file:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+
+    performer.contract_employee_scan = uploaded_file
+    performer.save(update_fields=["contract_employee_scan"])
+
+    _upload_scan_to_yandex_disk(request.user, performer, uploaded_file)
+
+    if performer.contract_batch_id:
+        Performer.objects.filter(
+            contract_batch_id=performer.contract_batch_id,
+        ).exclude(pk=performer.pk).update(
+            contract_employee_scan=performer.contract_employee_scan,
+        )
+
+    resp = render(request, CONTRACTS_PARTIAL_TEMPLATE, _contracts_context())
+    resp["HX-Trigger"] = "contracts-updated"
+    return resp
 
 
 @login_required

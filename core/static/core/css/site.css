@@ -1844,3 +1844,18 @@ section#templates .alert.alert-info .text-muted {
   color: #212529;
   background-color: rgba(0, 0, 0, .08);
 }
+.ct-upload-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: #6c757d;
+  text-decoration: none;
+  border-radius: .375rem;
+  cursor: pointer;
+}
+.ct-upload-link:hover {
+  color: #212529;
+  background-color: rgba(0, 0, 0, .08);
+}
