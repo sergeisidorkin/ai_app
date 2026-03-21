@@ -115,6 +115,67 @@
 
 
 /* -----------------------------------------------------------------------
+   Signing table ("Подписание договора") checkboxes
+   ----------------------------------------------------------------------- */
+(function () {
+  if (window.__signingPanelBound) return;
+  window.__signingPanelBound = true;
+
+  function pane() { return document.getElementById('contracts-pane'); }
+  var qa = function(sel, root) { return Array.from((root || document).querySelectorAll(sel)); };
+
+  function getSigningChecks() {
+    return qa('tbody input.form-check-input[name="signing-row-select"]', pane());
+  }
+  function updateSigningHighlight() {
+    getSigningChecks().forEach(function(b) {
+      var tr = b.closest('tr');
+      if (tr) tr.classList.toggle('table-active', !!b.checked);
+    });
+  }
+  function updateSigningMaster() {
+    var boxes = getSigningChecks();
+    var master = pane() && pane().querySelector('#signing-master');
+    if (!master) return;
+    var checkedCount = boxes.filter(function(b) { return b.checked; }).length;
+    master.checked = boxes.length > 0 && checkedCount === boxes.length;
+    master.indeterminate = checkedCount > 0 && checkedCount < boxes.length;
+  }
+
+  function refreshSigning() {
+    updateSigningMaster();
+    updateSigningHighlight();
+  }
+
+  document.addEventListener('change', function(e) {
+    var root = pane(); if (!root) return;
+
+    var master = e.target.closest('#signing-master');
+    if (master && root.contains(master)) {
+      getSigningChecks().forEach(function(b) { b.checked = master.checked; });
+      master.indeterminate = false;
+      refreshSigning();
+      return;
+    }
+
+    var rowCb = e.target.closest('tbody input.form-check-input[name="signing-row-select"]');
+    if (rowCb && root.contains(rowCb)) {
+      refreshSigning();
+      return;
+    }
+  });
+
+  document.body.addEventListener('htmx:afterSettle', function(e) {
+    var root = pane(); if (!root) return;
+    if (!(e.target === root || root.contains(e.target))) return;
+    refreshSigning();
+  });
+
+  document.addEventListener('DOMContentLoaded', refreshSigning);
+})();
+
+
+/* -----------------------------------------------------------------------
    Contract Templates ("Образцы шаблонов") panel
    ----------------------------------------------------------------------- */
 (function () {
