@@ -257,25 +257,71 @@
       if (!file) return;
       var url = scanInput.dataset.uploadUrl;
       if (!url) return;
+
+      var tr = scanInput.closest('tr');
+      var rowCb = tr && tr.querySelector('input[name="signing-row-select"]');
+      if (rowCb && !rowCb.checked) {
+        rowCb.checked = true;
+        refreshSigning();
+      }
+      var checkedPerformerIds = getSigningChecked().map(function(b) { return b.value; });
+
+      var modalEl = document.getElementById('scan-upload-progress-modal');
+      var progressBar = document.getElementById('scan-upload-progress-bar');
+      var statusEl = document.getElementById('scan-upload-status');
+      var closeBtn = document.getElementById('scan-upload-close-btn');
+      if (progressBar) progressBar.style.width = '0%';
+      if (statusEl) statusEl.textContent = '';
+      if (closeBtn) closeBtn.disabled = true;
+      if (modalEl && window.bootstrap) {
+        bootstrap.Modal.getOrCreateInstance(modalEl).show();
+      }
+
       var fd = new FormData();
       fd.append('contract_employee_scan', file);
-      fetch(url, {
-        method: 'POST',
-        headers: { 'X-CSRFToken': getCookie('csrftoken') },
-        body: fd,
-      }).then(function(resp) {
-        if (resp.ok) return resp.text();
-        throw new Error('Upload failed');
-      }).then(function(html) {
-        var target = document.getElementById('contracts-pane');
-        if (target) {
-          target.innerHTML = html;
-          htmx.process(target);
-          document.body.dispatchEvent(new Event('contracts-updated'));
+      var xhr = new XMLHttpRequest();
+      xhr.open('POST', url, true);
+      xhr.setRequestHeader('X-CSRFToken', getCookie('csrftoken'));
+      xhr.upload.addEventListener('progress', function(ev) {
+        if (ev.lengthComputable && progressBar) {
+          var pct = Math.round(ev.loaded / ev.total * 100);
+          progressBar.style.width = pct + '%';
         }
-      }).catch(function() {}).finally(function() {
-        scanInput.value = '';
       });
+      xhr.addEventListener('load', function() {
+        if (progressBar) progressBar.style.width = '100%';
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            var data = JSON.parse(xhr.responseText);
+            if (data.ok && data.scan_name && statusEl) {
+              statusEl.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>'
+                + 'Документ успешно загружен на Яндекс.Диск в папку с проектом договора и переименован в «'
+                + data.scan_name + '».</span>';
+            }
+          } catch (_) {}
+          var contractsPane = document.getElementById('contracts-pane');
+          if (contractsPane) {
+            var refreshUrl = contractsPane.getAttribute('hx-get') || contractsPane.dataset.refreshUrl;
+            if (refreshUrl) {
+              htmx.ajax('GET', refreshUrl, { target: '#contracts-pane', swap: 'innerHTML' }).then(function() {
+                var set = {};
+                checkedPerformerIds.forEach(function(id) { set[id] = true; });
+                getSigningChecks().forEach(function(b) { b.checked = !!set[b.value]; });
+                refreshSigning();
+              });
+            }
+          }
+        } else {
+          if (statusEl) statusEl.innerHTML = '<span class="text-danger">Ошибка при загрузке файла.</span>';
+        }
+        if (closeBtn) closeBtn.disabled = false;
+      });
+      xhr.addEventListener('error', function() {
+        if (statusEl) statusEl.innerHTML = '<span class="text-danger">Ошибка сети при загрузке файла.</span>';
+        if (closeBtn) closeBtn.disabled = false;
+      });
+      xhr.send(fd);
+      scanInput.value = '';
       return;
     }
   });
