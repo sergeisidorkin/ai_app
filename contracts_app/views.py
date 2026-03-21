@@ -127,16 +127,30 @@ def contracts_partial(request):
     return render(request, CONTRACTS_PARTIAL_TEMPLATE, _contracts_context(request.user))
 
 
+def _get_yadisk_user():
+    """Return a user who has a Yandex.Disk token (any connected account)."""
+    from yandexdisk_app.models import YandexDiskAccount
+    acc = YandexDiskAccount.objects.filter(access_token__gt="").select_related("user").first()
+    return acc.user if acc else None
+
+
 def _upload_scan_to_yandex_disk_bytes(user, performer, filename, file_bytes):
     """Upload scan bytes to Yandex.Disk, publish the resource, and return the public URL."""
     if not performer.contract_project_disk_folder:
         logger.warning("Yandex.Disk upload skipped: no disk folder for performer %s", performer.pk)
         return ""
+    yadisk_user = _get_yadisk_user()
+    if not yadisk_user:
+        logger.warning("Yandex.Disk upload skipped: no connected YandexDisk account found")
+        return ""
     try:
         from yandexdisk_app.service import upload_file, publish_resource
         disk_path = f"{performer.contract_project_disk_folder}/{filename}"
-        upload_file(user, disk_path, file_bytes)
-        public_url = publish_resource(user, disk_path)
+        ok = upload_file(yadisk_user, disk_path, file_bytes)
+        if not ok:
+            logger.error("Yandex.Disk upload_file returned False for %s", disk_path)
+            return ""
+        public_url = publish_resource(yadisk_user, disk_path)
         return public_url or ""
     except Exception:
         logger.exception("Yandex.Disk upload failed for scan %s", filename)
