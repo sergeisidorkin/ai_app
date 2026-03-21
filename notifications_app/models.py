@@ -28,6 +28,10 @@ class Notification(models.Model):
             "project_contract_conclusion",
             "Отправлен проект договора",
         )
+        EMPLOYEE_SCAN_SENT = (
+            "employee_scan_sent",
+            "Отправлен скан сотрудника",
+        )
 
     class RelatedSection(models.TextChoices):
         NONE = "none", "Не указан"

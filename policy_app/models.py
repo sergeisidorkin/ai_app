@@ -6,6 +6,7 @@ PROJECTS_HEAD_GROUP = "Руководитель проектов"
 ADMIN_GROUP = "Администратор"
 DIRECTOR_GROUP = "Директор"
 EXPERT_GROUP = "Эксперт"
+LAWYER_GROUP = "Юрист"
 MANAGER_GROUPS = (
     DEPARTMENT_HEAD_GROUP,
     PROJECTS_HEAD_GROUP,
@@ -13,6 +14,7 @@ MANAGER_GROUPS = (
 SUPERUSER_GROUPS = (
     ADMIN_GROUP,
     DIRECTOR_GROUP,
+    LAWYER_GROUP,
 )
 
 class Product(models.Model):
