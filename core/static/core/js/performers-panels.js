@@ -131,7 +131,7 @@
   }
   function getVisibleInfoRequestChecks() {
     return getInfoRequestRows()
-      .filter((row) => !row.classList.contains('d-none'))
+      .filter((row) => !isFilterHidden(row))
       .map((row) => row.querySelector('input[name="info-request-select"]'))
       .filter((checkbox) => checkbox && !checkbox.disabled);
   }
@@ -1701,7 +1701,7 @@
     const infoRequestMaster = e.target.closest('#info-request-master');
     if (infoRequestMaster && root.contains(infoRequestMaster)) {
       getInfoRequestRows().forEach((row) => {
-        if (row.classList.contains('d-none')) return;
+        if (isFilterHidden(row)) return;
         const checkbox = row.querySelector('input[name="info-request-select"]');
         if (!checkbox || checkbox.disabled) return;
         checkbox.checked = infoRequestMaster.checked;
