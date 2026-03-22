@@ -639,13 +639,9 @@ body .second-sidebar + .flex-grow-1 {
   opacity: 1 !important;
 }
 
-.signing-table tr[data-scan-sent="1"] td {
-  opacity: 0.55;
-}
 .signing-table tr[data-scan-sent="1"] td:first-child .form-check-input:disabled {
   background-color: #d5dbe1 !important;
   border-color: #c4cad1 !important;
-  opacity: 1 !important;
 }
 
 
