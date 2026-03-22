@@ -24,6 +24,29 @@
     P.set('perf:irAssetCollapsed', !!window.__infoRequestAssetCollapsed);
   }
 
+  function syncCollapseButtons() {
+    var root = document.getElementById('performers-pane');
+    if (!root) return;
+    var pairs = [
+      ['#participation-confirmation-section', '#participation-asset-toggle', window.__participationAssetCollapsed],
+      ['#participation-confirmation-section', '#participation-section-toggle', window.__participationSectionCollapsed],
+      ['#contract-conclusion-section', '#contract-asset-toggle', window.__contractAssetCollapsed],
+      ['#contract-conclusion-section', '#contract-section-toggle', window.__contractSectionCollapsed],
+      ['#info-request-approval-section', '#info-request-asset-toggle', window.__infoRequestAssetCollapsed],
+      ['#info-request-approval-section', '#info-request-section-toggle', window.__infoRequestSectionCollapsed],
+    ];
+    pairs.forEach(function(p) {
+      var section = root.querySelector(p[0]);
+      if (!section) return;
+      var btn = section.querySelector(p[1]);
+      if (!btn) return;
+      var active = !!p[2];
+      btn.classList.toggle('active', active);
+      var icon = btn.querySelector('i');
+      if (icon) icon.className = active ? 'bi bi-arrows-expand' : 'bi bi-arrows-collapse';
+    });
+  }
+
   function pane() { return document.getElementById('performers-pane'); }
   const qa = (sel, root) => Array.from((root || document).querySelectorAll(sel));
 
@@ -1980,6 +2003,7 @@
     reapplyContractCollapse();
     applyRowGrouping(root.querySelector('#info-request-approval-section'));
     reapplyInfoRequestCollapse();
+    syncCollapseButtons();
 
     window.__tableSelLast = null;
   }
@@ -2150,6 +2174,7 @@
       reapplyContractCollapse();
       applyRowGrouping(root.querySelector('#info-request-approval-section'));
       reapplyInfoRequestCollapse();
+      syncCollapseButtons();
     }
 
     const perfModal = document.getElementById('performers-modal');
