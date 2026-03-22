@@ -79,9 +79,14 @@
   function getParticipationRows() {
     return qa('#participation-confirmation-section tbody tr[data-project-id]', pane());
   }
+  function isFilterHidden(row) {
+    return row.classList.contains('d-none')
+      && !row.classList.contains('section-collapsed')
+      && !row.classList.contains('asset-collapsed');
+  }
   function getVisibleParticipationChecks() {
     return getParticipationRows()
-      .filter((row) => !row.classList.contains('d-none'))
+      .filter((row) => !isFilterHidden(row))
       .map((row) => row.querySelector('input[name="participation-select"]'))
       .filter((checkbox) => checkbox && !checkbox.disabled);
   }
@@ -187,7 +192,7 @@
   }
   function getVisibleContractChecks() {
     return getContractRows()
-      .filter((row) => !row.classList.contains('d-none'))
+      .filter((row) => !isFilterHidden(row))
       .map((row) => row.querySelector('input[name="contract-select"]'))
       .filter((checkbox) => checkbox && !checkbox.disabled);
   }
@@ -1632,7 +1637,7 @@
     const participationMaster = e.target.closest('#participation-master');
     if (participationMaster && root.contains(participationMaster)) {
       getParticipationRows().forEach((row) => {
-        if (row.classList.contains('d-none')) return;
+        if (isFilterHidden(row)) return;
         const checkbox = row.querySelector('input[name="participation-select"]');
         if (!checkbox || checkbox.disabled) return;
         if (checkbox) checkbox.checked = participationMaster.checked;
@@ -1668,7 +1673,7 @@
     const contractMaster = e.target.closest('#contract-master');
     if (contractMaster && root.contains(contractMaster)) {
       getContractRows().forEach((row) => {
-        if (row.classList.contains('d-none')) return;
+        if (isFilterHidden(row)) return;
         const checkbox = row.querySelector('input[name="contract-select"]');
         if (!checkbox || checkbox.disabled) return;
         checkbox.checked = contractMaster.checked;
