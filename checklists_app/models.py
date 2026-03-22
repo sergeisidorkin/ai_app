@@ -437,3 +437,34 @@ class SourceDataItemFolder(models.Model):
 
     def __str__(self):
         return f"ItemFolder:{self.project_id}:{self.checklist_item_id}:{self.disk_path[:60]}"
+
+
+class InfoRequestSectionApproval(models.Model):
+    project = models.ForeignKey(
+        "projects_app.ProjectRegistration",
+        on_delete=models.CASCADE,
+        related_name="info_request_section_approvals",
+        verbose_name="Проект",
+    )
+    section = models.ForeignKey(
+        "policy_app.TypicalSection",
+        on_delete=models.CASCADE,
+        related_name="info_request_approvals",
+        verbose_name="Типовой раздел",
+    )
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="info_request_section_approvals",
+        verbose_name="Кто согласовал",
+    )
+    approved_at = models.DateTimeField("Дата согласования")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [("project", "section", "approved_by")]
+        verbose_name = "Согласование раздела запроса"
+        verbose_name_plural = "Согласования разделов запросов"
+
+    def __str__(self):
+        return f"SectionApproval:{self.project_id}:{self.section_id}:{self.approved_by_id}"

@@ -632,10 +632,17 @@ body .second-sidebar + .flex-grow-1 {
 #performers-main-section .form-check-input:disabled,
 #participation-confirmation-section .form-check-input:disabled,
 #contract-conclusion-section .form-check-input:disabled,
-#info-request-approval-section .form-check-input:disabled {
+#info-request-approval-section .form-check-input:disabled,
+.signing-table .form-check-input:disabled,
+#checklists-table-wrap .form-check-input:disabled {
   background-color: #e9ecef !important;
   border-color: #d5dbe1 !important;
   opacity: 1 !important;
+}
+
+.signing-table tr[data-scan-sent="1"] td:first-child .form-check-input:disabled {
+  background-color: #d5dbe1 !important;
+  border-color: #c4cad1 !important;
 }
 
 
@@ -1843,4 +1850,39 @@ section#templates .alert.alert-info .text-muted {
 .ct-download-link:hover {
   color: #212529;
   background-color: rgba(0, 0, 0, .08);
+}
+.ct-upload-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: #6c757d;
+  text-decoration: none;
+  border-radius: .375rem;
+  cursor: pointer;
+}
+.ct-upload-link:hover {
+  color: #212529;
+  background-color: rgba(0, 0, 0, .08);
+}
+
+.signing-table.table-sm td {
+  vertical-align: middle;
+}
+.signing-table.table-sm td:not(.text-truncate) {
+  overflow: visible;
+}
+.signing-table td .badge.rounded-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: .65em;
+  min-width: 1.4em;
+  height: 1.4em;
+  padding: 0 .4em;
+  line-height: 1;
+  vertical-align: baseline;
+  position: relative;
+  top: -.1em;
 }

@@ -30,6 +30,40 @@
     }[status] || "";
   }
 
+  function sepIconClass(row) {
+    const cells = row.cells;
+    const csCells = row.customerCells;
+    if (!cells || !csCells) return "";
+    let blue = false, green = false;
+    for (let i = 0; i < cells.length; i++) {
+      const imcm = cells[i];
+      const cs = csCells[i];
+      if (!imcm || !cs || cs.status !== "transferred") continue;
+      const imcmIsPartial = imcm.status === "partial";
+      const imcmIsMissing = imcm.status === "missing";
+      if (!imcmIsPartial && !imcmIsMissing) continue;
+      if (!imcm.dateIso || !cs.dateIso) continue;
+      if (imcm.dateIso < cs.dateIso) { blue = true; }
+      else if (imcm.dateIso > cs.dateIso) { green = true; }
+    }
+    if (blue) return "chk-sep-icon--blue";
+    if (green) return "chk-sep-icon--green";
+    return "";
+  }
+
+  function _isItemEditable(itemId, payload) {
+    const ids = payload?.ui?.editableSectionIds;
+    if (!ids) return true;
+    const edSet = new Set(ids);
+    const rows = payload?.rows || [];
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i].kind === "item" && String(rows[i].id) === String(itemId)) {
+        return edSet.has(rows[i].sectionId);
+      }
+    }
+    return true;
+  }
+
   function computeCodeClass(cells) {
     const statuses = new Set(
       (cells || [])
@@ -271,12 +305,34 @@
       }
       if (ui.approveInfoRequestUrl || ui.infoRequestApprovedAt) {
         const approved = !!ui.infoRequestApprovedAt;
+        const isAllMode = !!state.payload?.allMode;
+        const hasPendingSections = (ui.pendingSectionIds || []).length > 0;
+        const currentSectionId = state.payload?.section?.id;
+        const currentSectionPending = currentSectionId && (ui.pendingSectionIds || []).includes(currentSectionId);
+        const isSectionMode = !isAllMode && currentSectionPending;
+
+        let btnLabel;
+        if (approved) {
+          btnLabel = 'Согласовано';
+        } else if (isSectionMode) {
+          btnLabel = 'Согласовать раздел чек-листа';
+        } else {
+          btnLabel = 'Согласовать весь запрос (чек-лист)';
+        }
+
+        const metaHtml = approved
+          ? `<span class="chk-approval-meta-block ms-auto me-2">
+               <span class="chk-approval-meta-name">${escapeHtml(ui.infoRequestApprovedByName || '')}</span>
+               <span class="chk-approval-meta-date">${escapeHtml(ui.infoRequestApprovedAt)}</span>
+             </span>`
+          : '';
+
         actions.push(
-          (approved ? `<span class="d-flex align-items-center ms-auto me-2" style="font-size:0.7rem;color:#6c757d;">${escapeHtml(ui.infoRequestApprovedAt)}</span>` : '') +
-          `<button class="btn btn-success btn-sm d-flex align-items-center${approved ? '' : ' ms-auto'}"
+          metaHtml +
+          `<button class="btn ${approved ? 'btn-primary' : 'btn-success'} btn-sm d-flex align-items-center${approved || metaHtml ? '' : ' ms-auto'}"
              data-grid-action="approve-info-request"
              ${state.editMode || approved ? "disabled" : ""}>
-            <i class="bi ${approved ? 'bi-check-circle' : 'bi-circle'} me-2"></i>${approved ? 'Согласовано' : 'Согласовать запрос (чек-лист)'}
+            <i class="bi ${approved ? 'bi-check-circle' : 'bi-circle'} me-2"></i>${btnLabel}
           </button>`
         );
       }
@@ -364,13 +420,14 @@
       </td>`;
     }
 
-    function renderTextCell(row, field, className) {
+    function renderTextCell(row, field, className, rowEditable) {
       const value = field === "short_name" ? row.shortName : row.name;
       const label = field === "short_name" ? "Краткое наименование" : "Наименование запроса";
       let inner = renderTextValue(value);
       if (field === "short_name" && row.sourceDataUrl) {
         inner = `<a href="${escapeHtml(row.sourceDataUrl)}" target="_blank" rel="noopener" class="text-reset text-decoration-none">${inner}</a>`;
       }
+      const canEdit = rowEditable !== false && state.editMode && !state.payload.readonly;
       return `<td
         id="grid-text-${field}-${row.id}"
         class="${className} chk-editable-text-cell"
@@ -379,7 +436,7 @@
         data-field="${field}"
         data-label="${escapeHtml(label)}"
         title="${escapeHtml(label)}"
-        ${state.editMode && !state.payload.readonly ? 'tabindex="0"' : ""}>
+        ${canEdit ? 'tabindex="0"' : ""}>
         ${inner}
       </td>`;
     }
@@ -391,7 +448,8 @@
       const showCheckboxes = state.editMode && ui.showActions;
       const showImcm = state.imcmVisible;
       const showCs = state.csVisible;
-      const statusColCount = (showImcm ? entities.length * 2 : 0) + (showCs ? entities.length * 2 : 0);
+      const showSep = showImcm || showCs;
+      const statusColCount = (showImcm ? entities.length * 2 : 0) + (showSep ? 1 : 0) + (showCs ? entities.length * 2 : 0);
       const baseCols = 5 + statusColCount + 1;
       return `<table class="table table-sm align-middle table-bordered${state.editMode ? " chk-edit-mode" : ""}" id="chk-items-table">
         <colgroup>
@@ -402,6 +460,7 @@
           <col class="files-col">
           <col id="chk-col-name">
           ${showImcm ? entities.map(() => '<col class="status-col imcm-col"><col class="date-col imcm-col">').join("") : ""}
+          ${showSep ? '<col class="separator-col">' : ""}
           ${showCs ? entities.map(() => '<col class="status-col cs-col"><col class="date-col cs-col">').join("") : ""}
           <col class="comment-col">
         </colgroup>
@@ -426,6 +485,7 @@
               <th class="status-col imcm-col text-nowrap"><span class="chk-bullet chk-bullet--imcm">\u2022</span> ${escapeHtml(entity.label)}</th>
               <th class="text-nowrap date-header imcm-col"><span class="chk-bullet chk-bullet--imcm">\u2022</span> Дата</th>
             `).join("") : ""}
+            ${showSep ? '<th class="separator-col text-center"><i class="bi bi-exclamation-octagon"></i></th>' : ""}
             ${showCs ? entities.map((entity) => `
               <th class="status-col cs-col text-nowrap"><span class="chk-bullet chk-bullet--cs">\u2022</span> ${escapeHtml(entity.label)}</th>
               <th class="text-nowrap date-header cs-col"><span class="chk-bullet chk-bullet--cs">\u2022</span> Дата</th>
@@ -436,10 +496,31 @@
         <tbody>
           ${rows.map((row) => {
             if (row.kind === "section_header") {
-              return `<tr class="section-header-row">
+              const hasBadge = row.needsApproval && !row.approvedAt;
+              const hasStamp = !!row.approvedAt;
+              const stampHtml = hasStamp
+                ? `<span class="chk-section-approval-info">
+                     <span class="chk-section-approval-meta">
+                       <span class="chk-section-approval-name">${escapeHtml(row.approvedByName || '')}</span>
+                       <span class="chk-section-approval-date">${escapeHtml(row.approvedAt)}</span>
+                     </span>
+                     <span class="btn btn-sm btn-primary chk-section-stamp" disabled>
+                       <i class="bi bi-check-circle me-1"></i>Согласовано
+                     </span>
+                   </span>`
+                : '';
+              const badgeHtml = hasBadge
+                ? '<span class="badge rounded-pill text-bg-danger ms-1 chk-section-badge">!</span>'
+                : '';
+              return `<tr class="section-header-row" data-section-id="${row.sectionId}">
                 ${showCheckboxes ? "<td></td>" : ""}
                 <td colspan="${baseCols}" class="section-header-cell">
-                  ${escapeHtml(row.sectionName)}
+                  <span class="chk-section-header-content">
+                    <span class="chk-section-header-left">
+                      ${escapeHtml(row.sectionName)}${badgeHtml}
+                    </span>
+                    ${stampHtml}
+                  </span>
                 </td>
               </tr>`;
             }
@@ -451,14 +532,17 @@
                 </td>
               </tr>`;
             }
+            const _editableSections = ui.editableSectionIds ? new Set(ui.editableSectionIds) : null;
+            const isRowEditable = !_editableSections || _editableSections.has(row.sectionId);
             const isSelected = state.selectedItems.has(String(row.id));
+            const showRowCheckbox = showCheckboxes && isRowEditable;
             return `<tr data-item-id="${row.id}"
-                ${isSelected ? 'class="table-active"' : ""}
+                ${isSelected && isRowEditable ? 'class="table-active"' : ""}
                 data-edit-url="${escapeHtml(row.actions?.editUrl || "")}"
                 data-delete-url="${escapeHtml(row.actions?.deleteUrl || "")}"
                 data-move-up-url="${escapeHtml(row.actions?.moveUpUrl || "")}"
                 data-move-down-url="${escapeHtml(row.actions?.moveDownUrl || "")}">
-              ${showCheckboxes ? `<td class="text-nowrap chk-select-col">
+              ${showCheckboxes ? (showRowCheckbox ? `<td class="text-nowrap chk-select-col">
                 <div class="form-check">
                   <input class="form-check-input" type="checkbox"
                          name="chk-grid-select"
@@ -466,18 +550,25 @@
                          ${isSelected ? "checked" : ""}
                          aria-label="Выделить строку">
                 </div>
-              </td>` : ""}
+              </td>` : `<td class="text-nowrap chk-select-col">
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox"
+                         disabled
+                         aria-label="Недоступно">
+                </div>
+              </td>`) : ""}
               <td id="chk-code-${row.id}" class="col-code text-nowrap ${escapeHtml(row.codeClass || "")}">${escapeHtml(row.code || "")}</td>
               <td class="col-num text-nowrap">${escapeHtml(row.number || "")}</td>
-              ${renderTextCell(row, "short_name", "col-short-name-cell")}
+              ${renderTextCell(row, "short_name", "col-short-name-cell", isRowEditable)}
               <td class="col-files text-nowrap">
                 <div class="chk-files-info">
                   <div>Всего файлов: ${row.fileCount != null ? row.fileCount : "—"}</div>
                   <div>Последняя загрузка: ${row.lastUploadAt || "—"}</div>
                 </div>
               </td>
-              ${renderTextCell(row, "name", "col-name-cell")}
+              ${renderTextCell(row, "name", "col-name-cell", isRowEditable)}
               ${showImcm ? (row.cells || []).map((cell) => renderStatusCell(row, cell)).join("") : ""}
+              ${showSep ? `<td class="separator-col text-center" id="chk-sep-${row.id}"><i class="bi bi-exclamation-octagon-fill chk-sep-icon ${sepIconClass(row)}"></i></td>` : ""}
               ${showCs ? (row.customerCells || []).map((cell) => renderCustomerStatusCell(row, cell)).join("") : ""}
               <td class="col-comment col-comment-imc">${renderComment("imc_comment", row)}</td>
             </tr>`;
@@ -1082,6 +1173,16 @@
       });
     }
 
+    function updateSepIcon(itemId) {
+      const sepTd = document.getElementById(`chk-sep-${itemId}`);
+      if (!sepTd) return;
+      const icon = sepTd.firstElementChild;
+      if (!icon) return;
+      const row = getRow(itemId);
+      if (!row) return;
+      icon.className = `bi bi-exclamation-octagon-fill chk-sep-icon ${sepIconClass(row)}`;
+    }
+
     function updateCellDom(itemId, entityId, pending) {
       const cell = getCell(itemId, entityId);
       if (!cell) return;
@@ -1101,6 +1202,7 @@
       if (row && codeEl) {
         codeEl.className = `col-code text-nowrap ${row.codeClass || ""}`;
       }
+      updateSepIcon(itemId);
     }
 
     function updateCustomerCellDom(itemId, entityId, pending) {
@@ -1118,6 +1220,7 @@
       if (dateEl) {
         dateEl.textContent = cell.dateDisplay || "—";
       }
+      updateSepIcon(itemId);
     }
 
     function updateTextDom(itemId) {
@@ -1887,10 +1990,18 @@
       const url = ui.approveInfoRequestUrl;
       if (!url || btn.disabled) return;
 
+      const isAllMode = !!state.payload?.allMode;
+      const currentSectionId = state.payload?.section?.id;
+      const pendingSections = ui.pendingSectionIds || [];
+      const isSectionMode = !isAllMode && currentSectionId && pendingSections.includes(currentSectionId);
+
       btn.disabled = true;
       try {
         const formData = new FormData();
         formData.append("project_uid", ui.projectUid || state.payload?.project?.shortUid || "");
+        if (isSectionMode) {
+          formData.append("section_id", String(currentSectionId));
+        }
         const response = await fetch(url, {
           method: "POST",
           headers: { "X-CSRFToken": options.getCsrf() },
@@ -1900,9 +2011,44 @@
         if (!response.ok || !data.ok) {
           throw new Error(data?.error || "Не удалось согласовать запрос.");
         }
-        ui.infoRequestApprovedAt = data.approved_at || '';
-        ui.approveInfoRequestUrl = '';
-        ui.showActions = false;
+
+        const sectionApprovals = data.section_approvals || {};
+        const rows = state.payload?.rows || [];
+        rows.forEach((row) => {
+          if (row.kind !== "section_header") return;
+          const sa = sectionApprovals[String(row.sectionId)];
+          if (sa && !row.approvedAt) {
+            row.approvedByName = sa.name;
+            row.approvedAt = sa.at;
+          }
+        });
+
+        if (data.all_done) {
+          ui.infoRequestApprovedAt = data.approved_at || '';
+          ui.infoRequestApprovedByName = data.approved_by_name || '';
+          ui.approveInfoRequestUrl = '';
+          ui.showActions = false;
+          ui.pendingSectionIds = [];
+          if (ui.editableSectionIds) ui.editableSectionIds = [];
+        } else {
+          const approvedIds = Object.keys(sectionApprovals).map(Number);
+          ui.pendingSectionIds = pendingSections.filter((id) => !approvedIds.includes(id));
+          if (ui.editableSectionIds) {
+            ui.editableSectionIds = ui.editableSectionIds.filter((id) => !approvedIds.includes(id));
+          }
+        }
+
+        const nowDisabledSections = new Set(Object.keys(sectionApprovals).map(Number));
+        if (nowDisabledSections.size && ui.editableSectionIds) {
+          const rows = state.payload?.rows || [];
+          for (const [itemId] of state.selectedItems) {
+            const row = rows.find((r) => String(r.id) === String(itemId));
+            if (row && nowDisabledSections.has(row.sectionId)) {
+              state.selectedItems.delete(itemId);
+            }
+          }
+        }
+
         if (state.editMode) cancelEditMode();
         render();
         document.body.dispatchEvent(new Event("performers-updated"));
@@ -2053,6 +2199,7 @@
 
         const textCell = event.target.closest('[data-action="text-cell"]');
         if (textCell && !state.payload?.readonly && state.editMode) {
+          if (!_isItemEditable(textCell.dataset.itemId, state.payload)) return;
           if (event.target.closest(".chk-inline-text-input")) return;
           const cellId = `${textCell.dataset.field}:${textCell.dataset.itemId}`;
           if (state.inlineEditing) {
@@ -2126,6 +2273,7 @@
         }
         const textCell = event.target.closest('[data-action="text-cell"]');
         if (textCell && !state.payload?.readonly && state.editMode) {
+          if (!_isItemEditable(textCell.dataset.itemId, state.payload)) return;
           if (state.inlineEditing) return;
           openInlineEdit(textCell);
         }
@@ -2149,6 +2297,7 @@
 
         const textCell = event.target.closest('[data-action="text-cell"]');
         if (textCell && !state.payload?.readonly && state.editMode && !state.inlineEditing && (event.key === "Enter" || event.key === " ")) {
+          if (!_isItemEditable(textCell.dataset.itemId, state.payload)) return;
           event.preventDefault();
           openInlineEdit(textCell);
         }
