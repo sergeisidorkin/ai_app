@@ -955,6 +955,8 @@ def _build_grid_payload(
     create_url: str = "",
     xlsx_url: str = "",
     approve_info_request_url: str = "",
+    pending_section_ids: set | None = None,
+    section_approval_map: dict | None = None,
 ) -> dict:
     section_items_list = scope["section_items_list"]
     legal_entities = scope["legal_entities"]
@@ -1009,14 +1011,22 @@ def _build_grid_payload(
 
     status_label_map = dict(ChecklistStatus.Status.choices)
     customer_status_label_map = dict(ChecklistCustomerStatus.Status.choices)
+    _pending = pending_section_ids or set()
+    _approvals = section_approval_map or {}
     rows = []
     for sec, items in section_items_list:
         if items:
-            rows.append({
+            header = {
                 "kind": "section_header",
                 "sectionId": sec.id,
                 "sectionName": sec.name_ru or str(sec),
-            })
+                "needsApproval": sec.id in _pending,
+            }
+            approval = _approvals.get(sec.id)
+            if approval:
+                header["approvedByName"] = approval["name"]
+                header["approvedAt"] = approval["at"]
+            rows.append(header)
 
         seen_additional_groups = set()
         for item in items:
@@ -1446,6 +1456,41 @@ def comment_modal(request):
     )
 
 
+def _is_project_manager(user, project):
+    """Check if user is the designated project manager for this project."""
+    if not user.is_authenticated or not project.project_manager:
+        return False
+    emp = getattr(user, "employee_profile", None)
+    if not emp:
+        return False
+    full_name = f"{user.last_name} {user.first_name} {emp.patronymic}".strip()
+    return full_name == project.project_manager.strip()
+
+
+def _get_dh_expertise_section_ids(user, project):
+    """For a department head with confirmed participation, return the set of
+    TypicalSection IDs that match their expertise direction."""
+    from policy_app.models import DEPARTMENT_HEAD_GROUP, TypicalSection
+    from projects_app.models import Performer
+    emp = getattr(user, "employee_profile", None)
+    if not emp or emp.role != DEPARTMENT_HEAD_GROUP:
+        return set()
+    dept = emp.department
+    if not dept or not dept.expertise_id:
+        return set()
+    has_confirmed = Performer.objects.filter(
+        employee__user=user,
+        registration=project,
+        participation_response=Performer.ParticipationResponse.CONFIRMED,
+    ).exists()
+    if not has_confirmed:
+        return set()
+    return set(
+        TypicalSection.objects.filter(expertise_dir_id=dept.expertise_id)
+        .values_list("id", flat=True)
+    )
+
+
 @require_GET
 def grid_data(request):
     project_uid = (request.GET.get("project_uid") or request.GET.get("project") or "").strip()
@@ -1459,17 +1504,48 @@ def grid_data(request):
     scope = _resolve_grid_scope(project, asset_name, section_id)
     approve_url = ""
     info_request_approved_at = ""
+    info_request_approved_by_name = ""
     hide_edit = False
+    pending_section_ids = set()
+    section_approval_map = {}
+
+    is_pm = False
     if request.user.is_authenticated:
-        from notifications_app.models import Notification
-        has_pending = Notification.objects.filter(
+        from notifications_app.models import Notification, NotificationPerformerLink
+        from checklists_app.models import InfoRequestSectionApproval
+        from projects_app.models import Performer
+        from django.utils import timezone as tz
+
+        is_pm = _is_project_manager(request.user, project)
+        dh_section_ids = _get_dh_expertise_section_ids(request.user, project)
+
+        pending_notifications = list(Notification.objects.filter(
             notification_type=Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
             recipient=request.user,
             project=project,
             is_processed=False,
-        ).exists()
+        ))
+        has_pending = bool(pending_notifications)
+
         if has_pending:
             approve_url = reverse("checklists_app:approve_info_request")
+            pending_perf_ids = list(
+                NotificationPerformerLink.objects.filter(
+                    notification__in=pending_notifications,
+                ).values_list("performer_id", flat=True)
+            )
+            pending_section_ids = set(
+                Performer.objects.filter(pk__in=pending_perf_ids)
+                .exclude(typical_section_id__isnull=True)
+                .values_list("typical_section_id", flat=True)
+                .distinct()
+            )
+            already_approved_ids = set(
+                InfoRequestSectionApproval.objects.filter(
+                    project=project, approved_by=request.user,
+                ).values_list("section_id", flat=True)
+            )
+            pending_section_ids -= already_approved_ids
         else:
             processed = Notification.objects.filter(
                 notification_type=Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
@@ -1478,12 +1554,93 @@ def grid_data(request):
                 is_processed=True,
             ).order_by("-action_at").first()
             if processed and processed.action_at:
-                from django.utils import timezone
-                local_dt = timezone.localtime(processed.action_at)
+                local_dt = tz.localtime(processed.action_at)
                 info_request_approved_at = local_dt.strftime("%d.%m.%y %H:%M")
+                if processed.action_by:
+                    u = processed.action_by
+                    info_request_approved_by_name = f"{u.first_name} {u.last_name}".strip() or u.username
                 hide_edit = True
 
+        if is_pm or dh_section_ids:
+            hide_edit = False
+            project_pending_notifs = Notification.objects.filter(
+                notification_type=Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
+                project=project,
+                is_processed=False,
+            )
+            if project_pending_notifs.exists():
+                approve_url = reverse("checklists_app:approve_info_request")
+                pm_pending_perf_ids = list(
+                    NotificationPerformerLink.objects.filter(
+                        notification__in=project_pending_notifs,
+                    ).values_list("performer_id", flat=True)
+                )
+                pm_pending_section_ids = set(
+                    Performer.objects.filter(pk__in=pm_pending_perf_ids)
+                    .exclude(typical_section_id__isnull=True)
+                    .values_list("typical_section_id", flat=True)
+                    .distinct()
+                )
+                if not is_pm:
+                    pm_pending_section_ids &= dh_section_ids
+                pm_already_approved = set(
+                    InfoRequestSectionApproval.objects.filter(
+                        project=project, approved_by=request.user,
+                    ).values_list("section_id", flat=True)
+                )
+                pm_pending_section_ids -= pm_already_approved
+                pending_section_ids = pending_section_ids | pm_pending_section_ids
+
+        try:
+            existing_approvals = InfoRequestSectionApproval.objects.filter(
+                project=project,
+            ).select_related("approved_by")
+            for sa in existing_approvals:
+                local_dt = tz.localtime(sa.approved_at)
+                u = sa.approved_by
+                section_approval_map[sa.section_id] = {
+                    "name": f"{u.first_name} {u.last_name}".strip() or u.username,
+                    "at": local_dt.strftime("%d.%m.%y %H:%M"),
+                }
+        except Exception:
+            pass
+
+        if not info_request_approved_at and not has_pending:
+            project_has_any_pending = Notification.objects.filter(
+                notification_type=Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
+                project=project,
+                is_processed=False,
+            ).exists()
+            if not project_has_any_pending:
+                any_processed = Notification.objects.filter(
+                    notification_type=Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
+                    project=project,
+                    is_processed=True,
+                ).order_by("-action_at").first()
+                if any_processed and any_processed.action_at:
+                    local_dt = tz.localtime(any_processed.action_at)
+                    info_request_approved_at = local_dt.strftime("%d.%m.%y %H:%M")
+
     show_actions = bool(request.user.is_authenticated and request.user.is_staff) and not hide_edit
+
+    editable_section_ids = None
+    if show_actions and request.user.is_authenticated:
+        from policy_app.models import DEPARTMENT_HEAD_GROUP, EXPERT_GROUP
+        emp_role = getattr(getattr(request.user, "employee_profile", None), "role", "")
+        if not is_pm and not dh_section_ids and emp_role in (DEPARTMENT_HEAD_GROUP, EXPERT_GROUP):
+            has_confirmed = Performer.objects.filter(
+                employee__user=request.user,
+                registration=project,
+                participation_response=Performer.ParticipationResponse.CONFIRMED,
+            ).exists()
+            if not has_confirmed:
+                show_actions = False
+
+        if not is_pm and pending_section_ids:
+            editable_ids = set(pending_section_ids)
+            if dh_section_ids:
+                editable_ids = editable_ids | dh_section_ids
+            editable_section_ids = list(editable_ids)
 
     payload = _build_grid_payload(
         project,
@@ -1494,11 +1651,70 @@ def grid_data(request):
         create_url=reverse("checklists_app:item_form_create"),
         xlsx_url=reverse("checklists_app:export_xlsx") + f"?project_uid={project.short_uid}" if scope["all_mode"] else "",
         approve_info_request_url=approve_url,
+        pending_section_ids=pending_section_ids,
+        section_approval_map=section_approval_map,
     )
     if info_request_approved_at:
         payload["ui"]["infoRequestApprovedAt"] = info_request_approved_at
-    if show_actions and not scope["all_mode"] and scope["section"]:
-        payload["ui"]["touchStatusDatesUrl"] = reverse("checklists_app:touch_status_dates")
+    if info_request_approved_by_name:
+        payload["ui"]["infoRequestApprovedByName"] = info_request_approved_by_name
+    payload["ui"]["pendingSectionIds"] = list(pending_section_ids)
+    if editable_section_ids is not None:
+        payload["ui"]["editableSectionIds"] = editable_section_ids
+    if (request.user.is_authenticated and request.user.is_staff
+            and not scope["all_mode"] and scope["section"]):
+        from notifications_app.models import Notification as _Notif
+        from policy_app.models import DEPARTMENT_HEAD_GROUP as _DH, EXPERT_GROUP as _EX
+        _role = getattr(getattr(request.user, "employee_profile", None), "role", "")
+        _current_section = scope["section"]
+        _in_dh_expertise = dh_section_ids and _current_section and _current_section.id in dh_section_ids
+        _is_restricted = not is_pm and not _in_dh_expertise and _role in (_DH, _EX)
+
+        user_approved_sections = None
+        if _is_restricted:
+            user_approved_sections = set(
+                InfoRequestSectionApproval.objects.filter(
+                    project=project, approved_by=request.user,
+                ).values_list("section_id", flat=True)
+            )
+            processed_notifs = _Notif.objects.filter(
+                notification_type=_Notif.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
+                recipient=request.user,
+                project=project,
+                is_processed=True,
+            )
+            if processed_notifs.exists():
+                from notifications_app.models import NotificationPerformerLink as _NPL
+                processed_perf_ids = _NPL.objects.filter(
+                    notification__in=processed_notifs,
+                ).values_list("performer_id", flat=True)
+                processed_section_ids = set(
+                    Performer.objects.filter(pk__in=processed_perf_ids)
+                    .exclude(typical_section_id__isnull=True)
+                    .values_list("typical_section_id", flat=True).distinct()
+                )
+                user_approved_sections = user_approved_sections | processed_section_ids
+            if _current_section and _current_section.id not in user_approved_sections:
+                payload["ui"]["createUrl"] = ""
+
+        any_sent = _Notif.objects.filter(
+            notification_type=_Notif.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
+            project=project,
+        ).exists()
+        if any_sent:
+            none_pending = not _Notif.objects.filter(
+                notification_type=_Notif.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
+                project=project,
+                is_processed=False,
+            ).exists()
+            if none_pending:
+                show_touch = True
+                if _is_restricted and user_approved_sections is not None:
+                    if _current_section and _current_section.id not in user_approved_sections:
+                        show_touch = False
+                if show_touch:
+                    payload["ui"]["touchStatusDatesUrl"] = reverse("checklists_app:touch_status_dates")
+
     return JsonResponse(payload)
 
 
@@ -1963,8 +2179,97 @@ def item_form_create(request):
             if ts and ts.id not in seen:
                 seen.add(ts.id)
                 sections_list.append(ts)
+
+        from policy_app.models import DEPARTMENT_HEAD_GROUP, EXPERT_GROUP
+        from checklists_app.models import InfoRequestSectionApproval
+        emp_role = getattr(getattr(request.user, "employee_profile", None), "role", "")
+        if emp_role in (DEPARTMENT_HEAD_GROUP, EXPERT_GROUP) and sections_list and project:
+            from notifications_app.models import Notification, NotificationPerformerLink
+            pending_notifs = Notification.objects.filter(
+                notification_type=Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
+                recipient=request.user,
+                project=project,
+                is_processed=False,
+            )
+            pending_perf_ids = NotificationPerformerLink.objects.filter(
+                notification__in=pending_notifs,
+            ).values_list("performer_id", flat=True)
+            allowed_ids = set(
+                Performer.objects.filter(pk__in=pending_perf_ids)
+                .exclude(typical_section_id__isnull=True)
+                .values_list("typical_section_id", flat=True).distinct()
+            )
+            approved_ids = set(
+                InfoRequestSectionApproval.objects.filter(
+                    project=project, approved_by=request.user,
+                ).values_list("section_id", flat=True)
+            )
+            processed_notifs = Notification.objects.filter(
+                notification_type=Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
+                recipient=request.user,
+                project=project,
+                is_processed=True,
+            )
+            if processed_notifs.exists():
+                proc_perf_ids = NotificationPerformerLink.objects.filter(
+                    notification__in=processed_notifs,
+                ).values_list("performer_id", flat=True)
+                proc_section_ids = set(
+                    Performer.objects.filter(pk__in=proc_perf_ids)
+                    .exclude(typical_section_id__isnull=True)
+                    .values_list("typical_section_id", flat=True).distinct()
+                )
+                approved_ids = approved_ids | proc_section_ids
+            allowed_ids = allowed_ids | approved_ids
+            sections_list = [s for s in sections_list if s.id in allowed_ids]
+            if section and section.id not in allowed_ids and sections_list:
+                section = sections_list[0]
+
         if not section and sections_list:
             section = sections_list[0]
+
+    approved_section_ids_set = set()
+    pending_section_ids_set = set()
+    if project and request.user.is_authenticated:
+        from checklists_app.models import InfoRequestSectionApproval
+        from notifications_app.models import Notification, NotificationPerformerLink
+        approved_section_ids_set = set(
+            InfoRequestSectionApproval.objects.filter(
+                project=project, approved_by=request.user,
+            ).values_list("section_id", flat=True)
+        )
+        processed_user_notifs = Notification.objects.filter(
+            notification_type=Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
+            recipient=request.user,
+            project=project,
+            is_processed=True,
+        )
+        if processed_user_notifs.exists():
+            proc_p_ids = NotificationPerformerLink.objects.filter(
+                notification__in=processed_user_notifs,
+            ).values_list("performer_id", flat=True)
+            approved_section_ids_set = approved_section_ids_set | set(
+                Performer.objects.filter(pk__in=proc_p_ids)
+                .exclude(typical_section_id__isnull=True)
+                .values_list("typical_section_id", flat=True).distinct()
+            )
+        pending_notifs = Notification.objects.filter(
+            notification_type=Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
+            recipient=request.user,
+            project=project,
+            is_processed=False,
+        )
+        pending_perf_ids = NotificationPerformerLink.objects.filter(
+            notification__in=pending_notifs,
+        ).values_list("performer_id", flat=True)
+        pending_section_ids_set = set(
+            Performer.objects.filter(pk__in=pending_perf_ids)
+            .exclude(typical_section_id__isnull=True)
+            .values_list("typical_section_id", flat=True).distinct()
+        )
+
+    section_is_approved = section and section.id in approved_section_ids_set
+    section_is_pending = section and section.id in pending_section_ids_set
 
     code = section.code if section else ""
     next_num = 1
@@ -1976,11 +2281,23 @@ def item_form_create(request):
             project=project, section=section,
             item_type=ChecklistItem.ItemType.ADDITIONAL,
         ).exists()
-    forced_type = "additional" if has_additional else ""
+    if section_is_approved:
+        forced_type = "additional"
+        item_type_value = "additional"
+    elif section_is_pending:
+        forced_type = "basic"
+        item_type_value = "basic"
+    elif has_additional:
+        forced_type = "additional"
+        item_type_value = "additional"
+    else:
+        forced_type = ""
+        item_type_value = "basic"
+
     return render(request, "checklists_app/checklist_item_form.html", {
         "project": project, "section": section,
         "code": code, "next_number": next_num,
-        "item_type": "additional" if has_additional else "basic",
+        "item_type": item_type_value,
         "forced_type": forced_type,
         "sections_list": sections_list,
         "all_mode": all_mode,
@@ -3021,33 +3338,231 @@ def shared_export_xlsx(request, token: str):
 @login_required
 @require_POST
 def approve_info_request(request):
-    from notifications_app.models import Notification
+    from notifications_app.models import Notification, NotificationPerformerLink
     from notifications_app.services import process_info_request_notification
+    from checklists_app.models import InfoRequestSectionApproval
+    from projects_app.models import Performer
+    from policy_app.models import TypicalSection
+    from django.utils import timezone as tz
 
     project_uid = (request.POST.get("project_uid") or "").strip()
+    section_id = (request.POST.get("section_id") or "").strip()
     if not project_uid:
         return JsonResponse({"ok": False, "error": "Не указан проект."}, status=400)
 
     project = get_object_or_404(ProjectRegistration.objects.select_related("type"), short_uid=project_uid)
 
-    notifications = list(
-        Notification.objects.filter(
+    now = tz.now()
+    now_local = tz.localtime(now)
+    now_str = now_local.strftime("%d.%m.%y %H:%M")
+    user = request.user
+    user_display = f"{user.first_name} {user.last_name}".strip() or user.username
+    is_pm = _is_project_manager(user, project)
+    dh_section_ids = _get_dh_expertise_section_ids(user, project)
+    has_elevated = is_pm or bool(dh_section_ids)
+
+    if has_elevated:
+        notif_qs = Notification.objects.filter(
             notification_type=Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
-            recipient=request.user,
             project=project,
             is_processed=False,
         )
-    )
+        if not is_pm and dh_section_ids:
+            dh_perf_ids = list(
+                Performer.objects.filter(
+                    registration=project,
+                    typical_section_id__in=dh_section_ids,
+                ).values_list("pk", flat=True)
+            )
+            dh_notif_ids = set(
+                NotificationPerformerLink.objects.filter(
+                    performer_id__in=dh_perf_ids,
+                    notification__in=notif_qs,
+                ).values_list("notification_id", flat=True)
+            )
+            own_notif_ids = set(
+                Notification.objects.filter(
+                    notification_type=Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
+                    recipient=user,
+                    project=project,
+                    is_processed=False,
+                ).values_list("pk", flat=True)
+            )
+            all_notif_ids = dh_notif_ids | own_notif_ids
+            notifications = list(Notification.objects.filter(pk__in=all_notif_ids))
+        else:
+            notifications = list(notif_qs)
+    else:
+        notifications = list(
+            Notification.objects.filter(
+                notification_type=Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
+                recipient=user,
+                project=project,
+                is_processed=False,
+            )
+        )
     if not notifications:
         return JsonResponse({"ok": False, "error": "Нет ожидающих согласования запросов."}, status=400)
 
-    for notification in notifications:
-        process_info_request_notification(notification, request.user)
+    all_perf_ids = list(
+        NotificationPerformerLink.objects.filter(
+            notification__in=notifications,
+        ).values_list("performer_id", flat=True)
+    )
 
-    from django.utils import timezone
-    now = timezone.localtime(timezone.now())
-    return JsonResponse({
-        "ok": True,
-        "processed": len(notifications),
-        "approved_at": now.strftime("%d.%m.%y %H:%M"),
-    })
+    all_section_ids_needing_approval = set(
+        Performer.objects.filter(pk__in=all_perf_ids)
+        .exclude(typical_section_id__isnull=True)
+        .values_list("typical_section_id", flat=True)
+        .distinct()
+    )
+
+    if section_id:
+        section = get_object_or_404(TypicalSection, pk=section_id)
+        section_perf_ids = list(
+            Performer.objects.filter(
+                pk__in=all_perf_ids,
+                typical_section_id=section.id,
+            ).values_list("pk", flat=True)
+        )
+        if not section_perf_ids:
+            return JsonResponse({"ok": False, "error": "Нет строк для согласования в данном разделе."}, status=400)
+
+        InfoRequestSectionApproval.objects.update_or_create(
+            project=project,
+            section=section,
+            approved_by=user,
+            defaults={"approved_at": now},
+        )
+
+        if has_elevated:
+            approved_section_ids = set(
+                InfoRequestSectionApproval.objects.filter(
+                    project=project, approved_by=user,
+                ).values_list("section_id", flat=True)
+            )
+            all_done = all_section_ids_needing_approval.issubset(approved_section_ids)
+
+            section_notifs = Notification.objects.filter(
+                notification_type=Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
+                project=project,
+                is_processed=False,
+            )
+            section_notif_perf_ids = NotificationPerformerLink.objects.filter(
+                notification__in=section_notifs,
+                performer__typical_section_id=section.id,
+            ).values_list("notification_id", flat=True)
+            affected_notifs = Notification.objects.filter(pk__in=section_notif_perf_ids, is_processed=False)
+
+            for notif in affected_notifs:
+                notif_perf_ids = set(
+                    NotificationPerformerLink.objects.filter(notification=notif)
+                    .values_list("performer_id", flat=True)
+                )
+                notif_section_ids = set(
+                    Performer.objects.filter(pk__in=notif_perf_ids)
+                    .exclude(typical_section_id__isnull=True)
+                    .values_list("typical_section_id", flat=True).distinct()
+                )
+                user_approved = set(
+                    InfoRequestSectionApproval.objects.filter(
+                        project=project, approved_by=user,
+                    ).values_list("section_id", flat=True)
+                )
+                recipient_approved = set(
+                    InfoRequestSectionApproval.objects.filter(
+                        project=project, approved_by=notif.recipient,
+                    ).values_list("section_id", flat=True)
+                )
+                pm_or_self_approved = user_approved | recipient_approved
+                if notif_section_ids.issubset(pm_or_self_approved):
+                    Performer.objects.filter(pk__in=notif_perf_ids).update(
+                        info_approval_status=Performer.InfoApprovalStatus.APPROVED,
+                        info_approval_at=now,
+                    )
+                    process_info_request_notification(notif, user)
+        else:
+            approved_section_ids = set(
+                InfoRequestSectionApproval.objects.filter(
+                    project=project,
+                    approved_by=user,
+                ).values_list("section_id", flat=True)
+            )
+            all_done = all_section_ids_needing_approval.issubset(approved_section_ids)
+
+            if all_done:
+                Performer.objects.filter(pk__in=all_perf_ids).update(
+                    info_approval_status=Performer.InfoApprovalStatus.APPROVED,
+                    info_approval_at=now,
+                )
+                for notification in notifications:
+                    process_info_request_notification(notification, user)
+
+        section_approvals = {}
+        for sa in InfoRequestSectionApproval.objects.filter(
+            project=project, approved_by=user,
+        ).select_related("approved_by"):
+            u = sa.approved_by
+            section_approvals[sa.section_id] = {
+                "name": f"{u.first_name} {u.last_name}".strip() or u.username,
+                "at": tz.localtime(sa.approved_at).strftime("%d.%m.%y %H:%M"),
+            }
+
+        remaining_pending = Notification.objects.filter(
+            notification_type=Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
+            project=project,
+            is_processed=False,
+        ).exists()
+        all_done_final = not remaining_pending and bool(section_approvals)
+
+        return JsonResponse({
+            "ok": True,
+            "section_id": section.id,
+            "approved_at": now_str,
+            "approved_by_name": user_display,
+            "all_done": all_done_final if has_elevated else all_done,
+            "section_approvals": section_approvals,
+        })
+
+    else:
+        if has_elevated:
+            for sid in all_section_ids_needing_approval:
+                InfoRequestSectionApproval.objects.update_or_create(
+                    project=project, section_id=sid, approved_by=user,
+                    defaults={"approved_at": now},
+                )
+            Performer.objects.filter(pk__in=all_perf_ids).update(
+                info_approval_status=Performer.InfoApprovalStatus.APPROVED,
+                info_approval_at=now,
+            )
+            for notification in notifications:
+                process_info_request_notification(notification, user)
+        else:
+            for notification in notifications:
+                process_info_request_notification(notification, user)
+
+        section_approvals = {}
+        for sid in all_section_ids_needing_approval:
+            existing = InfoRequestSectionApproval.objects.filter(
+                project=project, section_id=sid, approved_by=user,
+            ).first()
+            if not existing:
+                InfoRequestSectionApproval.objects.create(
+                    project=project, section_id=sid, approved_by=user, approved_at=now,
+                )
+                section_approvals[sid] = {"name": user_display, "at": now_str}
+            else:
+                u = existing.approved_by
+                section_approvals[existing.section_id] = {
+                    "name": f"{u.first_name} {u.last_name}".strip() or u.username,
+                    "at": tz.localtime(existing.approved_at).strftime("%d.%m.%y %H:%M"),
+                }
+
+        return JsonResponse({
+            "ok": True,
+            "processed": len(notifications),
+            "approved_at": now_str,
+            "approved_by_name": user_display,
+            "all_done": True,
+            "section_approvals": section_approvals,
+        })

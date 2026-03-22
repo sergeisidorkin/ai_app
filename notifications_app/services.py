@@ -359,7 +359,7 @@ def process_participation_notification(notification, actor, action_choice):
     return notification
 
 
-def _build_info_request_payload(*, recipient, project, performers, request_sent_at, deadline_at, duration_hours):
+def _build_info_request_payload(*, recipient, project, performers, request_sent_at, deadline_at, duration_hours, sender=None):
     services = [_service_line(performer) for performer in performers]
     project_label_parts = [project.short_uid]
     if project.type_id:
@@ -370,33 +370,64 @@ def _build_info_request_payload(*, recipient, project, performers, request_sent_
     recipient_name = _user_full_name(recipient)
     deadline_at_label = timezone.localtime(deadline_at).strftime("%H:%M %d.%m.%Y") if deadline_at else "—"
     sent_at_label = timezone.localtime(request_sent_at).strftime("%d.%m.%y %H:%M")
-    title_text = f"{sent_at_label} Согласование запроса информации по проекту {project_label}".strip()
-    content_lines = [
-        f"Добрый день, {recipient_name}!",
-        "",
-        f"Прошу согласовать информационный запрос по проекту {project_label} по следующим разделам:",
-    ]
-    for service in services:
-        content_lines.append(f"- {service}")
-    content_lines.extend(
-        [
-            "",
-            (
-                f"Для согласования информационного запроса необходимо изучить сформированный "
-                f"типовой чек-лист по проекту {project_label} в разделе «Чек-листы», "
-                f"при необходимости внести изменения и согласовать итоговый чек-лист, "
-                f"кликнув на кнопку «Согласовать запрос (чек-лист)» в разделе «Чек-листы» внизу страницы раздела."
-            ),
-            "",
-            (
-                f"Согласовать запрос необходимо в течение {duration_hours} "
-                f"часов с момента отправки данного сообщения — до {deadline_at_label}."
-            ),
-            "",
-            "С уважением,",
-            "IMC Montan AI",
-        ]
+
+    services_html = (
+        "<ul>" + "".join(f"<li>{s}</li>" for s in services) + "</ul>"
+        if services else "<ul><li>—</li></ul>"
     )
+
+    template_vars = {
+        "recipient_name": recipient_name,
+        "project_label": project_label,
+        "services_list": services_html,
+        "duration_hours": str(duration_hours),
+        "deadline_at": deadline_at_label,
+    }
+
+    title_text = f"Согласование запроса по проекту {project_label}".strip()
+    content_text = None
+
+    try:
+        from letters_app.services import get_effective_template, render_template, render_subject
+        tpl = get_effective_template("request_approval", sender)
+        if tpl:
+            content_text = render_template(tpl.body_html, template_vars, safe_keys={"services_list"})
+            if tpl.subject_template:
+                title_text = render_subject(tpl.subject_template, template_vars)
+    except Exception:
+        logger.debug("letters_app template lookup failed for request_approval, using fallback", exc_info=True)
+
+    if content_text is None:
+        content_lines = [
+            f"Добрый день, {recipient_name}!",
+            "",
+            f"Прошу согласовать информационный запрос по проекту {project_label} по следующим разделам:",
+        ]
+        for service in services:
+            content_lines.append(f"- {service}")
+        content_lines.extend(
+            [
+                "",
+                (
+                    f"Для согласования информационного запроса необходимо изучить сформированный "
+                    f"типовой чек-лист по проекту {project_label} в разделе «Чек-листы», "
+                    f"при необходимости внести изменения и согласовать все разделы итогового чек-листа, "
+                    f"кликнув на кнопку «Согласовать запрос (чек-лист)» в разделе «Чек-листы» внизу страницы "
+                    f"или согласовать запрос по отдельным разделам, кликая на кнопки "
+                    f"«Согласовать раздел чек-листа» в каждом выбранном в фильтре разделе."
+                ),
+                "",
+                (
+                    f"Согласовать запрос необходимо в течение {duration_hours} "
+                    f"часов с момента отправки данного сообщения\u00a0— до {deadline_at_label}."
+                ),
+                "",
+                "С уважением,",
+                "IMC Montan AI",
+            ]
+        )
+        content_text = "\n".join(content_lines).strip()
+
     payload = {
         "recipient_name": recipient_name,
         "project_label": project_label,
@@ -405,7 +436,7 @@ def _build_info_request_payload(*, recipient, project, performers, request_sent_
         "request_sent_at_display": sent_at_label,
         "deadline_at_display": deadline_at_label,
     }
-    return title_text, "\n".join(content_lines).strip(), payload
+    return title_text, content_text, payload
 
 
 @transaction.atomic
@@ -432,6 +463,7 @@ def create_info_request_notifications(*, performers, sender, request_sent_at, de
             request_sent_at=request_sent_at,
             deadline_at=deadline_at,
             duration_hours=duration_hours,
+            sender=sender,
         )
         notification = Notification.objects.create(
             notification_type=Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,

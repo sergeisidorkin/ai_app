@@ -86,8 +86,12 @@ class LetterTemplate(models.Model):
             ("{project_label}", "Обозначение проекта"),
         ],
         "request_approval": [
-            ("{recipient_name}", "Имя получателя"),
-            ("{project_label}", "Обозначение проекта"),
+            ("{recipient_name}", "Имя и отчество получателя"),
+            ("{project_label}",
+             "Обозначение проекта в формате «XXXXNZZ Тип Название проекта»"),
+            ("{services_list}", "Список разделов исполнителя с указанием активов"),
+            ("{duration_hours}", "Срок для принятия решения (часов)"),
+            ("{deadline_at}", "Крайний срок ответа"),
         ],
     }
 
