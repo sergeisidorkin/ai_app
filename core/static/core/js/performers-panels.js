@@ -233,7 +233,7 @@
       row.classList.remove('group-first', 'group-cont', 'asset-cont');
       var detailCells = row.querySelectorAll('.cell-detail-val');
       detailCells.forEach(function(c) { c.classList.remove('cell-repeated'); });
-      if (row.classList.contains('d-none')) return;
+      if (isFilterHidden(row)) return;
       var groupKey = (row.dataset.projectId || '') + '||' + (row.dataset.executor || '');
       var assetKey = groupKey + '||' + (row.dataset.assetName || '');
       if (groupKey !== prevGroupKey) {
