@@ -60,6 +60,7 @@ INSTALLED_APPS = [
     "notifications_app",
     "contracts_app",
     "letters_app",
+    "smtp_app",
 ]
 
 MIDDLEWARE = [
@@ -120,6 +121,7 @@ EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="noreply@imcmontanai.ru")
 EMAIL_TIMEOUT = env.int("EMAIL_TIMEOUT", default=10)
 EMAIL_FILE_PATH = env("EMAIL_FILE_PATH", default="")
+SMTP_APP_ENCRYPTION_KEY = env("SMTP_APP_ENCRYPTION_KEY", default=SECRET_KEY)
 
 EMAIL_URL = env("EMAIL_URL", default="")
 if EMAIL_URL:

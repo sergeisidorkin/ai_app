@@ -3,7 +3,12 @@ from datetime import date
 from django.contrib.auth.views import LoginView
 from django.shortcuts import render, redirect
 
-from policy_app.models import EXPERT_GROUP, LAWYER_GROUP
+from policy_app.models import (
+    DEPARTMENT_HEAD_GROUP,
+    EXPERT_GROUP,
+    LAWYER_GROUP,
+    PROJECTS_HEAD_GROUP,
+)
 from users_app.models import Employee
 
 
@@ -33,9 +38,16 @@ def home_entry(request):
     employee = Employee.objects.filter(user=request.user).first()
     is_expert = request.user.groups.filter(name=EXPERT_GROUP).exists()
     is_lawyer = request.user.groups.filter(name=LAWYER_GROUP).exists()
+    employee_role = getattr(employee, "role", "") or ""
+    can_access_connections = (not is_expert) or (
+        employee_role in {PROJECTS_HEAD_GROUP, DEPARTMENT_HEAD_GROUP}
+    )
+    smtp_only_connections = is_expert and can_access_connections
     return render(request, "index.html", {
         "employee": employee,
         "is_expert": is_expert,
         "is_lawyer": is_lawyer,
+        "can_access_connections": can_access_connections,
+        "smtp_only_connections": smtp_only_connections,
         "ler_date_filter": date.today().isoformat(),
     })

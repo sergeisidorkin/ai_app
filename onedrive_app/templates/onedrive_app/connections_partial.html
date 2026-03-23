@@ -1,3 +1,7 @@
+{# Панель внешнего SMTP #}
+{% include "smtp_app/connections_partial.html" with smtp_account=smtp_account smtp_form=smtp_form %}
+
+{% if not smtp_only_connections %}
 {# Панель OneDrive — ровно один include #}
 {% include "onedrive_app/panel.html" with selection=selection onedrive_connected=onedrive_connected %}
 
@@ -9,3 +13,4 @@
 
 {# Панель Яндекс.Диск #}
 {% include "yandexdisk_app/connections_partial.html" with selection=yadisk_selection yadisk_connected=yadisk_connected %}
+{% endif %}

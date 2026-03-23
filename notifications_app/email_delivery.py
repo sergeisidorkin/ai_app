@@ -33,7 +33,15 @@ def build_plain_text_body(content: str) -> str:
     return plain.strip()
 
 
-def send_notification_email(*, recipient, subject: str, content: str, from_email: str | None = None) -> dict:
+def send_notification_email(
+    *,
+    recipient,
+    subject: str,
+    content: str,
+    from_email: str | None = None,
+    connection=None,
+    reply_to: list[str] | None = None,
+) -> dict:
     recipient_email = (getattr(recipient, "email", "") or "").strip()
     if not recipient_email:
         raise EmailDeliveryError("У получателя не указан email.")
@@ -52,6 +60,8 @@ def send_notification_email(*, recipient, subject: str, content: str, from_email
         body=text_body,
         from_email=from_email or settings.DEFAULT_FROM_EMAIL,
         to=[recipient_email],
+        reply_to=reply_to,
+        connection=connection,
     )
     if looks_like_html(clean_content):
         message.attach_alternative(clean_content, "text/html")

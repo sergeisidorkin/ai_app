@@ -104,12 +104,14 @@
             <span class="link-text">Шаблоны</span>
           </a>
         </li>
+        {% if can_access_connections %}
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#connections" data-bs-toggle="tab">
             <i class="bi bi-hdd-network me-2"></i>
             <span class="link-text">Подключения</span>
           </a>
         </li>
+        {% endif %}
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#debugger" data-bs-toggle="tab">
             <i class="bi bi-sliders me-2"></i>
@@ -641,6 +643,7 @@
         </div>
       </section>
 
+      {% if can_access_connections %}
       <!-- Подключения -->
       <section id="connections" class="tab-pane fade">
         <div class="templates-bleed">
@@ -669,6 +672,7 @@
           </div>
         </div>
       </section>
+      {% endif %}
 
       <!-- Отладка -->
       <section id="debugger" class="tab-pane fade">
