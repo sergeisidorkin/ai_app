@@ -20,7 +20,12 @@ from experts_app.models import ExpertProfile
 from policy_app.models import TypicalSection
 from users_app.models import Employee
 from users_app.forms import FREELANCER_LABEL
-from notifications_app.services import create_participation_notifications, create_info_request_notifications, create_contract_notifications
+from notifications_app.services import (
+    create_contract_notifications,
+    create_info_request_notifications,
+    create_participation_notifications,
+    normalize_delivery_channels,
+)
 
 PROJECTS_PARTIAL_TEMPLATE = "projects_app/projects_partial.html"
 REG_FORM_TEMPLATE       = "projects_app/registration_form.html"
@@ -1152,6 +1157,12 @@ def participation_request(request):
     except forms.ValidationError as exc:
         return JsonResponse({"ok": False, "error": exc.message}, status=400)
 
+    raw_channels = request.POST.getlist("delivery_channels[]") or request.POST.getlist("delivery_channels")
+    try:
+        delivery_channels = normalize_delivery_channels(raw_channels)
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+
     deadline_at = _round_up_to_hour(request_sent_at + timedelta(hours=duration_hours))
     selected_performers = list(
         Performer.objects
@@ -1170,12 +1181,13 @@ def participation_request(request):
 
     try:
         with transaction.atomic():
-            create_participation_notifications(
+            notification_result = create_participation_notifications(
                 performers=selected_performers,
                 sender=request.user,
                 request_sent_at=request_sent_at,
                 deadline_at=deadline_at,
                 duration_hours=duration_hours,
+                delivery_channels=delivery_channels,
             )
             updated = Performer.objects.filter(pk__in=performer_ids).update(
                 participation_request_sent_at=request_sent_at,
@@ -1192,6 +1204,8 @@ def participation_request(request):
             "updated": updated,
             "request_sent_at": timezone.localtime(request_sent_at).strftime("%d.%m.%Y %H:%M"),
             "deadline_at": timezone.localtime(deadline_at).strftime("%d.%m.%Y %H:%M"),
+            "delivery_channels": list(notification_result["delivery_channels"]),
+            "email_delivery": notification_result["email_delivery"],
         }
     )
 

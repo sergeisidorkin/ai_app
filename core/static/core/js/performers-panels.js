@@ -1583,6 +1583,22 @@
         const modal = modalEl ? window.bootstrap?.Modal.getInstance(modalEl) : null;
         modal?.hide();
 
+        const emailDelivery = data?.email_delivery;
+        if (emailDelivery?.requested && emailDelivery?.failed > 0) {
+          const errorLines = (emailDelivery.errors || [])
+            .slice(0, 5)
+            .map((item) => `- ${item.recipient}: ${item.error}`);
+          const moreCount = Math.max((emailDelivery.errors || []).length - errorLines.length, 0);
+          const details = [
+            `Не удалось отправить ${emailDelivery.failed} из ${emailDelivery.attempted} email-писем.`,
+            ...errorLines,
+          ];
+          if (moreCount > 0) {
+            details.push(`- И еще ${moreCount} ошибок.`);
+          }
+          alert(details.join('\n'));
+        }
+
         document.body.dispatchEvent(new Event('performers-updated'));
         document.body.dispatchEvent(new Event('notifications-updated'));
       } catch (err) {

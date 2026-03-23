@@ -9,9 +9,89 @@ from django.utils import timezone
 from policy_app.models import DEPARTMENT_HEAD_GROUP as DEPARTMENT_HEAD_ROLE
 from projects_app.models import Performer
 
+from .email_delivery import EmailDeliveryError, send_notification_email
 from .models import Notification, NotificationPerformerLink
 
 logger = logging.getLogger(__name__)
+
+DELIVERY_CHANNEL_SYSTEM = "system"
+DELIVERY_CHANNEL_EMAIL = "email"
+SUPPORTED_DELIVERY_CHANNELS = (
+    DELIVERY_CHANNEL_SYSTEM,
+    DELIVERY_CHANNEL_EMAIL,
+)
+
+
+def normalize_delivery_channels(delivery_channels):
+    requested = {
+        str(value).strip()
+        for value in (delivery_channels or [])
+        if str(value).strip()
+    }
+    if not requested:
+        requested = {DELIVERY_CHANNEL_SYSTEM}
+
+    invalid = requested - set(SUPPORTED_DELIVERY_CHANNELS)
+    if invalid:
+        invalid_list = ", ".join(sorted(invalid))
+        raise ValueError(f"Переданы неподдерживаемые каналы доставки: {invalid_list}.")
+
+    if DELIVERY_CHANNEL_EMAIL in requested:
+        requested.add(DELIVERY_CHANNEL_SYSTEM)
+
+    return tuple(channel for channel in SUPPORTED_DELIVERY_CHANNELS if channel in requested)
+
+
+def _deliver_notification_email_jobs(email_jobs, *, email_requested=False):
+    summary = {
+        "requested": email_requested,
+        "attempted": len(email_jobs),
+        "sent": 0,
+        "failed": 0,
+        "errors": [],
+    }
+    if not email_jobs:
+        return summary
+
+    for job in email_jobs:
+        recipient = job["recipient"]
+        recipient_label = (
+            (getattr(recipient, "email", "") or "").strip()
+            or (getattr(recipient, "username", "") or "").strip()
+            or f"user:{getattr(recipient, 'pk', 'unknown')}"
+        )
+        try:
+            send_notification_email(
+                recipient=recipient,
+                subject=job["subject"],
+                content=job["content"],
+            )
+            summary["sent"] += 1
+        except EmailDeliveryError as exc:
+            summary["failed"] += 1
+            summary["errors"].append(
+                {
+                    "recipient": recipient_label,
+                    "error": str(exc),
+                }
+            )
+            logger.warning(
+                "Failed to send notification email to %s: %s",
+                recipient_label,
+                exc,
+            )
+
+    return summary
+
+
+def _empty_email_delivery_summary(*, email_requested=False, attempted=0):
+    return {
+        "requested": email_requested,
+        "attempted": attempted,
+        "sent": 0,
+        "failed": 0,
+        "errors": [],
+    }
 
 
 def _user_full_name(user):
@@ -178,8 +258,16 @@ def _build_participation_payload(*, recipient, project, performers, request_sent
     return title_text, content_text, payload
 
 
-@transaction.atomic
-def create_participation_notifications(*, performers, sender, request_sent_at, deadline_at, duration_hours):
+def create_participation_notifications(
+    *,
+    performers,
+    sender,
+    request_sent_at,
+    deadline_at,
+    duration_hours,
+    delivery_channels=None,
+):
+    delivery_channels = normalize_delivery_channels(delivery_channels)
     performers = list(performers)
     missing_employee = [performer for performer in performers if not performer.employee_id]
     if missing_employee:
@@ -191,52 +279,81 @@ def create_participation_notifications(*, performers, sender, request_sent_at, d
         grouped[(performer.registration_id, performer.employee_id)].append(performer)
 
     created = []
-    for (_registration_id, _employee_id), grouped_performers in grouped.items():
-        first = grouped_performers[0]
-        recipient = first.employee.user
-        project = first.registration
-        employee_role = getattr(first.employee, "role", "") or ""
-        template_type = (
-            "direction_confirmation"
-            if employee_role == DEPARTMENT_HEAD_ROLE
-            else "participation_confirmation"
-        )
-        title_text, content_text, payload = _build_participation_payload(
-            recipient=recipient,
-            project=project,
-            performers=grouped_performers,
-            request_sent_at=request_sent_at,
-            deadline_at=deadline_at,
-            duration_hours=duration_hours,
-            sender=sender,
-            template_type=template_type,
-        )
-        notification = Notification.objects.create(
-            notification_type=Notification.NotificationType.PROJECT_PARTICIPATION_CONFIRMATION,
-            related_section=Notification.RelatedSection.PROJECTS,
-            recipient=recipient,
-            sender=sender,
-            project=project,
-            title_text=title_text,
-            content_text=content_text,
-            payload=payload,
-            sent_at=request_sent_at,
-            deadline_at=deadline_at,
-            is_read=False,
-            is_processed=False,
-        )
-        NotificationPerformerLink.objects.bulk_create(
-            [
-                NotificationPerformerLink(
-                    notification=notification,
-                    performer=performer,
-                    position=index,
+    email_jobs = []
+    with transaction.atomic():
+        for (_registration_id, _employee_id), grouped_performers in grouped.items():
+            first = grouped_performers[0]
+            recipient = first.employee.user
+            project = first.registration
+            employee_role = getattr(first.employee, "role", "") or ""
+            template_type = (
+                "direction_confirmation"
+                if employee_role == DEPARTMENT_HEAD_ROLE
+                else "participation_confirmation"
+            )
+            title_text, content_text, payload = _build_participation_payload(
+                recipient=recipient,
+                project=project,
+                performers=grouped_performers,
+                request_sent_at=request_sent_at,
+                deadline_at=deadline_at,
+                duration_hours=duration_hours,
+                sender=sender,
+                template_type=template_type,
+            )
+            notification = Notification.objects.create(
+                notification_type=Notification.NotificationType.PROJECT_PARTICIPATION_CONFIRMATION,
+                related_section=Notification.RelatedSection.PROJECTS,
+                recipient=recipient,
+                sender=sender,
+                project=project,
+                title_text=title_text,
+                content_text=content_text,
+                payload=payload,
+                sent_at=request_sent_at,
+                deadline_at=deadline_at,
+                is_read=False,
+                is_processed=False,
+            )
+            NotificationPerformerLink.objects.bulk_create(
+                [
+                    NotificationPerformerLink(
+                        notification=notification,
+                        performer=performer,
+                        position=index,
+                    )
+                    for index, performer in enumerate(grouped_performers, start=1)
+                ]
+            )
+            created.append(notification)
+            if DELIVERY_CHANNEL_EMAIL in delivery_channels:
+                email_jobs.append(
+                    {
+                        "recipient": recipient,
+                        "subject": title_text,
+                        "content": content_text,
+                    }
                 )
-                for index, performer in enumerate(grouped_performers, start=1)
-            ]
+
+    email_requested = DELIVERY_CHANNEL_EMAIL in delivery_channels
+    email_delivery = _empty_email_delivery_summary(
+        email_requested=email_requested,
+        attempted=len(email_jobs),
+    )
+    if email_jobs:
+        transaction.on_commit(
+            lambda: email_delivery.update(
+                _deliver_notification_email_jobs(
+                    email_jobs,
+                    email_requested=email_requested,
+                )
+            )
         )
-        created.append(notification)
-    return created
+    return {
+        "notifications": created,
+        "delivery_channels": delivery_channels,
+        "email_delivery": email_delivery,
+    }
 
 
 @transaction.atomic
