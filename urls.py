@@ -44,6 +44,7 @@ path("", home_entry, name="home"),
     path("", include("notifications_app.urls")),
     path("contracts/", include("contracts_app.urls")),
     path("letters/", include("letters_app.urls")),
+    path("smtp/", include("smtp_app.urls")),
     path(
         "addin/commands.html",
         TemplateView.as_view(template_name="docops_queue/commands.html"),

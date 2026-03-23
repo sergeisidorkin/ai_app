@@ -15,16 +15,26 @@ from .models import Notification, NotificationPerformerLink
 logger = logging.getLogger(__name__)
 
 DELIVERY_CHANNEL_SYSTEM = "system"
-DELIVERY_CHANNEL_EMAIL = "email"
+DELIVERY_CHANNEL_SYSTEM_EMAIL = "system_email"
+DELIVERY_CHANNEL_CONNECTED_EMAIL = "connected_email"
+DELIVERY_CHANNEL_ALIASES = {
+    "email": DELIVERY_CHANNEL_SYSTEM_EMAIL,
+}
+DELIVERY_CHANNEL_LABELS = {
+    DELIVERY_CHANNEL_SYSTEM: "Системные уведомления",
+    DELIVERY_CHANNEL_SYSTEM_EMAIL: "Системная электронная почта",
+    DELIVERY_CHANNEL_CONNECTED_EMAIL: "Подключенная электронная почта",
+}
 SUPPORTED_DELIVERY_CHANNELS = (
     DELIVERY_CHANNEL_SYSTEM,
-    DELIVERY_CHANNEL_EMAIL,
+    DELIVERY_CHANNEL_SYSTEM_EMAIL,
+    DELIVERY_CHANNEL_CONNECTED_EMAIL,
 )
 
 
 def normalize_delivery_channels(delivery_channels):
     requested = {
-        str(value).strip()
+        DELIVERY_CHANNEL_ALIASES.get(str(value).strip(), str(value).strip())
         for value in (delivery_channels or [])
         if str(value).strip()
     }
@@ -36,14 +46,13 @@ def normalize_delivery_channels(delivery_channels):
         invalid_list = ", ".join(sorted(invalid))
         raise ValueError(f"Переданы неподдерживаемые каналы доставки: {invalid_list}.")
 
-    if DELIVERY_CHANNEL_EMAIL in requested:
-        requested.add(DELIVERY_CHANNEL_SYSTEM)
-
     return tuple(channel for channel in SUPPORTED_DELIVERY_CHANNELS if channel in requested)
 
 
-def _deliver_notification_email_jobs(email_jobs, *, email_requested=False):
+def _deliver_notification_email_jobs(email_jobs, *, delivery_channel, email_requested=False):
     summary = {
+        "channel": delivery_channel,
+        "channel_label": DELIVERY_CHANNEL_LABELS.get(delivery_channel, delivery_channel),
         "requested": email_requested,
         "attempted": len(email_jobs),
         "sent": 0,
@@ -55,16 +64,36 @@ def _deliver_notification_email_jobs(email_jobs, *, email_requested=False):
 
     for job in email_jobs:
         recipient = job["recipient"]
+        sender = job.get("sender")
         recipient_label = (
             (getattr(recipient, "email", "") or "").strip()
             or (getattr(recipient, "username", "") or "").strip()
             or f"user:{getattr(recipient, 'pk', 'unknown')}"
         )
         try:
+            delivery_options = {}
+            if delivery_channel == DELIVERY_CHANNEL_CONNECTED_EMAIL:
+                if sender is None:
+                    raise EmailDeliveryError("Не удалось определить отправителя для подключенной почты.")
+                try:
+                    from smtp_app.services import get_user_notification_email_options
+
+                    delivery_options = get_user_notification_email_options(sender)
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to resolve external SMTP options for %s: %s",
+                        getattr(sender, "username", sender),
+                        exc,
+                    )
+                if not delivery_options:
+                    raise EmailDeliveryError("У отправителя не настроен активный внешний SMTP-аккаунт.")
             send_notification_email(
                 recipient=recipient,
                 subject=job["subject"],
                 content=job["content"],
+                from_email=delivery_options.get("from_email"),
+                connection=delivery_options.get("connection"),
+                reply_to=delivery_options.get("reply_to"),
             )
             summary["sent"] += 1
         except EmailDeliveryError as exc:
@@ -73,10 +102,13 @@ def _deliver_notification_email_jobs(email_jobs, *, email_requested=False):
                 {
                     "recipient": recipient_label,
                     "error": str(exc),
+                    "channel": delivery_channel,
+                    "channel_label": DELIVERY_CHANNEL_LABELS.get(delivery_channel, delivery_channel),
                 }
             )
             logger.warning(
-                "Failed to send notification email to %s: %s",
+                "Failed to send %s notification email to %s: %s",
+                delivery_channel,
                 recipient_label,
                 exc,
             )
@@ -84,8 +116,10 @@ def _deliver_notification_email_jobs(email_jobs, *, email_requested=False):
     return summary
 
 
-def _empty_email_delivery_summary(*, email_requested=False, attempted=0):
+def _empty_email_delivery_summary(*, delivery_channel, email_requested=False, attempted=0):
     return {
+        "channel": delivery_channel,
+        "channel_label": DELIVERY_CHANNEL_LABELS.get(delivery_channel, delivery_channel),
         "requested": email_requested,
         "attempted": attempted,
         "sent": 0,
@@ -279,7 +313,9 @@ def create_participation_notifications(
         grouped[(performer.registration_id, performer.employee_id)].append(performer)
 
     created = []
-    email_jobs = []
+    system_email_jobs = []
+    connected_email_jobs = []
+    should_create_notifications = DELIVERY_CHANNEL_SYSTEM in delivery_channels
     with transaction.atomic():
         for (_registration_id, _employee_id), grouped_performers in grouped.items():
             first = grouped_performers[0]
@@ -301,51 +337,93 @@ def create_participation_notifications(
                 sender=sender,
                 template_type=template_type,
             )
-            notification = Notification.objects.create(
-                notification_type=Notification.NotificationType.PROJECT_PARTICIPATION_CONFIRMATION,
-                related_section=Notification.RelatedSection.PROJECTS,
-                recipient=recipient,
-                sender=sender,
-                project=project,
-                title_text=title_text,
-                content_text=content_text,
-                payload=payload,
-                sent_at=request_sent_at,
-                deadline_at=deadline_at,
-                is_read=False,
-                is_processed=False,
-            )
-            NotificationPerformerLink.objects.bulk_create(
-                [
-                    NotificationPerformerLink(
-                        notification=notification,
-                        performer=performer,
-                        position=index,
-                    )
-                    for index, performer in enumerate(grouped_performers, start=1)
-                ]
-            )
-            created.append(notification)
-            if DELIVERY_CHANNEL_EMAIL in delivery_channels:
-                email_jobs.append(
+            if should_create_notifications:
+                notification = Notification.objects.create(
+                    notification_type=Notification.NotificationType.PROJECT_PARTICIPATION_CONFIRMATION,
+                    related_section=Notification.RelatedSection.PROJECTS,
+                    recipient=recipient,
+                    sender=sender,
+                    project=project,
+                    title_text=title_text,
+                    content_text=content_text,
+                    payload=payload,
+                    sent_at=request_sent_at,
+                    deadline_at=deadline_at,
+                    is_read=False,
+                    is_processed=False,
+                )
+                NotificationPerformerLink.objects.bulk_create(
+                    [
+                        NotificationPerformerLink(
+                            notification=notification,
+                            performer=performer,
+                            position=index,
+                        )
+                        for index, performer in enumerate(grouped_performers, start=1)
+                    ]
+                )
+                created.append(notification)
+            if DELIVERY_CHANNEL_SYSTEM_EMAIL in delivery_channels:
+                system_email_jobs.append(
                     {
                         "recipient": recipient,
                         "subject": title_text,
                         "content": content_text,
+                        "sender": sender,
+                    }
+                )
+            if DELIVERY_CHANNEL_CONNECTED_EMAIL in delivery_channels:
+                connected_email_jobs.append(
+                    {
+                        "recipient": recipient,
+                        "subject": title_text,
+                        "content": content_text,
+                        "sender": sender,
                     }
                 )
 
-    email_requested = DELIVERY_CHANNEL_EMAIL in delivery_channels
-    email_delivery = _empty_email_delivery_summary(
-        email_requested=email_requested,
-        attempted=len(email_jobs),
-    )
-    if email_jobs:
+    system_email_requested = DELIVERY_CHANNEL_SYSTEM_EMAIL in delivery_channels
+    connected_email_requested = DELIVERY_CHANNEL_CONNECTED_EMAIL in delivery_channels
+    email_delivery = {
+        "requested": system_email_requested or connected_email_requested,
+        "attempted": len(system_email_jobs) + len(connected_email_jobs),
+        "sent": 0,
+        "failed": 0,
+        "errors": [],
+        "channels": {
+            DELIVERY_CHANNEL_SYSTEM_EMAIL: _empty_email_delivery_summary(
+                delivery_channel=DELIVERY_CHANNEL_SYSTEM_EMAIL,
+                email_requested=system_email_requested,
+                attempted=len(system_email_jobs),
+            ),
+            DELIVERY_CHANNEL_CONNECTED_EMAIL: _empty_email_delivery_summary(
+                delivery_channel=DELIVERY_CHANNEL_CONNECTED_EMAIL,
+                email_requested=connected_email_requested,
+                attempted=len(connected_email_jobs),
+            ),
+        },
+    }
+    if system_email_jobs:
         transaction.on_commit(
-            lambda: email_delivery.update(
-                _deliver_notification_email_jobs(
-                    email_jobs,
-                    email_requested=email_requested,
+            lambda: _update_email_delivery_summary(
+                aggregate=email_delivery,
+                channel_summary=email_delivery["channels"][DELIVERY_CHANNEL_SYSTEM_EMAIL],
+                delivered_summary=_deliver_notification_email_jobs(
+                    system_email_jobs,
+                    delivery_channel=DELIVERY_CHANNEL_SYSTEM_EMAIL,
+                    email_requested=system_email_requested,
+                ),
+            )
+        )
+    if connected_email_jobs:
+        transaction.on_commit(
+            lambda: _update_email_delivery_summary(
+                aggregate=email_delivery,
+                channel_summary=email_delivery["channels"][DELIVERY_CHANNEL_CONNECTED_EMAIL],
+                delivered_summary=_deliver_notification_email_jobs(
+                    connected_email_jobs,
+                    delivery_channel=DELIVERY_CHANNEL_CONNECTED_EMAIL,
+                    email_requested=connected_email_requested,
                 )
             )
         )
@@ -354,6 +432,13 @@ def create_participation_notifications(
         "delivery_channels": delivery_channels,
         "email_delivery": email_delivery,
     }
+
+
+def _update_email_delivery_summary(*, aggregate, channel_summary, delivered_summary):
+    channel_summary.update(delivered_summary)
+    aggregate["sent"] += delivered_summary["sent"]
+    aggregate["failed"] += delivered_summary["failed"]
+    aggregate["errors"].extend(delivered_summary["errors"])
 
 
 @transaction.atomic

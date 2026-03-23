@@ -1564,7 +1564,10 @@
         if (emailDelivery?.requested && emailDelivery?.failed > 0) {
           const errorLines = (emailDelivery.errors || [])
             .slice(0, 5)
-            .map((item) => `- ${item.recipient}: ${item.error}`);
+            .map((item) => {
+              const channelPrefix = item.channel_label ? `[${item.channel_label}] ` : '';
+              return `- ${channelPrefix}${item.recipient}: ${item.error}`;
+            });
           const moreCount = Math.max((emailDelivery.errors || []).length - errorLines.length, 0);
           const details = [
             `Не удалось отправить ${emailDelivery.failed} из ${emailDelivery.attempted} email-писем.`,

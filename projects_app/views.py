@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 
 from experts_app.models import ExpertProfile
 from policy_app.models import TypicalSection
+from smtp_app.models import ExternalSMTPAccount
 from users_app.models import Employee
 from users_app.forms import FREELANCER_LABEL
 from notifications_app.services import (
@@ -723,12 +724,18 @@ def _performers_context(user=None):
         .order_by("-number", "-id")
     )
     user_is_direction_head = False
+    has_active_smtp_connection = False
     if user:
         try:
             from policy_app.models import DEPARTMENT_HEAD_GROUP
             user_is_direction_head = getattr(user.employee_profile, "role", "") == DEPARTMENT_HEAD_GROUP
         except Exception:
             pass
+        has_active_smtp_connection = ExternalSMTPAccount.objects.filter(
+            user=user,
+            is_active=True,
+            use_for_notifications=True,
+        ).exists()
 
     if user:
         performers = list(performers)
@@ -822,6 +829,7 @@ def _performers_context(user=None):
         "contract_projects": contract_projects,
         "contract_request_sent_initial": request_sent_initial,
         "user_is_direction_head": user_is_direction_head,
+        "has_active_smtp_connection": has_active_smtp_connection,
     }
 
 @login_required

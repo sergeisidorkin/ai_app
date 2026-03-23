@@ -6,7 +6,11 @@ from django.views.decorators.http import require_POST
 from django.urls import reverse
 from django.conf import settings
 
+from policy_app.models import DEPARTMENT_HEAD_GROUP, PROJECTS_HEAD_GROUP
+from users_app.models import Employee
 from yandexdisk_app.models import YandexDiskAccount, YandexDiskSelection
+from smtp_app.forms import ExternalSMTPAccountForm
+from smtp_app.models import ExternalSMTPAccount
 
 from .graph import get_auth_url, exchange_code, list_children
 from .models import OneDriveSelection, OneDriveAccount
@@ -58,6 +62,11 @@ def connections_partial(request):
 
     yadisk_connected = YandexDiskAccount.objects.filter(user=request.user).exists()
     yadisk_selection = YandexDiskSelection.objects.filter(user=request.user).first()
+    smtp_account = ExternalSMTPAccount.objects.filter(user=request.user).first()
+    smtp_form = ExternalSMTPAccountForm(instance=smtp_account, user=request.user)
+    employee = Employee.objects.filter(user=request.user).first()
+    employee_role = getattr(employee, "role", "") or ""
+    smtp_only_connections = employee_role in {PROJECTS_HEAD_GROUP, DEPARTMENT_HEAD_GROUP}
 
     return render(
         request,
@@ -70,6 +79,9 @@ def connections_partial(request):
             "gdrive_selection": gdrive_selection,
             "yadisk_connected": yadisk_connected,
             "yadisk_selection": yadisk_selection,
+            "smtp_account": smtp_account,
+            "smtp_form": smtp_form,
+            "smtp_only_connections": smtp_only_connections,
         },
     )
 

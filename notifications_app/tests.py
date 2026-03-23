@@ -15,10 +15,16 @@ class DeliveryChannelTests(SimpleTestCase):
     def test_normalize_delivery_channels_defaults_to_system(self):
         self.assertEqual(normalize_delivery_channels([]), ("system",))
 
-    def test_normalize_delivery_channels_adds_system_for_email(self):
+    def test_normalize_delivery_channels_maps_legacy_email_to_system_email(self):
         self.assertEqual(
             normalize_delivery_channels(["email"]),
-            ("system", "email"),
+            ("system_email",),
+        )
+
+    def test_normalize_delivery_channels_keeps_connected_email_separate(self):
+        self.assertEqual(
+            normalize_delivery_channels(["system", "connected_email"]),
+            ("system", "connected_email"),
         )
 
     def test_normalize_delivery_channels_rejects_unknown_values(self):

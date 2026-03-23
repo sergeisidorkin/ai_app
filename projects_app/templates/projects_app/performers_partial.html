@@ -415,12 +415,27 @@
                 <div class="form-check">
                   <input class="form-check-input js-participation-channel"
                          type="checkbox"
-                         id="participation-channel-email"
-                         value="email">
-                  <label class="form-check-label" for="participation-channel-email">
-                    Электронная почта
+                         id="participation-channel-system-email"
+                         value="system_email">
+                  <label class="form-check-label" for="participation-channel-system-email">
+                    Системная электронная почта
                   </label>
                 </div>
+                <div class="form-check">
+                  <input class="form-check-input js-participation-channel"
+                         type="checkbox"
+                         id="participation-channel-connected-email"
+                         value="connected_email"
+                         {% if not has_active_smtp_connection %}disabled{% endif %}>
+                  <label class="form-check-label" for="participation-channel-connected-email">
+                    Подключенная электронная почта
+                  </label>
+                </div>
+                {% if not has_active_smtp_connection %}
+                  <div class="form-text mt-1">
+                    Сначала настройте активное внешнее SMTP-подключение в разделе «Подключения».
+                  </div>
+                {% endif %}
               </div>
               <div class="mb-0">
                 <label for="participation-request-sent-at" class="form-label">Дата отправки запроса</label>
