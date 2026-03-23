@@ -1,5 +1,7 @@
 from django.db import models
 
+from projects_app.models import Performer
+
 
 CONTRACT_TYPE_CHOICES = [
     ("gph", "ГПХ Договор гражданско-правового характера"),
@@ -127,3 +129,21 @@ class ContractSubject(models.Model):
 
     def __str__(self):
         return self.subject_text or f"Предмет #{self.pk}"
+
+
+class ContractProjectWork(Performer):
+    """Proxy: работа с проектами договоров (раздел «Договоры → В работе»)."""
+
+    class Meta:
+        proxy = True
+        verbose_name = "В работе: Проект договора"
+        verbose_name_plural = "В работе: Проекты договоров"
+
+
+class ContractSigningWork(Performer):
+    """Proxy: работа с подписанием договоров (раздел «Договоры → В работе»)."""
+
+    class Meta:
+        proxy = True
+        verbose_name = "В работе: Подписание договора"
+        verbose_name_plural = "В работе: Подписание договоров"
