@@ -1,0 +1,112 @@
+services:
+  redis:
+    image: redis:alpine
+    restart: always
+    volumes:
+      - "${ROOT}/redis:/data"
+
+  resolver:
+    image: "mailu/unbound:${MAILU_VERSION:-2024.06}"
+    env_file:
+      - mailu.env
+    restart: always
+    networks:
+      default:
+        ipv4_address: 192.168.203.254
+
+  front:
+    image: "mailu/nginx:${MAILU_VERSION:-2024.06}"
+    restart: always
+    env_file:
+      - mailu.env
+    ports:
+      - "${BIND_ADDRESS4}:25:25"
+      - "${BIND_ADDRESS4}:465:465"
+      - "${BIND_ADDRESS4}:587:587"
+      - "${BIND_ADDRESS4}:143:143"
+      - "${BIND_ADDRESS4}:993:993"
+      - "${BIND_ADDRESS4}:4190:4190"
+      - "127.0.0.1:8080:80"
+    volumes:
+      - "${ROOT}/certs:/certs"
+      - "${ROOT}/overrides/nginx:/overrides:ro"
+
+  admin:
+    image: "mailu/admin:${MAILU_VERSION:-2024.06}"
+    restart: always
+    env_file:
+      - mailu.env
+    volumes:
+      - "${ROOT}/data:/data"
+      - "${ROOT}/dkim:/dkim"
+    dns:
+      - 192.168.203.254
+    depends_on:
+      - redis
+      - resolver
+
+  imap:
+    image: "mailu/dovecot:${MAILU_VERSION:-2024.06}"
+    restart: always
+    env_file:
+      - mailu.env
+    volumes:
+      - "${ROOT}/mail:/mail"
+      - "${ROOT}/overrides/dovecot:/overrides:ro"
+    depends_on:
+      - front
+
+  smtp:
+    image: "mailu/postfix:${MAILU_VERSION:-2024.06}"
+    restart: always
+    env_file:
+      - mailu.env
+    volumes:
+      - "${ROOT}/mailqueue:/queue"
+      - "${ROOT}/overrides/postfix:/overrides:ro"
+    depends_on:
+      - front
+
+  oletools:
+    image: "mailu/oletools:${MAILU_VERSION:-2024.06}"
+    hostname: oletools
+    restart: always
+    networks:
+      - noinet
+
+  antispam:
+    image: "mailu/rspamd:${MAILU_VERSION:-2024.06}"
+    restart: always
+    env_file:
+      - mailu.env
+    networks:
+      - default
+      - noinet
+    volumes:
+      - "${ROOT}/filter:/var/lib/rspamd"
+      - "${ROOT}/dkim:/dkim"
+      - "${ROOT}/overrides/rspamd:/etc/rspamd/override.d:ro"
+    depends_on:
+      - front
+
+  webmail:
+    image: "mailu/roundcube:${MAILU_VERSION:-2024.06}"
+    restart: always
+    env_file:
+      - mailu.env
+    volumes:
+      - "${ROOT}/webmail:/data"
+      - "${ROOT}/overrides/roundcube:/overrides:ro"
+    depends_on:
+      - imap
+
+networks:
+  default:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: "${SUBNET}"
+  noinet:
+    driver: bridge
+    internal: true
