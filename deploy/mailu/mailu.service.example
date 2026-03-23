@@ -1,0 +1,15 @@
+[Unit]
+Description=Mailu mail stack
+Requires=docker.service network-online.target
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/mailu
+ExecStart=/usr/bin/docker compose -f /opt/mailu/docker-compose.yml --env-file /opt/mailu/mailu.env up -d
+ExecStop=/usr/bin/docker compose -f /opt/mailu/docker-compose.yml --env-file /opt/mailu/mailu.env down
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

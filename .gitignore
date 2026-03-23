@@ -15,4 +15,9 @@ media/
 .env
 .env.*
 .env.example
+deploy/mailu/mailu.env
+deploy/mailu/certs/
+deploy/mailu/*.pem
 office_addin_server/
+
+TPGR_Module_CP1251.bas

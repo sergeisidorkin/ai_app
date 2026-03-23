@@ -108,6 +108,8 @@ LOGIN_REDIRECT_URL = "/#policy"   # после входа — сразу на в
 LOGOUT_REDIRECT_URL = "login"
 
 # Email (SMTP)
+# Backward compatible with explicit EMAIL_* settings, but can also be configured
+# via a single EMAIL_URL value (e.g. smtp+tls://user:pass@127.0.0.1:587).
 EMAIL_BACKEND = env("EMAIL_BACKEND", default="django.core.mail.backends.smtp.EmailBackend")
 EMAIL_HOST = env("EMAIL_HOST", default="smtp.yandex.ru")
 EMAIL_PORT = env.int("EMAIL_PORT", default=465)
@@ -117,6 +119,21 @@ EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
 EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="noreply@imcmontanai.ru")
 EMAIL_TIMEOUT = env.int("EMAIL_TIMEOUT", default=10)
+EMAIL_FILE_PATH = env("EMAIL_FILE_PATH", default="")
+
+EMAIL_URL = env("EMAIL_URL", default="")
+if EMAIL_URL:
+    _email_cfg = env.email_url("EMAIL_URL")
+    EMAIL_BACKEND = _email_cfg.get("EMAIL_BACKEND", EMAIL_BACKEND)
+    EMAIL_HOST = _email_cfg.get("EMAIL_HOST", EMAIL_HOST)
+    EMAIL_PORT = _email_cfg.get("EMAIL_PORT", EMAIL_PORT)
+    EMAIL_USE_SSL = _email_cfg.get("EMAIL_USE_SSL", EMAIL_USE_SSL)
+    EMAIL_USE_TLS = _email_cfg.get("EMAIL_USE_TLS", EMAIL_USE_TLS)
+    EMAIL_HOST_USER = _email_cfg.get("EMAIL_HOST_USER", EMAIL_HOST_USER)
+    EMAIL_HOST_PASSWORD = _email_cfg.get("EMAIL_HOST_PASSWORD", EMAIL_HOST_PASSWORD)
+    EMAIL_TIMEOUT = _email_cfg.get("EMAIL_TIMEOUT", EMAIL_TIMEOUT)
+    EMAIL_FILE_PATH = _email_cfg.get("EMAIL_FILE_PATH", EMAIL_FILE_PATH)
+
 EMAIL_VERIFICATION_CODE_TTL = 30 * 60  # 30 minutes
 
 # Дополнительные разрешённые пути (префиксы), доступные без авторизации
