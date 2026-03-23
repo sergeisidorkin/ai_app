@@ -58,6 +58,9 @@ def test_smtp_connection(account: ExternalSMTPAccount) -> dict:
     return {"ok": True, "error": ""}
 
 
+test_smtp_connection.__test__ = False
+
+
 def send_test_email(account: ExternalSMTPAccount, to_email: str) -> dict:
     recipient_email = (to_email or "").strip()
     if not recipient_email:
