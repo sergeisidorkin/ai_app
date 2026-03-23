@@ -151,5 +151,5 @@ jobs:
             fi
 
             echo "== External HTTPS check =="
-            curl --fail -I https://imcmontanai.ru/health/ | grep -q "200 OK"
+            curl --fail --silent --show-error https://imcmontanai.ru/health/ | grep -qx "OK"
             echo "Deploy OK"
