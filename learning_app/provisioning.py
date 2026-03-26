@@ -48,10 +48,15 @@ def ensure_moodle_account(user, *, client: MoodleApiClient | None = None) -> Lea
         refreshed = client.get_users_by_id(moodle_user_id)
         moodle_user = refreshed[0] if refreshed else {**moodle_payload, "id": moodle_user_id}
     else:
-        created_users = client.create_users([{**moodle_payload, "password": _generate_moodle_password()}])
+        created_users = client.create_users([{**_build_moodle_create_payload(user), "password": _generate_moodle_password()}])
         moodle_user = created_users[0] if created_users else _resolve_moodle_user(user, client=client)
         if not moodle_user:
             raise MoodleApiError(f"Unable to create or resolve Moodle user for Django user `{user.pk}`.")
+        moodle_user_id = int(moodle_user["id"])
+        _assert_link_is_available(user, moodle_user_id)
+        client.update_users([{**moodle_payload, "id": moodle_user_id}])
+        refreshed = client.get_users_by_id(moodle_user_id)
+        moodle_user = refreshed[0] if refreshed else {**moodle_payload, "id": moodle_user_id}
 
     link, _ = LearningUserLink.objects.get_or_create(user=user)
     link.moodle_user_id = int(moodle_user["id"])
@@ -100,6 +105,18 @@ def _build_moodle_user_payload(user) -> dict[str, object]:
         "email": (user.email or "").strip(),
         "auth": "manual",
         "suspended": 0 if user.is_active and user.is_staff else 1,
+        "idnumber": _build_moodle_idnumber(user),
+    }
+
+
+def _build_moodle_create_payload(user) -> dict[str, object]:
+    # Moodle accepts fewer fields during create than during update.
+    return {
+        "username": _build_moodle_username(user),
+        "firstname": (user.first_name or "").strip() or _build_moodle_username(user),
+        "lastname": (user.last_name or "").strip() or "-",
+        "email": (user.email or "").strip(),
+        "auth": "manual",
         "idnumber": _build_moodle_idnumber(user),
     }
 

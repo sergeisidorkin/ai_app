@@ -38,6 +38,9 @@ class MoodleProvisioningTests(TestCase):
         client.create_users.return_value = [
             {"id": 42, "username": "staff@example.com", "email": "staff@example.com"}
         ]
+        client.get_users_by_id.return_value = [
+            {"id": 42, "username": "staff@example.com", "email": "staff@example.com"}
+        ]
 
         link = ensure_moodle_account(self.user, client=client)
 
@@ -45,7 +48,11 @@ class MoodleProvisioningTests(TestCase):
         self.assertEqual(link.moodle_username, "staff@example.com")
         self.assertEqual(LearningUserLink.objects.get(user=self.user).moodle_user_id, 42)
         client.create_users.assert_called_once()
-        client.update_users.assert_not_called()
+        create_payload = client.create_users.call_args.args[0][0]
+        self.assertEqual(create_payload["username"], self.user.email)
+        self.assertEqual(create_payload["email"], self.user.email)
+        self.assertNotIn("suspended", create_payload)
+        client.update_users.assert_called_once()
 
     def test_update_existing_moodle_user_for_linked_staff_account(self):
         LearningUserLink.objects.create(
