@@ -14,9 +14,9 @@ from .models import (
     LearningCourseResult,
     LearningEnrollment,
     LearningSyncRun,
-    LearningUserLink,
 )
 from .moodle_api import MoodleApiClient, MoodleApiError
+from .provisioning import ensure_moodle_account
 
 User = get_user_model()
 
@@ -77,8 +77,8 @@ def sync_staff_learning(
 
 def sync_user_learning(user, *, client: MoodleApiClient | None = None) -> dict[str, int | bool]:
     client = client or MoodleApiClient()
-    moodle_user = _find_moodle_user(user, client)
-    if not moodle_user:
+    link = ensure_moodle_account(user, client=client)
+    if not link or not link.moodle_user_id:
         return {
             "user_linked": False,
             "courses_upserted": 0,
@@ -89,14 +89,6 @@ def sync_user_learning(user, *, client: MoodleApiClient | None = None) -> dict[s
 
     now = timezone.now()
     with transaction.atomic():
-        link, _ = LearningUserLink.objects.get_or_create(user=user)
-        link.moodle_user_id = moodle_user.get("id")
-        link.moodle_username = moodle_user.get("username", "") or ""
-        link.moodle_email = moodle_user.get("email", "") or user.email or ""
-        link.last_synced_at = now
-        link.source_payload = moodle_user
-        link.save()
-
         courses = client.get_user_courses(link.moodle_user_id)
         seen_course_ids: set[int] = set()
         courses_upserted = 0
@@ -132,8 +124,15 @@ def sync_user_learning(user, *, client: MoodleApiClient | None = None) -> dict[s
             results_upserted += 1
 
         removed, _ = LearningEnrollment.objects.filter(user=user).exclude(course_id__in=seen_course_ids).delete()
+        refreshed_users = client.get_users_by_id(link.moodle_user_id)
+        moodle_user = refreshed_users[0] if refreshed_users else {}
         link.last_login_at = _parse_moodle_datetime(moodle_user.get("lastaccess"))
-        link.save(update_fields=["last_login_at"])
+        link.last_synced_at = now
+        if moodle_user:
+            link.moodle_username = moodle_user.get("username", "") or link.moodle_username
+            link.moodle_email = moodle_user.get("email", "") or link.moodle_email
+            link.source_payload = moodle_user
+        link.save(update_fields=["last_login_at", "last_synced_at", "moodle_username", "moodle_email", "source_payload"])
 
     return {
         "user_linked": True,

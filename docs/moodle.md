@@ -2,6 +2,8 @@
 
 This project integrates with `Moodle` as a separate subsystem. The Django application remains the main product UI, while `Moodle` handles course authoring, delivery, quizzes, and completion tracking.
 
+The first integration stage assumes that active `staff` users are provisioned from Django into Moodle automatically, so Django remains the source of truth for learning accounts.
+
 ## Why This Setup
 
 - `Moodle` runs on the same server, but isolated from the Django runtime.
@@ -121,6 +123,8 @@ In Moodle admin:
 3. Create a dedicated service account for API access.
 4. Create an external service and add at least:
    - `core_user_get_users_by_field`
+   - `core_user_create_users`
+   - `core_user_update_users`
    - `core_enrol_get_users_courses`
    - `core_completion_get_course_completion_status`
    - `core_completion_get_activities_completion_status`

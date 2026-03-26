@@ -83,6 +83,19 @@ class MoodleApiClient:
     def get_users_by_username(self, username: str) -> list[dict[str, Any]]:
         return self.call("core_user_get_users_by_field", field="username", values=[username])
 
+    def get_users_by_id(self, moodle_user_id: int) -> list[dict[str, Any]]:
+        return self.call("core_user_get_users_by_field", field="id", values=[moodle_user_id])
+
+    def get_users_by_idnumber(self, idnumber: str) -> list[dict[str, Any]]:
+        return self.call("core_user_get_users_by_field", field="idnumber", values=[idnumber])
+
+    def create_users(self, users: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        data = self.call("core_user_create_users", users=users)
+        return data if isinstance(data, list) else []
+
+    def update_users(self, users: list[dict[str, Any]]) -> Any:
+        return self.call("core_user_update_users", users=users)
+
     def get_user_courses(self, moodle_user_id: int) -> list[dict[str, Any]]:
         data = self.call("core_enrol_get_users_courses", userid=moodle_user_id)
         return data if isinstance(data, list) else []
