@@ -1,0 +1,54 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    env_file:
+      - moodle.env
+    environment:
+      POSTGRES_DB: ${MOODLE_DB_NAME}
+      POSTGRES_USER: ${MOODLE_DB_USER}
+      POSTGRES_PASSWORD: ${MOODLE_DB_PASSWORD}
+    volumes:
+      - "${ROOT}/postgres:/var/lib/postgresql/data"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${MOODLE_DB_USER} -d ${MOODLE_DB_NAME}"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  moodle:
+    image: esdrascaleb/moodle-docker-php-production:alpine-php8.3
+    restart: always
+    env_file:
+      - moodle.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${MOODLE_LOCAL_PORT}:80"
+    environment:
+      MOODLE_URL: https://${MOODLE_HOST}
+      DB_HOST: postgres
+      DB_TYPE: pgsql
+      DB_PORT: 5432
+      DB_NAME: ${MOODLE_DB_NAME}
+      DB_USER: ${MOODLE_DB_USER}
+      DB_PASS: ${MOODLE_DB_PASSWORD}
+      MOODLE_ADMIN_USER: ${MOODLE_ADMIN_USERNAME}
+      MOODLE_ADMIN_PASS: ${MOODLE_ADMIN_PASSWORD}
+      MOODLE_ADMIN_EMAIL: ${MOODLE_ADMIN_EMAIL}
+      MOODLE_SITE_FULLNAME: ${MOODLE_SITE_FULLNAME}
+      MOODLE_SITE_SHORTNAME: ${MOODLE_SITE_SHORTNAME}
+      MOODLE_SUPPORT_EMAIL: ${MOODLE_SUPPORT_EMAIL}
+      MOODLE_NOREPLY_EMAIL: ${MOODLE_NOREPLY_EMAIL}
+      PHP_MEMORY_LIMIT: 512M
+      PHP_UPLOAD_MAX_FILESIZE: 100M
+      PHP_POST_MAX_SIZE: 100M
+      PHP_MAX_EXECUTION_TIME: 600
+      SERVER_MEMORY_USAGE_PERCENT: 60
+      SITE_CODE_STATUS: static
+      PLUGIN_CODE_STATUS: static
+      MOODLE_EXTRA_PHP: $$CFG->sslproxy = 1;
+    volumes:
+      - "${ROOT}/moodledata:/var/www/moodledata"
+

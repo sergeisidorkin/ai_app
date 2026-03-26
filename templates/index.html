@@ -98,6 +98,14 @@
             <span class="link-text">Письма</span>
           </a>
         </li>
+        {% endif %}
+        <li class="nav-item">
+          <a class="nav-link d-flex align-items-center" href="#learning" data-bs-toggle="tab">
+            <i class="bi bi-mortarboard me-2"></i>
+            <span class="link-text">Обучение</span>
+          </a>
+        </li>
+        {% if not is_expert %}
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#templates" data-bs-toggle="tab">
             <i class="bi bi-puzzle me-2"></i>
@@ -505,8 +513,8 @@
         </div>
       </section>
 
-      {% if not is_expert %}
       <!-- Письма -->
+      {% if not is_expert %}
       <section id="letters" class="tab-pane fade">
         <div class="d-flex templates-bleed">
           <aside class="second-sidebar bg-body-tertiary border-end">
@@ -582,8 +590,15 @@
           </div>
         </div>
       </section>
+      {% endif %}
+
+      <!-- Обучение -->
+      <section id="learning" class="tab-pane fade">
+        {% include "learning_app/panel.html" %}
+      </section>
 
       <!-- Шаблоны -->
+      {% if not is_expert %}
       <section id="templates" class="tab-pane fade">
         <div class="d-flex templates-bleed">
           <!-- Второй уровень сайдбара для раздела "Шаблоны" -->

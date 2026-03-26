@@ -1,0 +1,107 @@
+<div class="templates-bleed">
+  <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
+    <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
+      <h5 class="mb-0 ps-3 fs-4 pt-2">Обучение</h5>
+      <div class="d-flex align-items-center gap-2">
+        {% if moodle_configured %}
+        <a class="btn btn-primary btn-sm d-flex align-items-center" href="{{ learning_launch_url }}">
+          <i class="bi bi-mortarboard me-2"></i>Открыть Moodle
+        </a>
+        {% else %}
+        <button type="button" class="btn btn-outline-secondary btn-sm d-flex align-items-center" disabled>
+          <i class="bi bi-slash-circle me-2"></i>Moodle не настроен
+        </button>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="ps-3 pe-0">
+    <div class="row g-3 mt-1">
+      <div class="col-12 col-md-6 col-xl-3">
+        <div class="card shadow-sm h-100">
+          <div class="card-body">
+            <div class="text-muted small mb-2">Назначено курсов</div>
+            <div class="display-6 mb-0">{{ learning_assigned_total }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-12 col-md-6 col-xl-3">
+        <div class="card shadow-sm h-100">
+          <div class="card-body">
+            <div class="text-muted small mb-2">В процессе</div>
+            <div class="display-6 mb-0">{{ learning_in_progress_total }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-12 col-md-6 col-xl-3">
+        <div class="card shadow-sm h-100">
+          <div class="card-body">
+            <div class="text-muted small mb-2">Завершено</div>
+            <div class="display-6 mb-0">{{ learning_completed_total }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-12 col-md-6 col-xl-3">
+        <div class="card shadow-sm h-100">
+          <div class="card-body">
+            <div class="text-muted small mb-2">Не пройдено</div>
+            <div class="display-6 mb-0">{{ learning_failed_total }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mt-3">
+      <div class="card-body">
+        {% if moodle_configured %}
+        <p class="mb-3">
+          Раздел уже готов к интеграции с Moodle. После настройки SSO и синхронизации здесь будут отображаться
+          ваши курсы, прогресс прохождения и результаты.
+        </p>
+        {% else %}
+        <p class="mb-3">
+          Каркас раздела готов, но ссылка на Moodle еще не настроена. Для запуска интеграции нужно задать
+          `MOODLE_BASE_URL` и подключить SSO.
+        </p>
+        {% endif %}
+
+        {% if not learning_schema_ready %}
+        <div class="alert alert-warning mb-0" role="alert">
+          Таблицы раздела обучения еще не созданы в базе данных. Выполните `python manage.py migrate`,
+          после чего здесь появятся данные по Moodle.
+        </div>
+        {% elif learning_has_data %}
+        <div class="table-responsive">
+          <table class="table align-middle mb-0">
+            <thead>
+              <tr>
+                <th>Курс</th>
+                <th>Статус</th>
+                <th>Прогресс</th>
+                <th>Балл</th>
+                <th>Завершен</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for item in learning_latest_results %}
+              <tr>
+                <td>{{ item.course.fullname }}</td>
+                <td>{{ item.get_status_display }}</td>
+                <td>{{ item.progress_percent }}%</td>
+                <td>{{ item.grade_display|default:"-" }}</td>
+                <td>{% if item.completed_at %}{{ item.completed_at|date:"d.m.Y H:i" }}{% else %}-{% endif %}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="alert alert-light border mb-0" role="alert">
+          Данных о курсах пока нет. После первой синхронизации Moodle здесь появятся назначения и результаты прохождения.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>

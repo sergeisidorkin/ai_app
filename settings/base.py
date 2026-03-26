@@ -60,6 +60,7 @@ INSTALLED_APPS = [
     "notifications_app",
     "contracts_app",
     "letters_app",
+    "learning_app",
     "smtp_app",
 ]
 
@@ -299,4 +300,11 @@ ADDIN_AGENT_ID   = env("ADDIN_AGENT_ID", default="addin-auto")
 ADDIN_AGENT_ROLE = env("ADDIN_AGENT_ROLE", default="addin")
 
 LOGS_INGEST_TOKEN = env("LOGS_INGEST_TOKEN", default="")
+
+# === Learning / Moodle ===
+MOODLE_BASE_URL = env("MOODLE_BASE_URL", default="")
+MOODLE_LAUNCH_PATH = env("MOODLE_LAUNCH_PATH", default="/")
+MOODLE_WEB_SERVICE_URL = env("MOODLE_WEB_SERVICE_URL", default="")
+MOODLE_WEB_SERVICE_TOKEN = env("MOODLE_WEB_SERVICE_TOKEN", default="")
+MOODLE_WEB_SERVICE_TIMEOUT = env.int("MOODLE_WEB_SERVICE_TIMEOUT", default=20)
 
