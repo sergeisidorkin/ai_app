@@ -3,6 +3,7 @@ from datetime import date
 from django.contrib.auth.views import LoginView
 from django.shortcuts import render, redirect
 
+from learning_app.services import build_learning_overview
 from policy_app.models import (
     DEPARTMENT_HEAD_GROUP,
     EXPERT_GROUP,
@@ -43,11 +44,13 @@ def home_entry(request):
         employee_role in {PROJECTS_HEAD_GROUP, DEPARTMENT_HEAD_GROUP}
     )
     smtp_only_connections = is_expert and can_access_connections
-    return render(request, "index.html", {
+    context = {
         "employee": employee,
         "is_expert": is_expert,
         "is_lawyer": is_lawyer,
         "can_access_connections": can_access_connections,
         "smtp_only_connections": smtp_only_connections,
         "ler_date_filter": date.today().isoformat(),
-    })
+    }
+    context.update(build_learning_overview(request.user))
+    return render(request, "index.html", context)

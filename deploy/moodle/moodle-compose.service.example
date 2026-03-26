@@ -1,0 +1,16 @@
+[Unit]
+Description=Moodle Docker Compose Stack
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/moodle
+ExecStart=/usr/bin/docker compose --env-file /opt/moodle/moodle.env up -d
+ExecStop=/usr/bin/docker compose --env-file /opt/moodle/moodle.env down
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

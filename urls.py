@@ -44,6 +44,7 @@ path("", home_entry, name="home"),
     path("", include("notifications_app.urls")),
     path("contracts/", include("contracts_app.urls")),
     path("letters/", include("letters_app.urls")),
+    path("learning/", include(("learning_app.urls", "learning_app"), namespace="learning_app")),
     path("smtp/", include("smtp_app.urls")),
     path(
         "addin/commands.html",
