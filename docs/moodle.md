@@ -123,6 +123,7 @@ sudo systemctl enable --now moodle-compose
 
 Recommended behavior of this setup:
 
+- the unit restores `local_imc_sso` from the checked-out app repo before each start, so the helper survives cold boots even if `/opt/moodle/local/imc_sso/` is empty
 - `systemd` runs `docker compose up -d` after `reboot`
 - `ExecStartPost` immediately runs `/opt/moodle/moodle-healthcheck.sh`
 - the health-check waits for `https://learn.imcmontanai.ru/` to return `200`
@@ -139,6 +140,11 @@ sudo /usr/bin/env bash /opt/moodle/moodle-healthcheck.sh
 ```
 
 This is the recommended reboot flow for production: after a host reboot, Moodle should recover through `systemd` without any manual `docker compose` steps.
+
+Important:
+
+- `moodle-compose.service.example` assumes the app repo is checked out at `/home/sergei/ai_appdir/ai_app`
+- if your Django app lives elsewhere, adjust `Environment=APP_ROOT=...` in the unit before enabling it
 
 ## Django Integration
 
@@ -280,6 +286,8 @@ stores the source tree there, but generates the live configured site under
 With `MOODLE_LOGOUT_FIRST_PATH=/local/imc_sso/logout_first.php`, the Django launch button first clears the current Moodle session and only then redirects to `/auth/oidc/`. That makes the next Moodle session match the currently authenticated Django user even when the browser was previously used by another staff member.
 
 This bind-mounted deployment model is intentional: the helper survives container recreate and moves with `/opt/moodle` during server migration.
+
+For operational safety, the recommended `systemd` unit also re-installs these two files from the checked-out app repo into `/opt/moodle/local/imc_sso/` before every `docker compose up -d`. That makes reboot recovery deterministic even if the target directory was emptied during troubleshooting or host recovery.
 
 Generate the RSA key once and keep it outside the repo:
 
