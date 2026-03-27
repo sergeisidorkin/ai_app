@@ -185,6 +185,7 @@ class MoodleLaunchFlowTests(TestCase):
         MOODLE_BASE_URL="https://learn.example.com",
         MOODLE_LAUNCH_PATH="/my/",
         MOODLE_SSO_LAUNCH_MODE="oidc",
+        MOODLE_LOGOUT_FIRST_PATH="/local/imc_sso/logout_first.php",
         MOODLE_OIDC_LOGIN_PATH="/auth/oidc/",
         MOODLE_OIDC_LOGIN_SOURCE="django",
         MOODLE_OIDC_PROMPT_LOGIN=False,
@@ -194,7 +195,7 @@ class MoodleLaunchFlowTests(TestCase):
 
         self.assertRedirects(
             response,
-            "https://learn.example.com/auth/oidc/?source=django",
+            "https://learn.example.com/local/imc_sso/logout_first.php?next=%2Fauth%2Foidc%2F%3Fsource%3Ddjango",
             fetch_redirect_response=False,
         )
 
