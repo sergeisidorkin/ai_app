@@ -4,6 +4,7 @@ from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_GET
 
+from .launch import build_moodle_launch_url
 from .services import build_learning_overview
 
 
@@ -26,5 +27,5 @@ def launch(request):
     if not moodle_base_url:
         return redirect(f"{reverse('home')}#learning")
 
-    moodle_launch_path = (getattr(settings, "MOODLE_LAUNCH_PATH", "") or "").strip() or "/"
-    return redirect(f"{moodle_base_url.rstrip('/')}/{moodle_launch_path.lstrip('/')}")
+    target_path = request.GET.get("next")
+    return redirect(build_moodle_launch_url(target_path))

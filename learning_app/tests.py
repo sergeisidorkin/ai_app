@@ -1,7 +1,9 @@
 from unittest.mock import Mock, patch
 
 from django.contrib.auth import get_user_model
+from django.test import Client
 from django.test import TestCase, override_settings
+from django.urls import reverse
 
 from learning_app.models import LearningUserLink
 from learning_app.moodle_api import MoodleApiError
@@ -129,3 +131,62 @@ class MoodleProvisioningSignalTests(TestCase):
             )
 
         mocked_sync.assert_not_called()
+
+
+class MoodleLaunchFlowTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="launch@example.com",
+            email="launch@example.com",
+            password="Secret123!",
+            is_staff=True,
+            is_active=True,
+        )
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    @override_settings(
+        MOODLE_BASE_URL="https://learn.example.com",
+        MOODLE_LAUNCH_PATH="/my/",
+        MOODLE_SSO_LAUNCH_MODE="oidc",
+        MOODLE_OIDC_LOGIN_PATH="/auth/oidc/",
+        MOODLE_OIDC_LOGIN_SOURCE="django",
+        MOODLE_OIDC_PROMPT_LOGIN=False,
+    )
+    def test_launch_redirects_to_moodle_oidc_entrypoint_by_default(self):
+        response = self.client.get(reverse("learning_app:launch"))
+
+        self.assertRedirects(
+            response,
+            "https://learn.example.com/auth/oidc/?source=django",
+            fetch_redirect_response=False,
+        )
+
+    @override_settings(
+        MOODLE_BASE_URL="https://learn.example.com",
+        MOODLE_LAUNCH_PATH="/my/",
+        MOODLE_SSO_LAUNCH_MODE="page",
+    )
+    def test_launch_can_redirect_directly_to_target_page(self):
+        response = self.client.get(reverse("learning_app:launch"))
+
+        self.assertRedirects(response, "https://learn.example.com/my/", fetch_redirect_response=False)
+
+    @override_settings(
+        MOODLE_BASE_URL="https://learn.example.com",
+        MOODLE_SSO_LAUNCH_MODE="page",
+    )
+    def test_launch_accepts_explicit_next_path(self):
+        response = self.client.get(reverse("learning_app:launch"), {"next": "/course/view.php?id=7"})
+
+        self.assertRedirects(
+            response,
+            "https://learn.example.com/course/view.php?id=7",
+            fetch_redirect_response=False,
+        )
+
+    @override_settings(MOODLE_BASE_URL="")
+    def test_launch_returns_to_dashboard_when_moodle_not_configured(self):
+        response = self.client.get(reverse("learning_app:launch"))
+
+        self.assertRedirects(response, "/#learning", fetch_redirect_response=False)
