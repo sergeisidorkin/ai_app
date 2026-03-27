@@ -112,6 +112,7 @@ MOODLE_BASE_URL=https://learn.imcmontanai.ru
 MOODLE_LAUNCH_PATH=/
 MOODLE_USER_AUTH_PLUGIN=manual
 MOODLE_SSO_LAUNCH_MODE=oidc
+MOODLE_LOGOUT_FIRST_PATH=/local/imc_sso/logout_first.php
 MOODLE_OIDC_LOGIN_PATH=/auth/oidc/
 MOODLE_OIDC_LOGIN_SOURCE=django
 MOODLE_OIDC_PROMPT_LOGIN=False
@@ -155,6 +156,7 @@ Relevant settings:
 
 - `MOODLE_USER_AUTH_PLUGIN=manual`: safe default before the Moodle `auth_oidc` plugin is enabled
 - `MOODLE_SSO_LAUNCH_MODE=oidc`: best default for passwordless launch from Django
+- `MOODLE_LOGOUT_FIRST_PATH=/local/imc_sso/logout_first.php`: clears any existing Moodle browser session before starting OIDC
 - `MOODLE_OIDC_LOGIN_PATH=/auth/oidc/`: entrypoint of the Moodle `auth_oidc` plugin
 - `MOODLE_OIDC_LOGIN_SOURCE=django`: optional source marker sent to Moodle
 - `MOODLE_OIDC_PROMPT_LOGIN=False`: keep `False` for silent reuse of the current Django session
@@ -164,6 +166,27 @@ Alternative mode:
 - `MOODLE_SSO_LAUNCH_MODE=page`
 
 In `page` mode Django redirects straight to `MOODLE_LAUNCH_PATH`. Use this only if you later enable automatic redirect to OIDC on the Moodle side, because otherwise users may still land on the Moodle login page first.
+
+## Logout-First Launch Helper
+
+To prevent a stale Moodle browser session from showing the previous user's cabinet, install the lightweight local plugin shipped in this repo:
+
+- `deploy/moodle/local/imc_sso/version.php`
+- `deploy/moodle/local/imc_sso/logout_first.php`
+
+Copy it into the Moodle container or image as:
+
+```text
+/var/www/moodle/local/imc_sso/
+```
+
+Then run:
+
+```bash
+php /var/www/moodle/admin/cli/upgrade.php --non-interactive
+```
+
+With `MOODLE_LOGOUT_FIRST_PATH=/local/imc_sso/logout_first.php`, the Django launch button first clears the current Moodle session and only then redirects to `/auth/oidc/`. That makes the next Moodle session match the currently authenticated Django user even when the browser was previously used by another staff member.
 
 Generate the RSA key once and keep it outside the repo:
 

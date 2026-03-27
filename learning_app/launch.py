@@ -26,6 +26,15 @@ def _build_absolute_moodle_url(path: str) -> str:
     return f"{base_url}{relative}"
 
 
+def _build_relative_url(path: str, *, extra_params: dict[str, str] | None = None) -> str:
+    split = urlsplit(_normalize_relative_path(path))
+    params = dict(parse_qsl(split.query, keep_blank_values=True))
+    if extra_params:
+        params.update({key: value for key, value in extra_params.items() if value != ""})
+    query = urlencode(params)
+    return urlunsplit(("", "", split.path, query, split.fragment))
+
+
 def build_moodle_target_url(target_path: str | None = None) -> str:
     launch_path = target_path or getattr(settings, "MOODLE_LAUNCH_PATH", "") or "/"
     return _build_absolute_moodle_url(launch_path)
@@ -47,5 +56,13 @@ def build_moodle_launch_url(target_path: str | None = None) -> str:
         params.setdefault("source", source)
     if prompt_login:
         params["promptlogin"] = "1"
+    oidc_target = urlunsplit((split.scheme, split.netloc, split.path, urlencode(params), split.fragment))
 
-    return urlunsplit((split.scheme, split.netloc, split.path, urlencode(params), split.fragment))
+    logout_first_path = (getattr(settings, "MOODLE_LOGOUT_FIRST_PATH", "") or "").strip()
+    if not logout_first_path:
+        return oidc_target
+
+    next_path = _build_relative_url(entry_path, extra_params=params)
+    return _build_absolute_moodle_url(
+        _build_relative_url(logout_first_path, extra_params={"next": next_path})
+    )
