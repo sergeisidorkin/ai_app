@@ -127,6 +127,7 @@ Recommended behavior of this setup:
 
 - `systemd` runs `docker compose up -d` after `reboot`
 - `ExecStartPost` runs `/opt/moodle/moodle-healthcheck.sh`
+- the shipped unit sets `WAIT_TIMEOUT_SECONDS=300` because Moodle can take more than three minutes to become externally reachable after a cold boot
 - the health-check calls `moodle-sync-local-helper.sh` itself before validating `local_imc_sso`, and retries until the helper redirect is ready
 - the health-check waits for `https://learn.imcmontanai.ru/` to return `200`
 - it verifies that `https://learn.imcmontanai.ru/auth/oidc/` returns a redirect into the Django OIDC provider
@@ -147,6 +148,7 @@ Important:
 
 - `moodle-compose.service.example` assumes the app repo is checked out at `/home/sergei/ai_appdir/ai_app`
 - if your Django app lives elsewhere, adjust `Environment=APP_ROOT=...` in the unit before enabling it
+- if your environment boots Moodle faster or slower, tune `Environment=WAIT_TIMEOUT_SECONDS=...` in the unit instead of editing the script
 - the unit expects `/opt/moodle/moodle-sync-local-helper.sh` to be installed alongside `/opt/moodle/moodle-healthcheck.sh`
 
 ## Django Integration
