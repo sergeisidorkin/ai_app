@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="${ROOT_DIR:-/opt/moodle}"
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/moodle.env}"
 COMPOSE_FILE="${COMPOSE_FILE:-$ROOT_DIR/docker-compose.yml}"
+HELPER_SYNC_SCRIPT="${HELPER_SYNC_SCRIPT:-$ROOT_DIR/moodle-sync-local-helper.sh}"
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "moodle-healthcheck: missing env file: $ENV_FILE" >&2
@@ -129,11 +130,31 @@ PY
   fi
 }
 
+sync_local_helper() {
+  if [[ -x "$HELPER_SYNC_SCRIPT" ]]; then
+    "$HELPER_SYNC_SCRIPT"
+  fi
+}
+
 assert_live_config_present() {
   local cid
   cid="$(compose ps -q moodle)"
   [[ -n "$cid" ]]
   docker exec "$cid" sh -lc 'test -f /var/www/moodle/config.php'
+}
+
+wait_for_helper_redirect() {
+  local deadline=$((SECONDS + WAIT_TIMEOUT_SECONDS))
+  while (( SECONDS < deadline )); do
+    sync_local_helper
+    if assert_helper_redirect; then
+      return 0
+    fi
+    sleep "$POLL_INTERVAL_SECONDS"
+  done
+
+  echo "moodle-healthcheck: timed out waiting for local_imc_sso helper redirect" >&2
+  return 1
 }
 
 echo "moodle-healthcheck: waiting for front page"
@@ -143,7 +164,7 @@ echo "moodle-healthcheck: checking live Moodle config"
 assert_live_config_present
 
 echo "moodle-healthcheck: checking local_imc_sso helper redirect"
-assert_helper_redirect
+wait_for_helper_redirect
 
 echo "moodle-healthcheck: checking auth_oidc redirect"
 assert_oidc_redirect

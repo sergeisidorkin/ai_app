@@ -11,11 +11,9 @@ WorkingDirectory=/opt/moodle
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=APP_ROOT=/home/sergei/ai_appdir/ai_app
 ExecStart=/usr/bin/docker compose --env-file /opt/moodle/moodle.env up -d
-ExecStartPost=/usr/bin/env bash /opt/moodle/moodle-sync-local-helper.sh
 ExecStartPost=/usr/bin/env bash /opt/moodle/moodle-healthcheck.sh
 ExecStop=/usr/bin/docker compose --env-file /opt/moodle/moodle.env stop
 ExecReload=/usr/bin/docker compose --env-file /opt/moodle/moodle.env up -d
-ExecReload=/usr/bin/env bash /opt/moodle/moodle-sync-local-helper.sh
 ExecReload=/usr/bin/env bash /opt/moodle/moodle-healthcheck.sh
 TimeoutStartSec=0
 
