@@ -51,4 +51,9 @@ services:
       MOODLE_EXTRA_PHP: $$CFG->sslproxy = 1;
     volumes:
       - "${ROOT}/moodledata:/var/www/moodledata"
+      # Keep local helper plugins on the host so they survive container recreate
+      # and move together with /opt/moodle during server migration.
+      # This image chmods plugin directories during startup, so the mount must
+      # stay writable for the container to boot successfully.
+      - "${ROOT}/local/imc_sso:/var/www/moodle/local/imc_sso"
 
