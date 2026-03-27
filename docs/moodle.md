@@ -125,10 +125,9 @@ sudo systemctl enable --now moodle-compose
 
 Recommended behavior of this setup:
 
-- after `docker compose up -d`, the unit restores `local_imc_sso` from the checked-out app repo
 - `systemd` runs `docker compose up -d` after `reboot`
-- the helper restore runs before the final health-check, so the Moodle image can finish its own startup mutations first
-- `ExecStartPost` then runs `/opt/moodle/moodle-healthcheck.sh`
+- `ExecStartPost` runs `/opt/moodle/moodle-healthcheck.sh`
+- the health-check calls `moodle-sync-local-helper.sh` itself before validating `local_imc_sso`, and retries until the helper redirect is ready
 - the health-check waits for `https://learn.imcmontanai.ru/` to return `200`
 - it verifies that `https://learn.imcmontanai.ru/auth/oidc/` returns a redirect into the Django OIDC provider
 - it verifies that `local_imc_sso/logout_first.php` redirects back into `/auth/oidc/`
@@ -291,7 +290,7 @@ With `MOODLE_LOGOUT_FIRST_PATH=/local/imc_sso/logout_first.php`, the Django laun
 
 This bind-mounted deployment model is intentional: the helper survives container recreate and moves with `/opt/moodle` during server migration.
 
-For operational safety, the recommended `systemd` unit runs `moodle-sync-local-helper.sh` after every `docker compose up -d` and `reload`. That script re-installs these two files from the checked-out app repo into `/opt/moodle/local/imc_sso/` after the container has already completed its own bootstrap. This makes reboot recovery deterministic even when the image startup sequence mutates the mounted helper directory.
+For operational safety, `moodle-healthcheck.sh` invokes `moodle-sync-local-helper.sh` before validating the helper redirect, and retries that sequence until `local_imc_sso` becomes visible through the live Moodle site. This makes reboot recovery deterministic even when the image startup sequence mutates the mounted helper directory after `docker compose up -d` has already returned.
 
 Generate the RSA key once and keep it outside the repo:
 
