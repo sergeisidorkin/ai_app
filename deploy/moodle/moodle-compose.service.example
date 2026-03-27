@@ -8,8 +8,12 @@ Wants=network-online.target
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/opt/moodle
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=/usr/bin/docker compose --env-file /opt/moodle/moodle.env up -d
-ExecStop=/usr/bin/docker compose --env-file /opt/moodle/moodle.env down
+ExecStartPost=/usr/bin/env bash /opt/moodle/moodle-healthcheck.sh
+ExecStop=/usr/bin/docker compose --env-file /opt/moodle/moodle.env stop
+ExecReload=/usr/bin/docker compose --env-file /opt/moodle/moodle.env up -d
+ExecReload=/usr/bin/env bash /opt/moodle/moodle-healthcheck.sh
 TimeoutStartSec=0
 
 [Install]

@@ -18,6 +18,7 @@ The second stage uses Django as the OpenID Connect Provider, so users can enter 
 - `deploy/moodle/moodle.env.example`: environment file template for the compose stack.
 - `deploy/moodle/nginx-learn.imcmontanai.ru.conf.example`: reverse proxy config for the existing `nginx`.
 - `deploy/moodle/moodle-compose.service.example`: optional `systemd` unit to keep the compose stack up.
+- `deploy/moodle/moodle-healthcheck.sh`: post-start verification script for front page, `auth_oidc`, and `local_imc_sso`.
 - `deploy/moodle/prod.env.moodle.example`: Django-side variables to place into `$HOME/ai_appdir/env/prod.env`.
 - `auth_oidc_moodle45_2024100720.zip`: optional fallback archive for `auth_oidc`; the preferred deploy path is `MOODLE_PLUGINS_JSON` from the upstream Git repo.
 - `deploy/moodle/local/imc_sso/`: bind-mounted Moodle local plugin used by the logout-first SSO helper.
@@ -72,6 +73,7 @@ Before publishing the subdomain:
 3. Copy:
    - `deploy/moodle/docker-compose.yml` -> `/opt/moodle/docker-compose.yml`
    - `deploy/moodle/moodle.env.example` -> `/opt/moodle/moodle.env`
+   - `deploy/moodle/moodle-healthcheck.sh` -> `/opt/moodle/moodle-healthcheck.sh`
    - `deploy/moodle/local/imc_sso/` -> `/opt/moodle/local/imc_sso/`
 4. Replace all placeholder passwords in `/opt/moodle/moodle.env`.
 5. Create data directories:
@@ -109,13 +111,34 @@ docker compose -f /opt/moodle/docker-compose.yml --env-file /opt/moodle/moodle.e
 If you want the compose stack managed like a service:
 
 1. Copy `deploy/moodle/moodle-compose.service.example` to `/etc/systemd/system/moodle-compose.service`.
-2. Adjust the paths if needed.
+2. Copy `deploy/moodle/moodle-healthcheck.sh` to `/opt/moodle/moodle-healthcheck.sh`.
 3. Run:
 
 ```bash
+sudo chmod 644 /etc/systemd/system/moodle-compose.service
+sudo chmod 755 /opt/moodle/moodle-healthcheck.sh
 sudo systemctl daemon-reload
 sudo systemctl enable --now moodle-compose
 ```
+
+Recommended behavior of this setup:
+
+- `systemd` runs `docker compose up -d` after `reboot`
+- `ExecStartPost` immediately runs `/opt/moodle/moodle-healthcheck.sh`
+- the health-check waits for `https://learn.imcmontanai.ru/` to return `200`
+- it verifies that `https://learn.imcmontanai.ru/auth/oidc/` returns a redirect into the Django OIDC provider
+- it verifies that `local_imc_sso` is present in the live Moodle tree inside the running container
+
+Useful operational commands:
+
+```bash
+sudo systemctl restart moodle-compose
+sudo systemctl status moodle-compose
+sudo journalctl -u moodle-compose -n 100 --no-pager
+sudo /usr/bin/env bash /opt/moodle/moodle-healthcheck.sh
+```
+
+This is the recommended reboot flow for production: after a host reboot, Moodle should recover through `systemd` without any manual `docker compose` steps.
 
 ## Django Integration
 
@@ -352,6 +375,18 @@ Recommended migration flow:
    Moodle reports a pending plugin upgrade.
 9. Switch DNS.
 10. Validate Moodle login, logout-first helper URL, and Django sync command.
+
+To preserve the same reboot behavior on the new server, also copy:
+
+- `/opt/moodle/moodle-healthcheck.sh`
+- `/etc/systemd/system/moodle-compose.service`
+
+Then run:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now moodle-compose
+```
 
 ## Notes
 
