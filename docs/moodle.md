@@ -127,7 +127,7 @@ Recommended behavior of this setup:
 - `ExecStartPost` immediately runs `/opt/moodle/moodle-healthcheck.sh`
 - the health-check waits for `https://learn.imcmontanai.ru/` to return `200`
 - it verifies that `https://learn.imcmontanai.ru/auth/oidc/` returns a redirect into the Django OIDC provider
-- it verifies that `local_imc_sso` is present in the live Moodle tree inside the running container
+- it verifies that `local_imc_sso/logout_first.php` redirects back into `/auth/oidc/`
 
 Useful operational commands:
 
