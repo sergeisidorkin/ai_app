@@ -4,6 +4,7 @@ import logging
 import secrets
 import string
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
@@ -103,14 +104,15 @@ def _build_moodle_user_payload(user) -> dict[str, object]:
         "firstname": (user.first_name or "").strip() or _build_moodle_username(user),
         "lastname": (user.last_name or "").strip() or "-",
         "email": (user.email or "").strip(),
-        "auth": "manual",
+        "auth": _get_moodle_auth_plugin(),
         "suspended": 0 if user.is_active and user.is_staff else 1,
         "idnumber": _build_moodle_idnumber(user),
     }
 
 
 def _build_moodle_create_payload(user) -> dict[str, object]:
-    # Moodle accepts fewer fields during create than during update.
+    # Keep the initial create payload conservative. We switch the auth plugin
+    # on the follow-up update so Stage 1 still works before auth_oidc is enabled.
     return {
         "username": _build_moodle_username(user),
         "firstname": (user.first_name or "").strip() or _build_moodle_username(user),
@@ -128,6 +130,11 @@ def _build_moodle_username(user) -> str:
 
 def _build_moodle_idnumber(user) -> str:
     return f"django:{user.pk}"
+
+
+def _get_moodle_auth_plugin() -> str:
+    auth_plugin = (getattr(settings, "MOODLE_USER_AUTH_PLUGIN", "") or "manual").strip()
+    return auth_plugin or "manual"
 
 
 def _generate_moodle_password(length: int = 24) -> str:

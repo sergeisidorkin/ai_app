@@ -329,6 +329,7 @@ LOGS_INGEST_TOKEN = env("LOGS_INGEST_TOKEN", default="")
 # === Learning / Moodle ===
 MOODLE_BASE_URL = env("MOODLE_BASE_URL", default="")
 MOODLE_LAUNCH_PATH = env("MOODLE_LAUNCH_PATH", default="/")
+MOODLE_USER_AUTH_PLUGIN = env("MOODLE_USER_AUTH_PLUGIN", default="manual")
 MOODLE_SSO_LAUNCH_MODE = env("MOODLE_SSO_LAUNCH_MODE", default="oidc")
 MOODLE_OIDC_LOGIN_PATH = env("MOODLE_OIDC_LOGIN_PATH", default="/auth/oidc/")
 MOODLE_OIDC_LOGIN_SOURCE = env("MOODLE_OIDC_LOGIN_SOURCE", default="django")
