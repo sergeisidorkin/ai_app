@@ -2,6 +2,8 @@ from pathlib import Path
 import environ, os
 from urllib.parse import urlparse
 
+from core.oidc_settings import oidc_pkce_required
+
 BASE_DIR = Path(__file__).resolve().parents[1]
 env = environ.Env(
     DEBUG=(bool, False),
@@ -32,6 +34,21 @@ if env.bool("READ_DOTENV", False) or (
     environ.Env.read_env(BASE_DIR / ".env")
 
 
+def _read_text_setting_from_env_or_file(name, *, default=""):
+    value = env(name, default=default)
+    if value:
+        return value
+
+    file_path = env(f"{name}_FILE", default="")
+    if not file_path:
+        return default
+
+    try:
+        return Path(file_path).read_text()
+    except OSError:
+        return default
+
+
 SECRET_KEY = env("SECRET_KEY", default="dev-secret-please-change")
 
 DEBUG = env.bool("DEBUG", False)
@@ -52,6 +69,7 @@ INSTALLED_APPS = [
     "policy_app","onedrive_app","blocks_app","blockseditor_app","openai_app","googledrive_app","projects_app",
     "requests_app","debugger_app","office_addin","corsheaders","channels","docops_app",
     "docops_queue","macroops_app","checklists_app","logs_app.apps.LogsAppConfig","yandexdisk_app",
+    "oauth2_provider",
     "classifiers_app",
     "group_app",
     "experts_app",
@@ -169,6 +187,13 @@ ENFORCE_LOGIN_EXEMPT = (
     "/site.webmanifest",
     "/checklists/shared/",
     "/media/",
+    "/o/authorize/",
+    "/o/token/",
+    "/o/revoke_token/",
+    "/o/introspect/",
+    "/o/userinfo/",
+    "/o/logout/",
+    "/o/.well-known/",
 )
 
 CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[
@@ -304,7 +329,39 @@ LOGS_INGEST_TOKEN = env("LOGS_INGEST_TOKEN", default="")
 # === Learning / Moodle ===
 MOODLE_BASE_URL = env("MOODLE_BASE_URL", default="")
 MOODLE_LAUNCH_PATH = env("MOODLE_LAUNCH_PATH", default="/")
+MOODLE_SSO_LAUNCH_MODE = env("MOODLE_SSO_LAUNCH_MODE", default="oidc")
+MOODLE_OIDC_LOGIN_PATH = env("MOODLE_OIDC_LOGIN_PATH", default="/auth/oidc/")
+MOODLE_OIDC_LOGIN_SOURCE = env("MOODLE_OIDC_LOGIN_SOURCE", default="django")
+MOODLE_OIDC_PROMPT_LOGIN = env.bool("MOODLE_OIDC_PROMPT_LOGIN", default=False)
 MOODLE_WEB_SERVICE_URL = env("MOODLE_WEB_SERVICE_URL", default="")
 MOODLE_WEB_SERVICE_TOKEN = env("MOODLE_WEB_SERVICE_TOKEN", default="")
 MOODLE_WEB_SERVICE_TIMEOUT = env.int("MOODLE_WEB_SERVICE_TIMEOUT", default=20)
+
+# === OIDC Provider ===
+OIDC_RSA_PRIVATE_KEY = _read_text_setting_from_env_or_file("OIDC_RSA_PRIVATE_KEY", default="").strip()
+OIDC_ISSUER_URL = env("OIDC_ISSUER_URL", default=f"{BASE_URL.rstrip('/')}/o").rstrip("/")
+MOODLE_OIDC_CLIENT_ID = env("MOODLE_OIDC_CLIENT_ID", default="").strip()
+OIDC_STAFF_ONLY_CLIENT_IDS = tuple(
+    client_id
+    for client_id in env.list("OIDC_STAFF_ONLY_CLIENT_IDS", default=[])
+    if client_id
+)
+if MOODLE_OIDC_CLIENT_ID and MOODLE_OIDC_CLIENT_ID not in OIDC_STAFF_ONLY_CLIENT_IDS:
+    OIDC_STAFF_ONLY_CLIENT_IDS = (*OIDC_STAFF_ONLY_CLIENT_IDS, MOODLE_OIDC_CLIENT_ID)
+
+OAUTH2_PROVIDER = {
+    "OAUTH2_VALIDATOR_CLASS": "core.oidc.IMCOAuth2Validator",
+    "OIDC_ENABLED": bool(OIDC_RSA_PRIVATE_KEY),
+    "OIDC_RSA_PRIVATE_KEY": OIDC_RSA_PRIVATE_KEY,
+    "OIDC_ISS_ENDPOINT": OIDC_ISSUER_URL,
+    "SCOPES": {
+        "openid": "OpenID Connect scope",
+        "profile": "Basic profile information",
+        "email": "Email address",
+    },
+    "DEFAULT_SCOPES": ["openid", "profile", "email"],
+    "REQUEST_APPROVAL_PROMPT": "auto",
+    "PKCE_REQUIRED": oidc_pkce_required,
+    "OIDC_RESPONSE_TYPES_SUPPORTED": ["code"],
+}
 
