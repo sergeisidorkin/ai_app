@@ -43,6 +43,7 @@ MOODLE_HOST="${MOODLE_HOST:-$(env_value MOODLE_HOST)}"
 PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-https://$MOODLE_HOST}"
 FRONT_PAGE_URL="${FRONT_PAGE_URL:-$PUBLIC_BASE_URL/}"
 OIDC_ENTRY_URL="${OIDC_ENTRY_URL:-$PUBLIC_BASE_URL/auth/oidc/}"
+HELPER_ENTRY_URL="${HELPER_ENTRY_URL:-$PUBLIC_BASE_URL/local/imc_sso/logout_first.php?next=%2Fauth%2Foidc%2F%3Fsource%3Ddjango}"
 WAIT_TIMEOUT_SECONDS="${WAIT_TIMEOUT_SECONDS:-180}"
 POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-5}"
 
@@ -94,20 +95,43 @@ PY
   fi
 }
 
-container_id() {
-  compose ps -q moodle
-}
+assert_helper_redirect() {
+  local headers
+  headers="$(curl --silent --show-error --max-redirs 0 --dump-header - --output /dev/null "$HELPER_ENTRY_URL")"
 
-assert_helper_plugin_present() {
-  local cid
-  cid="$(container_id)"
-  [[ -n "$cid" ]]
-  docker exec "$cid" sh -lc 'test -f /var/www/moodle/local/imc_sso/version.php'
+  if ! HEADER_TEXT="$headers" python3 - <<'PY'
+import os
+
+headers = os.environ.get("HEADER_TEXT", "").splitlines()
+status_line = next((line for line in headers if line.startswith("HTTP/")), "")
+location_line = next((line for line in headers if line.lower().startswith("location:")), "")
+
+if not status_line:
+    raise SystemExit(1)
+
+try:
+    status_code = int(status_line.split()[1])
+except Exception:
+    raise SystemExit(1)
+
+location_value = location_line.split(":", 1)[1].strip() if ":" in location_line else ""
+
+if status_code not in {302, 303}:
+    raise SystemExit(1)
+
+if "/auth/oidc/" not in location_value:
+    raise SystemExit(1)
+PY
+  then
+    echo "moodle-healthcheck: local_imc_sso did not redirect into auth_oidc" >&2
+    printf '%s\n' "$headers" >&2
+    return 1
+  fi
 }
 
 assert_live_config_present() {
   local cid
-  cid="$(container_id)"
+  cid="$(compose ps -q moodle)"
   [[ -n "$cid" ]]
   docker exec "$cid" sh -lc 'test -f /var/www/moodle/config.php'
 }
@@ -118,8 +142,8 @@ wait_for_http_200 "$FRONT_PAGE_URL"
 echo "moodle-healthcheck: checking live Moodle config"
 assert_live_config_present
 
-echo "moodle-healthcheck: checking local_imc_sso helper"
-assert_helper_plugin_present
+echo "moodle-healthcheck: checking local_imc_sso helper redirect"
+assert_helper_redirect
 
 echo "moodle-healthcheck: checking auth_oidc redirect"
 assert_oidc_redirect
