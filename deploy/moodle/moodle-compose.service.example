@@ -10,13 +10,12 @@ RemainAfterExit=yes
 WorkingDirectory=/opt/moodle
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=APP_ROOT=/home/sergei/ai_appdir/ai_app
-ExecStartPre=/usr/bin/env bash -lc 'install -d -m 2750 /opt/moodle/local/imc_sso'
-ExecStartPre=/usr/bin/env bash -lc 'install -m 644 "$APP_ROOT/deploy/moodle/local/imc_sso/version.php" /opt/moodle/local/imc_sso/version.php'
-ExecStartPre=/usr/bin/env bash -lc 'install -m 644 "$APP_ROOT/deploy/moodle/local/imc_sso/logout_first.php" /opt/moodle/local/imc_sso/logout_first.php'
 ExecStart=/usr/bin/docker compose --env-file /opt/moodle/moodle.env up -d
+ExecStartPost=/usr/bin/env bash /opt/moodle/moodle-sync-local-helper.sh
 ExecStartPost=/usr/bin/env bash /opt/moodle/moodle-healthcheck.sh
 ExecStop=/usr/bin/docker compose --env-file /opt/moodle/moodle.env stop
 ExecReload=/usr/bin/docker compose --env-file /opt/moodle/moodle.env up -d
+ExecReload=/usr/bin/env bash /opt/moodle/moodle-sync-local-helper.sh
 ExecReload=/usr/bin/env bash /opt/moodle/moodle-healthcheck.sh
 TimeoutStartSec=0
 
