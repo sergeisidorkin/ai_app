@@ -19,14 +19,17 @@ The second stage uses Django as the OpenID Connect Provider, so users can enter 
 - `deploy/moodle/nginx-learn.imcmontanai.ru.conf.example`: reverse proxy config for the existing `nginx`.
 - `deploy/moodle/moodle-compose.service.example`: optional `systemd` unit to keep the compose stack up.
 - `deploy/moodle/prod.env.moodle.example`: Django-side variables to place into `$HOME/ai_appdir/env/prod.env`.
+- `auth_oidc_moodle45_2024100720.zip`: optional fallback archive for `auth_oidc`; the preferred deploy path is `MOODLE_PLUGINS_JSON` from the upstream Git repo.
+- `deploy/moodle/local/imc_sso/`: bind-mounted Moodle local plugin used by the logout-first SSO helper.
 
 ## Why Docker Compose Helps Future Migration
 
 - The application definition lives in one compose file instead of ad-hoc package installs.
-- Runtime configuration is isolated in one env file.
+- Runtime configuration is isolated in one env file, including the plugin manifest.
 - Persistent state is limited to a small set of directories:
   - `postgres/`
   - `moodledata/`
+  - `local/imc_sso/`
 - The stack reuses `PostgreSQL`, which you already operate in the main app, instead of introducing `MariaDB`.
 - Reverse proxy and Django integration are explicit and versioned in this repo.
 - Migration to a new server becomes:
@@ -41,6 +44,8 @@ The second stage uses Django as the OpenID Connect Provider, so users can enter 
 /opt/moodle/
   docker-compose.yml
   moodle.env
+  local/
+    imc_sso/
   postgres/
   moodledata/
 ```
@@ -67,11 +72,12 @@ Before publishing the subdomain:
 3. Copy:
    - `deploy/moodle/docker-compose.yml` -> `/opt/moodle/docker-compose.yml`
    - `deploy/moodle/moodle.env.example` -> `/opt/moodle/moodle.env`
+   - `deploy/moodle/local/imc_sso/` -> `/opt/moodle/local/imc_sso/`
 4. Replace all placeholder passwords in `/opt/moodle/moodle.env`.
 5. Create data directories:
 
 ```bash
-mkdir -p /opt/moodle/{postgres,moodledata}
+mkdir -p /opt/moodle/{postgres,moodledata,local/imc_sso}
 ```
 
 6. Start the stack:
@@ -86,9 +92,17 @@ docker compose -f /opt/moodle/docker-compose.yml --env-file /opt/moodle/moodle.e
 docker compose -f /opt/moodle/docker-compose.yml --env-file /opt/moodle/moodle.env ps
 ```
 
-8. Apply the host `nginx` config for `learn.imcmontanai.ru`.
-9. Reload `nginx`.
-10. Open `https://learn.imcmontanai.ru` and confirm Moodle bootstrap completed.
+8. Wait until the Moodle front page responds again, then run plugin discovery if
+   Moodle reports a pending plugin upgrade:
+
+```bash
+docker compose -f /opt/moodle/docker-compose.yml --env-file /opt/moodle/moodle.env exec moodle \
+  php /var/www/moodle/admin/cli/upgrade.php --non-interactive
+```
+
+9. Apply the host `nginx` config for `learn.imcmontanai.ru`.
+10. Reload `nginx`.
+11. Open `https://learn.imcmontanai.ru` and confirm Moodle bootstrap completed.
 
 ## Optional systemd Integration
 
@@ -167,6 +181,44 @@ Alternative mode:
 
 In `page` mode Django redirects straight to `MOODLE_LAUNCH_PATH`. Use this only if you later enable automatic redirect to OIDC on the Moodle side, because otherwise users may still land on the Moodle login page first.
 
+## Moodle OpenID Connect Plugin
+
+The `Обучение -> Открыть Moodle` flow also depends on the Moodle authentication
+plugin `auth_oidc`. For this specific image, do not deploy it with a bind mount:
+the container treats Moodle code as immutable and manages plugins through the
+plugin layer driven by `MOODLE_PLUGINS_JSON`.
+
+Set this in `/opt/moodle/moodle.env`:
+
+```dotenv
+MOODLE_PLUGINS_JSON=[{"giturl":"https://github.com/microsoft/moodle-auth_oidc.git","branch":"MOODLE_405_STABLE","installpath":"auth/oidc"}]
+```
+
+If the plugin is not yet present and you want the container to fetch it on the
+next restart, temporarily set:
+
+```dotenv
+PLUGIN_CODE_STATUS=update
+```
+
+After `auth_oidc` appears under `/var/www/moodle/auth/oidc/` and Moodle works
+again, you can return to:
+
+```dotenv
+PLUGIN_CODE_STATUS=static
+```
+
+Then recreate the Moodle container, wait until `https://learn.imcmontanai.ru/`
+responds again, and only then run:
+
+```bash
+docker compose -f /opt/moodle/docker-compose.yml --env-file /opt/moodle/moodle.env exec moodle \
+  php /var/www/moodle/admin/cli/upgrade.php --non-interactive
+```
+
+Then enable `OpenID Connect` under `Site administration -> Plugins -> Authentication -> Manage authentication`
+and configure it to use the Django OIDC provider.
+
 ## Logout-First Launch Helper
 
 To prevent a stale Moodle browser session from showing the previous user's cabinet, install the lightweight local plugin shipped in this repo:
@@ -174,19 +226,37 @@ To prevent a stale Moodle browser session from showing the previous user's cabin
 - `deploy/moodle/local/imc_sso/version.php`
 - `deploy/moodle/local/imc_sso/logout_first.php`
 
-Copy it into the Moodle container or image as:
+Deploy it on the host as part of `/opt/moodle`:
+
+```text
+/opt/moodle/local/imc_sso/
+```
+
+`docker-compose.yml` bind-mounts that directory into the Moodle container at:
 
 ```text
 /var/www/moodle/local/imc_sso/
 ```
 
-Then run:
+The selected Moodle image adjusts permissions for local plugins during startup, so
+this mount must remain writable. Do not mount it read-only.
+
+After the plugin files are present on the host, wait until the container finishes
+its bootstrap and `https://learn.imcmontanai.ru/` responds normally again. Only
+after that, if Moodle reports a pending plugin upgrade, run:
 
 ```bash
-php /var/www/moodle/admin/cli/upgrade.php --non-interactive
+docker compose -f /opt/moodle/docker-compose.yml --env-file /opt/moodle/moodle.env exec moodle \
+  php /var/www/moodle/admin/cli/upgrade.php --non-interactive
 ```
 
+Do not run `upgrade.php` against `/var/www/moodledata/sitecode/...`: the image
+stores the source tree there, but generates the live configured site under
+`/var/www/moodle/`.
+
 With `MOODLE_LOGOUT_FIRST_PATH=/local/imc_sso/logout_first.php`, the Django launch button first clears the current Moodle session and only then redirects to `/auth/oidc/`. That makes the next Moodle session match the currently authenticated Django user even when the browser was previously used by another staff member.
+
+This bind-mounted deployment model is intentional: the helper survives container recreate and moves with `/opt/moodle` during server migration.
 
 Generate the RSA key once and keep it outside the repo:
 
@@ -262,6 +332,7 @@ To move the Moodle subsystem to a new server, preserve:
 
 - `/opt/moodle/docker-compose.yml`
 - `/opt/moodle/moodle.env`
+- `/opt/moodle/local/imc_sso/`
 - `/opt/moodle/postgres/`
 - `/opt/moodle/moodledata/`
 - the `nginx` virtual host for `learn.imcmontanai.ru`
@@ -275,9 +346,12 @@ Recommended migration flow:
 4. Restore `/opt/moodle` on the new server.
 5. Install Docker and `nginx`.
 6. Reapply the reverse proxy config and certificate.
-7. Start the compose stack.
-8. Switch DNS.
-9. Validate Moodle login and Django sync command.
+7. Restore `/opt/moodle/local/imc_sso/` before starting containers and keep the `auth_oidc` plugin declaration in `moodle.env`.
+8. Start the compose stack, wait until the Moodle front page responds again, and
+   then run `php /var/www/moodle/admin/cli/upgrade.php --non-interactive` only if
+   Moodle reports a pending plugin upgrade.
+9. Switch DNS.
+10. Validate Moodle login, logout-first helper URL, and Django sync command.
 
 ## Notes
 
