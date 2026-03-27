@@ -54,12 +54,7 @@
 
     <div class="card shadow-sm mt-3">
       <div class="card-body">
-        {% if moodle_configured %}
-        <p class="mb-3">
-          Раздел уже готов к интеграции с Moodle. После настройки SSO и синхронизации здесь будут отображаться
-          ваши курсы, прогресс прохождения и результаты.
-        </p>
-        {% else %}
+        {% if not moodle_configured %}
         <p class="mb-3">
           Каркас раздела готов, но ссылка на Moodle еще не настроена. Для запуска интеграции нужно задать
           `MOODLE_BASE_URL` и подключить SSO.
