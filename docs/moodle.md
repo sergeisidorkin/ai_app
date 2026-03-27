@@ -110,6 +110,7 @@ After `Moodle` is reachable, add the values from `deploy/moodle/prod.env.moodle.
 ```dotenv
 MOODLE_BASE_URL=https://learn.imcmontanai.ru
 MOODLE_LAUNCH_PATH=/
+MOODLE_USER_AUTH_PLUGIN=manual
 MOODLE_SSO_LAUNCH_MODE=oidc
 MOODLE_OIDC_LOGIN_PATH=/auth/oidc/
 MOODLE_OIDC_LOGIN_SOURCE=django
@@ -152,6 +153,7 @@ The `Обучение -> Открыть Moodle` button now starts the SSO flow f
 
 Relevant settings:
 
+- `MOODLE_USER_AUTH_PLUGIN=manual`: safe default before the Moodle `auth_oidc` plugin is enabled
 - `MOODLE_SSO_LAUNCH_MODE=oidc`: best default for passwordless launch from Django
 - `MOODLE_OIDC_LOGIN_PATH=/auth/oidc/`: entrypoint of the Moodle `auth_oidc` plugin
 - `MOODLE_OIDC_LOGIN_SOURCE=django`: optional source marker sent to Moodle
@@ -181,6 +183,23 @@ Create the Django OIDC application in admin:
 7. Save the application and copy its `client_id` and `client_secret` into Moodle.
 
 Use the same `client_id` in Django env for `MOODLE_OIDC_CLIENT_ID` so the provider can enforce the existing `staff-only` access rule for Moodle SSO.
+
+## Switching Provisioned Users To OIDC
+
+Stage 1 created Moodle staff users with `auth=manual`. After `auth_oidc` is installed and tested, switch Django provisioning to:
+
+```dotenv
+MOODLE_USER_AUTH_PLUGIN=oidc
+```
+
+Then redeploy Django and run a sync for existing staff users:
+
+```bash
+source .venv/bin/activate
+python manage.py sync_moodle_learning
+```
+
+That updates already linked Moodle staff accounts to `auth=oidc`, so the passwordless SSO flow works without editing each Moodle profile manually. Leave special local accounts like `admin` and `imc-api-sync` untouched; Django provisioning only manages linked staff users.
 
 ## Initial Moodle Setup After First Start
 

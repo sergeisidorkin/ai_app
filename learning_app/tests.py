@@ -56,6 +56,23 @@ class MoodleProvisioningTests(TestCase):
         self.assertNotIn("suspended", create_payload)
         client.update_users.assert_called_once()
 
+    @override_settings(MOODLE_USER_AUTH_PLUGIN="oidc")
+    def test_switches_staff_user_to_oidc_auth_on_followup_update(self):
+        client = self._client()
+        client.create_users.return_value = [
+            {"id": 42, "username": "staff@example.com", "email": "staff@example.com", "auth": "manual"}
+        ]
+        client.get_users_by_id.return_value = [
+            {"id": 42, "username": "staff@example.com", "email": "staff@example.com", "auth": "oidc"}
+        ]
+
+        ensure_moodle_account(self.user, client=client)
+
+        create_payload = client.create_users.call_args.args[0][0]
+        update_payload = client.update_users.call_args.args[0][0]
+        self.assertEqual(create_payload["auth"], "manual")
+        self.assertEqual(update_payload["auth"], "oidc")
+
     def test_update_existing_moodle_user_for_linked_staff_account(self):
         LearningUserLink.objects.create(
             user=self.user,
@@ -77,6 +94,25 @@ class MoodleProvisioningTests(TestCase):
         self.assertEqual(payload["id"], 42)
         self.assertEqual(payload["idnumber"], f"django:{self.user.pk}")
         self.assertEqual(payload["email"], self.user.email)
+
+    @override_settings(MOODLE_USER_AUTH_PLUGIN="oidc")
+    def test_updates_existing_moodle_user_auth_plugin_to_oidc(self):
+        LearningUserLink.objects.create(
+            user=self.user,
+            moodle_user_id=42,
+            moodle_username="staff@example.com",
+            moodle_email="staff@example.com",
+        )
+        client = self._client()
+        client.get_users_by_id.side_effect = [
+            [{"id": 42, "username": "staff@example.com", "email": "staff@example.com", "auth": "manual"}],
+            [{"id": 42, "username": "staff@example.com", "email": "staff@example.com", "auth": "oidc"}],
+        ]
+
+        ensure_moodle_account(self.user, client=client)
+
+        payload = client.update_users.call_args.args[0][0]
+        self.assertEqual(payload["auth"], "oidc")
 
     def test_raise_clear_error_when_other_django_user_owns_same_moodle_user(self):
         other = User.objects.create_user(
