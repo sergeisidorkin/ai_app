@@ -57,6 +57,14 @@ def _resolve_workspace_folder_name(name: str, project: ProjectRegistration | Non
     return _sanitize(" ".join(resolved.split()))
 
 
+def _sanitize_relative_path(path: str) -> str:
+    parts = [
+        _sanitize(" ".join(part.split()))
+        for part in str(path or "").split("/")
+    ]
+    return "/".join(part for part in parts if part)
+
+
 def _build_project_folder_name(project: ProjectRegistration) -> str:
     return _resolve_workspace_folder_name(_build_project_label(project))
 
@@ -283,12 +291,11 @@ def create_basic_project_workspace_stream(user, project: ProjectRegistration):
         current += 1
         yield {"current": current, "total": total}
 
-    project_public_url = publish_resource(user, project_path)
     ProjectWorkspace.objects.update_or_create(
         project=project,
         defaults={
             "disk_path": project_path,
-            "public_url": project_public_url,
+            "public_url": "",
             "created_by": user,
         },
     )
@@ -323,7 +330,9 @@ def _resolve_source_data_base(user, project: ProjectRegistration):
     project_folder = _build_project_folder_name(project)
 
     target_obj = SourceDataTargetFolder.objects.filter(user=user).first()
-    target_folder = _sanitize(target_obj.folder_name if target_obj else DEFAULT_SOURCE_DATA_FOLDER)
+    target_folder = _sanitize_relative_path(
+        target_obj.folder_name if target_obj else DEFAULT_SOURCE_DATA_FOLDER
+    )
 
     base_path = f"{disk_root}/{_sanitize(year_str)}/{project_folder}/{target_folder}"
     return base_path, None
