@@ -28,6 +28,13 @@ STANDARD_FOLDERS = [
 
 DATA_FOLDER = "05 Данные"
 
+WORKSPACE_PROJECT_VARIABLES = [
+    (
+        "{project_label}",
+        "Обозначение проекта в формате «Проект ID Тип Название проекта»",
+    ),
+]
+
 
 def _sanitize(name: str) -> str:
     """Убирает символы, недопустимые в именах папок на Яндекс.Диске."""
@@ -36,12 +43,22 @@ def _sanitize(name: str) -> str:
     return name.strip().rstrip('.')
 
 
-def _build_project_folder_name(project: ProjectRegistration) -> str:
+def _build_project_label(project: ProjectRegistration) -> str:
     type_name = ""
     if project.type:
         type_name = getattr(project.type, "short_name", "") or str(project.type)
-    parts = [project.short_uid, type_name, project.name]
-    return _sanitize(" ".join(p for p in parts if p))
+    return " ".join(part for part in (project.short_uid, type_name, project.name) if part).strip()
+
+
+def _resolve_workspace_folder_name(name: str, project: ProjectRegistration | None = None) -> str:
+    resolved = str(name or "")
+    if project is not None:
+        resolved = resolved.replace("{project_label}", _build_project_label(project))
+    return _sanitize(" ".join(resolved.split()))
+
+
+def _build_project_folder_name(project: ProjectRegistration) -> str:
+    return _resolve_workspace_folder_name(_build_project_label(project))
 
 
 def _build_section_folder_name(section) -> str:
@@ -172,7 +189,7 @@ REGISTRATION_STANDARD_FOLDERS = [
 ]
 
 
-def _build_folder_tree(rows):
+def _build_folder_tree(rows, project: ProjectRegistration | None = None):
     """
     Строит список путей из плоского списка (level, name),
     где level 2 вкладывается в ближайшую предыдущую level 1,
@@ -181,7 +198,7 @@ def _build_folder_tree(rows):
     paths = []
     parent = {1: "", 2: "", 3: ""}
     for level, name in rows:
-        sanitized = _sanitize(name)
+        sanitized = _resolve_workspace_folder_name(name, project)
         if level == 1:
             parent[1] = sanitized
             parent[2] = ""
@@ -235,7 +252,11 @@ def create_basic_project_workspace_stream(user, project: ProjectRegistration):
             .order_by("position")
             .values_list("level", "name")
         )
-    folder_paths = _build_folder_tree(user_rows) if user_rows else [_sanitize(n) for n in REGISTRATION_STANDARD_FOLDERS]
+    folder_paths = (
+        _build_folder_tree(user_rows, project=project)
+        if user_rows
+        else [_sanitize(n) for n in REGISTRATION_STANDARD_FOLDERS]
+    )
 
     total = 2 + len(folder_paths)  # year + project + sub-folders
     current = 0

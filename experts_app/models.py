@@ -73,6 +73,9 @@ class ExpertProfile(models.Model):
         related_name="expert_profile",
         verbose_name="Сотрудник",
     )
+    yandex_mail = models.CharField(
+        "Яндекс Почта", max_length=255, blank=True, default=""
+    )
     extra_email = models.CharField(
         "Дополнительная эл. почта", max_length=255, blank=True, default=""
     )

@@ -140,11 +140,15 @@ class ExpertProfileForm(forms.ModelForm):
     class Meta:
         model = ExpertProfile
         fields = [
-            "extra_email", "extra_phone",
+            "yandex_mail", "extra_email", "extra_phone",
             "expertise_direction", "grade",
             "country", "region", "status",
         ]
         widgets = {
+            "yandex_mail": forms.TextInput(attrs={
+                "class": "form-control",
+                "placeholder": "login@yandex.ru",
+            }),
             "extra_email": forms.TextInput(attrs={
                 "class": "form-control",
                 "placeholder": "name@mail.ru",

@@ -128,6 +128,7 @@ COLUMN_REGISTRY = {
                 "columns": {
                     "full_name": "ФИО",
                     "email": "Эл. почта (логин)",
+                    "yandex_mail": "Яндекс Почта",
                     "extra_email": "Дополнительная эл. почта",
                     "phone": "Телефон",
                     "extra_phone": "Дополнительный телефон",

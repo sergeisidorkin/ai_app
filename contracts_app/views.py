@@ -108,6 +108,7 @@ def _contracts_context(user=None):
     contract_projects = (
         ProjectRegistration.objects
         .filter(id__in=contract_project_ids)
+        .select_related("type")
         .order_by("-number", "-id")
     )
 
