@@ -4,14 +4,18 @@ from .models import ProjectRegistration, WorkVolume, Performer, LegalEntity
 @admin.register(ProjectRegistration)
 class ProjectRegistrationAdmin(admin.ModelAdmin):
     list_display = (
-        "position", "number", "group", "agreement_type", "agreement_number",
+        "position", "number", "group_display_value", "agreement_type", "agreement_number",
         "short_uid", "type", "name", "status", "year", "customer",
     )
     list_editable = ("position",)
     list_display_links = ("number", "name")
     search_fields = ("=number", "short_uid", "agreement_number", "name", "customer", "registration_number", "project_manager")
-    list_filter = ("group", "agreement_type", "status", "type", "year")
+    list_filter = ("group_member", "agreement_type", "status", "type", "year")
     readonly_fields = ("short_uid",)
+
+    @admin.display(description="Группа", ordering="group")
+    def group_display_value(self, obj):
+        return obj.group_display
 
 @admin.register(WorkVolume)
 class WorkVolumeAdmin(admin.ModelAdmin):

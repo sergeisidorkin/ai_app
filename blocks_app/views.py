@@ -161,32 +161,34 @@ def _latinize(s: str) -> str:
     }
     return "".join(m.get(ch, ch) for ch in s)
 
+
+PROJECT_UID_FULL_RE = re.compile(r"\b(\d{6}[A-Z]{2})\b")
+PROJECT_UID_SPLIT_RE = re.compile(r"\b(\d{4})\s*[-_. ]?\s*(\d)\s*[-_. ]?\s*(\d)\s*[-_. ]?\s*([A-Z]{2})\b")
+PROJECT_UID_CLEAN_RE = re.compile(r"\d{6}[A-Z]{2}")
+
+
+def _normalize_project_uid(raw: str) -> str:
+    if not raw:
+        return ""
+    normalized = _latinize(raw).upper()
+    match = re.search(PROJECT_UID_FULL_RE, normalized)
+    if match:
+        return match.group(1)
+    match = re.search(PROJECT_UID_SPLIT_RE, normalized)
+    if match:
+        return f"{match.group(1)}{match.group(2)}{match.group(3)}{match.group(4)}"
+    cleaned = re.sub(r"[^0-9A-Z]+", "", normalized)
+    match = re.search(PROJECT_UID_CLEAN_RE, cleaned)
+    return match.group(0) if match else ""
+
 def _extract_project_uid(raw: str) -> str:
     """
-    Извлекает project_uid вида 44441RU из произвольной строки.
-    Поддерживает варианты с разделителями (4444-1-RU, 4444 1 RU, 4444_1RU),
+    Извлекает project_uid вида 444410RU из произвольной строки.
+    Поддерживает варианты с разделителями (4444-1-0-RU, 4444 1 0 RU, 4444_10RU),
     а также кириллицу в буквенной части (КЗ -> KZ).
     Возвращает нормализованный UID либо ''.
     """
-    if not raw:
-        return ""
-
-    uid_full = r"\b(\d{5}[A-Z]{2})\b"
-    uid_split = r"\b(\d{4})\s*[-_. ]?\s*(\d)\s*[-_. ]?\s*([A-Z]{2})\b"
-    cleaned_re = r"[^0-9A-Z]+"
-
-    U = _latinize(raw).upper()
-
-    m = re.search(uid_full, U)
-    if m:
-        return m.group(1)
-
-    m = re.search(uid_split, U)
-    if m:
-        return f"{m.group(1)}{m.group(2)}{m.group(3)}"
-
-    candidate = re.sub(cleaned_re, "", U)[:7]
-    return candidate if re.fullmatch(r"\d{5}[A-Z]{2}", candidate or "") else ""
+    return _normalize_project_uid(raw)
 
 
 def _project_label_by_id(pid: str) -> str:
@@ -234,14 +236,9 @@ def _get_last_nonempty(qd, key: str) -> str:
 
 def _folder_project_uid_from_name(name: str) -> str:
     """
-    Нормализует имя папки Google Drive до project_uid (первые 7 алфанумериков после латинизации).
+    Нормализует имя папки Google Drive до project_uid.
     """
-    if not name:
-        return ""
-    U = _latinize(name).upper()
-    cleaned = re.sub(r"[^0-9A-Z]+", "", U)
-    candidate = cleaned[:7]
-    return candidate if re.fullmatch(r"\d{5}[A-Z]{2}", candidate or "") else ""
+    return _normalize_project_uid(name)
 
 logger = logging.getLogger(__name__)
 
@@ -252,17 +249,7 @@ def _extract_project_uid_from_label(label: str) -> str:
     """
     Серверный дубль клиентской логики: достаёт UID из подписи проекта.
     """
-    s = (label or "").strip().upper()
-    if not s:
-        return ""
-    m = re.search(r"\b(\d{5}[A-Z]{2})\b", s)
-    if m:
-        return m.group(1)
-    m = re.search(r"\b(\d{4})\s*[-_. ]?\s*(\d)\s*[-_. ]?\s*([A-Z]{2})\b", s)
-    if m:
-        return f"{m.group(1)}{m.group(2)}{m.group(3)}"
-    candidate = re.sub(r"[^0-9A-Z]+", "", s)[:7]
-    return candidate if re.fullmatch(r"\d{5}[A-Z]{2}", candidate or "") else ""
+    return _normalize_project_uid(label)
 
 def _extract_project_uid_from_request(request) -> tuple[str, dict]:
     """
@@ -800,7 +787,7 @@ def _find_project_folder_in_gdrive(request, base_folder_id: str, res_key: str, p
         raise ValueError("Выбран файл или пустая папка Google Drive. Выберите папку с проектами в «Подключения».")
     uid = _extract_project_uid(project_uid)
     if not uid:
-        raise ValueError("Не удалось определить номер проекта (формат 44441RU/55551KZ).")
+        raise ValueError("Не удалось определить номер проекта (формат 444410RU/555510KZ).")
 
     matched = []
     for ch in children:
@@ -1132,9 +1119,9 @@ def block_run(request, pk):
         return _redirect_after(request, default_tab="debugger")
 
     # 6) Валидация кода проекта
-    if not project_uid or not re.fullmatch(r"\d{5}[A-Z]{2}", project_uid):
+    if not project_uid or not re.fullmatch(r"\d{6}[A-Z]{2}", project_uid):
         logger.warning("PROJECT UID MISSING/INVALID in block_run: %s", dbg)
-        messages.error(request, "Не удалось определить project_uid (формат 44441RU/12345KZ).")
+        messages.error(request, "Не удалось определить project_uid (формат 444410RU/123450KZ).")
         return _redirect_after(request, default_tab="debugger")
 
     # 7) Папка проекта в GDrive

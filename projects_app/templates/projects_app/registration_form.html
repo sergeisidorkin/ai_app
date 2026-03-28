@@ -24,15 +24,15 @@
         {{ form.number }}
       </div>
       <div class="col-3">
-        <label class="form-label">Группа</label>
-        <div class="group-select-shell">
-          {{ form.group }}
-          <div class="group-select-display" id="registration-group-display" aria-hidden="true"></div>
-        </div>
-      </div>
-      <div class="col-3">
         <label class="form-label">Вид соглашения</label>
         {{ form.agreement_type }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Группа</label>
+        <div class="group-select-shell">
+          {{ form.group_member }}
+          <div class="group-select-display" id="registration-group-display" aria-hidden="true"></div>
+        </div>
       </div>
       <div class="col-3">
         <label class="form-label">Тип</label>
@@ -132,8 +132,8 @@
     display: flex;
     align-items: center;
     padding: .25rem 2.25rem .25rem .75rem;
-    font-size: .875rem;
-    line-height: 1.5;
+    font: inherit;
+    line-height: inherit;
     color: #212529;
     background-color: #fff;
     border: 1px solid #ced4da;
@@ -168,7 +168,8 @@
 
     const syncDisplay = () => {
       const selected = select.options[select.selectedIndex];
-      display.textContent = selected && selected.value ? selected.value : "";
+      const label = selected && selected.value ? selected.textContent.trim() : "";
+      display.textContent = label ? label.split(/\s+/, 1)[0] : "";
     };
 
     select.addEventListener("change", syncDisplay);
