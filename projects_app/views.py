@@ -1631,14 +1631,14 @@ def create_source_data_workspace(request):
 @require_GET
 def source_data_target_folder_load(request):
     from .models import SourceDataTargetFolder
-    from yandexdisk_app.workspace import REGISTRATION_STANDARD_FOLDERS
+    from yandexdisk_app.workspace import REGISTRATION_STANDARD_FOLDERS, _build_folder_tree
 
     qs, _ = _get_effective_folders(request.user)
-    options = list(
-        qs.filter(level=1)
-        .order_by("position")
-        .values_list("name", flat=True)
+    rows = list(
+        qs.order_by("position")
+        .values_list("level", "name")
     )
+    options = [path for path in _build_folder_tree(rows) if path.count("/") <= 1] if rows else []
     if not options:
         options = list(REGISTRATION_STANDARD_FOLDERS)
 
