@@ -7,7 +7,7 @@ from django.views.decorators.http import require_http_methods, require_POST
 
 from classifiers_app.models import LegalEntityIdentifier
 from .forms import GroupMemberForm, OrgUnitForm
-from .models import GroupMember, OrgUnit
+from .models import GroupMember, OrgUnit, resequence_group_members
 
 PARTIAL_TEMPLATE = "group_app/group_partial.html"
 TABLE_TEMPLATE = "group_app/group_table_partial.html"
@@ -23,12 +23,6 @@ def staff_required(u):
 
 def _group_context():
     members = list(GroupMember.objects.all())
-    country_counters = {}
-    for member in members:
-        country_key = member.country_code or member.country_name or ""
-        current_index = country_counters.get(country_key, 0)
-        member.country_order_number = current_index
-        country_counters[country_key] = current_index + 1
     return {
         "members": members,
         "org_units": OrgUnit.objects.select_related(
@@ -44,19 +38,12 @@ def _country_next_order_map(exclude_member_pk=None):
     counters = {}
     for member in qs:
         country_key = member.country_code or member.country_name or ""
-        counters[country_key] = counters.get(country_key, 0) + 1
+        counters[country_key] = max(counters.get(country_key, 0), int(member.country_order_number or 0) + 1)
     return counters
 
 
 def _member_country_order_number(member):
-    counters = {}
-    for candidate in GroupMember.objects.all():
-        country_key = candidate.country_code or candidate.country_name or ""
-        current_index = counters.get(country_key, 0)
-        if candidate.pk == member.pk:
-            return current_index
-        counters[country_key] = current_index + 1
-    return 0
+    return int(getattr(member, "country_order_number", 0) or 0)
 
 
 def _member_form_context(form, action, member=None):
@@ -103,6 +90,7 @@ def _normalize_positions():
     for idx, obj in enumerate(GroupMember.objects.all()):
         if obj.position != idx:
             GroupMember.objects.filter(pk=obj.pk).update(position=idx)
+    resequence_group_members()
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +120,7 @@ def member_form_create(request):
     obj = form.save(commit=False)
     obj.position = _next_position()
     obj.save()
+    resequence_group_members()
     return _render_updated(request)
 
 
@@ -148,6 +137,7 @@ def member_form_edit(request, pk: int):
     if not form.is_valid():
         return render(request, FORM_TEMPLATE, _member_form_context(form, "edit", member))
     form.save()
+    resequence_group_members()
     return _render_updated(request)
 
 
@@ -174,6 +164,7 @@ def member_move_up(request, pk: int):
         obj.position, prev.position = prev.position, obj.position
         GroupMember.objects.filter(pk=obj.pk).update(position=obj.position)
         GroupMember.objects.filter(pk=prev.pk).update(position=prev.position)
+        resequence_group_members()
     return _render_updated(request)
 
 
@@ -187,6 +178,7 @@ def member_move_down(request, pk: int):
         obj.position, nxt.position = nxt.position, obj.position
         GroupMember.objects.filter(pk=obj.pk).update(position=obj.position)
         GroupMember.objects.filter(pk=nxt.pk).update(position=nxt.position)
+        resequence_group_members()
     return _render_updated(request)
 
 

@@ -45,11 +45,11 @@ def staff_required(user):
     return user.is_authenticated and user.is_staff
 
 def _projects_context():
-    registrations = ProjectRegistration.objects.select_related("country").all()
-    work_items = WorkVolume.objects.select_related("project", "country").all()
+    registrations = ProjectRegistration.objects.select_related("country", "group_member").all()
+    work_items = WorkVolume.objects.select_related("project", "project__group_member", "country").all()
     legal_entities = (
         LegalEntity.objects
-        .select_related("project", "work_item", "work_item__project", "country")
+        .select_related("project", "project__group_member", "work_item", "work_item__project", "country")
         .all()
     )
     legal_projects = (
@@ -924,11 +924,11 @@ def _build_direction_hourly_rate_map():
 
 
 def _performer_form_ctx(form, action: str, performer=None):
-    regs = ProjectRegistration.objects.select_related("type").order_by("position", "id")
+    regs = ProjectRegistration.objects.select_related("type", "group_member").order_by("position", "id")
 
     reg_map = {
         str(r.id): {
-            "group": r.group,
+            "group": r.group_display,
             "type": str(r.type) if r.type_id else "",
             "type_short": getattr(r.type, "short_name", "") if r.type_id else "",
             "type_id": r.type_id,
@@ -1220,7 +1220,7 @@ def participation_request(request):
 
 def _build_contract_number(performer, sent_at, addendum_number=None):
     reg = getattr(performer, "registration", None)
-    if not reg or getattr(reg, "group", "") != "RU":
+    if not reg or getattr(reg, "group_alpha2", "") != "RU":
         return ""
     parts = (performer.executor or "").split()
     if len(parts) < 2:
@@ -1790,10 +1790,6 @@ def create_contract_project(request):
         for ep in ExpertProfile.objects.select_related("country").filter(employee_id__in=employee_ids):
             expert_cache[ep.employee_id] = ep
 
-    group_member_map = {}
-    for gm in GroupMember.objects.all():
-        group_member_map.setdefault(gm.country_alpha2, []).append(gm)
-
     def _executor_short(executor_full_name):
         raw = " ".join(str(executor_full_name or "").split())
         if not raw:
@@ -1810,8 +1806,7 @@ def create_contract_project(request):
         if not product:
             return None
 
-        group_alpha2 = project.group or ""
-        group_member_ids = {gm.pk for gm in group_member_map.get(group_alpha2, [])}
+        group_member_ids = {project.group_member_id} if project.group_member_id else set()
 
         expert = expert_cache.get(perf.employee_id) if perf.employee_id else None
 

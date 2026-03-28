@@ -107,22 +107,11 @@ def _next_project_number():
     return 9999 if current_max >= 9999 else current_max + 1
 
 def _group_choices(current_value=""):
-    items = (
+    return (
         GroupMember.objects
         .exclude(country_alpha2="")
-        .values_list("country_alpha2", "short_name")
         .order_by("position", "id")
     )
-    seen = set()
-    choices = [("", "— Не выбрано —")]
-    for alpha2, short_name in items:
-        if alpha2 in seen:
-            continue
-        seen.add(alpha2)
-        choices.append((alpha2, f"{alpha2} {short_name}"))
-    if current_value and all(value != current_value for value, _label in choices):
-        choices.insert(0, (current_value, current_value))
-    return choices
 
 
 class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
@@ -136,9 +125,9 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
     deadline = forms.DateField(required=False,
                                widget=forms.TextInput(attrs=DATE_INPUT_ATTRS),
                                input_formats=DATE_INPUT_FORMATS)
-    group = forms.ChoiceField(
+    group_member = forms.ModelChoiceField(
         label="Группа",
-        choices=(),
+        queryset=GroupMember.objects.none(),
         required=True,
         widget=forms.Select(attrs={"id": "registration-group-select"}),
     )
@@ -174,7 +163,7 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
     class Meta:
         model = ProjectRegistration
         fields = [
-            "number", "group", "agreement_type", "type", "name",
+            "number", "group_member", "agreement_type", "type", "name",
             "status", "deadline", "year",
             "country", "customer", "identifier", "registration_number",
             "registration_date", "project_manager",
@@ -186,9 +175,11 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        current_group = self.data.get("group") or (self.instance.group if self.instance else "")
+        current_group_member = self.data.get("group_member") or (self.instance.group_member_id if self.instance else "")
         current_manager = self.data.get("project_manager") or (self.instance.project_manager if self.instance else "")
-        self.fields["group"].choices = _group_choices(current_group)
+        self.fields["group_member"].queryset = _group_choices(current_group_member)
+        self.fields["group_member"].label_from_instance = lambda obj: obj.group_display_label
+        self.fields["group_member"].empty_label = "— Не выбрано —"
         self.fields["project_manager"].choices = _project_manager_choices(current_manager)
 
         today = timezone.now().date()
@@ -204,9 +195,14 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
             self.fields["identifier"].initial = self.instance.identifier
 
         self._bootstrapify()
-        if not self.instance.pk and "group" not in self.data:
-            ru_value = next((value for value, _label in self.fields["group"].choices if value == "RU"), "")
-            self.fields["group"].initial = ru_value
+        if not self.instance.pk and "group_member" not in self.data:
+            self.fields["group_member"].initial = (
+                GroupMember.objects
+                .filter(country_alpha2="RU")
+                .order_by("position", "id")
+                .values_list("pk", flat=True)
+                .first()
+            )
         if not self.instance.pk and "country" not in self.data:
             russia = country_qs.filter(short_name="Россия").first()
             if russia:
@@ -218,6 +214,12 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
             self.fields["year"].initial = timezone.now().year
         if not self.instance.pk and "number" not in self.data:
             self.fields["number"].initial = _next_project_number()
+
+    def clean_group_member(self):
+        member = self.cleaned_data.get("group_member")
+        if member and not (member.country_alpha2 or "").strip():
+            raise forms.ValidationError("Для выбранной строки состава группы не заполнен код Альфа-2.")
+        return member
 
     def clean_project_manager(self):
         return (self.cleaned_data.get("project_manager") or "").strip()

@@ -270,7 +270,7 @@ FIELD_MAP: dict[tuple[str, str, str], callable] = {
 
     # ---- projects.registration ----
     ("projects", "registration", "number"): lambda _ep, p: str(p.registration.number) if p.registration else "",
-    ("projects", "registration", "group"): lambda _ep, p: p.registration.group if p.registration else "",
+    ("projects", "registration", "group"): lambda _ep, p: p.registration.group_alpha2 if p.registration else "",
     ("projects", "registration", "agreement_type"): lambda _ep, p: p.registration.get_agreement_type_display() if p.registration else "",
     ("projects", "registration", "project_id"): _perf_project,
     ("projects", "registration", "type"): _perf_type,

@@ -238,7 +238,7 @@ def _code_cell_class(status_cells):
 
 
 def _project_options():
-    regs = ProjectRegistration.objects.select_related("type").order_by("position", "id")
+    regs = ProjectRegistration.objects.select_related("type", "group_member").order_by("position", "id")
     options = []
     for reg in regs:
         short_uid = (reg.short_uid or "").strip()
@@ -248,7 +248,7 @@ def _project_options():
                 "id": reg.id,
                 "short_uid": short_uid,
                 "label": " ".join(x for x in (short_uid, product_short, reg.name) if x),
-                "code": short_uid or f"{reg.number}{reg.group}".upper(),
+                "code": short_uid or f"{reg.number}{reg.group_alpha2}".upper(),
                 "product_short": product_short,
                 "product_id": getattr(getattr(reg, "type", None), "id", None),
             }
@@ -2889,7 +2889,7 @@ def shared_page(request, token: str):
         "label": " ".join(
             x for x in (project.short_uid or "", _product_short_label(getattr(project, "type", None)), project.name) if x
         ),
-        "code": (project.short_uid or "").strip() or f"{project.number}{project.group}".upper(),
+        "code": (project.short_uid or "").strip() or f"{project.number}{project.group_alpha2}".upper(),
         "product_short": _product_short_label(getattr(project, "type", None)),
         "product_id": getattr(getattr(project, "type", None), "id", None),
     }]

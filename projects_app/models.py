@@ -1,8 +1,11 @@
+import uuid
+
 from django.conf import settings
 from django.db import models, transaction
 from django.core.validators import MinValueValidator, MaxValueValidator
 from policy_app.models import Product, TypicalSection
 from classifiers_app.models import OKSMCountry, OKVCurrency
+from group_app.models import GroupMember
 from datetime import timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -25,6 +28,20 @@ class ProjectRegistration(models.Model):
         validators=[MinValueValidator(3333), MaxValueValidator(9999)],
     )
     group = models.CharField("Группа", max_length=2, default="RU", db_index=True)
+    group_member = models.ForeignKey(
+        GroupMember,
+        verbose_name="Группа",
+        on_delete=models.PROTECT,
+        related_name="project_registrations",
+        null=True,
+        blank=True,
+    )
+    agreement_sequence = models.PositiveIntegerField(
+        "№ соглашения в проекте",
+        default=0,
+        editable=False,
+        db_index=True,
+    )
     agreement_type = models.CharField(
         "Вид соглашения",
         max_length=20,
@@ -113,28 +130,96 @@ class ProjectRegistration(models.Model):
         verbose_name_plural = "Регистрация проекта"
         constraints = [
             models.UniqueConstraint(
-                fields=("number", "group", "agreement_type", "agreement_number"),
+                fields=("number", "group_member", "agreement_type", "agreement_number"),
                 name="project_registration_identity_unique",
             ),
         ]
 
     def __str__(self):
-        base = f"{self.number}{self.group}"
+        base = f"{self.number}{self.group_alpha2}"
         agreement = self.get_agreement_type_display()
         suffix = f" №{self.agreement_number}" if self.agreement_number else ""
         return f"{base} — {agreement}{suffix} — {self.name}"
 
     @property
     def display_identifier(self):
-        parts = [f"{self.number} {self.group} · {self.get_agreement_type_display()}"]
+        parts = [f"{self.number} {self.group_display} · {self.get_agreement_type_display()}"]
         if self.agreement_number:
             parts.append(f"№ {self.agreement_number}")
         return " ".join(parts)
 
+    @property
+    def group_alpha2(self):
+        member = self._resolved_group_member()
+        if member:
+            return (member.country_alpha2 or "").strip().upper()
+        return (self.group or "").strip().upper()
+
+    @property
+    def group_order_number(self):
+        member = self._resolved_group_member()
+        if member:
+            return int(member.country_order_number or 0)
+        return 0
+
+    @property
+    def group_display(self):
+        member = self._resolved_group_member()
+        if member:
+            return member.group_code_label
+        return self.group_alpha2
+
+    def _resolved_group_member(self):
+        if not self.group_member_id:
+            return None
+        cached = getattr(self, "_group_member_cache", None)
+        if cached and cached.pk == self.group_member_id:
+            return cached
+        member = GroupMember.objects.filter(pk=self.group_member_id).first()
+        self._group_member_cache = member
+        return member
+
+    @classmethod
+    def refresh_short_uids_for_group_members(cls, group_member_ids):
+        registrations = list(
+            cls.objects
+            .select_related("group_member")
+            .filter(group_member_id__in=group_member_ids)
+        )
+        if not registrations:
+            return
+        cls._bulk_refresh_short_uids(registrations)
+
+    @classmethod
+    def _bulk_refresh_short_uids(cls, registrations):
+        to_refresh = []
+        for registration in registrations:
+            new_uid = registration._build_short_uid()
+            if registration.short_uid == new_uid:
+                continue
+            registration.short_uid = f"tmp{registration.pk}{uuid.uuid4().hex[:8]}"
+            to_refresh.append((registration, new_uid))
+
+        if not to_refresh:
+            return
+
+        with transaction.atomic():
+            cls.objects.bulk_update([item[0] for item in to_refresh], ["short_uid"])
+            for registration, new_uid in to_refresh:
+                registration.short_uid = new_uid
+            cls.objects.bulk_update([item[0] for item in to_refresh], ["short_uid"])
+
     def save(self, *args, **kwargs):
+        member = self._resolved_group_member()
+        if member:
+            self.group = member.country_alpha2 or self.group
+        if self.agreement_sequence is None or not self.pk:
+            self.agreement_sequence = self._build_agreement_sequence()
+        elif self._needs_agreement_sequence_refresh():
+            self.agreement_sequence = self._build_agreement_sequence()
         if (
             not self.agreement_number
-            and self.group == "RU"
+            and self.group_alpha2 == "RU"
             and self.agreement_type == self.AgreementType.MAIN
         ):
             self.agreement_number = f"IMCM/{self.number}"
@@ -188,18 +273,36 @@ class ProjectRegistration(models.Model):
     def _needs_uid_refresh(self):
         if not self.pk:
             return True
-        orig = ProjectRegistration.objects.filter(pk=self.pk).values("number", "group").first()
-        return not orig or orig["number"] != self.number or orig["group"] != self.group
-
-    def _build_short_uid(self):
-        base = f"{self.number}"
-        idx = (
+        orig = (
             ProjectRegistration.objects
-            .filter(number=self.number, group=self.group)
+            .filter(pk=self.pk)
+            .values("number", "group", "group_member_id", "agreement_sequence")
+            .first()
+        )
+        return (
+            not orig
+            or orig["number"] != self.number
+            or orig["group"] != self.group
+            or orig["group_member_id"] != self.group_member_id
+            or orig["agreement_sequence"] != self.agreement_sequence
+        )
+
+    def _needs_agreement_sequence_refresh(self):
+        if not self.pk:
+            return True
+        orig = ProjectRegistration.objects.filter(pk=self.pk).values("number").first()
+        return not orig or orig["number"] != self.number
+
+    def _build_agreement_sequence(self):
+        return (
+            ProjectRegistration.objects
+            .filter(number=self.number)
             .exclude(pk=self.pk)
             .count()
         )
-        return f"{base}{idx}{self.group}"
+
+    def _build_short_uid(self):
+        return f"{self.number}{self.agreement_sequence}{self.group_order_number}{self.group_alpha2}"
 
 class WorkVolume(models.Model):
     position = models.PositiveIntegerField(default=0, db_index=True, verbose_name="Позиция")
@@ -690,7 +793,7 @@ class Performer(models.Model):
 
     def __str__(self):
         num = getattr(self.registration, "number", "") or ""
-        grp = getattr(self.registration, "group", "") or ""
+        grp = getattr(self.registration, "group_display", "") or ""
         return f"{num} {grp} — {self.executor or 'исполнитель'}"
 
     @staticmethod

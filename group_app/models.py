@@ -1,4 +1,8 @@
-from django.db import models
+from django.db import models, transaction
+
+
+def _country_key(member) -> str:
+    return (member.country_code or member.country_name or "").strip()
 
 
 class GroupMember(models.Model):
@@ -8,6 +12,7 @@ class GroupMember(models.Model):
     country_name = models.CharField("Страна регистрации", max_length=255)
     country_code = models.CharField("Код страны (ОКСМ)", max_length=3, blank=True, default="")
     country_alpha2 = models.CharField("Буквенный код (Альфа-2)", max_length=2, blank=True, default="")
+    country_order_number = models.PositiveIntegerField("№", default=0, db_index=True, editable=False)
     identifier = models.CharField("Идентификатор", max_length=255, blank=True, default="")
     registration_number = models.CharField("Регистрационный номер", max_length=255, blank=True, default="")
     registration_date = models.DateField("Дата регистрации", blank=True, null=True)
@@ -23,6 +28,51 @@ class GroupMember(models.Model):
 
     def __str__(self):
         return self.short_name
+
+    @property
+    def group_code_label(self) -> str:
+        alpha2 = (self.country_alpha2 or "").strip().upper()
+        if not alpha2:
+            return ""
+        if int(self.country_order_number or 0) == 0:
+            return alpha2
+        return f"{self.country_order_number}-{alpha2}"
+
+    @property
+    def group_display_label(self) -> str:
+        prefix = self.group_code_label or f"№{self.country_order_number}"
+        return f"{prefix} {self.short_name}".strip()
+
+
+def resequence_group_members(*, refresh_project_uids: bool = True):
+    members = list(
+        GroupMember.objects
+        .order_by("position", "id")
+        .only("id", "country_code", "country_name", "country_order_number")
+    )
+    counters = {}
+    to_update = []
+    affected_ids = set()
+
+    for member in members:
+        key = _country_key(member)
+        next_number = counters.get(key, 0)
+        if member.country_order_number != next_number:
+            member.country_order_number = next_number
+            to_update.append(member)
+            affected_ids.add(member.pk)
+        counters[key] = next_number + 1
+
+    if to_update:
+        GroupMember.objects.bulk_update(to_update, ["country_order_number"])
+
+    if refresh_project_uids and affected_ids:
+        from projects_app.models import ProjectRegistration
+
+        with transaction.atomic():
+            ProjectRegistration.refresh_short_uids_for_group_members(affected_ids)
+
+    return affected_ids
 
 
 class OrgUnit(models.Model):

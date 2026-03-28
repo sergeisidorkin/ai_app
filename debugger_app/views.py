@@ -35,8 +35,8 @@ def _product_short_label(product) -> str:
 
 def _format_project_label(reg: ProjectRegistration) -> str:
     """
-    Отображение проекта: "44441RU DD Название".
-    Приоритет: short_uid → number+group. Остальные поля через пробел.
+    Отображение проекта: "444410RU DD Название".
+    Приоритет: short_uid → number+group_alpha2. Остальные поля через пробел.
     """
     def s(v):
         try:
@@ -47,7 +47,7 @@ def _format_project_label(reg: ProjectRegistration) -> str:
     uid = s(getattr(reg, "short_uid", ""))
     if not uid:
         num = s(getattr(reg, "number", ""))
-        grp = s(getattr(reg, "group", ""))
+        grp = s(getattr(reg, "group_alpha2", ""))
         uid = f"{num}{grp}".strip()
 
     typ = s(_product_short_label(getattr(reg, "type", None)))
@@ -100,7 +100,7 @@ def panel(request):
     Рендер панели отладки.
     Возвращает данные для селекторов и URL для загрузки карточек блоков.
     """
-    regs = list(ProjectRegistration.objects.select_related("type").order_by("position", "id"))
+    regs = list(ProjectRegistration.objects.select_related("type", "group_member").order_by("position", "id"))
 
     def _s(v):
         try:
@@ -113,7 +113,7 @@ def panel(request):
         short_uid = _s(getattr(r, "short_uid", ""))
         if not short_uid:
             number = _s(getattr(r, "number", ""))
-            group = _s(getattr(r, "group", ""))
+            group = _s(getattr(r, "group_alpha2", ""))
             short_uid = f"{number}{group}".upper()
 
         project_options.append({

@@ -39,8 +39,8 @@
         <colgroup>
           <col class="checkbox">         <!-- 1: чекбокс -->
           <col class="project-number">   <!-- 2: Номер -->
-          <col class="group">            <!-- 3: Группа -->
-          <col class="agreement-type">   <!-- 4: Вид соглашения -->
+          <col class="agreement-type">   <!-- 3: Вид соглашения -->
+          <col class="group">            <!-- 4: Группа -->
           <col class="project-id">       <!-- 5: Проект ID -->
           <col class="reg-type">          <!-- 6: Тип -->
           <col class="reg-name">         <!-- 7: Название -->
@@ -69,8 +69,8 @@
           {% endif %}
         </th>
         <th class="col-project-number">Номер</th>
-        <th>Группа</th>
         <th>Вид соглашения</th>
+        <th>Группа</th>
         <th>Проект ID</th>
         <th>Тип</th>
         <th class="nowrap">Название</th>
@@ -106,8 +106,8 @@
             {% endif %}
           </td>
           <td class="col-project-number">{{ r.number }}</td>
-          <td>{{ r.group }}</td>
           <td>{{ r.get_agreement_type_display }}</td>
+          <td>{{ r.group_display }}</td>
           <td class="project-id-cell">{{ r.short_uid }}</td>
           <td>{{ r.type }}</td>
           <td>{{ r.name }}</td>
