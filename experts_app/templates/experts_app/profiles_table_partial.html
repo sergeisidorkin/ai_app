@@ -15,23 +15,24 @@
         </th>
         <th data-col="1" style="min-width:280px">ФИО</th>
         <th data-col="2" style="min-width:260px">Эл. почта (логин)</th>
-        <th data-col="3">Дополнительная эл. почта</th>
-        <th data-col="4">Телефон</th>
-        <th data-col="5">Дополнительный телефон</th>
-        <th data-col="6">Направление экспертизы</th>
-        <th data-col="7" class="text-nowrap" style="min-width:180px">
+        <th data-col="3">Яндекс Почта</th>
+        <th data-col="4">Дополнительная эл. почта</th>
+        <th data-col="5">Телефон</th>
+        <th data-col="6">Дополнительный телефон</th>
+        <th data-col="7">Направление экспертизы</th>
+        <th data-col="8" class="text-nowrap" style="min-width:180px">
             Специальность
             <button type="button" class="clf-wrap-btn active" id="epr-wrap-toggle"
                     title="Свернуть/развернуть строки">
               <i class="bi bi-text-wrap"></i>
             </button>
         </th>
-        <th data-col="8">Грейд</th>
-        <th data-col="8"></th>
-        <th data-col="9">Страна</th>
-        <th data-col="10">Регион</th>
-        <th data-col="11">Статус</th>
-        <th data-col="12">Дата</th>
+        <th data-col="9">Грейд</th>
+        <th data-col="9"></th>
+        <th data-col="10">Страна</th>
+        <th data-col="11">Регион</th>
+        <th data-col="12">Статус</th>
+        <th data-col="13">Дата</th>
     </tr>
     </thead>
     <tbody>
@@ -54,20 +55,21 @@
             </td>
             <td class="text-nowrap" data-col="1">{{ p.full_name }}</td>
             <td class="text-nowrap" data-col="2">{{ p.employee.user.email }}</td>
-            <td class="text-nowrap" data-col="3">{{ p.extra_email }}</td>
-            <td class="text-nowrap" data-col="4">{{ p.employee.phone }}</td>
-            <td class="text-nowrap" data-col="5">{{ p.extra_phone }}</td>
-            <td data-col="6">{% if p.expertise_direction %}{{ p.expertise_direction.department_name }}{% else %}—{% endif %}</td>
-            <td data-col="7" class="epr-spec-cell">{% for rs in p.ranked_specialties.all %}{% if forloop.first %}<span class="epr-spec-item">{{ rs.specialty.specialty }}</span>{% else %}<br class="epr-spec-rest"><span class="epr-spec-rest">{{ rs.specialty.specialty }}</span>{% endif %}{% empty %}—{% endfor %}</td>
-            <td data-col="8">{% if p.grade %}{{ p.grade.grade_ru }}{% else %}—{% endif %}</td>
-            <td class="text-nowrap" data-col="8">{% if p.grade %}{% for i in "12345678901234567890"|make_list %}{% if forloop.counter <= p.grade.qualification_levels %}{% if forloop.counter <= p.grade.qualification %}<i class="bi bi-star-fill text-warning"></i>{% else %}<i class="bi bi-star-fill" style="color:#dee2e6;"></i>{% endif %}{% endif %}{% endfor %}{% endif %}</td>
-            <td class="text-nowrap" data-col="9">{% if p.country %}{{ p.country.short_name }}{% else %}—{% endif %}</td>
-            <td data-col="10">{% if p.region %}{{ p.region.region_name }}{% else %}—{% endif %}</td>
-            <td class="text-nowrap" data-col="11">{{ p.status }}</td>
-            <td class="text-nowrap" data-col="12">{{ p.updated_at|date:"d.m.Y" }}</td>
+            <td class="text-nowrap" data-col="3">{{ p.yandex_mail }}</td>
+            <td class="text-nowrap" data-col="4">{{ p.extra_email }}</td>
+            <td class="text-nowrap" data-col="5">{{ p.employee.phone }}</td>
+            <td class="text-nowrap" data-col="6">{{ p.extra_phone }}</td>
+            <td data-col="7">{% if p.expertise_direction %}{{ p.expertise_direction.department_name }}{% else %}—{% endif %}</td>
+            <td data-col="8" class="epr-spec-cell">{% for rs in p.ranked_specialties.all %}{% if forloop.first %}<span class="epr-spec-item">{{ rs.specialty.specialty }}</span>{% else %}<br class="epr-spec-rest"><span class="epr-spec-rest">{{ rs.specialty.specialty }}</span>{% endif %}{% empty %}—{% endfor %}</td>
+            <td data-col="9">{% if p.grade %}{{ p.grade.grade_ru }}{% else %}—{% endif %}</td>
+            <td class="text-nowrap" data-col="9">{% if p.grade %}{% for i in "12345678901234567890"|make_list %}{% if forloop.counter <= p.grade.qualification_levels %}{% if forloop.counter <= p.grade.qualification %}<i class="bi bi-star-fill text-warning"></i>{% else %}<i class="bi bi-star-fill" style="color:#dee2e6;"></i>{% endif %}{% endif %}{% endfor %}{% endif %}</td>
+            <td class="text-nowrap" data-col="10">{% if p.country %}{{ p.country.short_name }}{% else %}—{% endif %}</td>
+            <td data-col="11">{% if p.region %}{{ p.region.region_name }}{% else %}—{% endif %}</td>
+            <td class="text-nowrap" data-col="12">{{ p.status }}</td>
+            <td class="text-nowrap" data-col="13">{{ p.updated_at|date:"d.m.Y" }}</td>
         </tr>
     {% empty %}
-        <tr><td colspan="14" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="15" class="text-muted">Пока нет данных.</td></tr>
     {% endfor %}
     </tbody>
 </table>

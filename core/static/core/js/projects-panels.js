@@ -79,6 +79,15 @@
     if (btn) btn.disabled = checkedCount !== 1;
   }
 
+  function clearRegistrationSelection() {
+    const boxes = getRowChecksByName('registration-select');
+    boxes.forEach(b => { b.checked = false; });
+    updateMasterStateFor('registration-select');
+    updateRowHighlightFor('registration-select');
+    ensureActionsVisibility('registration-select');
+    updateRegWorkspaceBtn();
+  }
+
   // Кнопка «Редактировать» для таблицы «Условия контракта»
   function updateContractEditBtn() {
     const root = pane();
@@ -247,10 +256,12 @@
     const statusEl = root.querySelector('#reg-create-workspace-status');
     const progressEl = root.querySelector('#reg-ws-progress');
     const fillEl = progressEl?.querySelector('.ws-progress-fill');
+    const createModalEl = document.getElementById('reg-create-workspace-modal');
     wsConfirmBtn.disabled = true;
     if (statusEl) statusEl.textContent = '';
     if (fillEl) fillEl.style.width = '0%';
     if (progressEl) progressEl.classList.remove('d-none');
+    if (createModalEl) createModalEl.dataset.workspaceCreated = '0';
 
     try {
       const formData = new FormData();
@@ -298,6 +309,7 @@
 
       if (fillEl) fillEl.style.width = '100%';
       if (statusEl) statusEl.innerHTML = '<span class="text-success">' + (lastResult.message || 'Готово!') + '</span>';
+      if (createModalEl) createModalEl.dataset.workspaceCreated = '1';
     } catch (err) {
       if (progressEl) progressEl.classList.add('d-none');
       if (statusEl) statusEl.innerHTML = '<span class="text-danger">' + (err.message || 'Ошибка') + '</span>';
@@ -430,6 +442,14 @@
     if (fillEl) fillEl.style.width = '0%';
     const statusEl = document.getElementById('reg-create-workspace-status');
     if (statusEl) statusEl.textContent = '';
+  });
+
+  document.addEventListener('hidden.bs.modal', (e) => {
+    if (!e.target.matches('#reg-create-workspace-modal')) return;
+    if (e.target.dataset.workspaceCreated === '1') {
+      clearRegistrationSelection();
+    }
+    e.target.dataset.workspaceCreated = '0';
   });
 
   document.addEventListener('change', (e) => {

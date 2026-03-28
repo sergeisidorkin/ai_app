@@ -9,7 +9,7 @@
             id="perf-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
       Проекты: <span class="js-perf-filter-label">Все</span>
     </button>
-    <div class="dropdown-menu p-3" aria-labelledby="perf-project-filter-toggle" style="min-width: 200px; max-height: 240px; overflow-y: auto;">
+    <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="perf-project-filter-toggle" style="max-height: 240px; overflow-y: auto;">
       <div class="form-check mb-2">
         <input class="form-check-input js-perf-filter" type="checkbox" value="__all__" id="perf-filter-all">
         <label class="form-check-label" for="perf-filter-all">Все проекты</label>
@@ -18,9 +18,11 @@
       {% for proj in performer_projects %}
         <div class="form-check">
           <input class="form-check-input js-perf-filter" type="checkbox"
-                 value="{{ proj.id }}" id="perf-filter-{{ proj.id }}">
+                 value="{{ proj.id }}" id="perf-filter-{{ proj.id }}"
+                 data-summary-label="{{ proj.short_uid }}"
+                 data-full-label="{{ proj.short_uid }}{% if proj.type %} {{ proj.type.short_name|default:proj.type }}{% endif %}{% if proj.name %} {{ proj.name }}{% endif %}">
           <label class="form-check-label" for="perf-filter-{{ proj.id }}">
-            {{ proj.short_uid }}
+            {{ proj.short_uid }}{% if proj.type %} {{ proj.type.short_name|default:proj.type }}{% endif %}{% if proj.name %} {{ proj.name }}{% endif %}
           </label>
         </div>
       {% empty %}
@@ -209,7 +211,7 @@
                 id="participation-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
           Проекты: <span class="js-participation-filter-label">Все</span>
         </button>
-        <div class="dropdown-menu p-3" aria-labelledby="participation-project-filter-toggle" style="min-width: 200px; max-height: 240px; overflow-y: auto;">
+        <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="participation-project-filter-toggle" style="max-height: 240px; overflow-y: auto;">
           <div class="form-check mb-2">
             <input class="form-check-input js-participation-filter" type="checkbox" value="__all__" id="participation-filter-all">
             <label class="form-check-label" for="participation-filter-all">Все проекты</label>
@@ -218,9 +220,11 @@
           {% for project in participation_projects %}
             <div class="form-check">
               <input class="form-check-input js-participation-filter" type="checkbox"
-                     value="{{ project.id }}" id="participation-filter-{{ project.id }}">
+                     value="{{ project.id }}" id="participation-filter-{{ project.id }}"
+                     data-summary-label="{{ project.short_uid }}"
+                     data-full-label="{{ project.short_uid }}{% if project.type %} {{ project.type.short_name|default:project.type }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}">
               <label class="form-check-label" for="participation-filter-{{ project.id }}">
-                {{ project.short_uid }}
+                {{ project.short_uid }}{% if project.type %} {{ project.type.short_name|default:project.type }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}
               </label>
             </div>
           {% empty %}
@@ -466,7 +470,7 @@
                 id="contract-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
           Проекты: <span class="js-contract-filter-label">Все</span>
         </button>
-        <div class="dropdown-menu p-3" aria-labelledby="contract-project-filter-toggle" style="min-width: 200px; max-height: 240px; overflow-y: auto;">
+        <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="contract-project-filter-toggle" style="max-height: 240px; overflow-y: auto;">
           <div class="form-check mb-2">
             <input class="form-check-input js-contract-filter" type="checkbox" value="__all__" id="contract-filter-all">
             <label class="form-check-label" for="contract-filter-all">Все проекты</label>
@@ -475,9 +479,11 @@
           {% for project in contract_projects %}
             <div class="form-check">
               <input class="form-check-input js-contract-filter" type="checkbox"
-                     value="{{ project.id }}" id="contract-filter-{{ project.id }}">
+                     value="{{ project.id }}" id="contract-filter-{{ project.id }}"
+                     data-summary-label="{{ project.short_uid }}"
+                     data-full-label="{{ project.short_uid }}{% if project.type %} {{ project.type.short_name|default:project.type }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}">
               <label class="form-check-label" for="contract-filter-{{ project.id }}">
-                {{ project.short_uid }}
+                {{ project.short_uid }}{% if project.type %} {{ project.type.short_name|default:project.type }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}
               </label>
             </div>
           {% empty %}
@@ -763,7 +769,7 @@
                 id="info-request-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
           Проект: <span class="js-info-request-filter-label">—</span>
         </button>
-        <div class="dropdown-menu p-3" aria-labelledby="info-request-project-filter-toggle" style="min-width: 200px; max-height: 240px; overflow-y: auto;">
+        <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="info-request-project-filter-toggle" style="max-height: 240px; overflow-y: auto;">
           <div class="form-check mb-1">
             <input class="form-check-input js-info-request-filter" type="radio"
                    name="info-request-project-radio"
@@ -775,9 +781,11 @@
             <div class="form-check">
               <input class="form-check-input js-info-request-filter" type="radio"
                      name="info-request-project-radio"
-                     value="{{ project.id }}" id="info-request-filter-{{ project.id }}">
+                     value="{{ project.id }}" id="info-request-filter-{{ project.id }}"
+                     data-summary-label="{{ project.short_uid }}"
+                     data-full-label="{{ project.short_uid }}{% if project.type %} {{ project.type.short_name|default:project.type }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}">
               <label class="form-check-label" for="info-request-filter-{{ project.id }}">
-                {{ project.short_uid }}
+                {{ project.short_uid }}{% if project.type %} {{ project.type.short_name|default:project.type }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}
               </label>
             </div>
           {% empty %}
@@ -1064,6 +1072,7 @@
 
     if (!projDropdown || projChecks.length === 0 || projDropdown.dataset.bound === "1") return;
     projDropdown.dataset.bound = "1";
+    if (window.bindProjectFilterMenuWidth) window.bindProjectFilterMenuWidth(projDropdown);
 
     var allAssetChecks = [];
 
@@ -1116,7 +1125,9 @@
       if (values.includes(FILTER_ALL) || !values.length) { lbl.textContent = "Все"; return; }
       if (values.length === 1) {
         var cb = Array.from(cbs).find(function(c) { return c.value === values[0]; });
-        lbl.textContent = cb ? cb.nextElementSibling.textContent.trim() : "1 " + allWord;
+        lbl.textContent = window.getProjectFilterSummaryLabel
+          ? window.getProjectFilterSummaryLabel(cb, "1 " + allWord)
+          : (cb?.dataset?.summaryLabel || ("1 " + allWord));
         return;
       }
       lbl.textContent = values.length + " выбрано";

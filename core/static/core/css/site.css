@@ -597,6 +597,20 @@ body .second-sidebar + .flex-grow-1 {
   font-size: 1.3rem;
 }
 
+.project-filter-menu {
+  width: max-content;
+  min-width: 200px;
+}
+
+.project-filter-menu .form-check {
+  width: max-content;
+  max-width: 100%;
+}
+
+.project-filter-menu .form-check-label {
+  white-space: nowrap;
+}
+
 /* Чекбоксы в секции "Политика": точные отступы по 2px слева и справа */
 #policy-pane .form-check {
   padding-left: 0 !important;            /* убрать стандартный отступ 1.5em у контейнера */

@@ -5,23 +5,23 @@
     <i class="bi bi-table"></i> Проекты договоров
   </h5>
   <div class="dropdown" id="contracts-project-filter-dropdown">
-    <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+    <button class="btn btn-outline-secondary btn-sm dropdown-toggle text-nowrap" type="button"
             id="contracts-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
       Проекты: <span class="js-contracts-filter-label">Все</span>
     </button>
-    <div class="dropdown-menu p-3" aria-labelledby="contracts-project-filter-toggle"
-         style="min-width: 200px; max-height: 240px; overflow-y: auto;">
+    <div class="dropdown-menu p-3 contracts-project-filter-menu" aria-labelledby="contracts-project-filter-toggle"
+         style="min-width: 100%; width: max-content; max-width: calc(100vw - 2rem); max-height: 240px; overflow-y: auto; overflow-x: auto; white-space: nowrap;">
       <div class="form-check mb-2">
         <input class="form-check-input js-contracts-filter" type="checkbox" value="__all__" id="contracts-filter-all">
-        <label class="form-check-label" for="contracts-filter-all">Все проекты</label>
+        <label class="form-check-label text-nowrap" for="contracts-filter-all">Все проекты</label>
       </div>
       <hr class="dropdown-divider">
       {% for proj in contract_projects %}
         <div class="form-check">
           <input class="form-check-input js-contracts-filter" type="checkbox"
                  value="{{ proj.id }}" id="contracts-filter-{{ proj.id }}">
-          <label class="form-check-label" for="contracts-filter-{{ proj.id }}">
-            {{ proj.short_uid }}
+          <label class="form-check-label text-nowrap" for="contracts-filter-{{ proj.id }}">
+            {{ proj.short_uid }}{% if proj.type %} {{ proj.type.short_name|default:proj.type }}{% endif %}{% if proj.name %} {{ proj.name }}{% endif %}
           </label>
         </div>
       {% empty %}

@@ -12,7 +12,7 @@
               id="reg-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
         Проекты: <span class="js-reg-filter-label">Все</span>
       </button>
-      <div class="dropdown-menu p-3" aria-labelledby="reg-project-filter-toggle" style="min-width: 200px; max-height: 240px; overflow-y: auto;">
+      <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="reg-project-filter-toggle" style="max-height: 240px; overflow-y: auto;">
         <div class="form-check mb-2">
           <input class="form-check-input js-reg-filter" type="checkbox" value="__all__" id="reg-filter-all">
           <label class="form-check-label" for="reg-filter-all">Все проекты</label>
@@ -21,9 +21,11 @@
         {% for r in reg_filter_projects %}
           <div class="form-check">
             <input class="form-check-input js-reg-filter" type="checkbox"
-                   value="{{ r.id }}" id="reg-filter-{{ r.id }}">
+                   value="{{ r.id }}" id="reg-filter-{{ r.id }}"
+                   data-summary-label="{{ r.short_uid }}"
+                   data-full-label="{{ r.short_uid }}{% if r.type %} {{ r.type.short_name|default:r.type }}{% endif %}{% if r.name %} {{ r.name }}{% endif %}">
             <label class="form-check-label" for="reg-filter-{{ r.id }}">
-              {{ r.short_uid }}
+              {{ r.short_uid }}{% if r.type %} {{ r.type.short_name|default:r.type }}{% endif %}{% if r.name %} {{ r.name }}{% endif %}
             </label>
           </div>
         {% empty %}
@@ -184,8 +186,14 @@
               <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
             </div>
             <div class="modal-body">
-              <p class="mb-2">На Яндекс.Диске будет создана структура папок для выбранного проекта:</p>
+              <p class="mb-2">
+                На Яндекс.Диске в подключенном каталоге в папке с датой выбранного проекта в формате ГГГГ
+                будет создана рабочая папка проекта вида «Проект ID Тип Название» с типовой структурой директорий:
+              </p>
               <ul id="reg-ws-folder-counts" class="small mb-3"></ul>
+              <p class="mb-0">
+                Руководителю проекта будет предоставлен доступ к рабочей папке проекта с правами редактора.
+              </p>
               <div id="reg-ws-progress" class="d-none">
                 <div class="ws-progress-track">
                   <div class="ws-progress-fill" style="width:0%"></div>
@@ -238,6 +246,30 @@
                     <button type="button" id="ws-folder-delete-btn" class="btn btn-outline-danger btn-sm" title="Удалить">
                       <i class="bi bi-x-square"></i>
                     </button>
+                  </div>
+                </div>
+              </div>
+              <div class="mt-3">
+                <a class="text-muted small text-decoration-none" data-bs-toggle="collapse"
+                   href="#ws-folder-vars" role="button" aria-expanded="false">
+                  <i class="bi bi-info-circle me-1"></i>Доступные переменные
+                </a>
+                <div class="collapse mt-2" id="ws-folder-vars">
+                  <div class="table-responsive">
+                    <table class="table table-bordered mb-0 small">
+                      <thead class="table-light">
+                        <tr>
+                          <th class="ps-3 py-2">Переменная</th>
+                          <th class="ps-3 py-2">Описание</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td class="ps-3 py-2"><code>{project_label}</code></td>
+                          <td class="ps-3 py-2">Обозначение проекта в формате «Проект ID Тип Название проекта»</td>
+                        </tr>
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               </div>
@@ -378,7 +410,7 @@
               id="work-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
         Проекты: <span class="js-work-filter-label">Все</span>
       </button>
-      <div class="dropdown-menu p-3" aria-labelledby="work-project-filter-toggle" style="min-width: 200px; max-height: 240px; overflow-y: auto;">
+      <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="work-project-filter-toggle" style="max-height: 240px; overflow-y: auto;">
         <div class="form-check mb-2">
           <input class="form-check-input js-work-filter" type="checkbox" value="__all__" id="work-filter-all">
           <label class="form-check-label" for="work-filter-all">Все проекты</label>
@@ -387,9 +419,11 @@
         {% for project in work_projects %}
           <div class="form-check">
             <input class="form-check-input js-work-filter" type="checkbox"
-                   value="{{ project.id }}" id="work-filter-{{ project.id }}">
+                   value="{{ project.id }}" id="work-filter-{{ project.id }}"
+                   data-summary-label="{{ project.short_uid }}"
+                   data-full-label="{{ project.short_uid }}{% if project.type %} {{ project.type.short_name|default:project.type }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}">
             <label class="form-check-label" for="work-filter-{{ project.id }}">
-              {{ project.short_uid }}
+              {{ project.short_uid }}{% if project.type %} {{ project.type.short_name|default:project.type }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}
             </label>
           </div>
         {% empty %}
@@ -513,7 +547,7 @@
               id="legal-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
         Проекты: <span class="js-legal-filter-label">Все</span>
       </button>
-      <div class="dropdown-menu p-3" aria-labelledby="legal-project-filter-toggle" style="min-width: 200px; max-height: 240px; overflow-y: auto;">
+      <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="legal-project-filter-toggle" style="max-height: 240px; overflow-y: auto;">
         <div class="form-check mb-2">
           <input class="form-check-input js-legal-filter" type="checkbox" value="__all__" id="legal-filter-all">
           <label class="form-check-label" for="legal-filter-all">Все проекты</label>
@@ -522,9 +556,11 @@
         {% for project in legal_projects %}
           <div class="form-check">
             <input class="form-check-input js-legal-filter" type="checkbox"
-                   value="{{ project.id }}" id="legal-filter-{{ project.id }}">
+                   value="{{ project.id }}" id="legal-filter-{{ project.id }}"
+                   data-summary-label="{{ project.short_uid }}"
+                   data-full-label="{{ project.short_uid }}{% if project.type %} {{ project.type.short_name|default:project.type }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}">
             <label class="form-check-label" for="legal-filter-{{ project.id }}">
-              {{ project.short_uid }}
+              {{ project.short_uid }}{% if project.type %} {{ project.type.short_name|default:project.type }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}
             </label>
           </div>
         {% empty %}
@@ -642,6 +678,27 @@
   (function(){
     const FILTER_ALL = "__all__";
     window.__regProjectFilter = window.__regProjectFilter || [FILTER_ALL];
+    window.getProjectFilterSummaryLabel = window.getProjectFilterSummaryLabel || function(input, fallback) {
+      const summary = input?.dataset?.summaryLabel?.trim();
+      return summary || fallback;
+    };
+    window.bindProjectFilterMenuWidth = window.bindProjectFilterMenuWidth || function(dropdown) {
+      if (!dropdown || dropdown.dataset.projectMenuWidthBound === "1") return;
+      dropdown.dataset.projectMenuWidthBound = "1";
+      const menu = dropdown.querySelector(".project-filter-menu");
+      if (!menu) return;
+      dropdown.addEventListener("shown.bs.dropdown", () => {
+        const labels = Array.from(menu.querySelectorAll(".form-check-label"));
+        const widestLabel = labels.reduce((maxWidth, item) => (
+          Math.max(maxWidth, Math.ceil(item.scrollWidth))
+        ), 0);
+        if (!widestLabel) return;
+        const controlWidth = Math.ceil(dropdown.querySelector(".dropdown-toggle")?.offsetWidth || 200);
+        const checkboxWidth = Math.ceil(menu.querySelector(".form-check-input")?.offsetWidth || 18);
+        const contentWidth = widestLabel + checkboxWidth + 64;
+        menu.style.minWidth = Math.max(controlWidth, 200, contentWidth) + "px";
+      });
+    };
 
     function initRegFilter() {
       const pane = document.getElementById("projects-pane");
@@ -655,6 +712,7 @@
 
       if (!dropdown || checks.length === 0 || dropdown.dataset.bound === "1") return;
       dropdown.dataset.bound = "1";
+      window.bindProjectFilterMenuWidth(dropdown);
 
       function syncCheckboxes(values) {
         const set = new Set(values);
@@ -665,7 +723,7 @@
         if (values.includes(FILTER_ALL) || !values.length) { label.textContent = "Все"; return; }
         if (values.length === 1) {
           const input = Array.from(checks).find(cb => cb.value === values[0]);
-          label.textContent = input?.nextElementSibling?.textContent?.trim() || "1 проект";
+          label.textContent = window.getProjectFilterSummaryLabel(input, "1 проект");
           return;
         }
         label.textContent = values.length + " выбрано";
@@ -741,6 +799,7 @@
       var firstCheck = checks[0];
       if (firstCheck.dataset.legalBound === "1") return;
       firstCheck.dataset.legalBound = "1";
+      window.bindProjectFilterMenuWidth(label?.closest(".dropdown"));
 
       function syncCheckboxes(values) {
         const set = new Set(values);
@@ -756,7 +815,7 @@
         }
         if (values.length === 1) {
           const input = Array.from(checks).find((cb) => cb.value === values[0]);
-          label.textContent = input?.nextElementSibling?.textContent?.trim() || "1 проект";
+          label.textContent = window.getProjectFilterSummaryLabel(input, "1 проект");
           return;
         }
         label.textContent = `${values.length} выбрано`;
@@ -846,6 +905,7 @@
       const firstCheck = checks[0];
       if (firstCheck.dataset.workBound === "1") return;
       firstCheck.dataset.workBound = "1";
+      window.bindProjectFilterMenuWidth(label?.closest(".dropdown"));
 
       function syncCheckboxes(values) {
         const set = new Set(values);
@@ -859,7 +919,7 @@
         }
         if (values.length === 1) {
           const input = Array.from(checks).find((cb) => cb.value === values[0]);
-          label.textContent = input?.nextElementSibling?.textContent?.trim() || "1 проект";
+          label.textContent = window.getProjectFilterSummaryLabel(input, "1 проект");
           return;
         }
         label.textContent = values.length + " выбрано";
@@ -996,17 +1056,27 @@
     listContainer.innerHTML = "";
     allProjectIds.forEach(function(pid) {
       var regCb = Array.from(regChecks).find(function(c) { return c.value === pid; });
-      var labelText = regCb ? regCb.nextElementSibling.textContent.trim() : pid;
       var div = document.createElement("div");
       div.className = "form-check";
-      div.innerHTML =
-        '<input class="form-check-input js-master-filter" type="checkbox" value="' + pid + '" id="master-filter-' + pid + '">' +
-        '<label class="form-check-label" for="master-filter-' + pid + '">' + labelText + '</label>';
+      var input = document.createElement("input");
+      input.className = "form-check-input js-master-filter";
+      input.type = "checkbox";
+      input.value = pid;
+      input.id = "master-filter-" + pid;
+      input.dataset.summaryLabel = regCb?.dataset?.summaryLabel || pid;
+      input.dataset.fullLabel = regCb?.dataset?.fullLabel || regCb?.nextElementSibling?.textContent?.trim() || pid;
+      var label = document.createElement("label");
+      label.className = "form-check-label";
+      label.htmlFor = input.id;
+      label.textContent = input.dataset.fullLabel;
+      div.appendChild(input);
+      div.appendChild(label);
       listContainer.appendChild(div);
     });
 
     var dropdown = document.getElementById("master-project-filter-dropdown");
     if (!dropdown) return;
+    window.bindProjectFilterMenuWidth(dropdown);
     var masterChecks = dropdown.querySelectorAll(".js-master-filter");
 
     function getMasterValues() {
@@ -1022,7 +1092,7 @@
       if (values[0] === FILTER_ALL) { masterLabel.textContent = "Все"; return; }
       if (values.length === 1) {
         var cb = Array.from(masterChecks).find(function(c) { return c.value === values[0]; });
-        masterLabel.textContent = cb ? cb.nextElementSibling.textContent.trim() : "1 проект";
+        masterLabel.textContent = window.getProjectFilterSummaryLabel(cb, "1 проект");
         return;
       }
       masterLabel.textContent = values.length + " выбрано";
@@ -1101,7 +1171,7 @@
         if (isAll) label.textContent = "Все";
         else if (isSingle) {
           var cb = Array.from(checks).find(function(c) { return c.value === values[0]; });
-          label.textContent = cb ? cb.nextElementSibling.textContent.trim() : "1 проект";
+          label.textContent = window.getProjectFilterSummaryLabel(cb, "1 проект");
         } else {
           label.textContent = "Все";
         }
@@ -1131,7 +1201,7 @@
         if (isAll) label.textContent = "Все";
         else if (isSingle) {
           var cb = Array.from(checks).find(function(c) { return c.value === values[0]; });
-          label.textContent = cb ? cb.nextElementSibling.textContent.trim() : "1 проект";
+          label.textContent = window.getProjectFilterSummaryLabel(cb, "1 проект");
         } else label.textContent = "Все";
       }
       window.__perfProjectFilter = isAll ? [FILTER_ALL] : values.slice();

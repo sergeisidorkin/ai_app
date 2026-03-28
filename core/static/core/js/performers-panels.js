@@ -49,6 +49,27 @@
 
   function pane() { return document.getElementById('performers-pane'); }
   const qa = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+  window.getProjectFilterSummaryLabel = window.getProjectFilterSummaryLabel || function(input, fallback) {
+    var summary = input && input.dataset ? (input.dataset.summaryLabel || '').trim() : '';
+    return summary || fallback;
+  };
+  window.bindProjectFilterMenuWidth = window.bindProjectFilterMenuWidth || function(dropdown) {
+    if (!dropdown || dropdown.dataset.projectMenuWidthBound === '1') return;
+    dropdown.dataset.projectMenuWidthBound = '1';
+    var menu = dropdown.querySelector('.project-filter-menu');
+    if (!menu) return;
+    dropdown.addEventListener('shown.bs.dropdown', function() {
+      var labels = qa('.form-check-label', menu);
+      var widestLabel = labels.reduce(function(maxWidth, item) {
+        return Math.max(maxWidth, Math.ceil(item.scrollWidth));
+      }, 0);
+      if (!widestLabel) return;
+      var controlWidth = Math.ceil(dropdown.querySelector('.dropdown-toggle')?.offsetWidth || 200);
+      var checkboxWidth = Math.ceil(menu.querySelector('.form-check-input')?.offsetWidth || 18);
+      var contentWidth = widestLabel + checkboxWidth + 64;
+      menu.style.minWidth = Math.max(controlWidth, 200, contentWidth) + 'px';
+    });
+  };
 
   function getCookie(name) {
     const m = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
@@ -602,6 +623,7 @@
 
     if (!dropdown || !checks.length || !label || dropdown.dataset.bound === '1') return;
     dropdown.dataset.bound = '1';
+    window.bindProjectFilterMenuWidth(dropdown);
 
     function syncCheckboxes(values) {
       const set = new Set(values);
@@ -617,7 +639,7 @@
       }
       if (values.length === 1) {
         const input = Array.from(checks).find((cb) => cb.value === values[0]);
-        label.textContent = input?.nextElementSibling?.textContent?.trim() || '1 проект';
+        label.textContent = window.getProjectFilterSummaryLabel(input, '1 проект');
         return;
       }
       label.textContent = `${values.length} выбрано`;
@@ -1034,6 +1056,7 @@
 
     if (!dropdown || !checks.length || !label || dropdown.dataset.bound === '1') return;
     dropdown.dataset.bound = '1';
+    window.bindProjectFilterMenuWidth(dropdown);
 
     function syncCheckboxes(values) {
       const set = new Set(values);
@@ -1049,7 +1072,7 @@
       }
       if (values.length === 1) {
         const input = Array.from(checks).find((cb) => cb.value === values[0]);
-        label.textContent = input?.nextElementSibling?.textContent?.trim() || '1 проект';
+        label.textContent = window.getProjectFilterSummaryLabel(input, '1 проект');
         return;
       }
       label.textContent = `${values.length} выбрано`;
@@ -1146,6 +1169,7 @@
 
     if (!dropdown || !radios.length || !label || dropdown.dataset.bound === '1') return;
     dropdown.dataset.bound = '1';
+    window.bindProjectFilterMenuWidth(dropdown);
 
     function applyFilter(projectId) {
       window.__infoRequestProjectFilter = projectId ? [projectId] : [];
@@ -1164,7 +1188,7 @@
       }
       const selected = Array.from(radios).find((r) => r.checked);
       label.textContent = (selected && selected.value)
-        ? (selected.nextElementSibling?.textContent?.trim() || '—')
+        ? window.getProjectFilterSummaryLabel(selected, '—')
         : 'Не выбран';
       updateInfoRequestState();
       applyRowGrouping(root.querySelector('#info-request-approval-section'));
@@ -1931,8 +1955,7 @@
           projLabel.textContent = 'Все';
         } else if (pf.length === 1) {
           var cb = root.querySelector('.js-perf-filter[value="' + CSS.escape(pf[0]) + '"]');
-          projLabel.textContent = cb && cb.nextElementSibling
-            ? cb.nextElementSibling.textContent.trim() : '1 проект';
+          projLabel.textContent = window.getProjectFilterSummaryLabel(cb, '1 проект');
         } else {
           projLabel.textContent = pf.length + ' выбрано';
         }
