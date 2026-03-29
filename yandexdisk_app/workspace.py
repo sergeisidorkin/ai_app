@@ -57,6 +57,11 @@ def _resolve_workspace_folder_name(name: str, project: ProjectRegistration | Non
     return _sanitize(" ".join(resolved.split()))
 
 
+def _contains_workspace_project_variable(path: str) -> bool:
+    raw = str(path or "")
+    return any(variable in raw for variable, _description in WORKSPACE_PROJECT_VARIABLES)
+
+
 def _sanitize_relative_path(path: str) -> str:
     parts = [
         _sanitize(" ".join(part.split()))

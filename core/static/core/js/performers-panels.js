@@ -90,7 +90,7 @@
     });
   }
   function updatePerformerMasterState() {
-    const boxes = getRowChecks('performer-select');
+    const boxes = getVisiblePerformerChecks();
     const master = pane()?.querySelector('input.form-check-input[data-actions-id="performers-actions"]');
     if (!master) return;
     const checkedCount = boxes.filter(b => b.checked).length;
@@ -100,9 +100,15 @@
   function ensurePerformerActionsVisibility() {
     const panel = pane()?.querySelector('#performers-actions');
     if (!panel) return;
-    const any = getRowChecks('performer-select').some(b => b.checked);
+    const any = getVisiblePerformerChecks().some(b => b.checked);
     panel.classList.toggle('d-none', !any);
     panel.classList.toggle('d-flex', any);
+  }
+  function getVisiblePerformerChecks() {
+    return getRowChecks('performer-select').filter((checkbox) => {
+      const row = checkbox.closest('tr');
+      return row && !row.classList.contains('d-none');
+    });
   }
 
   function getParticipationMaster() {
@@ -240,6 +246,31 @@
       .map((row) => row.querySelector('input[name="contract-select"]'))
       .filter((checkbox) => checkbox && !checkbox.disabled);
   }
+  function refreshPerformersSelectionState() {
+    getRowChecks('performer-select').forEach((checkbox) => {
+      const row = checkbox.closest('tr');
+      if (row && row.classList.contains('d-none')) checkbox.checked = false;
+    });
+    getRowChecks('participation-select').forEach((checkbox) => {
+      const row = checkbox.closest('tr');
+      if (row && isFilterHidden(row)) checkbox.checked = false;
+    });
+    getRowChecks('contract-select').forEach((checkbox) => {
+      const row = checkbox.closest('tr');
+      if (row && isFilterHidden(row)) checkbox.checked = false;
+    });
+    getRowChecks('info-request-select').forEach((checkbox) => {
+      const row = checkbox.closest('tr');
+      if (row && isFilterHidden(row)) checkbox.checked = false;
+    });
+    updatePerformerMasterState();
+    updateRowHighlight('performer-select');
+    ensurePerformerActionsVisibility();
+    updateParticipationState();
+    updateContractState();
+    updateInfoRequestState();
+  }
+  window.__refreshPerformersSelectionState = refreshPerformersSelectionState;
 
   function updateContractState() {
     const boxes = getVisibleContractChecks();
@@ -1692,7 +1723,7 @@
 
     const master = e.target.closest('input.form-check-input[data-actions-id="performers-actions"]');
     if (master && root.contains(master)) {
-      getRowChecks('performer-select').forEach(b => { b.checked = master.checked; });
+      getVisiblePerformerChecks().forEach(b => { b.checked = master.checked; });
       master.indeterminate = false;
       updatePerformerMasterState();
       updateRowHighlight('performer-select');

@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
@@ -23,6 +24,8 @@ class OIDCValidatorTests(TestCase):
             last_name="User",
             is_staff=True,
         )
+        group = Group.objects.create(name="Nextcloud Staff")
+        user.groups.add(group)
         request = SimpleNamespace(user=user, scopes=["openid", "profile", "email"])
 
         claims = IMCOAuth2Validator().get_oidc_claims(None, None, request)
@@ -34,6 +37,9 @@ class OIDCValidatorTests(TestCase):
         self.assertEqual(claims["family_name"], "User")
         self.assertTrue(claims["email_verified"])
         self.assertTrue(claims["is_staff"])
+        self.assertEqual(claims["nextcloud_uid"], f"ncstaff-{user.pk}")
+        self.assertEqual(claims["groups"], ["Nextcloud Staff"])
+        self.assertEqual(claims["quota"], "")
 
     def test_omits_profile_and_email_claims_without_scopes(self):
         user = User.objects.create_user(
@@ -84,5 +90,23 @@ class OIDCAuthorizationViewTests(TestCase):
         client.force_login(user)
 
         response = client.get(reverse("oauth2_provider:authorize"), {"client_id": "moodle-client"})
+
+        self.assertEqual(response.status_code, 403)
+
+    @override_settings(
+        NEXTCLOUD_OIDC_CLIENT_ID="nextcloud-client",
+        OIDC_STAFF_ONLY_CLIENT_IDS=("nextcloud-client",),
+    )
+    def test_nextcloud_client_is_also_staff_only(self):
+        user = User.objects.create_user(
+            username="external2@example.com",
+            email="external2@example.com",
+            password="Secret123!",
+            is_staff=False,
+        )
+        client = Client()
+        client.force_login(user)
+
+        response = client.get(reverse("oauth2_provider:authorize"), {"client_id": "nextcloud-client"})
 
         self.assertEqual(response.status_code, 403)

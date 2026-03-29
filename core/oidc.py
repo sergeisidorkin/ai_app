@@ -9,7 +9,14 @@ from oauth2_provider.views import AuthorizationView
 
 class IMCOAuth2Validator(OAuth2Validator):
     oidc_claim_scope = dict(OAuth2Validator.oidc_claim_scope)
-    oidc_claim_scope.update({"is_staff": "profile"})
+    oidc_claim_scope.update(
+        {
+            "is_staff": "profile",
+            "nextcloud_uid": "profile",
+            "groups": "profile",
+            "quota": "profile",
+        }
+    )
 
     def get_additional_claims(self):
         return {
@@ -23,6 +30,9 @@ class IMCOAuth2Validator(OAuth2Validator):
             "email": lambda request: (request.user.email or "").strip(),
             "email_verified": lambda request: bool((request.user.email or "").strip()),
             "is_staff": lambda request: bool(request.user.is_staff),
+            "nextcloud_uid": lambda request: f"ncstaff-{request.user.pk}",
+            "groups": lambda request: list(request.user.groups.order_by("name").values_list("name", flat=True)),
+            "quota": lambda request: "",
         }
 
     def get_claim_dict(self, request):
