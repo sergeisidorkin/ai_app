@@ -17,6 +17,23 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 
 from experts_app.models import ExpertProfile
+from core.cloud_storage import (
+    CloudStorageNotReadyError,
+    build_project_folder_name,
+    build_workspace_folder_tree,
+    contains_workspace_project_variable,
+    create_basic_project_workspace_stream as routed_create_basic_project_workspace_stream,
+    create_folder as cloud_create_folder,
+    create_project_workspace as routed_create_project_workspace,
+    create_source_data_workspace_stream as routed_create_source_data_workspace_stream,
+    get_registration_standard_folders,
+    get_selected_root_path,
+    get_workspace_result_class,
+    list_folder_resources,
+    publish_resource as cloud_publish_resource,
+    sanitize_folder_name,
+    upload_file as cloud_upload_file,
+)
 from policy_app.models import TypicalSection
 from smtp_app.models import ExternalSMTPAccount
 from users_app.models import Employee
@@ -1449,8 +1466,6 @@ def legal_entity_work_deps(request):
 @user_passes_test(staff_required)
 @require_POST
 def create_workspace(request):
-    from yandexdisk_app.workspace import create_project_workspace
-
     project_id = request.POST.get("project_id")
     if not project_id:
         return JsonResponse({"ok": False, "error": "Не выбран проект."}, status=400)
@@ -1469,7 +1484,10 @@ def create_workspace(request):
     if not project:
         return JsonResponse({"ok": False, "error": "Проект не найден."}, status=404)
 
-    result = create_project_workspace(request.user, project)
+    try:
+        result = routed_create_project_workspace(request.user, project)
+    except CloudStorageNotReadyError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
     if not result.ok:
         return JsonResponse({"ok": False, "error": result.message}, status=400)
 
@@ -1480,8 +1498,6 @@ def create_workspace(request):
 @user_passes_test(staff_required)
 @require_POST
 def create_registration_workspace(request):
-    from yandexdisk_app.workspace import create_basic_project_workspace_stream, WorkspaceResult
-
     project_id = request.POST.get("project_id")
     if not project_id:
         return JsonResponse({"ok": False, "error": "Не выбран проект."}, status=400)
@@ -1499,6 +1515,8 @@ def create_registration_workspace(request):
     )
     if not project:
         return JsonResponse({"ok": False, "error": "Проект не найден."}, status=404)
+
+    workspace_result_class = get_workspace_result_class()
 
     MIN_CHUNK = 256
 
@@ -1510,14 +1528,18 @@ def create_registration_workspace(request):
         return encoded
 
     def _stream():
-        for item in create_basic_project_workspace_stream(request.user, project):
-            if isinstance(item, WorkspaceResult):
-                if item.ok:
-                    yield _padded(json.dumps({"ok": True, "message": item.message}) + "\n")
+        try:
+            iterator = routed_create_basic_project_workspace_stream(request.user, project)
+            for item in iterator:
+                if isinstance(item, workspace_result_class):
+                    if item.ok:
+                        yield _padded(json.dumps({"ok": True, "message": item.message}) + "\n")
+                    else:
+                        yield _padded(json.dumps({"ok": False, "error": item.message}) + "\n")
                 else:
-                    yield _padded(json.dumps({"ok": False, "error": item.message}) + "\n")
-            else:
-                yield _padded(json.dumps(item) + "\n")
+                    yield _padded(json.dumps(item) + "\n")
+        except CloudStorageNotReadyError as exc:
+            yield _padded(json.dumps({"ok": False, "error": str(exc)}) + "\n")
 
     resp = StreamingHttpResponse(_stream(), content_type="application/x-ndjson")
     resp["Cache-Control"] = "no-cache, no-store"
@@ -1588,8 +1610,6 @@ def workspace_folders_reset(request):
 @user_passes_test(staff_required)
 @require_POST
 def create_source_data_workspace(request):
-    from yandexdisk_app.workspace import create_source_data_workspace_stream, WorkspaceResult
-
     project_id = request.POST.get("project_id")
     if not project_id:
         return JsonResponse({"ok": False, "error": "Не выбран проект."}, status=400)
@@ -1608,6 +1628,8 @@ def create_source_data_workspace(request):
     if not project:
         return JsonResponse({"ok": False, "error": "Проект не найден."}, status=404)
 
+    workspace_result_class = get_workspace_result_class()
+
     MIN_CHUNK = 256
 
     def _padded(line):
@@ -1617,14 +1639,18 @@ def create_source_data_workspace(request):
         return encoded
 
     def _stream():
-        for item in create_source_data_workspace_stream(request.user, project):
-            if isinstance(item, WorkspaceResult):
-                if item.ok:
-                    yield _padded(json.dumps({"ok": True, "message": item.message}) + "\n")
+        try:
+            iterator = routed_create_source_data_workspace_stream(request.user, project)
+            for item in iterator:
+                if isinstance(item, workspace_result_class):
+                    if item.ok:
+                        yield _padded(json.dumps({"ok": True, "message": item.message}) + "\n")
+                    else:
+                        yield _padded(json.dumps({"ok": False, "error": item.message}) + "\n")
                 else:
-                    yield _padded(json.dumps({"ok": False, "error": item.message}) + "\n")
-            else:
-                yield _padded(json.dumps(item) + "\n")
+                    yield _padded(json.dumps(item) + "\n")
+        except CloudStorageNotReadyError as exc:
+            yield _padded(json.dumps({"ok": False, "error": str(exc)}) + "\n")
 
     resp = StreamingHttpResponse(_stream(), content_type="application/x-ndjson")
     resp["Cache-Control"] = "no-cache, no-store"
@@ -1637,11 +1663,6 @@ def create_source_data_workspace(request):
 @require_GET
 def source_data_target_folder_load(request):
     from .models import SourceDataTargetFolder
-    from yandexdisk_app.workspace import (
-        REGISTRATION_STANDARD_FOLDERS,
-        _build_folder_tree,
-        _contains_workspace_project_variable,
-    )
 
     qs, _ = _get_effective_folders(request.user)
     rows = list(
@@ -1650,11 +1671,11 @@ def source_data_target_folder_load(request):
     )
     options = [
         path
-        for path in _build_folder_tree(rows)
-        if path.count("/") <= 1 and not _contains_workspace_project_variable(path)
+        for path in build_workspace_folder_tree(rows)
+        if path.count("/") <= 1 and not contains_workspace_project_variable(path)
     ] if rows else []
     if not options:
-        options = list(REGISTRATION_STANDARD_FOLDERS)
+        options = list(get_registration_standard_folders())
 
     target = SourceDataTargetFolder.objects.filter(user=request.user).first()
     folder_name = target.folder_name if target else ""
@@ -1667,7 +1688,6 @@ def source_data_target_folder_load(request):
 @require_POST
 def source_data_target_folder_save(request):
     from .models import SourceDataTargetFolder
-    from yandexdisk_app.workspace import _contains_workspace_project_variable
 
     try:
         data = json.loads(request.body)
@@ -1677,7 +1697,7 @@ def source_data_target_folder_save(request):
     folder_name = (data.get("folder_name") or "").strip()
     if not folder_name:
         return JsonResponse({"ok": False, "error": "Не указано имя папки."}, status=400)
-    if _contains_workspace_project_variable(folder_name):
+    if contains_workspace_project_variable(folder_name):
         return JsonResponse(
             {"ok": False, "error": "Шаблонные папки проекта нельзя использовать как целевую папку."},
             status=400,
@@ -1695,7 +1715,6 @@ def source_data_target_folder_save(request):
 @require_GET
 def contract_project_target_folder_load(request):
     from .models import ContractProjectTargetFolder
-    from yandexdisk_app.workspace import REGISTRATION_STANDARD_FOLDERS
 
     qs, _ = _get_effective_folders(request.user)
     options = list(
@@ -1704,7 +1723,7 @@ def contract_project_target_folder_load(request):
         .values_list("name", flat=True)
     )
     if not options:
-        options = list(REGISTRATION_STANDARD_FOLDERS)
+        options = list(get_registration_standard_folders())
 
     target = ContractProjectTargetFolder.objects.filter(user=request.user).first()
     folder_name = target.folder_name if target else ""
@@ -1752,10 +1771,6 @@ def create_contract_project(request):
     from contracts_app.docx_processor import process_template
     from experts_app.models import ExpertProfile
     from group_app.models import GroupMember
-    from yandexdisk_app.workspace import _build_project_folder_name, _sanitize
-    from yandexdisk_app.models import YandexDiskSelection
-    from yandexdisk_app.service import create_folder, list_resources, upload_file, publish_resource
-
     raw_ids = request.POST.getlist("performer_ids[]") or request.POST.getlist("performer_ids")
     if not raw_ids:
         return JsonResponse({"ok": False, "error": "Не выбраны строки."}, status=400)
@@ -1777,15 +1792,16 @@ def create_contract_project(request):
     if not performers:
         return JsonResponse({"ok": False, "error": "Исполнители не найдены."}, status=404)
 
-    selection = YandexDiskSelection.objects.filter(user=request.user).first()
-    if not selection or not selection.resource_path:
-        return JsonResponse({"ok": False, "error": "Не выбрана папка на Яндекс.Диске."}, status=400)
+    try:
+        disk_root = get_selected_root_path(request.user)
+    except CloudStorageNotReadyError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+    if not disk_root:
+        return JsonResponse({"ok": False, "error": "Не выбрана папка в основном облачном хранилище."}, status=400)
 
     target_obj = ContractProjectTargetFolder.objects.filter(user=request.user).first()
     if not target_obj or not target_obj.folder_name:
         return JsonResponse({"ok": False, "error": "Не выбрана целевая папка в настройках."}, status=400)
-
-    disk_root = selection.resource_path.rstrip("/")
 
     all_templates = list(
         ContractTemplate.objects
@@ -1915,170 +1931,173 @@ def create_contract_project(request):
         return encoded
 
     def _stream():
-        errors = []
-        warnings = []
-        created_ids = []
-        current = 0
+        try:
+            errors = []
+            warnings = []
+            created_ids = []
+            current = 0
 
-        for perf in unique_entries:
-            project = perf.registration
-            year_str = _sanitize(str(project.year) if project.year else "Без года")
-            project_folder = _build_project_folder_name(project)
-            target_folder = _sanitize(target_obj.folder_name)
-            base_path = f"{disk_root}/{year_str}/{project_folder}/{target_folder}"
+            for perf in unique_entries:
+                project = perf.registration
+                year_str = sanitize_folder_name(str(project.year) if project.year else "Без года")
+                project_folder = build_project_folder_name(project)
+                target_folder = sanitize_folder_name(target_obj.folder_name)
+                base_path = f"{disk_root}/{year_str}/{project_folder}/{target_folder}"
 
-            existing = list_resources(request.user, base_path, limit=1000)
-            next_number = 0
-            for item in existing:
-                match = re.match(r"^(\d{3})\s", item.get("name", ""))
-                if match:
-                    next_number = max(next_number, int(match.group(1)) + 1)
+                existing = list_folder_resources(request.user, base_path, limit=1000)
+                next_number = 0
+                for item in existing:
+                    match = re.match(r"^(\d{3})\s", item.get("name", ""))
+                    if match:
+                        next_number = max(next_number, int(match.group(1)) + 1)
 
-            executor_name = _executor_short(perf.executor)
-            folder_name = _sanitize(f"{next_number:03d} {executor_name}")
-            folder_path = f"{base_path}/{folder_name}"
+                executor_name = _executor_short(perf.executor)
+                folder_name = sanitize_folder_name(f"{next_number:03d} {executor_name}")
+                folder_path = f"{base_path}/{folder_name}"
 
-            key = (perf.registration_id, perf.executor)
-            if not create_folder(request.user, folder_path):
-                errors.append(folder_name)
-                current += 1
-                yield _padded(json.dumps({"current": current, "total": total}) + "\n")
-                continue
+                key = (perf.registration_id, perf.executor)
+                if not cloud_create_folder(request.user, folder_path):
+                    errors.append(folder_name)
+                    current += 1
+                    yield _padded(json.dumps({"current": current, "total": total}) + "\n")
+                    continue
 
-            created_ids.extend(executor_to_ids[key])
+                created_ids.extend(executor_to_ids[key])
 
-            now_dt = timezone.now()
-            reg_id, executor_val = key
-            existing_batch_count = (
-                Performer.objects
-                .filter(
-                    registration_id=reg_id,
-                    executor=executor_val,
-                    contract_batch_id__isnull=False,
-                )
-                .values("contract_batch_id")
-                .distinct()
-                .count()
-            )
-            is_addendum = existing_batch_count > 0
-            addendum_number = existing_batch_count if is_addendum else None
-
-            if is_addendum:
-                first_performer = (
+                now_dt = timezone.now()
+                reg_id, executor_val = key
+                existing_batch_count = (
                     Performer.objects
                     .filter(
                         registration_id=reg_id,
                         executor=executor_val,
                         contract_batch_id__isnull=False,
-                        contract_is_addendum=False,
                     )
-                    .order_by("contract_sent_at", "id")
-                    .first()
+                    .values("contract_batch_id")
+                    .distinct()
+                    .count()
                 )
-                base_date = (
-                    first_performer.contract_sent_at
-                    if first_performer and first_performer.contract_sent_at
-                    else now_dt
-                )
-            else:
-                base_date = now_dt
+                is_addendum = existing_batch_count > 0
+                addendum_number = existing_batch_count if is_addendum else None
 
-            pre_contract_number = _build_contract_number(perf, base_date, addendum_number)
-            perf.contract_number = pre_contract_number
-
-            seen_templates = set()
-            all_perfs_for_executor = executor_to_perfs[key]
-            unique_section_perfs = {}
-            for p in all_perfs_for_executor:
-                sec_id = p.typical_section_id
-                if sec_id not in unique_section_perfs:
-                    unique_section_perfs[sec_id] = p
-
-            for p in unique_section_perfs.values():
-                tmpl = _find_template(p)
-                if not tmpl:
-                    warnings.append(
-                        f"Образец шаблона не найден: {executor_name}"
-                        + (f" ({p.typical_section.code})" if p.typical_section else "")
-                    )
-                    continue
-
-                if tmpl.pk in seen_templates:
-                    continue
-                seen_templates.add(tmpl.pk)
-
-                try:
-                    tmpl.file.open("rb")
-                    try:
-                        file_data = tmpl.file.read()
-                    finally:
-                        tmpl.file.close()
-
-                    if all_variables:
-                        scalars, lists = resolve_variables(
-                            perf, all_variables,
-                            all_performers=all_perfs_for_executor,
+                if is_addendum:
+                    first_performer = (
+                        Performer.objects
+                        .filter(
+                            registration_id=reg_id,
+                            executor=executor_val,
+                            contract_batch_id__isnull=False,
+                            contract_is_addendum=False,
                         )
-                        if scalars or lists:
-                            file_data = process_template(
-                                file_data, scalars,
-                                list_replacements=lists or None,
-                            )
+                        .order_by("contract_sent_at", "id")
+                        .first()
+                    )
+                    base_date = (
+                        first_performer.contract_sent_at
+                        if first_performer and first_performer.contract_sent_at
+                        else now_dt
+                    )
+                else:
+                    base_date = now_dt
 
-                    original_name = tmpl.file.name.split("/")[-1]
-                    upload_path = f"{folder_path}/{original_name}"
-                    if not upload_file(request.user, upload_path, file_data):
-                        errors.append(f"Загрузка файла: {original_name} → {folder_name}")
-                    else:
+                pre_contract_number = _build_contract_number(perf, base_date, addendum_number)
+                perf.contract_number = pre_contract_number
+
+                seen_templates = set()
+                all_perfs_for_executor = executor_to_perfs[key]
+                unique_section_perfs = {}
+                for p in all_perfs_for_executor:
+                    sec_id = p.typical_section_id
+                    if sec_id not in unique_section_perfs:
+                        unique_section_perfs[sec_id] = p
+
+                for p in unique_section_perfs.values():
+                    tmpl = _find_template(p)
+                    if not tmpl:
+                        warnings.append(
+                            f"Образец шаблона не найден: {executor_name}"
+                            + (f" ({p.typical_section.code})" if p.typical_section else "")
+                        )
+                        continue
+
+                    if tmpl.pk in seen_templates:
+                        continue
+                    seen_templates.add(tmpl.pk)
+
+                    try:
+                        tmpl.file.open("rb")
                         try:
-                            public_url = publish_resource(request.user, upload_path)
-                            if public_url:
-                                Performer.objects.filter(
-                                    pk__in=executor_to_ids[key],
-                                ).update(contract_project_link=public_url)
-                        except Exception:
-                            pass
-                except Exception:
-                    errors.append(f"Чтение файла: {tmpl.sample_name}")
+                            file_data = tmpl.file.read()
+                        finally:
+                            tmpl.file.close()
 
-            batch_id = uuid.uuid4()
-            update_kwargs = dict(
-                contract_batch_id=batch_id,
-                contract_is_addendum=is_addendum,
-                contract_addendum_number=addendum_number,
-                contract_project_disk_folder=folder_path,
-            )
-            if pre_contract_number:
-                update_kwargs["contract_number"] = pre_contract_number
-            Performer.objects.filter(pk__in=executor_to_ids[key]).update(**update_kwargs)
+                        if all_variables:
+                            scalars, lists = resolve_variables(
+                                perf, all_variables,
+                                all_performers=all_perfs_for_executor,
+                            )
+                            if scalars or lists:
+                                file_data = process_template(
+                                    file_data, scalars,
+                                    list_replacements=lists or None,
+                                )
 
-            current += 1
-            yield _padded(json.dumps({"current": current, "total": total}) + "\n")
+                        original_name = tmpl.file.name.split("/")[-1]
+                        upload_path = f"{folder_path}/{original_name}"
+                        if not cloud_upload_file(request.user, upload_path, file_data):
+                            errors.append(f"Загрузка файла: {original_name} → {folder_name}")
+                        else:
+                            try:
+                                public_url = cloud_publish_resource(request.user, upload_path)
+                                if public_url:
+                                    Performer.objects.filter(
+                                        pk__in=executor_to_ids[key],
+                                    ).update(contract_project_link=public_url)
+                            except Exception:
+                                pass
+                    except Exception:
+                        errors.append(f"Чтение файла: {tmpl.sample_name}")
 
-        if created_ids:
-            created_set = set(created_ids)
-            Performer.objects.filter(pk__in=created_set).update(
-                contract_project_created=True,
-                contract_project_created_at=timezone.now(),
-                contract_date=timezone.now().date(),
-            )
+                batch_id = uuid.uuid4()
+                update_kwargs = dict(
+                    contract_batch_id=batch_id,
+                    contract_is_addendum=is_addendum,
+                    contract_addendum_number=addendum_number,
+                    contract_project_disk_folder=folder_path,
+                )
+                if pre_contract_number:
+                    update_kwargs["contract_number"] = pre_contract_number
+                Performer.objects.filter(pk__in=executor_to_ids[key]).update(**update_kwargs)
 
-        if errors:
-            msg = f"Ошибки: {'; '.join(errors)}"
-            if warnings:
-                msg += f"\nПредупреждения: {'; '.join(warnings)}"
-            yield _padded(json.dumps({"ok": False, "error": msg}) + "\n")
-        elif warnings:
-            yield _padded(json.dumps({
-                "ok": True,
-                "message": "Проекты договоров созданы.",
-                "warnings": warnings,
-            }) + "\n")
-        else:
-            yield _padded(json.dumps({
-                "ok": True,
-                "message": "Проекты договоров успешно созданы.",
-            }) + "\n")
+                current += 1
+                yield _padded(json.dumps({"current": current, "total": total}) + "\n")
+
+            if created_ids:
+                created_set = set(created_ids)
+                Performer.objects.filter(pk__in=created_set).update(
+                    contract_project_created=True,
+                    contract_project_created_at=timezone.now(),
+                    contract_date=timezone.now().date(),
+                )
+
+            if errors:
+                msg = f"Ошибки: {'; '.join(errors)}"
+                if warnings:
+                    msg += f"\nПредупреждения: {'; '.join(warnings)}"
+                yield _padded(json.dumps({"ok": False, "error": msg}) + "\n")
+            elif warnings:
+                yield _padded(json.dumps({
+                    "ok": True,
+                    "message": "Проекты договоров созданы.",
+                    "warnings": warnings,
+                }) + "\n")
+            else:
+                yield _padded(json.dumps({
+                    "ok": True,
+                    "message": "Проекты договоров успешно созданы.",
+                }) + "\n")
+        except CloudStorageNotReadyError as exc:
+            yield _padded(json.dumps({"ok": False, "error": str(exc)}) + "\n")
 
     resp = StreamingHttpResponse(_stream(), content_type="application/x-ndjson")
     resp["Cache-Control"] = "no-cache, no-store"

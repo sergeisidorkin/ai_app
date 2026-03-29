@@ -15,11 +15,10 @@ from django.utils.text import slugify
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
+from core.cloud_storage import get_user_cloud_launch_url
 from projects_app.models import LegalEntity, Performer, ProjectRegistration
 from policy_app.models import TypicalSection
 from requests_app.models import RequestItem, RequestTable
-
-from yandexdisk_app.models import YandexDiskAccount, YandexDiskSelection
 
 from .models import (
     ChecklistCommentHistory,
@@ -1386,12 +1385,7 @@ def panel(request):
             except Exception:
                 pass
         if not yadisk_url:
-            yadisk_sel = YandexDiskSelection.objects.filter(user=request.user).first()
-            if yadisk_sel and yadisk_sel.resource_path:
-                path = yadisk_sel.resource_path.strip("/")
-                yadisk_url = f"https://disk.yandex.ru/client/disk/{path}" if path else "https://disk.yandex.ru/client/disk"
-            elif YandexDiskAccount.objects.filter(user=request.user).exists():
-                yadisk_url = "https://disk.yandex.ru/client/disk"
+            yadisk_url = get_user_cloud_launch_url(request.user)
 
     return render(
         request,

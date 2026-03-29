@@ -1,3 +1,6 @@
+{% include "onedrive_app/primary_cloud_storage_panel.html" with primary_cloud_storage=primary_cloud_storage primary_cloud_storage_label=primary_cloud_storage_label can_manage_primary_cloud_storage=can_manage_primary_cloud_storage %}
+{% include "nextcloud_app/panel.html" with nextcloud_root_path=nextcloud_root_path nextcloud_root_configured=nextcloud_root_configured nextcloud_connection_status=nextcloud_connection_status nextcloud_connection_status_label=nextcloud_connection_status_label nextcloud_enabled=nextcloud_enabled nextcloud_launch_url=nextcloud_launch_url can_manage_nextcloud_root=can_manage_nextcloud_root %}
+
 {# Панель внешнего SMTP #}
 {% include "smtp_app/connections_partial.html" with smtp_account=smtp_account smtp_form=smtp_form %}
 
