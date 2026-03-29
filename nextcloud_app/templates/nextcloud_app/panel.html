@@ -1,0 +1,91 @@
+<div class="card shadow-sm mb-3" id="nextcloud-root-panel">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <p class="mb-0 fw-semibold d-flex align-items-center fs-6 lh-1">
+        <i class="bi bi-cloud me-2"></i>
+        Nextcloud
+      </p>
+      {% if nextcloud_connection_status == "connected" %}
+      <span class="badge text-bg-success">{{ nextcloud_connection_status_label }}</span>
+      {% elif nextcloud_connection_status == "pending" %}
+      <span class="badge text-bg-secondary">{{ nextcloud_connection_status_label }}</span>
+      {% else %}
+      <span class="badge text-bg-warning">{{ nextcloud_connection_status_label }}</span>
+      {% endif %}
+    </div>
+
+    <p class="text-muted small mb-3">
+      Глобальное корпоративное пространство Nextcloud для всех пользователей приложения.
+      Внутри этого root-каталога позже будут создаваться проектные папки.
+    </p>
+
+    {% if nextcloud_root_configured %}
+    <div class="mb-3">
+      <div class="small text-muted">Выбранный root каталог</div>
+      <div class="d-flex flex-wrap align-items-center gap-2">
+        <div>
+          <i class="bi bi-folder2 me-1 align-auto"></i>
+          <span class="fw-semibold">{{ nextcloud_root_path }}</span>
+        </div>
+        {% if nextcloud_enabled and nextcloud_launch_url %}
+        <a class="btn btn-sm btn-outline-secondary" href="{{ nextcloud_launch_url }}" target="_blank" rel="noopener">
+          Открыть Nextcloud
+        </a>
+        {% endif %}
+      </div>
+    </div>
+    {% else %}
+    <div class="mb-3">
+      {% if nextcloud_enabled %}
+      <span class="text-muted">Корневой каталог пока не задан.</span>
+      {% else %}
+      <span class="text-muted">Nextcloud не настроен в переменных окружения приложения.</span>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <form
+      method="post"
+      action="{% url 'nextcloud_root_update' %}"
+      {% if can_manage_nextcloud_root %}
+      hx-post="{% url 'nextcloud_root_update' %}"
+      hx-target="#connections-pane"
+      hx-swap="innerHTML"
+      {% endif %}
+    >
+      {% csrf_token %}
+      <label class="form-label small text-muted" for="nextcloud-root-path-input">Корневой каталог Nextcloud</label>
+      <input
+        id="nextcloud-root-path-input"
+        class="form-control"
+        type="text"
+        name="nextcloud_root_path"
+        value="{{ nextcloud_root_path }}"
+        placeholder="/Corporate/Projects"
+        {% if not can_manage_nextcloud_root %}disabled{% endif %}
+      >
+      {% if can_manage_nextcloud_root %}
+      <div class="mt-3 d-flex gap-2 align-items-center">
+        <button type="submit" class="btn btn-outline-primary">Сохранить root path</button>
+        <button
+          type="submit"
+          class="btn btn-outline-danger"
+          name="nextcloud_root_path"
+          value=""
+          onclick="return confirm('Очистить корпоративный root path Nextcloud?')"
+        >
+          Очистить
+        </button>
+      </div>
+      {% else %}
+      <p class="text-muted small mt-3 mb-0">
+        Изменять root path может только администратор системы.
+      </p>
+      {% endif %}
+    </form>
+
+    <p class="text-muted small mt-3 mb-0">
+      Пока root path задаётся вручную. Позже сюда можно будет добавить picker папок без изменения общей архитектуры.
+    </p>
+  </div>
+</div>

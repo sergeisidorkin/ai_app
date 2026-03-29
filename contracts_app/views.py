@@ -8,6 +8,12 @@ from django.shortcuts import render, get_object_or_404
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods, require_POST
 
+from core.cloud_storage import (
+    CloudStorageNotReadyError,
+    get_any_connected_service_user,
+    publish_resource as cloud_publish_resource,
+    upload_file as cloud_upload_file,
+)
 from notifications_app.models import Notification, NotificationPerformerLink
 from projects_app.models import Performer, ProjectRegistration
 from .forms import ContractEditForm, ContractSigningForm, ContractSubjectForm, ContractTemplateForm, ContractVariableForm
@@ -129,10 +135,8 @@ def contracts_partial(request):
 
 
 def _get_yadisk_user():
-    """Return a user who has a Yandex.Disk token (any connected account)."""
-    from yandexdisk_app.models import YandexDiskAccount
-    acc = YandexDiskAccount.objects.filter(access_token__gt="").select_related("user").first()
-    return acc.user if acc else None
+    """Return a user who has a connected cloud account for service uploads."""
+    return get_any_connected_service_user()
 
 
 def _upload_scan_to_yandex_disk_bytes(user, performer, filename, file_bytes):
@@ -140,19 +144,25 @@ def _upload_scan_to_yandex_disk_bytes(user, performer, filename, file_bytes):
     if not performer.contract_project_disk_folder:
         logger.warning("Yandex.Disk upload skipped: no disk folder for performer %s", performer.pk)
         return ""
-    yadisk_user = _get_yadisk_user()
+    try:
+        yadisk_user = _get_yadisk_user()
+    except CloudStorageNotReadyError:
+        logger.warning("Cloud upload skipped: selected backend is not migrated for contract scans")
+        return ""
     if not yadisk_user:
-        logger.warning("Yandex.Disk upload skipped: no connected YandexDisk account found")
+        logger.warning("Yandex.Disk upload skipped: no connected cloud account found")
         return ""
     try:
-        from yandexdisk_app.service import upload_file, publish_resource
         disk_path = f"{performer.contract_project_disk_folder}/{filename}"
-        ok = upload_file(yadisk_user, disk_path, file_bytes)
+        ok = cloud_upload_file(yadisk_user, disk_path, file_bytes)
         if not ok:
             logger.error("Yandex.Disk upload_file returned False for %s", disk_path)
             return ""
-        public_url = publish_resource(yadisk_user, disk_path)
+        public_url = cloud_publish_resource(yadisk_user, disk_path)
         return public_url or ""
+    except CloudStorageNotReadyError:
+        logger.warning("Cloud upload skipped: selected backend is not migrated for contract scans")
+        return ""
     except Exception:
         logger.exception("Yandex.Disk upload failed for scan %s", filename)
         return ""

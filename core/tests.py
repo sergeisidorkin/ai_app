@@ -1,3 +1,4 @@
+from unittest.mock import patch
 from types import SimpleNamespace
 
 from django.contrib.auth import get_user_model
@@ -7,8 +8,21 @@ from django.urls import reverse
 
 from oauth2_provider.models import get_application_model
 
+from core.cloud_storage import (
+    CloudStorageNotReadyError,
+    create_project_workspace,
+    get_nextcloud_root_path,
+    is_nextcloud_root_configured,
+    get_primary_cloud_storage,
+    get_user_cloud_launch_url,
+    is_yandex_disk_primary,
+    set_nextcloud_root_path,
+    set_primary_cloud_storage,
+    validate_nextcloud_root_path,
+)
 from core.oidc import IMCOAuth2Validator
 from core.oidc_settings import oidc_pkce_required
+from core.models import CloudStorageSettings
 
 User = get_user_model()
 Application = get_application_model()
@@ -92,6 +106,68 @@ class OIDCAuthorizationViewTests(TestCase):
         response = client.get(reverse("oauth2_provider:authorize"), {"client_id": "moodle-client"})
 
         self.assertEqual(response.status_code, 403)
+
+
+class CloudStorageSettingsTests(TestCase):
+    def test_defaults_to_yandex_disk_singleton(self):
+        settings_obj = CloudStorageSettings.get_solo()
+
+        self.assertEqual(settings_obj.pk, CloudStorageSettings.singleton_pk)
+        self.assertEqual(settings_obj.primary_storage, CloudStorageSettings.PrimaryStorage.YANDEX_DISK)
+        self.assertEqual(get_primary_cloud_storage(), CloudStorageSettings.PrimaryStorage.YANDEX_DISK)
+        self.assertTrue(is_yandex_disk_primary())
+
+    def test_set_primary_cloud_storage_updates_singleton(self):
+        set_primary_cloud_storage(CloudStorageSettings.PrimaryStorage.NEXTCLOUD)
+
+        settings_obj = CloudStorageSettings.get_solo()
+
+        self.assertEqual(settings_obj.pk, CloudStorageSettings.singleton_pk)
+        self.assertEqual(settings_obj.primary_storage, CloudStorageSettings.PrimaryStorage.NEXTCLOUD)
+
+    def test_set_nextcloud_root_path_normalizes_and_updates_singleton(self):
+        set_nextcloud_root_path(" Corporate//Projects ")
+
+        settings_obj = CloudStorageSettings.get_solo()
+
+        self.assertEqual(settings_obj.nextcloud_root_path, "/Corporate/Projects")
+        self.assertEqual(get_nextcloud_root_path(), "/Corporate/Projects")
+        self.assertTrue(is_nextcloud_root_configured())
+
+    def test_validate_nextcloud_root_path_rejects_dot_segments(self):
+        with self.assertRaises(ValueError):
+            validate_nextcloud_root_path("/Corporate/../Projects")
+
+
+class CloudStorageRoutingTests(TestCase):
+    @override_settings(
+        NEXTCLOUD_BASE_URL="https://cloud.imcmontanai.ru",
+        NEXTCLOUD_SSO_ENABLED=True,
+        NEXTCLOUD_OIDC_LOGIN_PATH="/apps/user_oidc/login/1",
+    )
+    def test_user_cloud_launch_url_uses_nextcloud_when_selected(self):
+        user = User.objects.create_user(
+            username="cloud-user",
+            email="cloud-user@example.com",
+            password="Secret123!",
+            is_staff=True,
+        )
+        set_primary_cloud_storage(CloudStorageSettings.PrimaryStorage.NEXTCLOUD)
+
+        launch_url = get_user_cloud_launch_url(user)
+
+        self.assertEqual(launch_url, "https://cloud.imcmontanai.ru/apps/user_oidc/login/1")
+
+    def test_workspace_routing_delegates_to_yandex_by_default(self):
+        with self.assertRaisesMessage(RuntimeError, "boom"):
+            with patch("yandexdisk_app.workspace.create_project_workspace", side_effect=RuntimeError("boom")):
+                create_project_workspace(object(), object())
+
+    def test_workspace_routing_raises_controlled_error_for_nextcloud(self):
+        set_primary_cloud_storage(CloudStorageSettings.PrimaryStorage.NEXTCLOUD)
+
+        with self.assertRaises(CloudStorageNotReadyError):
+            create_project_workspace(object(), object())
 
     @override_settings(
         NEXTCLOUD_OIDC_CLIENT_ID="nextcloud-client",

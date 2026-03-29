@@ -1,13 +1,22 @@
 from django.shortcuts import render, redirect
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
-from django.http import HttpResponseBadRequest
+from django.http import HttpResponseBadRequest, HttpResponseForbidden
 from django.views.decorators.http import require_POST
 from django.urls import reverse
 from django.conf import settings
 
 from policy_app.models import DEPARTMENT_HEAD_GROUP, PROJECTS_HEAD_GROUP
 from users_app.models import Employee
+from core.cloud_storage import (
+    get_cloud_storage_settings,
+    get_nextcloud_connection_status,
+    get_nextcloud_root_path,
+    get_primary_cloud_storage_label,
+    set_nextcloud_root_path,
+    set_primary_cloud_storage,
+)
+from nextcloud_app.services import build_nextcloud_overview
 from yandexdisk_app.models import YandexDiskAccount, YandexDiskSelection
 from smtp_app.forms import ExternalSMTPAccountForm
 from smtp_app.models import ExternalSMTPAccount
@@ -47,12 +56,8 @@ def _onedrive_redirect_uri_for(request) -> str:
     # Продовый случай — как было
     return settings.MS_REDIRECT_URI
 
-@login_required
-def connections_partial(request):
-    """
-    Фрагмент для вкладки «Подключения» на домашней странице.
-    Рендерит onedrive_app/templates/onedrive_app/connections_partial.html
-    """
+
+def _connections_context(request):
     selection = OneDriveSelection.objects.filter(user=request.user).first()
     onedrive_connected = OneDriveAccount.objects.filter(user=request.user).exists()
     openai = OpenAIAccount.objects.filter(user=request.user).first() if OpenAIAccount else None
@@ -67,23 +72,74 @@ def connections_partial(request):
     employee = Employee.objects.filter(user=request.user).first()
     employee_role = getattr(employee, "role", "") or ""
     smtp_only_connections = employee_role in {PROJECTS_HEAD_GROUP, DEPARTMENT_HEAD_GROUP}
+    storage_settings = get_cloud_storage_settings()
+    nextcloud_status = get_nextcloud_connection_status()
+    nextcloud_overview = build_nextcloud_overview(request.user)
 
+    return {
+        "selection": selection,
+        "onedrive_connected": onedrive_connected,
+        "openai": openai,
+        "gdrive_connected": gdrive_connected,
+        "gdrive_selection": gdrive_selection,
+        "yadisk_connected": yadisk_connected,
+        "yadisk_selection": yadisk_selection,
+        "smtp_account": smtp_account,
+        "smtp_form": smtp_form,
+        "smtp_only_connections": smtp_only_connections,
+        "primary_cloud_storage": storage_settings.primary_storage,
+        "primary_cloud_storage_label": get_primary_cloud_storage_label(),
+        "can_manage_primary_cloud_storage": bool(request.user.is_superuser),
+        "nextcloud_root_path": get_nextcloud_root_path(),
+        "nextcloud_root_configured": bool(get_nextcloud_root_path()),
+        "nextcloud_connection_status": nextcloud_status.code,
+        "nextcloud_connection_status_label": nextcloud_status.label,
+        "nextcloud_enabled": bool(nextcloud_overview.get("nextcloud_enabled")),
+        "nextcloud_launch_url": str(nextcloud_overview.get("nextcloud_launch_url") or ""),
+        "can_manage_nextcloud_root": bool(request.user.is_superuser),
+    }
+
+@login_required
+def connections_partial(request):
+    """
+    Фрагмент для вкладки «Подключения» на домашней странице.
+    Рендерит onedrive_app/templates/onedrive_app/connections_partial.html
+    """
     return render(
         request,
         "onedrive_app/connections_partial.html",
-        {
-            "selection": selection,
-            "onedrive_connected": onedrive_connected,
-            "openai": openai,
-            "gdrive_connected": gdrive_connected,
-            "gdrive_selection": gdrive_selection,
-            "yadisk_connected": yadisk_connected,
-            "yadisk_selection": yadisk_selection,
-            "smtp_account": smtp_account,
-            "smtp_form": smtp_form,
-            "smtp_only_connections": smtp_only_connections,
-        },
+        _connections_context(request),
     )
+
+
+@login_required
+@require_POST
+def primary_cloud_storage_update(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Недостаточно прав для изменения основного облачного хранилища.")
+
+    value = (request.POST.get("primary_storage") or "").strip()
+    try:
+        set_primary_cloud_storage(value)
+    except ValueError as exc:
+        return HttpResponseBadRequest(str(exc))
+
+    return connections_partial(request)
+
+
+@login_required
+@require_POST
+def nextcloud_root_update(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Недостаточно прав для изменения корпоративного root каталога Nextcloud.")
+
+    value = request.POST.get("nextcloud_root_path", "")
+    try:
+        set_nextcloud_root_path(value)
+    except ValueError as exc:
+        return HttpResponseBadRequest(str(exc))
+
+    return connections_partial(request)
 
 def _redirect_to_localhost_if_needed(request):
     """

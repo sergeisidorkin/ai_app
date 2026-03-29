@@ -172,7 +172,9 @@ class SidebarNextcloudLinkTests(TestCase):
         self.assertEqual(response.status_code, 200)
         content = response.content.decode("utf-8")
         self.assertIn("https://cloud.imcmontanai.ru", content)
-        self.assertLess(content.find("Обучение"), content.find("Nextcloud"))
+        self.assertIn("bi bi-cloud", content)
+        self.assertIn("Облако", content)
+        self.assertLess(content.find("Обучение"), content.find("Облако"))
 
     @override_settings(
         NEXTCLOUD_BASE_URL="https://cloud.imcmontanai.ru",

@@ -2,6 +2,7 @@ from decimal import Decimal, InvalidOperation
 
 from django import template
 from django.utils.safestring import mark_safe
+from core.cloud_storage import build_folder_url
 
 register = template.Library()
 
@@ -94,9 +95,5 @@ def get_item(dictionary, key):
 
 @register.filter
 def disk_folder_url(path):
-    """Convert Yandex.Disk API path (disk:/…) to a web-client URL."""
-    if not path:
-        return ""
-    from urllib.parse import quote
-    clean = path.removeprefix("disk:")
-    return "https://disk.yandex.ru/client/disk" + quote(clean)
+    """Convert a cloud storage path into a browser-friendly URL."""
+    return build_folder_url(path)
