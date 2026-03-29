@@ -1100,19 +1100,22 @@
 
     function enforceMasterOnRows() {
       var mv = getMasterValues();
-      if (mv[0] === FILTER_ALL) return;
-      var allRows = [];
-      ["table.reg-table", "table.contract-table", "table.work-table", "table.legal-table"].forEach(function(sel) {
-        pane.querySelectorAll(sel + " tbody tr").forEach(function(r) { allRows.push(r); });
-      });
-      var perfPane = document.getElementById("performers-pane");
-      if (perfPane) {
-        perfPane.querySelectorAll("#performers-main-section table.performers-table tbody tr").forEach(function(r) { allRows.push(r); });
+      if (mv[0] !== FILTER_ALL) {
+        var allRows = [];
+        ["table.reg-table", "table.contract-table", "table.work-table", "table.legal-table"].forEach(function(sel) {
+          pane.querySelectorAll(sel + " tbody tr").forEach(function(r) { allRows.push(r); });
+        });
+        var perfPane = document.getElementById("performers-pane");
+        if (perfPane) {
+          perfPane.querySelectorAll("#performers-main-section table.performers-table tbody tr").forEach(function(r) { allRows.push(r); });
+        }
+        allRows.forEach(function(row) {
+          var pid = row.dataset.projectId || "";
+          if (mv.indexOf(pid) === -1) row.classList.add("d-none");
+        });
       }
-      allRows.forEach(function(row) {
-        var pid = row.dataset.projectId || "";
-        if (mv.indexOf(pid) === -1) row.classList.add("d-none");
-      });
+      if (window.__refreshProjectsSelectionState) window.__refreshProjectsSelectionState();
+      if (window.__refreshPerformersSelectionState) window.__refreshPerformersSelectionState();
     }
 
     window.__enforceMasterOnRows = enforceMasterOnRows;

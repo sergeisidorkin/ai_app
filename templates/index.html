@@ -105,6 +105,14 @@
             <span class="link-text">Обучение</span>
           </a>
         </li>
+        {% if nextcloud_enabled %}
+        <li class="nav-item">
+          <a class="nav-link d-flex align-items-center" href="{{ nextcloud_launch_url }}" target="_blank" rel="noopener noreferrer">
+            <i class="bi bi-cloud me-2"></i>
+            <span class="link-text">Nextcloud</span>
+          </a>
+        </li>
+        {% endif %}
         {% if not is_expert %}
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#templates" data-bs-toggle="tab">

@@ -122,7 +122,7 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         max_value=9999,
         widget=forms.NumberInput(attrs={"min": 3333, "max": 9999, "placeholder": "3333–9999"}),
     )
-    deadline = forms.DateField(required=False,
+    deadline = forms.DateField(required=True,
                                widget=forms.TextInput(attrs=DATE_INPUT_ATTRS),
                                input_formats=DATE_INPUT_FORMATS)
     group_member = forms.ModelChoiceField(
@@ -180,6 +180,7 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         self.fields["group_member"].queryset = _group_choices(current_group_member)
         self.fields["group_member"].label_from_instance = lambda obj: obj.group_display_label
         self.fields["group_member"].empty_label = "— Не выбрано —"
+        self.fields["type"].required = True
         self.fields["project_manager"].choices = _project_manager_choices(current_manager)
 
         today = timezone.now().date()

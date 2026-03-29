@@ -9,6 +9,7 @@ from projects_app.models import ProjectRegistration
 from yandexdisk_app.models import YandexDiskSelection
 from yandexdisk_app.workspace import (
     _build_folder_tree,
+    _contains_workspace_project_variable,
     _resolve_workspace_folder_name,
     _sanitize_relative_path,
     WorkspaceResult,
@@ -52,6 +53,10 @@ class WorkspaceFolderVariablesTests(SimpleTestCase):
             _sanitize_relative_path("05 Исходные данные/01 Запросы"),
             "05 Исходные данные/01 Запросы",
         )
+
+    def test_contains_workspace_project_variable_detects_template_folder(self):
+        self.assertTrue(_contains_workspace_project_variable("05 Исходные данные/{project_label}"))
+        self.assertFalse(_contains_workspace_project_variable("05 Исходные данные/01 Запросы"))
 
 
 class WorkspacePublishingTests(TestCase):

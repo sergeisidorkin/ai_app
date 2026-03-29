@@ -4,6 +4,7 @@ from django.contrib.auth.views import LoginView
 from django.shortcuts import render, redirect
 
 from learning_app.services import build_learning_overview
+from nextcloud_app.services import build_nextcloud_overview
 from policy_app.models import (
     DEPARTMENT_HEAD_GROUP,
     EXPERT_GROUP,
@@ -53,4 +54,5 @@ def home_entry(request):
         "ler_date_filter": date.today().isoformat(),
     }
     context.update(build_learning_overview(request.user))
+    context.update(build_nextcloud_overview(request.user))
     return render(request, "index.html", context)

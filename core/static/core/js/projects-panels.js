@@ -28,8 +28,15 @@
     const root = pane();
     return qa(`tbody input.form-check-input[name="${CSS.escape(name)}"]`, root);
   }
+  function isVisibleRowCheckbox(box) {
+    const row = box?.closest('tr');
+    return !!row && !row.classList.contains('d-none');
+  }
+  function getVisibleRowChecksByName(name) {
+    return getRowChecksByName(name).filter(isVisibleRowCheckbox);
+  }
   function getCheckedByName(name) {
-    return getRowChecksByName(name).filter(b => b.checked);
+    return getVisibleRowChecksByName(name).filter(b => b.checked);
   }
   function updateRowHighlightFor(name) {
     getRowChecksByName(name).forEach(b => {
@@ -38,7 +45,7 @@
     });
   }
   function updateMasterStateFor(name) {
-    const boxes = getRowChecksByName(name);
+    const boxes = getVisibleRowChecksByName(name);
     const root = pane();
     const master = root?.querySelector(`input.form-check-input[data-target-name="${CSS.escape(name)}"]`);
     if (!master) return;
@@ -59,10 +66,26 @@
   function ensureActionsVisibility(name) {
     const panel = findActionsByName(name);
     if (!panel) return;
-    const anyChecked = getRowChecksByName(name).some(b => b.checked);
+    const anyChecked = getCheckedByName(name).length > 0;
     panel.classList.toggle('d-none', !anyChecked);
     panel.classList.toggle('d-flex', anyChecked);
   }
+  function clearHiddenSelections(name) {
+    getRowChecksByName(name).forEach((box) => {
+      if (!isVisibleRowCheckbox(box)) box.checked = false;
+    });
+  }
+  function syncSelectionToVisible(name) {
+    clearHiddenSelections(name);
+    updateMasterStateFor(name);
+    updateRowHighlightFor(name);
+    ensureActionsVisibility(name);
+    if (name === 'contract-select') updateContractEditBtn();
+    if (name === 'registration-select') updateRegWorkspaceBtn();
+  }
+  window.__refreshProjectsSelectionState = function() {
+    ['registration-select', 'contract-select', 'work-select', 'legal-select'].forEach(syncSelectionToVisible);
+  };
 
   function getDeleteConfirmationMessage(name, count) {
     if (name === 'work-select') {
@@ -192,7 +215,7 @@
     const master = e.target.closest('input.form-check-input[data-actions-id][data-target-name]');
     if (!master || !root.contains(master)) return;
     const name = master.dataset.targetName;
-    const boxes = getRowChecksByName(name);
+    const boxes = getVisibleRowChecksByName(name);
     boxes.forEach(b => { b.checked = master.checked; });
     master.indeterminate = false;
     updateMasterStateFor(name);

@@ -1,0 +1,18 @@
+[Unit]
+Description=Nextcloud Docker Compose Stack
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/nextcloud
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/bin/docker compose --env-file /opt/nextcloud/nextcloud.env up -d
+ExecStop=/usr/bin/docker compose --env-file /opt/nextcloud/nextcloud.env stop
+ExecReload=/usr/bin/docker compose --env-file /opt/nextcloud/nextcloud.env up -d
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

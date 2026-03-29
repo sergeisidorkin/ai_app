@@ -45,7 +45,7 @@ def staff_required(user):
     return user.is_authenticated and user.is_staff
 
 def _projects_context():
-    registrations = ProjectRegistration.objects.select_related("country", "group_member").all()
+    registrations = ProjectRegistration.objects.select_related("country", "group_member", "type").all()
     work_items = WorkVolume.objects.select_related("project", "project__group_member", "country").all()
     legal_entities = (
         LegalEntity.objects
@@ -54,17 +54,19 @@ def _projects_context():
     )
     legal_projects = (
         ProjectRegistration.objects
+        .select_related("type")
         .filter(legal_entities__isnull=False)
         .distinct()
         .order_by("-number", "-id")
     )
     work_projects = (
         ProjectRegistration.objects
+        .select_related("type")
         .filter(work_items__isnull=False)
         .distinct()
         .order_by("-number", "-id")
     )
-    reg_filter_projects = ProjectRegistration.objects.order_by("-number", "-id")
+    reg_filter_projects = ProjectRegistration.objects.select_related("type").order_by("-number", "-id")
     return {
         "registrations": registrations,
         "reg_filter_projects": reg_filter_projects,
@@ -678,6 +680,7 @@ def _performers_context(user=None):
     participation_project_ids = participation_performers.values_list("registration_id", flat=True).distinct()
     participation_projects = (
         ProjectRegistration.objects
+        .select_related("type")
         .filter(id__in=participation_project_ids)
         .order_by("-number", "-id")
     )
@@ -695,6 +698,7 @@ def _performers_context(user=None):
     info_request_project_ids = info_request_performers.values_list("registration_id", flat=True).distinct()
     info_request_projects = (
         ProjectRegistration.objects
+        .select_related("type")
         .filter(id__in=info_request_project_ids)
         .order_by("-number", "-id")
     )
@@ -713,6 +717,7 @@ def _performers_context(user=None):
     contract_project_ids = contract_performers.values_list("registration_id", flat=True).distinct()
     contract_projects = (
         ProjectRegistration.objects
+        .select_related("type")
         .filter(id__in=contract_project_ids)
         .order_by("-number", "-id")
     )
@@ -720,6 +725,7 @@ def _performers_context(user=None):
     performer_project_ids = performers.values_list("registration_id", flat=True).distinct()
     performer_projects = (
         ProjectRegistration.objects
+        .select_related("type")
         .filter(id__in=performer_project_ids)
         .order_by("-number", "-id")
     )
@@ -1631,14 +1637,22 @@ def create_source_data_workspace(request):
 @require_GET
 def source_data_target_folder_load(request):
     from .models import SourceDataTargetFolder
-    from yandexdisk_app.workspace import REGISTRATION_STANDARD_FOLDERS, _build_folder_tree
+    from yandexdisk_app.workspace import (
+        REGISTRATION_STANDARD_FOLDERS,
+        _build_folder_tree,
+        _contains_workspace_project_variable,
+    )
 
     qs, _ = _get_effective_folders(request.user)
     rows = list(
         qs.order_by("position")
         .values_list("level", "name")
     )
-    options = [path for path in _build_folder_tree(rows) if path.count("/") <= 1] if rows else []
+    options = [
+        path
+        for path in _build_folder_tree(rows)
+        if path.count("/") <= 1 and not _contains_workspace_project_variable(path)
+    ] if rows else []
     if not options:
         options = list(REGISTRATION_STANDARD_FOLDERS)
 
@@ -1653,6 +1667,7 @@ def source_data_target_folder_load(request):
 @require_POST
 def source_data_target_folder_save(request):
     from .models import SourceDataTargetFolder
+    from yandexdisk_app.workspace import _contains_workspace_project_variable
 
     try:
         data = json.loads(request.body)
@@ -1662,6 +1677,11 @@ def source_data_target_folder_save(request):
     folder_name = (data.get("folder_name") or "").strip()
     if not folder_name:
         return JsonResponse({"ok": False, "error": "Не указано имя папки."}, status=400)
+    if _contains_workspace_project_variable(folder_name):
+        return JsonResponse(
+            {"ok": False, "error": "Шаблонные папки проекта нельзя использовать как целевую папку."},
+            status=400,
+        )
 
     SourceDataTargetFolder.objects.update_or_create(
         user=request.user,
