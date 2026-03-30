@@ -1,4 +1,5 @@
 from datetime import date as date_type
+from types import SimpleNamespace
 
 from django import forms
 from django.db.models import Q
@@ -20,6 +21,12 @@ class _ContractFileInput(forms.ClearableFileInput):
 
     def get_context(self, name, value, attrs):
         ctx = super().get_context(name, value, attrs)
+        cloud_url = ctx["widget"].get("attrs", {}).get("cloud_current_url", "")
+        cloud_name = ctx["widget"].get("attrs", {}).get("cloud_current_name", "")
+        if not ctx["widget"].get("is_initial") and cloud_url:
+            ctx["widget"]["is_initial"] = True
+            ctx["widget"]["value"] = SimpleNamespace(url=cloud_url)
+            ctx["widget"]["file_basename"] = cloud_name or ""
         if ctx["widget"].get("is_initial") and value and hasattr(value, "name"):
             import os
             ctx["widget"]["file_basename"] = os.path.basename(value.name)
@@ -45,6 +52,24 @@ class ContractEditForm(forms.ModelForm):
 
 
 class ContractSigningForm(forms.ModelForm):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        instance = self.instance
+        if instance is None:
+            return
+        self.fields["contract_employee_scan"].widget.attrs.update(
+            {
+                "cloud_current_url": getattr(instance, "contract_employee_scan_link", "") or "",
+                "cloud_current_name": getattr(instance, "contract_scan_document", "") or "",
+            }
+        )
+        self.fields["contract_signed_scan_file"].widget.attrs.update(
+            {
+                "cloud_current_url": getattr(instance, "contract_signed_scan_link", "") or "",
+                "cloud_current_name": getattr(instance, "contract_signed_scan", "") or "",
+            }
+        )
+
     class Meta:
         model = Performer
         fields = [

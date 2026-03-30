@@ -181,7 +181,7 @@ def _sections_for_asset(project, selected_asset, performer_qs=None):
         sections = []
         for perf in performer_qs:
             ts = getattr(perf, "typical_section", None)
-            if ts and ts.id not in ids:
+            if ts and ts.accounting_type == "Раздел" and ts.id not in ids:
                 ids.add(ts.id)
                 label = str(ts)
                 if ts.short_name_ru:
@@ -197,7 +197,7 @@ def _sections_for_asset(project, selected_asset, performer_qs=None):
         if perf_asset not in effective_set:
             continue
         ts = getattr(perf, "typical_section", None)
-        if ts and ts.id not in ids:
+        if ts and ts.accounting_type == "Раздел" and ts.id not in ids:
             ids.add(ts.id)
             label = str(ts)
             if ts.short_name_ru:
@@ -237,7 +237,7 @@ def _code_cell_class(status_cells):
 
 
 def _project_options():
-    regs = ProjectRegistration.objects.select_related("type", "group_member").order_by("position", "id")
+    regs = ProjectRegistration.objects.select_related("type", "group_member").order_by("-number", "-id")
     options = []
     for reg in regs:
         short_uid = (reg.short_uid or "").strip()
@@ -257,7 +257,11 @@ def _project_options():
 
 def _resolve_section(project: ProjectRegistration, section_id: Optional[str], asset_name: Optional[str]):
     if section_id:
-        section = TypicalSection.objects.filter(pk=section_id, product=project.type).first()
+        section = TypicalSection.objects.filter(
+            pk=section_id,
+            product=project.type,
+            accounting_type="Раздел",
+        ).first()
         if section:
             return section
 
