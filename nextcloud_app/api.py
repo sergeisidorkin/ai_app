@@ -36,6 +36,7 @@ class NextcloudApiClient:
     EDITOR_PERMISSIONS = 15
     PUBLIC_LINK_SHARE_TYPE = 3
     RETRYABLE_STATUS_CODES = {429}
+    PUBLIC_LINK_CREATE_INTERVAL_SECONDS = 0.35
 
     def __init__(self, *, session: requests.Session | None = None):
         self._session = session or requests.Session()
@@ -45,6 +46,9 @@ class NextcloudApiClient:
         self.provider_id = int(getattr(settings, "NEXTCLOUD_OIDC_PROVIDER_ID", 0) or 0)
         self.default_group = (getattr(settings, "NEXTCLOUD_DEFAULT_GROUP", "") or "").strip()
         self.default_quota = (getattr(settings, "NEXTCLOUD_DEFAULT_QUOTA", "") or "").strip()
+        self._public_share_cache_loaded = False
+        self._public_share_cache: dict[str, NextcloudShare] = {}
+        self._next_public_share_create_at = 0.0
 
     @property
     def is_configured(self) -> bool:
@@ -312,7 +316,17 @@ class NextcloudApiClient:
             },
         )
         data = self._extract_data(response)
-        return str(data.get("url") or data.get("link") or "")
+        share = NextcloudShare(
+            share_id=str(data.get("id") or ""),
+            path=str(data.get("path") or normalized),
+            share_with="",
+            permissions=int(data.get("permissions") or 1),
+            share_type=self.PUBLIC_LINK_SHARE_TYPE,
+            url=str(data.get("url") or data.get("link") or ""),
+            target_path=str(data.get("file_target") or data.get("fileTarget") or ""),
+        )
+        self._remember_public_share(share)
+        return share.url
 
     def _request(self, method: str, path: str, **kwargs) -> requests.Response:
         if not self.is_configured:
@@ -324,7 +338,10 @@ class NextcloudApiClient:
         params = dict(kwargs.pop("params", {}) or {})
         params.setdefault("format", "json")
         max_attempts = 4
+        is_public_link_create = self._is_public_link_create_request(method, path, kwargs)
         for attempt in range(max_attempts):
+            if is_public_link_create:
+                self._wait_for_public_link_slot()
             try:
                 response = self._session.request(
                     method,
@@ -341,10 +358,17 @@ class NextcloudApiClient:
                 time.sleep(1.0 + attempt)
                 continue
             if response.status_code not in self.RETRYABLE_STATUS_CODES:
+                if is_public_link_create and response.status_code < 400:
+                    self._next_public_share_create_at = time.monotonic() + self.PUBLIC_LINK_CREATE_INTERVAL_SECONDS
                 break
             if attempt == max_attempts - 1:
                 break
             retry_after = self._get_retry_after_seconds(response, default=1.0 + attempt)
+            if is_public_link_create:
+                self._next_public_share_create_at = max(
+                    self._next_public_share_create_at,
+                    time.monotonic() + retry_after,
+                )
             time.sleep(retry_after)
         if response.status_code >= 400:
             raise NextcloudApiError(f"Nextcloud API error {response.status_code}: {response.text[:500]}")
@@ -381,18 +405,24 @@ class NextcloudApiClient:
 
     def get_public_link_share(self, owner_user_id: str, path: str) -> NextcloudShare | None:
         normalized = self._normalize_folder_path(path)
+        if not self._public_share_cache_loaded:
+            self.list_public_link_shares(owner_user_id)
+        return self._public_share_cache.get(normalized)
+
+    def list_public_link_shares(self, owner_user_id: str) -> dict[str, NextcloudShare]:
         response = self._request(
             "GET",
             "/ocs/v2.php/apps/files_sharing/api/v1/shares",
-            params={"path": normalized, "reshares": "true", "subfiles": "false"},
+            params={"reshares": "true", "subfiles": "false"},
         )
+        shares: dict[str, NextcloudShare] = {}
         for item in self._extract_list_data(response):
-            item_path = self._normalize_folder_path(item.get("path") or normalized)
-            if item_path != normalized:
+            item_path = self._normalize_folder_path(item.get("path") or "")
+            if not item_path or item_path == "/":
                 continue
             if int(item.get("share_type") or -1) != self.PUBLIC_LINK_SHARE_TYPE:
                 continue
-            return NextcloudShare(
+            shares[item_path] = NextcloudShare(
                 share_id=str(item.get("id") or ""),
                 path=item_path,
                 share_with="",
@@ -401,7 +431,14 @@ class NextcloudApiClient:
                 url=str(item.get("url") or item.get("link") or ""),
                 target_path=str(item.get("file_target") or item.get("fileTarget") or ""),
             )
-        return None
+        self._public_share_cache = shares
+        self._public_share_cache_loaded = True
+        return shares
+
+    def _remember_public_share(self, share: NextcloudShare) -> None:
+        if share.path:
+            self._public_share_cache[share.path] = share
+            self._public_share_cache_loaded = True
 
     def _extract_cloud_path(self, owner_user_id: str, href: str) -> str:
         base_prefix = f"/remote.php/dav/files/{quote(owner_user_id, safe='')}/"
@@ -422,6 +459,20 @@ class NextcloudApiClient:
         except (TypeError, ValueError):
             return max(default, 0.0)
         return max(seconds, 0.0)
+
+    def _wait_for_public_link_slot(self) -> None:
+        now = time.monotonic()
+        if self._next_public_share_create_at > now:
+            time.sleep(self._next_public_share_create_at - now)
+
+    @staticmethod
+    def _is_public_link_create_request(method: str, path: str, request_kwargs: dict[str, object]) -> bool:
+        if method.upper() != "POST" or path != "/ocs/v2.php/apps/files_sharing/api/v1/shares":
+            return False
+        data = request_kwargs.get("data")
+        if not isinstance(data, dict):
+            return False
+        return str(data.get("shareType") or "") == str(NextcloudApiClient.PUBLIC_LINK_SHARE_TYPE)
 
     @staticmethod
     def _extract_data(response: requests.Response) -> dict[str, object]:
