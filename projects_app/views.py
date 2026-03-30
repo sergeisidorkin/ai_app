@@ -30,12 +30,13 @@ from core.cloud_storage import (
     get_registration_standard_folders,
     get_selected_root_path,
     get_workspace_result_class,
+    is_nextcloud_primary,
     list_folder_resources,
     publish_resource as cloud_publish_resource,
     sanitize_folder_name,
     upload_file as cloud_upload_file,
 )
-from policy_app.models import TypicalSection
+from policy_app.models import LAWYER_GROUP, TypicalSection
 from smtp_app.models import ExternalSMTPAccount
 from users_app.models import Employee
 from users_app.forms import FREELANCER_LABEL
@@ -853,6 +854,7 @@ def _performers_context(user=None):
         "contract_performers": contract_performers,
         "contract_projects": contract_projects,
         "contract_request_sent_initial": request_sent_initial,
+        "primary_cloud_storage_label": get_primary_cloud_storage_label(),
         "user_is_direction_head": user_is_direction_head,
         "has_active_smtp_connection": has_active_smtp_connection,
     }
@@ -1090,6 +1092,61 @@ def _round_up_to_hour(value):
     if value.minute == 0:
         return value
     return (value + timedelta(hours=1)).replace(minute=0)
+
+
+def _share_contract_folder_for_nextcloud(performer, folder_path: str) -> list[str]:
+    if not is_nextcloud_primary() or not folder_path:
+        return []
+
+    from django.contrib.auth import get_user_model
+
+    from nextcloud_app.api import NextcloudApiClient, NextcloudApiError
+    from nextcloud_app.provisioning import ensure_nextcloud_account
+
+    User = get_user_model()
+    client = NextcloudApiClient()
+    if not client.is_configured:
+        return ["Nextcloud не настроен для выдачи доступа к папке проекта договора."]
+
+    recipients = []
+    seen_ids = set()
+
+    executor_user = getattr(getattr(performer, "employee", None), "user", None)
+    if executor_user and executor_user.is_active and executor_user.is_staff and executor_user.pk not in seen_ids:
+        recipients.append(executor_user)
+        seen_ids.add(executor_user.pk)
+
+    for lawyer in (
+        User.objects
+        .filter(groups__name=LAWYER_GROUP, is_active=True, is_staff=True)
+        .order_by("pk")
+        .distinct()
+    ):
+        if lawyer.pk in seen_ids:
+            continue
+        recipients.append(lawyer)
+        seen_ids.add(lawyer.pk)
+
+    warnings = []
+    for recipient in recipients:
+        try:
+            link = ensure_nextcloud_account(recipient, client=client)
+            if not link or not link.nextcloud_user_id:
+                warnings.append(
+                    f"Не удалось выдать доступ к папке проекта договора пользователю {recipient.get_username()}."
+                )
+                continue
+            client.ensure_user_share(
+                client.username,
+                folder_path,
+                link.nextcloud_user_id,
+                permissions=1,
+            )
+        except NextcloudApiError as exc:
+            warnings.append(
+                f"Не удалось выдать доступ к папке проекта договора пользователю {recipient.get_username()}: {exc}"
+            )
+    return warnings
 
 @login_required
 @require_http_methods(["GET", "POST"])
@@ -1969,6 +2026,8 @@ def create_contract_project(request):
                     current += 1
                     yield _padded(json.dumps({"current": current, "total": total}) + "\n")
                     continue
+
+                warnings.extend(_share_contract_folder_for_nextcloud(perf, folder_path))
 
                 created_ids.extend(executor_to_ids[key])
 

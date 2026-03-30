@@ -276,6 +276,7 @@
       var progressBar = document.getElementById('scan-upload-progress-bar');
       var statusEl = document.getElementById('scan-upload-status');
       var closeBtn = document.getElementById('scan-upload-close-btn');
+      var uploadSucceeded = false;
       if (progressBar) progressBar.style.width = '0%';
       if (statusEl) statusEl.textContent = '';
       if (closeBtn) closeBtn.disabled = true;
@@ -300,13 +301,15 @@
           try {
             var data = JSON.parse(xhr.responseText);
             if (data.ok && data.scan_name && statusEl) {
+              uploadSucceeded = true;
+              var storageLabel = data.storage_label || 'облачное хранилище';
               var icon = document.createElement('i');
               icon.className = 'bi bi-check-circle me-1';
               var span = document.createElement('span');
               span.className = 'text-success';
               span.appendChild(icon);
               span.appendChild(document.createTextNode(
-                'Документ успешно загружен на Яндекс.Диск в папку с проектом договора и переименован в \u00ab'
+                'Документ успешно загружен на ' + storageLabel + ' в папку с проектом договора и переименован в \u00ab'
                 + data.scan_name + '\u00bb.'));
               statusEl.textContent = '';
               statusEl.appendChild(span);
@@ -342,7 +345,9 @@
             if (refreshUrl) {
               htmx.ajax('GET', refreshUrl, { target: '#contracts-pane', swap: 'innerHTML' }).then(function() {
                 var set = {};
-                checkedPerformerIds.forEach(function(id) { set[id] = true; });
+                if (!uploadSucceeded) {
+                  checkedPerformerIds.forEach(function(id) { set[id] = true; });
+                }
                 getSigningChecks().forEach(function(b) { b.checked = !!set[b.value]; });
                 refreshSigning();
               });

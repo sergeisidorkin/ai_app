@@ -236,8 +236,8 @@
         </td>
         <td class="text-center p-0">
           {% if request.user.is_staff %}
-            {% if p.contract_employee_scan %}
-              <a href="{{ p.contract_employee_scan.url }}" download class="ct-download-link" title="Скачать скан">
+            {% if p.contract_employee_scan_link %}
+              <a href="{{ p.contract_employee_scan_link }}" target="_blank" rel="noopener" class="ct-download-link" title="Скачать скан">
                 <i class="bi bi-download"></i>
               </a>
             {% else %}
@@ -255,7 +255,7 @@
         <td class="text-nowrap">
           {% with folder_url=p.contract_project_disk_folder|disk_folder_url %}
           {% if folder_url %}
-            <a href="{{ folder_url }}" target="_blank" rel="noopener" title="Открыть папку на Яндекс.Диске">
+            <a href="{{ folder_url }}" target="_blank" rel="noopener" title="Открыть папку на {{ primary_cloud_storage_label }}">
               <i class="bi bi-link-45deg" style="color: var(--bs-primary, #075D94);"></i>
             </a>
           {% else %}
@@ -267,8 +267,8 @@
         <td class="text-nowrap">{% if p.contract_send_date %}{{ p.contract_send_date|date:"d.m.Y H:i" }}{% else %}—{% endif %}</td>
         <td class="text-center p-0">
           {% if request.user.is_staff and not is_expert %}
-            {% if p.contract_signed_scan_file %}
-              <a href="{{ p.contract_signed_scan_file.url }}" download class="ct-download-link" title="Скачать подписанный договор">
+            {% if p.contract_signed_scan_link %}
+              <a href="{{ p.contract_signed_scan_link }}" target="_blank" rel="noopener" class="ct-download-link" title="Скачать подписанный договор">
                 <i class="bi bi-download"></i>
               </a>
             {% else %}
