@@ -209,19 +209,6 @@ def contract_signing_edit(request, pk):
 
         form = ContractSigningForm(request.POST, request.FILES, instance=performer)
         if form.is_valid():
-            if has_new_scan:
-                if old_scan_path:
-                    try:
-                        default_storage.delete(old_scan_path)
-                    except Exception:
-                        pass
-            if has_new_signed:
-                if old_signed_path:
-                    try:
-                        default_storage.delete(old_signed_path)
-                    except Exception:
-                        pass
-
             scan_file_data = None
             if has_new_scan:
                 f = request.FILES["contract_employee_scan"]
@@ -261,6 +248,8 @@ def contract_signing_edit(request, pk):
 
             obj = performer
             update_fields = []
+            sibling_updates = {}
+            paths_to_delete = []
 
             if has_new_scan:
                 obj.contract_scan_document = scan_name
@@ -273,6 +262,15 @@ def contract_signing_edit(request, pk):
                     "contract_employee_scan_link",
                     "contract_employee_scan",
                 ])
+                sibling_updates.update({
+                    "contract_employee_scan_link": obj.contract_employee_scan_link,
+                    "contract_scan_document": obj.contract_scan_document,
+                    "contract_upload_date": obj.contract_upload_date,
+                    "contract_send_date": obj.contract_send_date,
+                    "contract_employee_scan": "",
+                })
+                if old_scan_path:
+                    paths_to_delete.append(old_scan_path)
             elif clear_scan:
                 obj.contract_scan_document = ""
                 obj.contract_upload_date = None
@@ -284,6 +282,15 @@ def contract_signing_edit(request, pk):
                     "contract_employee_scan_link",
                     "contract_employee_scan",
                 ])
+                sibling_updates.update({
+                    "contract_employee_scan_link": obj.contract_employee_scan_link,
+                    "contract_scan_document": obj.contract_scan_document,
+                    "contract_upload_date": obj.contract_upload_date,
+                    "contract_send_date": obj.contract_send_date,
+                    "contract_employee_scan": "",
+                })
+                if old_scan_path:
+                    paths_to_delete.append(old_scan_path)
 
             if has_new_signed:
                 obj.contract_signed_scan = signed_name
@@ -296,6 +303,14 @@ def contract_signing_edit(request, pk):
                     "contract_signed_scan_link",
                     "contract_signed_scan_file",
                 ])
+                sibling_updates.update({
+                    "contract_signed_scan": obj.contract_signed_scan,
+                    "contract_signed_scan_link": obj.contract_signed_scan_link,
+                    "contract_signed_scan_upload_date": obj.contract_signed_scan_upload_date,
+                    "contract_signed_scan_file": "",
+                })
+                if old_signed_path:
+                    paths_to_delete.append(old_signed_path)
             elif clear_signed:
                 obj.contract_signed_scan = ""
                 obj.contract_signed_scan_upload_date = None
@@ -307,24 +322,29 @@ def contract_signing_edit(request, pk):
                     "contract_signed_scan_link",
                     "contract_signed_scan_file",
                 ])
+                sibling_updates.update({
+                    "contract_signed_scan": obj.contract_signed_scan,
+                    "contract_signed_scan_link": obj.contract_signed_scan_link,
+                    "contract_signed_scan_upload_date": obj.contract_signed_scan_upload_date,
+                    "contract_signed_scan_file": "",
+                })
+                if old_signed_path:
+                    paths_to_delete.append(old_signed_path)
 
             if update_fields:
                 obj.save(update_fields=update_fields)
 
-            if obj.contract_batch_id:
+            if obj.contract_batch_id and sibling_updates:
                 Performer.objects.filter(
                     contract_batch_id=obj.contract_batch_id,
                 ).exclude(pk=obj.pk).update(
-                    contract_employee_scan_link=obj.contract_employee_scan_link,
-                    contract_scan_document=obj.contract_scan_document,
-                    contract_upload_date=obj.contract_upload_date,
-                    contract_send_date=obj.contract_send_date,
-                    contract_signed_scan=obj.contract_signed_scan,
-                    contract_signed_scan_link=obj.contract_signed_scan_link,
-                    contract_signed_scan_upload_date=obj.contract_signed_scan_upload_date,
-                    contract_employee_scan="",
-                    contract_signed_scan_file="",
+                    **sibling_updates,
                 )
+            for path in paths_to_delete:
+                try:
+                    default_storage.delete(path)
+                except Exception:
+                    pass
             resp = render(request, CONTRACTS_PARTIAL_TEMPLATE, _contracts_context(request.user))
             resp["HX-Trigger"] = "contracts-updated"
             return resp

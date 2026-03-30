@@ -1,15 +1,20 @@
+import os
 import shutil
 import tempfile
 import uuid
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
+from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from core.models import CloudStorageSettings
-from policy_app.models import Product
+from nextcloud_app.api import NextcloudShare
+from nextcloud_app.models import NextcloudUserLink
+from policy_app.models import EXPERT_GROUP, Product
 from projects_app.models import Performer, ProjectRegistration
 from users_app.models import Employee
 
@@ -60,6 +65,14 @@ class ContractsCloudLabelTests(TestCase):
             patronymic="Иванович",
             employment="Фрилансер",
         )
+        expert_group, _ = Group.objects.get_or_create(name=EXPERT_GROUP)
+        self.employee_user.groups.add(expert_group)
+        self.employee_link = NextcloudUserLink.objects.create(
+            user=self.employee_user,
+            nextcloud_user_id="nc-expert",
+            nextcloud_username="nc-expert",
+            nextcloud_email=self.employee_user.email,
+        )
         self.performer = Performer.objects.create(
             registration=self.project,
             employee=self.employee,
@@ -101,3 +114,82 @@ class ContractsCloudLabelTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "https://cloud.example.com/s/current-scan", html=False)
         self.assertContains(response, "Договор 7001_Иванов ИИ_1п.pdf", html=False)
+
+    def test_contracts_partial_marks_signing_row_as_having_scan_from_cloud_fields(self):
+        self.performer.contract_scan_document = "Договор 7001_Иванов ИИ_1п.pdf"
+        self.performer.contract_employee_scan_link = "https://cloud.example.com/s/current-scan"
+        self.performer.contract_employee_scan = ""
+        self.performer.save(update_fields=["contract_scan_document", "contract_employee_scan_link", "contract_employee_scan"])
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-has-scan="1"', html=False)
+
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share")
+    def test_contracts_partial_builds_nextcloud_disk_link_from_user_share_target(self, mocked_get_user_share):
+        mocked_get_user_share.return_value = NextcloudShare(
+            share_id="55",
+            path=self.performer.contract_project_disk_folder,
+            share_with=self.employee_link.nextcloud_user_id,
+            permissions=1,
+            target_path="/Shared/000 Иванов ИИ",
+        )
+        self.client.force_login(self.employee_user)
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            "/apps/files/files?dir=/Shared/000%20%D0%98%D0%B2%D0%B0%D0%BD%D0%BE%D0%B2%20%D0%98%D0%98",
+            html=False,
+        )
+
+    @patch("contracts_app.views._upload_scan_to_cloud_bytes", return_value="")
+    def test_contract_signing_edit_keeps_existing_local_scan_when_cloud_upload_fails(self, _mock_upload):
+        with self.settings(MEDIA_ROOT=self.media_root):
+            self.performer.contract_employee_scan.save("existing-scan.pdf", ContentFile(b"existing"), save=True)
+            old_name = self.performer.contract_employee_scan.name
+            old_path = self.performer.contract_employee_scan.path
+
+            response = self.client.post(
+                reverse("contracts_signing_edit", args=[self.performer.pk]),
+                {
+                    "contract_employee_scan": SimpleUploadedFile(
+                        "new-scan.pdf",
+                        b"new-data",
+                        content_type="application/pdf",
+                    ),
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.performer.refresh_from_db()
+        self.assertEqual(self.performer.contract_employee_scan.name, old_name)
+        self.assertTrue(os.path.exists(old_path))
+        self.assertIn("contract_employee_scan", response.context["form"].errors)
+
+    def test_contract_signing_edit_noop_does_not_clear_sibling_local_scan_fields(self):
+        sibling = Performer.objects.create(
+            registration=self.project,
+            employee=self.employee,
+            executor="Иванов Иван Иванович",
+            contract_batch_id=self.performer.contract_batch_id,
+            contract_project_disk_folder=self.performer.contract_project_disk_folder,
+        )
+        with self.settings(MEDIA_ROOT=self.media_root):
+            sibling.contract_employee_scan.save("sibling-employee.pdf", ContentFile(b"employee"), save=True)
+            sibling.contract_signed_scan_file.save("sibling-signed.pdf", ContentFile(b"signed"), save=True)
+            employee_name = sibling.contract_employee_scan.name
+            signed_name = sibling.contract_signed_scan_file.name
+
+            response = self.client.post(
+                reverse("contracts_signing_edit", args=[self.performer.pk]),
+                {},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        sibling.refresh_from_db()
+        self.assertEqual(sibling.contract_employee_scan.name, employee_name)
+        self.assertEqual(sibling.contract_signed_scan_file.name, signed_name)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 from urllib.parse import quote
 from urllib.parse import unquote
 import xml.etree.ElementTree as ET
@@ -28,11 +29,13 @@ class NextcloudShare:
     permissions: int
     share_type: int = 0
     url: str = ""
+    target_path: str = ""
 
 
 class NextcloudApiClient:
     EDITOR_PERMISSIONS = 15
     PUBLIC_LINK_SHARE_TYPE = 3
+    RETRYABLE_STATUS_CODES = {429}
 
     def __init__(self, *, session: requests.Session | None = None):
         self._session = session or requests.Session()
@@ -145,6 +148,7 @@ class NextcloudApiClient:
                     path=existing.path,
                     share_with=existing.share_with,
                     permissions=permissions,
+                    target_path=existing.target_path,
                 )
             return existing
 
@@ -164,6 +168,7 @@ class NextcloudApiClient:
             path=str(data.get("path") or normalized),
             share_with=str(data.get("share_with") or share_with_user_id),
             permissions=int(data.get("permissions") or permissions),
+            target_path=str(data.get("file_target") or data.get("fileTarget") or ""),
         )
 
     def get_user_share(
@@ -190,6 +195,7 @@ class NextcloudApiClient:
                 path=str(item.get("path") or normalized),
                 share_with=str(item.get("share_with") or share_with_user_id),
                 permissions=int(item.get("permissions") or self.EDITOR_PERMISSIONS),
+                target_path=str(item.get("file_target") or item.get("fileTarget") or ""),
             )
         return None
 
@@ -289,15 +295,23 @@ class NextcloudApiClient:
             headers["Content-Type"] = "application/json"
         params = dict(kwargs.pop("params", {}) or {})
         params.setdefault("format", "json")
-        response = self._session.request(
-            method,
-            f"{self.base_url}{path}",
-            auth=(self.username, self.token),
-            headers=headers,
-            params=params,
-            timeout=20,
-            **kwargs,
-        )
+        max_attempts = 4
+        for attempt in range(max_attempts):
+            response = self._session.request(
+                method,
+                f"{self.base_url}{path}",
+                auth=(self.username, self.token),
+                headers=headers,
+                params=params,
+                timeout=20,
+                **kwargs,
+            )
+            if response.status_code not in self.RETRYABLE_STATUS_CODES:
+                break
+            if attempt == max_attempts - 1:
+                break
+            retry_after = self._get_retry_after_seconds(response, default=1.0 + attempt)
+            time.sleep(retry_after)
         if response.status_code >= 400:
             raise NextcloudApiError(f"Nextcloud API error {response.status_code}: {response.text[:500]}")
         return response
@@ -351,6 +365,7 @@ class NextcloudApiClient:
                 permissions=int(item.get("permissions") or 1),
                 share_type=self.PUBLIC_LINK_SHARE_TYPE,
                 url=str(item.get("url") or item.get("link") or ""),
+                target_path=str(item.get("file_target") or item.get("fileTarget") or ""),
             )
         return None
 
@@ -364,6 +379,15 @@ class NextcloudApiClient:
         if decoded.startswith(base_prefix):
             return self._normalize_folder_path(decoded[len(base_prefix):])
         return ""
+
+    @staticmethod
+    def _get_retry_after_seconds(response: requests.Response, *, default: float) -> float:
+        raw = str(response.headers.get("Retry-After") or "").strip()
+        try:
+            seconds = float(raw)
+        except (TypeError, ValueError):
+            return max(default, 0.0)
+        return max(seconds, 0.0)
 
     @staticmethod
     def _extract_data(response: requests.Response) -> dict[str, object]:

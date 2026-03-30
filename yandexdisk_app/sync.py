@@ -11,6 +11,7 @@ import threading
 import time
 from collections import defaultdict
 from datetime import datetime
+from email.utils import parsedate_to_datetime
 
 from django.db import close_old_connections
 from django.utils import timezone
@@ -28,6 +29,11 @@ def _parse_modified(dt_str: str):
         dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
         return timezone.make_aware(dt) if timezone.is_naive(dt) else dt
     except (ValueError, TypeError):
+        pass
+    try:
+        dt = parsedate_to_datetime(dt_str)
+        return timezone.make_aware(dt) if timezone.is_naive(dt) else dt
+    except (TypeError, ValueError, IndexError):
         return None
 
 

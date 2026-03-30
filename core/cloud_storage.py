@@ -275,15 +275,25 @@ def get_any_connected_service_user():
     return account.user if account else None
 
 
-def build_folder_url(path: str) -> str:
+def build_folder_url(path: str, *, user=None) -> str:
     if not path:
         return ""
 
     if is_nextcloud_primary():
-        from nextcloud_app.api import NextcloudApiClient
+        from nextcloud_app.api import NextcloudApiClient, NextcloudApiError
+        from nextcloud_app.models import NextcloudUserLink
 
         client = NextcloudApiClient()
         if client.is_configured:
+            if user is not None and getattr(user, "is_authenticated", False):
+                link = NextcloudUserLink.objects.filter(user=user).first()
+                if link and link.nextcloud_user_id and link.nextcloud_user_id != client.username:
+                    try:
+                        share = client.get_user_share(client.username, path, link.nextcloud_user_id)
+                    except NextcloudApiError:
+                        share = None
+                    if share and share.target_path:
+                        return client.build_files_url(share.target_path)
             return client.build_files_url(path)
         return ""
 
