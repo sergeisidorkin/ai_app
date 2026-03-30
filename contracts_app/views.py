@@ -11,6 +11,8 @@ from django.views.decorators.http import require_http_methods, require_POST
 from core.cloud_storage import (
     CloudStorageNotReadyError,
     get_any_connected_service_user,
+    get_primary_cloud_storage_label,
+    is_nextcloud_primary,
     publish_resource as cloud_publish_resource,
     upload_file as cloud_upload_file,
 )
@@ -125,6 +127,7 @@ def _contracts_context(user=None):
         "lawyer_badge_map": lawyer_badge_map,
         "is_expert": is_expert,
         "is_lawyer": is_lawyer,
+        "primary_cloud_storage_label": get_primary_cloud_storage_label(),
     }
 
 
@@ -134,37 +137,39 @@ def contracts_partial(request):
     return render(request, CONTRACTS_PARTIAL_TEMPLATE, _contracts_context(request.user))
 
 
-def _get_yadisk_user():
-    """Return a user who has a connected cloud account for service uploads."""
+def _get_cloud_upload_user(user):
+    """Return a user context suitable for cloud uploads."""
+    if is_nextcloud_primary():
+        return user
     return get_any_connected_service_user()
 
 
-def _upload_scan_to_yandex_disk_bytes(user, performer, filename, file_bytes):
-    """Upload scan bytes to Yandex.Disk, publish the resource, and return the public URL."""
+def _upload_scan_to_cloud_bytes(user, performer, filename, file_bytes):
+    """Upload scan bytes to the selected cloud storage and return the public URL."""
     if not performer.contract_project_disk_folder:
-        logger.warning("Yandex.Disk upload skipped: no disk folder for performer %s", performer.pk)
+        logger.warning("Cloud upload skipped: no cloud folder for performer %s", performer.pk)
         return ""
     try:
-        yadisk_user = _get_yadisk_user()
+        cloud_user = _get_cloud_upload_user(user)
     except CloudStorageNotReadyError:
         logger.warning("Cloud upload skipped: selected backend is not migrated for contract scans")
         return ""
-    if not yadisk_user:
-        logger.warning("Yandex.Disk upload skipped: no connected cloud account found")
+    if not cloud_user:
+        logger.warning("Cloud upload skipped: no connected cloud account found")
         return ""
     try:
         disk_path = f"{performer.contract_project_disk_folder}/{filename}"
-        ok = cloud_upload_file(yadisk_user, disk_path, file_bytes)
+        ok = cloud_upload_file(cloud_user, disk_path, file_bytes)
         if not ok:
-            logger.error("Yandex.Disk upload_file returned False for %s", disk_path)
+            logger.error("Cloud upload_file returned False for %s", disk_path)
             return ""
-        public_url = cloud_publish_resource(yadisk_user, disk_path)
+        public_url = cloud_publish_resource(cloud_user, disk_path)
         return public_url or ""
     except CloudStorageNotReadyError:
         logger.warning("Cloud upload skipped: selected backend is not migrated for contract scans")
         return ""
     except Exception:
-        logger.exception("Yandex.Disk upload failed for scan %s", filename)
+        logger.exception("Cloud upload failed for scan %s", filename)
         return ""
 
 
@@ -184,9 +189,11 @@ def contract_signing_edit(request, pk):
 
         has_new_scan = "contract_employee_scan" in request.FILES
         old_scan_path = performer.contract_employee_scan.name if performer.contract_employee_scan else ""
+        clear_scan = bool(request.POST.get("contract_employee_scan-clear")) and not has_new_scan
 
         has_new_signed = "contract_signed_scan_file" in request.FILES
         old_signed_path = performer.contract_signed_scan_file.name if performer.contract_signed_scan_file else ""
+        clear_signed = bool(request.POST.get("contract_signed_scan_file-clear")) and not has_new_signed
 
         if has_new_scan:
             scan_name = _compute_scan_name(performer)
@@ -208,25 +215,12 @@ def contract_signing_edit(request, pk):
                         default_storage.delete(old_scan_path)
                     except Exception:
                         pass
-                form.instance.contract_scan_document = scan_name
-                form.instance.contract_upload_date = timezone.now()
-            elif not form.cleaned_data.get("contract_employee_scan"):
-                form.instance.contract_scan_document = ""
-                form.instance.contract_upload_date = None
-                form.instance.contract_employee_scan_link = ""
-
             if has_new_signed:
                 if old_signed_path:
                     try:
                         default_storage.delete(old_signed_path)
                     except Exception:
                         pass
-                form.instance.contract_signed_scan = signed_name
-                form.instance.contract_signed_scan_upload_date = timezone.now()
-            elif not form.cleaned_data.get("contract_signed_scan_file"):
-                form.instance.contract_signed_scan = ""
-                form.instance.contract_signed_scan_upload_date = None
-                form.instance.contract_signed_scan_link = ""
 
             scan_file_data = None
             if has_new_scan:
@@ -240,37 +234,96 @@ def contract_signing_edit(request, pk):
                 f.seek(0)
                 signed_file_data = f.read()
 
-            obj = form.save()
-
+            scan_url = ""
             if has_new_scan and scan_file_data is not None:
-                scan_url = _upload_scan_to_yandex_disk_bytes(
-                    request.user, obj, request.FILES["contract_employee_scan"].name, scan_file_data,
+                scan_url = _upload_scan_to_cloud_bytes(
+                    request.user, performer, request.FILES["contract_employee_scan"].name, scan_file_data,
                 )
-                if scan_url:
-                    obj.contract_employee_scan_link = scan_url
-                    obj.save(update_fields=["contract_employee_scan_link"])
+                if not scan_url:
+                    form.add_error("contract_employee_scan", "Не удалось загрузить файл в облачное хранилище.")
 
+            signed_url = ""
             if has_new_signed and signed_file_data is not None:
-                signed_url = _upload_scan_to_yandex_disk_bytes(
-                    request.user, obj, request.FILES["contract_signed_scan_file"].name, signed_file_data,
+                signed_url = _upload_scan_to_cloud_bytes(
+                    request.user, performer, request.FILES["contract_signed_scan_file"].name, signed_file_data,
                 )
-                if signed_url:
-                    obj.contract_signed_scan_link = signed_url
-                    obj.save(update_fields=["contract_signed_scan_link"])
+                if not signed_url:
+                    form.add_error("contract_signed_scan_file", "Не удалось загрузить файл в облачное хранилище.")
+
+            if form.errors:
+                resp = render(request, "contracts_app/signing_form.html", {
+                    "form": form,
+                    "performer": performer,
+                })
+                resp["HX-Retarget"] = "#contracts-modal .modal-content"
+                resp["HX-Reswap"] = "innerHTML"
+                return resp
+
+            obj = performer
+            update_fields = []
+
+            if has_new_scan:
+                obj.contract_scan_document = scan_name
+                obj.contract_upload_date = timezone.now()
+                obj.contract_employee_scan_link = scan_url
+                obj.contract_employee_scan = ""
+                update_fields.extend([
+                    "contract_scan_document",
+                    "contract_upload_date",
+                    "contract_employee_scan_link",
+                    "contract_employee_scan",
+                ])
+            elif clear_scan:
+                obj.contract_scan_document = ""
+                obj.contract_upload_date = None
+                obj.contract_employee_scan_link = ""
+                obj.contract_employee_scan = ""
+                update_fields.extend([
+                    "contract_scan_document",
+                    "contract_upload_date",
+                    "contract_employee_scan_link",
+                    "contract_employee_scan",
+                ])
+
+            if has_new_signed:
+                obj.contract_signed_scan = signed_name
+                obj.contract_signed_scan_upload_date = timezone.now()
+                obj.contract_signed_scan_link = signed_url
+                obj.contract_signed_scan_file = ""
+                update_fields.extend([
+                    "contract_signed_scan",
+                    "contract_signed_scan_upload_date",
+                    "contract_signed_scan_link",
+                    "contract_signed_scan_file",
+                ])
+            elif clear_signed:
+                obj.contract_signed_scan = ""
+                obj.contract_signed_scan_upload_date = None
+                obj.contract_signed_scan_link = ""
+                obj.contract_signed_scan_file = ""
+                update_fields.extend([
+                    "contract_signed_scan",
+                    "contract_signed_scan_upload_date",
+                    "contract_signed_scan_link",
+                    "contract_signed_scan_file",
+                ])
+
+            if update_fields:
+                obj.save(update_fields=update_fields)
 
             if obj.contract_batch_id:
                 Performer.objects.filter(
                     contract_batch_id=obj.contract_batch_id,
                 ).exclude(pk=obj.pk).update(
-                    contract_employee_scan=obj.contract_employee_scan,
                     contract_employee_scan_link=obj.contract_employee_scan_link,
                     contract_scan_document=obj.contract_scan_document,
                     contract_upload_date=obj.contract_upload_date,
                     contract_send_date=obj.contract_send_date,
                     contract_signed_scan=obj.contract_signed_scan,
-                    contract_signed_scan_file=obj.contract_signed_scan_file,
                     contract_signed_scan_link=obj.contract_signed_scan_link,
                     contract_signed_scan_upload_date=obj.contract_signed_scan_upload_date,
+                    contract_employee_scan="",
+                    contract_signed_scan_file="",
                 )
             resp = render(request, CONTRACTS_PARTIAL_TEMPLATE, _contracts_context(request.user))
             resp["HX-Trigger"] = "contracts-updated"
@@ -336,28 +389,40 @@ def contract_scan_upload(request, pk):
     _rename_uploaded_file(uploaded_file, scan_name)
     uploaded_file.seek(0)
     file_bytes = uploaded_file.read()
-    uploaded_file.seek(0)
-    performer.contract_employee_scan = uploaded_file
+    scan_url = _upload_scan_to_cloud_bytes(request.user, performer, uploaded_file.name, file_bytes)
+    if not scan_url:
+        return JsonResponse({"ok": False, "error": "Не удалось загрузить файл в облачное хранилище."}, status=400)
+
+    performer.contract_employee_scan = ""
     performer.contract_scan_document = scan_name
     performer.contract_upload_date = timezone.now()
-    performer.save(update_fields=["contract_employee_scan", "contract_scan_document", "contract_upload_date"])
-
-    scan_url = _upload_scan_to_yandex_disk_bytes(request.user, performer, uploaded_file.name, file_bytes)
-    if scan_url:
-        performer.contract_employee_scan_link = scan_url
-        performer.save(update_fields=["contract_employee_scan_link"])
+    performer.contract_employee_scan_link = scan_url
+    performer.save(
+        update_fields=[
+            "contract_employee_scan",
+            "contract_scan_document",
+            "contract_upload_date",
+            "contract_employee_scan_link",
+        ]
+    )
 
     if performer.contract_batch_id:
         Performer.objects.filter(
             contract_batch_id=performer.contract_batch_id,
         ).exclude(pk=performer.pk).update(
-            contract_employee_scan=performer.contract_employee_scan,
+            contract_employee_scan="",
             contract_employee_scan_link=performer.contract_employee_scan_link,
             contract_scan_document=performer.contract_scan_document,
             contract_upload_date=performer.contract_upload_date,
         )
 
-    return JsonResponse({"ok": True, "scan_name": scan_name})
+    return JsonResponse(
+        {
+            "ok": True,
+            "scan_name": scan_name,
+            "storage_label": get_primary_cloud_storage_label(),
+        }
+    )
 
 
 @login_required
@@ -377,33 +442,40 @@ def contract_signed_scan_upload(request, pk):
     _rename_uploaded_file(uploaded_file, scan_name)
     uploaded_file.seek(0)
     file_bytes = uploaded_file.read()
-    uploaded_file.seek(0)
-    performer.contract_signed_scan_file = uploaded_file
-    performer.contract_signed_scan = scan_name
-    performer.contract_signed_scan_upload_date = timezone.now()
-    performer.save(update_fields=[
-        "contract_signed_scan_file", "contract_signed_scan",
-        "contract_signed_scan_upload_date",
-    ])
-
-    scan_url = _upload_scan_to_yandex_disk_bytes(
+    scan_url = _upload_scan_to_cloud_bytes(
         request.user, performer, uploaded_file.name, file_bytes,
     )
-    if scan_url:
-        performer.contract_signed_scan_link = scan_url
-        performer.save(update_fields=["contract_signed_scan_link"])
+    if not scan_url:
+        return JsonResponse({"ok": False, "error": "Не удалось загрузить файл в облачное хранилище."}, status=400)
+
+    performer.contract_signed_scan_file = ""
+    performer.contract_signed_scan = scan_name
+    performer.contract_signed_scan_upload_date = timezone.now()
+    performer.contract_signed_scan_link = scan_url
+    performer.save(update_fields=[
+        "contract_signed_scan_file",
+        "contract_signed_scan",
+        "contract_signed_scan_upload_date",
+        "contract_signed_scan_link",
+    ])
 
     if performer.contract_batch_id:
         Performer.objects.filter(
             contract_batch_id=performer.contract_batch_id,
         ).exclude(pk=performer.pk).update(
-            contract_signed_scan_file=performer.contract_signed_scan_file,
+            contract_signed_scan_file="",
             contract_signed_scan_link=performer.contract_signed_scan_link,
             contract_signed_scan=performer.contract_signed_scan,
             contract_signed_scan_upload_date=performer.contract_signed_scan_upload_date,
         )
 
-    return JsonResponse({"ok": True, "scan_name": scan_name})
+    return JsonResponse(
+        {
+            "ok": True,
+            "scan_name": scan_name,
+            "storage_label": get_primary_cloud_storage_label(),
+        }
+    )
 
 
 @login_required

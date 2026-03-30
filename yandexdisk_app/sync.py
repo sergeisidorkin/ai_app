@@ -31,6 +31,35 @@ def _parse_modified(dt_str: str):
         return None
 
 
+def _collect_recursive_metrics(user, root_path, delay, list_resources):
+    file_count = 0
+    last_mod = None
+    stack = [root_path]
+    visited = set()
+
+    while stack:
+        current_path = stack.pop()
+        if current_path in visited:
+            continue
+        visited.add(current_path)
+
+        contents = list_resources(user, current_path, limit=1000)
+        time.sleep(delay)
+        for item in contents:
+            item_type = item.get("type")
+            if item_type == "file":
+                file_count += 1
+                mod = _parse_modified(item.get("modified"))
+                if mod and (last_mod is None or mod > last_mod):
+                    last_mod = mod
+            elif item_type == "dir":
+                child_path = item.get("path") or ""
+                if child_path and child_path not in visited:
+                    stack.append(child_path)
+
+    return file_count, last_mod
+
+
 def _sync_folders(user, folders, delay, list_resources):
     """Sync file_count / last_upload_at for a queryset of folder records.
 
@@ -71,16 +100,7 @@ def _sync_folders(user, folders, delay, list_resources):
                     break
 
         if folder_info:
-            contents = list_resources(user, folder.disk_path, limit=1000)
-            time.sleep(delay)
-
-            files_only = [c for c in contents if c.get("type") == "file"]
-            file_count = len(files_only)
-            last_mod = None
-            for f in files_only:
-                mod = _parse_modified(f.get("modified"))
-                if mod and (last_mod is None or mod > last_mod):
-                    last_mod = mod
+            file_count, last_mod = _collect_recursive_metrics(user, folder.disk_path, delay, list_resources)
 
             folder.file_count = file_count
             folder.last_upload_at = last_mod
@@ -102,8 +122,8 @@ def run_sync(delay: float = API_DELAY) -> int:
         ChecklistItemFolder, ProjectWorkspace,
         SourceDataWorkspace, SourceDataSectionFolder, SourceDataItemFolder,
     )
+    from core.cloud_storage import CloudStorageNotReadyError, is_nextcloud_primary, list_folder_resources
     from yandexdisk_app.models import YandexDiskAccount
-    from yandexdisk_app.service import list_resources
 
     total_updated = 0
 
@@ -116,12 +136,16 @@ def run_sync(delay: float = API_DELAY) -> int:
 
     for user_id, user_workspaces in ws_by_user.items():
         user = user_workspaces[0].created_by
-        if not YandexDiskAccount.objects.filter(user=user).exists():
+        if not is_nextcloud_primary() and not YandexDiskAccount.objects.filter(user=user).exists():
             logger.warning("У пользователя %s нет подключения к Яндекс.Диску, пропускаем", user)
             continue
         for ws in user_workspaces:
             folders = ChecklistItemFolder.objects.filter(project=ws.project)
-            total_updated += _sync_folders(user, folders, delay, list_resources)
+            try:
+                total_updated += _sync_folders(user, folders, delay, list_folder_resources)
+            except CloudStorageNotReadyError:
+                logger.info("Пропускаем синхронизацию папок проекта: текущее облачное хранилище ещё не настроено.")
+                return total_updated
 
     # ── 2. Пространства исходных данных (SourceData*Folder) ─────────────
     sd_workspaces = SourceDataWorkspace.objects.select_related("created_by").all()
@@ -132,15 +156,19 @@ def run_sync(delay: float = API_DELAY) -> int:
 
     for user_id, user_sd_workspaces in sd_by_user.items():
         user = user_sd_workspaces[0].created_by
-        if not YandexDiskAccount.objects.filter(user=user).exists():
+        if not is_nextcloud_primary() and not YandexDiskAccount.objects.filter(user=user).exists():
             logger.warning("У пользователя %s нет подключения к Яндекс.Диску, пропускаем", user)
             continue
         for sdws in user_sd_workspaces:
             section_folders = SourceDataSectionFolder.objects.filter(project=sdws.project)
-            total_updated += _sync_folders(user, section_folders, delay, list_resources)
+            try:
+                total_updated += _sync_folders(user, section_folders, delay, list_folder_resources)
 
-            item_folders = SourceDataItemFolder.objects.filter(project=sdws.project)
-            total_updated += _sync_folders(user, item_folders, delay, list_resources)
+                item_folders = SourceDataItemFolder.objects.filter(project=sdws.project)
+                total_updated += _sync_folders(user, item_folders, delay, list_folder_resources)
+            except CloudStorageNotReadyError:
+                logger.info("Пропускаем синхронизацию source-data: текущее облачное хранилище ещё не настроено.")
+                return total_updated
 
     return total_updated
 

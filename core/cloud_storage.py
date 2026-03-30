@@ -138,7 +138,11 @@ def create_basic_project_workspace_stream(user, project):
 
 
 def create_source_data_workspace_stream(user, project):
-    ensure_backend_supported("создание пространства исходных данных")
+    if is_nextcloud_primary():
+        from nextcloud_app.workspace import create_source_data_workspace_stream as create_nextcloud_source_stream
+
+        return create_nextcloud_source_stream(user, project)
+
     from yandexdisk_app.workspace import create_source_data_workspace_stream as create_yadisk_source_stream
 
     return create_yadisk_source_stream(user, project)
