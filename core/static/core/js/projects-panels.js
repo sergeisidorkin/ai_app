@@ -438,6 +438,7 @@
     const root = pane();
     const url = root?.querySelector('[data-workspace-folders-url]')?.dataset?.workspaceFoldersUrl;
     const listEl = document.getElementById('reg-ws-folder-counts');
+    const storageLabelEl = document.getElementById('reg-create-workspace-storage-label');
     if (!listEl) return;
     listEl.innerHTML = '<li class="text-muted">Загрузка…</li>';
 
@@ -447,6 +448,7 @@
         const resp = await fetch(url);
         const data = await resp.json();
         folders = data.folders || [];
+        if (storageLabelEl && data.storage_label) storageLabelEl.textContent = data.storage_label;
       } catch { /* ignore */ }
     }
 

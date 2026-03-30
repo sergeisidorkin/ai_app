@@ -1,12 +1,19 @@
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
+from checklists_app.models import ProjectWorkspace
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.test import Client, TestCase, override_settings
 
+from core.models import CloudStorageSettings
+from policy_app.models import Product
+from projects_app.models import ProjectRegistration, RegistrationWorkspaceFolder
+from users_app.models import Employee
+from yandexdisk_app.workspace import _build_project_folder_name, WorkspaceResult
 from nextcloud_app.api import NextcloudApiError
 from nextcloud_app.models import NextcloudUserLink
 from nextcloud_app.provisioning import ensure_nextcloud_account
+from nextcloud_app.workspace import create_basic_project_workspace_stream
 
 User = get_user_model()
 
@@ -196,3 +203,96 @@ class SidebarNextcloudLinkTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'href="https://cloud.imcmontanai.ru/apps/user_oidc/login/1"', html=False)
+
+
+@override_settings(
+    NEXTCLOUD_PROVISIONING_BASE_URL="https://cloud.example.com",
+    NEXTCLOUD_PROVISIONING_USERNAME="cloud-admin",
+    NEXTCLOUD_PROVISIONING_TOKEN="token",
+    NEXTCLOUD_OIDC_PROVIDER_ID=1,
+)
+class NextcloudWorkspaceTests(TestCase):
+    def setUp(self):
+        settings_obj = CloudStorageSettings.get_solo()
+        settings_obj.primary_storage = CloudStorageSettings.PrimaryStorage.NEXTCLOUD
+        settings_obj.nextcloud_root_path = "/Corporate Root"
+        settings_obj.save()
+
+        self.creator = User.objects.create_user(
+            username="creator@example.com",
+            email="creator@example.com",
+            password="Secret123!",
+            is_staff=True,
+            is_active=True,
+        )
+        self.manager = User.objects.create_user(
+            username="manager@example.com",
+            email="manager@example.com",
+            password="Secret123!",
+            first_name="Иван",
+            last_name="Иванов",
+            is_staff=True,
+            is_active=True,
+        )
+        Employee.objects.create(user=self.manager, patronymic="Иванович", role="Руководитель проектов")
+        NextcloudUserLink.objects.create(
+            user=self.manager,
+            nextcloud_user_id=f"ncstaff-{self.manager.pk}",
+            nextcloud_username=f"ncstaff-{self.manager.pk}",
+            nextcloud_email="manager@example.com",
+        )
+        RegistrationWorkspaceFolder.objects.bulk_create(
+            [
+                RegistrationWorkspaceFolder(user=self.creator, level=1, name="01 Документы", position=0),
+                RegistrationWorkspaceFolder(user=self.creator, level=2, name="02 Письма", position=1),
+            ]
+        )
+        self.product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            service_type="service",
+        )
+        self.project = ProjectRegistration.objects.create(
+            number=6001,
+            type=self.product,
+            name="Проект Nextcloud",
+            year=2026,
+            project_manager="Иванов Иван Иванович",
+        )
+
+    def test_create_basic_project_workspace_creates_folders_and_grants_editor_access(self):
+        project_folder = _build_project_folder_name(self.project)
+        project_path = f"/Corporate Root/2026/{project_folder}"
+        client = Mock()
+        client.is_configured = True
+        client.username = "cloud-admin"
+        client.ensure_folder.side_effect = lambda _owner, path: "/" + "/".join(
+            part for part in str(path).replace("\\", "/").split("/") if part
+        )
+        client.ensure_user_share.return_value = Mock()
+        client.build_files_url.return_value = f"https://cloud.example.com/apps/files/files?dir={project_path}"
+
+        items = list(create_basic_project_workspace_stream(self.creator, self.project, client=client))
+
+        self.assertIsInstance(items[-1], WorkspaceResult)
+        self.assertTrue(items[-1].ok)
+        self.assertIn("Nextcloud", items[-1].message)
+        self.assertEqual(
+            client.ensure_folder.call_args_list,
+            [
+                call("cloud-admin", "/Corporate Root/2026"),
+                call("cloud-admin", project_path),
+                call("cloud-admin", f"{project_path}/01 Документы"),
+                call("cloud-admin", f"{project_path}/01 Документы/02 Письма"),
+            ],
+        )
+        client.ensure_user_share.assert_called_once_with(
+            "cloud-admin",
+            project_path,
+            f"ncstaff-{self.manager.pk}",
+            permissions=15,
+        )
+        workspace = ProjectWorkspace.objects.get(project=self.project)
+        self.assertEqual(workspace.disk_path, project_path)
+        self.assertEqual(workspace.public_url, f"https://cloud.example.com/apps/files/files?dir={project_path}")

@@ -117,3 +117,23 @@ class CloudStorageProjectRoutingTests(TestCase):
         payload = response.json()
         self.assertFalse(payload["ok"])
         self.assertIn("Nextcloud", payload["error"])
+
+    def test_projects_partial_uses_current_primary_cloud_label_in_workspace_modal(self):
+        settings_obj = CloudStorageSettings.get_solo()
+        settings_obj.primary_storage = CloudStorageSettings.PrimaryStorage.NEXTCLOUD
+        settings_obj.save()
+
+        response = self.client.get(reverse("projects_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="reg-create-workspace-storage-label">Nextcloud', html=False)
+
+    def test_workspace_folders_list_returns_current_primary_cloud_label(self):
+        settings_obj = CloudStorageSettings.get_solo()
+        settings_obj.primary_storage = CloudStorageSettings.PrimaryStorage.NEXTCLOUD
+        settings_obj.save()
+
+        response = self.client.get(reverse("workspace_folders_list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["storage_label"], "Nextcloud")
