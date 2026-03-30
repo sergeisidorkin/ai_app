@@ -260,10 +260,7 @@ class NextcloudSourceDataWorkspaceFlowTests(TestCase):
         section_path = f"{base_path}/01 FIN Финансы"
         item_path = f"{section_path}/REQ-01 ОСВ"
         mocked_ensure_folder.side_effect = [section_path, item_path]
-        mocked_public_share.side_effect = [
-            "https://cloud.example.com/s/section-folder",
-            "https://cloud.example.com/s/item-folder",
-        ]
+        mocked_public_share.return_value = "https://cloud.example.com/s/item-folder"
 
         response = self.client.post(
             reverse("create_source_data_workspace"),
@@ -283,7 +280,6 @@ class NextcloudSourceDataWorkspaceFlowTests(TestCase):
         )
         mocked_public_share.assert_has_calls(
             [
-                call("cloud-admin", section_path),
                 call("cloud-admin", item_path),
             ]
         )
@@ -296,7 +292,7 @@ class NextcloudSourceDataWorkspaceFlowTests(TestCase):
         )
         workspace = SourceDataWorkspace.objects.get(project=self.project)
         self.assertEqual(section_folder.disk_path, section_path)
-        self.assertEqual(section_folder.public_url, "https://cloud.example.com/s/section-folder")
+        self.assertEqual(section_folder.public_url, "")
         self.assertEqual(item_folder.disk_path, item_path)
         self.assertEqual(item_folder.public_url, "https://cloud.example.com/s/item-folder")
         self.assertEqual(workspace.disk_path, base_path)
