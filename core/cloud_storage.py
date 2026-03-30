@@ -194,28 +194,69 @@ def get_selected_root_path(user) -> str:
 
 
 def list_folder_resources(user, path: str, *, limit: int = 100):
-    ensure_backend_supported("просмотр содержимого облачного хранилища")
+    if is_nextcloud_primary():
+        from nextcloud_app.api import NextcloudApiClient, NextcloudApiError
+
+        client = NextcloudApiClient()
+        if not client.is_configured:
+            raise CloudStorageNotReadyError("Nextcloud не настроен для просмотра содержимого облачного хранилища.")
+        try:
+            return client.list_resources(client.username, path, limit=limit)
+        except NextcloudApiError:
+            return []
+
     from yandexdisk_app.service import list_resources
 
     return list_resources(user, path, limit=limit)
 
 
 def create_folder(user, path: str) -> bool:
-    ensure_backend_supported("создание папок в облачном хранилище")
+    if is_nextcloud_primary():
+        from nextcloud_app.api import NextcloudApiClient, NextcloudApiError
+
+        client = NextcloudApiClient()
+        if not client.is_configured:
+            raise CloudStorageNotReadyError("Nextcloud не настроен для создания папок в облачном хранилище.")
+        try:
+            client.ensure_folder(client.username, path)
+            return True
+        except NextcloudApiError:
+            return False
+
     from yandexdisk_app.service import create_folder as yadisk_create_folder
 
     return yadisk_create_folder(user, path)
 
 
 def upload_file(user, path: str, data: bytes, *, overwrite: bool = True) -> bool:
-    ensure_backend_supported("загрузка файлов в облачное хранилище")
+    if is_nextcloud_primary():
+        from nextcloud_app.api import NextcloudApiClient, NextcloudApiError
+
+        client = NextcloudApiClient()
+        if not client.is_configured:
+            raise CloudStorageNotReadyError("Nextcloud не настроен для загрузки файлов в облачное хранилище.")
+        try:
+            return client.upload_file(client.username, path, data, overwrite=overwrite)
+        except NextcloudApiError:
+            return False
+
     from yandexdisk_app.service import upload_file as yadisk_upload_file
 
     return yadisk_upload_file(user, path, data, overwrite=overwrite)
 
 
 def publish_resource(user, path: str) -> str:
-    ensure_backend_supported("публикация файлов в облачном хранилище")
+    if is_nextcloud_primary():
+        from nextcloud_app.api import NextcloudApiClient, NextcloudApiError
+
+        client = NextcloudApiClient()
+        if not client.is_configured:
+            raise CloudStorageNotReadyError("Nextcloud не настроен для публикации файлов в облачном хранилище.")
+        try:
+            return client.ensure_public_link_share(client.username, path)
+        except NextcloudApiError:
+            return ""
+
     from yandexdisk_app.service import publish_resource as yadisk_publish_resource
 
     return yadisk_publish_resource(user, path)
@@ -232,6 +273,14 @@ def get_any_connected_service_user():
 
 def build_folder_url(path: str) -> str:
     if not path:
+        return ""
+
+    if is_nextcloud_primary():
+        from nextcloud_app.api import NextcloudApiClient
+
+        client = NextcloudApiClient()
+        if client.is_configured:
+            return client.build_files_url(path)
         return ""
 
     clean = str(path).removeprefix("disk:")
