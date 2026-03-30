@@ -305,7 +305,7 @@ def create_basic_project_workspace_stream(user, project: ProjectRegistration):
         },
     )
 
-    yield WorkspaceResult(True, "Рабочее пространство успешно создано.")
+    yield WorkspaceResult(True, "Рабочее пространство в облачном хранилище «Яндекс Диск» успешно создано.")
 
 
 DEFAULT_SOURCE_DATA_FOLDER = "05 Исходные данные"

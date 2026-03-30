@@ -26,6 +26,7 @@ from core.cloud_storage import (
     create_folder as cloud_create_folder,
     create_project_workspace as routed_create_project_workspace,
     create_source_data_workspace_stream as routed_create_source_data_workspace_stream,
+    get_primary_cloud_storage_label,
     get_registration_standard_folders,
     get_selected_root_path,
     get_workspace_result_class,
@@ -87,6 +88,7 @@ def _projects_context():
     return {
         "registrations": registrations,
         "reg_filter_projects": reg_filter_projects,
+        "primary_cloud_storage_label": get_primary_cloud_storage_label(),
         "work_items": work_items,
         "work_projects": work_projects,
         "legal_entities": legal_entities,
@@ -1561,7 +1563,13 @@ def _get_effective_folders(user):
 def workspace_folders_list(request):
     qs, is_custom = _get_effective_folders(request.user)
     folders = list(qs.values("id", "level", "name", "position"))
-    return JsonResponse({"folders": folders, "is_custom": is_custom})
+    return JsonResponse(
+        {
+            "folders": folders,
+            "is_custom": is_custom,
+            "storage_label": get_primary_cloud_storage_label(),
+        }
+    )
 
 
 @login_required

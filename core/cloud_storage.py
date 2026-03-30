@@ -127,7 +127,11 @@ def create_project_workspace(user, project):
 
 
 def create_basic_project_workspace_stream(user, project):
-    ensure_backend_supported("создание регистрационного рабочего пространства")
+    if is_nextcloud_primary():
+        from nextcloud_app.workspace import create_basic_project_workspace_stream as create_nextcloud_workspace_stream
+
+        return create_nextcloud_workspace_stream(user, project)
+
     from yandexdisk_app.workspace import create_basic_project_workspace_stream as create_yadisk_workspace_stream
 
     return create_yadisk_workspace_stream(user, project)
