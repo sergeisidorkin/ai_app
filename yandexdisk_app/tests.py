@@ -193,11 +193,11 @@ class FolderSyncTests(TestCase):
                 return [{"path": folder.disk_path, "type": "dir"}]
             if path == folder.disk_path:
                 return [
-                    {"path": f"{folder.disk_path}/scan-1.pdf", "type": "file", "modified": "2026-03-28T08:30:00Z"},
+                    {"path": f"{folder.disk_path}/scan-1.pdf", "type": "file", "modified": "Sat, 28 Mar 2026 08:30:00 GMT"},
                     {"path": f"{folder.disk_path}/nested", "type": "dir"},
                 ]
             if path == f"{folder.disk_path}/nested":
-                return [{"path": f"{folder.disk_path}/nested/scan-2.pdf", "type": "file", "modified": "2026-03-31T09:00:00Z"}]
+                return [{"path": f"{folder.disk_path}/nested/scan-2.pdf", "type": "file", "modified": "Tue, 31 Mar 2026 09:00:00 GMT"}]
             return []
 
         mocked_list_folder_resources.side_effect = nextcloud_listing

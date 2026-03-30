@@ -240,6 +240,45 @@ class NextcloudApiClientFileOpsTests(TestCase):
 
         self.assertEqual(public_url, "https://cloud.example.com/s/public-doc")
 
+    @patch("nextcloud_app.api.time.sleep")
+    def test_ensure_public_link_share_retries_after_429(self, mocked_sleep):
+        session = Mock()
+        too_many = Mock(
+            status_code=429,
+            content=b'{"ocs":{"meta":{"status":"failure","statuscode":429,"message":"Too many requests"}}}',
+            json=lambda: {
+                "ocs": {
+                    "meta": {"status": "failure", "statuscode": 429, "message": "Too many requests"},
+                    "data": {},
+                }
+            },
+            text="Too many requests",
+            headers={"Retry-After": "0"},
+        )
+        success = Mock(
+            status_code=200,
+            content=(
+                b'{"ocs":{"meta":{"status":"ok","statuscode":100},"data":{"id":"16","url":"https://cloud.example.com/s/retried-doc"}}}'
+            ),
+            json=lambda: {
+                "ocs": {
+                    "meta": {"status": "ok", "statuscode": 100},
+                    "data": {"id": "16", "url": "https://cloud.example.com/s/retried-doc"},
+                }
+            },
+            text="",
+            headers={},
+        )
+        session.request.side_effect = [too_many, success]
+        client = NextcloudApiClient(session=session)
+
+        with patch.object(client, "get_public_link_share", return_value=None):
+            public_url = client.ensure_public_link_share("cloud-admin", "/Corporate Root/2026/retry.docx")
+
+        self.assertEqual(public_url, "https://cloud.example.com/s/retried-doc")
+        self.assertEqual(session.request.call_count, 2)
+        mocked_sleep.assert_called_once()
+
 
 class SidebarNextcloudLinkTests(TestCase):
     @override_settings(NEXTCLOUD_BASE_URL="https://cloud.imcmontanai.ru")

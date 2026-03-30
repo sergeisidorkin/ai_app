@@ -97,3 +97,9 @@ def get_item(dictionary, key):
 def disk_folder_url(path):
     """Convert a cloud storage path into a browser-friendly URL."""
     return build_folder_url(path)
+
+
+@register.simple_tag
+def disk_folder_url_for_user(user, path):
+    """Build a folder URL that works for the current authenticated user."""
+    return build_folder_url(path, user=user)
