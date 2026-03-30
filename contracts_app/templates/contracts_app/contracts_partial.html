@@ -253,7 +253,7 @@
         </td>
         <td class="text-nowrap">{{ p.contract_scan_document|default:"—" }}</td>
         <td class="text-nowrap">
-          {% disk_folder_url_for_user request.user p.contract_project_disk_folder as folder_url %}
+          {% with folder_url=p.contract_project_folder_url %}
           {% if folder_url %}
             <a href="{{ folder_url }}" target="_blank" rel="noopener" title="Открыть папку на {{ primary_cloud_storage_label }}">
               <i class="bi bi-link-45deg" style="color: var(--bs-primary, #075D94);"></i>
@@ -261,6 +261,7 @@
           {% else %}
             <i class="bi bi-link-45deg" style="color: #ccc;"></i>
           {% endif %}
+          {% endwith %}
         </td>
         <td class="text-nowrap">{% if p.contract_upload_date %}{{ p.contract_upload_date|date:"d.m.Y H:i" }}{% else %}—{% endif %}</td>
         <td class="text-nowrap">{% if p.contract_send_date %}{{ p.contract_send_date|date:"d.m.Y H:i" }}{% else %}—{% endif %}</td>

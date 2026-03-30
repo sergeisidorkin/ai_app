@@ -199,6 +199,34 @@ class NextcloudApiClient:
             )
         return None
 
+    def list_user_shares(
+        self,
+        owner_user_id: str,
+        share_with_user_id: str,
+    ) -> dict[str, NextcloudShare]:
+        response = self._request(
+            "GET",
+            "/ocs/v2.php/apps/files_sharing/api/v1/shares",
+            params={"reshares": "true", "subfiles": "false"},
+        )
+        shares: dict[str, NextcloudShare] = {}
+        for item in self._extract_list_data(response):
+            if str(item.get("share_with") or "") != share_with_user_id:
+                continue
+            if int(item.get("share_type") or -1) != 0:
+                continue
+            normalized_path = self._normalize_folder_path(item.get("path") or "")
+            if not normalized_path or normalized_path == "/":
+                continue
+            shares[normalized_path] = NextcloudShare(
+                share_id=str(item.get("id") or ""),
+                path=normalized_path,
+                share_with=str(item.get("share_with") or share_with_user_id),
+                permissions=int(item.get("permissions") or self.EDITOR_PERMISSIONS),
+                target_path=str(item.get("file_target") or item.get("fileTarget") or ""),
+            )
+        return shares
+
     def build_files_url(self, path: str) -> str:
         normalized = self._normalize_folder_path(path)
         return f"{self.base_url}/apps/files/files?dir={quote(normalized, safe='/')}"
@@ -297,15 +325,21 @@ class NextcloudApiClient:
         params.setdefault("format", "json")
         max_attempts = 4
         for attempt in range(max_attempts):
-            response = self._session.request(
-                method,
-                f"{self.base_url}{path}",
-                auth=(self.username, self.token),
-                headers=headers,
-                params=params,
-                timeout=20,
-                **kwargs,
-            )
+            try:
+                response = self._session.request(
+                    method,
+                    f"{self.base_url}{path}",
+                    auth=(self.username, self.token),
+                    headers=headers,
+                    params=params,
+                    timeout=20,
+                    **kwargs,
+                )
+            except requests.RequestException as exc:
+                if attempt == max_attempts - 1:
+                    raise NextcloudApiError(f"Nextcloud request failed: {exc}") from exc
+                time.sleep(1.0 + attempt)
+                continue
             if response.status_code not in self.RETRYABLE_STATUS_CODES:
                 break
             if attempt == max_attempts - 1:

@@ -190,6 +190,14 @@ def create_source_data_workspace_stream(
 
     section_upserts = []
     item_upserts = []
+    existing_section_urls = {
+        (row.section_id, row.asset_name): row.public_url
+        for row in SourceDataSectionFolder.objects.filter(project=project)
+    }
+    existing_item_urls = {
+        (row.checklist_item_id, row.asset_name): row.public_url
+        for row in SourceDataItemFolder.objects.filter(project=project)
+    }
 
     try:
         for asset in (unique_assets if multi_asset else [single_asset_name]):
@@ -209,7 +217,7 @@ def create_source_data_workspace_stream(
                 nn = section_nn[section.id]
                 section_folder = _build_numbered_section_folder_name(nn, section)
                 section_disk_path = client.ensure_folder(owner_user_id, _join_path(asset_path, section_folder))
-                section_public_url = client.ensure_public_link_share(owner_user_id, section_disk_path)
+                section_public_url = existing_section_urls.get((section.id, asset), "")
                 section_upserts.append(
                     (
                         {"project": project, "section": section, "asset_name": asset},
@@ -222,7 +230,9 @@ def create_source_data_workspace_stream(
                 for item in items_by_section.get(section.id, []):
                     item_folder = _build_item_folder_name(item)
                     item_disk_path = client.ensure_folder(owner_user_id, _join_path(section_disk_path, item_folder))
-                    item_public_url = client.ensure_public_link_share(owner_user_id, item_disk_path)
+                    item_public_url = existing_item_urls.get((item.id, asset), "")
+                    if not item_public_url:
+                        item_public_url = client.ensure_public_link_share(owner_user_id, item_disk_path)
                     item_upserts.append(
                         (
                             {"project": project, "checklist_item": item, "asset_name": asset},

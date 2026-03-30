@@ -9,6 +9,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_http_methods, require_POST
 
 from core.cloud_storage import (
+    build_folder_url,
     CloudStorageNotReadyError,
     get_any_connected_service_user,
     get_primary_cloud_storage_label,
@@ -16,6 +17,8 @@ from core.cloud_storage import (
     publish_resource as cloud_publish_resource,
     upload_file as cloud_upload_file,
 )
+from nextcloud_app.api import NextcloudApiClient, NextcloudApiError
+from nextcloud_app.models import NextcloudUserLink
 from notifications_app.models import Notification, NotificationPerformerLink
 from projects_app.models import Performer, ProjectRegistration
 from .forms import ContractEditForm, ContractSigningForm, ContractSubjectForm, ContractTemplateForm, ContractVariableForm
@@ -120,6 +123,8 @@ def _contracts_context(user=None):
         .order_by("-number", "-id")
     )
 
+    _attach_contract_folder_urls(contracts, user)
+
     return {
         "contracts": contracts,
         "contract_projects": contract_projects,
@@ -129,6 +134,45 @@ def _contracts_context(user=None):
         "is_lawyer": is_lawyer,
         "primary_cloud_storage_label": get_primary_cloud_storage_label(),
     }
+
+
+def _attach_contract_folder_urls(contracts, user=None):
+    folder_cache = {}
+    for performer in contracts:
+        path = getattr(performer, "contract_project_disk_folder", "") or ""
+        performer.contract_project_folder_url = build_folder_url(path)
+        if path:
+            folder_cache.setdefault(path, performer.contract_project_folder_url)
+
+    if not contracts or not is_nextcloud_primary():
+        return
+    if user is None or not getattr(user, "is_authenticated", False):
+        return
+
+    client = NextcloudApiClient()
+    if not client.is_configured:
+        return
+
+    link = NextcloudUserLink.objects.filter(user=user).first()
+    if not link or not link.nextcloud_user_id or link.nextcloud_user_id == client.username:
+        return
+
+    try:
+        share_map = client.list_user_shares(client.username, link.nextcloud_user_id)
+    except NextcloudApiError as exc:
+        logger.warning("Could not resolve Nextcloud share targets for contracts table: %s", exc)
+        return
+
+    resolved_cache = dict(folder_cache)
+    for path in list(resolved_cache.keys()):
+        share = share_map.get(path)
+        if share and share.target_path:
+            resolved_cache[path] = client.build_files_url(share.target_path)
+
+    for performer in contracts:
+        path = getattr(performer, "contract_project_disk_folder", "") or ""
+        if path:
+            performer.contract_project_folder_url = resolved_cache.get(path, performer.contract_project_folder_url)
 
 
 @login_required

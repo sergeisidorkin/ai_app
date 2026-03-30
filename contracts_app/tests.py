@@ -12,7 +12,7 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from core.models import CloudStorageSettings
-from nextcloud_app.api import NextcloudShare
+from nextcloud_app.api import NextcloudApiError, NextcloudShare
 from nextcloud_app.models import NextcloudUserLink
 from policy_app.models import EXPERT_GROUP, Product
 from projects_app.models import Performer, ProjectRegistration
@@ -126,15 +126,17 @@ class ContractsCloudLabelTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'data-has-scan="1"', html=False)
 
-    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share")
-    def test_contracts_partial_builds_nextcloud_disk_link_from_user_share_target(self, mocked_get_user_share):
-        mocked_get_user_share.return_value = NextcloudShare(
-            share_id="55",
-            path=self.performer.contract_project_disk_folder,
-            share_with=self.employee_link.nextcloud_user_id,
-            permissions=1,
-            target_path="/Shared/000 Иванов ИИ",
-        )
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
+    def test_contracts_partial_builds_nextcloud_disk_link_from_user_share_target(self, mocked_list_user_shares):
+        mocked_list_user_shares.return_value = {
+            self.performer.contract_project_disk_folder: NextcloudShare(
+                share_id="55",
+                path=self.performer.contract_project_disk_folder,
+                share_with=self.employee_link.nextcloud_user_id,
+                permissions=1,
+                target_path="/Shared/000 Иванов ИИ",
+            )
+        }
         self.client.force_login(self.employee_user)
 
         response = self.client.get(reverse("contracts_partial"))
@@ -143,6 +145,19 @@ class ContractsCloudLabelTests(TestCase):
         self.assertContains(
             response,
             "/apps/files/files?dir=/Shared/000%20%D0%98%D0%B2%D0%B0%D0%BD%D0%BE%D0%B2%20%D0%98%D0%98",
+            html=False,
+        )
+
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", side_effect=NextcloudApiError("temporary outage"))
+    def test_contracts_partial_falls_back_to_generic_folder_url_when_share_resolution_fails(self, _mocked_list_user_shares):
+        self.client.force_login(self.employee_user)
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            "/apps/files/files?dir=/Corporate%20Root/2026/Project/09%20%D0%94%D0%BE%D0%B3%D0%BE%D0%B2%D0%BE%D1%80%D1%8B/000%20%D0%98%D0%B2%D0%B0%D0%BD%D0%BE%D0%B2%20%D0%98%D0%98",
             html=False,
         )
 
