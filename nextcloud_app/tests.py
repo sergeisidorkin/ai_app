@@ -11,6 +11,7 @@ from projects_app.models import ProjectRegistration, RegistrationWorkspaceFolder
 from users_app.models import Employee
 from yandexdisk_app.workspace import _build_project_folder_name, WorkspaceResult
 from nextcloud_app.api import NextcloudApiError
+from nextcloud_app.api import NextcloudApiClient
 from nextcloud_app.models import NextcloudUserLink
 from nextcloud_app.provisioning import ensure_nextcloud_account
 from nextcloud_app.workspace import create_basic_project_workspace_stream
@@ -161,6 +162,85 @@ class NextcloudCommandTests(TestCase):
         mocked_sync.assert_called_once_with(staff_user.pk)
 
 
+@override_settings(
+    NEXTCLOUD_PROVISIONING_BASE_URL="https://cloud.example.com",
+    NEXTCLOUD_PROVISIONING_USERNAME="cloud-admin",
+    NEXTCLOUD_PROVISIONING_TOKEN="token",
+    NEXTCLOUD_OIDC_PROVIDER_ID=1,
+)
+class NextcloudApiClientFileOpsTests(TestCase):
+    def test_list_resources_parses_webdav_depth_response(self):
+        session = Mock()
+        session.request.return_value = Mock(
+            status_code=207,
+            content=(
+                b'<?xml version="1.0"?>'
+                b'<d:multistatus xmlns:d="DAV:">'
+                b'  <d:response>'
+                b'    <d:href>/remote.php/dav/files/cloud-admin/Corporate%20Root/2026/</d:href>'
+                b'    <d:propstat><d:prop><d:displayname>2026</d:displayname><d:resourcetype><d:collection/></d:resourcetype></d:prop></d:propstat>'
+                b'  </d:response>'
+                b'  <d:response>'
+                b'    <d:href>/remote.php/dav/files/cloud-admin/Corporate%20Root/2026/000%20Ivanov%20II/</d:href>'
+                b'    <d:propstat><d:prop><d:displayname>000 Ivanov II</d:displayname><d:resourcetype><d:collection/></d:resourcetype></d:prop></d:propstat>'
+                b'  </d:response>'
+                b'  <d:response>'
+                b'    <d:href>/remote.php/dav/files/cloud-admin/Corporate%20Root/2026/contract.docx</d:href>'
+                b'    <d:propstat><d:prop><d:displayname>contract.docx</d:displayname><d:resourcetype/>'
+                b'    <d:getcontentlength>42</d:getcontentlength><d:getlastmodified>Mon, 30 Mar 2026 10:00:00 GMT</d:getlastmodified>'
+                b'    </d:prop></d:propstat>'
+                b'  </d:response>'
+                b'</d:multistatus>'
+            ),
+            text="",
+        )
+        client = NextcloudApiClient(session=session)
+
+        items = client.list_resources("cloud-admin", "/Corporate Root/2026", limit=100)
+
+        self.assertEqual(
+            items,
+            [
+                {
+                    "name": "000 Ivanov II",
+                    "path": "/Corporate Root/2026/000 Ivanov II",
+                    "type": "dir",
+                    "size": None,
+                    "modified": None,
+                },
+                {
+                    "name": "contract.docx",
+                    "path": "/Corporate Root/2026/contract.docx",
+                    "type": "file",
+                    "size": 42,
+                    "modified": "Mon, 30 Mar 2026 10:00:00 GMT",
+                },
+            ],
+        )
+
+    def test_ensure_public_link_share_returns_created_url(self):
+        session = Mock()
+        session.request.return_value = Mock(
+            status_code=200,
+            content=(
+                b'{"ocs":{"meta":{"status":"ok","statuscode":100},"data":{"id":"15","url":"https://cloud.example.com/s/public-doc"}}}'
+            ),
+            json=lambda: {
+                "ocs": {
+                    "meta": {"status": "ok", "statuscode": 100},
+                    "data": {"id": "15", "url": "https://cloud.example.com/s/public-doc"},
+                }
+            },
+            text="",
+        )
+        client = NextcloudApiClient(session=session)
+
+        with patch.object(client, "get_public_link_share", return_value=None):
+            public_url = client.ensure_public_link_share("cloud-admin", "/Corporate Root/2026/contract.docx")
+
+        self.assertEqual(public_url, "https://cloud.example.com/s/public-doc")
+
+
 class SidebarNextcloudLinkTests(TestCase):
     @override_settings(NEXTCLOUD_BASE_URL="https://cloud.imcmontanai.ru")
     def test_home_sidebar_contains_nextcloud_link_after_learning(self):
@@ -296,3 +376,47 @@ class NextcloudWorkspaceTests(TestCase):
         workspace = ProjectWorkspace.objects.get(project=self.project)
         self.assertEqual(workspace.disk_path, project_path)
         self.assertEqual(workspace.public_url, f"https://cloud.example.com/apps/files/files?dir={project_path}")
+
+    def test_create_basic_project_workspace_accepts_slash_as_root_path(self):
+        settings_obj = CloudStorageSettings.get_solo()
+        settings_obj.nextcloud_root_path = "/"
+        settings_obj.save()
+
+        project_folder = _build_project_folder_name(self.project)
+        project_path = f"/2026/{project_folder}"
+        client = Mock()
+        client.is_configured = True
+        client.username = "cloud-admin"
+        client.ensure_folder.side_effect = lambda _owner, path: "/" + "/".join(
+            part for part in str(path).replace("\\", "/").split("/") if part
+        )
+        client.enable_user.return_value = None
+        client.set_user_email.return_value = None
+        client.set_user_display_name.return_value = None
+        client.ensure_user_share.return_value = Mock()
+        client.build_files_url.return_value = f"https://cloud.example.com/apps/files/files?dir={project_path}"
+
+        items = list(create_basic_project_workspace_stream(self.creator, self.project, client=client))
+
+        self.assertTrue(items[-1].ok)
+        self.assertEqual(
+            client.ensure_folder.call_args_list,
+            [
+                call("cloud-admin", "/2026"),
+                call("cloud-admin", project_path),
+                call("cloud-admin", f"{project_path}/01 Документы"),
+                call("cloud-admin", f"{project_path}/01 Документы/02 Письма"),
+            ],
+        )
+
+    def test_create_basic_project_workspace_returns_workspace_error_when_manager_sync_api_fails(self):
+        client = Mock()
+        client.is_configured = True
+        client.username = "cloud-admin"
+        client.enable_user.side_effect = NextcloudApiError("temporary nextcloud failure")
+
+        items = list(create_basic_project_workspace_stream(self.creator, self.project, client=client))
+
+        self.assertIsInstance(items[-1], WorkspaceResult)
+        self.assertFalse(items[-1].ok)
+        self.assertIn("temporary nextcloud failure", items[-1].message)

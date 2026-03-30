@@ -29,15 +29,11 @@ def create_basic_project_workspace_stream(
         yield WorkspaceResult(False, "Nextcloud не настроен для создания рабочих пространств.")
         return
 
-    base = get_nextcloud_root_path().rstrip("/")
-    if not base:
+    base_root = get_nextcloud_root_path()
+    if not base_root:
         yield WorkspaceResult(False, "Не задан корневой каталог Nextcloud в разделе «Подключения».")
         return
-
-    manager_link = _resolve_project_manager_nextcloud_link(project, client=client)
-    if manager_link is None:
-        yield WorkspaceResult(False, "Не удалось определить Nextcloud-пользователя руководителя проекта.")
-        return
+    base = "/" if base_root == "/" else base_root.rstrip("/")
 
     user_rows = list(
         RegistrationWorkspaceFolder.objects
@@ -63,18 +59,23 @@ def create_basic_project_workspace_stream(
     owner_user_id = client.username
 
     try:
+        manager_link = _resolve_project_manager_nextcloud_link(project, client=client)
+        if manager_link is None:
+            yield WorkspaceResult(False, "Не удалось определить Nextcloud-пользователя руководителя проекта.")
+            return
+
         year_str = str(project.year) if project.year else "Без года"
-        year_path = client.ensure_folder(owner_user_id, f"{base}/{_sanitize(year_str)}")
+        year_path = client.ensure_folder(owner_user_id, _join_path(base, _sanitize(year_str)))
         current += 1
         yield {"current": current, "total": total}
 
         project_folder = _build_project_folder_name(project)
-        project_path = client.ensure_folder(owner_user_id, f"{year_path}/{project_folder}")
+        project_path = client.ensure_folder(owner_user_id, _join_path(year_path, project_folder))
         current += 1
         yield {"current": current, "total": total}
 
         for rel_path in folder_paths:
-            client.ensure_folder(owner_user_id, f"{project_path}/{rel_path}")
+            client.ensure_folder(owner_user_id, _join_path(project_path, rel_path))
             current += 1
             yield {"current": current, "total": total}
 
@@ -145,3 +146,13 @@ def _employee_full_name(employee: Employee) -> str:
         (employee.patronymic or "").strip(),
     ]
     return " ".join(part for part in parts if part).strip()
+
+
+def _join_path(base: str, child: str) -> str:
+    clean_base = "/" if base == "/" else str(base or "").rstrip("/")
+    clean_child = str(child or "").lstrip("/")
+    if not clean_child:
+        return clean_base or "/"
+    if clean_base in {"", "/"}:
+        return "/" + clean_child
+    return f"{clean_base}/{clean_child}"
