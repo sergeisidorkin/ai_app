@@ -40,9 +40,10 @@ class NextcloudApiClient:
     PUBLIC_LINK_SHARE_TYPE = 3
     RETRYABLE_STATUS_CODES = {429, 503}
     DAV_RETRYABLE_STATUSES = {429, 503}
-    SHARE_CREATE_INTERVAL_SECONDS = 2.0
+    SHARE_CREATE_INTERVAL_SECONDS = 1.0
     MAX_OCS_ATTEMPTS = 8
     MAX_DAV_ATTEMPTS = 5
+    MAX_RETRY_SLEEP_SECONDS = 5.0
 
     def __init__(self, *, session: requests.Session | None = None):
         self._session = session or requests.Session()
@@ -344,6 +345,7 @@ class NextcloudApiClient:
         params = dict(kwargs.pop("params", {}) or {})
         params.setdefault("format", "json")
         is_share_create = self._is_share_create_request(method, path)
+        cap = self.MAX_RETRY_SLEEP_SECONDS
         response = None
         for attempt in range(self.MAX_OCS_ATTEMPTS):
             if is_share_create:
@@ -355,13 +357,13 @@ class NextcloudApiClient:
                     auth=(self.username, self.token),
                     headers=headers,
                     params=params,
-                    timeout=30,
+                    timeout=15,
                     **kwargs,
                 )
             except requests.RequestException as exc:
                 if attempt == self.MAX_OCS_ATTEMPTS - 1:
                     raise NextcloudApiError(f"Nextcloud request failed: {exc}") from exc
-                delay = min(2.0 * (2 ** attempt), 60.0)
+                delay = min(2.0 * (2 ** attempt), cap)
                 logger.warning(
                     "OCS %s %s network error (attempt %d/%d), retry in %.1fs: %s",
                     method, path, attempt + 1, self.MAX_OCS_ATTEMPTS, delay, exc,
@@ -374,8 +376,8 @@ class NextcloudApiClient:
                 break
             if attempt == self.MAX_OCS_ATTEMPTS - 1:
                 break
-            default_delay = min(2.0 * (2 ** attempt), 60.0)
-            retry_after = self._get_retry_after_seconds(response, default=default_delay)
+            default_delay = min(2.0 * (2 ** attempt), cap)
+            retry_after = min(self._get_retry_after_seconds(response, default=default_delay), cap)
             logger.warning(
                 "OCS %s %s returned %d (attempt %d/%d), retry in %.1fs",
                 method, path, response.status_code,
@@ -396,6 +398,7 @@ class NextcloudApiClient:
             raise NextcloudApiError("Nextcloud provisioning is not configured.")
 
         allow_statuses = set(kwargs.pop("allow_statuses", set()) or set())
+        cap = self.MAX_RETRY_SLEEP_SECONDS
         response = None
         for attempt in range(self.MAX_DAV_ATTEMPTS):
             try:
@@ -403,13 +406,13 @@ class NextcloudApiClient:
                     method,
                     url,
                     auth=(self.username, self.token),
-                    timeout=30,
+                    timeout=15,
                     **kwargs,
                 )
             except requests.RequestException as exc:
                 if attempt == self.MAX_DAV_ATTEMPTS - 1:
                     raise NextcloudApiError(f"Nextcloud DAV request failed: {exc}") from exc
-                delay = min(2.0 * (2 ** attempt), 30.0)
+                delay = min(2.0 * (2 ** attempt), cap)
                 logger.warning(
                     "DAV %s network error (attempt %d/%d), retry in %.1fs: %s",
                     method, attempt + 1, self.MAX_DAV_ATTEMPTS, delay, exc,
@@ -420,8 +423,9 @@ class NextcloudApiClient:
                 break
             if attempt == self.MAX_DAV_ATTEMPTS - 1:
                 break
-            delay = self._get_retry_after_seconds(
-                response, default=min(2.0 * (2 ** attempt), 30.0),
+            delay = min(
+                self._get_retry_after_seconds(response, default=min(2.0 * (2 ** attempt), cap)),
+                cap,
             )
             logger.warning(
                 "DAV %s returned %d (attempt %d/%d), retry in %.1fs",
@@ -506,7 +510,7 @@ class NextcloudApiClient:
     def _wait_for_share_slot(self) -> None:
         now = time.monotonic()
         if self._next_share_create_at > now:
-            time.sleep(self._next_share_create_at - now)
+            time.sleep(min(self._next_share_create_at - now, self.MAX_RETRY_SLEEP_SECONDS))
 
     @staticmethod
     def _is_share_create_request(method: str, path: str) -> bool:
