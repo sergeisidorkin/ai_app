@@ -649,6 +649,20 @@ class HeartbeatRetryTests(TestCase):
             self.assertEqual(ev["total"], 50)
 
     @patch("nextcloud_app.workspace.time.sleep")
+    def test_ensure_folder_with_heartbeat_raises_after_max_retries(self, mocked_sleep):
+        from nextcloud_app.workspace import _ensure_folder_with_heartbeat, _FOLDER_MAX_RETRIES
+
+        client = Mock()
+        client.ensure_folder.side_effect = NextcloudApiError("permission denied")
+
+        gen = _ensure_folder_with_heartbeat(client, "admin", "/bad/path", 1, 10)
+        with self.assertRaises(NextcloudApiError):
+            while True:
+                next(gen)
+
+        self.assertEqual(client.ensure_folder.call_count, _FOLDER_MAX_RETRIES)
+
+    @patch("nextcloud_app.workspace.time.sleep")
     def test_ensure_link_with_heartbeat_raises_after_max_retries(self, mocked_sleep):
         from nextcloud_app.workspace import _ensure_link_with_heartbeat, _LINK_MAX_RETRIES
 

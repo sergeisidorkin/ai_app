@@ -26,10 +26,14 @@ from .provisioning import ensure_nextcloud_account
 
 logger = logging.getLogger(__name__)
 
-_FOLDER_MAX_RETRIES = 20
+_FOLDER_MAX_RETRIES = 5
+_FOLDER_RETRY_WAIT_BASE = 3.0
+_FOLDER_RETRY_WAIT_MAX = 10.0
+
 _LINK_MAX_RETRIES = 30
-_RETRY_WAIT_BASE = 30.0
-_RETRY_WAIT_MAX = 35.0
+_LINK_RETRY_WAIT_BASE = 30.0
+_LINK_RETRY_WAIT_MAX = 35.0
+
 _HEARTBEAT_INTERVAL = 2.0
 
 
@@ -45,14 +49,18 @@ def _heartbeat_sleep(seconds, progress, total):
 
 
 def _ensure_folder_with_heartbeat(client, owner_user_id, path, progress, total):
-    """Create a folder with generator-level retries and heartbeat events."""
+    """Create a folder with generator-level retries and heartbeat events.
+
+    Uses short backoff (3-10s) because folder creation is not subject to
+    Nextcloud's share rate-limit — transient errors resolve quickly.
+    """
     for attempt in range(_FOLDER_MAX_RETRIES):
         try:
             return client.ensure_folder(owner_user_id, path)
         except NextcloudApiError as exc:
             if attempt == _FOLDER_MAX_RETRIES - 1:
                 raise
-            wait = min(_RETRY_WAIT_BASE + attempt * 2.0, _RETRY_WAIT_MAX)
+            wait = min(_FOLDER_RETRY_WAIT_BASE + attempt * 2.0, _FOLDER_RETRY_WAIT_MAX)
             logger.warning(
                 "Folder creation failed for %s (attempt %d/%d), "
                 "retrying in %.0fs: %s",
@@ -68,6 +76,8 @@ def _ensure_link_with_heartbeat(client, owner_user_id, path, progress, total):
     Uses ``_quick=True`` so that the internal HTTP layer fails fast on 429;
     the longer wait (with heartbeats) happens here in the generator, keeping
     the streaming connection alive.
+
+    Long backoff (30-35s) accounts for Nextcloud's share rate-limit window.
     """
     for attempt in range(_LINK_MAX_RETRIES):
         try:
@@ -75,7 +85,7 @@ def _ensure_link_with_heartbeat(client, owner_user_id, path, progress, total):
         except NextcloudApiError as exc:
             if attempt == _LINK_MAX_RETRIES - 1:
                 raise
-            wait = min(_RETRY_WAIT_BASE + attempt * 2.0, _RETRY_WAIT_MAX)
+            wait = min(_LINK_RETRY_WAIT_BASE + attempt * 2.0, _LINK_RETRY_WAIT_MAX)
             logger.warning(
                 "Public link creation failed for %s (attempt %d/%d), "
                 "retrying in %.0fs: %s",
