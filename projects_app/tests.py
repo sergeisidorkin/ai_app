@@ -13,10 +13,16 @@ from contracts_app.models import ContractTemplate
 from nextcloud_app.models import NextcloudUserLink
 from notifications_app.models import Notification
 from policy_app.models import LAWYER_GROUP, Product
-from projects_app.models import ContractProjectTargetFolder, Performer, RegistrationWorkspaceFolder, SourceDataTargetFolder
-from projects_app.forms import ProjectRegistrationForm
+from projects_app.models import (
+    ContractProjectTargetFolder,
+    Performer,
+    ProjectRegistration,
+    RegistrationWorkspaceFolder,
+    SourceDataTargetFolder,
+    WorkVolume,
+)
+from projects_app.forms import ProjectRegistrationForm, WorkVolumeForm
 from group_app.models import GroupMember
-from projects_app.models import ProjectRegistration
 from users_app.models import Employee
 from unittest.mock import call, patch
 
@@ -105,6 +111,147 @@ class ProjectRegistrationFormTests(TestCase):
         self.assertFalse(form.is_valid())
         self.assertIn("type", form.errors)
         self.assertIn("deadline", form.errors)
+
+
+class WorkVolumePerformerCreationTests(TestCase):
+    def setUp(self):
+        self.product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            service_type="service",
+        )
+        self.project_manager_employee = self._create_employee(
+            username="project.manager",
+            first_name="Иван",
+            last_name="Иванов",
+            patronymic="Иванович",
+        )
+        self.first_manager_employee = self._create_employee(
+            username="asset.manager.one",
+            first_name="Петр",
+            last_name="Петров",
+            patronymic="Петрович",
+        )
+        self.second_manager_employee = self._create_employee(
+            username="asset.manager.two",
+            first_name="Сидор",
+            last_name="Сидоров",
+            patronymic="Сидорович",
+        )
+        self.project_manager_name = "Иванов Иван Иванович"
+        self.first_manager_name = "Петров Петр Петрович"
+        self.second_manager_name = "Сидоров Сидор Сидорович"
+        self.project = ProjectRegistration.objects.create(
+            number=6001,
+            type=self.product,
+            name="Проект активов",
+            year=2026,
+            project_manager=self.project_manager_name,
+        )
+        self.product.sections.create(
+            code="PRD",
+            short_name="Project Director",
+            short_name_ru="Руководитель проекта",
+            name_en="Project Director",
+            name_ru="Руководитель проекта",
+            accounting_type="Раздел",
+            position=1,
+        )
+        self.product.sections.create(
+            code="PRJ",
+            short_name="Project Manager",
+            short_name_ru="Менеджер проекта",
+            name_en="Project Manager",
+            name_ru="Менеджер проекта",
+            accounting_type="Раздел",
+            position=2,
+        )
+        self.product.sections.create(
+            code="CRD",
+            short_name="Coordinator",
+            short_name_ru="Координатор",
+            name_en="Coordinator",
+            name_ru="Координатор",
+            accounting_type="Раздел",
+            position=3,
+        )
+
+    def _create_employee(self, *, username, first_name, last_name, patronymic):
+        user = get_user_model().objects.create_user(
+            username=username,
+            password="secret",
+            first_name=first_name,
+            last_name=last_name,
+            is_staff=True,
+        )
+        return Employee.objects.create(user=user, patronymic=patronymic)
+
+    def test_work_volume_form_uses_project_manager_label(self):
+        form = WorkVolumeForm()
+
+        self.assertEqual(form.fields["manager"].label, "Менеджер проекта")
+
+    def test_equal_project_manager_and_manager_skips_prj_and_assigns_prd_to_project_manager(self):
+        work_item = WorkVolume.objects.create(
+            project=self.project,
+            name="Актив 1",
+            asset_name="Актив 1",
+            manager=self.project_manager_name,
+        )
+
+        self.assertFalse(
+            Performer.objects.filter(work_item=work_item, typical_section__code="PRJ").exists()
+        )
+        prd = Performer.objects.get(work_item=work_item, typical_section__code="PRD")
+        self.assertEqual(prd.executor, self.project_manager_name)
+        self.assertEqual(prd.employee, self.project_manager_employee)
+
+    def test_different_manager_creates_prj_and_does_not_duplicate_prd_or_crd(self):
+        first_work_item = WorkVolume.objects.create(
+            project=self.project,
+            name="Актив 1",
+            asset_name="Актив 1",
+            manager=self.first_manager_name,
+        )
+
+        self.assertTrue(
+            Performer.objects.filter(work_item=first_work_item, typical_section__code="PRD").exists()
+        )
+        self.assertTrue(
+            Performer.objects.filter(work_item=first_work_item, typical_section__code="PRJ").exists()
+        )
+
+        second_work_item = WorkVolume.objects.create(
+            project=self.project,
+            name="Актив 2",
+            asset_name="Актив 2",
+            manager=self.second_manager_name,
+        )
+
+        self.assertEqual(
+            Performer.objects.filter(registration=self.project, typical_section__code="PRD").count(),
+            1,
+        )
+        self.assertEqual(
+            Performer.objects.filter(registration=self.project, typical_section__code="CRD").count(),
+            1,
+        )
+        self.assertEqual(
+            Performer.objects.filter(registration=self.project, typical_section__code="PRJ").count(),
+            2,
+        )
+
+        first_prj = Performer.objects.get(work_item=first_work_item, typical_section__code="PRJ")
+        second_prj = Performer.objects.get(work_item=second_work_item, typical_section__code="PRJ")
+        prd = Performer.objects.get(registration=self.project, typical_section__code="PRD")
+
+        self.assertEqual(first_prj.executor, self.first_manager_name)
+        self.assertEqual(first_prj.employee, self.first_manager_employee)
+        self.assertEqual(second_prj.executor, self.second_manager_name)
+        self.assertEqual(second_prj.employee, self.second_manager_employee)
+        self.assertEqual(prd.executor, self.project_manager_name)
+        self.assertEqual(prd.employee, self.project_manager_employee)
 
 
 class CloudStorageProjectRoutingTests(TestCase):
@@ -280,7 +427,7 @@ class NextcloudSourceDataWorkspaceFlowTests(TestCase):
         )
         mocked_public_share.assert_has_calls(
             [
-                call("cloud-admin", item_path),
+                call("cloud-admin", item_path, _quick=True),
             ]
         )
 
@@ -416,9 +563,7 @@ class NextcloudContractProjectFlowTests(TestCase):
         expected_project_folder = f"{self.project.short_uid} DD Контрактный проект"
         expected_base_path = f"/Corporate Root/2026/{expected_project_folder}/09 Договоры"
         expected_folder_path = f"{expected_base_path}/000 Иванов ИИ"
-        self.template.refresh_from_db()
-        stored_template_name = self.template.file.name.split("/")[-1]
-        expected_upload_path = f"{expected_folder_path}/{stored_template_name}"
+        expected_upload_path = f"{expected_folder_path}/Договор 5002_Иванов ИИ.docx"
 
         mocked_list_resources.assert_called_once_with("cloud-admin", expected_base_path, limit=1000)
         mocked_ensure_folder.assert_called_once_with("cloud-admin", expected_folder_path)

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+import time
+
 from django.db import transaction
 
 from checklists_app.models import ProjectWorkspace
@@ -20,6 +23,66 @@ from yandexdisk_app.workspace import (
 from .api import NextcloudApiClient, NextcloudApiError
 from .models import NextcloudUserLink
 from .provisioning import ensure_nextcloud_account
+
+logger = logging.getLogger(__name__)
+
+_FOLDER_MAX_RETRIES = 20
+_LINK_MAX_RETRIES = 30
+_RETRY_WAIT_BASE = 8.0
+_RETRY_WAIT_MAX = 20.0
+_HEARTBEAT_INTERVAL = 2.0
+
+
+def _heartbeat_sleep(seconds, progress, total):
+    """Sleep in small chunks, yielding heartbeat progress events to keep
+    the streaming HTTP connection alive."""
+    waited = 0.0
+    while waited < seconds:
+        chunk = min(_HEARTBEAT_INTERVAL, seconds - waited)
+        time.sleep(chunk)
+        waited += chunk
+        yield {"current": progress, "total": total}
+
+
+def _ensure_folder_with_heartbeat(client, owner_user_id, path, progress, total):
+    """Create a folder with generator-level retries and heartbeat events."""
+    for attempt in range(_FOLDER_MAX_RETRIES):
+        try:
+            return client.ensure_folder(owner_user_id, path)
+        except NextcloudApiError as exc:
+            if attempt == _FOLDER_MAX_RETRIES - 1:
+                raise
+            wait = min(_RETRY_WAIT_BASE + attempt * 2.0, _RETRY_WAIT_MAX)
+            logger.warning(
+                "Folder creation failed for %s (attempt %d/%d), "
+                "retrying in %.0fs: %s",
+                path, attempt + 1, _FOLDER_MAX_RETRIES, wait, exc,
+            )
+            yield from _heartbeat_sleep(wait, progress, total)
+    raise NextcloudApiError(f"Failed to create folder after {_FOLDER_MAX_RETRIES} attempts: {path}")
+
+
+def _ensure_link_with_heartbeat(client, owner_user_id, path, progress, total):
+    """Create a public link share with generator-level retries and heartbeat events.
+
+    Uses ``_quick=True`` so that the internal HTTP layer fails fast on 429;
+    the longer wait (with heartbeats) happens here in the generator, keeping
+    the streaming connection alive.
+    """
+    for attempt in range(_LINK_MAX_RETRIES):
+        try:
+            return client.ensure_public_link_share(owner_user_id, path, _quick=True)
+        except NextcloudApiError as exc:
+            if attempt == _LINK_MAX_RETRIES - 1:
+                raise
+            wait = min(_RETRY_WAIT_BASE + attempt * 2.0, _RETRY_WAIT_MAX)
+            logger.warning(
+                "Public link creation failed for %s (attempt %d/%d), "
+                "retrying in %.0fs: %s",
+                path, attempt + 1, _LINK_MAX_RETRIES, wait, exc,
+            )
+            yield from _heartbeat_sleep(wait, progress, total)
+    raise NextcloudApiError(f"Failed to create public link after {_LINK_MAX_RETRIES} attempts: {path}")
 
 
 def create_basic_project_workspace_stream(
@@ -71,17 +134,23 @@ def create_basic_project_workspace_stream(
             return
 
         year_str = str(project.year) if project.year else "Без года"
-        year_path = client.ensure_folder(owner_user_id, _join_path(base, _sanitize(year_str)))
+        year_path = yield from _ensure_folder_with_heartbeat(
+            client, owner_user_id, _join_path(base, _sanitize(year_str)), current, total,
+        )
         current += 1
         yield {"current": current, "total": total}
 
         project_folder = _build_project_folder_name(project)
-        project_path = client.ensure_folder(owner_user_id, _join_path(year_path, project_folder))
+        project_path = yield from _ensure_folder_with_heartbeat(
+            client, owner_user_id, _join_path(year_path, project_folder), current, total,
+        )
         current += 1
         yield {"current": current, "total": total}
 
         for rel_path in folder_paths:
-            client.ensure_folder(owner_user_id, _join_path(project_path, rel_path))
+            yield from _ensure_folder_with_heartbeat(
+                client, owner_user_id, _join_path(project_path, rel_path), current, total,
+            )
             current += 1
             yield {"current": current, "total": total}
 
@@ -202,7 +271,9 @@ def create_source_data_workspace_stream(
     try:
         for asset in (unique_assets if multi_asset else [single_asset_name]):
             if multi_asset:
-                asset_path = client.ensure_folder(owner_user_id, _join_path(base_path, _sanitize(asset)))
+                asset_path = yield from _ensure_folder_with_heartbeat(
+                    client, owner_user_id, _join_path(base_path, _sanitize(asset)), current, total,
+                )
                 current += 1
                 yield {"current": current, "total": total}
             else:
@@ -216,7 +287,9 @@ def create_source_data_workspace_stream(
 
                 nn = section_nn[section.id]
                 section_folder = _build_numbered_section_folder_name(nn, section)
-                section_disk_path = client.ensure_folder(owner_user_id, _join_path(asset_path, section_folder))
+                section_disk_path = yield from _ensure_folder_with_heartbeat(
+                    client, owner_user_id, _join_path(asset_path, section_folder), current, total,
+                )
                 section_public_url = existing_section_urls.get((section.id, asset), "")
                 section_upserts.append(
                     (
@@ -229,10 +302,14 @@ def create_source_data_workspace_stream(
 
                 for item in items_by_section.get(section.id, []):
                     item_folder = _build_item_folder_name(item)
-                    item_disk_path = client.ensure_folder(owner_user_id, _join_path(section_disk_path, item_folder))
+                    item_disk_path = yield from _ensure_folder_with_heartbeat(
+                        client, owner_user_id, _join_path(section_disk_path, item_folder), current, total,
+                    )
                     item_public_url = existing_item_urls.get((item.id, asset), "")
                     if not item_public_url:
-                        item_public_url = client.ensure_public_link_share(owner_user_id, item_disk_path)
+                        item_public_url = yield from _ensure_link_with_heartbeat(
+                            client, owner_user_id, item_disk_path, current, total,
+                        )
                     item_upserts.append(
                         (
                             {"project": project, "checklist_item": item, "asset_name": asset},
