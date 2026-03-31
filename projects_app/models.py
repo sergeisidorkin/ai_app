@@ -326,7 +326,7 @@ class WorkVolume(models.Model):
     identifier = models.CharField("Идентификатор", max_length=64, blank=True, default="")
     registration_number = models.CharField(max_length=100, blank=True, verbose_name="Регистрационный номер")
     registration_date = models.DateField("Дата регистрации", null=True, blank=True)
-    manager = models.CharField(max_length=255, blank=True, verbose_name="Менеджер")
+    manager = models.CharField(max_length=255, blank=True, verbose_name="Менеджер проекта")
 
     class Meta:
         ordering = ["project__position", "position", "id"]
@@ -339,6 +339,22 @@ class WorkVolume(models.Model):
 
 def _effective_work_asset_name(work_item):
     return (getattr(work_item, "asset_name", "") or getattr(work_item, "name", "") or "").strip()
+
+
+def _normalize_text_value(value):
+    return " ".join(str(value or "").split()).strip()
+
+
+def _normalize_section_code(section):
+    return _normalize_text_value(getattr(section, "code", "")).upper()
+
+
+def _resolve_executor_assignment(executor_name):
+    normalized_name = _normalize_text_value(executor_name)
+    if not normalized_name:
+        return "", None
+    employee = Performer.resolve_employee_from_executor(normalized_name)
+    return normalized_name, employee
 
 
 def _sync_checklist_note_asset_names(project, section_ids, old_asset_name, new_asset_name):
@@ -497,6 +513,10 @@ def ensure_performer_rows(sender, instance, created, **kwargs):
     if not created or not instance.project_id:
         return
 
+    unique_project_role_codes = {"PRD", "CRD"}
+    project_manager_name = _normalize_text_value(getattr(instance.project, "project_manager", ""))
+    manager_name = _normalize_text_value(instance.manager)
+
     product_id = getattr(instance.project, "type_id", None)
     if not product_id:
         return
@@ -511,6 +531,17 @@ def ensure_performer_rows(sender, instance, created, **kwargs):
         return
 
     from users_app.models import Employee
+
+    existing_unique_codes = {
+        normalized_code
+        for code in (
+            Performer.objects
+            .filter(registration=instance.project, typical_section__isnull=False)
+            .values_list("typical_section__code", flat=True)
+        )
+        for normalized_code in [_normalize_text_value(code).upper()]
+        if normalized_code in unique_project_role_codes
+    }
 
     direction_ids = {s.expertise_direction_id for s in sections if s.expertise_direction_id}
     dept_head_map = {}
@@ -589,6 +620,12 @@ def ensure_performer_rows(sender, instance, created, **kwargs):
 
     performers = []
     for section in sections:
+        section_code = _normalize_section_code(section)
+        if section_code in unique_project_role_codes and section_code in existing_unique_codes:
+            continue
+        if section_code == "PRJ" and project_manager_name == manager_name:
+            continue
+
         next_position += 1
 
         executor_name = ""
@@ -598,7 +635,12 @@ def ensure_performer_rows(sender, instance, created, **kwargs):
         estimated_costs_value = None
         agreed_amount_value = None
 
-        if section.expertise_direction_id:
+        if section_code == "PRD":
+            executor_name, employee_obj = _resolve_executor_assignment(project_manager_name)
+            existing_unique_codes.add(section_code)
+        elif section_code == "PRJ":
+            executor_name, employee_obj = _resolve_executor_assignment(manager_name)
+        elif section.expertise_direction_id:
             head = dept_head_map.get(section.expertise_direction_id)
             if head:
                 parts = [

@@ -380,7 +380,7 @@ class WorkVolumeForm(BootstrapMixin, forms.ModelForm):
         input_formats=DATE_INPUT_FORMATS,
     )
     manager = forms.ChoiceField(
-        label="Менеджер",
+        label="Менеджер проекта",
         required=False,
         choices=(),
     )
