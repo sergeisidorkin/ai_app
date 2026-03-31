@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 import time
 from urllib.parse import quote
@@ -8,6 +9,8 @@ import xml.etree.ElementTree as ET
 
 import requests
 from django.conf import settings
+
+logger = logging.getLogger(__name__)
 
 
 class NextcloudApiError(Exception):
@@ -35,8 +38,11 @@ class NextcloudShare:
 class NextcloudApiClient:
     EDITOR_PERMISSIONS = 15
     PUBLIC_LINK_SHARE_TYPE = 3
-    RETRYABLE_STATUS_CODES = {429}
-    PUBLIC_LINK_CREATE_INTERVAL_SECONDS = 0.35
+    RETRYABLE_STATUS_CODES = {429, 503}
+    DAV_RETRYABLE_STATUSES = {429, 503}
+    SHARE_CREATE_INTERVAL_SECONDS = 2.0
+    MAX_OCS_ATTEMPTS = 8
+    MAX_DAV_ATTEMPTS = 5
 
     def __init__(self, *, session: requests.Session | None = None):
         self._session = session or requests.Session()
@@ -48,7 +54,7 @@ class NextcloudApiClient:
         self.default_quota = (getattr(settings, "NEXTCLOUD_DEFAULT_QUOTA", "") or "").strip()
         self._public_share_cache_loaded = False
         self._public_share_cache: dict[str, NextcloudShare] = {}
-        self._next_public_share_create_at = 0.0
+        self._next_share_create_at = 0.0
 
     @property
     def is_configured(self) -> bool:
@@ -337,11 +343,11 @@ class NextcloudApiClient:
             headers["Content-Type"] = "application/json"
         params = dict(kwargs.pop("params", {}) or {})
         params.setdefault("format", "json")
-        max_attempts = 4
-        is_public_link_create = self._is_public_link_create_request(method, path, kwargs)
-        for attempt in range(max_attempts):
-            if is_public_link_create:
-                self._wait_for_public_link_slot()
+        is_share_create = self._is_share_create_request(method, path)
+        response = None
+        for attempt in range(self.MAX_OCS_ATTEMPTS):
+            if is_share_create:
+                self._wait_for_share_slot()
             try:
                 response = self._session.request(
                     method,
@@ -349,28 +355,39 @@ class NextcloudApiClient:
                     auth=(self.username, self.token),
                     headers=headers,
                     params=params,
-                    timeout=20,
+                    timeout=30,
                     **kwargs,
                 )
             except requests.RequestException as exc:
-                if attempt == max_attempts - 1:
+                if attempt == self.MAX_OCS_ATTEMPTS - 1:
                     raise NextcloudApiError(f"Nextcloud request failed: {exc}") from exc
-                time.sleep(1.0 + attempt)
+                delay = min(2.0 * (2 ** attempt), 60.0)
+                logger.warning(
+                    "OCS %s %s network error (attempt %d/%d), retry in %.1fs: %s",
+                    method, path, attempt + 1, self.MAX_OCS_ATTEMPTS, delay, exc,
+                )
+                time.sleep(delay)
                 continue
             if response.status_code not in self.RETRYABLE_STATUS_CODES:
-                if is_public_link_create and response.status_code < 400:
-                    self._next_public_share_create_at = time.monotonic() + self.PUBLIC_LINK_CREATE_INTERVAL_SECONDS
+                if is_share_create and response.status_code < 400:
+                    self._next_share_create_at = time.monotonic() + self.SHARE_CREATE_INTERVAL_SECONDS
                 break
-            if attempt == max_attempts - 1:
+            if attempt == self.MAX_OCS_ATTEMPTS - 1:
                 break
-            retry_after = self._get_retry_after_seconds(response, default=1.0 + attempt)
-            if is_public_link_create:
-                self._next_public_share_create_at = max(
-                    self._next_public_share_create_at,
+            default_delay = min(2.0 * (2 ** attempt), 60.0)
+            retry_after = self._get_retry_after_seconds(response, default=default_delay)
+            logger.warning(
+                "OCS %s %s returned %d (attempt %d/%d), retry in %.1fs",
+                method, path, response.status_code,
+                attempt + 1, self.MAX_OCS_ATTEMPTS, retry_after,
+            )
+            if is_share_create:
+                self._next_share_create_at = max(
+                    self._next_share_create_at,
                     time.monotonic() + retry_after,
                 )
             time.sleep(retry_after)
-        if response.status_code >= 400:
+        if response is not None and response.status_code >= 400:
             raise NextcloudApiError(f"Nextcloud API error {response.status_code}: {response.text[:500]}")
         return response
 
@@ -379,14 +396,40 @@ class NextcloudApiClient:
             raise NextcloudApiError("Nextcloud provisioning is not configured.")
 
         allow_statuses = set(kwargs.pop("allow_statuses", set()) or set())
-        response = self._session.request(
-            method,
-            url,
-            auth=(self.username, self.token),
-            timeout=20,
-            **kwargs,
-        )
-        if response.status_code >= 400 and response.status_code not in ({405} | allow_statuses):
+        response = None
+        for attempt in range(self.MAX_DAV_ATTEMPTS):
+            try:
+                response = self._session.request(
+                    method,
+                    url,
+                    auth=(self.username, self.token),
+                    timeout=30,
+                    **kwargs,
+                )
+            except requests.RequestException as exc:
+                if attempt == self.MAX_DAV_ATTEMPTS - 1:
+                    raise NextcloudApiError(f"Nextcloud DAV request failed: {exc}") from exc
+                delay = min(2.0 * (2 ** attempt), 30.0)
+                logger.warning(
+                    "DAV %s network error (attempt %d/%d), retry in %.1fs: %s",
+                    method, attempt + 1, self.MAX_DAV_ATTEMPTS, delay, exc,
+                )
+                time.sleep(delay)
+                continue
+            if response.status_code not in self.DAV_RETRYABLE_STATUSES:
+                break
+            if attempt == self.MAX_DAV_ATTEMPTS - 1:
+                break
+            delay = self._get_retry_after_seconds(
+                response, default=min(2.0 * (2 ** attempt), 30.0),
+            )
+            logger.warning(
+                "DAV %s returned %d (attempt %d/%d), retry in %.1fs",
+                method, response.status_code,
+                attempt + 1, self.MAX_DAV_ATTEMPTS, delay,
+            )
+            time.sleep(delay)
+        if response is not None and response.status_code >= 400 and response.status_code not in ({405} | allow_statuses):
             raise NextcloudApiError(f"Nextcloud DAV error {response.status_code}: {response.text[:500]}")
         return response
 
@@ -460,19 +503,17 @@ class NextcloudApiClient:
             return max(default, 0.0)
         return max(seconds, 0.0)
 
-    def _wait_for_public_link_slot(self) -> None:
+    def _wait_for_share_slot(self) -> None:
         now = time.monotonic()
-        if self._next_public_share_create_at > now:
-            time.sleep(self._next_public_share_create_at - now)
+        if self._next_share_create_at > now:
+            time.sleep(self._next_share_create_at - now)
 
     @staticmethod
-    def _is_public_link_create_request(method: str, path: str, request_kwargs: dict[str, object]) -> bool:
-        if method.upper() != "POST" or path != "/ocs/v2.php/apps/files_sharing/api/v1/shares":
-            return False
-        data = request_kwargs.get("data")
-        if not isinstance(data, dict):
-            return False
-        return str(data.get("shareType") or "") == str(NextcloudApiClient.PUBLIC_LINK_SHARE_TYPE)
+    def _is_share_create_request(method: str, path: str) -> bool:
+        return (
+            method.upper() == "POST"
+            and path == "/ocs/v2.php/apps/files_sharing/api/v1/shares"
+        )
 
     @staticmethod
     def _extract_data(response: requests.Response) -> dict[str, object]:

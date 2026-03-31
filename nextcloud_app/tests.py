@@ -298,7 +298,7 @@ class NextcloudApiClientFileOpsTests(TestCase):
         )
         session.request.side_effect = [empty_list, too_many, success]
         client = NextcloudApiClient(session=session)
-        client.PUBLIC_LINK_CREATE_INTERVAL_SECONDS = 0
+        client.SHARE_CREATE_INTERVAL_SECONDS = 0
 
         public_url = client.ensure_public_link_share("cloud-admin", "/Corporate Root/2026/retry.docx")
 
@@ -345,6 +345,35 @@ class NextcloudApiClientFileOpsTests(TestCase):
 
         self.assertEqual(list(shares.keys()), ["/Corporate Root/2026/contract.docx"])
         self.assertEqual(shares["/Corporate Root/2026/contract.docx"].url, "https://cloud.example.com/s/public-doc")
+
+    @patch("nextcloud_app.api.time.sleep")
+    def test_dav_request_retries_on_429(self, mocked_sleep):
+        session = Mock()
+        too_many = Mock(status_code=429, text="Too Many Requests", headers={"Retry-After": "0"}, content=b"")
+        ok = Mock(status_code=201, text="Created", headers={}, content=b"")
+        session.request.side_effect = [too_many, ok]
+        client = NextcloudApiClient(session=session)
+
+        response = client._dav_request("MKCOL", "https://cloud.example.com/remote.php/dav/files/admin/test")
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(session.request.call_count, 2)
+        self.assertGreaterEqual(mocked_sleep.call_count, 1)
+
+    @patch("nextcloud_app.api.time.sleep")
+    def test_dav_request_retries_on_network_error(self, mocked_sleep):
+        import requests as req
+        session = Mock()
+        session.request.side_effect = [
+            req.ConnectionError("connection reset"),
+            Mock(status_code=201, text="Created", headers={}, content=b""),
+        ]
+        client = NextcloudApiClient(session=session)
+
+        response = client._dav_request("MKCOL", "https://cloud.example.com/remote.php/dav/files/admin/test")
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(session.request.call_count, 2)
 
 
 class SidebarNextcloudLinkTests(TestCase):
