@@ -232,7 +232,7 @@ COLUMN_REGISTRY = {
                     "identifier": "Идент.",
                     "registration_number": "Регистр. номер",
                     "date": "Дата",
-                    "manager": "Менеджер",
+                    "manager": "Менеджер проекта",
                 },
             },
             "work_legal_entities": {

@@ -12,6 +12,7 @@ from .models import ProjectRegistration, WorkVolume, Performer, WorkVolumeItem, 
 from .forms import ProjectRegistrationForm, ContractConditionsForm, WorkVolumeForm, PerformerForm, BootstrapMixin, LegalEntityForm
 
 import json
+import os
 import uuid
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -1900,6 +1901,13 @@ def create_contract_project(request):
         initials = "".join(part[0] for part in parts[1:3] if part)
         return f"{last_name} {initials}".strip()
 
+    def _contract_project_file_name(perf, original_name):
+        project_number = str(getattr(getattr(perf, "registration", None), "number", "") or "")
+        project_prefix = "".join(ch for ch in project_number if ch.isdigit())[:4] or project_number[:4] or "Unknown"
+        executor_name = _executor_short(perf.executor)
+        ext = os.path.splitext(original_name or "")[1] or ".docx"
+        return sanitize_folder_name(f"Договор {project_prefix}_{executor_name}{ext}")
+
     def _find_template(perf):
         """Find the best matching ContractTemplate for a Performer row."""
         project = perf.registration
@@ -2110,9 +2118,10 @@ def create_contract_project(request):
                                 )
 
                         original_name = tmpl.file.name.split("/")[-1]
-                        upload_path = f"{folder_path}/{original_name}"
+                        upload_name = _contract_project_file_name(perf, original_name)
+                        upload_path = f"{folder_path}/{upload_name}"
                         if not cloud_upload_file(request.user, upload_path, file_data):
-                            errors.append(f"Загрузка файла: {original_name} → {folder_name}")
+                            errors.append(f"Загрузка файла: {upload_name} → {folder_name}")
                         else:
                             try:
                                 public_url = cloud_publish_resource(request.user, upload_path)

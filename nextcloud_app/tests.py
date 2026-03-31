@@ -555,3 +555,133 @@ class NextcloudWorkspaceTests(TestCase):
         self.assertIsInstance(items[-1], WorkspaceResult)
         self.assertFalse(items[-1].ok)
         self.assertIn("temporary nextcloud failure", items[-1].message)
+
+    @patch("nextcloud_app.workspace.time.sleep")
+    def test_create_basic_project_workspace_retries_folder_creation_with_heartbeats(self, mocked_sleep):
+        client = Mock()
+        client.is_configured = True
+        client.username = "cloud-admin"
+        client.ensure_folder.side_effect = [
+            NextcloudApiError("429 rate limit"),
+            "/Corporate Root/2026",
+            lambda _o, p: "/" + "/".join(part for part in str(p).split("/") if part),
+        ]
+        # After retry success, remaining calls should succeed
+        def _folder_ok(_owner, path):
+            return "/" + "/".join(part for part in str(path).replace("\\", "/").split("/") if part)
+        client.ensure_folder.side_effect = [
+            NextcloudApiError("429 rate limit"),
+            "/Corporate Root/2026",
+            "/Corporate Root/2026/Проект 6001 DD Проект Nextcloud",
+            "/Corporate Root/2026/Проект 6001 DD Проект Nextcloud/01 Документы",
+            "/Corporate Root/2026/Проект 6001 DD Проект Nextcloud/01 Документы/02 Письма",
+        ]
+        client.ensure_user_share.return_value = Mock()
+        client.build_files_url.return_value = "https://cloud.example.com/apps/files/files?dir=/test"
+
+        items = list(create_basic_project_workspace_stream(self.creator, self.project, client=client))
+
+        self.assertIsInstance(items[-1], WorkspaceResult)
+        self.assertTrue(items[-1].ok)
+        heartbeats = [i for i in items if isinstance(i, dict) and "current" in i and "total" in i]
+        self.assertTrue(len(heartbeats) > 0)
+        self.assertTrue(mocked_sleep.call_count >= 1)
+
+
+@override_settings(
+    NEXTCLOUD_PROVISIONING_BASE_URL="https://cloud.example.com",
+    NEXTCLOUD_PROVISIONING_USERNAME="cloud-admin",
+    NEXTCLOUD_PROVISIONING_TOKEN="token",
+    NEXTCLOUD_OIDC_PROVIDER_ID=1,
+)
+class HeartbeatRetryTests(TestCase):
+    @patch("nextcloud_app.workspace.time.sleep")
+    def test_ensure_folder_with_heartbeat_retries_and_yields_heartbeats(self, mocked_sleep):
+        from nextcloud_app.workspace import _ensure_folder_with_heartbeat
+
+        client = Mock()
+        client.ensure_folder.side_effect = [
+            NextcloudApiError("429 rate limit"),
+            NextcloudApiError("429 rate limit"),
+            "/test/folder",
+        ]
+
+        gen = _ensure_folder_with_heartbeat(client, "admin", "/test/folder", 5, 20)
+        events = []
+        result = None
+        try:
+            while True:
+                events.append(next(gen))
+        except StopIteration as e:
+            result = e.value
+
+        self.assertEqual(result, "/test/folder")
+        self.assertEqual(client.ensure_folder.call_count, 3)
+        self.assertTrue(len(events) > 0)
+        for ev in events:
+            self.assertEqual(ev["current"], 5)
+            self.assertEqual(ev["total"], 20)
+
+    @patch("nextcloud_app.workspace.time.sleep")
+    def test_ensure_link_with_heartbeat_retries_and_yields_heartbeats(self, mocked_sleep):
+        from nextcloud_app.workspace import _ensure_link_with_heartbeat
+
+        client = Mock()
+        client.ensure_public_link_share.side_effect = [
+            NextcloudApiError("429 rate limit"),
+            "https://cloud.example.com/s/abc123",
+        ]
+
+        gen = _ensure_link_with_heartbeat(client, "admin", "/test/folder", 10, 50)
+        events = []
+        result = None
+        try:
+            while True:
+                events.append(next(gen))
+        except StopIteration as e:
+            result = e.value
+
+        self.assertEqual(result, "https://cloud.example.com/s/abc123")
+        client.ensure_public_link_share.assert_any_call("admin", "/test/folder", _quick=True)
+        self.assertTrue(len(events) > 0)
+        for ev in events:
+            self.assertEqual(ev["current"], 10)
+            self.assertEqual(ev["total"], 50)
+
+    @patch("nextcloud_app.workspace.time.sleep")
+    def test_ensure_link_with_heartbeat_raises_after_max_retries(self, mocked_sleep):
+        from nextcloud_app.workspace import _ensure_link_with_heartbeat, _LINK_MAX_RETRIES
+
+        client = Mock()
+        client.ensure_public_link_share.side_effect = NextcloudApiError("persistent 429")
+
+        gen = _ensure_link_with_heartbeat(client, "admin", "/test/path", 1, 10)
+        with self.assertRaises(NextcloudApiError):
+            while True:
+                next(gen)
+
+        self.assertEqual(client.ensure_public_link_share.call_count, _LINK_MAX_RETRIES)
+
+    def test_quick_mode_uses_single_attempt(self):
+        session = Mock()
+        empty_list = Mock(
+            status_code=200,
+            content=b'{"ocs":{"meta":{"status":"ok","statuscode":100},"data":[]}}',
+            json=lambda: {"ocs": {"meta": {"status": "ok", "statuscode": 100}, "data": []}},
+            text="",
+            headers={},
+        )
+        too_many = Mock(
+            status_code=429,
+            text="Too many requests",
+            headers={"Retry-After": "0"},
+        )
+        session.request.side_effect = [empty_list, too_many]
+        client = NextcloudApiClient(session=session)
+        client.SHARE_CREATE_INTERVAL_SECONDS = 0
+
+        with self.assertRaises(NextcloudApiError) as ctx:
+            client.ensure_public_link_share("cloud-admin", "/test", _quick=True)
+
+        self.assertIn("429", str(ctx.exception))
+        self.assertEqual(session.request.call_count, 2)

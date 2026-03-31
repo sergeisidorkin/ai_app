@@ -61,7 +61,7 @@
     </div>
     <div class="row">
       <div class="col-md-6 mb-3">
-        <label class="form-label">Менеджер</label>
+        <label class="form-label">Менеджер проекта</label>
         {{ form.manager }}
       </div>
     </div>
@@ -111,7 +111,7 @@
       // «Название»: берём из регистрации
       if (nameInput) nameInput.value = j.name || nameInput.value || "";
 
-      // «Менеджер»: по умолчанию равен руководителю проекта выбранной регистрации
+      // «Менеджер проекта»: по умолчанию равен руководителю проекта выбранной регистрации
       if (managerSel) managerSel.value = j.project_manager || "";
 
       if (countrySel && j.country_id) {
