@@ -1,3 +1,4 @@
+import sys
 import uuid
 
 from django.core.validators import MaxValueValidator, MinValueValidator
@@ -6,6 +7,11 @@ from django.db import models, transaction
 from classifiers_app.models import OKSMCountry, OKVCurrency
 from group_app.models import GroupMember
 from policy_app.models import Product
+
+
+# Prevent duplicate imports via `proposals_app.models` and `ai_app.proposals_app.models`.
+sys.modules.setdefault("proposals_app.models", sys.modules[__name__])
+sys.modules.setdefault("ai_app.proposals_app.models", sys.modules[__name__])
 
 
 class ProposalRegistration(models.Model):

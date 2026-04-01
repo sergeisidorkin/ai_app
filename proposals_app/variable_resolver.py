@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+import sys
+
 from datetime import date
 from decimal import Decimal, InvalidOperation
+
+
+sys.modules.setdefault("proposals_app.variable_resolver", sys.modules[__name__])
+sys.modules.setdefault("ai_app.proposals_app.variable_resolver", sys.modules[__name__])
 
 
 def _proposal_number(proposal) -> str:
