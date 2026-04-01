@@ -139,6 +139,7 @@ class ProposalRegistration(models.Model):
     contact_email = models.CharField("Эл. почта", max_length=255, blank=True, default="")
 
     class Meta:
+        app_label = "proposals_app"
         ordering = ["position", "id"]
         verbose_name = "ТКП"
         verbose_name_plural = "Реестр ТКП"
@@ -260,6 +261,7 @@ class ProposalAsset(models.Model):
     registration_date = models.DateField("Дата регистрации", null=True, blank=True)
 
     class Meta:
+        app_label = "proposals_app"
         ordering = ["position", "id"]
         verbose_name = "Актив ТКП"
         verbose_name_plural = "Активы ТКП"
@@ -291,6 +293,7 @@ class ProposalLegalEntity(models.Model):
     registration_date = models.DateField("Дата регистрации", null=True, blank=True)
 
     class Meta:
+        app_label = "proposals_app"
         ordering = ["position", "id"]
         verbose_name = "Юрлицо ТКП"
         verbose_name_plural = "Юрлица ТКП"
@@ -315,6 +318,7 @@ class ProposalObject(models.Model):
     registration_date = models.DateField("Дата регистрации", null=True, blank=True)
 
     class Meta:
+        app_label = "proposals_app"
         ordering = ["position", "id"]
         verbose_name = "Объект ТКП"
         verbose_name_plural = "Объекты ТКП"
@@ -354,6 +358,7 @@ class ProposalCommercialOffer(models.Model):
     )
 
     class Meta:
+        app_label = "proposals_app"
         ordering = ["position", "id"]
         verbose_name = "Коммерческое предложение ТКП"
         verbose_name_plural = "Коммерческие предложения ТКП"
@@ -385,6 +390,7 @@ class ProposalTemplate(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
+        app_label = "proposals_app"
         ordering = ["position", "id"]
         verbose_name = "Образец шаблона ТКП"
         verbose_name_plural = "Образцы шаблонов ТКП"
@@ -405,6 +411,7 @@ class ProposalVariable(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
+        app_label = "proposals_app"
         ordering = ["position", "id"]
         verbose_name = "Переменная шаблона ТКП"
         verbose_name_plural = "Переменные шаблонов ТКП"
