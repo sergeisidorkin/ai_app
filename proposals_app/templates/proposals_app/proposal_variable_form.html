@@ -1,0 +1,134 @@
+<div class="modal-header" data-modal-size="xl">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить переменную{% else %}Изменить переменную{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    hx-post="{% if action == 'create' %}{% url 'proposal_variable_form_create' %}{% else %}{% url 'proposal_variable_form_edit' variable.pk %}{% endif %}"
+    hx-target="#proposals-pane"
+    hx-swap="outerHTML">
+  <div class="modal-body">
+    {% csrf_token %}
+
+    <div class="row mb-3">
+      <div class="col-4">
+        <label class="form-label">{{ form.key.label }}</label>
+        {{ form.key }}
+      </div>
+      <div class="col">
+        <label class="form-label">{{ form.description.label }}</label>
+        {{ form.description }}
+      </div>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">Связь</label>
+      <input type="text" class="form-control" id="id_proposal_var_binding_display" readonly tabindex="-1"
+             style="background-color:#f8f9fa; color:#6c757d;"
+             value="{{ variable.binding_display|default:'' }}">
+    </div>
+
+    <hr style="margin: 1.5rem -1rem 1rem -1rem;">
+
+    <div class="row mb-3">
+      <div class="col-4">
+        <label class="form-label">{{ form.source_section.label }}</label>
+        {{ form.source_section }}
+      </div>
+      <div class="col-4">
+        <label class="form-label">{{ form.source_table.label }}</label>
+        {{ form.source_table }}
+      </div>
+      <div class="col-4">
+        <label class="form-label">{{ form.source_column.label }}</label>
+        {{ form.source_column }}
+      </div>
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mb-0">
+        {% for field, errors in form.errors.items %}
+          {% for error in errors %}
+            <div>{{ error }}</div>
+          {% endfor %}
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>
+
+<script type="application/json" id="proposal-var-col-registry">{{ registry_json|safe }}</script>
+<script>
+(function() {
+  var registryEl = document.getElementById('proposal-var-col-registry');
+  var reg = registryEl ? JSON.parse(registryEl.textContent) : {};
+  var secSel = document.getElementById('id_proposal_var_source_section');
+  var tblSel = document.getElementById('id_proposal_var_source_table');
+  var colSel = document.getElementById('id_proposal_var_source_column');
+  var bindingInput = document.getElementById('id_proposal_var_binding_display');
+  if (!secSel || !tblSel || !colSel) return;
+
+  function selectedText(sel) {
+    return sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex].text : '';
+  }
+
+  function updateBinding() {
+    if (!bindingInput) return;
+    var secVal = secSel.value, tblVal = tblSel.value, colVal = colSel.value;
+    if (secVal && tblVal && colVal) {
+      bindingInput.value = 'Значения столбца «' + selectedText(colSel) +
+        '» из таблицы «' + selectedText(tblSel) +
+        '» раздела «' + selectedText(secSel) + '»';
+    } else {
+      bindingInput.value = '';
+    }
+  }
+
+  function populateSelect(sel, items, keepValue) {
+    var current = keepValue || '';
+    sel.innerHTML = '';
+    for (var key in items) {
+      var option = document.createElement('option');
+      option.value = key;
+      option.textContent = typeof items[key] === 'string' ? items[key] : items[key].label;
+      if (key === current) option.selected = true;
+      sel.appendChild(option);
+    }
+  }
+
+  function onSectionChange() {
+    var sec = reg[secSel.value];
+    if (sec) {
+      populateSelect(tblSel, sec.tables, tblSel.value || 'registry');
+      onTableChange();
+      return;
+    }
+    tblSel.innerHTML = '';
+    colSel.innerHTML = '';
+    updateBinding();
+  }
+
+  function onTableChange() {
+    var sec = reg[secSel.value];
+    var tbl = sec && sec.tables ? sec.tables[tblSel.value] : null;
+    if (tbl) {
+      populateSelect(colSel, tbl.columns, colSel.value);
+    } else {
+      colSel.innerHTML = '';
+    }
+    updateBinding();
+  }
+
+  secSel.addEventListener('change', onSectionChange);
+  tblSel.addEventListener('change', onTableChange);
+  colSel.addEventListener('change', updateBinding);
+  updateBinding();
+})();
+</script>

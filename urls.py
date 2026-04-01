@@ -45,6 +45,7 @@ path("", home_entry, name="home"),
     path("contracts/", include("contracts_app.urls")),
     path("letters/", include("letters_app.urls")),
     path("learning/", include(("learning_app.urls", "learning_app"), namespace="learning_app")),
+    path("", include("proposals_app.urls")),
     path("o/", include(("core.oidc_urls", "oauth2_provider"), namespace="oauth2_provider")),
     path("smtp/", include("smtp_app.urls")),
     path(
