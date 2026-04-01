@@ -125,7 +125,7 @@
         </div>
       </div>
 
-      <div class="col-12">
+      <div class="col-12 d-none">
         <label class="form-label mb-2">Объем услуг: юрлица</label>
         {{ form.legal_entities_payload }}
         <div class="proposal-assets-editor proposal-legal-entities-editor">
@@ -166,7 +166,7 @@
         </div>
       </div>
 
-      <div class="col-12">
+      <div class="col-12 d-none">
         <label class="form-label mb-2">Объем услуг: объекты</label>
         {{ form.objects_payload }}
         <div class="proposal-assets-editor proposal-objects-editor">
@@ -268,38 +268,41 @@
         <label class="form-label">{{ form.currency.label }}</label>
         {{ form.currency }}
       </div>
+      <div class="w-100"></div>
 
-      <div class="col-6">
+      <div class="col-4">
         <label class="form-label">{{ form.advance_percent.label }}</label>
         <div class="input-group">
           {{ form.advance_percent }}
           <span class="input-group-text">%</span>
         </div>
       </div>
-      <div class="col-6">
+      <div class="col-4">
         <label class="form-label">{{ form.advance_term_days.label }}</label>
         {{ form.advance_term_days }}
       </div>
-      <div class="col-6">
+      <div class="w-100"></div>
+      <div class="col-4">
         <label class="form-label">{{ form.preliminary_report_percent.label }}</label>
         <div class="input-group">
           {{ form.preliminary_report_percent }}
           <span class="input-group-text">%</span>
         </div>
       </div>
-      <div class="col-6">
+      <div class="col-4">
         <label class="form-label">{{ form.preliminary_report_term_days.label }}</label>
         {{ form.preliminary_report_term_days }}
       </div>
+      <div class="w-100"></div>
 
-      <div class="col-6">
+      <div class="col-4">
         <label class="form-label">{{ form.final_report_percent.label }}</label>
         <div class="input-group">
           {{ form.final_report_percent }}
           <span class="input-group-text">%</span>
         </div>
       </div>
-      <div class="col-6">
+      <div class="col-4">
         <label class="form-label">{{ form.final_report_term_days.label }}</label>
         {{ form.final_report_term_days }}
       </div>

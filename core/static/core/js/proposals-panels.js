@@ -1669,6 +1669,24 @@
     const root = pane();
     const form = root?.querySelector('form[data-proposal-form]');
     if (!form) return;
+
+    function parsePercentValue(input) {
+      const raw = String(input?.value || '').trim().replace(',', '.');
+      if (!raw) return 0;
+      const value = Number.parseFloat(raw);
+      return Number.isFinite(value) ? value : 0;
+    }
+
+    function syncFinalReportPercent() {
+      const advanceInput = form.querySelector('[name="advance_percent"]');
+      const preliminaryInput = form.querySelector('[name="preliminary_report_percent"]');
+      const finalInput = form.querySelector('[name="final_report_percent"]');
+      if (!advanceInput || !preliminaryInput || !finalInput) return;
+
+      const result = 100 - parsePercentValue(advanceInput) - parsePercentValue(preliminaryInput);
+      finalInput.value = result.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+    }
+
     attachGroupSelectDisplay(form);
     attachCountryIdentifierSync(form);
     attachGuillemets(form);
@@ -1680,6 +1698,9 @@
     attachProposalCommercialTable(form, assetsApi);
     attachProposalAssetsToLegalEntitiesSync(form, assetsApi, legalEntitiesApi);
     attachProposalLegalEntitiesToObjectsSync(form, legalEntitiesApi, objectsApi);
+    form.querySelector('[name="advance_percent"]')?.addEventListener('input', syncFinalReportPercent);
+    form.querySelector('[name="preliminary_report_percent"]')?.addEventListener('input', syncFinalReportPercent);
+    syncFinalReportPercent();
   }
 
   document.addEventListener('click', async (event) => {

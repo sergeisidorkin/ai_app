@@ -1,4 +1,5 @@
 import json
+import sys
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
@@ -11,6 +12,10 @@ from classifiers_app.models import LegalEntityIdentifier, OKSMCountry, OKVCurren
 from contracts_app.forms import _ContractFileInput
 from group_app.models import GroupMember
 from policy_app.models import Product
+
+
+sys.modules.setdefault("proposals_app.forms", sys.modules[__name__])
+sys.modules.setdefault("ai_app.proposals_app.forms", sys.modules[__name__])
 
 from .models import (
     ProposalAsset,
@@ -255,7 +260,16 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         max_value=100,
         max_digits=5,
         decimal_places=2,
-        widget=forms.NumberInput(attrs={"min": 0, "max": 100, "step": "0.01"}),
+        widget=forms.NumberInput(
+            attrs={
+                "min": 0,
+                "max": 100,
+                "step": "0.01",
+                "readonly": True,
+                "tabindex": "-1",
+                "class": "readonly-field",
+            }
+        ),
     )
     final_report_term_days = forms.IntegerField(
         label="Срок оплаты Итогового отчёта в календарных днях",
@@ -363,6 +377,9 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             )
         self.fields["currency"].queryset = currency_qs
         self.fields["currency"].label_from_instance = lambda obj: f"{obj.code_alpha} {obj.name}"
+        self.fields["final_report_percent"].disabled = True
+        self.fields["final_report_percent"].widget.attrs["readonly"] = True
+        self.fields["final_report_percent"].widget.attrs["tabindex"] = "-1"
 
         if self.instance and self.instance.pk and self.instance.identifier:
             self.fields["identifier"].initial = self.instance.identifier
@@ -466,12 +483,55 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             rub = currency_qs.filter(code_alpha="RUB").first()
             if rub:
                 self.fields["currency"].initial = rub.pk
+        self.initial["final_report_percent"] = self._calculate_final_report_percent(
+            advance_percent=self.data.get("advance_percent") if self.is_bound else self.initial.get("advance_percent", self.instance.advance_percent),
+            preliminary_report_percent=(
+                self.data.get("preliminary_report_percent")
+                if self.is_bound
+                else self.initial.get("preliminary_report_percent", self.instance.preliminary_report_percent)
+            ),
+        )
 
     def clean_group_member(self):
         member = self.cleaned_data.get("group_member")
         if member and not (member.country_alpha2 or "").strip():
             raise forms.ValidationError("Для выбранной строки состава группы не заполнен код Альфа-2.")
         return member
+
+    def _calculate_final_report_percent(self, *, advance_percent, preliminary_report_percent):
+        advance = self._parse_payload_decimal(
+            advance_percent,
+            "Размер предоплаты в процентах должен быть корректным числом.",
+        ) or Decimal("0")
+        preliminary = self._parse_payload_decimal(
+            preliminary_report_percent,
+            "Размер оплаты Предварительного отчёта в процентах должен быть корректным числом.",
+        ) or Decimal("0")
+        result = Decimal("100") - advance - preliminary
+        return result.quantize(Decimal("0.01"))
+
+    def clean(self):
+        cleaned = super().clean()
+        if self.errors.get("advance_percent") or self.errors.get("preliminary_report_percent"):
+            return cleaned
+
+        try:
+            final_percent = self._calculate_final_report_percent(
+                advance_percent=cleaned.get("advance_percent"),
+                preliminary_report_percent=cleaned.get("preliminary_report_percent"),
+            )
+        except forms.ValidationError:
+            return cleaned
+
+        if final_percent < 0 or final_percent > 100:
+            self.add_error(
+                "final_report_percent",
+                "Рассчитанный размер оплаты Итогового отчёта должен быть в диапазоне от 0% до 100%.",
+            )
+            return cleaned
+
+        cleaned["final_report_percent"] = final_percent
+        return cleaned
 
     def clean_assets_payload(self):
         cleaned_assets = self._clean_related_payload(
