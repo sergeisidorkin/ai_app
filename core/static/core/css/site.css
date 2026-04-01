@@ -1372,6 +1372,589 @@ section#templates .alert.alert-info .text-muted {
 
 
 
+/* =========================
+   PROPOSALS TABLE (ТКП)
+   ========================= */
+
+#proposals-pane table.proposals-table col.checkbox            { width: 1% !important; }
+#proposals-pane table.proposals-table col.proposal-number     { width: 4% !important; }
+#proposals-pane table.proposals-table col.group               { width: 3% !important; }
+#proposals-pane table.proposals-table col.quick-edit          { width: 1% !important; }
+#proposals-pane table.proposals-table col.proposal-id         { width: 4% !important; }
+#proposals-pane table.proposals-table col.proposal-type       { width: 3% !important; }
+#proposals-pane table.proposals-table col.proposal-name       { width: 8% !important; }
+#proposals-pane table.proposals-table col.proposal-kind,
+#proposals-pane table.proposals-table col.proposal-year,
+#proposals-pane table.proposals-table col.proposal-customer,
+#proposals-pane table.proposals-table col.proposal-country,
+#proposals-pane table.proposals-table col.proposal-identifier,
+#proposals-pane table.proposals-table col.proposal-regnumber,
+#proposals-pane table.proposals-table col.proposal-regdate { width: calc(71% / 7) !important; }
+#proposals-pane table.proposals-table col.proposal-purpose,
+#proposals-pane table.proposals-table col.proposal-services { width: 12% !important; }
+#proposals-pane table.proposals-table col.proposal-evaluation-date,
+#proposals-pane table.proposals-table col.proposal-term,
+#proposals-pane table.proposals-table col.proposal-preliminary-report-date,
+#proposals-pane table.proposals-table col.proposal-final-report-date,
+#proposals-pane table.proposals-table col.proposal-currency,
+#proposals-pane table.proposals-table col.proposal-advance-percent,
+#proposals-pane table.proposals-table col.proposal-advance-term,
+#proposals-pane table.proposals-table col.proposal-preliminary-report-percent,
+#proposals-pane table.proposals-table col.proposal-preliminary-report-term,
+#proposals-pane table.proposals-table col.proposal-final-report-percent,
+#proposals-pane table.proposals-table col.proposal-final-report-term { width: 6% !important; }
+#proposals-pane table.proposals-table col.proposal-report-languages,
+#proposals-pane table.proposals-table col.proposal-service-cost { width: 8% !important; }
+#proposals-pane table.proposal-dispatch-table col.checkbox     { width: 1% !important; }
+#proposals-pane table.proposal-dispatch-table col.proposal-id   { width: 4% !important; }
+#proposals-pane table.proposal-dispatch-table col.proposal-type { width: 3% !important; }
+#proposals-pane table.proposal-dispatch-table col.proposal-name { width: 8% !important; }
+#proposals-pane table.proposal-dispatch-table col.docx-name     { width: 16% !important; }
+#proposals-pane table.proposal-dispatch-table col.docx-link     { width: 4% !important; }
+#proposals-pane table.proposal-dispatch-table col.pdf-name      { width: 16% !important; }
+#proposals-pane table.proposal-dispatch-table col.pdf-link      { width: 4% !important; }
+#proposals-pane table.proposal-dispatch-table col.sent-date,
+#proposals-pane table.proposal-dispatch-table col.recipient,
+#proposals-pane table.proposal-dispatch-table col.contact-name,
+#proposals-pane table.proposal-dispatch-table col.contact-email { width: calc(40% / 4) !important; }
+
+#proposals-pane table.proposals-table {
+  table-layout: auto !important;
+  width: 100%;
+  min-width: 0;
+  --bs-table-cell-padding-y: .5rem;
+  --proposal-first-col-pr: .8rem;
+}
+
+#proposals-pane .registration-table-wrap {
+  overflow-x: auto;
+  overflow-y: visible;
+  width: 100%;
+}
+
+#proposals-pane .registration-table-wrap > table.proposals-table {
+  width: max-content;
+  min-width: 100%;
+}
+
+#proposals-pane .proposal-assets-editor {
+  border: 1px solid #dee2e6;
+  border-radius: .5rem;
+  padding: 1rem;
+  overflow: visible;
+  position: relative;
+}
+
+#proposals-pane .proposal-assets-table {
+  margin-bottom: 0;
+}
+
+#proposals-pane .proposal-assets-editor .table-responsive {
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+#proposals-pane .proposal-assets-table .proposal-assets-check-col,
+#proposals-pane .proposal-assets-table td.proposal-asset-check-cell {
+  width: 28px;
+  min-width: 28px;
+  max-width: 28px;
+  padding-left: .275rem !important;
+  padding-right: .275rem !important;
+}
+
+#proposals-pane .proposal-assets-table th.proposal-assets-check-col,
+#proposals-pane .proposal-assets-table td.proposal-asset-check-cell {
+  text-align: center !important;
+}
+
+#proposals-pane .proposal-assets-table td.proposal-asset-check-cell {
+  vertical-align: middle !important;
+}
+
+#proposals-pane .proposal-assets-table td.proposal-asset-check-cell .proposal-asset-check-wrap {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  margin: 0 !important;
+  margin-left: 0 !important;
+  width: 100%;
+  min-height: auto !important;
+}
+
+#proposals-pane .proposal-assets-table td.proposal-asset-check-cell .proposal-asset-check {
+  float: none !important;
+  display: block !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  margin-top: 0 !important;
+}
+
+#proposals-pane .proposal-assets-table th {
+  white-space: nowrap;
+  font-weight: 400;
+}
+
+#proposals-pane .proposal-assets-table td {
+  vertical-align: middle;
+  padding-top: .45rem;
+  padding-bottom: .45rem;
+}
+
+#proposals-pane .proposal-assets-table .proposal-asset-short-cell {
+  min-width: 22rem;
+}
+
+#proposals-pane .proposal-assets-table .proposal-asset-parent-short-cell,
+#proposals-pane .proposal-assets-table .proposal-legal-entity-asset-short-name {
+  min-width: 16rem;
+}
+
+#proposals-pane .proposal-assets-table .proposal-asset-ler-wrap {
+  min-width: 22rem;
+  z-index: 1065;
+}
+
+#proposals-pane .proposal-assets-table .proposal-asset-ler-list {
+  position: fixed;
+  z-index: 2000;
+  width: max-content !important;
+  max-width: none !important;
+  overflow-x: visible;
+}
+
+#proposals-pane .proposal-assets-table .proposal-asset-ler-list .ler-ac-item,
+#proposals-pane .proposal-assets-table .proposal-asset-ler-list .ler-ac-main,
+#proposals-pane .proposal-assets-table .proposal-asset-ler-list .ler-ac-sub {
+  white-space: nowrap;
+}
+
+#proposals-pane .proposal-commercial-table {
+  table-layout: auto;
+  width: max-content;
+  min-width: 100%;
+}
+
+#proposals-pane .proposal-commercial-table th[rowspan="2"] {
+  vertical-align: bottom;
+  padding-bottom: var(--bs-table-cell-padding-y, .5rem);
+}
+
+#proposals-pane .proposal-commercial-table .proposal-commercial-days-group,
+#proposals-pane .proposal-commercial-table .proposal-commercial-day-header {
+  text-align: center;
+}
+
+#proposals-pane .proposal-commercial-table .proposal-commercial-days-group {
+  position: relative;
+}
+
+#proposals-pane .proposal-commercial-table .proposal-commercial-days-group-subheaders {
+  border-bottom-color: transparent !important;
+}
+
+#proposals-pane .proposal-commercial-table .proposal-commercial-days-group-subheaders::after {
+  content: "";
+  position: absolute;
+  left: .65rem;
+  right: .65rem;
+  bottom: 0;
+  border-bottom: 1px solid var(--bs-border-color, #dee2e6);
+}
+
+#proposals-pane .proposal-commercial-table th:nth-child(2),
+#proposals-pane .proposal-commercial-table td:nth-child(2),
+#proposals-pane .proposal-commercial-table th:nth-child(3),
+#proposals-pane .proposal-commercial-table td:nth-child(3),
+#proposals-pane .proposal-commercial-table th:nth-child(4),
+#proposals-pane .proposal-commercial-table td:nth-child(4),
+#proposals-pane .proposal-commercial-table th:nth-child(5),
+#proposals-pane .proposal-commercial-table td:nth-child(5) {
+  min-width: 13rem;
+}
+
+#proposals-pane .proposal-commercial-table th:nth-child(6),
+#proposals-pane .proposal-commercial-table td:nth-child(6),
+#proposals-pane .proposal-commercial-table th:nth-last-child(1),
+#proposals-pane .proposal-commercial-table td:nth-last-child(1) {
+  min-width: 10rem;
+}
+
+#proposals-pane .proposal-commercial-table .proposal-commercial-day-header,
+#proposals-pane .proposal-commercial-table .proposal-commercial-day-cell,
+#proposals-pane .proposal-commercial-table .proposal-commercial-day-placeholder-cell {
+  min-width: 7rem;
+}
+
+#proposals-pane .proposal-commercial-table .proposal-commercial-day-placeholder-cell {
+  text-align: center;
+  color: #6c757d;
+}
+
+#proposals-pane .proposal-commercial-table .proposal-commercial-rate,
+#proposals-pane .proposal-commercial-table .proposal-commercial-day-count,
+#proposals-pane .proposal-commercial-table .proposal-commercial-total {
+  text-align: right;
+}
+
+#proposals-pane .proposal-assets-table {
+  --proposal-check-width: 28px;
+  --proposal-left-half-width: 50%;
+  --proposal-right-quarter-width: 12.5%;
+  --proposal-legal-left-col-width: calc((var(--proposal-left-half-width) - var(--proposal-check-width)) / 2);
+  table-layout: fixed;
+  width: 100%;
+}
+
+#proposals-pane #proposal-assets-table th:nth-child(2),
+#proposals-pane #proposal-assets-table td:nth-child(2) {
+  width: calc(var(--proposal-left-half-width) - var(--proposal-check-width));
+  min-width: calc(var(--proposal-left-half-width) - var(--proposal-check-width));
+  max-width: calc(var(--proposal-left-half-width) - var(--proposal-check-width));
+}
+
+#proposals-pane .proposal-legal-entities-table th:nth-child(2),
+#proposals-pane .proposal-legal-entities-table td:nth-child(2),
+#proposals-pane .proposal-objects-table th:nth-child(2),
+#proposals-pane .proposal-objects-table td:nth-child(2) {
+  width: var(--proposal-legal-left-col-width);
+  min-width: var(--proposal-legal-left-col-width);
+  max-width: var(--proposal-legal-left-col-width);
+}
+
+#proposals-pane .proposal-legal-entities-table th:nth-child(3),
+#proposals-pane .proposal-legal-entities-table td:nth-child(3),
+#proposals-pane .proposal-objects-table th:nth-child(3),
+#proposals-pane .proposal-objects-table td:nth-child(3) {
+  width: var(--proposal-legal-left-col-width);
+  min-width: var(--proposal-legal-left-col-width);
+  max-width: var(--proposal-legal-left-col-width);
+}
+
+#proposals-pane #proposal-assets-table th:nth-child(n+3):nth-child(-n+6),
+#proposals-pane #proposal-assets-table td:nth-child(n+3):nth-child(-n+6),
+#proposals-pane .proposal-legal-entities-table th:nth-child(n+4):nth-child(-n+7),
+#proposals-pane .proposal-legal-entities-table td:nth-child(n+4):nth-child(-n+7),
+#proposals-pane .proposal-objects-table th:nth-child(n+4):nth-child(-n+7),
+#proposals-pane .proposal-objects-table td:nth-child(n+4):nth-child(-n+7) {
+  width: var(--proposal-right-quarter-width);
+  min-width: var(--proposal-right-quarter-width);
+  max-width: var(--proposal-right-quarter-width);
+}
+
+#proposals-pane #proposal-assets-table .proposal-asset-short-cell,
+#proposals-pane #proposal-assets-table .proposal-asset-ler-wrap {
+  min-width: 0;
+}
+
+#proposals-pane .proposal-legal-entities-table .proposal-asset-parent-short-cell,
+#proposals-pane .proposal-legal-entities-table .proposal-legal-entity-asset-short-name,
+#proposals-pane .proposal-legal-entities-table .proposal-asset-short-cell,
+#proposals-pane .proposal-legal-entities-table .proposal-asset-ler-wrap,
+#proposals-pane .proposal-objects-table .proposal-asset-parent-short-cell,
+#proposals-pane .proposal-objects-table .proposal-object-legal-entity-short-name,
+#proposals-pane .proposal-objects-table .proposal-asset-short-cell {
+  min-width: 0;
+}
+
+#proposals-pane #proposal-assets-table .proposal-asset-country,
+#proposals-pane #proposal-assets-table .proposal-asset-identifier,
+#proposals-pane #proposal-assets-table .proposal-asset-reg-number,
+#proposals-pane #proposal-assets-table .proposal-asset-reg-date,
+#proposals-pane .proposal-legal-entities-table .proposal-legal-entity-country,
+#proposals-pane .proposal-legal-entities-table .proposal-legal-entity-identifier,
+#proposals-pane .proposal-legal-entities-table .proposal-legal-entity-reg-number,
+#proposals-pane .proposal-legal-entities-table .proposal-legal-entity-reg-date,
+#proposals-pane .proposal-objects-table .proposal-object-region,
+#proposals-pane .proposal-objects-table .proposal-object-type,
+#proposals-pane .proposal-objects-table .proposal-object-license,
+#proposals-pane .proposal-objects-table .proposal-object-reg-date {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+#proposals-pane .proposal-assets-table .form-control,
+#proposals-pane .proposal-assets-table .form-select {
+  font-size: 1rem;
+  min-height: calc(1.5em + .75rem + 2px);
+}
+
+#proposals-pane .proposal-asset-add-btn {
+  border: 1px solid #ced4da;
+  background-color: #f8f9fa;
+  color: #495057;
+  font-size: 1rem;
+  padding: .375rem .75rem;
+}
+
+#proposals-pane .proposal-asset-add-btn:hover,
+#proposals-pane .proposal-asset-add-btn:focus {
+  background-color: #eef1f4;
+  color: #343a40;
+}
+
+#proposals-pane #proposal-asset-up-btn,
+#proposals-pane #proposal-asset-down-btn,
+#proposals-pane #proposal-legal-entity-up-btn,
+#proposals-pane #proposal-legal-entity-down-btn,
+#proposals-pane #proposal-commercial-up-btn,
+#proposals-pane #proposal-commercial-down-btn,
+#proposals-pane #proposal-object-up-btn,
+#proposals-pane #proposal-object-down-btn {
+  border-color: #ced4da;
+  background-color: #f8f9fa;
+  color: #495057;
+}
+
+#proposals-pane #proposal-asset-up-btn:hover,
+#proposals-pane #proposal-asset-up-btn:focus,
+#proposals-pane #proposal-asset-down-btn:hover,
+#proposals-pane #proposal-asset-down-btn:focus,
+#proposals-pane #proposal-legal-entity-up-btn:hover,
+#proposals-pane #proposal-legal-entity-up-btn:focus,
+#proposals-pane #proposal-legal-entity-down-btn:hover,
+#proposals-pane #proposal-legal-entity-down-btn:focus,
+#proposals-pane #proposal-commercial-up-btn:hover,
+#proposals-pane #proposal-commercial-up-btn:focus,
+#proposals-pane #proposal-commercial-down-btn:hover,
+#proposals-pane #proposal-commercial-down-btn:focus,
+#proposals-pane #proposal-object-up-btn:hover,
+#proposals-pane #proposal-object-up-btn:focus,
+#proposals-pane #proposal-object-down-btn:hover,
+#proposals-pane #proposal-object-down-btn:focus {
+  border-color: #ced4da;
+  background-color: #eef1f4;
+  color: #343a40;
+}
+
+#proposals-pane #proposal-asset-delete-btn,
+#proposals-pane #proposal-legal-entity-delete-btn,
+#proposals-pane #proposal-commercial-delete-btn,
+#proposals-pane #proposal-object-delete-btn {
+  border-color: #e6c9cf;
+  background-color: #fbf4f5;
+  color: #b45d68;
+}
+
+#proposals-pane #proposal-asset-delete-btn:hover,
+#proposals-pane #proposal-asset-delete-btn:focus,
+#proposals-pane #proposal-legal-entity-delete-btn:hover,
+#proposals-pane #proposal-legal-entity-delete-btn:focus,
+#proposals-pane #proposal-commercial-delete-btn:hover,
+#proposals-pane #proposal-commercial-delete-btn:focus,
+#proposals-pane #proposal-object-delete-btn:hover,
+#proposals-pane #proposal-object-delete-btn:focus {
+  border-color: #ddb8c0;
+  background-color: #f8ecee;
+  color: #a14f59;
+}
+
+#proposals-pane table.proposal-dispatch-table {
+  table-layout: auto !important;
+  width: 100%;
+  min-width: 0;
+  --bs-table-cell-padding-y: .5rem;
+  --proposal-first-col-pr: .8rem;
+}
+
+#proposals-pane table.proposals-table > thead tr > :first-child,
+#proposals-pane table.proposals-table > tbody tr > :first-child,
+#proposals-pane table.proposal-dispatch-table > thead tr > :first-child,
+#proposals-pane table.proposal-dispatch-table > tbody tr > :first-child,
+#proposals-pane table.proposal-template-table > thead tr > :first-child,
+#proposals-pane table.proposal-template-table > tbody tr > :first-child {
+  white-space: nowrap !important;
+  padding-left: .25rem !important;
+  padding-right: .25rem !important;
+  box-sizing: border-box !important;
+}
+
+#proposals-pane table.proposals-table.table-sm,
+#proposals-pane table.proposal-dispatch-table.table-sm { --bs-table-cell-padding-y: .25rem; }
+
+#proposals-pane table.proposals-table thead th,
+#proposals-pane table.proposal-dispatch-table thead th {
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  vertical-align: bottom !important;
+  line-height: 1.2;
+  padding-top: var(--bs-table-cell-padding-y) !important;
+  padding-bottom: calc(var(--bs-table-cell-padding-y) + 2px) !important;
+}
+
+#proposals-pane table.proposals-table thead th {
+  white-space: nowrap !important;
+}
+
+#proposals-pane table.proposals-table tbody th,
+#proposals-pane table.proposals-table tbody td,
+#proposals-pane table.proposal-dispatch-table tbody th,
+#proposals-pane table.proposal-dispatch-table tbody td {
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#proposals-pane table.proposals-table tbody td.proposal-textarea-cell {
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  vertical-align: top !important;
+  min-width: 14rem;
+}
+
+#proposals-pane table.proposals-table tbody td.proposal-id-cell,
+#proposals-pane table.proposal-dispatch-table tbody td.proposal-id-cell {
+  color: #a1a9b1 !important;
+}
+
+#proposals-pane table.proposals-table thead th:nth-child(4),
+#proposals-pane table.proposals-table tbody td:nth-child(4) {
+  width: 1% !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#proposals-pane table.proposals-table .proposal-quick-edit-col {
+  width: 1% !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  white-space: nowrap !important;
+}
+
+#proposals-pane table.proposal-dispatch-table tbody td.proposal-id-cell {
+  color: #212529 !important;
+}
+
+#proposals-pane table.table > thead tr > :first-child,
+#proposals-pane table.table > tbody tr > :first-child {
+  padding-left: calc(var(--bs-table-cell-padding-x, .4rem) + 0px);
+}
+
+#proposals-pane table.table > thead tr > :first-child .form-check,
+#proposals-pane table.table > tbody tr > :first-child .form-check {
+  margin-left: 0;
+}
+
+#proposals-pane table.proposals-table > thead tr > :first-child .form-check,
+#proposals-pane table.proposals-table > tbody tr > :first-child .form-check,
+#proposals-pane table.proposal-dispatch-table > thead tr > :first-child .form-check,
+#proposals-pane table.proposal-dispatch-table > tbody tr > :first-child .form-check,
+#proposals-pane table.proposal-template-table > thead tr > :first-child .form-check,
+#proposals-pane table.proposal-template-table > tbody tr > :first-child .form-check {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+#proposals-pane table.proposals-table > thead tr > :first-child .form-check-input,
+#proposals-pane table.proposals-table > tbody tr > :first-child .form-check-input,
+#proposals-pane table.proposal-dispatch-table > thead tr > :first-child .form-check-input,
+#proposals-pane table.proposal-dispatch-table > tbody tr > :first-child .form-check-input,
+#proposals-pane table.proposal-template-table > thead tr > :first-child .form-check-input,
+#proposals-pane table.proposal-template-table > tbody tr > :first-child .form-check-input {
+  margin: 0 !important;
+}
+
+#proposals-pane .readonly-field {
+  background-color: #f8f9fa;
+  color: #6c757d;
+}
+
+#proposals-pane .proposal-customer-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+#proposals-pane .proposal-customer-meta-grid > div {
+  min-width: 0;
+}
+
+#proposals-modal .readonly-field {
+  background-color: #f8f9fa;
+  color: #6c757d;
+}
+
+#proposals-modal .modal-body.modal-body-scroll {
+  max-height: calc(100vh - 170px);
+  overflow-y: auto;
+  padding-right: 1rem;
+}
+
+#proposals-section-heading .proposal-header-link {
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+#proposals-section-heading .proposal-header-link:hover {
+  text-decoration: none;
+}
+
+#proposals-section-heading .proposal-header-separator {
+  color: #c7cdd3;
+}
+
+#proposals-pane .group-select-shell {
+  position: relative;
+}
+
+#proposals-pane .group-select-shell select {
+  position: relative;
+  z-index: 2;
+  opacity: 0.01;
+}
+
+#proposals-pane .group-select-display {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  padding: .375rem 2.25rem .375rem .75rem;
+  color: #212529;
+  background-color: #fff;
+  border: 1px solid #ced4da;
+  border-radius: .375rem;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#proposals-pane .group-select-display::after {
+  content: "";
+  position: absolute;
+  right: .75rem;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  transform: translateY(-50%);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 16px 12px;
+  opacity: .7;
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M2 5l6 6 6-6'/%3e%3c/svg%3e");
+}
+
+#proposals-pane .proposal-template-actions-row {
+  margin-top: 0 !important;
+  margin-bottom: 0.875rem !important;
+}
+
+#proposals-pane .proposal-template-table {
+  margin-bottom: 0 !important;
+}
+
 /* ==== Contract Conditions table (Условия контракта) ==== */
 .contract-table { table-layout: fixed; width: 100%; min-width: 1940px; }
 .contract-table col.checkbox     { width: 30px  !important; }
@@ -1477,6 +2060,8 @@ section#templates .alert.alert-info .text-muted {
 /* ==== Performers table ==== */
 .performer-quick-edit { cursor: pointer; opacity: .45; transition: opacity .15s; }
 .performer-quick-edit:hover { opacity: .85; }
+.proposal-quick-edit { cursor: pointer; opacity: .45; transition: opacity .15s; }
+.proposal-quick-edit:hover { opacity: .85; }
 .performer-locked-icon { opacity: .35; }
 
 .perf-nav-btn {
@@ -1864,6 +2449,21 @@ section#templates .alert.alert-info .text-muted {
 .ct-download-link:hover {
   color: #212529;
   background-color: rgba(0, 0, 0, .08);
+}
+
+#proposals-pane .proposal-docx-download-link {
+  display: block;
+  max-width: 100%;
+  color: #6c757d;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#proposals-pane .proposal-docx-download-link:hover {
+  color: #212529;
+  text-decoration: underline;
 }
 .ct-upload-link {
   display: inline-flex;

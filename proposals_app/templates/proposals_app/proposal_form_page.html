@@ -1,0 +1,335 @@
+<div id="proposals-pane"
+     class="proposal-form-page"
+     data-header-root-label="ТКП"
+     data-header-root-url="{% url 'proposals_partial' %}"
+     data-header-current-label="{% if action == "create" %}Новое ТКП{% else %}{{ proposal.short_uid }}{% endif %}"
+     data-header-current-url="{% if action == "create" %}{% url 'proposal_form_create' %}{% else %}{% url 'proposal_form_edit' proposal.pk %}{% endif %}">
+  {{ typical_sections_json|json_script:"proposal-typical-sections-data" }}
+  <form method="post"
+        data-proposal-form="1"
+        data-country-identifier-url="{% url 'identifier_for_country' %}"
+        data-ler-search-url="{% url 'ler_search' %}"
+        {% if action == "create" %}
+          hx-post="{% url 'proposal_form_create' %}"
+        {% else %}
+          hx-post="{% url 'proposal_form_edit' proposal.pk %}"
+        {% endif %}
+        hx-target="#proposals-pane"
+        hx-swap="outerHTML">
+    {% csrf_token %}
+
+    <div class="row g-3">
+      <div class="col-3">
+        <label class="form-label">{{ form.number.label }}</label>
+        {{ form.number }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">{{ form.group_member.label }}</label>
+        <div class="group-select-shell">
+          {{ form.group_member }}
+          <div class="group-select-display" id="proposal-group-display" aria-hidden="true"></div>
+        </div>
+      </div>
+      <div class="col-3">
+        <label class="form-label">{{ form.kind.label }}</label>
+        {{ form.kind }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">{{ form.year.label }}</label>
+        {{ form.year }}
+      </div>
+
+      <div class="col-3">
+        <label class="form-label">{{ form.type.label }}</label>
+        {{ form.type }}
+      </div>
+      <div class="col-9">
+        <label class="form-label">{{ form.name.label }}</label>
+        {{ form.name }}
+      </div>
+
+      <div class="col-6">
+        <label class="form-label">{{ form.customer.label }}</label>
+        <div class="ler-ac-wrap">
+          {{ form.customer }}
+          <div class="ler-ac-list" id="proposal-ler-ac-list"></div>
+        </div>
+      </div>
+      <div class="col-6">
+        <div class="proposal-customer-meta-grid">
+          <div>
+            <label class="form-label">{{ form.country.label }}</label>
+            {{ form.country }}
+          </div>
+          <div>
+            <label class="form-label">{{ form.identifier.label }}</label>
+            {{ form.identifier }}
+          </div>
+          <div>
+            <label class="form-label">{{ form.registration_number.label }}</label>
+            {{ form.registration_number }}
+          </div>
+          <div>
+            <label class="form-label">{{ form.registration_date.label }}</label>
+            {{ form.registration_date }}
+          </div>
+        </div>
+      </div>
+
+      <div class="col-6">
+        <label class="form-label">{{ form.purpose.label }}</label>
+        {{ form.purpose }}
+      </div>
+      <div class="col-6">
+        <label class="form-label">{{ form.service_composition.label }}</label>
+        {{ form.service_composition }}
+      </div>
+
+      <div class="col-12">
+        <label class="form-label mb-2">Объем услуг: активы</label>
+        {{ form.assets_payload }}
+        <div class="proposal-assets-editor">
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-2 proposal-assets-table" id="proposal-assets-table">
+              <thead>
+                <tr>
+                  <th class="w-checkbox proposal-assets-check-col"></th>
+                  <th>Наименование актива (краткое)</th>
+                  <th>Страна</th>
+                  <th>Идентификатор</th>
+                  <th>Регистрационный номер</th>
+                  <th>Дата регистрации</th>
+                </tr>
+              </thead>
+              <tbody id="proposal-assets-tbody"></tbody>
+            </table>
+          </div>
+          <div class="d-flex align-items-stretch gap-2 mt-3">
+            <button type="button" id="proposal-asset-add-btn" class="btn btn-sm proposal-asset-add-btn">
+              <i class="bi bi-plus-circle me-1"></i>Добавить актив
+            </button>
+            <div id="proposal-assets-row-actions" class="d-none">
+              <div class="btn-group">
+                <button type="button" id="proposal-asset-up-btn" class="btn btn-outline-primary btn-sm" title="Переместить вверх" aria-label="Переместить вверх">
+                  <i class="bi bi-arrow-up-square"></i>
+                </button>
+                <button type="button" id="proposal-asset-down-btn" class="btn btn-outline-primary btn-sm" title="Переместить вниз" aria-label="Переместить вниз">
+                  <i class="bi bi-arrow-down-square"></i>
+                </button>
+                <button type="button" id="proposal-asset-delete-btn" class="btn btn-outline-danger btn-sm" title="Удалить" aria-label="Удалить">
+                  <i class="bi bi-x-square"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12">
+        <label class="form-label mb-2">Объем услуг: юрлица</label>
+        {{ form.legal_entities_payload }}
+        <div class="proposal-assets-editor proposal-legal-entities-editor">
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-2 proposal-assets-table proposal-legal-entities-table" id="proposal-legal-entities-table">
+              <thead>
+                <tr>
+                  <th class="w-checkbox proposal-assets-check-col"></th>
+                  <th>Наименование актива (краткое)</th>
+                  <th>Наименование юрлица (краткое)</th>
+                  <th>Страна</th>
+                  <th>Идентификатор</th>
+                  <th>Регистрационный номер</th>
+                  <th>Дата регистрации</th>
+                </tr>
+              </thead>
+              <tbody id="proposal-legal-entities-tbody"></tbody>
+            </table>
+          </div>
+          <div class="d-flex align-items-stretch gap-2 mt-3">
+            <button type="button" id="proposal-legal-entity-add-btn" class="btn btn-sm proposal-asset-add-btn">
+              <i class="bi bi-plus-circle me-1"></i>Добавить юрлицо
+            </button>
+            <div id="proposal-legal-entities-row-actions" class="d-none">
+              <div class="btn-group">
+                <button type="button" id="proposal-legal-entity-up-btn" class="btn btn-outline-primary btn-sm" title="Переместить вверх" aria-label="Переместить вверх">
+                  <i class="bi bi-arrow-up-square"></i>
+                </button>
+                <button type="button" id="proposal-legal-entity-down-btn" class="btn btn-outline-primary btn-sm" title="Переместить вниз" aria-label="Переместить вниз">
+                  <i class="bi bi-arrow-down-square"></i>
+                </button>
+                <button type="button" id="proposal-legal-entity-delete-btn" class="btn btn-outline-danger btn-sm" title="Удалить" aria-label="Удалить">
+                  <i class="bi bi-x-square"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12">
+        <label class="form-label mb-2">Объем услуг: объекты</label>
+        {{ form.objects_payload }}
+        <div class="proposal-assets-editor proposal-objects-editor">
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-2 proposal-assets-table proposal-objects-table" id="proposal-objects-table">
+              <thead>
+                <tr>
+                  <th class="w-checkbox proposal-assets-check-col"></th>
+                  <th>Наименование юрлица (краткое)</th>
+                  <th>Наименование объекта (краткое)</th>
+                  <th>Регион</th>
+                  <th>Тип</th>
+                  <th>Лицензия</th>
+                  <th>Дата регистрации</th>
+                </tr>
+              </thead>
+              <tbody id="proposal-objects-tbody"></tbody>
+            </table>
+          </div>
+          <div class="d-flex align-items-stretch gap-2 mt-3">
+            <button type="button" id="proposal-object-add-btn" class="btn btn-sm proposal-asset-add-btn">
+              <i class="bi bi-plus-circle me-1"></i>Добавить объект
+            </button>
+            <div id="proposal-objects-row-actions" class="d-none">
+              <div class="btn-group">
+                <button type="button" id="proposal-object-up-btn" class="btn btn-outline-primary btn-sm" title="Переместить вверх" aria-label="Переместить вверх">
+                  <i class="bi bi-arrow-up-square"></i>
+                </button>
+                <button type="button" id="proposal-object-down-btn" class="btn btn-outline-primary btn-sm" title="Переместить вниз" aria-label="Переместить вниз">
+                  <i class="bi bi-arrow-down-square"></i>
+                </button>
+                <button type="button" id="proposal-object-delete-btn" class="btn btn-outline-danger btn-sm" title="Удалить" aria-label="Удалить">
+                  <i class="bi bi-x-square"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-3">
+        <label class="form-label">{{ form.evaluation_date.label }}</label>
+        {{ form.evaluation_date }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">{{ form.service_term_months.label }}</label>
+        {{ form.service_term_months }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">{{ form.preliminary_report_date.label }}</label>
+        {{ form.preliminary_report_date }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">{{ form.final_report_date.label }}</label>
+        {{ form.final_report_date }}
+      </div>
+
+      <div class="col-12">
+        <label class="form-label">{{ form.report_languages.label }}</label>
+        {{ form.report_languages }}
+      </div>
+
+      <div class="col-12">
+        <label class="form-label mb-2">Коммерческое предложение</label>
+        {{ form.commercial_offer_payload }}
+        <div class="proposal-assets-editor proposal-commercial-editor">
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-2 proposal-assets-table proposal-commercial-table" id="proposal-commercial-table">
+              <thead id="proposal-commercial-thead"></thead>
+              <tbody id="proposal-commercial-tbody"></tbody>
+            </table>
+          </div>
+          <div class="d-flex align-items-stretch gap-2 mt-3">
+            <button type="button" id="proposal-commercial-add-btn" class="btn btn-sm proposal-asset-add-btn">
+              <i class="bi bi-plus-circle me-1"></i>Добавить строку
+            </button>
+            <div id="proposal-commercial-row-actions" class="d-none">
+              <div class="btn-group">
+                <button type="button" id="proposal-commercial-up-btn" class="btn btn-outline-primary btn-sm" title="Переместить вверх" aria-label="Переместить вверх">
+                  <i class="bi bi-arrow-up-square"></i>
+                </button>
+                <button type="button" id="proposal-commercial-down-btn" class="btn btn-outline-primary btn-sm" title="Переместить вниз" aria-label="Переместить вниз">
+                  <i class="bi bi-arrow-down-square"></i>
+                </button>
+                <button type="button" id="proposal-commercial-delete-btn" class="btn btn-outline-danger btn-sm" title="Удалить" aria-label="Удалить">
+                  <i class="bi bi-x-square"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-4">
+        <label class="form-label">{{ form.service_cost.label }}</label>
+        {{ form.service_cost }}
+      </div>
+      <div class="col-4">
+        <label class="form-label">{{ form.currency.label }}</label>
+        {{ form.currency }}
+      </div>
+
+      <div class="col-6">
+        <label class="form-label">{{ form.advance_percent.label }}</label>
+        <div class="input-group">
+          {{ form.advance_percent }}
+          <span class="input-group-text">%</span>
+        </div>
+      </div>
+      <div class="col-6">
+        <label class="form-label">{{ form.advance_term_days.label }}</label>
+        {{ form.advance_term_days }}
+      </div>
+      <div class="col-6">
+        <label class="form-label">{{ form.preliminary_report_percent.label }}</label>
+        <div class="input-group">
+          {{ form.preliminary_report_percent }}
+          <span class="input-group-text">%</span>
+        </div>
+      </div>
+      <div class="col-6">
+        <label class="form-label">{{ form.preliminary_report_term_days.label }}</label>
+        {{ form.preliminary_report_term_days }}
+      </div>
+
+      <div class="col-6">
+        <label class="form-label">{{ form.final_report_percent.label }}</label>
+        <div class="input-group">
+          {{ form.final_report_percent }}
+          <span class="input-group-text">%</span>
+        </div>
+      </div>
+      <div class="col-6">
+        <label class="form-label">{{ form.final_report_term_days.label }}</label>
+        {{ form.final_report_term_days }}
+      </div>
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mt-3 mb-0">
+        <div class="fw-semibold mb-1">Проверьте введённые данные:</div>
+        <ul class="mb-0">
+          {% for field, errors in form.errors.items %}
+            {% for err in errors %}
+              <li>{{ field }}: {{ err }}</li>
+            {% endfor %}
+          {% endfor %}
+          {% for err in form.non_field_errors %}
+            <li>{{ err }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
+    <div class="d-flex justify-content-start align-items-center gap-2 pt-4">
+      <button type="button"
+              class="btn btn-outline-secondary"
+              hx-get="{% url 'proposals_partial' %}"
+              hx-target="#proposals-pane"
+              hx-swap="outerHTML">
+        Отмена
+      </button>
+      <button type="submit" class="btn btn-primary">Сохранить</button>
+    </div>
+  </form>
+</div>
