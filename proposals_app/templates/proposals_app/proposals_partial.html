@@ -1,0 +1,569 @@
+{% load classifiers_filters %}
+<div id="proposals-pane">
+  <div id="proposals-loading" class="text-muted htmx-indicator d-none">Загрузка…</div>
+
+  <div class="d-flex justify-content-between align-items-center gap-3 mb-3 table-section-header flex-wrap">
+    <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
+      <i class="bi bi-table"></i> Реестр ТКП
+    </h5>
+    <div class="d-flex align-items-center gap-2">
+      <span class="small text-muted text-nowrap">Отображаемые поля:</span>
+      <div class="tkp-colpicker" id="proposal-colpicker-wrap">
+        <button type="button" class="form-select form-select-sm text-start tkp-colpicker-btn" id="proposal-colpicker-btn">
+          Все поля
+        </button>
+        <div class="tkp-colpicker-menu" id="proposal-colpicker-menu">
+          <div class="tkp-colpicker-item">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="all" id="proposal-col-all" checked>
+              <label class="form-check-label" for="proposal-col-all">Все поля</label>
+            </div>
+          </div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="number" id="proposal-col-number" checked><label class="form-check-label" for="proposal-col-number">Номер</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="group" id="proposal-col-group" checked><label class="form-check-label" for="proposal-col-group">Группа</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="tkp-id" id="proposal-col-tkp-id" checked><label class="form-check-label" for="proposal-col-tkp-id">ТКП ID</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="type" id="proposal-col-type" checked><label class="form-check-label" for="proposal-col-type">Тип</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="name" id="proposal-col-name" checked><label class="form-check-label" for="proposal-col-name">Название</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="kind" id="proposal-col-kind" checked><label class="form-check-label" for="proposal-col-kind">Вид</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="year" id="proposal-col-year" checked><label class="form-check-label" for="proposal-col-year">Год</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="customer" id="proposal-col-customer" checked><label class="form-check-label" for="proposal-col-customer">Заказчик</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="country" id="proposal-col-country" checked><label class="form-check-label" for="proposal-col-country">Страна</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="identifier" id="proposal-col-identifier" checked><label class="form-check-label" for="proposal-col-identifier">Идент.</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="reg-number" id="proposal-col-reg-number" checked><label class="form-check-label" for="proposal-col-reg-number">Регистр. номер</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="date" id="proposal-col-date" checked><label class="form-check-label" for="proposal-col-date">Дата</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="purpose" id="proposal-col-purpose" checked><label class="form-check-label" for="proposal-col-purpose">Цель</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="service-composition" id="proposal-col-service-composition" checked><label class="form-check-label" for="proposal-col-service-composition">Состав услуг</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="evaluation-date" id="proposal-col-evaluation-date" checked><label class="form-check-label" for="proposal-col-evaluation-date">Дата оценки</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="term" id="proposal-col-term" checked><label class="form-check-label" for="proposal-col-term">Срок</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="preliminary-report-date" id="proposal-col-preliminary-report-date" checked><label class="form-check-label" for="proposal-col-preliminary-report-date">Дата предв. отчёта</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="final-report-date" id="proposal-col-final-report-date" checked><label class="form-check-label" for="proposal-col-final-report-date">Дата итог. отчёта</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="report-languages" id="proposal-col-report-languages" checked><label class="form-check-label" for="proposal-col-report-languages">Языки отчёта</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="service-cost" id="proposal-col-service-cost" checked><label class="form-check-label" for="proposal-col-service-cost">Стоимость услуг</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="currency" id="proposal-col-currency" checked><label class="form-check-label" for="proposal-col-currency">Валюта</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="advance-percent" id="proposal-col-advance-percent" checked><label class="form-check-label" for="proposal-col-advance-percent">Предоплата, проц.</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="advance-term" id="proposal-col-advance-term" checked><label class="form-check-label" for="proposal-col-advance-term">Предоплата, срок</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="preliminary-report-percent" id="proposal-col-preliminary-report-percent" checked><label class="form-check-label" for="proposal-col-preliminary-report-percent">Предв. отчёт, проц.</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="preliminary-report-term" id="proposal-col-preliminary-report-term" checked><label class="form-check-label" for="proposal-col-preliminary-report-term">Предв. отчёт, срок</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="final-report-percent" id="proposal-col-final-report-percent" checked><label class="form-check-label" for="proposal-col-final-report-percent">Итог. отчёт, проц.</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="final-report-term" id="proposal-col-final-report-term" checked><label class="form-check-label" for="proposal-col-final-report-term">Итог. отчёт, срок</label></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="registration-table-wrap">
+    <table id="proposal-registry-table" class="table table-sm align-middle reg-table proposals-table">
+      <colgroup>
+        <col class="checkbox">
+        <col class="proposal-number">
+        <col class="group">
+        <col class="quick-edit" style="width:1%">
+        <col class="proposal-id">
+        <col class="proposal-type">
+        <col class="proposal-name">
+        <col class="proposal-kind">
+        <col class="proposal-year">
+        <col class="proposal-customer">
+        <col class="proposal-country">
+        <col class="proposal-identifier">
+        <col class="proposal-regnumber">
+        <col class="proposal-regdate">
+        <col class="proposal-purpose">
+        <col class="proposal-services">
+        <col class="proposal-evaluation-date">
+        <col class="proposal-term">
+        <col class="proposal-preliminary-report-date">
+        <col class="proposal-final-report-date">
+        <col class="proposal-report-languages">
+        <col class="proposal-service-cost">
+        <col class="proposal-currency">
+        <col class="proposal-advance-percent">
+        <col class="proposal-advance-term">
+        <col class="proposal-preliminary-report-percent">
+        <col class="proposal-preliminary-report-term">
+        <col class="proposal-final-report-percent">
+        <col class="proposal-final-report-term">
+      </colgroup>
+      <thead>
+        <tr>
+          <th class="w-checkbox" style="width:1%">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+              <div class="form-check m-0">
+                <input class="form-check-input"
+                       type="checkbox"
+                       id="proposals-master"
+                       data-target-name="proposal-select"
+                       data-actions-id="proposal-actions"
+                       aria-label="Выделить все строки ТКП">
+              </div>
+            {% endif %}
+          </th>
+          <th data-col="number">Номер</th>
+          <th data-col="group">Группа</th>
+          <th class="proposal-quick-edit-col" style="width:1%; padding:0;"></th>
+          <th data-col="tkp-id">ТКП ID</th>
+          <th data-col="type">Тип</th>
+          <th data-col="name">Название</th>
+          <th data-col="kind">Вид</th>
+          <th data-col="year">Год</th>
+          <th data-col="customer">Заказчик</th>
+          <th data-col="country">Страна</th>
+          <th data-col="identifier">Идент.</th>
+          <th data-col="reg-number">Регистр. номер</th>
+          <th data-col="date">Дата</th>
+          <th data-col="purpose">Цель</th>
+          <th data-col="service-composition">Состав услуг</th>
+          <th data-col="evaluation-date">Дата оценки</th>
+          <th data-col="term">Срок</th>
+          <th data-col="preliminary-report-date">Дата предв. отчёта</th>
+          <th data-col="final-report-date">Дата итог. отчёта</th>
+          <th data-col="report-languages">Языки отчёта</th>
+          <th data-col="service-cost">Стоимость услуг</th>
+          <th data-col="currency">Валюта</th>
+          <th data-col="advance-percent">Предоплата, проц.</th>
+          <th data-col="advance-term">Предоплата, срок</th>
+          <th data-col="preliminary-report-percent">Предв. отчёт, проц.</th>
+          <th data-col="preliminary-report-term">Предв. отчёт, срок</th>
+          <th data-col="final-report-percent">Итог. отчёт, проц.</th>
+          <th data-col="final-report-term">Итог. отчёт, срок</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for proposal in proposals %}
+          <tr data-edit-url="{% url 'proposal_form_edit' proposal.pk %}"
+              data-delete-url="{% url 'proposal_delete' proposal.pk %}"
+              data-move-up-url="{% url 'proposal_move_up' proposal.pk %}"
+              data-move-down-url="{% url 'proposal_move_down' proposal.pk %}">
+            <td class="text-nowrap">
+              {% if request.user.is_authenticated and request.user.is_staff %}
+                <div class="form-check">
+                  <input class="form-check-input"
+                         type="checkbox"
+                         id="proposal-sel-{{ proposal.id }}"
+                         name="proposal-select"
+                         value="{{ proposal.id }}"
+                         aria-label="Выделить строку ТКП">
+                </div>
+              {% endif %}
+            </td>
+            <td data-col="number">{{ proposal.number }}</td>
+            <td data-col="group">{{ proposal.group_display }}</td>
+            <td class="text-center p-0 proposal-quick-edit-col" style="width:1%;">
+              {% if request.user.is_authenticated and request.user.is_staff %}
+                <i class="bi bi-pencil-square text-secondary proposal-quick-edit"
+                   role="button"
+                   title="Редактировать"
+                   aria-label="Редактировать ТКП"></i>
+              {% endif %}
+            </td>
+            <td data-col="tkp-id" class="proposal-id-cell">{{ proposal.short_uid }}</td>
+            <td data-col="type">{{ proposal.type.short_name|default:proposal.type }}</td>
+            <td data-col="name">{{ proposal.name }}</td>
+            <td data-col="kind">{{ proposal.get_kind_display }}</td>
+            <td data-col="year">{{ proposal.year }}</td>
+            <td data-col="customer">{{ proposal.customer }}</td>
+            <td data-col="country">{{ proposal.country.short_name|default:"" }}</td>
+            <td data-col="identifier">{{ proposal.identifier }}</td>
+            <td data-col="reg-number">{{ proposal.registration_number }}</td>
+            <td data-col="date">{{ proposal.registration_date|date:"d.m.y" }}</td>
+            <td data-col="purpose" class="proposal-textarea-cell">{{ proposal.purpose|linebreaksbr }}</td>
+            <td data-col="service-composition" class="proposal-textarea-cell">{{ proposal.service_composition|linebreaksbr }}</td>
+            <td data-col="evaluation-date">{{ proposal.evaluation_date|date:"d.m.Y" }}</td>
+            <td data-col="term">{{ proposal.service_term_months|floatformat:"1" }}</td>
+            <td data-col="preliminary-report-date">{{ proposal.preliminary_report_date|date:"d.m.Y" }}</td>
+            <td data-col="final-report-date">{{ proposal.final_report_date|date:"d.m.Y" }}</td>
+            <td data-col="report-languages">{{ proposal.report_languages }}</td>
+            <td data-col="service-cost" class="text-end">{{ proposal.service_cost|format_money }}</td>
+            <td data-col="currency">{{ proposal.currency.code_alpha|default:"" }}</td>
+            <td data-col="advance-percent">{% if proposal.advance_percent != None %}{{ proposal.advance_percent|floatformat:"-2" }}%{% endif %}</td>
+            <td data-col="advance-term">{{ proposal.advance_term_days }}</td>
+            <td data-col="preliminary-report-percent">{% if proposal.preliminary_report_percent != None %}{{ proposal.preliminary_report_percent|floatformat:"-2" }}%{% endif %}</td>
+            <td data-col="preliminary-report-term">{{ proposal.preliminary_report_term_days }}</td>
+            <td data-col="final-report-percent">{% if proposal.final_report_percent != None %}{{ proposal.final_report_percent|floatformat:"-2" }}%{% endif %}</td>
+            <td data-col="final-report-term">{{ proposal.final_report_term_days }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="29" class="text-muted">Пока нет данных.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if request.user.is_authenticated and request.user.is_staff %}
+      <div class="d-flex align-items-stretch gap-2 products-actions-row proposal-template-actions-row">
+        <button class="btn btn-primary btn-sm d-flex align-items-center"
+                hx-get="{% url 'proposal_form_create' %}"
+                hx-target="#proposals-pane"
+                hx-swap="outerHTML">
+          <i class="bi bi-plus-circle me-2"></i>Создать новое ТКП
+        </button>
+        <div id="proposal-actions" class="d-none">
+          <div class="btn-group">
+            <button type="button" data-proposal-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+              <i class="bi bi-arrow-up-square"></i>
+            </button>
+            <button type="button" data-proposal-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+              <i class="bi bi-arrow-down-square"></i>
+            </button>
+            <button type="button" data-proposal-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Редактировать" aria-label="Редактировать">
+              <i class="bi bi-pencil-square"></i>
+            </button>
+            <button type="button" data-proposal-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+              <i class="bi bi-x-square"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 24px;">
+    <h5 class="table-section-title">
+      <i class="bi bi-envelope-at me-2"></i> Отправка ТКП
+    </h5>
+  </div>
+
+  <div class="proposal-dispatch-table-wrap">
+    <table class="table table-sm align-middle proposal-dispatch-table">
+      <colgroup>
+        <col class="checkbox">
+        <col class="proposal-id">
+        <col class="proposal-type">
+        <col class="proposal-name">
+        <col class="docx-name">
+        <col class="docx-link">
+        <col class="pdf-name">
+        <col class="pdf-link">
+        <col class="sent-date">
+        <col class="recipient">
+        <col class="contact-name">
+        <col class="contact-email">
+      </colgroup>
+      <thead>
+        <tr>
+          <th class="w-checkbox" style="width:1%">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+              <div class="form-check m-0">
+                <input class="form-check-input"
+                       type="checkbox"
+                       id="proposal-dispatch-master"
+                       data-target-name="proposal-dispatch-select"
+                       data-actions-id="proposal-dispatch-actions"
+                       aria-label="Выделить все строки отправки ТКП">
+              </div>
+            {% endif %}
+          </th>
+          <th>ТКП ID</th>
+          <th>Тип</th>
+          <th>Название</th>
+          <th>Наименование файла DOCX</th>
+          <th>Ссылка</th>
+          <th>Наименование файла PDF</th>
+          <th>Ссылка</th>
+          <th>Дата отправки</th>
+          <th>Получатель</th>
+          <th>ФИО</th>
+          <th>Эл. почта</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for proposal in proposals %}
+          <tr data-edit-url="{% url 'proposal_dispatch_form_edit' proposal.pk %}">
+            <td class="text-nowrap">
+              {% if request.user.is_authenticated and request.user.is_staff %}
+                <div class="form-check">
+                  <input class="form-check-input"
+                         type="checkbox"
+                         id="proposal-dispatch-sel-{{ proposal.id }}"
+                         name="proposal-dispatch-select"
+                         value="{{ proposal.id }}"
+                         aria-label="Выделить строку отправки ТКП">
+                </div>
+              {% endif %}
+            </td>
+            <td class="proposal-id-cell">{{ proposal.short_uid }}</td>
+            <td>{{ proposal.type.short_name|default:proposal.type }}</td>
+            <td>{{ proposal.name }}</td>
+            <td>
+              {% if proposal.docx_file_name %}
+                <a href="{% url 'proposal_generated_docx_download' proposal.pk %}" download class="proposal-docx-download-link">
+                  {{ proposal.docx_file_name }}
+                </a>
+              {% endif %}
+            </td>
+            <td></td>
+            <td>{{ proposal.pdf_file_name }}</td>
+            <td>{{ proposal.pdf_file_link }}</td>
+            <td>{{ proposal.sent_date }}</td>
+            <td>{{ proposal.recipient }}</td>
+            <td>{{ proposal.contact_full_name }}</td>
+            <td>{{ proposal.contact_email }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="12" class="text-muted">Пока нет данных.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if request.user.is_authenticated and request.user.is_staff %}
+      <div class="d-flex align-items-stretch gap-2 products-actions-row"
+           id="proposal-dispatch-controls"
+           data-send-url="{% url 'proposal_dispatch_send' %}"
+           data-create-url="{% url 'proposal_dispatch_create_documents' %}"
+           data-refresh-url="{% url 'proposals_partial' %}">
+        <button
+          type="button"
+          id="proposal-dispatch-edit-btn"
+          class="btn btn-primary btn-sm d-flex align-items-center"
+          disabled>
+          <i class="bi bi-pencil-square me-2"></i>Редактировать
+        </button>
+        <button
+          type="button"
+          id="proposal-create-btn"
+          class="btn btn-primary btn-sm d-flex align-items-center"
+          disabled>
+          <i class="bi bi-file-earmark-ruled me-2"></i>Создать ТКП
+        </button>
+        <div class="btn-group">
+          <button type="button"
+                  id="proposal-send-btn"
+                  class="btn btn-primary btn-sm d-flex align-items-center"
+                  disabled>
+            <i class="bi bi-envelope-at me-2"></i>Отправить ТКП
+          </button>
+          <button type="button"
+                  id="proposal-send-settings-btn"
+                  class="btn btn-primary btn-sm"
+                  data-bs-toggle="modal"
+                  data-bs-target="#proposal-send-modal"
+                  title="Настройки отправки ТКП">
+            <i class="bi bi-gear"></i>
+          </button>
+        </div>
+        <div id="proposal-dispatch-actions" class="d-none"></div>
+      </div>
+
+      <div class="modal fade" id="proposal-send-modal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title">Настройки отправки ТКП</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+            </div>
+            <div class="modal-body">
+              <div class="mb-4">
+                <div class="fw-semibold mb-2">Способ отправки</div>
+                <div class="form-check">
+                  <input class="form-check-input js-proposal-channel"
+                         type="checkbox"
+                         id="proposal-channel-system"
+                         value="system"
+                         checked>
+                  <label class="form-check-label" for="proposal-channel-system">
+                    Системные уведомления
+                  </label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input js-proposal-channel"
+                         type="checkbox"
+                         id="proposal-channel-email"
+                         value="email">
+                  <label class="form-check-label" for="proposal-channel-email">
+                    Электронная почта
+                  </label>
+                </div>
+              </div>
+              <div class="mb-0">
+                <label for="proposal-request-sent-at" class="form-label">Дата отправки</label>
+                <input type="datetime-local"
+                       id="proposal-request-sent-at"
+                       class="form-control"
+                       value="{{ proposal_request_sent_initial }}">
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Закрыть</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 24px;">
+        <h5 class="table-section-title">
+          <i class="bi bi-layout-text-window me-2"></i>
+          Образцы шаблонов ТКП
+        </h5>
+      </div>
+
+      <div class="table-responsive">
+        <table class="table table-sm align-top proposal-template-table">
+          <thead>
+          <tr>
+            <th style="width:1%">
+              <div class="form-check m-0">
+                <input class="form-check-input"
+                       type="checkbox"
+                       id="proposal-template-master"
+                       data-target-name="proposal-template-select"
+                       data-actions-id="proposal-template-actions"
+                       aria-label="Выделить все строки">
+              </div>
+            </th>
+            <th>Группа</th>
+            <th>Продукт</th>
+            <th>Наименование образца</th>
+            <th>Версия</th>
+            <th>Загрузка</th>
+            <th>Скачать</th>
+          </tr>
+          </thead>
+          <tbody>
+          {% for template in proposal_templates %}
+            <tr data-edit-url="{% url 'proposal_template_form_edit' template.pk %}"
+                data-delete-url="{% url 'proposal_template_delete' template.pk %}"
+                data-move-up-url="{% url 'proposal_template_move_up' template.pk %}"
+                data-move-down-url="{% url 'proposal_template_move_down' template.pk %}">
+              <td class="text-nowrap">
+                <div class="form-check">
+                  <input class="form-check-input"
+                         type="checkbox"
+                         id="proposal-template-sel-{{ template.id }}"
+                         name="proposal-template-select"
+                         value="{{ template.id }}"
+                         aria-label="Выделить строку">
+                </div>
+              </td>
+              <td class="text-nowrap">{{ template.group_display }}</td>
+              <td class="text-nowrap">{{ template.product.short_name }}</td>
+              <td>{{ template.sample_name }}</td>
+              <td class="text-nowrap">{{ template.version }}</td>
+              <td class="text-nowrap">{% if template.file %}{{ template.sample_name }}{% else %}—{% endif %}</td>
+              <td class="text-nowrap">
+                {% if template.file %}
+                  <a href="{% url 'proposal_template_download' template.pk %}" download class="ct-download-link" title="Скачать файл">
+                    <i class="bi bi-download"></i>
+                  </a>
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="7" class="text-muted">Пока нет данных.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="d-flex align-items-stretch gap-2 products-actions-row">
+        <button
+          class="btn btn-primary btn-sm d-flex align-items-center"
+          hx-get="{% url 'proposal_template_form_create' %}"
+          hx-target="#proposals-modal .modal-content"
+          hx-swap="innerHTML">
+          <i class="bi bi-plus-circle me-2"></i>Добавить строку
+        </button>
+        <div id="proposal-template-actions" class="d-none d-flex">
+          <div class="btn-group">
+            <button type="button" data-proposal-template-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+              <i class="bi bi-arrow-up-square"></i>
+            </button>
+            <button type="button" data-proposal-template-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+              <i class="bi bi-arrow-down-square"></i>
+            </button>
+            <button type="button" data-proposal-template-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+              <i class="bi bi-pencil-square"></i>
+            </button>
+            <button type="button" data-proposal-template-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+              <i class="bi bi-x-square"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-3">
+        <a class="text-muted small text-decoration-none" data-bs-toggle="collapse"
+           href="#proposal-dispatch-vars" role="button" aria-expanded="false">
+          <i class="bi bi-info-circle me-1"></i>Доступные переменные
+        </a>
+        <div class="collapse mt-2" id="proposal-dispatch-vars">
+          <div class="table-responsive">
+            <table class="table table-bordered mb-0 small align-top">
+              <thead class="table-light">
+                <tr>
+                  <th style="width:1%; vertical-align:middle !important; padding:.5rem .5rem;" class="text-center">
+                    {% if request.user.is_authenticated and request.user.is_staff %}
+                      <input class="form-check-input"
+                             style="margin:0 !important; float:none !important; vertical-align:middle !important;"
+                             type="checkbox"
+                             id="proposal-variable-master"
+                             data-target-name="proposal-variable-select"
+                             data-actions-id="proposal-variable-actions"
+                             aria-label="Выделить все строки">
+                    {% endif %}
+                  </th>
+                  <th class="ps-3 py-2">Переменная</th>
+                  <th class="ps-3 py-2">Описание</th>
+                  <th class="ps-3 py-2">Связь</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for variable in proposal_variables %}
+                  <tr data-edit-url="{% url 'proposal_variable_form_edit' variable.pk %}"
+                      data-delete-url="{% url 'proposal_variable_delete' variable.pk %}"
+                      data-move-up-url="{% url 'proposal_variable_move_up' variable.pk %}"
+                      data-move-down-url="{% url 'proposal_variable_move_down' variable.pk %}">
+                    <td style="vertical-align:middle !important; padding:.5rem .5rem;" class="text-center">
+                      {% if request.user.is_authenticated and request.user.is_staff %}
+                        <input class="form-check-input"
+                               style="margin:0 !important; float:none !important; vertical-align:middle !important;"
+                               type="checkbox"
+                               id="proposal-variable-sel-{{ variable.id }}"
+                               name="proposal-variable-select"
+                               value="{{ variable.id }}"
+                               aria-label="Выделить строку">
+                      {% endif %}
+                    </td>
+                    <td class="ps-3 py-2"><code>{{ variable.key }}</code></td>
+                    <td class="ps-3 py-2">{{ variable.description }}</td>
+                    <td class="ps-3 py-2 text-muted">{{ variable.binding_display }}</td>
+                  </tr>
+                {% empty %}
+                  <tr><td colspan="4" class="text-muted py-2">Пока нет данных.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+
+          {% if request.user.is_authenticated and request.user.is_staff %}
+            <div class="d-flex align-items-stretch gap-2 products-actions-row mt-2">
+              <button
+                      class="btn btn-primary btn-sm d-flex align-items-center"
+                      hx-get="{% url 'proposal_variable_form_create' %}"
+                      hx-target="#proposals-modal .modal-content"
+                      hx-swap="innerHTML">
+                <i class="bi bi-plus-circle me-2"></i>Добавить строку
+              </button>
+              <div id="proposal-variable-actions" class="d-none d-flex">
+                <div class="btn-group">
+                  <button type="button" data-proposal-variable-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+                    <i class="bi bi-arrow-up-square"></i>
+                  </button>
+                  <button type="button" data-proposal-variable-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+                    <i class="bi bi-arrow-down-square"></i>
+                  </button>
+                  <button type="button" data-proposal-variable-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+                    <i class="bi bi-pencil-square"></i>
+                  </button>
+                  <button type="button" data-proposal-variable-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+                    <i class="bi bi-x-square"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+          {% endif %}
+        </div>
+      </div>
+    {% endif %}
+  </div>
+</div>

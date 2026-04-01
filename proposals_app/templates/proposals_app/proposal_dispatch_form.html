@@ -1,0 +1,83 @@
+<div class="modal-header" data-modal-size="xl">
+  <h5 class="modal-title">Редактировать отправку ТКП</h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+  method="post"
+  hx-post="{% url 'proposal_dispatch_form_edit' proposal.pk %}"
+  hx-target="#proposals-pane"
+  hx-swap="outerHTML">
+  <div class="modal-body modal-body-scroll">
+    {% csrf_token %}
+
+    <div class="row g-2">
+      <div class="col-3">
+        <label class="form-label">ТКП ID</label>
+        <input type="text" class="form-control readonly-field" readonly tabindex="-1" value="{{ proposal.short_uid }}">
+      </div>
+      <div class="col-9">
+        <label class="form-label">Получатель</label>
+        {{ form.recipient }}
+      </div>
+
+      <div class="col-6">
+        <label class="form-label">Наименование файла DOCX</label>
+        {{ form.docx_file_name.as_hidden }}
+        {% if proposal.docx_file_name %}
+          <a href="{% url 'proposal_generated_docx_download' proposal.pk %}" download class="form-control text-decoration-none text-truncate d-block">
+            {{ proposal.docx_file_name }}
+          </a>
+        {% else %}
+          <input type="text" class="form-control readonly-field" readonly tabindex="-1" value="">
+        {% endif %}
+      </div>
+      <div class="col-6">
+        <label class="form-label">Ссылка</label>
+        {{ form.docx_file_link.as_hidden }}
+        <input type="text" class="form-control readonly-field" readonly tabindex="-1" value="">
+      </div>
+
+      <div class="col-6">
+        <label class="form-label">Наименование файла PDF</label>
+        {{ form.pdf_file_name }}
+      </div>
+      <div class="col-6">
+        <label class="form-label">Ссылка</label>
+        {{ form.pdf_file_link }}
+      </div>
+
+      <div class="col-4">
+        <label class="form-label">Дата отправки</label>
+        {{ form.sent_date }}
+      </div>
+      <div class="col-4">
+        <label class="form-label">ФИО</label>
+        {{ form.contact_full_name }}
+      </div>
+      <div class="col-4">
+        <label class="form-label">Эл. почта</label>
+        {{ form.contact_email }}
+      </div>
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mt-3 mb-0">
+        <div class="fw-semibold mb-1">Проверьте введённые данные:</div>
+        <ul class="mb-0">
+          {% for field, errors in form.errors.items %}
+            {% for err in errors %}
+              <li>{{ field }}: {{ err }}</li>
+            {% endfor %}
+          {% endfor %}
+          {% for err in form.non_field_errors %}<li>{{ err }}</li>{% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
+    <div class="modal-footer pb-3">
+      <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+      <button type="submit" class="btn btn-primary">Сохранить</button>
+    </div>
+  </div>
+</form>

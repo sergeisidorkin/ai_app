@@ -1,0 +1,102 @@
+<div class="modal-header" data-modal-size="xxl">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    enctype="multipart/form-data"
+    {% if action == "create" %}
+      hx-post="{% url 'proposal_template_form_create' %}"
+    {% else %}
+      hx-post="{% url 'proposal_template_form_edit' template_obj.pk %}"
+    {% endif %}
+    hx-target="#proposals-pane"
+    hx-swap="outerHTML"
+    hx-encoding="multipart/form-data">
+  <div class="modal-body modal-body-scroll">
+    {% csrf_token %}
+    <div class="row g-2">
+      <div class="col-12">
+        <label class="form-label">Группа</label>
+        {{ form.group_member }}
+      </div>
+      <div class="col-6">
+        <label class="form-label">Продукт</label>
+        {{ form.product }}
+      </div>
+      <div class="col-4">
+        <label class="form-label">Наименование образца</label>
+        {{ form.sample_name }}
+      </div>
+      <div class="col-2">
+        <label class="form-label">Версия</label>
+        {{ form.version }}
+      </div>
+
+      <div class="col-12 mt-4 mb-3">
+        {{ form.file }}
+      </div>
+    </div>
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>
+
+{{ form.group_alpha2_map|json_script:"pt-data-group-alpha2-map" }}
+{{ form.group_short_name_map|json_script:"pt-data-group-short-name-map" }}
+{{ form.version_map|json_script:"pt-data-version-map" }}
+{{ form.current_pair|json_script:"pt-data-current-pair" }}
+{{ form.current_version|json_script:"pt-data-current-ver" }}
+
+<script>
+(function() {
+  function _jsonEl(id) { return JSON.parse(document.getElementById(id).textContent); }
+
+  const groupAlpha2Map = _jsonEl("pt-data-group-alpha2-map");
+  const groupShortNameMap = _jsonEl("pt-data-group-short-name-map");
+  const versionMap = _jsonEl("pt-data-version-map");
+  const currentPair = _jsonEl("pt-data-current-pair");
+  const currentVersion = _jsonEl("pt-data-current-ver");
+
+  const groupSel = document.getElementById("id_group_member");
+  const productSel = document.getElementById("id_product");
+  const sampleInp = document.getElementById("id_sample_name");
+  const versionInp = document.getElementById("id_version");
+
+  function computePair() {
+    return (groupSel?.value || "") + ":" + (productSel?.value || "");
+  }
+
+  function computeBase() {
+    const alpha2 = groupAlpha2Map[groupSel?.value] || "";
+    const shortName = groupShortNameMap[groupSel?.value] || "";
+    const productShort = productSel?.value ? (productSel.selectedOptions[0]?.textContent?.trim() || "") : "";
+    const prefix = [alpha2, "Шаблон ТКП"].filter(Boolean).join(" ");
+    const tail = [shortName, productShort].filter(Boolean).join("_");
+    return [prefix, tail].filter(Boolean).join("_");
+  }
+
+  function getNextVersion(pair) {
+    if (pair && pair === currentPair) return currentVersion || "1";
+    return String((versionMap[pair] || 0) + 1);
+  }
+
+  function rebuild() {
+    if (!sampleInp || !versionInp) return;
+    const pair = computePair();
+    sampleInp.value = computeBase();
+    versionInp.value = getNextVersion(pair);
+  }
+
+  [groupSel, productSel].forEach(function(el) {
+    if (el) el.addEventListener("change", rebuild);
+  });
+
+  rebuild();
+})();
+</script>

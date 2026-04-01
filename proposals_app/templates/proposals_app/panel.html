@@ -1,0 +1,174 @@
+{% load static %}
+<style>
+  .tkp-colpicker { position: relative; min-width: 14rem; }
+  .tkp-colpicker-btn {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding-right: 2rem !important;
+  }
+  .tkp-colpicker-menu {
+    display: none;
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: 1055;
+    background: #fff;
+    border: 1px solid #ced4da;
+    border-radius: .25rem;
+    max-height: 22rem;
+    overflow-y: auto;
+    min-width: 100%;
+    padding: .25rem 0;
+    box-shadow: 0 .25rem .5rem rgba(0,0,0,.15);
+    margin-top: 2px;
+  }
+  .tkp-colpicker-menu.show { display: block; }
+  .tkp-colpicker-item {
+    display: flex;
+    align-items: center;
+    padding: .2rem .75rem;
+    white-space: nowrap;
+    margin: 0;
+    font-size: .875em;
+    color: #212529;
+  }
+  .tkp-colpicker-item:hover { background: #f8f9fa; }
+  .tkp-colpicker-item .form-check { margin: 0; min-height: auto; }
+  .tkp-colpicker-item .form-check-label { cursor: pointer; user-select: none; }
+</style>
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div id="proposals-pane"
+         hx-get="{% url 'proposals_partial' %}"
+         hx-trigger="load"
+         hx-target="#proposals-pane"
+         hx-swap="outerHTML"
+         hx-indicator="#proposals-loading">
+      <div id="proposals-loading" class="text-muted htmx-indicator">Загрузка ТКП…</div>
+    </div>
+    <div class="modal fade" id="proposals-modal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-scrollable">
+        <div class="modal-content"></div>
+      </div>
+    </div>
+    <script src="{% static 'core/js/proposals-panels.js' %}" defer></script>
+    <script>
+      document.body.addEventListener('proposals-updated', function () {
+        const el = document.getElementById('proposals-modal');
+        if (!el) return;
+        const modal = bootstrap.Modal.getInstance(el) || bootstrap.Modal.getOrCreateInstance(el);
+        modal.hide();
+      });
+    </script>
+    <script>
+      document.body.addEventListener('htmx:afterSwap', function (e) {
+        const modalContent = document.querySelector('#proposals-modal .modal-content');
+        if (!modalContent || !modalContent.contains(e.target)) return;
+
+        const dlg = document.querySelector('#proposals-modal .modal-dialog');
+        if (!dlg) return;
+        dlg.classList.remove('modal-sm', 'modal-lg', 'modal-xl', 'modal-fullscreen');
+
+        const sz = modalContent.querySelector('[data-modal-size]')?.dataset?.modalSize;
+        if (sz) dlg.classList.add('modal-' + sz);
+      });
+    </script>
+    <script>
+      (function() {
+        if (window.__proposalColPickerBound) return;
+        window.__proposalColPickerBound = true;
+
+        var P = window.UIPref;
+        var cfg = {
+          prefKey: 'proposals:hiddenCols',
+          wrapId: 'proposal-colpicker-wrap',
+          btnId: 'proposal-colpicker-btn',
+          menuId: 'proposal-colpicker-menu',
+          allId: 'proposal-col-all',
+          tableId: 'proposal-registry-table',
+          hidden: P ? P.get('proposals:hiddenCols', {}) : {},
+        };
+
+        function saveHidden() {
+          if (P) P.set(cfg.prefKey, cfg.hidden);
+        }
+
+        function updateBtnLabel(btn, menu) {
+          var cbs = menu.querySelectorAll('input.form-check-input:not([value="all"])');
+          var checked = 0;
+          cbs.forEach(function(c) { if (c.checked) checked++; });
+          btn.textContent = checked === cbs.length ? 'Все поля' : checked + ' из ' + cbs.length;
+        }
+
+        function applyVisibility() {
+          var table = document.getElementById(cfg.tableId);
+          if (!table) return;
+          var hidden = Object.keys(cfg.hidden);
+          table.querySelectorAll('[data-col]').forEach(function(cell) {
+            cell.style.display = hidden.indexOf(cell.getAttribute('data-col')) !== -1 ? 'none' : '';
+          });
+        }
+
+        function initPicker() {
+          var wrap = document.getElementById(cfg.wrapId);
+          var btn = document.getElementById(cfg.btnId);
+          var menu = document.getElementById(cfg.menuId);
+          if (!wrap || !btn || !menu) return;
+
+          btn.onclick = function(e) {
+            e.stopPropagation();
+            menu.classList.toggle('show');
+          };
+
+          var cbs = menu.querySelectorAll('input.form-check-input:not([value="all"])');
+          cbs.forEach(function(cb) {
+            cb.checked = !cfg.hidden[cb.value];
+          });
+
+          var allCb = document.getElementById(cfg.allId);
+          if (allCb) {
+            var allChecked = true;
+            cbs.forEach(function(c) { if (!c.checked) allChecked = false; });
+            allCb.checked = allChecked;
+          }
+
+          updateBtnLabel(btn, menu);
+          applyVisibility();
+
+          menu.onchange = function(e) {
+            var cb = e.target;
+            if (!cb.classList.contains('form-check-input')) return;
+            var items = menu.querySelectorAll('input.form-check-input:not([value="all"])');
+            if (cb.value === 'all') {
+              items.forEach(function(c) { c.checked = cb.checked; });
+            } else {
+              var ac = document.getElementById(cfg.allId);
+              var all = true;
+              items.forEach(function(c) { if (!c.checked) all = false; });
+              if (ac) ac.checked = all;
+            }
+            cfg.hidden = {};
+            items.forEach(function(c) { if (!c.checked) cfg.hidden[c.value] = true; });
+            saveHidden();
+            updateBtnLabel(btn, menu);
+            applyVisibility();
+          };
+        }
+
+        document.addEventListener('click', function(e) {
+          var wrap = document.getElementById(cfg.wrapId);
+          var menu = document.getElementById(cfg.menuId);
+          if (wrap && menu && !wrap.contains(e.target)) menu.classList.remove('show');
+        });
+
+        document.body.addEventListener('htmx:afterSettle', function(e) {
+          var pane = document.getElementById('proposals-pane');
+          if (pane && pane.contains(e.target)) initPicker();
+        });
+
+        document.addEventListener('DOMContentLoaded', initPicker);
+      })();
+    </script>
+  </div>
+</div>
