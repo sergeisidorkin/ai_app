@@ -141,7 +141,7 @@ class ExpertProfileForm(forms.ModelForm):
         model = ExpertProfile
         fields = [
             "yandex_mail", "extra_email", "extra_phone",
-            "expertise_direction", "grade",
+            "expertise_direction", "professional_status", "grade",
             "country", "region", "status",
         ]
         widgets = {
@@ -160,6 +160,10 @@ class ExpertProfileForm(forms.ModelForm):
             "expertise_direction": forms.Select(attrs={
                 "class": "form-select",
                 "id": "ep-direction-select",
+            }),
+            "professional_status": forms.TextInput(attrs={
+                "class": "form-control",
+                "placeholder": "Профессиональный статус",
             }),
             "grade": forms.Select(attrs={
                 "class": "form-select",

@@ -68,6 +68,32 @@ def _proposal_date(proposal) -> str:
     return _format_date(proposal.registration_date, "%d.%m.%y")
 
 
+def _proposal_asset_owner(proposal) -> str:
+    return proposal.asset_owner or ""
+
+
+def _proposal_asset_owner_country(proposal) -> str:
+    if not proposal.asset_owner_country_id:
+        return ""
+    return proposal.asset_owner_country.short_name or proposal.asset_owner_country.full_name or ""
+
+
+def _proposal_asset_owner_identifier(proposal) -> str:
+    return proposal.asset_owner_identifier or ""
+
+
+def _proposal_asset_owner_registration_number(proposal) -> str:
+    return proposal.asset_owner_registration_number or ""
+
+
+def _proposal_asset_owner_registration_date(proposal) -> str:
+    return _format_date(proposal.asset_owner_registration_date, "%d.%m.%y")
+
+
+def _proposal_project_name(proposal) -> str:
+    return proposal.proposal_project_name or ""
+
+
 def _format_date(value, fmt="%d.%m.%Y") -> str:
     if not value:
         return ""
@@ -183,6 +209,12 @@ FIELD_MAP = {
     ("proposals", "registry", "identifier"): _proposal_identifier,
     ("proposals", "registry", "registration_number"): _proposal_registration_number,
     ("proposals", "registry", "date"): _proposal_date,
+    ("proposals", "registry", "asset_owner"): _proposal_asset_owner,
+    ("proposals", "registry", "asset_owner_country"): _proposal_asset_owner_country,
+    ("proposals", "registry", "asset_owner_identifier"): _proposal_asset_owner_identifier,
+    ("proposals", "registry", "asset_owner_registration_number"): _proposal_asset_owner_registration_number,
+    ("proposals", "registry", "asset_owner_registration_date"): _proposal_asset_owner_registration_date,
+    ("proposals", "registry", "proposal_project_name"): _proposal_project_name,
     ("proposals", "registry", "purpose"): _proposal_purpose,
     ("proposals", "registry", "service_composition"): _proposal_service_composition,
     ("proposals", "registry", "evaluation_date"): _proposal_evaluation_date,

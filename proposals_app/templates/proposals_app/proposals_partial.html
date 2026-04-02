@@ -26,11 +26,17 @@
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="name" id="proposal-col-name" checked><label class="form-check-label" for="proposal-col-name">Название</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="kind" id="proposal-col-kind" checked><label class="form-check-label" for="proposal-col-kind">Вид</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="year" id="proposal-col-year" checked><label class="form-check-label" for="proposal-col-year">Год</label></div></div>
-          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="customer" id="proposal-col-customer" checked><label class="form-check-label" for="proposal-col-customer">Заказчик</label></div></div>
-          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="country" id="proposal-col-country" checked><label class="form-check-label" for="proposal-col-country">Страна</label></div></div>
-          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="identifier" id="proposal-col-identifier" checked><label class="form-check-label" for="proposal-col-identifier">Идент.</label></div></div>
-          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="reg-number" id="proposal-col-reg-number" checked><label class="form-check-label" for="proposal-col-reg-number">Регистр. номер</label></div></div>
-          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="date" id="proposal-col-date" checked><label class="form-check-label" for="proposal-col-date">Дата</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="customer" id="proposal-col-customer" checked><label class="form-check-label" for="proposal-col-customer">Заказчик: наименование</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="country" id="proposal-col-country" checked><label class="form-check-label" for="proposal-col-country">Заказчик: страна</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="identifier" id="proposal-col-identifier" checked><label class="form-check-label" for="proposal-col-identifier">Заказчик: идент.</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="reg-number" id="proposal-col-reg-number" checked><label class="form-check-label" for="proposal-col-reg-number">Заказчик: регистр. номер</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="date" id="proposal-col-date" checked><label class="form-check-label" for="proposal-col-date">Заказчик: дата регистр.</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="asset-owner" id="proposal-col-asset-owner" checked><label class="form-check-label" for="proposal-col-asset-owner">Владелец: наименование</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="asset-owner-country" id="proposal-col-asset-owner-country" checked><label class="form-check-label" for="proposal-col-asset-owner-country">Владелец: страна</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="asset-owner-identifier" id="proposal-col-asset-owner-identifier" checked><label class="form-check-label" for="proposal-col-asset-owner-identifier">Владелец: идент.</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="asset-owner-reg-number" id="proposal-col-asset-owner-reg-number" checked><label class="form-check-label" for="proposal-col-asset-owner-reg-number">Владелец: регистр. номер</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="asset-owner-date" id="proposal-col-asset-owner-date" checked><label class="form-check-label" for="proposal-col-asset-owner-date">Владелец: дата регистр.</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="proposal-project-name" id="proposal-col-proposal-project-name" checked><label class="form-check-label" for="proposal-col-proposal-project-name">Наименование ТКП (проекта)</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="purpose" id="proposal-col-purpose" checked><label class="form-check-label" for="proposal-col-purpose">Цель</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="service-composition" id="proposal-col-service-composition" checked><label class="form-check-label" for="proposal-col-service-composition">Состав услуг</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="evaluation-date" id="proposal-col-evaluation-date" checked><label class="form-check-label" for="proposal-col-evaluation-date">Дата оценки</label></div></div>
@@ -68,6 +74,12 @@
         <col class="proposal-identifier">
         <col class="proposal-regnumber">
         <col class="proposal-regdate">
+        <col class="proposal-customer">
+        <col class="proposal-country">
+        <col class="proposal-identifier">
+        <col class="proposal-regnumber">
+        <col class="proposal-regdate">
+        <col class="proposal-name">
         <col class="proposal-purpose">
         <col class="proposal-services">
         <col class="proposal-evaluation-date">
@@ -106,11 +118,17 @@
           <th data-col="name">Название</th>
           <th data-col="kind">Вид</th>
           <th data-col="year">Год</th>
-          <th data-col="customer">Заказчик</th>
-          <th data-col="country">Страна</th>
-          <th data-col="identifier">Идент.</th>
-          <th data-col="reg-number">Регистр. номер</th>
-          <th data-col="date">Дата</th>
+          <th data-col="customer" class="proposal-split-header proposal-split-header-inline"><span class="proposal-split-header-prefix">Заказчик: </span><span class="proposal-split-header-suffix">наименование</span></th>
+          <th data-col="country" class="proposal-split-header"><span class="proposal-split-header-prefix">Заказчик: </span><span class="proposal-split-header-suffix">страна</span></th>
+          <th data-col="identifier" class="proposal-split-header"><span class="proposal-split-header-prefix">Заказчик: </span><span class="proposal-split-header-suffix">идент.</span></th>
+          <th data-col="reg-number" class="proposal-split-header"><span class="proposal-split-header-prefix">Заказчик: </span><span class="proposal-split-header-suffix">регистр. номер</span></th>
+          <th data-col="date" class="proposal-split-header"><span class="proposal-split-header-prefix">Заказчик: </span><span class="proposal-split-header-suffix">дата регистр.</span></th>
+          <th data-col="asset-owner" class="proposal-split-header proposal-split-header-inline"><span class="proposal-split-header-prefix">Владелец: </span><span class="proposal-split-header-suffix">наименование</span></th>
+          <th data-col="asset-owner-country" class="proposal-split-header"><span class="proposal-split-header-prefix">Владелец: </span><span class="proposal-split-header-suffix">страна</span></th>
+          <th data-col="asset-owner-identifier" class="proposal-split-header"><span class="proposal-split-header-prefix">Владелец: </span><span class="proposal-split-header-suffix">идент.</span></th>
+          <th data-col="asset-owner-reg-number" class="proposal-split-header"><span class="proposal-split-header-prefix">Владелец: </span><span class="proposal-split-header-suffix">регистр. номер</span></th>
+          <th data-col="asset-owner-date" class="proposal-split-header"><span class="proposal-split-header-prefix">Владелец: </span><span class="proposal-split-header-suffix">дата регистр.</span></th>
+          <th data-col="proposal-project-name">Наименование ТКП (проекта)</th>
           <th data-col="purpose">Цель</th>
           <th data-col="service-composition">Состав услуг</th>
           <th data-col="evaluation-date">Дата оценки</th>
@@ -166,6 +184,12 @@
             <td data-col="identifier">{{ proposal.identifier }}</td>
             <td data-col="reg-number">{{ proposal.registration_number }}</td>
             <td data-col="date">{{ proposal.registration_date|date:"d.m.y" }}</td>
+            <td data-col="asset-owner">{% if proposal.asset_owner_matches_customer %}{{ proposal.customer }}{% else %}{{ proposal.asset_owner }}{% endif %}</td>
+            <td data-col="asset-owner-country">{% if proposal.asset_owner_matches_customer %}{{ proposal.country.short_name|default:"" }}{% else %}{{ proposal.asset_owner_country.short_name|default:"" }}{% endif %}</td>
+            <td data-col="asset-owner-identifier">{% if proposal.asset_owner_matches_customer %}{{ proposal.identifier }}{% else %}{{ proposal.asset_owner_identifier }}{% endif %}</td>
+            <td data-col="asset-owner-reg-number">{% if proposal.asset_owner_matches_customer %}{{ proposal.registration_number }}{% else %}{{ proposal.asset_owner_registration_number }}{% endif %}</td>
+            <td data-col="asset-owner-date">{% if proposal.asset_owner_matches_customer %}{{ proposal.registration_date|date:"d.m.y" }}{% else %}{{ proposal.asset_owner_registration_date|date:"d.m.y" }}{% endif %}</td>
+            <td data-col="proposal-project-name">{{ proposal.proposal_project_name }}</td>
             <td data-col="purpose" class="proposal-textarea-cell">{{ proposal.purpose|linebreaksbr }}</td>
             <td data-col="service-composition" class="proposal-textarea-cell">{{ proposal.service_composition|linebreaksbr }}</td>
             <td data-col="evaluation-date">{{ proposal.evaluation_date|date:"d.m.Y" }}</td>
@@ -183,7 +207,7 @@
             <td data-col="final-report-term">{{ proposal.final_report_term_days }}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="29" class="text-muted">Пока нет данных.</td></tr>
+          <tr><td colspan="35" class="text-muted">Пока нет данных.</td></tr>
         {% endfor %}
       </tbody>
     </table>

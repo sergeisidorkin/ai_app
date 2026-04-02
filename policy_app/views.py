@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+from collections import defaultdict
 
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.db.models import Max, Q
@@ -10,16 +11,41 @@ from django.views.decorators.http import require_http_methods, require_POST
 
 from experts_app.models import ExpertSpecialty
 from group_app.models import OrgUnit
-from .models import Product, TypicalSection, TypicalSectionSpecialty, SectionStructure, ExpertiseDirection, Grade, Tariff, MANAGER_GROUPS
-from .forms import ProductForm, TypicalSectionForm, SectionStructureForm, ExpertiseDirectionForm, GradeForm, TariffForm
+from .models import (
+    Product,
+    TypicalSection,
+    TypicalSectionSpecialty,
+    SectionStructure,
+    ServiceGoalReport,
+    TypicalServiceComposition,
+    ExpertiseDirection,
+    Grade,
+    SpecialtyTariff,
+    Tariff,
+    MANAGER_GROUPS,
+)
+from .forms import (
+    ProductForm,
+    TypicalSectionForm,
+    SectionStructureForm,
+    ServiceGoalReportForm,
+    TypicalServiceCompositionForm,
+    ExpertiseDirectionForm,
+    GradeForm,
+    SpecialtyTariffForm,
+    TariffForm,
+)
 
 # Вынесенные константы для единообразия шаблонов/заголовков
 POLICY_PARTIAL_TEMPLATE = "policy_app/policy_partial.html"
 PRODUCT_FORM_TEMPLATE = "policy_app/product_form.html"
 SECTION_FORM_TEMPLATE = "policy_app/section_form.html"
 STRUCTURE_FORM_TEMPLATE = "policy_app/structure_form.html"
+SERVICE_GOAL_REPORT_FORM_TEMPLATE = "policy_app/service_goal_report_form.html"
+TYPICAL_SERVICE_COMPOSITION_FORM_TEMPLATE = "policy_app/typical_service_composition_form.html"
 EXPERTISE_DIR_FORM_TEMPLATE = "policy_app/expertise_direction_form.html"
 GRADE_FORM_TEMPLATE = "policy_app/grade_form.html"
+SPECIALTY_TARIFF_FORM_TEMPLATE = "policy_app/specialty_tariff_form.html"
 TARIFF_FORM_TEMPLATE = "policy_app/tariff_form.html"
 HX_TRIGGER_HEADER = "HX-Trigger"
 HX_POLICY_UPDATED_EVENT = "policy-updated"
@@ -55,6 +81,17 @@ def _get_tariffs_for_user(user):
         return qs.filter(created_by=user)
     return qs
 
+
+def _get_specialty_tariffs_for_user(user):
+    qs = SpecialtyTariff.objects.select_related(
+        "currency", "created_by", "created_by__employee_profile"
+    ).prefetch_related("specialties")
+    if user.is_superuser:
+        return qs
+    if _is_department_head(user):
+        return qs.filter(created_by=user)
+    return qs
+
 def staff_required(user):
     return user.is_authenticated and user.is_staff
 
@@ -65,16 +102,22 @@ def _policy_context(request):
         "ranked_specialties", "ranked_specialties__specialty"
     ).all()
     structures = SectionStructure.objects.select_related("product", "section").all()
+    service_goal_reports = ServiceGoalReport.objects.select_related("product").all()
+    typical_service_compositions = TypicalServiceComposition.objects.select_related("product", "section").all()
     expertise_directions = ExpertiseDirection.objects.prefetch_related("owners").all()
     grades = _get_grades_for_user(request.user)
+    specialty_tariffs = _get_specialty_tariffs_for_user(request.user)
     tariffs = _get_tariffs_for_user(request.user)
     is_dept_head = _is_department_head(request.user)
     return {
         "products": products,
         "sections": sections,
         "structures": structures,
+        "service_goal_reports": service_goal_reports,
+        "typical_service_compositions": typical_service_compositions,
         "expertise_directions": expertise_directions,
         "grades": grades,
+        "specialty_tariffs": specialty_tariffs,
         "tariffs": tariffs,
         "is_admin": request.user.is_superuser,
         "is_dept_head": is_dept_head,
@@ -184,6 +227,70 @@ def _save_section_specialties(section, post_data):
             ))
     if to_create:
         TypicalSectionSpecialty.objects.bulk_create(to_create)
+
+
+def _typical_sections_by_product_json():
+    data = defaultdict(list)
+    sections = TypicalSection.objects.select_related("product").order_by("product_id", "position", "id")
+    for section in sections:
+        data[str(section.product_id)].append({
+            "id": section.pk,
+            "label": section.name_ru,
+        })
+    return json.dumps(data, ensure_ascii=False)
+
+
+def _typical_service_composition_form_context(form, action, composition=None):
+    ctx = {
+        "form": form,
+        "action": action,
+        "sections_by_product_json": _typical_sections_by_product_json(),
+    }
+    if composition:
+        ctx["composition"] = composition
+    return ctx
+
+
+def _specialty_tariff_specialty_options():
+    return [
+        {
+            "id": specialty.pk,
+            "label": specialty.specialty,
+            "expertise_direction": (
+                ""
+                if (getattr(specialty.expertise_dir, "short_name", "") or "").strip() == "—"
+                else (getattr(specialty.expertise_dir, "short_name", "") or "").strip()
+            ),
+        }
+        for specialty in ExpertSpecialty.objects.exclude(specialty="").select_related("expertise_dir").order_by("position", "id")
+    ]
+
+
+def _specialty_tariff_form_context(form, action, tariff=None):
+    selected_specialty_ids = []
+    if form.is_bound:
+        selected_specialty_ids = [str(value) for value in form.data.getlist("specialties") if value]
+    elif tariff and tariff.pk:
+        selected_specialty_ids = [str(value) for value in tariff.specialties.values_list("pk", flat=True)]
+
+    ctx = {
+        "form": form,
+        "action": action,
+        "specialty_options": _specialty_tariff_specialty_options(),
+        "specialty_options_json": json.dumps(_specialty_tariff_specialty_options(), ensure_ascii=False),
+        "selected_specialty_ids_json": json.dumps(selected_specialty_ids, ensure_ascii=False),
+    }
+    if tariff:
+        ctx["tariff"] = tariff
+    return ctx
+
+
+def _specialty_tariff_owner(request, form):
+    if request.user.is_superuser:
+        owner = form.cleaned_data.get("owner")
+        if owner:
+            return owner
+    return request.user
 
 
 @login_required
@@ -511,6 +618,206 @@ def structure_move_down(request, pk: int):
     return _render_policy_updated(request)
 
 
+# --- Цели услуг и названия отчетов ---
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def service_goal_report_form_create(request):
+    if request.method == "GET":
+        form = ServiceGoalReportForm()
+        return render(request, SERVICE_GOAL_REPORT_FORM_TEMPLATE, {"form": form, "action": "create"})
+    form = ServiceGoalReportForm(request.POST)
+    if not form.is_valid():
+        return render(request, SERVICE_GOAL_REPORT_FORM_TEMPLATE, {"form": form, "action": "create"})
+    obj = form.save(commit=False)
+    if not getattr(obj, "position", 0):
+        obj.position = _next_position(ServiceGoalReport)
+    obj.save()
+    return _render_policy_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def service_goal_report_form_edit(request, pk: int):
+    service_goal_report = get_object_or_404(ServiceGoalReport, pk=pk)
+    if request.method == "GET":
+        form = ServiceGoalReportForm(instance=service_goal_report)
+        return render(
+            request,
+            SERVICE_GOAL_REPORT_FORM_TEMPLATE,
+            {"form": form, "action": "edit", "service_goal_report": service_goal_report},
+        )
+    form = ServiceGoalReportForm(request.POST, instance=service_goal_report)
+    if not form.is_valid():
+        return render(
+            request,
+            SERVICE_GOAL_REPORT_FORM_TEMPLATE,
+            {"form": form, "action": "edit", "service_goal_report": service_goal_report},
+        )
+    form.save()
+    return _render_policy_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def service_goal_report_delete(request, pk: int):
+    service_goal_report = get_object_or_404(ServiceGoalReport, pk=pk)
+    service_goal_report.delete()
+    return _render_policy_updated(request)
+
+
+def _normalize_service_goal_report_positions():
+    items = ServiceGoalReport.objects.order_by("position", "id").only("id", "position")
+    for idx, item in enumerate(items, start=1):
+        if item.position != idx:
+            ServiceGoalReport.objects.filter(pk=item.pk).update(position=idx)
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+def service_goal_report_move_up(request, pk: int):
+    _normalize_service_goal_report_positions()
+    items = list(
+        ServiceGoalReport.objects
+        .order_by("position", "id")
+        .only("id", "position")
+    )
+    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+    if idx is not None and idx > 0:
+        cur = items[idx]
+        prev = items[idx - 1]
+        cur_pos, prev_pos = cur.position, prev.position
+        ServiceGoalReport.objects.filter(pk=cur.id).update(position=prev_pos)
+        ServiceGoalReport.objects.filter(pk=prev.id).update(position=cur_pos)
+        _normalize_service_goal_report_positions()
+    return _render_policy_updated(request)
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+def service_goal_report_move_down(request, pk: int):
+    _normalize_service_goal_report_positions()
+    items = list(
+        ServiceGoalReport.objects
+        .order_by("position", "id")
+        .only("id", "position")
+    )
+    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+    if idx is not None and idx < len(items) - 1:
+        cur = items[idx]
+        nxt = items[idx + 1]
+        cur_pos, next_pos = cur.position, nxt.position
+        ServiceGoalReport.objects.filter(pk=cur.id).update(position=next_pos)
+        ServiceGoalReport.objects.filter(pk=nxt.id).update(position=cur_pos)
+        _normalize_service_goal_report_positions()
+    return _render_policy_updated(request)
+
+
+# --- Типовой состав услуг ---
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def typical_service_composition_form_create(request):
+    if request.method == "GET":
+        form = TypicalServiceCompositionForm()
+        return render(
+            request,
+            TYPICAL_SERVICE_COMPOSITION_FORM_TEMPLATE,
+            _typical_service_composition_form_context(form, "create"),
+        )
+    form = TypicalServiceCompositionForm(request.POST)
+    if not form.is_valid():
+        return render(
+            request,
+            TYPICAL_SERVICE_COMPOSITION_FORM_TEMPLATE,
+            _typical_service_composition_form_context(form, "create"),
+        )
+    obj = form.save(commit=False)
+    if not getattr(obj, "position", 0):
+        obj.position = _next_position(TypicalServiceComposition)
+    obj.save()
+    return _render_policy_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def typical_service_composition_form_edit(request, pk: int):
+    composition = get_object_or_404(TypicalServiceComposition, pk=pk)
+    if request.method == "GET":
+        form = TypicalServiceCompositionForm(instance=composition)
+        return render(
+            request,
+            TYPICAL_SERVICE_COMPOSITION_FORM_TEMPLATE,
+            _typical_service_composition_form_context(form, "edit", composition),
+        )
+    form = TypicalServiceCompositionForm(request.POST, instance=composition)
+    if not form.is_valid():
+        return render(
+            request,
+            TYPICAL_SERVICE_COMPOSITION_FORM_TEMPLATE,
+            _typical_service_composition_form_context(form, "edit", composition),
+        )
+    form.save()
+    return _render_policy_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def typical_service_composition_delete(request, pk: int):
+    composition = get_object_or_404(TypicalServiceComposition, pk=pk)
+    composition.delete()
+    return _render_policy_updated(request)
+
+
+def _normalize_typical_service_composition_positions():
+    items = TypicalServiceComposition.objects.order_by("position", "id").only("id", "position")
+    for idx, item in enumerate(items, start=1):
+        if item.position != idx:
+            TypicalServiceComposition.objects.filter(pk=item.pk).update(position=idx)
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+def typical_service_composition_move_up(request, pk: int):
+    _normalize_typical_service_composition_positions()
+    items = list(
+        TypicalServiceComposition.objects.order_by("position", "id").only("id", "position")
+    )
+    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+    if idx is not None and idx > 0:
+        cur = items[idx]
+        prev = items[idx - 1]
+        cur_pos, prev_pos = cur.position, prev.position
+        TypicalServiceComposition.objects.filter(pk=cur.id).update(position=prev_pos)
+        TypicalServiceComposition.objects.filter(pk=prev.id).update(position=cur_pos)
+        _normalize_typical_service_composition_positions()
+    return _render_policy_updated(request)
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+def typical_service_composition_move_down(request, pk: int):
+    _normalize_typical_service_composition_positions()
+    items = list(
+        TypicalServiceComposition.objects.order_by("position", "id").only("id", "position")
+    )
+    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+    if idx is not None and idx < len(items) - 1:
+        cur = items[idx]
+        nxt = items[idx + 1]
+        cur_pos, next_pos = cur.position, nxt.position
+        TypicalServiceComposition.objects.filter(pk=cur.id).update(position=next_pos)
+        TypicalServiceComposition.objects.filter(pk=nxt.id).update(position=cur_pos)
+        _normalize_typical_service_composition_positions()
+    return _render_policy_updated(request)
+
+
 # --- Направления экспертизы ---
 
 @login_required
@@ -719,6 +1026,126 @@ def grade_move_down(request, pk: int):
         obj.position, nxt.position = nxt.position, obj.position
         Grade.objects.filter(pk=obj.pk).update(position=obj.position)
         Grade.objects.filter(pk=nxt.pk).update(position=nxt.position)
+    return _render_policy_updated(request)
+
+
+# --- Тарифы специальностей ---
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def specialty_tariff_form_create(request):
+    if request.method == "GET":
+        form = SpecialtyTariffForm(request_user=request.user)
+        return render(
+            request,
+            SPECIALTY_TARIFF_FORM_TEMPLATE,
+            {
+                **_specialty_tariff_form_context(form, "create"),
+                "is_admin": request.user.is_superuser,
+            },
+        )
+    form = SpecialtyTariffForm(request.POST, request_user=request.user)
+    if not form.is_valid():
+        return render(
+            request,
+            SPECIALTY_TARIFF_FORM_TEMPLATE,
+            {
+                **_specialty_tariff_form_context(form, "create"),
+                "is_admin": request.user.is_superuser,
+            },
+        )
+    obj = form.save(commit=False)
+    obj.created_by = _specialty_tariff_owner(request, form)
+    if not getattr(obj, "position", 0):
+        obj.position = _next_position(SpecialtyTariff, {"created_by": obj.created_by})
+    obj.save()
+    form.save_m2m()
+    return _render_policy_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def specialty_tariff_form_edit(request, pk: int):
+    specialty_tariff = get_object_or_404(SpecialtyTariff, pk=pk)
+    if not request.user.is_superuser and specialty_tariff.created_by != request.user:
+        return _render_policy_updated(request)
+    if request.method == "GET":
+        form = SpecialtyTariffForm(instance=specialty_tariff, request_user=request.user)
+        return render(
+            request,
+            SPECIALTY_TARIFF_FORM_TEMPLATE,
+            {
+                **_specialty_tariff_form_context(form, "edit", specialty_tariff),
+                "is_admin": request.user.is_superuser,
+            },
+        )
+    form = SpecialtyTariffForm(request.POST, instance=specialty_tariff, request_user=request.user)
+    if not form.is_valid():
+        return render(
+            request,
+            SPECIALTY_TARIFF_FORM_TEMPLATE,
+            {
+                **_specialty_tariff_form_context(form, "edit", specialty_tariff),
+                "is_admin": request.user.is_superuser,
+            },
+        )
+    obj = form.save(commit=False)
+    if request.user.is_superuser:
+        owner = form.cleaned_data.get("owner")
+        if owner:
+            obj.created_by = owner
+    obj.save()
+    form.save_m2m()
+    return _render_policy_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def specialty_tariff_delete(request, pk: int):
+    specialty_tariff = get_object_or_404(SpecialtyTariff, pk=pk)
+    if not request.user.is_superuser and specialty_tariff.created_by != request.user:
+        return _render_policy_updated(request)
+    specialty_tariff.delete()
+    return _render_policy_updated(request)
+
+
+def _normalize_specialty_tariff_positions():
+    items = SpecialtyTariff.objects.order_by("position", "id").only("id", "position")
+    for idx, item in enumerate(items, start=1):
+        if item.position != idx:
+            SpecialtyTariff.objects.filter(pk=item.pk).update(position=idx)
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+def specialty_tariff_move_up(request, pk: int):
+    obj = get_object_or_404(SpecialtyTariff, pk=pk)
+    if not request.user.is_superuser and obj.created_by != request.user:
+        return _render_policy_updated(request)
+    qs = SpecialtyTariff.objects.filter(created_by=obj.created_by)
+    prev = qs.filter(position__lt=obj.position).order_by("-position").first()
+    if prev:
+        obj.position, prev.position = prev.position, obj.position
+        SpecialtyTariff.objects.filter(pk=obj.pk).update(position=obj.position)
+        SpecialtyTariff.objects.filter(pk=prev.pk).update(position=prev.position)
+    return _render_policy_updated(request)
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+def specialty_tariff_move_down(request, pk: int):
+    obj = get_object_or_404(SpecialtyTariff, pk=pk)
+    if not request.user.is_superuser and obj.created_by != request.user:
+        return _render_policy_updated(request)
+    qs = SpecialtyTariff.objects.filter(created_by=obj.created_by)
+    nxt = qs.filter(position__gt=obj.position).order_by("position").first()
+    if nxt:
+        obj.position, nxt.position = nxt.position, obj.position
+        SpecialtyTariff.objects.filter(pk=obj.pk).update(position=obj.position)
+        SpecialtyTariff.objects.filter(pk=nxt.pk).update(position=nxt.position)
     return _render_policy_updated(request)
 
 

@@ -40,6 +40,10 @@
       <label class="form-label">Объем услуг в часах</label>
       {{ form.service_hours }}
     </div>
+    <div class="mb-3">
+      <label class="form-label">Объем услуг в днях для ТКП</label>
+      {{ form.service_days_tkp }}
+    </div>
 
     {% if form.errors %}
       <div class="alert alert-danger mb-0">

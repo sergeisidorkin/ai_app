@@ -1,0 +1,96 @@
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    {% if action == "create" %}
+      hx-post="{% url 'typical_service_composition_form_create' %}"
+    {% else %}
+      hx-post="{% url 'typical_service_composition_form_edit' composition.pk %}"
+    {% endif %}
+    hx-target="#policy-pane"
+    hx-swap="outerHTML">
+  <div class="modal-body">
+    {% csrf_token %}
+    <div class="mb-3">
+      <label class="form-label">Продукт</label>
+      {{ form.product }}
+      {% if form.product.errors %}
+        <div class="invalid-feedback d-block">
+          {{ form.product.errors|join:", " }}
+        </div>
+      {% endif %}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Раздел (услуга)</label>
+      {{ form.section }}
+      {% if form.section.errors %}
+        <div class="invalid-feedback d-block">
+          {{ form.section.errors|join:", " }}
+        </div>
+      {% endif %}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Состав услуг</label>
+      {{ form.service_composition }}
+      {% if form.service_composition.errors %}
+        <div class="invalid-feedback d-block">
+          {{ form.service_composition.errors|join:", " }}
+        </div>
+      {% endif %}
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mb-0">
+        Проверьте введённые данные.
+      </div>
+    {% endif %}
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>
+
+<script>
+(function () {
+  var productSelect = document.getElementById('id_product');
+  var sectionSelect = document.getElementById('id_section');
+  var sectionsByProduct = {{ sections_by_product_json|safe }};
+
+  if (!productSelect || !sectionSelect) return;
+
+  function renderSectionOptions(productId, selectedValue) {
+    var items = sectionsByProduct[String(productId || '')] || [];
+    sectionSelect.innerHTML = '';
+
+    var emptyOption = document.createElement('option');
+    emptyOption.value = '';
+    emptyOption.textContent = '---------';
+    sectionSelect.appendChild(emptyOption);
+
+    items.forEach(function (item) {
+      var option = document.createElement('option');
+      option.value = String(item.id);
+      option.textContent = item.label;
+      if (String(selectedValue || '') === String(item.id)) {
+        option.selected = true;
+      }
+      sectionSelect.appendChild(option);
+    });
+
+    if (!items.some(function (item) { return String(item.id) === String(selectedValue || ''); })) {
+      sectionSelect.value = '';
+    }
+  }
+
+  renderSectionOptions(productSelect.value, sectionSelect.value);
+  productSelect.addEventListener('change', function () {
+    renderSectionOptions(productSelect.value, sectionSelect.value);
+  });
+})();
+</script>

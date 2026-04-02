@@ -1,18 +1,27 @@
 import json
 import os
+import re
 from datetime import date as dt_date, datetime
 from urllib.parse import quote
 
 from django import forms
 from django.contrib.auth.decorators import login_required, user_passes_test
-from django.db.models import Max
+from django.db.models import Max, Prefetch
 from django.http import FileResponse, Http404, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from classifiers_app.models import LegalEntityRecord
-from policy_app.models import TypicalSection
+from experts_app.models import ExpertProfile, ExpertProfileSpecialty
+from policy_app.models import (
+    ServiceGoalReport,
+    SpecialtyTariff,
+    Tariff,
+    TypicalSection,
+    TypicalServiceComposition,
+)
+from users_app.models import Employee
 
 from .forms import (
     ProposalDispatchForm,
@@ -82,7 +91,13 @@ def _sync_to_legal_entity_record(short_name, country, identifier, registration_n
 
 
 def _proposals_context():
-    proposals = ProposalRegistration.objects.select_related("group_member", "country", "type", "currency").all()
+    proposals = ProposalRegistration.objects.select_related(
+        "group_member",
+        "country",
+        "asset_owner_country",
+        "type",
+        "currency",
+    ).all()
     proposal_templates = list(ProposalTemplate.objects.select_related("group_member", "product").all())
     proposal_variables = ProposalVariable.objects.all()
     order_map = _proposal_group_member_order_map()
@@ -108,14 +123,268 @@ def _render_proposals_updated(request):
 
 
 def _render_proposal_form(request, *, form, action, proposal=None):
+    def _primary_specialty(raw_value):
+        raw = str(raw_value or "").strip()
+        if not raw:
+            return ""
+        values = [
+            item.strip()
+            for item in re.split(r"\s*(?:;|,|\n|/)\s*", raw)
+            if item and item.strip()
+        ]
+        return values[0] if values else ""
+
+    def _employee_short_name(employee):
+        if not employee:
+            return ""
+        user = getattr(employee, "user", None)
+        parts = [
+            (getattr(user, "first_name", "") or "").strip(),
+            (getattr(user, "last_name", "") or "").strip(),
+        ]
+        return " ".join(part for part in parts if part)
+
+    def _grade_sort_key(profile):
+        grade = getattr(profile, "grade", None)
+        return (
+            int(getattr(grade, "qualification", 0) or 0),
+            int(getattr(grade, "qualification_levels", 0) or 0),
+        )
+
+    specialty_candidates = {}
+    specialty_defaults = {}
+    expert_profiles = (
+        ExpertProfile.objects
+        .filter(employee__user__is_staff=True)
+        .select_related("employee__user", "grade")
+        .prefetch_related(
+            Prefetch(
+                "ranked_specialties",
+                queryset=(
+                    ExpertProfileSpecialty.objects
+                    .select_related("specialty")
+                    .order_by("rank", "id")
+                ),
+            )
+        )
+    )
+    for profile in expert_profiles:
+        specialist_name = _employee_short_name(profile.employee)
+        if not specialist_name:
+            continue
+        candidate_status = str(profile.professional_status or "").strip()
+        for link in profile.ranked_specialties.all():
+            specialty_name = str(getattr(link.specialty, "specialty", "") or "").strip()
+            if not specialty_name:
+                continue
+            specialty_candidates.setdefault(specialty_name, []).append(
+                {
+                    "name": specialist_name,
+                    "professional_status": candidate_status,
+                    "base_rate_share": int(getattr(getattr(profile, "grade", None), "base_rate_share", 0) or 0),
+                    "rank": int(link.rank or 0),
+                    "grade_sort_key": _grade_sort_key(profile),
+                }
+            )
+
+    for specialty_name, candidates in specialty_candidates.items():
+        if not candidates:
+            continue
+        min_rank = min(candidate["rank"] for candidate in candidates)
+        best_grade_key = max(
+            (
+                candidate["grade_sort_key"]
+                for candidate in candidates
+                if candidate["rank"] == min_rank
+            ),
+            default=(0, 0),
+        )
+        specialty_defaults[specialty_name] = next(
+            (
+                {
+                    "name": candidate["name"],
+                    "professional_status": candidate["professional_status"],
+                    "base_rate_share": int(candidate.get("base_rate_share", 0) or 0),
+                }
+                for candidate in candidates
+                if candidate["rank"] == min_rank and candidate["grade_sort_key"] == best_grade_key
+            ),
+            {"name": "", "professional_status": "", "base_rate_share": 0},
+        )
+        seen_names = set()
+        ordered_candidates = []
+        for candidate in sorted(
+            candidates,
+            key=lambda item: (
+                item["rank"],
+                -item["grade_sort_key"][0],
+                -item["grade_sort_key"][1],
+                item["name"],
+            ),
+        ):
+            if candidate["name"] in seen_names:
+                continue
+            seen_names.add(candidate["name"])
+            ordered_candidates.append(
+                {
+                    "name": candidate["name"],
+                    "professional_status": candidate["professional_status"],
+                    "base_rate_share": int(candidate.get("base_rate_share", 0) or 0),
+                }
+            )
+        specialty_candidates[specialty_name] = ordered_candidates
+
+    sections = list(
+        TypicalSection.objects
+        .select_related("product", "expertise_dir", "expertise_direction")
+        .order_by("product_id", "position", "id")
+    )
+    service_goal_reports = list(
+        ServiceGoalReport.objects
+        .select_related("product")
+        .order_by("product_id", "position", "id")
+    )
+    typical_service_compositions = list(
+        TypicalServiceComposition.objects
+        .select_related("product", "section")
+        .order_by("product_id", "position", "id")
+    )
+    specialty_tariffs = list(
+        SpecialtyTariff.objects
+        .prefetch_related("specialties")
+        .order_by("position", "id")
+    )
+    section_tariffs = list(
+        Tariff.objects
+        .select_related("product", "section")
+        .order_by("product_id", "position", "id")
+    )
+    direction_ids = {
+        section.expertise_direction_id
+        for section in sections
+        if section.expertise_direction_id and section.expertise_dir_id
+    }
+    direction_heads = {}
+    if direction_ids:
+        for employee in (
+            Employee.objects
+            .select_related("user")
+            .filter(department_id__in=direction_ids, role="Руководитель направления")
+            .order_by("position", "id")
+        ):
+            direction_heads.setdefault(employee.department_id, employee)
+    head_profiles = {}
+    head_employee_ids = [employee.pk for employee in direction_heads.values()]
+    if head_employee_ids:
+        for profile in (
+            ExpertProfile.objects
+            .select_related("employee__user")
+            .filter(employee_id__in=head_employee_ids)
+        ):
+            head_profiles[profile.employee_id] = profile
+
     sections_map = {}
-    for section in TypicalSection.objects.select_related("product").order_by("product_id", "position", "id"):
+    specialty_tariff_map = {}
+    for tariff in specialty_tariffs:
+        if tariff.daily_rate_tkp_eur in (None, ""):
+            continue
+        for specialty in tariff.specialties.all():
+            specialty_name = str(getattr(specialty, "specialty", "") or "").strip()
+            if specialty_name and specialty_name not in specialty_tariff_map:
+                specialty_tariff_map[specialty_name] = str(tariff.daily_rate_tkp_eur)
+    section_tariff_map = {}
+    for tariff in section_tariffs:
+        product_id = str(tariff.product_id or "")
+        if not product_id:
+            continue
+        bucket = section_tariff_map.setdefault(product_id, {})
+        section_code = (getattr(tariff.section, "code", "") or "").strip()
+        section_name = (getattr(tariff.section, "name_ru", "") or "").strip()
+        if section_code and section_code not in bucket:
+            bucket[section_code] = int(tariff.service_days_tkp or 0)
+        if section_name and section_name not in bucket:
+            bucket[section_name] = int(tariff.service_days_tkp or 0)
+    for section in sections:
         product_id = str(section.product_id or "")
         if not product_id or not section.name_ru:
             continue
         bucket = sections_map.setdefault(product_id, [])
-        if section.name_ru not in bucket:
-            bucket.append(section.name_ru)
+        if not any(item.get("name") == section.name_ru for item in bucket):
+            specialty_name = _primary_specialty(section.executor)
+            specialist_options = list(specialty_candidates.get(specialty_name, []))
+            default_candidate = specialty_defaults.get(
+                specialty_name, {"name": "", "professional_status": "", "base_rate_share": 0}
+            )
+            default_specialist = default_candidate["name"]
+            default_professional_status = default_candidate["professional_status"]
+            default_base_rate_share = int(default_candidate.get("base_rate_share", 0) or 0)
+            if section.expertise_dir_id and section.expertise_direction_id:
+                head = direction_heads.get(section.expertise_direction_id)
+                head_profile = head_profiles.get(getattr(head, "pk", None))
+                head_name = _employee_short_name(head)
+                if head_name:
+                    default_specialist = head_name
+                    default_professional_status = str(
+                        getattr(head_profile, "professional_status", "") or ""
+                    ).strip()
+                    default_base_rate_share = int(
+                        getattr(getattr(head_profile, "grade", None), "base_rate_share", 0) or 0
+                    )
+                    if not any(option.get("name") == head_name for option in specialist_options):
+                        specialist_options = [
+                            {
+                                "name": head_name,
+                                "professional_status": default_professional_status,
+                                "base_rate_share": default_base_rate_share,
+                            },
+                            *specialist_options,
+                        ]
+            specialty_policy_dir = getattr(section, "expertise_dir", None)
+            specialty_is_director = (
+                not specialty_policy_dir
+                or (getattr(specialty_policy_dir, "short_name", "") or "").strip() == "—"
+            )
+            section_tariff_days = int(
+                (section_tariff_map.get(product_id, {}).get((section.code or "").strip()))
+                or (section_tariff_map.get(product_id, {}).get((section.name_ru or "").strip()))
+                or 0
+            )
+            bucket.append(
+                {
+                    "name": section.name_ru,
+                    "code": section.code or "",
+                    "executor": section.executor or "",
+                    "default_specialist": default_specialist,
+                    "default_professional_status": default_professional_status,
+                    "default_base_rate_share": default_base_rate_share,
+                    "specialty_tariff_rate_eur": specialty_tariff_map.get(specialty_name, ""),
+                    "service_days_tkp": section_tariff_days,
+                    "specialty_is_director": specialty_is_director,
+                    "specialist_options": specialist_options,
+                }
+            )
+    service_goal_reports_map = {}
+    for item in service_goal_reports:
+        product_id = str(item.product_id or "")
+        if not product_id or product_id in service_goal_reports_map:
+            continue
+        service_goal_reports_map[product_id] = {
+            "report_title": item.report_title or "",
+            "service_goal": item.service_goal or "",
+        }
+    typical_service_compositions_map = {}
+    for item in typical_service_compositions:
+        product_id = str(item.product_id or "")
+        if not product_id:
+            continue
+        bucket = typical_service_compositions_map.setdefault(product_id, [])
+        bucket.append(
+            {
+                "code": (getattr(item.section, "code", "") or "").strip(),
+                "service_name": (getattr(item.section, "name_ru", "") or "").strip(),
+                "service_composition": item.service_composition or "",
+            }
+        )
     return render(
         request,
         PROPOSAL_FORM_TEMPLATE,
@@ -124,6 +393,8 @@ def _render_proposal_form(request, *, form, action, proposal=None):
             "action": action,
             "proposal": proposal,
             "typical_sections_json": sections_map,
+            "service_goal_reports_json": service_goal_reports_map,
+            "typical_service_compositions_json": typical_service_compositions_map,
         },
     )
 
@@ -232,6 +503,7 @@ def _find_proposal_template(proposal, templates):
 
 
 @login_required
+@user_passes_test(staff_required)
 @require_GET
 def proposals_partial(request):
     return render(request, PROPOSALS_PARTIAL_TEMPLATE, _proposals_context())
@@ -262,6 +534,14 @@ def proposal_form_create(request):
         proposal.identifier,
         proposal.registration_number,
         proposal.registration_date,
+        request.user,
+    )
+    _sync_to_legal_entity_record(
+        proposal.asset_owner,
+        proposal.asset_owner_country,
+        proposal.asset_owner_identifier,
+        proposal.asset_owner_registration_number,
+        proposal.asset_owner_registration_date,
         request.user,
     )
     for asset in proposal.assets.all():
@@ -313,6 +593,14 @@ def proposal_form_edit(request, pk: int):
         proposal.identifier,
         proposal.registration_number,
         proposal.registration_date,
+        request.user,
+    )
+    _sync_to_legal_entity_record(
+        proposal.asset_owner,
+        proposal.asset_owner_country,
+        proposal.asset_owner_identifier,
+        proposal.asset_owner_registration_number,
+        proposal.asset_owner_registration_date,
         request.user,
     )
     for asset in proposal.assets.all():

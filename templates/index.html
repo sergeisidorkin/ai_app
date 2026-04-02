@@ -436,7 +436,7 @@
           </div>
       </section>
       {% endif %}
-      {% if not is_expert %}
+      {% if request.user.is_staff and not is_expert %}
       <!-- ТКП -->
       <section id="proposals" class="tab-pane fade">
         <div class="templates-bleed">

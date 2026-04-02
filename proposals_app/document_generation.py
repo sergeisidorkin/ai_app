@@ -73,7 +73,13 @@ def get_generated_docx_path(proposal) -> Path | None:
     year_dir = sanitize_folder_name(str(proposal.year) if proposal.year else "Без года")
     proposal_dir = sanitize_folder_name(proposal.short_uid or f"proposal-{proposal.pk}")
     path = root / year_dir / proposal_dir / proposal.docx_file_name
-    return path if path.exists() else None
+    if path.exists():
+        return path
+
+    # The proposal metadata can be edited after generation, while the document remains
+    # in its original folder. Fall back to any matching generated file name.
+    matches = sorted(root.rglob(proposal.docx_file_name), key=lambda item: item.stat().st_mtime, reverse=True)
+    return matches[0] if matches else None
 
 
 def convert_docx_bytes_to_pdf(docx_bytes: bytes, *, source_name: str = "proposal.docx") -> bytes:

@@ -70,8 +70,27 @@ class ProposalRegistration(models.Model):
     identifier = models.CharField("Идентификатор", max_length=64, blank=True, default="")
     registration_number = models.CharField("Регистрационный номер", max_length=100, blank=True)
     registration_date = models.DateField("Дата регистрации", null=True, blank=True)
+    asset_owner = models.CharField("Владелец активов", max_length=255, blank=True, default="")
+    asset_owner_matches_customer = models.BooleanField("Совпадает с Заказчиком", default=True)
+    asset_owner_country = models.ForeignKey(
+        OKSMCountry,
+        verbose_name="Страна владельца активов",
+        on_delete=models.SET_NULL,
+        related_name="proposal_asset_owner_registrations",
+        null=True,
+        blank=True,
+    )
+    asset_owner_identifier = models.CharField("Идентификатор владельца активов", max_length=64, blank=True, default="")
+    asset_owner_registration_number = models.CharField(
+        "Регистрационный номер владельца активов", max_length=100, blank=True, default=""
+    )
+    asset_owner_registration_date = models.DateField("Дата регистрации владельца активов", null=True, blank=True)
+    proposal_project_name = models.TextField("Наименование ТКП (проекта)", blank=True, default="")
+    service_sections_json = models.JSONField("Состав услуг: разделы", default=list, blank=True)
     purpose = models.TextField("Цель оказания услуг", blank=True, default="")
     service_composition = models.TextField("Состав услуг", blank=True, default="")
+    service_composition_customer_tz = models.TextField("Состав услуг: ТЗ Заказчика", blank=True, default="")
+    service_composition_mode = models.CharField("Режим состава услуг", max_length=20, blank=True, default="sections")
     evaluation_date = models.DateField("Дата оценки", null=True, blank=True)
     service_term_months = models.DecimalField(
         "Срок оказания услуг, мес.",
