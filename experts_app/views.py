@@ -10,7 +10,7 @@ from django.views.decorators.http import require_http_methods, require_POST
 from classifiers_app.models import TerritorialDivision
 from policy_app.models import Grade
 from .forms import ExpertSpecialtyForm, ExpertProfileForm, ExpertContractDetailsForm, _active_regions_qs
-from .models import ExpertSpecialty, ExpertProfile, ExpertProfileSpecialty, EXCLUDED_ROLES
+from .models import ExpertSpecialty, ExpertProfile, ExpertProfileSpecialty
 
 PARTIAL_TEMPLATE = "experts_app/experts_partial.html"
 FORM_TEMPLATE = "experts_app/specialty_form.html"
@@ -33,9 +33,7 @@ def staff_required(u):
 
 def _ensure_profiles():
     from users_app.models import Employee
-    eligible = Employee.objects.select_related("user").exclude(
-        role__in=EXCLUDED_ROLES
-    ).exclude(role="")
+    eligible = Employee.objects.select_related("user").filter(user__is_staff=True)
     existing_ids = set(
         ExpertProfile.objects.values_list("employee_id", flat=True)
     )
@@ -60,6 +58,8 @@ def _experts_context():
             "employee", "employee__user",
             "expertise_direction",
             "grade", "country", "region",
+        ).filter(
+            employee__user__is_staff=True,
         ).prefetch_related(
             models.Prefetch(
                 "ranked_specialties",

@@ -5,6 +5,8 @@
      data-header-current-label="{% if action == "create" %}Новое ТКП{% else %}{{ proposal.short_uid }}{% endif %}"
      data-header-current-url="{% if action == "create" %}{% url 'proposal_form_create' %}{% else %}{% url 'proposal_form_edit' proposal.pk %}{% endif %}">
   {{ typical_sections_json|json_script:"proposal-typical-sections-data" }}
+  {{ service_goal_reports_json|json_script:"proposal-service-goal-reports-data" }}
+  {{ typical_service_compositions_json|json_script:"proposal-typical-service-compositions-data" }}
   <form method="post"
         data-proposal-form="1"
         data-country-identifier-url="{% url 'identifier_for_country' %}"
@@ -77,11 +79,209 @@
       </div>
 
       <div class="col-6">
-        <label class="form-label">{{ form.purpose.label }}</label>
-        {{ form.purpose }}
+        <label class="form-label">{{ form.asset_owner.label }}</label>
+        <div class="ler-ac-wrap">
+          {{ form.asset_owner }}
+          <div class="ler-ac-list" id="proposal-asset-owner-ler-ac-list"></div>
+        </div>
       </div>
       <div class="col-6">
-        <label class="form-label">{{ form.service_composition.label }}</label>
+        <div class="proposal-customer-meta-grid">
+          <div>
+            <label class="form-label">{{ form.asset_owner_country.label }}</label>
+            {{ form.asset_owner_country }}
+          </div>
+          <div>
+            <label class="form-label">{{ form.asset_owner_identifier.label }}</label>
+            {{ form.asset_owner_identifier }}
+          </div>
+          <div>
+            <label class="form-label">{{ form.asset_owner_registration_number.label }}</label>
+            {{ form.asset_owner_registration_number }}
+          </div>
+          <div>
+            <label class="form-label">{{ form.asset_owner_registration_date.label }}</label>
+            {{ form.asset_owner_registration_date }}
+          </div>
+        </div>
+      </div>
+      <div class="col-12">
+        <div class="form-check mt-1">
+          {{ form.asset_owner_matches_customer }}
+          <label class="form-check-label" for="{{ form.asset_owner_matches_customer.id_for_label }}">
+            {{ form.asset_owner_matches_customer.label }}
+          </label>
+        </div>
+      </div>
+
+      <div class="col-12">
+        <label class="form-label">{{ form.proposal_project_name.label }}</label>
+        {{ form.proposal_project_name.as_hidden }}
+        <div class="proposal-project-name-composite">
+          <input type="text"
+                 class="form-control proposal-project-name-part proposal-project-name-part--prefix"
+                 id="proposal-project-name-prefix"
+                 placeholder="Название отчета">
+          <input type="text"
+                 class="form-control proposal-project-name-part proposal-project-name-part--suffix"
+                 id="proposal-project-name-suffix">
+        </div>
+      </div>
+
+      <div class="col-12">
+        <label class="form-label">{{ form.purpose.label }}</label>
+        {{ form.purpose.as_hidden }}
+        <div class="proposal-project-name-composite proposal-purpose-composite">
+          <input type="text"
+                 class="form-control proposal-project-name-part proposal-project-name-part--prefix"
+                 id="proposal-purpose-prefix"
+                 placeholder="Цель оказания услуг">
+          <input type="text"
+                 class="form-control proposal-project-name-part proposal-project-name-part--suffix"
+                 id="proposal-purpose-suffix">
+        </div>
+      </div>
+      <div class="col-12">
+        <label class="form-label mb-2">Состав услуг / техническое задание</label>
+        {{ form.service_sections_payload }}
+        {{ form.service_sections_editor_state }}
+        {{ form.service_customer_tz_editor_state }}
+        {{ form.service_composition_customer_tz }}
+        {{ form.service_composition_mode }}
+        <div class="proposal-assets-editor proposal-service-sections-editor">
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-2 proposal-assets-table proposal-service-sections-table" id="proposal-service-sections-table">
+              <thead>
+                <tr>
+                  <th class="w-checkbox proposal-assets-check-col">
+                    <div class="form-check proposal-asset-check-wrap">
+                      <input type="checkbox" class="form-check-input proposal-service-sections-master-check" id="proposal-service-sections-master-check">
+                    </div>
+                  </th>
+                  <th class="proposal-service-section-name-header"><span class="proposal-service-section-header-text">Наименование раздела (услуги)</span></th>
+                  <th><span class="proposal-service-section-header-text">Код</span></th>
+                </tr>
+              </thead>
+              <tbody id="proposal-service-sections-tbody"></tbody>
+            </table>
+          </div>
+          <div class="d-flex align-items-stretch gap-2 mt-3">
+            <button type="button" id="proposal-service-section-add-btn" class="btn btn-sm proposal-asset-add-btn">
+              <i class="bi bi-plus-circle me-1"></i>Добавить услугу
+            </button>
+            <button type="button" id="proposal-service-text-edit-btn" class="btn btn-sm proposal-asset-add-btn">
+              <i class="bi bi-pencil-square me-1"></i>Редактировать ТЗ
+            </button>
+            <div id="proposal-service-sections-row-actions" class="d-none">
+              <div class="btn-group">
+                <button type="button" id="proposal-service-section-up-btn" class="btn btn-outline-primary btn-sm" title="Переместить вверх" aria-label="Переместить вверх">
+                  <i class="bi bi-arrow-up-square"></i>
+                </button>
+                <button type="button" id="proposal-service-section-down-btn" class="btn btn-outline-primary btn-sm" title="Переместить вниз" aria-label="Переместить вниз">
+                  <i class="bi bi-arrow-down-square"></i>
+                </button>
+                <button type="button" id="proposal-service-section-delete-btn" class="btn btn-outline-danger btn-sm" title="Удалить" aria-label="Удалить">
+                  <i class="bi bi-x-square"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="proposal-service-text-modal d-none" id="proposal-service-text-modal" aria-hidden="true">
+          <div class="proposal-service-text-modal__backdrop"></div>
+          <div class="proposal-service-text-modal__dialog">
+            <div class="proposal-service-text-modal__header">
+              <h5 class="mb-0">Состав услуг / техническое задание</h5>
+              <button type="button" class="btn-close" id="proposal-service-text-close-btn" aria-label="Закрыть"></button>
+            </div>
+            <div class="proposal-service-text-modal__toolbar">
+              <div class="proposal-service-text-toolbar" id="proposal-service-text-toolbar">
+                <div class="proposal-service-text-toolbar__group">
+                  <select class="form-select form-select-sm proposal-service-text-toolbar__select" data-format="font" aria-label="Шрифт">
+                    <option value="cambria" selected>Cambria</option>
+                    <option value="sans">Sans Serif</option>
+                    <option value="serif">Serif</option>
+                    <option value="monospace">Monospace</option>
+                    <option value="georgia">Georgia</option>
+                    <option value="times-new-roman">Times New Roman</option>
+                  </select>
+                </div>
+                <div class="proposal-service-text-toolbar__group">
+                  <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-format="bold" aria-label="Жирный">
+                    <i class="bi bi-type-bold"></i>
+                  </button>
+                  <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-format="italic" aria-label="Курсив">
+                    <i class="bi bi-type-italic"></i>
+                  </button>
+                  <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-format="underline" aria-label="Подчеркнутый">
+                    <i class="bi bi-type-underline"></i>
+                  </button>
+                </div>
+                <div class="proposal-service-text-toolbar__group">
+                  <div class="proposal-service-text-toolbar__color-combo">
+                    <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn proposal-service-text-toolbar__btn--combo" data-apply-color="color" aria-label="Применить цвет текста" title="Применить цвет текста">
+                      <i class="bi bi-palette"></i>
+                    </button>
+                    <label class="proposal-service-text-toolbar__color" title="Выбрать цвет текста" aria-label="Выбрать цвет текста">
+                      <input type="color" value="#000000" data-color-source="color">
+                      <span class="proposal-service-text-toolbar__color-swatch" data-color-preview="color" style="background:#000000;"></span>
+                    </label>
+                  </div>
+                  <div class="proposal-service-text-toolbar__color-combo">
+                    <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn proposal-service-text-toolbar__btn--combo" data-apply-color="background" aria-label="Применить цвет фона" title="Применить цвет фона">
+                      <i class="bi bi-paint-bucket"></i>
+                    </button>
+                    <label class="proposal-service-text-toolbar__color" title="Выбрать цвет фона" aria-label="Выбрать цвет фона">
+                      <input type="color" value="#ffffff" data-color-source="background">
+                      <span class="proposal-service-text-toolbar__color-swatch" data-color-preview="background" style="background:#ffffff;"></span>
+                    </label>
+                  </div>
+                </div>
+                <div class="proposal-service-text-toolbar__group">
+                  <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-list="ordered" aria-label="Нумерованный список">
+                    <i class="bi bi-list-ol"></i>
+                  </button>
+                  <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-list="bullet" aria-label="Маркированный список">
+                    <i class="bi bi-list-ul"></i>
+                  </button>
+                </div>
+                <div class="proposal-service-text-toolbar__group">
+                  <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-align="justify" aria-label="По ширине">
+                    <i class="bi bi-justify"></i>
+                  </button>
+                  <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-align="left" aria-label="По левому краю">
+                    <i class="bi bi-text-left"></i>
+                  </button>
+                  <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-align="center" aria-label="По центру">
+                    <i class="bi bi-text-center"></i>
+                  </button>
+                  <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-align="right" aria-label="По правому краю">
+                    <i class="bi bi-text-right"></i>
+                  </button>
+                </div>
+                <div class="proposal-service-text-toolbar__group">
+                  <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-action="clean" aria-label="Очистить форматирование">
+                    <i class="bi bi-eraser"></i>
+                  </button>
+                </div>
+                <div class="form-check form-switch proposal-service-mode-toggle-wrap">
+                  <input class="form-check-input" type="checkbox" role="switch" id="proposal-service-mode-toggle">
+                  <label class="form-check-label" for="proposal-service-mode-toggle">Вставить ТЗ Заказчика</label>
+                </div>
+              </div>
+            </div>
+            <div class="proposal-service-text-modal__body">
+              <div class="proposal-service-text-modal__cards" id="proposal-service-text-cards"></div>
+            </div>
+            <div class="proposal-service-text-modal__footer">
+              <button type="button" class="btn btn-primary btn-sm" id="proposal-service-text-save-btn">Сохранить</button>
+              <button type="button" class="btn btn-outline-secondary btn-sm" id="proposal-service-text-cancel-btn">Отмена</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="d-none">
         {{ form.service_composition }}
       </div>
 

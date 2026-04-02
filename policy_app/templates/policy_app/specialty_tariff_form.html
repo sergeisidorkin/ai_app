@@ -1,0 +1,198 @@
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    {% if action == "create" %}
+      hx-post="{% url 'specialty_tariff_form_create' %}"
+    {% else %}
+      hx-post="{% url 'specialty_tariff_form_edit' tariff.pk %}"
+    {% endif %}
+    hx-target="#policy-pane"
+    hx-swap="outerHTML">
+  <div class="modal-body">
+    {% csrf_token %}
+    {% if is_admin %}
+    <div class="mb-3">
+      <label class="form-label">Руководитель направления</label>
+      {{ form.owner }}
+    </div>
+    {% endif %}
+    <div class="mb-3">
+      <label class="form-label">Группа специальностей</label>
+      {{ form.specialty_group }}
+      {% if form.specialty_group.errors %}
+        <div class="invalid-feedback d-block">
+          {{ form.specialty_group.errors|join:", " }}
+        </div>
+      {% endif %}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Специальности</label>
+      <div class="dropdown" id="specialty-tariff-specialties-dropdown">
+        <button class="form-select text-start" type="button"
+                id="specialty-tariff-specialties-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
+                style="cursor:pointer; background-color:#fff;">
+          <span class="js-specialty-tariff-specialties-label">Выберите специальности</span>
+        </button>
+        <div class="dropdown-menu p-3" aria-labelledby="specialty-tariff-specialties-toggle"
+             style="min-width: 100%; max-height: 260px; overflow-y: auto;">
+          {% for opt in specialty_options %}
+            <div class="form-check">
+              <input class="form-check-input js-specialty-tariff-specialty" type="checkbox"
+                     name="specialties" value="{{ opt.id }}" id="specialty-tariff-specialty-{{ opt.id }}">
+              <label class="form-check-label" for="specialty-tariff-specialty-{{ opt.id }}">
+                {{ opt.label }}
+              </label>
+            </div>
+          {% empty %}
+            <div class="text-muted small">Нет специальностей</div>
+          {% endfor %}
+        </div>
+      </div>
+      {% if form.specialties.errors %}
+        <div class="invalid-feedback d-block">
+          {{ form.specialties.errors|join:", " }}
+        </div>
+      {% endif %}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Направления экспертизы</label>
+      {{ form.expertise_direction_display }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Дневная ставка оплаты в евро для ТКП</label>
+      {{ form.daily_rate_tkp_eur }}
+      {% if form.daily_rate_tkp_eur.errors %}
+        <div class="invalid-feedback d-block">
+          {{ form.daily_rate_tkp_eur.errors|join:", " }}
+        </div>
+      {% endif %}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Дневная ставка оплаты для с/с</label>
+      {{ form.daily_rate_ss }}
+      {% if form.daily_rate_ss.errors %}
+        <div class="invalid-feedback d-block">
+          {{ form.daily_rate_ss.errors|join:", " }}
+        </div>
+      {% endif %}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Валюта</label>
+      {{ form.currency }}
+      {% if form.currency.errors %}
+        <div class="invalid-feedback d-block">
+          {{ form.currency.errors|join:", " }}
+        </div>
+      {% endif %}
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mb-0">
+        Проверьте введённые данные.
+      </div>
+    {% endif %}
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>
+
+<script>
+(function () {
+  var selectedIds = new Set({{ selected_specialty_ids_json|safe }});
+  var specialtyOptions = {{ specialty_options_json|safe }};
+  var dropdown = document.getElementById('specialty-tariff-specialties-dropdown');
+  var label = dropdown ? dropdown.querySelector('.js-specialty-tariff-specialties-label') : null;
+  var checks = dropdown ? Array.from(dropdown.querySelectorAll('.js-specialty-tariff-specialty')) : [];
+  var form = dropdown ? dropdown.closest('form') : null;
+  var expertiseDirectionInput = form
+    ? (form.querySelector('#specialty-tariff-expertise-direction-field')
+        || form.querySelector('[name="expertise_direction_display"]'))
+    : null;
+
+  var specialtyMap = {};
+  specialtyOptions.forEach(function (item) {
+    specialtyMap[String(item.id)] = item;
+  });
+
+  checks.forEach(function (checkbox) {
+    checkbox.checked = selectedIds.has(String(checkbox.value));
+  });
+
+  function updateSpecialtiesLabel() {
+    if (!label) return;
+    var selected = checks.filter(function (checkbox) { return checkbox.checked; });
+    if (!selected.length) {
+      label.textContent = 'Выберите специальности';
+      return;
+    }
+    if (selected.length === 1) {
+      label.textContent = selected[0].nextElementSibling?.textContent?.trim() || '1 выбрано';
+      return;
+    }
+    label.textContent = selected.length + ' выбрано';
+  }
+
+  function updateExpertiseDirections() {
+    if (!expertiseDirectionInput) return;
+    var labels = [];
+    var seen = new Set();
+    checks.forEach(function (checkbox) {
+      if (!checkbox.checked) return;
+      var option = specialtyMap[String(checkbox.value)];
+      var direction = option && option.expertise_direction ? String(option.expertise_direction).trim() : '';
+      if (!direction || seen.has(direction)) return;
+      seen.add(direction);
+      labels.push(direction);
+    });
+    expertiseDirectionInput.value = labels.join(', ');
+  }
+
+  checks.forEach(function (checkbox) {
+    checkbox.addEventListener('change', function () {
+      updateSpecialtiesLabel();
+      updateExpertiseDirections();
+    });
+  });
+
+  function fmtMoney(value) {
+    var normalized = String(value || '').replace(/[^\d.,-]/g, '').replace(',', '.');
+    var number = parseFloat(normalized);
+    if (isNaN(number)) return '';
+    var parts = number.toFixed(2).split('.');
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0');
+    return parts.join(',');
+  }
+
+  function rawMoney(value) {
+    return String(value || '').replace(/\s/g, '').replace(/\u00a0/g, '').replace(',', '.');
+  }
+
+  var moneyInputs = form ? Array.from(form.querySelectorAll('.js-specialty-tariff-money')) : [];
+  moneyInputs.forEach(function (input) {
+    if (input.value) input.value = fmtMoney(input.value);
+    input.addEventListener('blur', function () {
+      if (input.value) input.value = fmtMoney(input.value);
+    });
+  });
+
+  if (form && form.dataset.specialtyTariffMoneyBound !== '1') {
+    form.dataset.specialtyTariffMoneyBound = '1';
+    form.addEventListener('submit', function () {
+      moneyInputs.forEach(function (input) {
+        input.value = rawMoney(input.value);
+      });
+    });
+  }
+
+  updateSpecialtiesLabel();
+  updateExpertiseDirections();
+})();
+</script>

@@ -150,6 +150,57 @@ class SectionStructure(models.Model):
         return f"{self.product.short_name} / {self.section.short_name}"
 
 
+class ServiceGoalReport(models.Model):
+    product = models.ForeignKey(
+        Product,
+        verbose_name="Продукт",
+        on_delete=models.CASCADE,
+        related_name="service_goal_reports",
+    )
+    service_goal = models.TextField("Цели оказания услуг", blank=True, default="")
+    report_title = models.TextField("Название отчета", blank=True, default="")
+    position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Цель услуги и название отчета"
+        verbose_name_plural = "Цели услуг и названия отчетов"
+        ordering = ["position", "id"]
+
+    def __str__(self):
+        return f"{self.product.short_name} / {self.report_title or self.service_goal}"
+
+
+class TypicalServiceComposition(models.Model):
+    product = models.ForeignKey(
+        Product,
+        verbose_name="Продукт",
+        on_delete=models.CASCADE,
+        related_name="typical_service_compositions",
+    )
+    section = models.ForeignKey(
+        TypicalSection,
+        verbose_name="Раздел (услуга)",
+        on_delete=models.CASCADE,
+        related_name="typical_service_compositions",
+    )
+    service_composition = models.TextField("Состав услуг", blank=True, default="")
+    position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Типовой состав услуг"
+        verbose_name_plural = "Типовой состав услуг"
+        ordering = ["position", "id"]
+
+    def __str__(self):
+        return f"{self.product.short_name} / {self.section.name_ru}"
+
+
 class ExpertiseDirection(models.Model):
     PRICING_METHOD_CHOICES = [
         ("vpm", "Ставка в ВПМ"),
@@ -231,6 +282,79 @@ class Grade(models.Model):
         return self.grade_en or self.grade_ru
 
 
+class SpecialtyTariff(models.Model):
+    specialty_group = models.CharField("Группа специальностей", max_length=255, blank=True, default="")
+    specialties = models.ManyToManyField(
+        "experts_app.ExpertSpecialty",
+        blank=True,
+        related_name="specialty_tariffs",
+        verbose_name="Специальности",
+    )
+    expertise_direction = models.ForeignKey(
+        "group_app.OrgUnit",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="specialty_tariffs",
+        verbose_name="Направление экспертизы",
+    )
+    daily_rate_tkp_eur = models.DecimalField(
+        "Дневная ставка оплаты в евро для ТКП",
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    daily_rate_ss = models.DecimalField(
+        "Дневная ставка оплаты для с/с",
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    currency = models.ForeignKey(
+        "classifiers_app.OKVCurrency",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="specialty_tariffs",
+        verbose_name="Валюта",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="specialty_tariffs",
+        verbose_name="Автор",
+    )
+    position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["created_by", "position", "id"]
+        verbose_name = "Тариф специальностей"
+        verbose_name_plural = "Тарифы специальностей"
+
+    def __str__(self):
+        return self.specialty_group or f"Тариф специальностей #{self.pk}"
+
+    @property
+    def expertise_direction_display(self):
+        labels = []
+        seen = set()
+        for specialty in self.specialties.select_related("expertise_dir").order_by("position", "id"):
+            label = (getattr(specialty.expertise_dir, "short_name", "") or "").strip()
+            if label == "—":
+                label = ""
+            if label and label not in seen:
+                seen.add(label)
+                labels.append(label)
+        return ", ".join(labels)
+
+
 class Tariff(models.Model):
     product = models.ForeignKey(
         Product, verbose_name="Продукт", on_delete=models.CASCADE, related_name="tariffs"
@@ -243,6 +367,9 @@ class Tariff(models.Model):
     )
     service_hours = models.PositiveIntegerField(
         "Объем услуг в часах", default=0
+    )
+    service_days_tkp = models.PositiveIntegerField(
+        "Объем услуг в днях для ТКП", default=0
     )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

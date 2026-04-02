@@ -8,10 +8,10 @@
     </div>
 
     <div class="table-responsive">
-        <table class="table table-sm align-middle">
+        <table class="table table-sm align-top">
             <thead>
             <tr>
-                <th style="width:1%">
+                <th style="width:1%; vertical-align: top;">
                     {% if request.user.is_authenticated and request.user.is_staff %}
                         <div class="form-check m-0">
                             <input class="form-check-input"
@@ -96,7 +96,7 @@
     </div>
 
     <div class="table-responsive">
-        <table class="table table-sm align-middle">
+        <table class="table table-sm align-top">
             <thead>
             <tr>
                 <th style="width:1%">
@@ -187,6 +187,91 @@
     <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 50px;">
         <h5 class="table-section-title">
             <i class="bi bi-table me-2"></i>
+            Цели услуг и названия отчетов
+        </h5>
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-sm align-top">
+            <thead>
+            <tr>
+                <th style="width:1%">
+                    {% if request.user.is_authenticated and request.user.is_staff %}
+                        <div class="form-check m-0">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="service-goal-reports-master"
+                                   data-target-name="service-goal-report-select"
+                                   data-actions-id="service-goal-reports-actions"
+                                   aria-label="Выделить все строки целей услуг и названий отчетов">
+                        </div>
+                    {% endif %}
+                </th>
+                <th>Продукт</th>
+                <th>Цели оказания услуг</th>
+                <th>Название отчета</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for item in service_goal_reports %}
+                <tr data-edit-url="{% url 'service_goal_report_form_edit' item.pk %}"
+                    data-delete-url="{% url 'service_goal_report_delete' item.pk %}"
+                    data-move-up-url="{% url 'service_goal_report_move_up' item.pk %}"
+                    data-move-down-url="{% url 'service_goal_report_move_down' item.pk %}">
+                    <td class="text-nowrap">
+                        {% if request.user.is_authenticated and request.user.is_staff %}
+                            <div class="form-check">
+                                <input class="form-check-input"
+                                       type="checkbox"
+                                       id="service-goal-report-sel-{{ item.id }}"
+                                       name="service-goal-report-select"
+                                       value="{{ item.id }}"
+                                       aria-label="Выделить строку целей услуг и названия отчета">
+                            </div>
+                        {% endif %}
+                    </td>
+                    <td class="text-nowrap">{{ item.product.short_name }}</td>
+                    <td>{{ item.service_goal }}</td>
+                    <td>{{ item.report_title }}</td>
+                </tr>
+            {% empty %}
+                <tr><td colspan="4" class="text-muted">Пока нет данных.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+
+        {% if request.user.is_authenticated and request.user.is_staff %}
+        <div class="d-flex align-items-stretch gap-2 products-actions-row">
+          <button
+                  class="btn btn-primary btn-sm d-flex align-items-center"
+                  hx-get="{% url 'service_goal_report_form_create' %}"
+                  hx-target="#policy-modal .modal-content"
+                  hx-swap="innerHTML">
+            <i class="bi bi-plus-circle me-2"></i>Добавить строку
+          </button>
+          <div id="service-goal-reports-actions" class="d-none d-flex">
+            <div class="btn-group">
+              <button type="button" id="service-goal-reports-actions-up" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+                <i class="bi bi-arrow-up-square"></i>
+              </button>
+              <button type="button" id="service-goal-reports-actions-down" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+                <i class="bi bi-arrow-down-square"></i>
+              </button>
+              <button type="button" id="service-goal-reports-actions-edit" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+                <i class="bi bi-pencil-square"></i>
+              </button>
+              <button type="button" id="service-goal-reports-actions-delete" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+                <i class="bi bi-x-square"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 50px;">
+        <h5 class="table-section-title">
+            <i class="bi bi-table me-2"></i>
             Типовые разделы (услуги)
         </h5>
     </div>
@@ -211,8 +296,8 @@
                 <th>Код</th>
                 <th>Краткое имя EN</th>
                 <th>Краткое имя RU</th>
-                <th>Наименование раздела EN</th>
-                <th>Наименование раздела RU</th>
+                <th>Наименование раздела (услуги) EN</th>
+                <th>Наименование раздела (услуги) RU</th>
                 <th>Тип учета</th>
                 <th>Исполнитель</th>
                 <th>Экспертиза</th>
@@ -299,7 +384,7 @@
     </div>
 
     <div class="table-responsive">
-        <table class="table table-sm align-middle">
+        <table class="table table-sm align-top specialty-tariffs-table">
             <thead>
             <tr>
                 <th style="width:1%">
@@ -339,7 +424,7 @@
                         {% endif %}
                     </td>
                     <td class="text-nowrap">{{ st.product.short_name }}</td>
-                    <td class="text-nowrap">{{ st.section.short_name }}</td>
+                    <td class="text-nowrap">{{ st.section.name_ru|default:st.section.name_en }}</td>
                     <td>{{ st.subsections }}</td>
                 </tr>
             {% empty %}
@@ -369,6 +454,105 @@
                 <i class="bi bi-pencil-square"></i>
               </button>
               <button type="button" id="structures-actions-delete" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+                <i class="bi bi-x-square"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 50px;">
+        <h5 class="table-section-title">
+            <i class="bi bi-table me-2"></i>
+            Типовой состав услуг
+        </h5>
+    </div>
+
+    <div class="table-responsive" id="typical-service-compositions-table-wrap">
+        <table class="table table-sm align-top" id="typical-service-compositions-table">
+            <colgroup>
+                <col style="width: 30px;">
+                <col style="width: 5%;">
+                <col style="width: 15%;">
+                <col style="width: 80%;">
+            </colgroup>
+            <thead>
+            <tr>
+                <th style="width:30px">
+                    {% if request.user.is_authenticated and request.user.is_staff %}
+                        <div class="form-check m-0">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="typical-service-compositions-master"
+                                   data-target-name="typical-service-composition-select"
+                                   data-actions-id="typical-service-compositions-actions"
+                                   aria-label="Выделить все строки типового состава услуг">
+                        </div>
+                    {% endif %}
+                </th>
+                <th style="width:5%">Продукт</th>
+                <th style="width:15%">Раздел (услуга)</th>
+                <th class="text-nowrap" style="width:80%">
+                    Состав услуг
+                    <button type="button" class="clf-wrap-btn active" id="typical-service-compositions-wrap-toggle"
+                            title="Свернуть/развернуть строки">
+                      <i class="bi bi-text-wrap"></i>
+                    </button>
+                </th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for item in typical_service_compositions %}
+                <tr data-edit-url="{% url 'typical_service_composition_form_edit' item.pk %}"
+                    data-delete-url="{% url 'typical_service_composition_delete' item.pk %}"
+                    data-move-up-url="{% url 'typical_service_composition_move_up' item.pk %}"
+                    data-move-down-url="{% url 'typical_service_composition_move_down' item.pk %}">
+                    <td class="text-nowrap">
+                        {% if request.user.is_authenticated and request.user.is_staff %}
+                            <div class="form-check">
+                                <input class="form-check-input"
+                                       type="checkbox"
+                                       id="typical-service-composition-sel-{{ item.id }}"
+                                       name="typical-service-composition-select"
+                                       value="{{ item.id }}"
+                                       aria-label="Выделить строку типового состава услуг">
+                            </div>
+                        {% endif %}
+                    </td>
+                    <td class="text-nowrap">{{ item.product.short_name }}</td>
+                    <td>{{ item.section.name_ru }}</td>
+                    <td class="policy-service-composition-cell">
+                        <div class="policy-service-composition-content">{{ item.service_composition }}</div>
+                    </td>
+                </tr>
+            {% empty %}
+                <tr><td colspan="4" class="text-muted">Пока нет данных.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+
+        {% if request.user.is_authenticated and request.user.is_staff %}
+        <div class="d-flex align-items-stretch gap-2 products-actions-row">
+          <button
+                  class="btn btn-primary btn-sm d-flex align-items-center"
+                  hx-get="{% url 'typical_service_composition_form_create' %}"
+                  hx-target="#policy-modal .modal-content"
+                  hx-swap="innerHTML">
+            <i class="bi bi-plus-circle me-2"></i>Добавить строку
+          </button>
+          <div id="typical-service-compositions-actions" class="d-none d-flex">
+            <div class="btn-group">
+              <button type="button" id="typical-service-compositions-actions-up" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+                <i class="bi bi-arrow-up-square"></i>
+              </button>
+              <button type="button" id="typical-service-compositions-actions-down" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+                <i class="bi bi-arrow-down-square"></i>
+              </button>
+              <button type="button" id="typical-service-compositions-actions-edit" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+                <i class="bi bi-pencil-square"></i>
+              </button>
+              <button type="button" id="typical-service-compositions-actions-delete" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
                 <i class="bi bi-x-square"></i>
               </button>
             </div>
@@ -492,7 +676,118 @@
     <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 50px;">
         <h5 class="table-section-title">
             <i class="bi bi-table me-2"></i>
-            Тарифы
+            Тарифы специальностей
+        </h5>
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-sm align-middle">
+            <thead>
+            <tr>
+                <th style="width:1%">
+                    <div class="form-check m-0">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="specialty-tariffs-master"
+                               data-target-name="specialty-tariff-select"
+                               data-actions-id="specialty-tariffs-actions"
+                               aria-label="Выделить все строки тарифов специальностей">
+                    </div>
+                </th>
+                <th style="vertical-align: top;">Группа специальностей</th>
+                <th class="text-nowrap" style="vertical-align: top;">
+                    Специальности
+                    <button type="button" class="clf-wrap-btn" id="specialty-tariffs-specialties-toggle"
+                            title="Свернуть/развернуть строки">
+                      <i class="bi bi-arrows-collapse"></i>
+                    </button>
+                </th>
+                <th style="vertical-align: top;">Направления экспертизы</th>
+                <th class="text-end" style="vertical-align: top;">Дневная ставка оплаты в евро для ТКП</th>
+                <th class="text-end" style="vertical-align: top;">Дневная ставка оплаты для с/с</th>
+                {% if is_admin %}
+                <th style="vertical-align: top;">Руководитель направления</th>
+                {% endif %}
+            </tr>
+            </thead>
+            <tbody>
+            {% for item in specialty_tariffs %}
+                <tr data-edit-url="{% url 'specialty_tariff_form_edit' item.pk %}"
+                    data-delete-url="{% url 'specialty_tariff_delete' item.pk %}"
+                    data-move-up-url="{% url 'specialty_tariff_move_up' item.pk %}"
+                    data-move-down-url="{% url 'specialty_tariff_move_down' item.pk %}">
+                    <td class="text-nowrap" style="vertical-align: top;">
+                        <div class="form-check">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="specialty-tariff-sel-{{ item.id }}"
+                                   name="specialty-tariff-select"
+                                   value="{{ item.id }}"
+                                   aria-label="Выделить строку тарифа специальностей">
+                        </div>
+                    </td>
+                    <td class="text-nowrap" style="vertical-align: top;">{{ item.specialty_group }}</td>
+                    <td class="specialty-tariffs-specialties-cell"
+                        data-specialty-count="{{ item.specialties.all|length }}"
+                        style="vertical-align: top;">
+                        {% for specialty in item.specialties.all %}
+                            {% if forloop.first %}<span>{{ specialty.specialty }}</span>{% else %}<br><span>{{ specialty.specialty }}</span>{% endif %}
+                        {% empty %}
+                            —
+                        {% endfor %}
+                    </td>
+                    <td class="text-nowrap" style="vertical-align: top;">{{ item.expertise_direction_display|default:"—" }}</td>
+                    <td class="text-nowrap text-end" style="vertical-align: top;">{% if item.daily_rate_tkp_eur != None %}{{ item.daily_rate_tkp_eur|format_money }}{% else %}—{% endif %}</td>
+                    <td class="text-nowrap text-end" style="vertical-align: top;">{% if item.daily_rate_ss != None %}{{ item.daily_rate_ss|format_money }}{% if item.currency %} {{ item.currency.code_alpha }}{% endif %}{% else %}—{% endif %}</td>
+                    {% if is_admin %}
+                    <td class="text-nowrap text-muted" style="vertical-align: top;">
+                        {% if item.created_by and item.created_by.employee_profile %}
+                            {{ item.created_by.employee_profile.job_title }}
+                        {% elif item.created_by %}
+                            {{ item.created_by.get_full_name|default:item.created_by.username }}
+                        {% else %}
+                            —
+                        {% endif %}
+                    </td>
+                    {% endif %}
+                </tr>
+            {% empty %}
+                <tr><td colspan="{% if is_admin %}7{% else %}6{% endif %}" class="text-muted">Пока нет данных.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+
+        <div class="d-flex align-items-stretch gap-2 products-actions-row">
+          <button
+                  class="btn btn-primary btn-sm d-flex align-items-center"
+                  hx-get="{% url 'specialty_tariff_form_create' %}"
+                  hx-target="#policy-modal .modal-content"
+                  hx-swap="innerHTML">
+            <i class="bi bi-plus-circle me-2"></i>Добавить строку
+          </button>
+          <div id="specialty-tariffs-actions" class="d-none d-flex">
+            <div class="btn-group">
+              <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+                <i class="bi bi-arrow-up-square"></i>
+              </button>
+              <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+                <i class="bi bi-arrow-down-square"></i>
+              </button>
+              <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+                <i class="bi bi-pencil-square"></i>
+              </button>
+              <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+                <i class="bi bi-x-square"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+    </div>
+
+    <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 50px;">
+        <h5 class="table-section-title">
+            <i class="bi bi-table me-2"></i>
+            Тарифы разделов (услуг)
         </h5>
     </div>
 
@@ -514,6 +809,7 @@
                 <th>Раздел (услуга)</th>
                 <th>Базовая ставка в ВПМ</th>
                 <th>Объем услуг в часах</th>
+                <th>Объем услуг в днях для ТКП</th>
                 {% if is_admin %}
                 <th>Руководитель направления</th>
                 {% endif %}
@@ -537,9 +833,10 @@
                         </div>
                     </td>
                     <td class="text-nowrap">{{ t.product.short_name }}</td>
-                    <td class="text-nowrap">{{ t.section.short_name }}</td>
+                    <td class="text-nowrap">{{ t.section.name_ru|default:t.section.name_en }}</td>
                     <td class="text-nowrap">{{ t.base_rate_vpm|format_money }}</td>
                     <td class="text-nowrap">{{ t.service_hours }}</td>
+                    <td class="text-nowrap">{{ t.service_days_tkp }}</td>
                     {% if is_admin %}
                     <td class="text-nowrap text-muted">
                         {% if t.created_by.employee_profile %}
@@ -551,7 +848,7 @@
                     {% endif %}
                 </tr>
             {% empty %}
-                <tr><td colspan="{% if is_admin %}6{% else %}5{% endif %}" class="text-muted">Пока нет данных.</td></tr>
+                <tr><td colspan="{% if is_admin %}7{% else %}6{% endif %}" class="text-muted">Пока нет данных.</td></tr>
             {% endfor %}
             </tbody>
         </table>

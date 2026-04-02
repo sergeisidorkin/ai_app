@@ -232,6 +232,7 @@ FIELD_MAP: dict[tuple[str, str, str], callable] = {
     ("experts", "experts_base", "extra_phone"): _str_field("extra_phone"),
     ("experts", "experts_base", "expertise_direction"): _ep_expertise_direction,
     ("experts", "experts_base", "specialty"): _ep_specialty,
+    ("experts", "experts_base", "professional_status"): _str_field("professional_status"),
     ("experts", "experts_base", "grade"): _ep_grade,
     ("experts", "experts_base", "country"): _ep_country,
     ("experts", "experts_base", "region"): _ep_region,

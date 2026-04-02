@@ -11,7 +11,7 @@ from django.utils import timezone
 from classifiers_app.models import LegalEntityIdentifier, OKSMCountry, OKVCurrency
 from contracts_app.forms import _ContractFileInput
 from group_app.models import GroupMember
-from policy_app.models import Product
+from policy_app.models import Product, TypicalSection
 
 
 sys.modules.setdefault("proposals_app.forms", sys.modules[__name__])
@@ -168,10 +168,58 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         widget=forms.TextInput(attrs=DATE_INPUT_ATTRS),
         input_formats=DATE_INPUT_FORMATS,
     )
+    asset_owner = forms.CharField(
+        label="Владелец активов",
+        required=False,
+        widget=forms.TextInput(
+            attrs={
+                "placeholder": "Искать по наименованию и регистрационному номеру",
+                "id": "proposal-asset-owner-field",
+            }
+        ),
+    )
+    asset_owner_country = forms.ModelChoiceField(
+        label="Страна",
+        queryset=OKSMCountry.objects.none(),
+        required=False,
+        widget=forms.Select(attrs={"id": "proposal-asset-owner-country-select"}),
+    )
+    asset_owner_identifier = forms.CharField(
+        label="Идентификатор",
+        required=False,
+        widget=forms.TextInput(
+            attrs={
+                "readonly": True,
+                "tabindex": "-1",
+                "class": "form-control readonly-field",
+                "id": "proposal-asset-owner-identifier-field",
+            }
+        ),
+    )
+    asset_owner_registration_number = forms.CharField(
+        label="Регистрационный номер",
+        required=False,
+    )
+    asset_owner_registration_date = forms.DateField(
+        label="Дата регистрации",
+        required=False,
+        widget=forms.TextInput(attrs={**DATE_INPUT_ATTRS, "id": "proposal-asset-owner-registration-date"}),
+        input_formats=DATE_INPUT_FORMATS,
+    )
+    asset_owner_matches_customer = forms.BooleanField(
+        label="Совпадает с Заказчиком",
+        required=False,
+        initial=True,
+    )
+    proposal_project_name = forms.CharField(
+        label="Наименование ТКП (проекта)",
+        required=False,
+        widget=forms.TextInput(),
+    )
     purpose = forms.CharField(
         label="Цель оказания услуг",
         required=False,
-        widget=forms.Textarea(attrs={"rows": 3}),
+        widget=forms.Textarea(attrs={"rows": 1}),
     )
     service_composition = forms.CharField(
         label="Состав услуг",
@@ -293,6 +341,30 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         required=False,
         widget=forms.HiddenInput(attrs={"id": "proposal-commercial-offer-payload"}),
     )
+    service_sections_payload = forms.CharField(
+        required=False,
+        widget=forms.HiddenInput(attrs={"id": "proposal-service-sections-payload"}),
+    )
+    service_sections_editor_state = forms.CharField(
+        required=False,
+        widget=forms.HiddenInput(attrs={"id": "proposal-service-sections-editor-state"}),
+    )
+    service_customer_tz_editor_state = forms.CharField(
+        required=False,
+        widget=forms.HiddenInput(attrs={"id": "proposal-service-customer-tz-editor-state"}),
+    )
+    service_composition_customer_tz = forms.CharField(
+        required=False,
+        widget=forms.HiddenInput(attrs={"id": "proposal-service-composition-customer-tz"}),
+    )
+    service_composition_mode = forms.ChoiceField(
+        required=False,
+        choices=[
+            ("sections", "Разделы"),
+            ("customer_tz", "ТЗ Заказчика"),
+        ],
+        widget=forms.HiddenInput(attrs={"id": "proposal-service-composition-mode"}),
+    )
 
     _decimal_text_fields = (
         "service_term_months",
@@ -317,8 +389,17 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             "identifier",
             "registration_number",
             "registration_date",
+            "asset_owner",
+            "asset_owner_country",
+            "asset_owner_identifier",
+            "asset_owner_registration_number",
+            "asset_owner_registration_date",
+            "asset_owner_matches_customer",
+            "proposal_project_name",
             "purpose",
             "service_composition",
+            "service_composition_customer_tz",
+            "service_composition_mode",
             "evaluation_date",
             "service_term_months",
             "preliminary_report_date",
@@ -360,12 +441,13 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         country_qs = OKSMCountry.objects.filter(
             models.Q(expiry_date__isnull=True) | models.Q(expiry_date__gte=today)
         ).order_by("short_name")
-        if self.instance and self.instance.pk and self.instance.country_id:
-            country_qs = (country_qs | OKSMCountry.objects.filter(pk=self.instance.country_id)).distinct().order_by(
-                "short_name"
-            )
+        if self.instance and self.instance.pk and (self.instance.country_id or self.instance.asset_owner_country_id):
+            country_ids = [value for value in [self.instance.country_id, self.instance.asset_owner_country_id] if value]
+            country_qs = (country_qs | OKSMCountry.objects.filter(pk__in=country_ids)).distinct().order_by("short_name")
         self.fields["country"].queryset = country_qs
         self.fields["country"].label_from_instance = lambda obj: obj.short_name
+        self.fields["asset_owner_country"].queryset = country_qs
+        self.fields["asset_owner_country"].label_from_instance = lambda obj: obj.short_name
 
         currency_qs = OKVCurrency.objects.filter(
             models.Q(approval_date__isnull=True) | models.Q(approval_date__lte=today),
@@ -385,6 +467,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             self.fields["identifier"].initial = self.instance.identifier
 
         self._bootstrapify()
+        self.fields["asset_owner_matches_customer"].widget.attrs["class"] = "form-check-input"
 
         if self.instance and self.instance.pk and "assets_payload" not in self.data:
             self.fields["assets_payload"].initial = json.dumps(
@@ -402,7 +485,19 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 ensure_ascii=False,
             )
         elif not self.instance.pk and "assets_payload" not in self.data:
-            self.fields["assets_payload"].initial = "[]"
+            self.fields["assets_payload"].initial = json.dumps(
+                [
+                    {
+                        "short_name": "",
+                        "country_id": "",
+                        "country_name": "",
+                        "identifier": "",
+                        "registration_number": "",
+                        "registration_date": "",
+                    }
+                ],
+                ensure_ascii=False,
+            )
 
         if self.instance and self.instance.pk and "legal_entities_payload" not in self.data:
             self.fields["legal_entities_payload"].initial = json.dumps(
@@ -463,6 +558,27 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             )
         elif not self.instance.pk and "commercial_offer_payload" not in self.data:
             self.fields["commercial_offer_payload"].initial = "[]"
+        if self.instance and self.instance.pk and "service_sections_payload" not in self.data:
+            self.fields["service_sections_payload"].initial = json.dumps(
+                [
+                    {
+                        "service_name": item.get("service_name", ""),
+                        "code": item.get("code", ""),
+                    }
+                    for item in (self.instance.service_sections_json or [])
+                ],
+                ensure_ascii=False,
+            )
+        elif not self.instance.pk and "service_sections_payload" not in self.data:
+            self.fields["service_sections_payload"].initial = "[]"
+        if "service_sections_editor_state" not in self.data:
+            self.fields["service_sections_editor_state"].initial = "[]"
+        if "service_customer_tz_editor_state" not in self.data:
+            self.fields["service_customer_tz_editor_state"].initial = ""
+        if self.instance and self.instance.pk and "service_composition_mode" not in self.data:
+            self.fields["service_composition_mode"].initial = self.instance.service_composition_mode or "sections"
+        elif "service_composition_mode" not in self.data:
+            self.fields["service_composition_mode"].initial = "sections"
 
         if not self.instance.pk and "group_member" not in self.data:
             self.fields["group_member"].initial = (
@@ -483,14 +599,26 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             rub = currency_qs.filter(code_alpha="RUB").first()
             if rub:
                 self.fields["currency"].initial = rub.pk
-        self.initial["final_report_percent"] = self._calculate_final_report_percent(
-            advance_percent=self.data.get("advance_percent") if self.is_bound else self.initial.get("advance_percent", self.instance.advance_percent),
-            preliminary_report_percent=(
-                self.data.get("preliminary_report_percent")
-                if self.is_bound
-                else self.initial.get("preliminary_report_percent", self.instance.preliminary_report_percent)
-            ),
-        )
+        if not self.instance.pk and "asset_owner_matches_customer" not in self.data:
+            self.fields["asset_owner_matches_customer"].initial = True
+        try:
+            self.initial["final_report_percent"] = self._calculate_final_report_percent(
+                advance_percent=(
+                    self.data.get("advance_percent")
+                    if self.is_bound
+                    else self.initial.get("advance_percent", self.instance.advance_percent)
+                ),
+                preliminary_report_percent=(
+                    self.data.get("preliminary_report_percent")
+                    if self.is_bound
+                    else self.initial.get("preliminary_report_percent", self.instance.preliminary_report_percent)
+                ),
+            )
+        except forms.ValidationError:
+            self.initial["final_report_percent"] = self.initial.get(
+                "final_report_percent",
+                self.instance.final_report_percent,
+            )
 
     def clean_group_member(self):
         member = self.cleaned_data.get("group_member")
@@ -513,25 +641,57 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
     def clean(self):
         cleaned = super().clean()
         if self.errors.get("advance_percent") or self.errors.get("preliminary_report_percent"):
-            return cleaned
+            final_percent = None
+        else:
+            try:
+                final_percent = self._calculate_final_report_percent(
+                    advance_percent=cleaned.get("advance_percent"),
+                    preliminary_report_percent=cleaned.get("preliminary_report_percent"),
+                )
+            except forms.ValidationError:
+                final_percent = None
 
-        try:
-            final_percent = self._calculate_final_report_percent(
-                advance_percent=cleaned.get("advance_percent"),
-                preliminary_report_percent=cleaned.get("preliminary_report_percent"),
-            )
-        except forms.ValidationError:
-            return cleaned
-
-        if final_percent < 0 or final_percent > 100:
+        if final_percent is not None and (final_percent < 0 or final_percent > 100):
             self.add_error(
                 "final_report_percent",
                 "Рассчитанный размер оплаты Итогового отчёта должен быть в диапазоне от 0% до 100%.",
             )
-            return cleaned
+        elif final_percent is not None:
+            cleaned["final_report_percent"] = final_percent
 
-        cleaned["final_report_percent"] = final_percent
+        asset_owner_country = cleaned.get("asset_owner_country")
+        asset_owner_identifier = ""
+        if asset_owner_country:
+            asset_owner_identifier = (
+                LegalEntityIdentifier.objects.filter(country=asset_owner_country)
+                .values_list("identifier", flat=True)
+                .first()
+                or ""
+            )
+
+        if cleaned.get("asset_owner_matches_customer"):
+            cleaned["asset_owner"] = cleaned.get("customer") or ""
+            cleaned["asset_owner_country"] = cleaned.get("country")
+            cleaned["asset_owner_identifier"] = cleaned.get("identifier") or ""
+            cleaned["asset_owner_registration_number"] = cleaned.get("registration_number") or ""
+            cleaned["asset_owner_registration_date"] = cleaned.get("registration_date")
+        else:
+            cleaned["asset_owner_identifier"] = asset_owner_identifier
+
         return cleaned
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        instance.service_sections_json = [
+            {
+                "service_name": item["service_name"],
+                "code": item["code"],
+            }
+            for item in getattr(self, "cleaned_service_sections", [])
+        ]
+        if commit:
+            instance.save()
+        return instance
 
     def clean_assets_payload(self):
         cleaned_assets = self._clean_related_payload(
@@ -540,6 +700,63 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         )
         self.cleaned_assets = cleaned_assets
         return self._serialize_related_payload(cleaned_assets)
+
+    def clean_service_sections_payload(self):
+        raw = (self.cleaned_data.get("service_sections_payload") or "").strip()
+        if not raw:
+            self.cleaned_service_sections = []
+            return "[]"
+
+        try:
+            rows = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raise forms.ValidationError("Некорректные данные по составу услуг.")
+
+        if not isinstance(rows, list):
+            raise forms.ValidationError("Некорректный формат данных по составу услуг.")
+
+        type_obj = self.cleaned_data.get("type")
+        sections_by_name = {}
+        if type_obj:
+            for section in TypicalSection.objects.filter(product=type_obj).order_by("position", "id"):
+                name_ru = (section.name_ru or "").strip()
+                if name_ru and name_ru not in sections_by_name:
+                    sections_by_name[name_ru] = (section.code or "").strip()
+
+        cleaned_rows = []
+        for idx, row in enumerate(rows, start=1):
+            if not isinstance(row, dict):
+                raise forms.ValidationError(f"Строка состава услуг #{idx} передана в некорректном формате.")
+
+            service_name = str(row.get("service_name") or "").strip()
+            code = str(row.get("code") or "").strip()
+            if not service_name and not code:
+                continue
+            if not service_name:
+                raise forms.ValidationError(
+                    f"В строке состава услуг #{idx} заполните поле «Наименование раздела (услуги)»."
+                )
+
+            expected_code = sections_by_name.get(service_name, "")
+            cleaned_rows.append(
+                {
+                    "position": len(cleaned_rows) + 1,
+                    "service_name": service_name,
+                    "code": expected_code or code,
+                }
+            )
+
+        self.cleaned_service_sections = cleaned_rows
+        return json.dumps(
+            [
+                {
+                    "service_name": item["service_name"],
+                    "code": item["code"],
+                }
+                for item in cleaned_rows
+            ],
+            ensure_ascii=False,
+        )
 
     def clean_legal_entities_payload(self):
         cleaned_legal_entities = self._clean_related_payload(
