@@ -19,6 +19,10 @@ class ProposalRegistration(models.Model):
         REGULAR = "regular", "Обычные"
         OWED_TO_US = "owed_to_us", "Должны нам"
 
+    class ProposalStatus(models.TextChoices):
+        PRELIMINARY = "preliminary", "Предварительное"
+        FINAL = "final", "Итоговое"
+
     position = models.PositiveIntegerField(default=0, db_index=True, verbose_name="Позиция")
     number = models.PositiveIntegerField(
         verbose_name="Номер",
@@ -57,6 +61,13 @@ class ProposalRegistration(models.Model):
         default=ProposalKind.REGULAR,
         db_index=True,
     )
+    status = models.CharField(
+        "Статус",
+        max_length=20,
+        choices=ProposalStatus.choices,
+        default=ProposalStatus.FINAL,
+        db_index=True,
+    )
     year = models.PositiveIntegerField("Год", null=True, blank=True)
     customer = models.CharField("Заказчик", max_length=255, blank=True)
     country = models.ForeignKey(
@@ -91,6 +102,7 @@ class ProposalRegistration(models.Model):
     service_composition = models.TextField("Состав услуг", blank=True, default="")
     service_composition_customer_tz = models.TextField("Состав услуг: ТЗ Заказчика", blank=True, default="")
     service_composition_mode = models.CharField("Режим состава услуг", max_length=20, blank=True, default="sections")
+    commercial_totals_json = models.JSONField("Итоги коммерческого предложения", default=dict, blank=True)
     evaluation_date = models.DateField("Дата оценки", null=True, blank=True)
     service_term_months = models.DecimalField(
         "Срок оказания услуг, мес.",

@@ -1388,12 +1388,13 @@ section#templates .alert.alert-info .text-muted {
 #proposals-pane table.proposals-table col.proposal-type       { width: 3% !important; }
 #proposals-pane table.proposals-table col.proposal-name       { width: 8% !important; }
 #proposals-pane table.proposals-table col.proposal-kind,
+#proposals-pane table.proposals-table col.proposal-status,
 #proposals-pane table.proposals-table col.proposal-year,
 #proposals-pane table.proposals-table col.proposal-customer,
 #proposals-pane table.proposals-table col.proposal-country,
 #proposals-pane table.proposals-table col.proposal-identifier,
 #proposals-pane table.proposals-table col.proposal-regnumber,
-#proposals-pane table.proposals-table col.proposal-regdate { width: calc(71% / 7) !important; }
+#proposals-pane table.proposals-table col.proposal-regdate { width: calc(71% / 8) !important; }
 #proposals-pane table.proposals-table col.proposal-purpose,
 #proposals-pane table.proposals-table col.proposal-services { width: 12% !important; }
 #proposals-pane table.proposals-table col.proposal-evaluation-date,
@@ -1675,6 +1676,155 @@ section#templates .alert.alert-info .text-muted {
   box-sizing: border-box;
   margin-right: 1px;
 }
+
+#proposals-pane .proposal-commercial-table > tbody > tr.proposal-commercial-travel-row > td {
+  position: relative;
+  padding-top: 1.4rem;
+  padding-bottom: .45rem;
+  border-top: none !important;
+}
+
+#proposals-pane .proposal-commercial-table > tbody > tr.proposal-commercial-travel-row > td::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: .95rem;
+  border-top: 1px solid var(--bs-border-color, #dee2e6);
+  pointer-events: none;
+}
+
+#proposals-pane .proposal-commercial-table .proposal-commercial-travel-label-cell {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+#proposals-pane .proposal-commercial-table .proposal-commercial-travel-rate {
+  text-align: center;
+}
+
+#proposals-pane .proposal-commercial-table > tbody > tr.proposal-commercial-summary-row > td {
+  position: relative;
+  padding-top: 1.4rem;
+  padding-bottom: .45rem;
+  border-top: none !important;
+}
+
+#proposals-pane .proposal-commercial-table > tbody > tr.proposal-commercial-summary-row > td::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: .95rem;
+  border-top: 1px solid var(--bs-border-color, #dee2e6);
+  pointer-events: none;
+}
+
+#proposals-pane .proposal-commercial-table .proposal-commercial-summary-label-cell {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+#proposals-pane .proposal-commercial-table > tbody > tr.proposal-commercial-financial-row--first > td {
+  position: relative;
+  padding-top: 1.4rem;
+  padding-bottom: .45rem;
+  border-top: none !important;
+}
+
+#proposals-pane .proposal-commercial-table > tbody > tr.proposal-commercial-financial-row--first > td::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: .95rem;
+  border-top: 1px solid var(--bs-border-color, #dee2e6);
+  pointer-events: none;
+}
+
+#proposals-pane .proposal-commercial-table > tbody > tr.proposal-commercial-financial-row:not(.proposal-commercial-financial-row--first) > td {
+  padding-top: .45rem;
+  padding-bottom: .45rem;
+}
+
+#proposals-pane .proposal-commercial-table .proposal-commercial-financial-label-cell {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+#proposals-pane .proposal-commercial-table > tbody > tr.proposal-commercial-travel-row > td,
+#proposals-pane .proposal-commercial-table > tbody > tr.proposal-commercial-summary-row > td,
+#proposals-pane .proposal-commercial-table > tbody > tr.proposal-commercial-financial-row > td {
+  min-width: 0 !important;
+  max-width: none !important;
+}
+
+#proposals-pane .proposal-commercial-table .proposal-commercial-travel-label-cell,
+#proposals-pane .proposal-commercial-table .proposal-commercial-summary-label-cell,
+#proposals-pane .proposal-commercial-table .proposal-commercial-financial-label-cell {
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+}
+
+#proposals-pane .proposal-commercial-table .proposal-commercial-financial-service-cell {
+  width: 13rem !important;
+  min-width: 13rem !important;
+  max-width: 13rem !important;
+}
+
+#proposals-pane .proposal-commercial-table .proposal-commercial-financial-rate-cell,
+#proposals-pane .proposal-commercial-table .proposal-commercial-travel-rate-cell,
+#proposals-pane .proposal-commercial-table .proposal-commercial-summary-rate-cell {
+  width: 10.5rem !important;
+  min-width: 10.5rem !important;
+  max-width: 10.5rem !important;
+}
+
+#proposals-pane .proposal-commercial-table > tbody > tr.proposal-commercial-travel-row .proposal-commercial-day-cell,
+#proposals-pane .proposal-commercial-table > tbody > tr.proposal-commercial-summary-row .proposal-commercial-day-cell,
+#proposals-pane .proposal-commercial-table > tbody > tr.proposal-commercial-financial-row .proposal-commercial-day-cell,
+#proposals-pane .proposal-commercial-table > tbody > tr.proposal-commercial-travel-row .proposal-commercial-day-placeholder-cell,
+#proposals-pane .proposal-commercial-table > tbody > tr.proposal-commercial-summary-row .proposal-commercial-day-placeholder-cell,
+#proposals-pane .proposal-commercial-table > tbody > tr.proposal-commercial-financial-row .proposal-commercial-day-placeholder-cell {
+  width: auto !important;
+  min-width: 3.5rem !important;
+  max-width: none !important;
+}
+
+#proposals-pane .proposal-commercial-table .proposal-commercial-financial-service-cell .proposal-commercial-service-text {
+  text-align: right;
+}
+
+#proposals-pane .proposal-commercial-table .proposal-commercial-financial-service-wrap {
+  position: relative;
+  width: 100%;
+}
+
+#proposals-pane .proposal-commercial-table .proposal-commercial-service-link {
+  position: absolute;
+  left: .65rem;
+  top: 50%;
+  transform: translateY(-50%);
+  text-decoration: none;
+  line-height: 1;
+  font-size: 1rem;
+  color: #adb5bd;
+  z-index: 1;
+}
+
+#proposals-pane .proposal-commercial-table .proposal-commercial-service-link:hover {
+  color: #8f99a3;
+  opacity: .9;
+}
+
+#proposals-pane .proposal-commercial-table .proposal-commercial-financial-service-wrap .proposal-commercial-service-text {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  padding-left: 2rem;
+}
+
 
 #proposals-pane .proposal-assets-table {
   --proposal-check-width: 28px;
@@ -2006,6 +2156,8 @@ section#templates .alert.alert-info .text-muted {
   padding-left: 0 !important;
   padding-right: 0 !important;
   white-space: nowrap !important;
+  vertical-align: middle !important;
+  text-align: center !important;
 }
 
 #proposals-pane table.proposal-dispatch-table tbody td.proposal-id-cell {
@@ -2272,7 +2424,15 @@ section#templates .alert.alert-info .text-muted {
 /* ==== Performers table ==== */
 .performer-quick-edit { cursor: pointer; opacity: .45; transition: opacity .15s; }
 .performer-quick-edit:hover { opacity: .85; }
-.proposal-quick-edit { cursor: pointer; opacity: .45; transition: opacity .15s; }
+.proposal-quick-edit {
+  display: inline-block;
+  vertical-align: middle;
+  line-height: 1;
+  transform: translateY(-2px);
+  cursor: pointer;
+  opacity: .45;
+  transition: opacity .15s;
+}
 .proposal-quick-edit:hover { opacity: .85; }
 .performer-locked-icon { opacity: .35; }
 

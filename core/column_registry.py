@@ -374,6 +374,7 @@ COLUMN_REGISTRY = {
                     "type": "Тип",
                     "name": "Название",
                     "kind": "Вид",
+                    "status": "Статус",
                     "year": "Год",
                     "customer": "Заказчик",
                     "country": "Страна",

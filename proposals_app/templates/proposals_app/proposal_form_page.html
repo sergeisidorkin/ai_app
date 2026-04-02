@@ -21,22 +21,26 @@
     {% csrf_token %}
 
     <div class="row g-3">
-      <div class="col-3">
+      <div class="col-2">
         <label class="form-label">{{ form.number.label }}</label>
         {{ form.number }}
       </div>
-      <div class="col-3">
+      <div class="col-4">
         <label class="form-label">{{ form.group_member.label }}</label>
         <div class="group-select-shell">
           {{ form.group_member }}
           <div class="group-select-display" id="proposal-group-display" aria-hidden="true"></div>
         </div>
       </div>
-      <div class="col-3">
+      <div class="col-2">
         <label class="form-label">{{ form.kind.label }}</label>
         {{ form.kind }}
       </div>
-      <div class="col-3">
+      <div class="col-2">
+        <label class="form-label">{{ form.status.label }}</label>
+        {{ form.status }}
+      </div>
+      <div class="col-2">
         <label class="form-label">{{ form.year.label }}</label>
         {{ form.year }}
       </div>
@@ -432,6 +436,7 @@
       <div class="col-12">
         <label class="form-label mb-2">Коммерческое предложение</label>
         {{ form.commercial_offer_payload }}
+        {{ form.commercial_totals_payload }}
         <div class="proposal-assets-editor proposal-commercial-editor">
           <div class="table-responsive">
             <table class="table table-sm align-middle mb-2 proposal-assets-table proposal-commercial-table" id="proposal-commercial-table">
