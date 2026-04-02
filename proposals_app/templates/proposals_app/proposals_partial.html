@@ -25,6 +25,7 @@
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="type" id="proposal-col-type" checked><label class="form-check-label" for="proposal-col-type">Тип</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="name" id="proposal-col-name" checked><label class="form-check-label" for="proposal-col-name">Название</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="kind" id="proposal-col-kind" checked><label class="form-check-label" for="proposal-col-kind">Вид</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="status" id="proposal-col-status" checked><label class="form-check-label" for="proposal-col-status">Статус</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="year" id="proposal-col-year" checked><label class="form-check-label" for="proposal-col-year">Год</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="customer" id="proposal-col-customer" checked><label class="form-check-label" for="proposal-col-customer">Заказчик: наименование</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="country" id="proposal-col-country" checked><label class="form-check-label" for="proposal-col-country">Заказчик: страна</label></div></div>
@@ -68,6 +69,7 @@
         <col class="proposal-type">
         <col class="proposal-name">
         <col class="proposal-kind">
+        <col class="proposal-status">
         <col class="proposal-year">
         <col class="proposal-customer">
         <col class="proposal-country">
@@ -117,6 +119,7 @@
           <th data-col="type">Тип</th>
           <th data-col="name">Название</th>
           <th data-col="kind">Вид</th>
+          <th data-col="status">Статус</th>
           <th data-col="year">Год</th>
           <th data-col="customer" class="proposal-split-header proposal-split-header-inline"><span class="proposal-split-header-prefix">Заказчик: </span><span class="proposal-split-header-suffix">наименование</span></th>
           <th data-col="country" class="proposal-split-header"><span class="proposal-split-header-prefix">Заказчик: </span><span class="proposal-split-header-suffix">страна</span></th>
@@ -178,6 +181,7 @@
             <td data-col="type">{{ proposal.type.short_name|default:proposal.type }}</td>
             <td data-col="name">{{ proposal.name }}</td>
             <td data-col="kind">{{ proposal.get_kind_display }}</td>
+            <td data-col="status">{{ proposal.get_status_display }}</td>
             <td data-col="year">{{ proposal.year }}</td>
             <td data-col="customer">{{ proposal.customer }}</td>
             <td data-col="country">{{ proposal.country.short_name|default:"" }}</td>
@@ -207,7 +211,7 @@
             <td data-col="final-report-term">{{ proposal.final_report_term_days }}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="35" class="text-muted">Пока нет данных.</td></tr>
+          <tr><td colspan="36" class="text-muted">Пока нет данных.</td></tr>
         {% endfor %}
       </tbody>
     </table>

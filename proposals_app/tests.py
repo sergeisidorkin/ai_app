@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 import tempfile
+from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -207,6 +210,22 @@ class ProposalRegistrationFormTests(TestCase):
             '[{"short_name": "", "country_id": "", "country_name": "", "identifier": "", "registration_number": "", "registration_date": ""}]',
         )
 
+    @patch("proposals_app.forms.get_cbr_eur_rate_for_today")
+    def test_new_form_prefills_cbr_exchange_rate_in_commercial_totals(self, mocked_rate):
+        mocked_rate.return_value = Decimal("96.5432")
+
+        form = ProposalRegistrationForm()
+
+        self.assertEqual(
+            json.loads(form.fields["commercial_totals_payload"].initial),
+            {
+                "discount_percent": "5",
+                "rub_total_service_text": "Курс евро Банка России на текущую дату:",
+                "discounted_total_service_text": "Размер скидки:",
+                "exchange_rate": "96.5432",
+            },
+        )
+
     def test_invalid_bound_percent_does_not_raise_during_init(self):
         form = ProposalRegistrationForm(
             data={
@@ -264,6 +283,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "type": product.pk,
                 "name": "Тестовое ТКП",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
+                "status": ProposalRegistration.ProposalStatus.FINAL,
                 "year": 2026,
                 "customer": 'ООО "Приморское"',
                 "country": country.pk,
@@ -287,6 +307,58 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(proposal.asset_owner_identifier, proposal.identifier)
         self.assertEqual(proposal.asset_owner_registration_number, proposal.registration_number)
         self.assertEqual(proposal.asset_owner_registration_date, proposal.registration_date)
+
+    def test_customer_tz_mode_keeps_service_composition_in_sync(self):
+        country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            service_type="service",
+            position=1,
+        )
+
+        form = ProposalRegistrationForm(
+            data={
+                "number": 3333,
+                "group_member": group_member.pk,
+                "type": product.pk,
+                "name": "Тестовое ТКП",
+                "kind": ProposalRegistration.ProposalKind.REGULAR,
+                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "year": 2026,
+                "customer": 'ООО "Приморское"',
+                "country": country.pk,
+                "identifier": "ОГРН",
+                "registration_number": "1174910001683",
+                "registration_date": "01.04.2026",
+                "service_composition": "Старый текст разделов",
+                "service_composition_customer_tz": "Новый текст ТЗ заказчика",
+                "service_composition_mode": "customer_tz",
+            }
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        proposal = form.save()
+
+        self.assertEqual(proposal.service_composition_mode, "customer_tz")
+        self.assertEqual(proposal.service_composition_customer_tz, "Новый текст ТЗ заказчика")
+        self.assertEqual(proposal.service_composition, "Новый текст ТЗ заказчика")
 
     def test_service_sections_payload_saves_code_by_selected_service(self):
         group_member = GroupMember.objects.create(
@@ -321,6 +393,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "type": product.pk,
                 "name": "Тестовое ТКП",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
+                "status": ProposalRegistration.ProposalStatus.FINAL,
                 "year": 2026,
                 "service_sections_payload": '[{"service_name":"Раздел 1","code":""}]',
             }
@@ -369,6 +442,7 @@ class ProposalRegistrationFormTests(TestCase):
             group_member=group_member,
             type=product,
             name="Приморское",
+            status=ProposalRegistration.ProposalStatus.PRELIMINARY,
             proposal_project_name="Проект Приморское",
             country=country,
             purpose="Проверка актива",
@@ -408,6 +482,12 @@ class ProposalRegistrationFormTests(TestCase):
                 source_column="evaluation_date",
             ),
             ProposalVariable(
+                key="{{status}}",
+                source_section="proposals",
+                source_table="registry",
+                source_column="status",
+            ),
+            ProposalVariable(
                 key="{{advance_percent}}",
                 source_section="proposals",
                 source_table="registry",
@@ -439,6 +519,7 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(replacements["{{purpose}}"], "Проверка актива")
         self.assertEqual(replacements["{{service_cost}}"], "1\u00a0250\u00a0000,50")
         self.assertEqual(replacements["{{evaluation_date}}"], "01.04.2026")
+        self.assertEqual(replacements["{{status}}"], "Предварительное")
         self.assertEqual(replacements["{{advance_percent}}"], "50")
         self.assertEqual(replacements["{{currency}}"], "RUB")
         self.assertEqual(replacements["{{country}}"], "Россия")
@@ -476,6 +557,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "type": product.pk,
                 "name": "Тестовое ТКП",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
+                "status": ProposalRegistration.ProposalStatus.FINAL,
                 "year": 2026,
                 "customer": 'ООО "Приморское"',
                 "country": country.pk,
@@ -532,6 +614,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "type": product.pk,
                 "name": "Тестовое ТКП",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
+                "status": ProposalRegistration.ProposalStatus.FINAL,
                 "year": 2026,
                 "customer": 'ООО "Приморское"',
                 "country": country.pk,
@@ -591,6 +674,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "type": product.pk,
                 "name": "Тестовое ТКП",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
+                "status": ProposalRegistration.ProposalStatus.FINAL,
                 "year": 2026,
                 "customer": 'ООО "Приморское"',
                 "country": country.pk,
@@ -652,6 +736,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "type": product.pk,
                 "name": "Тестовое ТКП",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
+                "status": ProposalRegistration.ProposalStatus.FINAL,
                 "year": 2026,
                 "customer": 'ООО "Приморское"',
                 "country": country.pk,
@@ -678,6 +763,68 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(str(offer.rate_eur_per_day), "1200.50")
         self.assertEqual(offer.asset_day_counts, [2, 3])
         self.assertEqual(str(offer.total_eur_without_vat), "6002.50")
+
+    def test_form_saves_commercial_totals_payload(self):
+        country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            service_type="service",
+            position=1,
+        )
+
+        form = ProposalRegistrationForm(
+            data={
+                "number": 3333,
+                "group_member": group_member.pk,
+                "type": product.pk,
+                "name": "Тестовое ТКП",
+                "kind": ProposalRegistration.ProposalKind.REGULAR,
+                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "year": 2026,
+                "customer": 'ООО "Приморское"',
+                "country": country.pk,
+                "identifier": "ОГРН",
+                "registration_number": "1174910001683",
+                "registration_date": "01.04.2026",
+                "commercial_totals_payload": (
+                    '{"exchange_rate":"96.50","discount_percent":"7.50",'
+                    '"contract_total":"1200000","contract_total_auto":"1300000",'
+                    '"rub_total_service_text":"Курс ЦБ","discounted_total_service_text":"Скидка проекта"}'
+                ),
+            }
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        proposal = form.save()
+
+        self.assertEqual(
+            proposal.commercial_totals_json,
+            {
+                "exchange_rate": "96.50",
+                "discount_percent": "7.50",
+                "contract_total": "1200000",
+                "contract_total_auto": "1300000",
+                "rub_total_service_text": "Курс ЦБ",
+                "discounted_total_service_text": "Скидка проекта",
+            },
+        )
 
 
 class ProposalFormContextTests(TestCase):
@@ -1013,7 +1160,8 @@ class ProposalFormContextTests(TestCase):
         )
 
     def test_proposal_form_renders_composite_project_name_inputs(self):
-        response = self.client.get(reverse("proposal_form_create"))
+        with patch("proposals_app.forms.get_cbr_eur_rate_for_today", return_value=Decimal("95.1111")):
+            response = self.client.get(reverse("proposal_form_create"))
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'id="proposal-project-name-prefix"', html=False)
@@ -1022,6 +1170,9 @@ class ProposalFormContextTests(TestCase):
         self.assertContains(response, 'id="proposal-purpose-prefix"', html=False)
         self.assertContains(response, 'id="proposal-purpose-suffix"', html=False)
         self.assertContains(response, 'type="hidden" name="purpose"', html=False)
+        self.assertContains(response, 'id="proposal-commercial-totals-payload"', html=False)
+        self.assertContains(response, 'name="status"', html=False)
+        self.assertContains(response, 'value="final"', html=False)
 
 
 class ProposalAccessTests(TestCase):

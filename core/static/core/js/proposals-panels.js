@@ -465,14 +465,29 @@
     return String(value || '').replace(/\s/g, '').replace(/\u00a0/g, '').replace(',', '.');
   }
 
+  function formatMoneyWithPrecision(value, precision) {
+    var normalized = rawMoney(value);
+    var number = parseFloat(normalized);
+    if (isNaN(number)) return '';
+    var digits = Number.isInteger(precision) && precision >= 0 ? precision : 2;
+    var parts = number.toFixed(digits).split('.');
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0');
+    return parts.join(',');
+  }
+
+  function formatProposalExchangeRateDisplay(value) {
+    return formatMoneyWithPrecision(value, 4);
+  }
+
   function attachMoneyInputs(root) {
     if (!root) return;
     root.querySelectorAll('.js-money-input').forEach(function (input) {
       if (input.dataset.moneyBound === '1') return;
       input.dataset.moneyBound = '1';
-      if (input.value) input.value = fmtMoney(input.value);
+      var precision = parseInt(input.dataset.moneyPrecision || '2', 10);
+      if (input.value) input.value = formatMoneyWithPrecision(input.value, precision);
       input.addEventListener('blur', function () {
-        if (input.value) input.value = fmtMoney(input.value);
+        if (input.value) input.value = formatMoneyWithPrecision(input.value, precision);
       });
     });
 
@@ -992,6 +1007,62 @@
     return syncOptionsSelect(select, getProposalTypicalSectionNames(form), selectedValue);
   }
 
+  const PROPOSAL_TRAVEL_EXPENSES_LABEL = 'Командировочные расходы';
+  const PROPOSAL_SUMMARY_TOTAL_LABEL = 'ИТОГО, по расчёту';
+  const PROPOSAL_RUB_TOTAL_LABEL = 'ИТОГО, рубли без НДС';
+  const PROPOSAL_RUB_DISCOUNTED_LABEL = 'ИТОГО, рубли без НДС с учетом скидки';
+  const PROPOSAL_CONTRACT_TOTAL_LABEL = 'ИТОГО в договор, рубли без НДС с учётом дополнительной скидки';
+  const PROPOSAL_CBR_EUR_DAILY_URL = 'https://www.cbr.ru/currency_base/daily/';
+
+  function isProposalTravelExpensesRow(row) {
+    return String(row?.service_name || '').trim() === PROPOSAL_TRAVEL_EXPENSES_LABEL;
+  }
+
+  function normalizeProposalTravelExpensesRow(row) {
+    const dayCounts = Array.isArray(row?.asset_day_counts)
+      ? row.asset_day_counts.map(function (value) { return String(value ?? '').trim(); })
+      : [];
+    return {
+      specialist: '',
+      job_title: '',
+      professional_status: '',
+      service_name: PROPOSAL_TRAVEL_EXPENSES_LABEL,
+      code: '',
+      rate_eur_per_day: '',
+      asset_day_counts: dayCounts,
+      total_eur_without_vat: String(row?.total_eur_without_vat || '').trim(),
+    };
+  }
+
+  function parseProposalPercent(value) {
+    const normalized = String(value || '').replace(/\s/g, '').replace(/\u00a0/g, '').replace('%', '').replace(',', '.');
+    const number = parseFloat(normalized);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function formatProposalPercentDisplay(value) {
+    const normalized = String(value || '').replace(/\s/g, '').replace(/\u00a0/g, '').replace('%', '').replace(',', '.').trim();
+    if (!normalized) return '';
+    return normalized + '%';
+  }
+
+  function normalizeProposalCommercialTotalsState(payload) {
+    const source = payload && typeof payload === 'object' ? payload : {};
+    return {
+      exchange_rate: String(source.exchange_rate || '').trim(),
+      discount_percent: String(source.discount_percent || '5').replace('%', '').trim(),
+      contract_total: String(source.contract_total || '').trim(),
+      contract_total_auto: String(source.contract_total_auto || '').trim(),
+      rub_total_service_text: String(source.rub_total_service_text || 'Курс евро Банка России на текущую дату:').trim(),
+      discounted_total_service_text: String(source.discounted_total_service_text || 'Размер скидки:').trim(),
+    };
+  }
+
+  function roundProposalToHundredThousand(value) {
+    if (!Number.isFinite(value)) return '';
+    return String(Math.floor(value / 100000) * 100000);
+  }
+
   function syncProposalServiceSectionSelect(select, form, selectedValue) {
     return syncOptionsSelect(select, getProposalTypicalSectionNames(form), selectedValue);
   }
@@ -1022,8 +1093,14 @@
       }
     }
 
-    function getRows() {
+    function getAllRows() {
       return Array.from(tbody.querySelectorAll('tr'));
+    }
+
+    function getRows() {
+      return getAllRows().filter(function (row) {
+        return row.dataset.travelExpensesRow !== '1';
+      });
     }
 
     function getSelectedRows() {
@@ -1698,6 +1775,9 @@
     }
 
     function normalizeRow(row, options) {
+      if (isProposalTravelExpensesRow(row)) {
+        return normalizeProposalTravelExpensesRow(row);
+      }
       const serviceName = String(row?.service_name || '').trim();
       const autofill = getProposalCommercialAutofill(form, serviceName);
       const specialty = autofill.jobTitle || String(row?.job_title || '').trim();
@@ -1733,10 +1813,16 @@
     function buildMergedRows() {
       const commercialRows = parsePayload(commercialInput);
       const serviceRows = parsePayload(serviceInput);
-      const count = Math.max(commercialRows.length, serviceRows.length);
+      const regularCommercialRows = commercialRows.filter(function (row) {
+        return !isProposalTravelExpensesRow(row);
+      });
+      const travelRow = normalizeProposalTravelExpensesRow(
+        commercialRows.find(isProposalTravelExpensesRow) || {}
+      );
+      const count = Math.max(regularCommercialRows.length, serviceRows.length);
       const rows = [];
       for (let index = 0; index < count; index += 1) {
-        const commercialRow = commercialRows[index] || {};
+        const commercialRow = regularCommercialRows[index] || {};
         const serviceRow = serviceRows[index] || {};
         rows.push(normalizeRow({
           ...commercialRow,
@@ -1744,6 +1830,7 @@
           code: serviceRow.code ?? commercialRow.code ?? '',
         }));
       }
+      rows.push(travelRow);
       return rows;
     }
 
@@ -1765,7 +1852,9 @@
     }
 
     function serializeServiceRows() {
-      return rows.map(function (row) {
+      return rows.filter(function (row) {
+        return !isProposalTravelExpensesRow(row);
+      }).map(function (row) {
         return {
           service_name: row.service_name,
           code: row.code,
@@ -1810,11 +1899,15 @@
       },
       commitCommercialRows: function (nextRows, meta) {
         rows = (Array.isArray(nextRows) ? nextRows : []).map(normalizeRow);
+        if (!rows.some(isProposalTravelExpensesRow)) {
+          rows.push(normalizeProposalTravelExpensesRow({}));
+        }
         syncHiddenInputs();
         emit(meta);
       },
       commitServiceRows: function (nextRows, meta) {
         const currentRows = api.getRows();
+        const currentTravelRow = currentRows.find(isProposalTravelExpensesRow) || normalizeProposalTravelExpensesRow({});
         rows = (Array.isArray(nextRows) ? nextRows : []).map(function (row, index) {
           const currentRow = currentRows[index] || {};
           const nextServiceName = String(row?.service_name || '').trim();
@@ -1827,6 +1920,7 @@
             forceAutofill: nextServiceName !== currentServiceName,
           });
         });
+        rows.push(normalizeProposalTravelExpensesRow(currentTravelRow));
         syncHiddenInputs();
         emit(meta);
       },
@@ -1862,8 +1956,10 @@
     if (!root) return null;
     const form = root.closest('form[data-proposal-form]') || root;
     const servicesStore = attachProposalServicesStore(form);
+    const serviceCostInput = form.querySelector('[name="service_cost"]');
     const table = form.querySelector('#proposal-commercial-table');
     const payloadInput = form.querySelector('#proposal-commercial-offer-payload');
+    const totalsPayloadInput = form.querySelector('#proposal-commercial-totals-payload');
     const thead = form.querySelector('#proposal-commercial-thead');
     const tbody = form.querySelector('#proposal-commercial-tbody');
     const addBtn = form.querySelector('#proposal-commercial-add-btn');
@@ -1871,7 +1967,7 @@
     const upBtn = form.querySelector('#proposal-commercial-up-btn');
     const downBtn = form.querySelector('#proposal-commercial-down-btn');
     const deleteBtn = form.querySelector('#proposal-commercial-delete-btn');
-    if (!table || !payloadInput || !thead || !tbody || !addBtn || !actions || !upBtn || !downBtn || !deleteBtn) return null;
+    if (!table || !payloadInput || !totalsPayloadInput || !thead || !tbody || !addBtn || !actions || !upBtn || !downBtn || !deleteBtn) return null;
     if (form.dataset.commercialBound === '1') return form.__proposalCommercialTableApi || null;
     form.dataset.commercialBound = '1';
 
@@ -1889,8 +1985,50 @@
       return Array.from(tbody.querySelectorAll('tr'));
     }
 
-    function getSelectedRows() {
+    function isSummaryRow(row) {
+      return row?.dataset?.summaryRow === '1';
+    }
+
+    function isRubTotalRow(row) {
+      return row?.dataset?.rubTotalRow === '1';
+    }
+
+    function isDiscountedTotalRow(row) {
+      return row?.dataset?.discountedTotalRow === '1';
+    }
+
+    function isContractTotalRow(row) {
+      return row?.dataset?.contractTotalRow === '1';
+    }
+
+    function isTravelRow(row) {
+      return row?.dataset?.travelExpensesRow === '1';
+    }
+
+    function isFixedRow(row) {
+      return isTravelRow(row) || isSummaryRow(row) || isRubTotalRow(row) || isDiscountedTotalRow(row) || isContractTotalRow(row);
+    }
+
+    function parseTotalsPayload() {
+      try {
+        return normalizeProposalCommercialTotalsState(JSON.parse(totalsPayloadInput.value || '{}'));
+      } catch (error) {
+        return normalizeProposalCommercialTotalsState({});
+      }
+    }
+
+    function setTotalsPayload(state) {
+      totalsPayloadInput.value = JSON.stringify(normalizeProposalCommercialTotalsState(state));
+    }
+
+    function getEditableRows() {
       return getRows().filter(function (row) {
+        return !isFixedRow(row);
+      });
+    }
+
+    function getSelectedRows() {
+      return getEditableRows().filter(function (row) {
         return !!row.querySelector('.proposal-commercial-check:checked');
       });
     }
@@ -2036,6 +2174,7 @@
 
     function recalcRowTotal(row) {
       if (!row) return;
+      if (isFixedRow(row)) return;
       const rateInput = row.querySelector('.proposal-commercial-rate');
       const totalInput = row.querySelector('.proposal-commercial-total');
       if (!rateInput || !totalInput) return;
@@ -2054,7 +2193,8 @@
       totalInput.value = fmtMoney((rate * totalDays).toFixed(2));
     }
 
-    function syncDayCells(row, assetRows, values) {
+    function syncDayCells(row, assetRows, values, options) {
+      const isReadOnly = options?.readOnly === true;
       const sourceValues = Array.isArray(values) ? values : getDayInputs(row).map(function (input) { return input.value || ''; });
       const dayColumnWidths = getCommercialDayColumnWidths(assetRows);
       row.querySelectorAll('.proposal-commercial-day-cell, .proposal-commercial-day-placeholder-cell').forEach(function (cell) {
@@ -2083,6 +2223,11 @@
         input.step = '1';
         input.className = 'form-control proposal-commercial-day-count';
         input.value = sourceValues[index] ?? '';
+        if (isReadOnly) {
+          input.readOnly = true;
+          input.tabIndex = -1;
+          input.classList.add('readonly-field');
+        }
         if (dayColumnWidths[index]) {
           input.style.width = '100%';
           input.style.minWidth = '0';
@@ -2094,22 +2239,38 @@
           input.style.maxWidth = '100%';
           input.style.boxSizing = 'border-box';
         }
-        input.addEventListener('change', function () {
-          recalcRowTotal(row);
-          updatePayload();
-        });
-        input.addEventListener('input', function () {
-          recalcRowTotal(row);
-          updatePayload();
-        });
+        if (!isReadOnly) {
+          input.addEventListener('change', function () {
+            recalcRowTotal(row);
+            updatePayload();
+          });
+          input.addEventListener('input', function () {
+            recalcRowTotal(row);
+            updatePayload();
+          });
+        }
         dayCell.appendChild(input);
         row.insertBefore(dayCell, totalCell);
       });
 
-      recalcRowTotal(row);
+      if (!isReadOnly) recalcRowTotal(row);
     }
 
     function serializeRow(row) {
+      if (isSummaryRow(row) || isRubTotalRow(row) || isDiscountedTotalRow(row) || isContractTotalRow(row)) {
+        return null;
+      }
+      if (isTravelRow(row)) {
+        return {
+          specialist: '',
+          job_title: '',
+          professional_status: '',
+          service_name: PROPOSAL_TRAVEL_EXPENSES_LABEL,
+          rate_eur_per_day: '',
+          asset_day_counts: getDayInputs(row).map(function (input) { return (input.value || '').trim(); }),
+          total_eur_without_vat: rawMoney(row.querySelector('.proposal-commercial-total')?.value || ''),
+        };
+      }
       return {
         specialist: (row.querySelector('.proposal-commercial-specialist')?.value || '').trim(),
         job_title: (row.querySelector('.proposal-commercial-job-title')?.value || '').trim(),
@@ -2121,8 +2282,129 @@
       };
     }
 
+    function computeSummaryValues() {
+      const editableRows = getEditableRows();
+      const assetCount = Math.max(getAssetRows().length, 1);
+      const dayCounts = Array.from({ length: assetCount }, function () { return 0; });
+      let total = 0;
+
+      editableRows.forEach(function (row) {
+        getDayInputs(row).forEach(function (input, index) {
+          const value = parseInt((input.value || '').trim(), 10);
+          if (Number.isFinite(value)) dayCounts[index] += value;
+        });
+        const rowTotal = parseFloat(rawMoney(row.querySelector('.proposal-commercial-total')?.value || ''));
+        if (Number.isFinite(rowTotal)) total += rowTotal;
+      });
+
+      return {
+        asset_day_counts: dayCounts.map(function (value) { return value > 0 ? String(value) : ''; }),
+        total_eur_without_vat: total > 0 ? fmtMoney(total.toFixed(2)) : '',
+      };
+    }
+
+    function findFixedRow(selector) {
+      return tbody.querySelector(selector);
+    }
+
+    function createReadOnlyDayValues() {
+      return Array.from({ length: Math.max(getAssetRows().length, 1) }, function () { return ''; });
+    }
+
+    function computeCommercialFinancialTotals() {
+      const summaryTotal = parseFloat(rawMoney(findFixedRow('tr[data-summary-row="1"]')?.querySelector('.proposal-commercial-total')?.value || ''));
+      const totalsState = parseTotalsPayload();
+      const exchangeRate = parseFloat(rawMoney(findFixedRow('tr[data-rub-total-row="1"]')?.querySelector('.proposal-commercial-rate')?.value || totalsState.exchange_rate || ''));
+      const discountPercent = parseProposalPercent(findFixedRow('tr[data-discounted-total-row="1"]')?.querySelector('.proposal-commercial-rate')?.value || totalsState.discount_percent || '');
+      const rubTotal = Number.isFinite(summaryTotal) && Number.isFinite(exchangeRate) ? summaryTotal * exchangeRate : null;
+      const discountedRubTotal = Number.isFinite(rubTotal)
+        ? (rubTotal - (rubTotal * ((discountPercent || 0) / 100)))
+        : null;
+      const autoContractTotal = Number.isFinite(discountedRubTotal)
+        ? roundProposalToHundredThousand(discountedRubTotal)
+        : '';
+
+      return {
+        exchange_rate: Number.isFinite(exchangeRate) ? rawMoney(exchangeRate) : totalsState.exchange_rate,
+        discount_percent: Number.isFinite(discountPercent) ? String(discountPercent) : totalsState.discount_percent,
+        rub_total: Number.isFinite(rubTotal) ? fmtMoney(rubTotal.toFixed(2)) : '',
+        discounted_rub_total: Number.isFinite(discountedRubTotal) ? fmtMoney(discountedRubTotal.toFixed(2)) : '',
+        auto_contract_total: autoContractTotal,
+        rub_total_service_text: String(findFixedRow('tr[data-rub-total-row="1"]')?.querySelector('.proposal-commercial-service-text')?.value || totalsState.rub_total_service_text || '').trim(),
+        discounted_total_service_text: String(findFixedRow('tr[data-discounted-total-row="1"]')?.querySelector('.proposal-commercial-service-text')?.value || totalsState.discounted_total_service_text || '').trim(),
+      };
+    }
+
+    function syncSummaryRowValues() {
+      const summaryRow = tbody.querySelector('tr[data-summary-row="1"]');
+      if (!summaryRow) return;
+      const summary = computeSummaryValues();
+      syncDayCells(summaryRow, getAssetRows(), summary.asset_day_counts, { readOnly: true });
+      const totalInput = summaryRow.querySelector('.proposal-commercial-total');
+      if (totalInput) totalInput.value = summary.total_eur_without_vat;
+    }
+
+    function syncServiceCostValue(valueRaw) {
+      if (!serviceCostInput || document.activeElement === serviceCostInput) return;
+      serviceCostInput.value = valueRaw ? fmtMoney(valueRaw) : '';
+    }
+
+    function syncCommercialFinancialRows() {
+      const totals = computeCommercialFinancialTotals();
+      const rubTotalRow = findFixedRow('tr[data-rub-total-row="1"]');
+      const discountedRow = findFixedRow('tr[data-discounted-total-row="1"]');
+      const contractRow = findFixedRow('tr[data-contract-total-row="1"]');
+      const currentState = parseTotalsPayload();
+
+      if (rubTotalRow) {
+        syncDayCells(rubTotalRow, getAssetRows(), createReadOnlyDayValues(), { readOnly: true });
+        const rateInput = rubTotalRow.querySelector('.proposal-commercial-rate');
+        if (rateInput && document.activeElement !== rateInput) rateInput.value = formatProposalExchangeRateDisplay(totals.exchange_rate);
+        const totalInput = rubTotalRow.querySelector('.proposal-commercial-total');
+        if (totalInput) totalInput.value = totals.rub_total;
+      }
+
+      if (discountedRow) {
+        syncDayCells(discountedRow, getAssetRows(), createReadOnlyDayValues(), { readOnly: true });
+        const rateInput = discountedRow.querySelector('.proposal-commercial-rate');
+        if (rateInput) rateInput.value = formatProposalPercentDisplay(totals.discount_percent);
+        const totalInput = discountedRow.querySelector('.proposal-commercial-total');
+        if (totalInput) totalInput.value = totals.discounted_rub_total;
+      }
+
+      let contractValueRaw = rawMoney(contractRow?.querySelector('.proposal-commercial-total')?.value || currentState.contract_total || '');
+      const previousAutoRaw = rawMoney(currentState.contract_total_auto || contractRow?.dataset?.autoValue || '');
+      const nextAutoRaw = rawMoney(totals.auto_contract_total || '');
+      const manualOverride = contractRow?.dataset?.manualContractOverride === '1';
+      const numericContractValue = parseFloat(contractValueRaw || '');
+      if (!manualOverride || !contractValueRaw || contractValueRaw === previousAutoRaw || (!Number.isNaN(numericContractValue) && numericContractValue === 0)) {
+        contractValueRaw = nextAutoRaw;
+      }
+
+      if (contractRow) {
+        syncDayCells(contractRow, getAssetRows(), createReadOnlyDayValues(), { readOnly: true });
+        const totalInput = contractRow.querySelector('.proposal-commercial-total');
+        if (totalInput) totalInput.value = contractValueRaw ? fmtMoney(contractValueRaw) : '';
+        contractRow.dataset.autoValue = nextAutoRaw;
+        contractRow.dataset.manualContractOverride = manualOverride && contractValueRaw && contractValueRaw !== nextAutoRaw ? '1' : '0';
+      }
+
+      syncServiceCostValue(contractValueRaw);
+
+      setTotalsPayload({
+        exchange_rate: totals.exchange_rate,
+        discount_percent: totals.discount_percent,
+        contract_total: contractValueRaw,
+        contract_total_auto: nextAutoRaw,
+        rub_total_service_text: totals.rub_total_service_text,
+        discounted_total_service_text: totals.discounted_total_service_text,
+      });
+    }
+
     function updatePayload(meta) {
-      const rows = getRows().map(serializeRow);
+      const rows = getRows().map(serializeRow).filter(Boolean);
+      syncSummaryRowValues();
+      syncCommercialFinancialRows();
       syncActions();
       if (servicesStore) {
         servicesStore.commitCommercialRows(rows, { ...(meta || {}), source: 'commercial-view' });
@@ -2325,16 +2607,247 @@
       return row;
     }
 
+    function createTravelExpensesRow(data) {
+      const row = document.createElement('tr');
+      row.dataset.travelExpensesRow = '1';
+      row.className = 'proposal-commercial-travel-row';
+
+      const labelTd = createProposalTableCell('proposal-commercial-travel-label-cell');
+      labelTd.colSpan = 5;
+      labelTd.textContent = PROPOSAL_TRAVEL_EXPENSES_LABEL;
+      row.appendChild(labelTd);
+
+      const rateTd = createProposalTableCell('proposal-commercial-rate-cell proposal-commercial-travel-rate-cell');
+      const rateInput = document.createElement('input');
+      rateInput.type = 'text';
+      rateInput.className = 'form-control proposal-commercial-rate proposal-commercial-travel-rate readonly-field';
+      rateInput.value = 'по факту';
+      rateInput.readOnly = true;
+      rateInput.tabIndex = -1;
+      rateTd.appendChild(rateInput);
+      row.appendChild(rateTd);
+
+      const totalTd = createProposalTableCell('proposal-commercial-total-cell proposal-commercial-total-value-cell');
+      const totalInput = document.createElement('input');
+      totalInput.type = 'text';
+      totalInput.className = 'form-control js-money-input proposal-commercial-total';
+      totalInput.inputMode = 'decimal';
+      totalInput.value = data.total_eur_without_vat ? fmtMoney(data.total_eur_without_vat) : '';
+      totalTd.appendChild(totalInput);
+      row.appendChild(totalTd);
+
+      syncDayCells(row, getAssetRows(), data.asset_day_counts || []);
+
+      totalInput.addEventListener('change', function () {
+        updatePayload({ reason: 'travel-expenses-edit' });
+      });
+      totalInput.addEventListener('input', function () {
+        updatePayload({ reason: 'travel-expenses-edit' });
+      });
+
+      attachMoneyInputs(row);
+      return row;
+    }
+
+    function createSummaryRow() {
+      const row = document.createElement('tr');
+      row.dataset.summaryRow = '1';
+      row.className = 'proposal-commercial-summary-row';
+
+      const labelTd = createProposalTableCell('proposal-commercial-summary-label-cell');
+      labelTd.colSpan = 5;
+      labelTd.textContent = PROPOSAL_SUMMARY_TOTAL_LABEL;
+      row.appendChild(labelTd);
+
+      const rateTd = createProposalTableCell('proposal-commercial-rate-cell proposal-commercial-summary-rate-cell');
+      const rateInput = document.createElement('input');
+      rateInput.type = 'text';
+      rateInput.className = 'form-control proposal-commercial-rate readonly-field';
+      rateInput.value = '';
+      rateInput.readOnly = true;
+      rateInput.tabIndex = -1;
+      rateTd.appendChild(rateInput);
+      row.appendChild(rateTd);
+
+      const totalTd = createProposalTableCell('proposal-commercial-total-cell proposal-commercial-total-value-cell');
+      const totalInput = document.createElement('input');
+      totalInput.type = 'text';
+      totalInput.className = 'form-control proposal-commercial-total readonly-field';
+      totalInput.readOnly = true;
+      totalInput.tabIndex = -1;
+      totalTd.appendChild(totalInput);
+      row.appendChild(totalTd);
+
+      syncDayCells(row, getAssetRows(), [], { readOnly: true });
+      return row;
+    }
+
+    function createFinancialTotalRow(config, state) {
+      const row = document.createElement('tr');
+      row.className = config.rowClass;
+      row.dataset[config.rowDataset] = '1';
+
+      const labelTd = createProposalTableCell('proposal-commercial-financial-label-cell');
+      labelTd.colSpan = config.serviceEditable ? 4 : 5;
+      labelTd.textContent = config.label;
+      row.appendChild(labelTd);
+
+      if (config.serviceEditable) {
+        const serviceTd = createProposalTableCell('proposal-commercial-financial-service-cell');
+        const serviceWrap = document.createElement('div');
+        serviceWrap.className = 'proposal-commercial-financial-service-wrap';
+        if (config.showCbrLink) {
+          const serviceLink = document.createElement('a');
+          serviceLink.className = 'proposal-commercial-service-link';
+          serviceLink.href = PROPOSAL_CBR_EUR_DAILY_URL;
+          serviceLink.target = '_blank';
+          serviceLink.rel = 'noreferrer noopener';
+          serviceLink.title = 'Открыть официальный курс евро Банка России';
+          serviceLink.setAttribute('aria-label', 'Открыть официальный курс евро Банка России');
+          serviceLink.innerHTML = '<i class="bi bi-globe2" aria-hidden="true"></i>';
+          serviceWrap.appendChild(serviceLink);
+        }
+        const serviceInput = document.createElement('input');
+        serviceInput.type = 'text';
+        serviceInput.className = 'form-control proposal-commercial-service-text';
+        serviceInput.value = config.serviceStateKey ? (state[config.serviceStateKey] || '') : '';
+        serviceInput.addEventListener('input', function () {
+          syncCommercialFinancialRows();
+        });
+        serviceInput.addEventListener('change', function () {
+          syncCommercialFinancialRows();
+        });
+        serviceWrap.appendChild(serviceInput);
+        serviceTd.appendChild(serviceWrap);
+        row.appendChild(serviceTd);
+      }
+
+      const rateTd = createProposalTableCell('proposal-commercial-rate-cell proposal-commercial-financial-rate-cell');
+      if (config.rateMode === 'money') {
+        const rateInput = document.createElement('input');
+        rateInput.type = 'text';
+        rateInput.className = 'form-control js-money-input proposal-commercial-rate';
+        rateInput.dataset.moneyPrecision = '4';
+        rateInput.inputMode = 'decimal';
+        rateInput.value = state.exchange_rate ? formatProposalExchangeRateDisplay(state.exchange_rate) : '';
+        rateInput.addEventListener('input', function () {
+          syncCommercialFinancialRows();
+        });
+        rateInput.addEventListener('change', function () {
+          syncCommercialFinancialRows();
+        });
+        rateTd.appendChild(rateInput);
+      } else if (config.rateMode === 'percent') {
+        const rateInput = document.createElement('input');
+        rateInput.type = 'text';
+        rateInput.className = 'form-control proposal-commercial-rate proposal-commercial-discount-rate';
+        rateInput.inputMode = 'decimal';
+        rateInput.value = formatProposalPercentDisplay(state.discount_percent);
+        rateInput.addEventListener('focus', function () {
+          rateInput.value = String(rateInput.value || '').replace('%', '').trim();
+        });
+        rateInput.addEventListener('input', function () {
+          syncCommercialFinancialRows();
+        });
+        rateInput.addEventListener('change', function () {
+          syncCommercialFinancialRows();
+        });
+        rateInput.addEventListener('blur', function () {
+          rateInput.value = formatProposalPercentDisplay(rateInput.value);
+          syncCommercialFinancialRows();
+        });
+        rateTd.appendChild(rateInput);
+      } else {
+        const rateInput = document.createElement('input');
+        rateInput.type = 'text';
+        rateInput.className = 'form-control proposal-commercial-rate readonly-field';
+        rateInput.readOnly = true;
+        rateInput.tabIndex = -1;
+        rateTd.appendChild(rateInput);
+      }
+      row.appendChild(rateTd);
+
+      const totalTd = createProposalTableCell('proposal-commercial-total-cell proposal-commercial-total-value-cell');
+      const totalInput = document.createElement('input');
+      totalInput.type = 'text';
+      totalInput.className = 'form-control proposal-commercial-total' + (config.totalEditable ? ' js-money-input' : ' readonly-field');
+      totalInput.inputMode = 'decimal';
+      if (config.totalEditable) {
+        totalInput.value = state.contract_total ? fmtMoney(state.contract_total) : '';
+        row.dataset.manualContractOverride = (
+          state.contract_total
+          && state.contract_total !== state.contract_total_auto
+          && parseFloat(rawMoney(state.contract_total || '')) !== 0
+        ) ? '1' : '0';
+        totalInput.addEventListener('input', function () {
+          row.dataset.manualContractOverride = rawMoney(totalInput.value || '') ? '1' : '0';
+          syncCommercialFinancialRows();
+        });
+        totalInput.addEventListener('change', function () {
+          row.dataset.manualContractOverride = rawMoney(totalInput.value || '') ? '1' : '0';
+          syncCommercialFinancialRows();
+        });
+      } else {
+        totalInput.readOnly = true;
+        totalInput.tabIndex = -1;
+      }
+      totalTd.appendChild(totalInput);
+      row.appendChild(totalTd);
+
+      syncDayCells(row, getAssetRows(), createReadOnlyDayValues(), { readOnly: true });
+      attachMoneyInputs(row);
+      return row;
+    }
+
     function renderRows(dataRows) {
       tbody.innerHTML = '';
-      (dataRows || []).forEach(function (item) {
+      const rowsList = Array.isArray(dataRows) ? dataRows : [];
+      const regularRows = rowsList.filter(function (item) {
+        return !isProposalTravelExpensesRow(item);
+      });
+      const travelRow = normalizeProposalTravelExpensesRow(
+        rowsList.find(isProposalTravelExpensesRow) || {}
+      );
+      const totalsState = parseTotalsPayload();
+      regularRows.forEach(function (item) {
         tbody.appendChild(createRow(item || {}));
       });
+      tbody.appendChild(createTravelExpensesRow(travelRow));
+      tbody.appendChild(createSummaryRow());
+      tbody.appendChild(createFinancialTotalRow({
+        label: PROPOSAL_RUB_TOTAL_LABEL,
+        rowClass: 'proposal-commercial-financial-row proposal-commercial-financial-row--first',
+        rowDataset: 'rubTotalRow',
+        rateMode: 'money',
+        totalEditable: false,
+        serviceEditable: true,
+        serviceStateKey: 'rub_total_service_text',
+        showCbrLink: true,
+      }, totalsState));
+      tbody.appendChild(createFinancialTotalRow({
+        label: PROPOSAL_RUB_DISCOUNTED_LABEL,
+        rowClass: 'proposal-commercial-financial-row',
+        rowDataset: 'discountedTotalRow',
+        rateMode: 'percent',
+        totalEditable: false,
+        serviceEditable: true,
+        serviceStateKey: 'discounted_total_service_text',
+      }, totalsState));
+      tbody.appendChild(createFinancialTotalRow({
+        label: PROPOSAL_CONTRACT_TOTAL_LABEL,
+        rowClass: 'proposal-commercial-financial-row',
+        rowDataset: 'contractTotalRow',
+        rateMode: 'readonly',
+        totalEditable: true,
+        serviceEditable: false,
+      }, totalsState));
+      syncSummaryRowValues();
+      syncCommercialFinancialRows();
       syncActions();
     }
 
     function moveSelected(direction) {
-      const rows = getRows();
+      const rows = getEditableRows();
       if (direction === 'up') {
         for (let i = 1; i < rows.length; i += 1) {
           if (rows[i].querySelector('.proposal-commercial-check:checked') && !rows[i - 1].querySelector('.proposal-commercial-check:checked')) {
@@ -2360,8 +2873,13 @@
 
     addBtn.addEventListener('click', function () {
       const row = createRow({});
-      tbody.appendChild(row);
-      updatePayload({ reason: 'row-add', rowIndex: getRows().length - 1 });
+      const firstFixedRow = getRows().find(function (item) { return isFixedRow(item); });
+      if (firstFixedRow) {
+        tbody.insertBefore(row, firstFixedRow);
+      } else {
+        tbody.appendChild(row);
+      }
+      updatePayload({ reason: 'row-add', rowIndex: getEditableRows().length - 1 });
       row.querySelector('.proposal-commercial-specialist')?.focus();
     });
 
@@ -2387,7 +2905,11 @@
           );
           return;
         }
-        syncDayCells(row, rows);
+        if (isSummaryRow(row)) {
+          syncSummaryRowValues();
+          return;
+        }
+        syncDayCells(row, rows, undefined, { readOnly: isFixedRow(row) && !isTravelRow(row) });
       });
       updatePayload({ reason: 'sync-asset-columns' });
     });
@@ -2402,7 +2924,7 @@
 
     const api = {
       getSerializedRows: function () {
-        return servicesStore ? servicesStore.getRows() : getRows().map(serializeRow);
+        return servicesStore ? servicesStore.getRows() : getRows().map(serializeRow).filter(Boolean);
       },
       replaceRows: function (rowsData, meta) {
         if (servicesStore) {
@@ -3068,9 +3590,7 @@
 
     function saveModal() {
       persistDraftState();
-      if (getMode() === 'sections') {
-        textarea.value = composeTextareaValue(draftState);
-      }
+      textarea.value = composeTextareaValue(draftState);
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
       textarea.dispatchEvent(new Event('change', { bubbles: true }));
       closeModal();

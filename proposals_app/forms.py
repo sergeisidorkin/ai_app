@@ -26,6 +26,7 @@ from .models import (
     ProposalTemplate,
     ProposalVariable,
 )
+from .cbr import get_cbr_eur_rate_for_today
 
 DATE_INPUT_ATTRS = {"class": "js-date", "autocomplete": "off"}
 DATE_INPUT_FORMATS = ["%Y-%m-%d", "%d.%m.%Y", "%d.%m.%y"]
@@ -341,6 +342,10 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         required=False,
         widget=forms.HiddenInput(attrs={"id": "proposal-commercial-offer-payload"}),
     )
+    commercial_totals_payload = forms.CharField(
+        required=False,
+        widget=forms.HiddenInput(attrs={"id": "proposal-commercial-totals-payload"}),
+    )
     service_sections_payload = forms.CharField(
         required=False,
         widget=forms.HiddenInput(attrs={"id": "proposal-service-sections-payload"}),
@@ -383,6 +388,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             "type",
             "name",
             "kind",
+            "status",
             "year",
             "customer",
             "country",
@@ -558,6 +564,33 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             )
         elif not self.instance.pk and "commercial_offer_payload" not in self.data:
             self.fields["commercial_offer_payload"].initial = "[]"
+        if self.instance and self.instance.pk and "commercial_totals_payload" not in self.data:
+            totals_payload = {
+                "discount_percent": "5",
+                "rub_total_service_text": "Курс евро Банка России на текущую дату:",
+                "discounted_total_service_text": "Размер скидки:",
+                **dict(self.instance.commercial_totals_json or {}),
+            }
+            eur_rate = get_cbr_eur_rate_for_today()
+            if eur_rate is not None:
+                totals_payload["exchange_rate"] = format(eur_rate.quantize(Decimal("0.0001")), "f")
+            self.fields["commercial_totals_payload"].initial = json.dumps(
+                totals_payload,
+                ensure_ascii=False,
+            )
+        elif "commercial_totals_payload" not in self.data:
+            totals_payload = {
+                "discount_percent": "5",
+                "rub_total_service_text": "Курс евро Банка России на текущую дату:",
+                "discounted_total_service_text": "Размер скидки:",
+            }
+            eur_rate = get_cbr_eur_rate_for_today()
+            if eur_rate is not None:
+                totals_payload["exchange_rate"] = format(eur_rate.quantize(Decimal("0.0001")), "f")
+            self.fields["commercial_totals_payload"].initial = json.dumps(
+                totals_payload,
+                ensure_ascii=False,
+            )
         if self.instance and self.instance.pk and "service_sections_payload" not in self.data:
             self.fields["service_sections_payload"].initial = json.dumps(
                 [
@@ -678,6 +711,9 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         else:
             cleaned["asset_owner_identifier"] = asset_owner_identifier
 
+        if cleaned.get("service_composition_mode") == "customer_tz":
+            cleaned["service_composition"] = cleaned.get("service_composition_customer_tz") or ""
+
         return cleaned
 
     def save(self, commit=True):
@@ -689,6 +725,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             }
             for item in getattr(self, "cleaned_service_sections", [])
         ]
+        instance.commercial_totals_json = getattr(self, "cleaned_commercial_totals", {})
         if commit:
             instance.save()
         return instance
@@ -941,6 +978,50 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             ],
             ensure_ascii=False,
         )
+
+    def clean_commercial_totals_payload(self):
+        raw = (self.cleaned_data.get("commercial_totals_payload") or "").strip()
+        if not raw:
+            self.cleaned_commercial_totals = {}
+            return "{}"
+
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raise forms.ValidationError("Некорректные данные по итогам коммерческого предложения.")
+
+        if not isinstance(payload, dict):
+            raise forms.ValidationError("Некорректный формат данных по итогам коммерческого предложения.")
+
+        exchange_rate = self._parse_payload_decimal(
+            str(payload.get("exchange_rate") or "").strip(),
+            "Поле «ИТОГО, рубли без НДС» заполнено некорректно.",
+        )
+        discount_percent = self._parse_payload_decimal(
+            str(payload.get("discount_percent") or "").replace("%", "").strip(),
+            "Поле «ИТОГО, рубли без НДС с учетом скидки» заполнено некорректно.",
+        )
+        contract_total = self._parse_payload_decimal(
+            str(payload.get("contract_total") or "").strip(),
+            "Поле «ИТОГО в договор, рубли без НДС с учётом дополнительной скидки» заполнено некорректно.",
+        )
+        contract_total_auto = self._parse_payload_decimal(
+            str(payload.get("contract_total_auto") or "").strip(),
+            "Расчётное значение итога по договору заполнено некорректно.",
+        )
+
+        if discount_percent is not None and (discount_percent < 0 or discount_percent > 100):
+            raise forms.ValidationError("Скидка должна быть в диапазоне от 0% до 100%.")
+
+        self.cleaned_commercial_totals = {
+            "exchange_rate": str(exchange_rate or ""),
+            "discount_percent": str(discount_percent or ""),
+            "contract_total": str(contract_total or ""),
+            "contract_total_auto": str(contract_total_auto or ""),
+            "rub_total_service_text": str(payload.get("rub_total_service_text") or "").strip(),
+            "discounted_total_service_text": str(payload.get("discounted_total_service_text") or "").strip(),
+        }
+        return json.dumps(self.cleaned_commercial_totals, ensure_ascii=False)
 
     def _clean_related_payload(self, raw, *, item_label, require_asset_short_name=False):
         raw = (raw or "").strip()

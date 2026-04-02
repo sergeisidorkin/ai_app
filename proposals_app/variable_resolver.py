@@ -36,6 +36,10 @@ def _proposal_kind(proposal) -> str:
     return proposal.get_kind_display() or ""
 
 
+def _proposal_status(proposal) -> str:
+    return proposal.get_status_display() or ""
+
+
 def _proposal_year(proposal) -> str:
     return str(proposal.year or "")
 
@@ -202,6 +206,7 @@ FIELD_MAP = {
     ("proposals", "registry", "type"): _proposal_type,
     ("proposals", "registry", "name"): _proposal_name,
     ("proposals", "registry", "kind"): _proposal_kind,
+    ("proposals", "registry", "status"): _proposal_status,
     ("proposals", "registry", "year"): _proposal_year,
     ("proposals", "registry", "customer"): _proposal_customer,
     ("proposals", "registry", "country"): _proposal_country,

@@ -96,6 +96,35 @@ class ServiceGoalReportViewsTests(TestCase):
         self.assertEqual(first.position, 2)
         self.assertEqual(second.position, 1)
 
+    def test_non_staff_user_cannot_reorder_service_goal_reports(self):
+        first = ServiceGoalReport.objects.create(
+            product=self.product,
+            service_goal="Первая цель",
+            report_title="Первый отчет",
+            position=1,
+        )
+        second = ServiceGoalReport.objects.create(
+            product=self.product,
+            service_goal="Вторая цель",
+            report_title="Второй отчет",
+            position=2,
+        )
+        non_staff = get_user_model().objects.create_user(
+            username="policy-user",
+            password="secret123",
+            is_staff=False,
+        )
+        client = self.client_class()
+        client.force_login(non_staff)
+
+        response = client.post(reverse("service_goal_report_move_up", args=[second.pk]))
+
+        self.assertEqual(response.status_code, 302)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.position, 1)
+        self.assertEqual(second.position, 2)
+
 
 class TypicalServiceCompositionViewsTests(TestCase):
     def setUp(self):
@@ -192,6 +221,35 @@ class TypicalServiceCompositionViewsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Раздел должен относиться к выбранному продукту.")
         self.assertFalse(TypicalServiceComposition.objects.exists())
+
+    def test_non_staff_user_cannot_reorder_typical_service_compositions(self):
+        first = TypicalServiceComposition.objects.create(
+            product=self.product,
+            section=self.section,
+            service_composition="Этап 1",
+            position=1,
+        )
+        second = TypicalServiceComposition.objects.create(
+            product=self.product,
+            section=self.section,
+            service_composition="Этап 2",
+            position=2,
+        )
+        non_staff = get_user_model().objects.create_user(
+            username="policy-user-2",
+            password="secret123",
+            is_staff=False,
+        )
+        client = self.client_class()
+        client.force_login(non_staff)
+
+        response = client.post(reverse("typical_service_composition_move_down", args=[first.pk]))
+
+        self.assertEqual(response.status_code, 302)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.position, 1)
+        self.assertEqual(second.position, 2)
 
 
 class SpecialtyTariffViewsTests(TestCase):

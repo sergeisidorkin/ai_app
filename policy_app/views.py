@@ -678,6 +678,7 @@ def _normalize_service_goal_report_positions():
 
 @require_http_methods(["POST", "GET"])
 @login_required
+@user_passes_test(staff_required)
 def service_goal_report_move_up(request, pk: int):
     _normalize_service_goal_report_positions()
     items = list(
@@ -698,6 +699,7 @@ def service_goal_report_move_up(request, pk: int):
 
 @require_http_methods(["POST", "GET"])
 @login_required
+@user_passes_test(staff_required)
 def service_goal_report_move_down(request, pk: int):
     _normalize_service_goal_report_positions()
     items = list(
@@ -784,6 +786,7 @@ def _normalize_typical_service_composition_positions():
 
 @require_http_methods(["POST", "GET"])
 @login_required
+@user_passes_test(staff_required)
 def typical_service_composition_move_up(request, pk: int):
     _normalize_typical_service_composition_positions()
     items = list(
@@ -802,6 +805,7 @@ def typical_service_composition_move_up(request, pk: int):
 
 @require_http_methods(["POST", "GET"])
 @login_required
+@user_passes_test(staff_required)
 def typical_service_composition_move_down(request, pk: int):
     _normalize_typical_service_composition_positions()
     items = list(
