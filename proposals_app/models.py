@@ -81,7 +81,9 @@ class ProposalRegistration(models.Model):
         blank=True,
     )
     asset_owner_identifier = models.CharField("Идентификатор владельца активов", max_length=64, blank=True, default="")
-    asset_owner_registration_number = models.CharField("Регистрационный номер владельца активов", max_length=100, blank=True)
+    asset_owner_registration_number = models.CharField(
+        "Регистрационный номер владельца активов", max_length=100, blank=True, default=""
+    )
     asset_owner_registration_date = models.DateField("Дата регистрации владельца активов", null=True, blank=True)
     proposal_project_name = models.TextField("Наименование ТКП (проекта)", blank=True, default="")
     service_sections_json = models.JSONField("Состав услуг: разделы", default=list, blank=True)

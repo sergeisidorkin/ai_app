@@ -10,11 +10,13 @@ class YandexDiskAppConfig(AppConfig):
     verbose_name = "Яндекс.Диск"
 
     def ready(self):
-        # Avoid double-start in dev (runserver spawns two processes).
-        # RUN_MAIN is set by Django's reloader in the child process.
+        # Start background sync only for long-running server processes.
+        # This avoids DB access during management commands like check/migrate.
         if any("pytest" in arg for arg in sys.argv):
             return
         if os.environ.get("DISABLE_YADISK_BACKGROUND_SYNC") == "1":
+            return
+        if len(sys.argv) > 1 and sys.argv[1] != "runserver":
             return
 
         is_reloader_main = os.environ.get("RUN_MAIN") == "true"
