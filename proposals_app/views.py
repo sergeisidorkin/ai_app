@@ -131,20 +131,28 @@ def _attach_proposal_folder_urls(proposals, user=None):
         share_map = client.list_user_shares(client.username, link.nextcloud_user_id)
     except NextcloudApiError as exc:
         logger.warning("Could not resolve Nextcloud share targets for proposals table: %s", exc)
-        return
+        share_map = {}
 
     resolved_cache = dict(folder_cache)
     for path in list(resolved_cache.keys()):
         share = share_map.get(path)
+        if share is None:
+            try:
+                share = client.get_user_share(client.username, path, link.nextcloud_user_id)
+            except NextcloudApiError as exc:
+                logger.warning(
+                    "Could not resolve Nextcloud share target for proposal path %s: %s",
+                    path,
+                    exc,
+                )
+                share = None
         if share and share.target_path:
             resolved_cache[path] = client.build_files_url(share.target_path)
 
     for proposal in proposals:
         path = getattr(proposal, "proposal_workspace_disk_path", "") or ""
-        if path:
-            share = share_map.get(path)
-            if share and share.target_path:
-                proposal.proposal_workspace_folder_url = resolved_cache.get(path, "")
+        if path and resolved_cache.get(path) != folder_cache.get(path):
+            proposal.proposal_workspace_folder_url = resolved_cache.get(path, "")
 
 
 def _proposals_context(user=None):
@@ -242,7 +250,7 @@ def _render_proposal_form(request, *, form, action, proposal=None):
         specialist_name = _employee_short_name(profile.employee)
         if not specialist_name:
             continue
-        candidate_status = str(profile.professional_status or "").strip()
+        candidate_status = str(profile.professional_status_short or "").strip()
         for link in profile.ranked_specialties.all():
             specialty_name = str(getattr(link.specialty, "specialty", "") or "").strip()
             if not specialty_name:
@@ -407,7 +415,7 @@ def _render_proposal_form(request, *, form, action, proposal=None):
                 if head_name:
                     default_specialist = head_name
                     default_professional_status = str(
-                        getattr(head_profile, "professional_status", "") or ""
+                        getattr(head_profile, "professional_status_short", "") or ""
                     ).strip()
                     default_base_rate_share = int(
                         getattr(getattr(head_profile, "grade", None), "base_rate_share", 0) or 0

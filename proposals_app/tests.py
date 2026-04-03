@@ -307,6 +307,11 @@ class ProposalRegistrationFormTests(TestCase):
 
         self.assertTrue(form.fields["year"].required)
 
+    def test_form_requires_name(self):
+        form = ProposalRegistrationForm()
+
+        self.assertTrue(form.fields["name"].required)
+
     def test_form_uses_russian_required_error_for_required_fields(self):
         form = ProposalRegistrationForm(data={})
 
@@ -1185,7 +1190,8 @@ class ProposalFormContextTests(TestCase):
         )
         profile_low = ExpertProfile.objects.create(
             employee=employee_low,
-            professional_status="ACCA",
+            professional_status="Association of Chartered Certified Accountants",
+            professional_status_short="ACCA",
             grade=grade_low,
             position=1,
         )
@@ -1198,7 +1204,8 @@ class ProposalFormContextTests(TestCase):
         )
         profile_high = ExpertProfile.objects.create(
             employee=employee_high,
-            professional_status="CFA",
+            professional_status="Chartered Financial Analyst",
+            professional_status_short="CFA",
             grade=grade_high,
             position=2,
         )
@@ -1211,7 +1218,8 @@ class ProposalFormContextTests(TestCase):
         )
         profile_other_rank = ExpertProfile.objects.create(
             employee=employee_other_rank,
-            professional_status="FRM",
+            professional_status="Financial Risk Manager",
+            professional_status_short="FRM",
             grade=grade_top_other_rank,
             position=3,
         )
@@ -1355,7 +1363,8 @@ class ProposalFormContextTests(TestCase):
         )
         profile_candidate = ExpertProfile.objects.create(
             employee=employee_candidate,
-            professional_status="ASA",
+            professional_status="Accredited Senior Appraiser",
+            professional_status_short="ASA",
             position=4,
         )
         ExpertProfileSpecialty.objects.create(profile=profile_candidate, specialty=specialty, rank=1)
@@ -1369,7 +1378,8 @@ class ProposalFormContextTests(TestCase):
         )
         ExpertProfile.objects.create(
             employee=employee_head,
-            professional_status="CPA",
+            professional_status="Certified Public Accountant",
+            professional_status_short="CPA",
             position=5,
         )
 
@@ -1688,6 +1698,30 @@ class ProposalDispatchDiskColumnTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, ">Облако<", html=False)
         self.assertContains(response, 'title="Открыть папку на Nextcloud"', html=False)
+        self.assertContains(
+            response,
+            "/apps/files/files?dir=/Shared/333300RU%20DD%20%D0%A2%D0%B5%D1%81%D1%82%D0%BE%D0%B2%D0%BE%D0%B5%20%D0%A2%D0%9A%D0%9F",
+            html=False,
+        )
+
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share")
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_proposals_partial_falls_back_to_direct_share_lookup_for_new_workspace(
+        self,
+        _mocked_list_user_shares,
+        mocked_get_user_share,
+    ):
+        mocked_get_user_share.return_value = NextcloudShare(
+            share_id="78",
+            path=self.proposal.proposal_workspace_disk_path,
+            share_with=self.user_link.nextcloud_user_id,
+            permissions=15,
+            target_path="/Shared/333300RU DD Тестовое ТКП",
+        )
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
         self.assertContains(
             response,
             "/apps/files/files?dir=/Shared/333300RU%20DD%20%D0%A2%D0%B5%D1%81%D1%82%D0%BE%D0%B2%D0%BE%D0%B5%20%D0%A2%D0%9A%D0%9F",
