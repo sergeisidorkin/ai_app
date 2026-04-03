@@ -30,6 +30,42 @@ from .cbr import get_cbr_eur_rate_for_today
 
 DATE_INPUT_ATTRS = {"class": "js-date", "autocomplete": "off"}
 DATE_INPUT_FORMATS = ["%Y-%m-%d", "%d.%m.%Y", "%d.%m.%y"]
+PROPOSAL_REPORT_LANGUAGE_LABELS = ("русский", "английский", "казахский", "китайский")
+PROPOSAL_REPORT_LANGUAGE_ALIASES = {
+    "ru": "русский",
+    "russian": "русский",
+    "русский": "русский",
+    "en": "английский",
+    "english": "английский",
+    "английский": "английский",
+    "kz": "казахский",
+    "kk": "казахский",
+    "kazakh": "казахский",
+    "казахский": "казахский",
+    "zh": "китайский",
+    "cn": "китайский",
+    "chinese": "китайский",
+    "китайский": "китайский",
+}
+
+
+def normalize_proposal_report_languages(value) -> list[str]:
+    if value in (None, ""):
+        return ["русский"]
+    if isinstance(value, (list, tuple)):
+        raw_values = [str(item or "").strip() for item in value]
+    else:
+        raw_values = [
+            item.strip()
+            for item in str(value).replace(";", ",").replace("\n", ",").split(",")
+        ]
+    seen = set()
+    for raw in raw_values:
+        label = PROPOSAL_REPORT_LANGUAGE_ALIASES.get(raw.strip().lower())
+        if label:
+            seen.add(label)
+    normalized = [label for label in PROPOSAL_REPORT_LANGUAGE_LABELS if label in seen]
+    return normalized or ["русский"]
 
 
 class BootstrapMixin:
@@ -256,7 +292,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
     report_languages = forms.CharField(
         label="Языки отчёта",
         required=False,
-        widget=forms.TextInput(),
+        widget=forms.HiddenInput(attrs={"id": "proposal-report-languages"}),
     )
     service_cost = forms.DecimalField(
         label="Стоимость услуг",
@@ -275,30 +311,34 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
     advance_percent = forms.DecimalField(
         label="Размер предоплаты в процентах",
         required=False,
+        initial=40,
         min_value=0,
         max_value=100,
         max_digits=5,
         decimal_places=2,
-        widget=forms.NumberInput(attrs={"min": 0, "max": 100, "step": "0.01"}),
+        widget=forms.NumberInput(attrs={"min": 0, "max": 100, "step": "1"}),
     )
     advance_term_days = forms.IntegerField(
         label="Срок предоплаты в календарных днях",
         required=False,
+        initial=10,
         min_value=0,
         widget=forms.NumberInput(attrs={"min": 0, "step": 1}),
     )
     preliminary_report_percent = forms.DecimalField(
         label="Размер оплаты Предварительного отчёта в процентах",
         required=False,
+        initial=40,
         min_value=0,
         max_value=100,
         max_digits=5,
         decimal_places=2,
-        widget=forms.NumberInput(attrs={"min": 0, "max": 100, "step": "0.01"}),
+        widget=forms.NumberInput(attrs={"min": 0, "max": 100, "step": "1"}),
     )
     preliminary_report_term_days = forms.IntegerField(
         label="Срок оплаты Предварительного отчёта в календарных днях",
         required=False,
+        initial=7,
         min_value=0,
         widget=forms.NumberInput(attrs={"min": 0, "step": 1}),
     )
@@ -323,6 +363,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
     final_report_term_days = forms.IntegerField(
         label="Срок оплаты Итогового отчёта в календарных днях",
         required=False,
+        initial=15,
         min_value=0,
         widget=forms.NumberInput(attrs={"min": 0, "step": 1}),
     )
@@ -428,6 +469,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        getlist = self.data.getlist if hasattr(self.data, "getlist") else lambda key: []
         if self.data:
             data = self.data.copy()
             for field_name in self._decimal_text_fields:
@@ -468,6 +510,14 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         self.fields["final_report_percent"].disabled = True
         self.fields["final_report_percent"].widget.attrs["readonly"] = True
         self.fields["final_report_percent"].widget.attrs["tabindex"] = "-1"
+        selected_report_languages = normalize_proposal_report_languages(
+            getlist("report_language_choices")
+            or self.data.get("report_languages")
+            or self.initial.get("report_languages", getattr(self.instance, "report_languages", ""))
+        )
+        self.selected_report_languages = selected_report_languages
+        if not self.data:
+            self.initial["report_languages"] = ", ".join(selected_report_languages)
 
         if self.instance and self.instance.pk and self.instance.identifier:
             self.fields["identifier"].initial = self.instance.identifier
@@ -572,7 +622,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 **dict(self.instance.commercial_totals_json or {}),
             }
             eur_rate = get_cbr_eur_rate_for_today()
-            if eur_rate is not None:
+            if eur_rate is not None and not str(totals_payload.get("exchange_rate") or "").strip():
                 totals_payload["exchange_rate"] = format(eur_rate.quantize(Decimal("0.0001")), "f")
             self.fields["commercial_totals_payload"].initial = json.dumps(
                 totals_payload,
@@ -1014,14 +1064,32 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             raise forms.ValidationError("Скидка должна быть в диапазоне от 0% до 100%.")
 
         self.cleaned_commercial_totals = {
-            "exchange_rate": str(exchange_rate or ""),
-            "discount_percent": str(discount_percent or ""),
-            "contract_total": str(contract_total or ""),
-            "contract_total_auto": str(contract_total_auto or ""),
+            "exchange_rate": self._serialize_payload_decimal(exchange_rate),
+            "discount_percent": self._serialize_payload_decimal(discount_percent),
+            "contract_total": self._serialize_payload_decimal(contract_total),
+            "contract_total_auto": self._serialize_payload_decimal(contract_total_auto),
             "rub_total_service_text": str(payload.get("rub_total_service_text") or "").strip(),
             "discounted_total_service_text": str(payload.get("discounted_total_service_text") or "").strip(),
         }
         return json.dumps(self.cleaned_commercial_totals, ensure_ascii=False)
+
+    def clean_report_languages(self):
+        has_choice_values = False
+        selected_choices = []
+        if hasattr(self.data, "getlist"):
+            has_choice_values = "report_language_choices" in self.data
+            if has_choice_values:
+                selected_choices = normalize_proposal_report_languages(self.data.getlist("report_language_choices"))
+        elif isinstance(self.data, dict) and "report_language_choices" in self.data:
+            has_choice_values = True
+            raw_value = self.data.get("report_language_choices")
+            if isinstance(raw_value, (list, tuple)):
+                selected_choices = normalize_proposal_report_languages(list(raw_value))
+            else:
+                selected_choices = normalize_proposal_report_languages(raw_value)
+        if has_choice_values:
+            return ", ".join(selected_choices)
+        return ", ".join(normalize_proposal_report_languages(self.cleaned_data.get("report_languages")))
 
     def _clean_related_payload(self, raw, *, item_label, require_asset_short_name=False):
         raw = (raw or "").strip()
@@ -1135,6 +1203,11 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         if parsed < 0:
             raise forms.ValidationError(error_message)
         return parsed
+
+    def _serialize_payload_decimal(self, value):
+        if value is None:
+            return ""
+        return str(value)
 
     def save_assets(self, proposal, user=None):
         assets = getattr(self, "cleaned_assets", [])

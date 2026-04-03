@@ -200,7 +200,7 @@
             <td data-col="term">{{ proposal.service_term_months|floatformat:"1" }}</td>
             <td data-col="preliminary-report-date">{{ proposal.preliminary_report_date|date:"d.m.Y" }}</td>
             <td data-col="final-report-date">{{ proposal.final_report_date|date:"d.m.Y" }}</td>
-            <td data-col="report-languages">{{ proposal.report_languages }}</td>
+            <td data-col="report-languages" class="text-nowrap">{{ proposal.report_languages }}</td>
             <td data-col="service-cost" class="text-end">{{ proposal.service_cost|format_money }}</td>
             <td data-col="currency">{{ proposal.currency.code_alpha|default:"" }}</td>
             <td data-col="advance-percent">{% if proposal.advance_percent != None %}{{ proposal.advance_percent|floatformat:"-2" }}%{% endif %}</td>

@@ -117,6 +117,10 @@
     panel.classList.toggle('d-none', !anyChecked);
   }
 
+  function rememberPolicyScrollPosition() {
+    window.__policyScrollRestoreY = window.scrollY || window.pageYOffset || 0;
+  }
+
   // Делегирование: клики по кнопкам панелей
   document.addEventListener('click', async (e) => {
     const root = pane();
@@ -141,6 +145,7 @@
     }
     const btn = e.target.closest('button[data-panel-action]');
     if (!btn || !root.contains(btn)) return;
+    e.preventDefault();
     const panel = btn.closest('div[id$="-actions"]');
     if (!panel) return;
     const action = btn.dataset.panelAction; // "up" | "down" | "edit" | "delete"
@@ -167,6 +172,8 @@
 
     if (action === 'delete') {
       if (!confirm(`Удалить ${checked.length} строк(у/и)?`)) return;
+      btn.blur();
+      rememberPolicyScrollPosition();
       const urls = checked.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
       for (let i = 0; i < urls.length; i++) {
         const isLast = i === urls.length - 1;
@@ -180,6 +187,8 @@
     }
 
     if (action === 'up' || action === 'down') {
+      btn.blur();
+      rememberPolicyScrollPosition();
       let urls = checked
         .map(ch => ch.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'])
         .filter(Boolean);
@@ -294,6 +303,13 @@
   // Восстановление выбора только для таблицы, где было действие
   document.body.addEventListener('htmx:afterSettle', function (e) {
     if (!(e.target && e.target.id === 'policy-pane')) return;
+    const restoreY = window.__policyScrollRestoreY;
+    if (typeof restoreY === 'number') {
+      requestAnimationFrame(function () {
+        window.scrollTo(0, restoreY);
+      });
+      window.__policyScrollRestoreY = null;
+    }
     initTypicalServiceCompositionWrapToggle();
     collapseSpecialtyTariffsSpecialties();
     const last = window.__tableSelLast;

@@ -223,6 +223,77 @@
     sync();
   }
 
+  function attachReportLanguagesDropdown(root) {
+    if (!root) return;
+    const hiddenInput = root.querySelector('#proposal-report-languages');
+    const dropdown = root.querySelector('#proposal-report-languages-dropdown');
+    if (!hiddenInput || !dropdown || dropdown.dataset.bound === '1') return;
+    dropdown.dataset.bound = '1';
+    const label = dropdown.querySelector('.js-proposal-report-languages-label');
+    const checkboxes = Array.from(dropdown.querySelectorAll('.js-proposal-report-language'));
+
+    function parseLanguages(value) {
+      const aliasMap = {
+        ru: 'русский',
+        russian: 'русский',
+        русский: 'русский',
+        en: 'английский',
+        english: 'английский',
+        английский: 'английский',
+        kz: 'казахский',
+        kk: 'казахский',
+        kazakh: 'казахский',
+        казахский: 'казахский',
+        zh: 'китайский',
+        cn: 'китайский',
+        chinese: 'китайский',
+        китайский: 'китайский',
+      };
+      const order = ['русский', 'английский', 'казахский', 'китайский'];
+      const selectedSet = new Set();
+      String(value || '').replace(/;/g, ',').split(',').forEach(function (item) {
+        const normalized = aliasMap[String(item || '').trim().toLowerCase()];
+        if (normalized) selectedSet.add(normalized);
+      });
+      return order.filter(function (item) { return selectedSet.has(item); });
+    }
+
+    function updateLabel(selected) {
+      if (!label) return;
+      if (!selected.length) {
+        label.textContent = 'русский';
+      } else {
+        label.textContent = selected.join(', ');
+      }
+    }
+
+    function syncFromHidden() {
+      let selected = parseLanguages(hiddenInput.value);
+      if (!selected.length) {
+        selected = ['русский'];
+        hiddenInput.value = selected.join(', ');
+      }
+      const selectedSet = new Set(selected);
+      checkboxes.forEach(function (checkbox) {
+        checkbox.checked = selectedSet.has(checkbox.value);
+      });
+      updateLabel(selected);
+    }
+
+    function syncHidden() {
+      const selected = checkboxes
+        .filter(function (checkbox) { return checkbox.checked; })
+        .map(function (checkbox) { return checkbox.value; });
+      hiddenInput.value = selected.join(', ');
+      updateLabel(selected);
+    }
+
+    checkboxes.forEach(function (checkbox) {
+      checkbox.addEventListener('change', syncHidden);
+    });
+    syncFromHidden();
+  }
+
   function attachCountryIdentifierSync(root) {
     if (!root) return;
     const form = root.closest('form[data-proposal-form]') || root;
@@ -373,9 +444,9 @@
 
         list.classList.remove('show');
         if (options.changeEventName) {
-          form.dispatchEvent(new CustomEvent(options.changeEventName));
+          form.dispatchEvent(new CustomEvent(options.changeEventName, { detail: { reason: 'autocomplete-pick' } }));
           setTimeout(function () {
-            form.dispatchEvent(new CustomEvent(options.changeEventName));
+            form.dispatchEvent(new CustomEvent(options.changeEventName, { detail: { reason: 'autocomplete-pick' } }));
           }, 0);
         }
       }
@@ -386,7 +457,7 @@
         if (query.length < 1) {
           list.classList.remove('show');
           if (options.changeEventName) {
-            form.dispatchEvent(new CustomEvent(options.changeEventName));
+            form.dispatchEvent(new CustomEvent(options.changeEventName, { detail: { reason: 'autocomplete-clear' } }));
           }
           return;
         }
@@ -1093,6 +1164,38 @@
       }
     }
 
+    function getDefaultRowData() {
+      if (typeof config.getDefaultRowData !== 'function') return null;
+      return config.getDefaultRowData(form) || null;
+    }
+
+    let lastDefaultRowData = getDefaultRowData();
+
+    function mergeWithDefaultRowData(data) {
+      const source = data && typeof data === 'object' ? data : {};
+      const defaults = getDefaultRowData();
+      if (!defaults) return source;
+      return {
+        ...source,
+        short_name: String(source.short_name || '').trim() || String(defaults.short_name || '').trim(),
+        country_id: String(source.country_id || '').trim() || String(defaults.country_id || '').trim(),
+        country_name: String(source.country_name || '').trim() || String(defaults.country_name || '').trim(),
+        identifier: String(source.identifier || '').trim() || String(defaults.identifier || '').trim(),
+        registration_number: String(source.registration_number || '').trim() || String(defaults.registration_number || '').trim(),
+        registration_date: String(source.registration_date || '').trim() || String(defaults.registration_date || '').trim(),
+      };
+    }
+
+    function normalizePrefillValue(value) {
+      return String(value || '').trim();
+    }
+
+    function shouldOverwritePrefilledValue(currentValue, previousDefaultValue) {
+      const current = normalizePrefillValue(currentValue);
+      const previousDefault = normalizePrefillValue(previousDefaultValue);
+      return !current || (previousDefault && current === previousDefault);
+    }
+
     function getAllRows() {
       return Array.from(tbody.querySelectorAll('tr'));
     }
@@ -1166,6 +1269,7 @@
     }
 
     function createRow(data) {
+      data = mergeWithDefaultRowData(data);
       const row = document.createElement('tr');
       row.dataset.countryId = data.country_id || '';
       row.dataset.countryName = data.country_name || '';
@@ -1378,6 +1482,51 @@
         });
         updatePayload({ reason: 'sync-asset-selects' });
       },
+      fillEmptyRowsFromDefaults: function () {
+        const defaults = getDefaultRowData();
+        if (!defaults) {
+          lastDefaultRowData = defaults;
+          return;
+        }
+        let changed = false;
+        getRows().forEach(function (row) {
+          const serialized = serializeRow(row);
+          const merged = {
+            ...serialized,
+            short_name: shouldOverwritePrefilledValue(serialized.short_name, lastDefaultRowData?.short_name)
+              ? normalizePrefillValue(defaults.short_name)
+              : serialized.short_name,
+            country_id: shouldOverwritePrefilledValue(serialized.country_id, lastDefaultRowData?.country_id)
+              ? normalizePrefillValue(defaults.country_id)
+              : serialized.country_id,
+            country_name: shouldOverwritePrefilledValue(serialized.country_name, lastDefaultRowData?.country_name)
+              ? normalizePrefillValue(defaults.country_name)
+              : serialized.country_name,
+            identifier: shouldOverwritePrefilledValue(serialized.identifier, lastDefaultRowData?.identifier)
+              ? normalizePrefillValue(defaults.identifier)
+              : serialized.identifier,
+            registration_number: shouldOverwritePrefilledValue(serialized.registration_number, lastDefaultRowData?.registration_number)
+              ? normalizePrefillValue(defaults.registration_number)
+              : serialized.registration_number,
+            registration_date: shouldOverwritePrefilledValue(serialized.registration_date, lastDefaultRowData?.registration_date)
+              ? normalizePrefillValue(defaults.registration_date)
+              : serialized.registration_date,
+          };
+          if (
+            merged.short_name !== serialized.short_name
+            || merged.country_id !== serialized.country_id
+            || merged.country_name !== serialized.country_name
+            || merged.identifier !== serialized.identifier
+            || merged.registration_number !== serialized.registration_number
+            || merged.registration_date !== serialized.registration_date
+          ) {
+            setRowData(row, merged);
+            changed = true;
+          }
+        });
+        lastDefaultRowData = { ...defaults };
+        if (changed) updatePayload({ reason: 'default-row-prefill' });
+      },
     };
     form[config.apiKey] = api;
     return api;
@@ -1406,6 +1555,21 @@
         identifier: '.proposal-asset-identifier',
         regNumber: '.proposal-asset-reg-number',
         regDate: '.proposal-asset-reg-date',
+      },
+      getDefaultRowData: function (form) {
+        const ownerInput = form.querySelector('input[name="asset_owner"]');
+        const ownerCountry = form.querySelector('#proposal-asset-owner-country-select');
+        const ownerIdentifier = form.querySelector('#proposal-asset-owner-identifier-field');
+        const ownerRegistrationNumber = form.querySelector('input[name="asset_owner_registration_number"]');
+        const ownerRegistrationDate = form.querySelector('input[name="asset_owner_registration_date"]');
+        return {
+          short_name: ownerInput ? (ownerInput.value || '').trim() : '',
+          country_id: ownerCountry ? (ownerCountry.value || '').trim() : '',
+          country_name: ownerCountry?.options?.[ownerCountry.selectedIndex]?.textContent?.trim() || '',
+          identifier: ownerIdentifier ? (ownerIdentifier.value || '').trim() : '',
+          registration_number: ownerRegistrationNumber ? (ownerRegistrationNumber.value || '').trim() : '',
+          registration_date: ownerRegistrationDate ? (ownerRegistrationDate.value || '').trim() : '',
+        };
       },
       rowsChangedEvent: 'proposal-assets-changed',
       withAssetSelect: false,
@@ -3661,7 +3825,7 @@
       finalInput.value = result.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
     }
 
-    function syncAssetOwnerFromCustomer() {
+    function syncAssetOwnerFromCustomer(reason) {
       const matchesCheckbox = form.querySelector('[name="asset_owner_matches_customer"]');
       const customerInput = form.querySelector('input[name="customer"]');
       const customerCountry = form.querySelector('#proposal-country-select');
@@ -3699,12 +3863,12 @@
         ownerRegistrationNumber.value = customerRegistrationNumber ? (customerRegistrationNumber.value || '') : '';
         setDateFieldValue(ownerRegistrationDate, customerRegistrationDate ? (customerRegistrationDate.value || '') : '');
         setLockedState(true);
-        form.dispatchEvent(new CustomEvent('proposal-asset-owner-changed'));
+        form.dispatchEvent(new CustomEvent('proposal-asset-owner-changed', { detail: { reason: reason || 'customer-sync' } }));
         return;
       }
 
       setLockedState(false);
-      form.dispatchEvent(new CustomEvent('proposal-asset-owner-changed'));
+      form.dispatchEvent(new CustomEvent('proposal-asset-owner-changed', { detail: { reason: reason || 'customer-sync' } }));
     }
 
     function syncProposalTypeDefaults(force) {
@@ -3799,6 +3963,7 @@
     }
 
     attachGroupSelectDisplay(form);
+    attachReportLanguagesDropdown(form);
     attachCountryIdentifierSync(form);
     attachGuillemets(form);
     attachLerAutocomplete(form);
@@ -3846,13 +4011,36 @@
     form.querySelector('[name="preliminary_report_percent"]')?.addEventListener('input', syncFinalReportPercent);
     form.querySelector('[name="asset_owner_matches_customer"]')?.addEventListener('change', syncAssetOwnerFromCustomer);
     ['customer', 'registration_number', 'registration_date'].forEach(function (fieldName) {
-      form.querySelector('[name="' + fieldName + '"]')?.addEventListener('input', syncAssetOwnerFromCustomer);
-      form.querySelector('[name="' + fieldName + '"]')?.addEventListener('change', syncAssetOwnerFromCustomer);
+      form.querySelector('[name="' + fieldName + '"]')?.addEventListener('input', function () {
+        syncAssetOwnerFromCustomer('customer-input');
+      });
+      form.querySelector('[name="' + fieldName + '"]')?.addEventListener('change', function () {
+        syncAssetOwnerFromCustomer('customer-sync');
+      });
     });
-    form.querySelector('#proposal-country-select')?.addEventListener('change', syncAssetOwnerFromCustomer);
-    form.addEventListener('proposal-customer-changed', syncAssetOwnerFromCustomer);
+    form.querySelector('#proposal-country-select')?.addEventListener('change', function () {
+      syncAssetOwnerFromCustomer('customer-sync');
+    });
+    form.addEventListener('proposal-customer-changed', function () {
+      syncAssetOwnerFromCustomer('customer-sync');
+    });
+    form.addEventListener('proposal-asset-owner-changed', function (event) {
+      const reason = event?.detail?.reason || '';
+      if (reason === 'autocomplete-pick' || reason === 'customer-sync' || reason === 'owner-change') {
+        assetsApi?.fillEmptyRowsFromDefaults();
+      }
+    });
+    ['asset_owner', 'asset_owner_registration_number', 'asset_owner_registration_date'].forEach(function (fieldName) {
+      form.querySelector('[name="' + fieldName + '"]')?.addEventListener('change', function () {
+        form.dispatchEvent(new CustomEvent('proposal-asset-owner-changed', { detail: { reason: 'owner-change' } }));
+      });
+    });
+    form.querySelector('#proposal-asset-owner-country-select')?.addEventListener('change', function () {
+      form.dispatchEvent(new CustomEvent('proposal-asset-owner-changed', { detail: { reason: 'owner-change' } }));
+    });
     syncFinalReportPercent();
-    syncAssetOwnerFromCustomer();
+    syncAssetOwnerFromCustomer('customer-sync');
+    assetsApi?.fillEmptyRowsFromDefaults();
   }
 
   document.addEventListener('click', async (event) => {

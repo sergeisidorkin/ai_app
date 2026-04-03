@@ -385,7 +385,7 @@ class Tariff(models.Model):
     class Meta:
         ordering = ["created_by", "position", "id"]
         verbose_name = "Тариф"
-        verbose_name_plural = "Тарифы"
+        verbose_name_plural = "Тарифы разделов (услуг)"
 
     def __str__(self):
         return f"{self.product.short_name} / {self.section.short_name}"
