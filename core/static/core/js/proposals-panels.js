@@ -29,6 +29,7 @@
 
   const csrftoken = getCookie('csrftoken');
   const SELECT_NAMES = ['proposal-select', 'proposal-dispatch-select', 'proposal-template-select', 'proposal-variable-select'];
+  const PROPOSAL_SEND_PREF_KEY = 'proposals:dispatch-send-settings';
   const QUILL_JS = '/static/letters_app/vendor/quill/quill.min.js';
   const QUILL_CSS = '/static/letters_app/vendor/quill/quill.snow.css';
   let proposalQuillLoaded = false;
@@ -170,6 +171,33 @@
 
   function getProposalChannels() {
     return qa('.js-proposal-channel', pane());
+  }
+
+  function saveProposalSendSettings() {
+    if (!window.UIPref) return;
+    UIPref.set(PROPOSAL_SEND_PREF_KEY, {
+      deliveryChannels: getProposalChannels()
+        .filter((cb) => cb.checked && !cb.disabled)
+        .map((cb) => cb.value),
+    });
+  }
+
+  function restoreProposalSendSettings() {
+    const channels = getProposalChannels();
+    if (!channels.length) return;
+    const saved = window.UIPref ? UIPref.get(PROPOSAL_SEND_PREF_KEY, null) : null;
+    const savedValues = Array.isArray(saved?.deliveryChannels) ? new Set(saved.deliveryChannels) : null;
+
+    if (savedValues) {
+      channels.forEach((cb) => {
+        cb.checked = !cb.disabled && savedValues.has(cb.value);
+      });
+    }
+
+    if (!channels.some((cb) => cb.checked) ) {
+      const firstEnabled = channels.find((cb) => !cb.disabled);
+      if (firstEnabled) firstEnabled.checked = true;
+    }
   }
 
   function varsCollapse() {
@@ -4322,6 +4350,25 @@
       const modal = modalEl ? window.bootstrap?.Modal.getInstance(modalEl) : null;
       modal?.hide();
 
+      const emailDelivery = data?.email_delivery;
+      if (emailDelivery?.requested && emailDelivery?.failed > 0) {
+        const errorLines = (emailDelivery.errors || [])
+          .slice(0, 5)
+          .map((item) => {
+            const channelPrefix = item.channel_label ? '[' + item.channel_label + '] ' : '';
+            return '- ' + channelPrefix + item.recipient + ': ' + item.error;
+          });
+        const moreCount = Math.max((emailDelivery.errors || []).length - errorLines.length, 0);
+        const details = [
+          'Не удалось отправить ' + emailDelivery.failed + ' из ' + emailDelivery.attempted + ' email-писем.',
+          ...errorLines,
+        ];
+        if (moreCount > 0) {
+          details.push('- И еще ' + moreCount + ' ошибок.');
+        }
+        alert(details.join('\n'));
+      }
+
       await htmx.ajax('GET', refreshUrl, { target: '#proposals-pane', swap: 'outerHTML' });
     } catch (err) {
       alert(err.message || 'Не удалось отправить ТКП.');
@@ -4348,6 +4395,14 @@
     const rowCheckbox = event.target.closest('tbody input.form-check-input[name]');
     if (!rowCheckbox || !root.contains(rowCheckbox)) return;
     syncSelectionState(rowCheckbox.name);
+  });
+
+  document.addEventListener('change', (event) => {
+    const root = pane();
+    if (!root) return;
+    const channelCheckbox = event.target.closest('.js-proposal-channel');
+    if (!channelCheckbox || !root.contains(channelCheckbox)) return;
+    saveProposalSendSettings();
   });
 
   document.addEventListener('shown.bs.collapse', (event) => {
@@ -4380,6 +4435,7 @@
     updateHeaderPath();
     syncAllSelectionStates();
     initProposalForm();
+    restoreProposalSendSettings();
     restoreVariableCollapseState();
   });
 
@@ -4387,6 +4443,7 @@
     updateHeaderPath();
     syncAllSelectionStates();
     initProposalForm();
+    restoreProposalSendSettings();
     if (typeof window.__proposalVarsExpanded === 'undefined') {
       window.__proposalVarsExpanded = !!varsCollapse()?.classList.contains('show');
     }

@@ -111,15 +111,12 @@ def create_proposal_workspace(
     if not proposal.year:
         raise NextcloudApiError("Невозможно создать рабочую папку ТКП в Nextcloud: не заполнено поле «Год».")
 
-    base = "/" if base_root == "/" else base_root.rstrip("/")
     owner_user_id = client.username
 
-    tkp_root_path = client.ensure_folder(owner_user_id, _join_path(base, _sanitize("ТКП")))
+    proposal_path = build_proposal_workspace_path(proposal, base_root=base_root)
+    tkp_root_path = client.ensure_folder(owner_user_id, _join_path("/" if base_root == "/" else base_root.rstrip("/"), _sanitize("ТКП")))
     year_path = client.ensure_folder(owner_user_id, _join_path(tkp_root_path, _sanitize(str(proposal.year))))
-    proposal_path = client.ensure_folder(
-        owner_user_id,
-        _join_path(year_path, _build_proposal_workspace_folder_name(proposal)),
-    )
+    proposal_path = client.ensure_folder(owner_user_id, proposal_path)
 
     if _should_skip_proposal_editor_share(user):
         return proposal_path
@@ -465,6 +462,20 @@ def _build_proposal_workspace_folder_name(proposal) -> str:
     if getattr(proposal, "type", None):
         type_name = getattr(proposal.type, "short_name", "") or str(proposal.type)
     return _sanitize(" ".join(part for part in (proposal.short_uid, type_name, proposal.name) if str(part or "").strip()))
+
+
+def build_proposal_workspace_path(proposal, *, base_root: str | None = None) -> str:
+    if not getattr(proposal, "year", None):
+        return ""
+
+    root_path = str(base_root or get_nextcloud_root_path() or "").strip()
+    if not root_path:
+        return ""
+
+    base = "/" if root_path == "/" else root_path.rstrip("/")
+    tkp_root_path = _join_path(base, _sanitize("ТКП"))
+    year_path = _join_path(tkp_root_path, _sanitize(str(proposal.year)))
+    return _join_path(year_path, _build_proposal_workspace_folder_name(proposal))
 
 
 def _should_skip_proposal_editor_share(user) -> bool:

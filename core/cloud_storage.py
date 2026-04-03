@@ -283,7 +283,7 @@ def build_folder_url(path: str) -> str:
         from nextcloud_app.api import NextcloudApiClient
 
         client = NextcloudApiClient()
-        if client.is_configured:
+        if client.base_url:
             return client.build_files_url(path)
         return ""
 

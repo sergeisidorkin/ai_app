@@ -24,6 +24,7 @@ def render_template(body_html, variables: dict, safe_keys=frozenset()) -> str:
     result = body_html
     for key, value in variables.items():
         replacement = str(value) if key in safe_keys else _html_escape(str(value))
+        result = result.replace("{{" + key + "}}", replacement)
         result = result.replace("{" + key + "}", replacement)
     return result
 
@@ -32,5 +33,6 @@ def render_subject(subject_template, variables: dict) -> str:
     """Replace {key} placeholders in *subject_template* with values from *variables*."""
     result = subject_template
     for key, value in variables.items():
+        result = result.replace("{{" + key + "}}", str(value))
         result = result.replace("{" + key + "}", str(value))
     return result

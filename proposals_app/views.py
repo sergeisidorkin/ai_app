@@ -17,7 +17,7 @@ from core.cloud_storage import build_folder_url, get_primary_cloud_storage_label
 from experts_app.models import ExpertProfile, ExpertProfileSpecialty
 from nextcloud_app.api import NextcloudApiClient, NextcloudApiError
 from nextcloud_app.models import NextcloudUserLink
-from nextcloud_app.workspace import create_proposal_workspace
+from nextcloud_app.workspace import build_proposal_workspace_path, create_proposal_workspace
 from policy_app.models import (
     ServiceGoalReport,
     SpecialtyTariff,
@@ -26,6 +26,7 @@ from policy_app.models import (
     TypicalSectionSpecialty,
     TypicalServiceComposition,
 )
+from smtp_app.models import ExternalSMTPAccount
 from users_app.models import Employee
 
 from .forms import (
@@ -39,6 +40,7 @@ from .forms import (
 )
 from .document_generation import get_generated_docx_path, store_generated_documents
 from .models import ProposalRegistration, ProposalTemplate, ProposalVariable
+from .services import normalize_proposal_delivery_channels, send_proposal_dispatch_emails
 from .variable_resolver import resolve_variables
 
 PROPOSALS_PARTIAL_TEMPLATE = "proposals_app/proposals_partial.html"
@@ -141,32 +143,44 @@ def _sync_to_legal_entity_record(short_name, country, identifier, registration_n
 def _attach_proposal_folder_urls(proposals, user=None):
     folder_cache = {}
     for proposal in proposals:
-        path = getattr(proposal, "proposal_workspace_disk_path", "") or ""
+        path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
         proposal.proposal_workspace_folder_url = ""
         if path:
             folder_cache.setdefault(path, build_folder_url(path))
 
     if not proposals or not is_nextcloud_primary():
         for proposal in proposals:
-            path = getattr(proposal, "proposal_workspace_disk_path", "") or ""
+            path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
             if path:
                 proposal.proposal_workspace_folder_url = folder_cache.get(path, "")
         return
     if user is None or not getattr(user, "is_authenticated", False):
+        for proposal in proposals:
+            path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
+            if path:
+                proposal.proposal_workspace_folder_url = folder_cache.get(path, "")
         return
 
     client = NextcloudApiClient()
     if not client.is_configured:
+        for proposal in proposals:
+            path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
+            if path:
+                proposal.proposal_workspace_folder_url = folder_cache.get(path, "")
         return
 
     link = NextcloudUserLink.objects.filter(user=user).first()
     if link and link.nextcloud_user_id == client.username:
         for proposal in proposals:
-            path = getattr(proposal, "proposal_workspace_disk_path", "") or ""
+            path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
             if path:
                 proposal.proposal_workspace_folder_url = folder_cache.get(path, "")
         return
     if not link or not link.nextcloud_user_id:
+        for proposal in proposals:
+            path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
+            if path:
+                proposal.proposal_workspace_folder_url = folder_cache.get(path, "")
         return
 
     try:
@@ -193,9 +207,9 @@ def _attach_proposal_folder_urls(proposals, user=None):
             resolved_cache[path] = client.build_files_url(target_path)
 
     for proposal in proposals:
-        path = getattr(proposal, "proposal_workspace_disk_path", "") or ""
-        if path and resolved_cache.get(path):
-            proposal.proposal_workspace_folder_url = resolved_cache.get(path, "")
+        path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
+        if path:
+            proposal.proposal_workspace_folder_url = resolved_cache.get(path, folder_cache.get(path, ""))
 
 
 def _proposals_context(user=None):
@@ -217,12 +231,20 @@ def _proposals_context(user=None):
             )
         else:
             template.group_display = ""
+    has_active_smtp_connection = False
+    if user:
+        has_active_smtp_connection = ExternalSMTPAccount.objects.filter(
+            user=user,
+            is_active=True,
+            use_for_notifications=True,
+        ).exists()
     return {
         "proposals": proposals,
         "proposal_templates": proposal_templates,
         "proposal_variables": proposal_variables,
         "primary_cloud_storage_label": get_primary_cloud_storage_label(),
         "proposal_request_sent_initial": timezone.localtime().replace(second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M"),
+        "has_active_smtp_connection": has_active_smtp_connection,
     }
 
 
@@ -792,27 +814,55 @@ def proposal_dispatch_send(request):
     except (TypeError, ValueError):
         return JsonResponse({"ok": False, "error": "Передан некорректный список строк."}, status=400)
 
-    delivery_channels = request.POST.getlist("delivery_channels[]") or request.POST.getlist("delivery_channels")
-    if not delivery_channels:
-        return JsonResponse({"ok": False, "error": "Выберите хотя бы один способ отправки."}, status=400)
+    raw_channels = request.POST.getlist("delivery_channels[]") or request.POST.getlist("delivery_channels")
+    try:
+        delivery_channels = normalize_proposal_delivery_channels(raw_channels)
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
 
     try:
         sent_at = _parse_proposal_sent_at(request.POST.get("sent_at", "").strip())
     except forms.ValidationError as exc:
         return JsonResponse({"ok": False, "error": exc.message}, status=400)
 
-    selected_proposals = list(ProposalRegistration.objects.filter(pk__in=proposal_ids).order_by("position", "id"))
+    selected_proposals = list(
+        ProposalRegistration.objects
+        .filter(pk__in=proposal_ids)
+        .select_related("type")
+        .order_by("position", "id")
+    )
     if len(selected_proposals) != len(proposal_ids):
         return JsonResponse({"ok": False, "error": "Часть выбранных строк не найдена."}, status=400)
 
     sent_at_display = timezone.localtime(sent_at).strftime("%d.%m.%Y %H:%M")
-    updated = ProposalRegistration.objects.filter(pk__in=proposal_ids).update(sent_date=sent_at_display)
+    email_result = send_proposal_dispatch_emails(
+        proposals=selected_proposals,
+        sender=request.user,
+        delivery_channels=delivery_channels,
+    )
+    sent_proposal_ids = email_result["sent_proposal_ids"]
+    updated = 0
+    if sent_proposal_ids:
+        updated = ProposalRegistration.objects.filter(pk__in=sent_proposal_ids).update(sent_date=sent_at_display)
+
+    if updated == 0:
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "Не удалось отправить ни одного письма.",
+                "email_delivery": email_result["email_delivery"],
+                "delivery_channels": list(email_result["delivery_channels"]),
+            },
+            status=400,
+        )
+
     return JsonResponse(
         {
             "ok": True,
             "updated": updated,
             "sent_at": sent_at_display,
-            "delivery_channels": delivery_channels,
+            "delivery_channels": list(email_result["delivery_channels"]),
+            "email_delivery": email_result["email_delivery"],
         }
     )
 

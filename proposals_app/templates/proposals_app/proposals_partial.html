@@ -317,10 +317,10 @@
               {% with folder_url=proposal.proposal_workspace_folder_url %}
               {% if folder_url %}
                 <a href="{{ folder_url }}" target="_blank" rel="noopener" title="Открыть папку на {{ primary_cloud_storage_label }}">
-                  <i class="bi bi-cloud" style="color: var(--bs-primary, #075D94);"></i>
+                  <i class="bi bi-cloud cloud-link-icon" style="color: var(--bs-primary, #075D94);"></i>
                 </a>
               {% else %}
-                <i class="bi bi-cloud" style="color: #ccc;"></i>
+                <i class="bi bi-cloud cloud-link-icon" style="color: #ccc;"></i>
               {% endif %}
               {% endwith %}
             </td>
@@ -388,7 +388,7 @@
         <div class="modal-dialog">
           <div class="modal-content">
             <div class="modal-header">
-              <h5 class="modal-title">Настройки отправки ТКП</h5>
+              <h5 class="modal-title">Настройка отправки ТКП</h5>
               <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
             </div>
             <div class="modal-body">
@@ -397,22 +397,28 @@
                 <div class="form-check">
                   <input class="form-check-input js-proposal-channel"
                          type="checkbox"
-                         id="proposal-channel-system"
-                         value="system"
+                         id="proposal-channel-system-email"
+                         value="system_email"
                          checked>
-                  <label class="form-check-label" for="proposal-channel-system">
-                    Системные уведомления
+                  <label class="form-check-label" for="proposal-channel-system-email">
+                    Системная электронная почта
                   </label>
                 </div>
                 <div class="form-check">
                   <input class="form-check-input js-proposal-channel"
                          type="checkbox"
-                         id="proposal-channel-email"
-                         value="email">
-                  <label class="form-check-label" for="proposal-channel-email">
-                    Электронная почта
+                         id="proposal-channel-connected-email"
+                         value="connected_email"
+                         {% if not has_active_smtp_connection %}disabled{% endif %}>
+                  <label class="form-check-label" for="proposal-channel-connected-email">
+                    Подключенная электронная почта
                   </label>
                 </div>
+                {% if not has_active_smtp_connection %}
+                  <div class="form-text mt-1">
+                    Сначала настройте активное внешнее SMTP-подключение в разделе «Подключения».
+                  </div>
+                {% endif %}
               </div>
               <div class="mb-0">
                 <label for="proposal-request-sent-at" class="form-label">Дата отправки</label>
