@@ -1,5 +1,12 @@
+import sys
+
 from django.conf import settings
 from django.db import models
+
+
+# Prevent duplicate imports via `letters_app.models` and `ai_app.letters_app.models`.
+sys.modules.setdefault("letters_app.models", sys.modules[__name__])
+sys.modules.setdefault("ai_app.letters_app.models", sys.modules[__name__])
 
 
 class LetterTemplate(models.Model):
@@ -138,6 +145,7 @@ class LetterTemplate(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
+        app_label = "letters_app"
         ordering = ["-updated_at"]
         verbose_name = "Шаблон письма"
         verbose_name_plural = "Шаблоны писем"
