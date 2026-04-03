@@ -68,6 +68,48 @@ def normalize_proposal_report_languages(value) -> list[str]:
     return normalized or ["русский"]
 
 
+def _apply_russian_error_messages(field: forms.Field) -> None:
+    field.error_messages["required"] = "Обязательное поле."
+
+    if "max_length" in field.error_messages:
+        field.error_messages["max_length"] = (
+            "Убедитесь, что это значение содержит не более %(limit_value)s символов "
+            "(сейчас %(show_value)s)."
+        )
+    if "min_length" in field.error_messages:
+        field.error_messages["min_length"] = (
+            "Убедитесь, что это значение содержит не менее %(limit_value)s символов "
+            "(сейчас %(show_value)s)."
+        )
+    if "min_value" in field.error_messages:
+        field.error_messages["min_value"] = "Значение должно быть не меньше %(limit_value)s."
+    if "max_value" in field.error_messages:
+        field.error_messages["max_value"] = "Значение должно быть не больше %(limit_value)s."
+
+    if isinstance(field, forms.DateField):
+        field.error_messages["invalid"] = "Введите дату в формате ДД.ММ.ГГГГ."
+    elif isinstance(field, forms.IntegerField):
+        field.error_messages["invalid"] = "Введите целое число."
+    elif isinstance(field, forms.DecimalField):
+        field.error_messages["invalid"] = "Введите число."
+        if "max_digits" in field.error_messages:
+            field.error_messages["max_digits"] = "Введите число не более чем с %(max)s цифрами."
+        if "max_decimal_places" in field.error_messages:
+            field.error_messages["max_decimal_places"] = (
+                "Введите число не более чем с %(max)s знаками после запятой."
+            )
+        if "max_whole_digits" in field.error_messages:
+            field.error_messages["max_whole_digits"] = (
+                "Введите число не более чем с %(max)s цифрами до запятой."
+            )
+
+    if isinstance(field, forms.ModelChoiceField):
+        field.error_messages["invalid_choice"] = "Выберите корректное значение."
+        field.error_messages["invalid_pk_value"] = "Выберите корректное значение."
+    elif isinstance(field, forms.ChoiceField):
+        field.error_messages["invalid_choice"] = "Выберите корректное значение."
+
+
 class BootstrapMixin:
     def _bootstrapify(self):
         for field in self.fields.values():
@@ -477,6 +519,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 if value:
                     data[field_name] = str(value).replace("\u00a0", "").replace(" ", "").replace(",", ".")
             self.data = data
+        for field in self.fields.values():
+            _apply_russian_error_messages(field)
         self.fields["group_member"].queryset = _group_choices()
         self.fields["group_member"].label_from_instance = lambda obj: obj.group_display_label
         self.fields["group_member"].empty_label = "— Не выбрано —"
@@ -484,6 +528,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         self.fields["type"].label_from_instance = lambda obj: obj.short_name
         self.fields["type"].required = True
         self.fields["type"].empty_label = "— Не выбрано —"
+        self.fields["year"].required = not bool(self.instance and self.instance.pk)
+        self.fields["year"].error_messages["required"] = "Укажите год."
 
         today = timezone.now().date()
         country_qs = OKSMCountry.objects.filter(

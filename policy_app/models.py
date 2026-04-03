@@ -63,7 +63,6 @@ class TypicalSection(models.Model):
     name_en = models.CharField("Наименование раздела на английском языке", max_length=255)
     name_ru = models.CharField("Наименование раздела на русском языке", max_length=255)
     accounting_type = models.CharField("Тип учета", max_length=128, choices=ACCOUNTING_TYPE_CHOICES, default="Раздел")
-    executor = models.CharField("Исполнитель", max_length=128, blank=True, default="")
     specialties = models.ManyToManyField(
         "experts_app.ExpertSpecialty",
         through="TypicalSectionSpecialty",

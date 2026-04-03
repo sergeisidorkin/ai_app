@@ -141,7 +141,7 @@ class ExpertProfileForm(forms.ModelForm):
         model = ExpertProfile
         fields = [
             "yandex_mail", "extra_email", "extra_phone",
-            "expertise_direction", "professional_status", "grade",
+            "expertise_direction", "professional_status", "professional_status_short", "grade",
             "country", "region", "status",
         ]
         widgets = {
@@ -164,6 +164,10 @@ class ExpertProfileForm(forms.ModelForm):
             "professional_status": forms.TextInput(attrs={
                 "class": "form-control",
                 "placeholder": "Профессиональный статус",
+            }),
+            "professional_status_short": forms.TextInput(attrs={
+                "class": "form-control",
+                "placeholder": "Профессиональный статус (кратко)",
             }),
             "grade": forms.Select(attrs={
                 "class": "form-select",

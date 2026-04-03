@@ -100,6 +100,9 @@ class ExpertProfile(models.Model):
     professional_status = models.CharField(
         "Профессиональный статус", max_length=255, blank=True, default=""
     )
+    professional_status_short = models.CharField(
+        "Профессиональный статус (кратко)", max_length=255, blank=True, default=""
+    )
     grade = models.ForeignKey(
         "policy_app.Grade",
         on_delete=models.SET_NULL,

@@ -6,7 +6,9 @@ from django.core.management import call_command
 from django.test import Client, TestCase, override_settings
 
 from core.models import CloudStorageSettings
+from group_app.models import GroupMember
 from policy_app.models import Product
+from proposals_app.models import ProposalRegistration
 from projects_app.models import ProjectRegistration, RegistrationWorkspaceFolder
 from users_app.models import Employee
 from yandexdisk_app.workspace import _build_project_folder_name, WorkspaceResult
@@ -14,7 +16,7 @@ from nextcloud_app.api import NextcloudApiError
 from nextcloud_app.api import NextcloudApiClient
 from nextcloud_app.models import NextcloudUserLink
 from nextcloud_app.provisioning import ensure_nextcloud_account
-from nextcloud_app.workspace import create_basic_project_workspace_stream
+from nextcloud_app.workspace import create_basic_project_workspace_stream, create_proposal_workspace
 
 User = get_user_model()
 
@@ -586,6 +588,91 @@ class NextcloudWorkspaceTests(TestCase):
         heartbeats = [i for i in items if isinstance(i, dict) and "current" in i and "total" in i]
         self.assertTrue(len(heartbeats) > 0)
         self.assertTrue(mocked_sleep.call_count >= 1)
+
+
+@override_settings(
+    NEXTCLOUD_PROVISIONING_BASE_URL="https://cloud.example.com",
+    NEXTCLOUD_PROVISIONING_USERNAME="cloud-admin",
+    NEXTCLOUD_PROVISIONING_TOKEN="token",
+    NEXTCLOUD_OIDC_PROVIDER_ID=1,
+)
+class NextcloudProposalWorkspaceTests(TestCase):
+    def setUp(self):
+        settings_obj = CloudStorageSettings.get_solo()
+        settings_obj.primary_storage = CloudStorageSettings.PrimaryStorage.NEXTCLOUD
+        settings_obj.nextcloud_root_path = "/Corporate Root"
+        settings_obj.save()
+
+        self.author = User.objects.create_user(
+            username="proposal-author@example.com",
+            email="proposal-author@example.com",
+            password="Secret123!",
+            is_staff=True,
+            is_active=True,
+        )
+        self.group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        self.product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            service_type="service",
+        )
+        self.proposal = ProposalRegistration.objects.create(
+            number=3333,
+            group_member=self.group_member,
+            type=self.product,
+            name="Сделка / Восток",
+            year=2026,
+        )
+
+    @patch("nextcloud_app.workspace.ensure_nextcloud_account")
+    def test_create_proposal_workspace_creates_tkp_tree_and_grants_editor_access(self, mocked_ensure_account):
+        mocked_ensure_account.return_value = Mock(nextcloud_user_id=f"ncstaff-{self.author.pk}")
+        client = Mock()
+        client.is_configured = True
+        client.username = "cloud-admin"
+        client.ensure_folder.side_effect = lambda _owner, path: "/" + "/".join(
+            part for part in str(path).replace("\\", "/").split("/") if part
+        )
+        client.ensure_user_share.return_value = Mock()
+
+        folder_name = f"{self.proposal.short_uid} {self.product.short_name} Сделка _ Восток"
+        workspace_path = create_proposal_workspace(self.author, self.proposal, client=client)
+
+        self.assertEqual(workspace_path, f"/Corporate Root/ТКП/2026/{folder_name}")
+        self.assertEqual(
+            client.ensure_folder.call_args_list,
+            [
+                call("cloud-admin", "/Corporate Root/ТКП"),
+                call("cloud-admin", "/Corporate Root/ТКП/2026"),
+                call("cloud-admin", f"/Corporate Root/ТКП/2026/{folder_name}"),
+            ],
+        )
+        client.ensure_user_share.assert_called_once_with(
+            "cloud-admin",
+            f"/Corporate Root/ТКП/2026/{folder_name}",
+            f"ncstaff-{self.author.pk}",
+            permissions=15,
+        )
+
+    def test_create_proposal_workspace_requires_year(self):
+        self.proposal.year = None
+
+        client = Mock()
+        client.is_configured = True
+        client.username = "cloud-admin"
+
+        with self.assertRaises(NextcloudApiError) as ctx:
+            create_proposal_workspace(self.author, self.proposal, client=client)
+
+        self.assertIn("поле «Год»", str(ctx.exception))
+        client.ensure_folder.assert_not_called()
 
 
 @override_settings(

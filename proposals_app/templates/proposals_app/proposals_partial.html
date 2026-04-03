@@ -257,6 +257,7 @@
         <col class="proposal-id">
         <col class="proposal-type">
         <col class="proposal-name">
+        <col class="proposal-disk">
         <col class="docx-name">
         <col class="docx-link">
         <col class="pdf-name">
@@ -283,6 +284,7 @@
           <th>ТКП ID</th>
           <th>Тип</th>
           <th>Название</th>
+          <th>Облако</th>
           <th>Наименование файла DOCX</th>
           <th>Ссылка</th>
           <th>Наименование файла PDF</th>
@@ -311,6 +313,17 @@
             <td class="proposal-id-cell">{{ proposal.short_uid }}</td>
             <td>{{ proposal.type.short_name|default:proposal.type }}</td>
             <td>{{ proposal.name }}</td>
+            <td class="text-nowrap">
+              {% with folder_url=proposal.proposal_workspace_folder_url %}
+              {% if folder_url %}
+                <a href="{{ folder_url }}" target="_blank" rel="noopener" title="Открыть папку на {{ primary_cloud_storage_label }}">
+                  <i class="bi bi-cloud" style="color: var(--bs-primary, #075D94);"></i>
+                </a>
+              {% else %}
+                <i class="bi bi-cloud" style="color: #ccc;"></i>
+              {% endif %}
+              {% endwith %}
+            </td>
             <td>
               {% if proposal.docx_file_name %}
                 <a href="{% url 'proposal_generated_docx_download' proposal.pk %}" download class="proposal-docx-download-link">
@@ -327,7 +340,7 @@
             <td>{{ proposal.contact_email }}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="12" class="text-muted">Пока нет данных.</td></tr>
+          <tr><td colspan="13" class="text-muted">Пока нет данных.</td></tr>
         {% endfor %}
       </tbody>
     </table>
