@@ -52,7 +52,7 @@ class TypicalSectionViewsTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Типовые разделы (услуги)")
-        self.assertContains(response, "<th>ТКП</th>", html=False)
+        self.assertContains(response, '<th><i class="bi bi-ban me-1"></i>ТКП</th>', html=False)
         self.assertContains(response, 'aria-label="Исключить из автозаполнения в ТКП"', html=False)
 
     def test_create_section_saves_tkp_exclusion_flag(self):
