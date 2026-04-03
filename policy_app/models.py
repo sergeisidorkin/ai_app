@@ -87,6 +87,10 @@ class TypicalSection(models.Model):
         related_name="typical_sections",
         verbose_name="Направление экспертизы",
     )
+    exclude_from_tkp_autofill = models.BooleanField(
+        "Исключить из автозаполнения в ТКП",
+        default=False,
+    )
     position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
 
     created_at = models.DateTimeField(auto_now_add=True)

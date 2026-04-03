@@ -302,6 +302,7 @@
                 <th>Исполнитель</th>
                 <th>Экспертиза</th>
                 <th>Подразделение</th>
+                <th><i class="bi bi-ban me-1"></i>ТКП</th>
             </tr>
             </thead>
             <tbody>
@@ -334,9 +335,17 @@
                     <td>{% for rs in s.ranked_specialties.all %}{% if forloop.first %}<span>{{ rs.specialty.specialty }}</span>{% else %}<br><span>{{ rs.specialty.specialty }}</span>{% endif %}{% empty %}—{% endfor %}</td>
                     <td class="text-nowrap">{% if s.expertise_dir %}{{ s.expertise_dir.short_name }}{% endif %}</td>
                     <td class="text-nowrap">{% if s.expertise_direction %}{{ s.expertise_direction.department_name }}{% endif %}</td>
+                    <td class="text-center">
+                        <input
+                            class="form-check-input"
+                            type="checkbox"
+                            {% if s.exclude_from_tkp_autofill %}checked{% endif %}
+                            disabled
+                            aria-label="Исключить из автозаполнения в ТКП">
+                    </td>
                 </tr>
             {% empty %}
-                <tr><td colspan="12" class="text-muted">Пока нет данных.</td></tr>
+                <tr><td colspan="13" class="text-muted">Пока нет данных.</td></tr>
             {% endfor %}
             </tbody>
         </table>

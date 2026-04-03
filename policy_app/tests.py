@@ -1,5 +1,5 @@
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import Client, TestCase
 from django.urls import reverse
 
 from classifiers_app.models import OKVCurrency
@@ -15,6 +15,64 @@ from policy_app.models import (
     TypicalServiceComposition,
 )
 from users_app.models import Employee
+
+
+class TypicalSectionViewsTests(TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            username="policy-sections-admin",
+            password="secret123",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.product = Product.objects.create(
+            short_name="SEC",
+            name_en="Sections",
+            display_name="Sections",
+            name_ru="Разделы",
+            service_type="Консалтинг",
+            position=1,
+        )
+
+    def test_policy_partial_renders_tkp_column_for_sections(self):
+        TypicalSection.objects.create(
+            product=self.product,
+            code="SEC-1",
+            short_name="section-en",
+            short_name_ru="section-ru",
+            name_en="Section EN",
+            name_ru="Раздел RU",
+            accounting_type="Раздел",
+            exclude_from_tkp_autofill=True,
+            position=1,
+        )
+
+        response = self.client.get(reverse("policy_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Типовые разделы (услуги)")
+        self.assertContains(response, '<th><i class="bi bi-ban me-1"></i>ТКП</th>', html=False)
+        self.assertContains(response, 'aria-label="Исключить из автозаполнения в ТКП"', html=False)
+
+    def test_create_section_saves_tkp_exclusion_flag(self):
+        response = self.client.post(
+            reverse("section_form_create"),
+            {
+                "product": self.product.pk,
+                "code": "SEC-2",
+                "short_name": "audit-en",
+                "short_name_ru": "audit-ru",
+                "name_en": "Audit EN",
+                "name_ru": "Аудит RU",
+                "accounting_type": "Раздел",
+                "exclude_from_tkp_autofill": "on",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        section = TypicalSection.objects.get(code="SEC-2")
+        self.assertTrue(section.exclude_from_tkp_autofill)
 
 
 class ServiceGoalReportViewsTests(TestCase):
@@ -583,7 +641,7 @@ class TariffAdminTests(TestCase):
         self.client.force_login(self.superuser)
 
     def test_admin_move_owner_down_swaps_group_positions(self):
-        response = self.client.get(
+        response = self.client.post(
             reverse("admin:policy_app_tariff_move_owner_down", args=[self.first_tariff.pk])
         )
 
@@ -592,3 +650,28 @@ class TariffAdminTests(TestCase):
         self.second_profile.refresh_from_db()
         self.assertEqual(self.first_profile.position, 2)
         self.assertEqual(self.second_profile.position, 1)
+
+    def test_admin_move_owner_down_rejects_get(self):
+        response = self.client.get(
+            reverse("admin:policy_app_tariff_move_owner_down", args=[self.first_tariff.pk])
+        )
+
+        self.assertEqual(response.status_code, 405)
+        self.first_profile.refresh_from_db()
+        self.second_profile.refresh_from_db()
+        self.assertEqual(self.first_profile.position, 1)
+        self.assertEqual(self.second_profile.position, 2)
+
+    def test_admin_move_owner_down_requires_csrf_token(self):
+        csrf_client = Client(enforce_csrf_checks=True)
+        csrf_client.force_login(self.superuser)
+
+        response = csrf_client.post(
+            reverse("admin:policy_app_tariff_move_owner_down", args=[self.first_tariff.pk])
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.first_profile.refresh_from_db()
+        self.second_profile.refresh_from_db()
+        self.assertEqual(self.first_profile.position, 1)
+        self.assertEqual(self.second_profile.position, 2)

@@ -354,6 +354,7 @@ def _render_proposal_form(request, *, form, action, proposal=None):
                     "name": section.name_ru,
                     "code": section.code or "",
                     "executor": section.executor or "",
+                    "exclude_from_tkp_autofill": bool(section.exclude_from_tkp_autofill),
                     "default_specialist": default_specialist,
                     "default_professional_status": default_professional_status,
                     "default_base_rate_share": default_base_rate_share,

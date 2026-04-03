@@ -2094,9 +2094,15 @@
             return {
               service_name: (entry?.name || '').trim(),
               code: (entry?.code || '').trim(),
+              exclude_from_tkp_autofill: !!entry?.exclude_from_tkp_autofill,
             };
           }).filter(function (entry) {
-            return !!entry.service_name;
+            return !!entry.service_name && !entry.exclude_from_tkp_autofill;
+          }).map(function (entry) {
+            return {
+              service_name: entry.service_name,
+              code: entry.code,
+            };
           }),
           meta
         );
@@ -4009,7 +4015,9 @@
     attachProposalLegalEntitiesToObjectsSync(form, legalEntitiesApi, objectsApi);
     form.querySelector('[name="advance_percent"]')?.addEventListener('input', syncFinalReportPercent);
     form.querySelector('[name="preliminary_report_percent"]')?.addEventListener('input', syncFinalReportPercent);
-    form.querySelector('[name="asset_owner_matches_customer"]')?.addEventListener('change', syncAssetOwnerFromCustomer);
+    form.querySelector('[name="asset_owner_matches_customer"]')?.addEventListener('change', function () {
+      syncAssetOwnerFromCustomer('customer-sync');
+    });
     ['customer', 'registration_number', 'registration_date'].forEach(function (fieldName) {
       form.querySelector('[name="' + fieldName + '"]')?.addEventListener('input', function () {
         syncAssetOwnerFromCustomer('customer-input');
