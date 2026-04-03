@@ -1,6 +1,8 @@
 from django.contrib.auth import get_user_model
+from django.db import connection
+from django.db.migrations.executor import MigrationExecutor
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import Client, TestCase
+from django.test import Client, TestCase, TransactionTestCase
 from django.urls import reverse
 
 from classifiers_app.models import OKVCurrency
@@ -16,6 +18,79 @@ from policy_app.models import (
     TypicalServiceComposition,
 )
 from users_app.models import Employee
+
+
+class RemoveTypicalSectionExecutorMigrationTests(TransactionTestCase):
+    migrate_from = ("policy_app", "0033_typicalsection_exclude_from_tkp_autofill")
+    migrate_to = ("policy_app", "0034_remove_typicalsection_executor")
+
+    def setUp(self):
+        super().setUp()
+        self.executor = MigrationExecutor(connection)
+        self.executor.migrate([self.migrate_from])
+        old_apps = self.executor.loader.project_state([self.migrate_from]).apps
+
+        Product = old_apps.get_model("policy_app", "Product")
+        TypicalSection = old_apps.get_model("policy_app", "TypicalSection")
+        ExpertSpecialty = old_apps.get_model("experts_app", "ExpertSpecialty")
+        TypicalSectionSpecialty = old_apps.get_model("policy_app", "TypicalSectionSpecialty")
+
+        product = Product.objects.create(
+            short_name="MIG",
+            name_en="Migration product",
+            display_name="Migration product",
+            name_ru="Миграционный продукт",
+            service_type="Консалтинг",
+            position=1,
+        )
+        existing_specialty = ExpertSpecialty.objects.create(
+            specialty="Юрист",
+            specialty_en="",
+            position=1,
+        )
+        self.section = TypicalSection.objects.create(
+            product_id=product.pk,
+            code="MIG-1",
+            short_name="mig-1",
+            short_name_ru="mig-1",
+            name_en="Migration section",
+            name_ru="Миграционный раздел",
+            accounting_type="Раздел",
+            executor="Партнер; Юрист",
+            position=1,
+        )
+        TypicalSectionSpecialty.objects.create(
+            section_id=self.section.pk,
+            specialty_id=existing_specialty.pk,
+            rank=1,
+        )
+
+    def tearDown(self):
+        executor = MigrationExecutor(connection)
+        executor.migrate(executor.loader.graph.leaf_nodes())
+        super().tearDown()
+
+    def test_migration_backfills_executor_into_ranked_specialties(self):
+        self.executor.loader.build_graph()
+        self.executor.migrate([self.migrate_to])
+        new_apps = self.executor.loader.project_state([self.migrate_to]).apps
+
+        ExpertSpecialty = new_apps.get_model("experts_app", "ExpertSpecialty")
+        TypicalSectionSpecialty = new_apps.get_model("policy_app", "TypicalSectionSpecialty")
+
+        created_names = list(
+            ExpertSpecialty.objects.filter(specialty__in=["Партнер", "Юрист"])
+            .order_by("specialty")
+            .values_list("specialty", flat=True)
+        )
+        self.assertEqual(created_names, ["Партнер", "Юрист"])
+
+        links = list(
+            TypicalSectionSpecialty.objects.filter(section_id=self.section.pk)
+            .select_related("specialty")
+            .order_by("rank")
+        )
+        self.assertEqual([(link.specialty.specialty, link.rank) for link in links], [("Юрист", 1), ("Партнер", 2)])
 
 
 class TypicalSectionViewsTests(TestCase):

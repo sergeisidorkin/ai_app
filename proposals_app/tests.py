@@ -6,6 +6,7 @@ from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import quote
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -814,6 +815,46 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(legal_entity.identifier, "ОГРН")
         self.assertEqual(legal_entity.registration_number, "456")
         self.assertEqual(legal_entity.registration_date.isoformat(), "2026-04-03")
+
+    def test_form_allows_legal_entity_without_short_name(self):
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            service_type="service",
+            position=1,
+        )
+
+        form = ProposalRegistrationForm(
+            data={
+                "number": 3333,
+                "group_member": group_member.pk,
+                "type": product.pk,
+                "name": "Тестовое ТКП",
+                "kind": ProposalRegistration.ProposalKind.REGULAR,
+                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "year": 2026,
+                "assets_payload": '[{"short_name":"ООО \\"Актив\\""}]',
+                "legal_entities_payload": '[{"asset_short_name":"ООО \\"Актив\\"","short_name":"","identifier":"ОГРН"}]',
+            }
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        proposal = form.save()
+        form.save_assets(proposal)
+        form.save_legal_entities(proposal)
+
+        legal_entity = ProposalLegalEntity.objects.get(proposal=proposal)
+        self.assertEqual(legal_entity.asset_short_name, 'ООО "Актив"')
+        self.assertEqual(legal_entity.short_name, "")
+        self.assertEqual(legal_entity.identifier, "ОГРН")
 
     def test_form_saves_objects_from_payload(self):
         country = OKSMCountry.objects.create(
@@ -1650,6 +1691,31 @@ class ProposalDispatchDiskColumnTests(TestCase):
         self.assertContains(
             response,
             "/apps/files/files?dir=/Shared/333300RU%20DD%20%D0%A2%D0%B5%D1%81%D1%82%D0%BE%D0%B2%D0%BE%D0%B5%20%D0%A2%D0%9A%D0%9F",
+            html=False,
+        )
+
+    def test_proposals_partial_hides_cloud_link_when_viewer_has_no_nextcloud_link(self):
+        self.user_link.delete()
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        owner_url = f"https://cloud.example.com/apps/files/files?dir={quote(self.proposal.proposal_workspace_disk_path, safe='/')}"
+        self.assertNotContains(
+            response,
+            f'href="{owner_url}"',
+            html=False,
+        )
+
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_proposals_partial_hides_cloud_link_when_share_target_is_missing(self, _mocked_list_user_shares):
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        owner_url = f"https://cloud.example.com/apps/files/files?dir={quote(self.proposal.proposal_workspace_disk_path, safe='/')}"
+        self.assertNotContains(
+            response,
+            f'href="{owner_url}"',
             html=False,
         )
 
