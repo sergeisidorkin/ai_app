@@ -505,7 +505,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         ]
         widgets = {
             "year": forms.NumberInput(attrs={"placeholder": "ГГГГ"}),
-            "name": forms.TextInput(attrs={"placeholder": "Название"}),
+            "name": forms.TextInput(attrs={"placeholder": "Краткое название компании или месторождения"}),
             "customer": forms.TextInput(attrs={"placeholder": "Искать по наименованию и регистрационному номеру"}),
         }
 
@@ -528,6 +528,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         self.fields["type"].label_from_instance = lambda obj: obj.short_name
         self.fields["type"].required = True
         self.fields["type"].empty_label = "— Не выбрано —"
+        self.fields["name"].required = True
         self.fields["year"].required = not bool(self.instance and self.instance.pk)
         self.fields["year"].error_messages["required"] = "Укажите год."
 

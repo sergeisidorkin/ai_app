@@ -674,6 +674,23 @@ class NextcloudProposalWorkspaceTests(TestCase):
         self.assertIn("поле «Год»", str(ctx.exception))
         client.ensure_folder.assert_not_called()
 
+    @patch("nextcloud_app.workspace.ensure_nextcloud_account")
+    def test_create_proposal_workspace_skips_editor_share_for_director(self, mocked_ensure_account):
+        Employee.objects.create(user=self.author, role="Директор")
+        client = Mock()
+        client.is_configured = True
+        client.username = "cloud-admin"
+        client.ensure_folder.side_effect = lambda _owner, path: "/" + "/".join(
+            part for part in str(path).replace("\\", "/").split("/") if part
+        )
+
+        folder_name = f"{self.proposal.short_uid} {self.product.short_name} Сделка _ Восток"
+        workspace_path = create_proposal_workspace(self.author, self.proposal, client=client)
+
+        self.assertEqual(workspace_path, f"/Corporate Root/ТКП/2026/{folder_name}")
+        mocked_ensure_account.assert_not_called()
+        client.ensure_user_share.assert_not_called()
+
 
 @override_settings(
     NEXTCLOUD_PROVISIONING_BASE_URL="https://cloud.example.com",
