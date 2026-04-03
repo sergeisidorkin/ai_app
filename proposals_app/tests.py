@@ -1728,6 +1728,55 @@ class ProposalDispatchDiskColumnTests(TestCase):
             html=False,
         )
 
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
+    def test_proposals_partial_resolves_cloud_link_from_parent_shared_folder_for_director(
+        self,
+        mocked_list_user_shares,
+    ):
+        Employee.objects.create(user=self.user, role="Директор")
+        mocked_list_user_shares.return_value = {
+            "/Corporate Root/ТКП": NextcloudShare(
+                share_id="79",
+                path="/Corporate Root/ТКП",
+                share_with=self.user_link.nextcloud_user_id,
+                permissions=15,
+                target_path="/Shared/ТКП",
+            )
+        }
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            "/apps/files/files?dir=/Shared/%D0%A2%D0%9A%D0%9F/2026/333300RU%20DD%20%D0%A2%D0%B5%D1%81%D1%82%D0%BE%D0%B2%D0%BE%D0%B5%20%D0%A2%D0%9A%D0%9F",
+            html=False,
+        )
+
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
+    def test_proposals_partial_keeps_cloud_link_when_direct_share_has_no_target_path(
+        self,
+        mocked_list_user_shares,
+    ):
+        mocked_list_user_shares.return_value = {
+            self.proposal.proposal_workspace_disk_path: NextcloudShare(
+                share_id="80",
+                path=self.proposal.proposal_workspace_disk_path,
+                share_with=self.user_link.nextcloud_user_id,
+                permissions=15,
+                target_path="",
+            )
+        }
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            "/apps/files/files?dir=/Corporate%20Root/%D0%A2%D0%9A%D0%9F/2026/333300RU%20DD%20%D0%A2%D0%B5%D1%81%D1%82%D0%BE%D0%B2%D0%BE%D0%B5%20%D0%A2%D0%9A%D0%9F",
+            html=False,
+        )
+
     def test_proposals_partial_hides_cloud_link_when_viewer_has_no_nextcloud_link(self):
         self.user_link.delete()
 

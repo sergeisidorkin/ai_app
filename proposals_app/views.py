@@ -52,6 +52,48 @@ HX_PROPOSALS_UPDATED_EVENT = "proposals-updated"
 logger = logging.getLogger(__name__)
 
 
+def _normalize_nextcloud_path(path: str) -> str:
+    raw_path = str(path or "").strip()
+    if not raw_path:
+        return ""
+    if raw_path == "/":
+        return "/"
+    return f"/{raw_path.strip('/')}"
+
+
+def _resolve_shared_target_path(path: str, share_map: dict[str, object]) -> str:
+    normalized_path = _normalize_nextcloud_path(path)
+    if not normalized_path:
+        return ""
+
+    direct_share = share_map.get(normalized_path)
+    direct_target_path = str(getattr(direct_share, "target_path", "") or "").strip()
+    if direct_target_path:
+        return direct_target_path
+    if direct_share is not None:
+        return normalized_path
+
+    parent_candidates = []
+    for shared_path, share in share_map.items():
+        normalized_shared_path = _normalize_nextcloud_path(shared_path)
+        target_path = str(getattr(share, "target_path", "") or "").strip()
+        if not normalized_shared_path:
+            continue
+        if normalized_path == normalized_shared_path or normalized_path.startswith(f"{normalized_shared_path}/"):
+            parent_candidates.append((len(normalized_shared_path), normalized_shared_path, target_path))
+
+    if not parent_candidates:
+        return ""
+
+    _, shared_path, target_path = max(parent_candidates, key=lambda item: item[0])
+    if not target_path:
+        return normalized_path
+    suffix = normalized_path[len(shared_path) :].strip("/")
+    if not suffix:
+        return target_path
+    return f"{target_path.rstrip('/')}/{suffix}"
+
+
 def staff_required(user):
     return user.is_authenticated and user.is_staff
 
@@ -133,10 +175,10 @@ def _attach_proposal_folder_urls(proposals, user=None):
         logger.warning("Could not resolve Nextcloud share targets for proposals table: %s", exc)
         share_map = {}
 
-    resolved_cache = dict(folder_cache)
-    for path in list(resolved_cache.keys()):
-        share = share_map.get(path)
-        if share is None:
+    resolved_cache = {}
+    for path in folder_cache:
+        target_path = _resolve_shared_target_path(path, share_map)
+        if not target_path:
             try:
                 share = client.get_user_share(client.username, path, link.nextcloud_user_id)
             except NextcloudApiError as exc:
@@ -146,12 +188,13 @@ def _attach_proposal_folder_urls(proposals, user=None):
                     exc,
                 )
                 share = None
-        if share and share.target_path:
-            resolved_cache[path] = client.build_files_url(share.target_path)
+            target_path = str(getattr(share, "target_path", "") or "").strip()
+        if target_path:
+            resolved_cache[path] = client.build_files_url(target_path)
 
     for proposal in proposals:
         path = getattr(proposal, "proposal_workspace_disk_path", "") or ""
-        if path and resolved_cache.get(path) != folder_cache.get(path):
+        if path and resolved_cache.get(path):
             proposal.proposal_workspace_folder_url = resolved_cache.get(path, "")
 
 
