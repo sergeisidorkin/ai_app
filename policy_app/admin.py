@@ -1,9 +1,11 @@
 from django.contrib import admin, messages
+from django.middleware.csrf import get_token
 from django.db.models import IntegerField, Value
 from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import path, reverse
 from django.utils.html import format_html
+from django.views.decorators.http import require_POST
 
 from .models import (
     ExpertiseDirection,
@@ -79,6 +81,7 @@ class TypicalSectionAdmin(TimestampedAdmin):
         "accounting_type",
         "expertise_dir",
         "expertise_direction",
+        "exclude_from_tkp_autofill",
         "updated_at",
     )
     list_editable = ("position",)
@@ -98,6 +101,7 @@ class TypicalSectionAdmin(TimestampedAdmin):
                 ("name_en", "name_ru"),
                 "executor",
                 ("expertise_dir", "expertise_direction"),
+                "exclude_from_tkp_autofill",
             ),
         }),
         ("Служебные поля", {
@@ -352,16 +356,20 @@ class TariffAdmin(TimestampedAdmin):
         custom_urls = [
             path(
                 "<int:object_id>/move-owner-up/",
-                self.admin_site.admin_view(self.move_owner_up),
+                self.admin_site.admin_view(require_POST(self.move_owner_up)),
                 name="policy_app_tariff_move_owner_up",
             ),
             path(
                 "<int:object_id>/move-owner-down/",
-                self.admin_site.admin_view(self.move_owner_down),
+                self.admin_site.admin_view(require_POST(self.move_owner_down)),
                 name="policy_app_tariff_move_owner_down",
             ),
         ]
         return custom_urls + urls
+
+    def changelist_view(self, request, extra_context=None):
+        self._changelist_request = request
+        return super().changelist_view(request, extra_context=extra_context)
 
     def _swap_owner_position(self, request, object_id: int, direction: str):
         tariff = get_object_or_404(
@@ -425,11 +433,21 @@ class TariffAdmin(TimestampedAdmin):
     def group_order_controls(self, obj):
         if not obj.created_by_id:
             return "—"
+        request = getattr(self, "_changelist_request", None)
+        csrf_token = get_token(request) if request is not None else ""
         up_url = reverse("admin:policy_app_tariff_move_owner_up", args=[obj.pk])
         down_url = reverse("admin:policy_app_tariff_move_owner_down", args=[obj.pk])
         return format_html(
-            '<a class="button" href="{}" title="Поднять группу вверх">↑</a>&nbsp;'
-            '<a class="button" href="{}" title="Опустить группу вниз">↓</a>',
+            '<form method="post" action="{}" style="display:inline-block; margin:0;">'
+            '<input type="hidden" name="csrfmiddlewaretoken" value="{}">'
+            '<button type="submit" class="button" title="Поднять группу вверх">↑</button>'
+            "</form>&nbsp;"
+            '<form method="post" action="{}" style="display:inline-block; margin:0;">'
+            '<input type="hidden" name="csrfmiddlewaretoken" value="{}">'
+            '<button type="submit" class="button" title="Опустить группу вниз">↓</button>'
+            "</form>",
             up_url,
+            csrf_token,
             down_url,
+            csrf_token,
         )

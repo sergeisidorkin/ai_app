@@ -1100,6 +1100,45 @@ class ProposalFormContextTests(TestCase):
             ["Анна Сидорова", "Иван Петров", "Петр Иванов"],
         )
 
+    def test_typical_sections_json_marks_sections_excluded_from_tkp_autofill(self):
+        product = Product.objects.create(
+            short_name="TKP",
+            name_en="TKP product",
+            name_ru="ТКП продукт",
+            service_type="service",
+            position=1,
+        )
+        TypicalSection.objects.create(
+            product=product,
+            code="IN",
+            short_name="IN",
+            name_en="Included",
+            name_ru="Включенный раздел",
+            position=1,
+        )
+        TypicalSection.objects.create(
+            product=product,
+            code="OUT",
+            short_name="OUT",
+            name_en="Excluded",
+            name_ru="Исключенный раздел",
+            exclude_from_tkp_autofill=True,
+            position=2,
+        )
+
+        response = self.client.get(reverse("proposal_form_create"))
+
+        self.assertEqual(response.status_code, 200)
+        entries = response.context["typical_sections_json"][str(product.pk)]
+        self.assertEqual(
+            [item["name"] for item in entries],
+            ["Включенный раздел", "Исключенный раздел"],
+        )
+        excluded_entry = next(item for item in entries if item["name"] == "Исключенный раздел")
+        self.assertTrue(excluded_entry["exclude_from_tkp_autofill"])
+        included_entry = next(item for item in entries if item["name"] == "Включенный раздел")
+        self.assertFalse(included_entry["exclude_from_tkp_autofill"])
+
     def test_typical_sections_json_uses_direction_head_for_special_expertise_sections(self):
         product = Product.objects.create(
             short_name="VAL",

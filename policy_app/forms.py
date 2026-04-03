@@ -99,7 +99,18 @@ class TypicalSectionForm(forms.ModelForm):
 
     class Meta:
         model = TypicalSection
-        fields = ["product", "code", "short_name", "short_name_ru", "name_en", "name_ru", "accounting_type", "expertise_dir", "expertise_direction"]
+        fields = [
+            "product",
+            "code",
+            "short_name",
+            "short_name_ru",
+            "name_en",
+            "name_ru",
+            "accounting_type",
+            "expertise_dir",
+            "expertise_direction",
+            "exclude_from_tkp_autofill",
+        ]
         widgets = {
             "code": forms.TextInput(attrs={"class": "form-control", "placeholder": "Код"}),
             "short_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Short name EN"}),
@@ -107,6 +118,7 @@ class TypicalSectionForm(forms.ModelForm):
             "name_en": forms.TextInput(attrs={"class": "form-control", "placeholder": "English section name"}),
             "name_ru": forms.TextInput(attrs={"class": "form-control", "placeholder": "Русское наименование раздела"}),
             "accounting_type": forms.Select(attrs={"class": "form-select"}),
+            "exclude_from_tkp_autofill": forms.CheckboxInput(attrs={"class": "form-check-input"}),
         }
 
     def __init__(self, *args, request_user=None, **kwargs):
