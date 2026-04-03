@@ -100,11 +100,15 @@ def _attach_proposal_folder_urls(proposals, user=None):
     folder_cache = {}
     for proposal in proposals:
         path = getattr(proposal, "proposal_workspace_disk_path", "") or ""
-        proposal.proposal_workspace_folder_url = build_folder_url(path)
+        proposal.proposal_workspace_folder_url = ""
         if path:
-            folder_cache.setdefault(path, proposal.proposal_workspace_folder_url)
+            folder_cache.setdefault(path, build_folder_url(path))
 
     if not proposals or not is_nextcloud_primary():
+        for proposal in proposals:
+            path = getattr(proposal, "proposal_workspace_disk_path", "") or ""
+            if path:
+                proposal.proposal_workspace_folder_url = folder_cache.get(path, "")
         return
     if user is None or not getattr(user, "is_authenticated", False):
         return
@@ -114,7 +118,13 @@ def _attach_proposal_folder_urls(proposals, user=None):
         return
 
     link = NextcloudUserLink.objects.filter(user=user).first()
-    if not link or not link.nextcloud_user_id or link.nextcloud_user_id == client.username:
+    if link and link.nextcloud_user_id == client.username:
+        for proposal in proposals:
+            path = getattr(proposal, "proposal_workspace_disk_path", "") or ""
+            if path:
+                proposal.proposal_workspace_folder_url = folder_cache.get(path, "")
+        return
+    if not link or not link.nextcloud_user_id:
         return
 
     try:
@@ -132,7 +142,9 @@ def _attach_proposal_folder_urls(proposals, user=None):
     for proposal in proposals:
         path = getattr(proposal, "proposal_workspace_disk_path", "") or ""
         if path:
-            proposal.proposal_workspace_folder_url = resolved_cache.get(path, proposal.proposal_workspace_folder_url)
+            share = share_map.get(path)
+            if share and share.target_path:
+                proposal.proposal_workspace_folder_url = resolved_cache.get(path, "")
 
 
 def _proposals_context(user=None):

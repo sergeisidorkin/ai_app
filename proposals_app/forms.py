@@ -896,6 +896,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             raw=self.cleaned_data.get("legal_entities_payload"),
             item_label="юрлица",
             require_asset_short_name=True,
+            require_short_name=False,
         )
         self.cleaned_legal_entities = cleaned_legal_entities
         return self._serialize_related_payload(cleaned_legal_entities, include_asset_short_name=True)
@@ -1137,7 +1138,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             return ", ".join(selected_choices)
         return ", ".join(normalize_proposal_report_languages(self.cleaned_data.get("report_languages")))
 
-    def _clean_related_payload(self, raw, *, item_label, require_asset_short_name=False):
+    def _clean_related_payload(self, raw, *, item_label, require_asset_short_name=False, require_short_name=True):
         raw = (raw or "").strip()
         if not raw:
             return []
@@ -1180,7 +1181,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     f"В строке {item_label} #{idx} заполните поле «Наименование актива (краткое)»."
                 )
 
-            if not short_name:
+            if require_short_name and not short_name:
                 raise forms.ValidationError(f"В строке {item_label} #{idx} заполните поле «Наименование (краткое)».")
 
             registration_date = None
