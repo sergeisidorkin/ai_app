@@ -1,5 +1,12 @@
+import sys
+
 from django.conf import settings
 from django.db import models
+
+
+# Prevent duplicate imports via `letters_app.models` and `ai_app.letters_app.models`.
+sys.modules.setdefault("letters_app.models", sys.modules[__name__])
+sys.modules.setdefault("ai_app.letters_app.models", sys.modules[__name__])
 
 
 class LetterTemplate(models.Model):
@@ -7,6 +14,7 @@ class LetterTemplate(models.Model):
         ("participation_confirmation", "Подтверждение участия эксперта"),
         ("direction_confirmation", "Подтверждение по направлению"),
         ("contract_sending", "Отправка проекта договора"),
+        ("proposal_sending", "Отправка ТКП"),
         ("scan_sending", "Отправка скана сотрудника"),
         ("project_start", "Начало проекта"),
         ("request_approval", "Согласование запроса"),
@@ -16,6 +24,7 @@ class LetterTemplate(models.Model):
         "participation_confirmation": "Шаблон запроса подтверждения участия в проекте",
         "direction_confirmation": "Шаблон запроса подтверждения по направлению",
         "contract_sending": "Шаблон отправки проекта договора",
+        "proposal_sending": "Шаблон сопроводительного письма при отправке ТКП",
         "scan_sending": "Шаблон отправки скана сотрудника",
         "project_start": "Шаблон уведомления о начале проекта",
         "request_approval": "Шаблон согласования запроса",
@@ -71,6 +80,13 @@ class LetterTemplate(models.Model):
             ("{project_deadline}", "Срок завершения проекта (дедлайн)"),
             ("{duration_hours}", "Срок для принятия решения (часов)"),
             ("{deadline_at}", "Крайний срок ответа"),
+        ],
+        "proposal_sending": [
+            ("{{tkp_id}}",
+             "Идентификатор ТКП в формате «XXXXYZZ Тип Название», где: "
+             "XXXX — четырехзначный номер проекта, "
+             "Y — номер строки компании в составе группы для выбранной страны, начиная с 0, "
+             "ZZ — двузначный код страны регистрации компании группы IMC Montan"),
         ],
         "scan_sending": [
             ("{recipient_name_lawer}", "Имя Отчество пользователя с ролью «Юрист»"),
@@ -129,6 +145,7 @@ class LetterTemplate(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
+        app_label = "letters_app"
         ordering = ["-updated_at"]
         verbose_name = "Шаблон письма"
         verbose_name_plural = "Шаблоны писем"

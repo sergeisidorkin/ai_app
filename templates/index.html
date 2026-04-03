@@ -561,6 +561,10 @@
             <hr class="my-0">
             <div class="list-group list-group-flush p-3 m-0" id="letters-second-sidebar-list">
               <a href="#" class="list-group-item list-group-item-action active"
+                 data-letters-section="proposal-sending">
+                Отправка ТКП
+              </a>
+              <a href="#" class="list-group-item list-group-item-action"
                  data-letters-section="participation-confirmation">
                 Подтверждение участия эксперта
               </a>
@@ -590,7 +594,7 @@
           <div class="flex-grow-1 ps-3 pe-0" style="min-width:0;">
             <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
               <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
-                <h5 class="mb-0 ps-3 fs-4 pt-2" id="letters-section-title">Подтверждение участия эксперта</h5>
+                <h5 class="mb-0 ps-3 fs-4 pt-2" id="letters-section-title">Отправка ТКП</h5>
                 <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
                    href="#notifications"
                    data-bs-toggle="tab"
@@ -603,12 +607,15 @@
             </div>
 
             <div class="ps-3">
-              <div id="letters-content-participation-confirmation"
+              <div id="letters-content-proposal-sending"
                    class="letters-section-content"
-                   hx-get="{% url 'letter_template_partial' 'participation_confirmation' %}"
+                   hx-get="{% url 'letter_template_partial' 'proposal_sending' %}"
                    hx-trigger="intersect once"
                    hx-swap="innerHTML">
                 <div class="text-center py-4"><div class="spinner-border spinner-border-sm text-secondary"></div></div>
+              </div>
+              <div id="letters-content-participation-confirmation" class="letters-section-content d-none"
+                   data-letters-url="{% url 'letter_template_partial' 'participation_confirmation' %}">
               </div>
               <div id="letters-content-direction-confirmation" class="letters-section-content d-none"
                    data-letters-url="{% url 'letter_template_partial' 'direction_confirmation' %}">
@@ -1023,6 +1030,7 @@
             'participation-confirmation': 'Подтверждение участия эксперта',
             'direction-confirmation': 'Подтверждение по направлению',
             'contract-sending': 'Отправка проекта договора',
+            'proposal-sending': 'Отправка ТКП',
             'scan-sending': 'Отправка скана сотрудника',
             'project-start': 'Начало проекта',
             'request-approval': 'Согласование запроса',

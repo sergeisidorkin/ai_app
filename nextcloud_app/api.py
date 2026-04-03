@@ -47,7 +47,10 @@ class NextcloudApiClient:
 
     def __init__(self, *, session: requests.Session | None = None):
         self._session = session or requests.Session()
-        self.base_url = (getattr(settings, "NEXTCLOUD_PROVISIONING_BASE_URL", "") or "").strip().rstrip("/")
+        self.base_url = (
+            (getattr(settings, "NEXTCLOUD_PROVISIONING_BASE_URL", "") or "").strip()
+            or (getattr(settings, "NEXTCLOUD_BASE_URL", "") or "").strip()
+        ).rstrip("/")
         self.username = (getattr(settings, "NEXTCLOUD_PROVISIONING_USERNAME", "") or "").strip()
         self.token = (getattr(settings, "NEXTCLOUD_PROVISIONING_TOKEN", "") or "").strip()
         self.provider_id = int(getattr(settings, "NEXTCLOUD_OIDC_PROVIDER_ID", 0) or 0)

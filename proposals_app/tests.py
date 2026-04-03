@@ -19,6 +19,7 @@ from classifiers_app.models import OKSMCountry, OKVCurrency
 from core.models import CloudStorageSettings
 from experts_app.models import ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
 from group_app.models import GroupMember, OrgUnit
+from letters_app.models import LetterTemplate
 from nextcloud_app.api import NextcloudShare
 from nextcloud_app.models import NextcloudUserLink
 from policy_app.models import (
@@ -190,6 +191,211 @@ class ProposalDocumentGenerationTests(TestCase):
 
         download_response = self.client.get(reverse("proposal_generated_docx_download", args=[self.proposal.pk]))
         self.assertEqual(download_response.status_code, 200)
+
+
+@override_settings(ROOT_URLCONF="proposals_app.urls")
+class ProposalDispatchSendTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="proposal-dispatch-staff",
+            email="staff@example.com",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+
+        self.group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        self.product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            service_type="service",
+            position=1,
+        )
+        LetterTemplate.objects.update_or_create(
+            template_type="proposal_sending",
+            user=None,
+            defaults={
+                "subject_template": "Технико-коммерческое предложение IMC Montan {{tkp_id}}",
+                "body_html": "<p>Направляем проект ТКП {{tkp_id}}</p>",
+                "is_default": True,
+            },
+        )
+        self.successful_proposal = ProposalRegistration.objects.create(
+            number=3333,
+            group_member=self.group_member,
+            type=self.product,
+            name="Приморское",
+            year=2026,
+            contact_email="recipient@example.com",
+        )
+        self.failed_proposal = ProposalRegistration.objects.create(
+            number=3334,
+            group_member=self.group_member,
+            type=self.product,
+            name="Балтика",
+            year=2026,
+            contact_email="",
+        )
+
+    @patch("proposals_app.services.send_notification_email")
+    def test_dispatch_send_updates_only_successfully_sent_rows(self, mocked_send_notification_email):
+        mocked_send_notification_email.return_value = {
+            "recipient_email": "recipient@example.com",
+            "subject": "ignored",
+            "is_html": True,
+        }
+
+        response = self.client.post(
+            reverse("proposal_dispatch_send"),
+            {
+                "proposal_ids[]": [self.successful_proposal.pk, self.failed_proposal.pk],
+                "delivery_channels[]": ["system_email"],
+                "sent_at": "2026-04-04T12:30",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["updated"], 1)
+        self.assertEqual(payload["email_delivery"]["sent"], 1)
+        self.assertEqual(payload["email_delivery"]["failed"], 1)
+        self.assertEqual(mocked_send_notification_email.call_count, 1)
+
+        call_kwargs = mocked_send_notification_email.call_args.kwargs
+        expected_tkp_id = " ".join(
+            [
+                self.successful_proposal.short_uid,
+                self.product.short_name,
+                self.successful_proposal.name,
+            ]
+        )
+        self.assertEqual(
+            call_kwargs["subject"],
+            f"Технико-коммерческое предложение IMC Montan {expected_tkp_id}",
+        )
+        self.assertEqual(
+            call_kwargs["content"],
+            f"<p>Направляем проект ТКП {expected_tkp_id}</p>",
+        )
+
+        self.successful_proposal.refresh_from_db()
+        self.failed_proposal.refresh_from_db()
+        self.assertEqual(self.successful_proposal.sent_date, "04.04.2026 12:30")
+        self.assertEqual(self.failed_proposal.sent_date, "")
+
+    @patch("proposals_app.services.send_notification_email")
+    @patch(
+        "proposals_app.services.get_user_notification_email_options",
+        return_value={},
+    )
+    def test_dispatch_send_marks_row_sent_when_at_least_one_channel_succeeds(
+        self,
+        _mocked_email_options,
+        mocked_send_notification_email,
+    ):
+        mocked_send_notification_email.return_value = {
+            "recipient_email": "recipient@example.com",
+            "subject": "ignored",
+            "is_html": True,
+        }
+
+        response = self.client.post(
+            reverse("proposal_dispatch_send"),
+            {
+                "proposal_ids[]": [self.successful_proposal.pk],
+                "delivery_channels[]": ["system_email", "connected_email"],
+                "sent_at": "2026-04-04T12:30",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["updated"], 1)
+        self.assertEqual(payload["email_delivery"]["sent"], 1)
+        self.assertEqual(payload["email_delivery"]["failed"], 1)
+        self.assertEqual(
+            payload["email_delivery"]["channels"]["connected_email"]["errors"][0]["error"],
+            "У отправителя не настроен активный внешний SMTP-аккаунт.",
+        )
+        self.assertEqual(mocked_send_notification_email.call_count, 1)
+        self.successful_proposal.refresh_from_db()
+        self.assertEqual(self.successful_proposal.sent_date, "04.04.2026 12:30")
+
+    @patch("proposals_app.services.send_notification_email")
+    def test_dispatch_send_uses_rendered_fallback_subject_when_template_subject_empty(self, mocked_send_notification_email):
+        mocked_send_notification_email.return_value = {
+            "recipient_email": "recipient@example.com",
+            "subject": "ignored",
+            "is_html": True,
+        }
+        LetterTemplate.objects.filter(
+            template_type="proposal_sending",
+            user__isnull=True,
+        ).update(
+            subject_template="",
+            body_html="<p>Направляем проект ТКП {{tkp_id}}</p>",
+        )
+
+        response = self.client.post(
+            reverse("proposal_dispatch_send"),
+            {
+                "proposal_ids[]": [self.successful_proposal.pk],
+                "delivery_channels[]": ["system_email"],
+                "sent_at": "2026-04-04T12:30",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        call_kwargs = mocked_send_notification_email.call_args.kwargs
+        expected_tkp_id = " ".join(
+            [
+                self.successful_proposal.short_uid,
+                self.product.short_name,
+                self.successful_proposal.name,
+            ]
+        )
+        self.assertEqual(
+            call_kwargs["subject"],
+            f"Технико-коммерческое предложение IMC Montan {expected_tkp_id}",
+        )
+
+    @patch("proposals_app.services.send_notification_email")
+    @patch("proposals_app.services.get_user_notification_email_options", return_value={})
+    def test_dispatch_send_returns_error_when_connected_email_unavailable(
+        self,
+        _mocked_email_options,
+        mocked_send_notification_email,
+    ):
+        response = self.client.post(
+            reverse("proposal_dispatch_send"),
+            {
+                "proposal_ids[]": [self.successful_proposal.pk],
+                "delivery_channels[]": ["connected_email"],
+                "sent_at": "2026-04-04T12:30",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"], "Не удалось отправить ни одного письма.")
+        self.assertEqual(payload["email_delivery"]["failed"], 1)
+        self.assertEqual(
+            payload["email_delivery"]["channels"]["connected_email"]["errors"][0]["error"],
+            "У отправителя не настроен активный внешний SMTP-аккаунт.",
+        )
+        mocked_send_notification_email.assert_not_called()
+        self.successful_proposal.refresh_from_db()
+        self.assertEqual(self.successful_proposal.sent_date, "")
 
 
 class ProposalRegistrationFormTests(TestCase):
@@ -1777,28 +1983,41 @@ class ProposalDispatchDiskColumnTests(TestCase):
             html=False,
         )
 
-    def test_proposals_partial_hides_cloud_link_when_viewer_has_no_nextcloud_link(self):
+    def test_proposals_partial_falls_back_to_direct_cloud_link_when_viewer_has_no_nextcloud_link(self):
         self.user_link.delete()
 
         response = self.client.get(reverse("proposals_partial"))
 
         self.assertEqual(response.status_code, 200)
         owner_url = f"https://cloud.example.com/apps/files/files?dir={quote(self.proposal.proposal_workspace_disk_path, safe='/')}"
-        self.assertNotContains(
+        self.assertContains(
             response,
             f'href="{owner_url}"',
             html=False,
         )
 
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
-    def test_proposals_partial_hides_cloud_link_when_share_target_is_missing(self, _mocked_list_user_shares):
+    def test_proposals_partial_falls_back_to_direct_cloud_link_when_share_target_is_missing(self, _mocked_list_user_shares):
         response = self.client.get(reverse("proposals_partial"))
 
         self.assertEqual(response.status_code, 200)
         owner_url = f"https://cloud.example.com/apps/files/files?dir={quote(self.proposal.proposal_workspace_disk_path, safe='/')}"
-        self.assertNotContains(
+        self.assertContains(
             response,
             f'href="{owner_url}"',
+            html=False,
+        )
+
+    def test_proposals_partial_builds_cloud_link_from_expected_workspace_path_for_legacy_rows(self):
+        self.proposal.proposal_workspace_disk_path = ""
+        self.proposal.save(update_fields=["proposal_workspace_disk_path"])
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            "/apps/files/files?dir=/Corporate%20Root/%D0%A2%D0%9A%D0%9F/2026/33330RU%20DD%20%D0%A2%D0%B5%D1%81%D1%82%D0%BE%D0%B2%D0%BE%D0%B5%20%D0%A2%D0%9A%D0%9F",
             html=False,
         )
 
