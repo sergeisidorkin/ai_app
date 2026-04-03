@@ -226,6 +226,61 @@ class ProposalRegistrationFormTests(TestCase):
             },
         )
 
+    @patch("proposals_app.forms.get_cbr_eur_rate_for_today")
+    def test_existing_form_keeps_stored_exchange_rate_in_commercial_totals(self, mocked_rate):
+        mocked_rate.return_value = Decimal("101.1111")
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        product = Product.objects.create(
+            short_name="FIX",
+            name_en="Fixed rate",
+            name_ru="Фиксированный курс",
+            service_type="service",
+            position=1,
+        )
+        proposal = ProposalRegistration.objects.create(
+            number=3333,
+            group_member=group_member,
+            type=product,
+            name="Историческое ТКП",
+            kind=ProposalRegistration.ProposalKind.REGULAR,
+            status=ProposalRegistration.ProposalStatus.FINAL,
+            year=2026,
+            customer='ООО "История"',
+            commercial_totals_json={
+                "exchange_rate": "95.4321",
+                "discount_percent": "0",
+            },
+        )
+
+        form = ProposalRegistrationForm(instance=proposal)
+
+        self.assertEqual(
+            json.loads(form.fields["commercial_totals_payload"].initial)["exchange_rate"],
+            "95.4321",
+        )
+
+    def test_new_form_defaults_report_languages_to_russian(self):
+        form = ProposalRegistrationForm()
+
+        self.assertEqual(form.initial["report_languages"], "русский")
+
+    def test_new_form_defaults_percent_fields_to_40_with_integer_step(self):
+        form = ProposalRegistrationForm()
+
+        self.assertEqual(form.fields["advance_percent"].initial, 40)
+        self.assertEqual(form.fields["preliminary_report_percent"].initial, 40)
+        self.assertEqual(form.fields["advance_term_days"].initial, 10)
+        self.assertEqual(form.fields["preliminary_report_term_days"].initial, 7)
+        self.assertEqual(form.fields["final_report_term_days"].initial, 15)
+        self.assertEqual(form.fields["advance_percent"].widget.attrs["step"], "1")
+        self.assertEqual(form.fields["preliminary_report_percent"].widget.attrs["step"], "1")
+
     def test_invalid_bound_percent_does_not_raise_during_init(self):
         form = ProposalRegistrationForm(
             data={
@@ -237,6 +292,36 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertIsNone(form.initial.get("final_report_percent"))
         self.assertFalse(form.is_valid())
         self.assertIn("advance_percent", form.errors)
+
+    def test_report_languages_normalizes_legacy_codes(self):
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            service_type="service",
+            position=1,
+        )
+        form = ProposalRegistrationForm(
+            data={
+                "number": 3333,
+                "group_member": group_member.pk,
+                "type": product.pk,
+                "name": "Тестовое ТКП",
+                "kind": ProposalRegistration.ProposalKind.REGULAR,
+                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "report_languages": "RU, EN, zh",
+            }
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.cleaned_data["report_languages"], "русский, английский, китайский")
 
     def test_proposal_variable_form_accepts_registry_binding(self):
         form = ProposalVariableForm(
@@ -826,6 +911,68 @@ class ProposalRegistrationFormTests(TestCase):
             },
         )
 
+    def test_form_preserves_zero_values_in_commercial_totals_payload(self):
+        country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        product = Product.objects.create(
+            short_name="ZERO",
+            name_en="Zero values",
+            name_ru="Нулевые значения",
+            service_type="service",
+            position=1,
+        )
+
+        form = ProposalRegistrationForm(
+            data={
+                "number": 3333,
+                "group_member": group_member.pk,
+                "type": product.pk,
+                "name": "ТКП с нулями",
+                "kind": ProposalRegistration.ProposalKind.REGULAR,
+                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "year": 2026,
+                "customer": 'ООО "Ноль"',
+                "country": country.pk,
+                "identifier": "ОГРН",
+                "registration_number": "1174910001683",
+                "registration_date": "01.04.2026",
+                "commercial_totals_payload": (
+                    '{"exchange_rate":"0","discount_percent":"0",'
+                    '"contract_total":"0","contract_total_auto":"0",'
+                    '"rub_total_service_text":"Курс ЦБ","discounted_total_service_text":"Скидка проекта"}'
+                ),
+            }
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        proposal = form.save()
+
+        self.assertEqual(
+            proposal.commercial_totals_json,
+            {
+                "exchange_rate": "0",
+                "discount_percent": "0",
+                "contract_total": "0",
+                "contract_total_auto": "0",
+                "rub_total_service_text": "Курс ЦБ",
+                "discounted_total_service_text": "Скидка проекта",
+            },
+        )
+
 
 class ProposalFormContextTests(TestCase):
     def setUp(self):
@@ -1173,6 +1320,10 @@ class ProposalFormContextTests(TestCase):
         self.assertContains(response, 'id="proposal-commercial-totals-payload"', html=False)
         self.assertContains(response, 'name="status"', html=False)
         self.assertContains(response, 'value="final"', html=False)
+        self.assertContains(response, 'id="proposal-report-languages-dropdown"', html=False)
+        self.assertContains(response, 'id="proposal-report-languages-toggle"', html=False)
+        self.assertContains(response, 'id="proposal-report-language-en"', html=False)
+        self.assertContains(response, 'value="русский"', html=False)
 
 
 class ProposalAccessTests(TestCase):

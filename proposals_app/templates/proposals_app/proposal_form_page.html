@@ -428,10 +428,52 @@
         {{ form.final_report_date }}
       </div>
 
-      <div class="col-12">
+      <div class="col-3">
         <label class="form-label">{{ form.report_languages.label }}</label>
-        {{ form.report_languages }}
+        {{ form.report_languages.as_hidden }}
+        <div class="dropdown proposal-report-languages-dropdown" id="proposal-report-languages-dropdown">
+          <button class="form-select text-start" type="button"
+                  id="proposal-report-languages-toggle"
+                  data-bs-toggle="dropdown"
+                  data-bs-auto-close="outside"
+                  aria-expanded="false"
+                  style="cursor:pointer; background-color:#fff;">
+            <span class="js-proposal-report-languages-label">{{ form.selected_report_languages|join:", " }}</span>
+          </button>
+          <div class="dropdown-menu p-3" aria-labelledby="proposal-report-languages-toggle"
+               style="min-width: 100%; max-height: 240px; overflow-y: auto;">
+            <div class="form-check mb-2">
+              <input class="form-check-input js-proposal-report-language" type="checkbox"
+                     name="report_language_choices" value="русский" id="proposal-report-language-ru"
+                     onchange="(() => { const dropdown = this.closest('.proposal-report-languages-dropdown'); const hidden = document.getElementById('proposal-report-languages'); const checks = Array.from(dropdown.querySelectorAll('.js-proposal-report-language')); let values = checks.filter(cb => cb.checked).map(cb => cb.value); if (!values.length) { const ru = dropdown.querySelector('#proposal-report-language-ru'); if (ru) { ru.checked = true; values = ['русский']; } } if (hidden) hidden.value = values.join(', '); const label = dropdown.querySelector('.js-proposal-report-languages-label'); if (label) label.textContent = values.join(', '); })()"
+                     {% if "русский" in form.selected_report_languages %}checked{% endif %}>
+              <label class="form-check-label" for="proposal-report-language-ru">русский</label>
+            </div>
+            <div class="form-check mb-2">
+              <input class="form-check-input js-proposal-report-language" type="checkbox"
+                     name="report_language_choices" value="английский" id="proposal-report-language-en"
+                     onchange="(() => { const dropdown = this.closest('.proposal-report-languages-dropdown'); const hidden = document.getElementById('proposal-report-languages'); const checks = Array.from(dropdown.querySelectorAll('.js-proposal-report-language')); let values = checks.filter(cb => cb.checked).map(cb => cb.value); if (!values.length) { const ru = dropdown.querySelector('#proposal-report-language-ru'); if (ru) { ru.checked = true; values = ['русский']; } } if (hidden) hidden.value = values.join(', '); const label = dropdown.querySelector('.js-proposal-report-languages-label'); if (label) label.textContent = values.join(', '); })()"
+                     {% if "английский" in form.selected_report_languages %}checked{% endif %}>
+              <label class="form-check-label" for="proposal-report-language-en">английский</label>
+            </div>
+            <div class="form-check mb-2">
+              <input class="form-check-input js-proposal-report-language" type="checkbox"
+                     name="report_language_choices" value="казахский" id="proposal-report-language-kz"
+                     onchange="(() => { const dropdown = this.closest('.proposal-report-languages-dropdown'); const hidden = document.getElementById('proposal-report-languages'); const checks = Array.from(dropdown.querySelectorAll('.js-proposal-report-language')); let values = checks.filter(cb => cb.checked).map(cb => cb.value); if (!values.length) { const ru = dropdown.querySelector('#proposal-report-language-ru'); if (ru) { ru.checked = true; values = ['русский']; } } if (hidden) hidden.value = values.join(', '); const label = dropdown.querySelector('.js-proposal-report-languages-label'); if (label) label.textContent = values.join(', '); })()"
+                     {% if "казахский" in form.selected_report_languages %}checked{% endif %}>
+              <label class="form-check-label" for="proposal-report-language-kz">казахский</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input js-proposal-report-language" type="checkbox"
+                     name="report_language_choices" value="китайский" id="proposal-report-language-zh"
+                     onchange="(() => { const dropdown = this.closest('.proposal-report-languages-dropdown'); const hidden = document.getElementById('proposal-report-languages'); const checks = Array.from(dropdown.querySelectorAll('.js-proposal-report-language')); let values = checks.filter(cb => cb.checked).map(cb => cb.value); if (!values.length) { const ru = dropdown.querySelector('#proposal-report-language-ru'); if (ru) { ru.checked = true; values = ['русский']; } } if (hidden) hidden.value = values.join(', '); const label = dropdown.querySelector('.js-proposal-report-languages-label'); if (label) label.textContent = values.join(', '); })()"
+                     {% if "китайский" in form.selected_report_languages %}checked{% endif %}>
+              <label class="form-check-label" for="proposal-report-language-zh">китайский</label>
+            </div>
+          </div>
+        </div>
       </div>
+      <div class="w-100"></div>
 
       <div class="col-12">
         <label class="form-label mb-2">Коммерческое предложение</label>

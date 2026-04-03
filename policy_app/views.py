@@ -4,7 +4,8 @@ import json
 from collections import defaultdict
 
 from django.contrib.auth.decorators import login_required, user_passes_test
-from django.db.models import Max, Q
+from django.db.models import IntegerField, Max, Q, Value
+from django.db.models.functions import Coalesce
 from django.http import JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST
@@ -74,6 +75,18 @@ def _get_grades_for_user(user):
 def _get_tariffs_for_user(user):
     qs = Tariff.objects.select_related(
         "product", "section", "created_by", "created_by__employee_profile"
+    ).annotate(
+        owner_group_position=Coalesce(
+            "created_by__employee_profile__position",
+            Value(1000000),
+            output_field=IntegerField(),
+        )
+    ).order_by(
+        "owner_group_position",
+        "created_by__employee_profile__job_title",
+        "created_by__username",
+        "position",
+        "id",
     )
     if user.is_superuser:
         return qs
@@ -1123,6 +1136,27 @@ def _normalize_specialty_tariff_positions():
             SpecialtyTariff.objects.filter(pk=item.pk).update(position=idx)
 
 
+def _normalize_tariff_positions(created_by_id: int | None = None):
+    qs = Tariff.objects.only("id", "position", "created_by_id")
+    if created_by_id is not None:
+        items = qs.filter(created_by_id=created_by_id).order_by("position", "id")
+        for idx, item in enumerate(items, start=1):
+            if item.position != idx:
+                Tariff.objects.filter(pk=item.pk).update(position=idx)
+        return
+    items = qs.order_by("created_by_id", "position", "id")
+    current_owner_id = object()
+    idx = 0
+    for item in items:
+        if item.created_by_id != current_owner_id:
+            current_owner_id = item.created_by_id
+            idx = 1
+        else:
+            idx += 1
+        if item.position != idx:
+            Tariff.objects.filter(pk=item.pk).update(position=idx)
+
+
 @require_http_methods(["POST", "GET"])
 @login_required
 def specialty_tariff_move_up(request, pk: int):
@@ -1228,12 +1262,16 @@ def tariff_move_up(request, pk: int):
     obj = get_object_or_404(Tariff, pk=pk)
     if not request.user.is_superuser and obj.created_by != request.user:
         return _render_policy_updated(request)
-    qs = Tariff.objects.filter(created_by=obj.created_by)
-    prev = qs.filter(position__lt=obj.position).order_by("-position").first()
-    if prev:
-        obj.position, prev.position = prev.position, obj.position
-        Tariff.objects.filter(pk=obj.pk).update(position=obj.position)
-        Tariff.objects.filter(pk=prev.pk).update(position=prev.position)
+    _normalize_tariff_positions(created_by_id=obj.created_by_id)
+    items = list(Tariff.objects.filter(created_by_id=obj.created_by_id).order_by("position", "id").only("id", "position"))
+    idx = next((i for i, item in enumerate(items) if item.id == pk), None)
+    if idx is not None and idx > 0:
+        cur = items[idx]
+        prev = items[idx - 1]
+        cur_pos, prev_pos = cur.position, prev.position
+        Tariff.objects.filter(pk=cur.id).update(position=prev_pos)
+        Tariff.objects.filter(pk=prev.id).update(position=cur_pos)
+        _normalize_tariff_positions(created_by_id=obj.created_by_id)
     return _render_policy_updated(request)
 
 
@@ -1243,10 +1281,14 @@ def tariff_move_down(request, pk: int):
     obj = get_object_or_404(Tariff, pk=pk)
     if not request.user.is_superuser and obj.created_by != request.user:
         return _render_policy_updated(request)
-    qs = Tariff.objects.filter(created_by=obj.created_by)
-    nxt = qs.filter(position__gt=obj.position).order_by("position").first()
-    if nxt:
-        obj.position, nxt.position = nxt.position, obj.position
-        Tariff.objects.filter(pk=obj.pk).update(position=obj.position)
-        Tariff.objects.filter(pk=nxt.pk).update(position=nxt.position)
+    _normalize_tariff_positions(created_by_id=obj.created_by_id)
+    items = list(Tariff.objects.filter(created_by_id=obj.created_by_id).order_by("position", "id").only("id", "position"))
+    idx = next((i for i, item in enumerate(items) if item.id == pk), None)
+    if idx is not None and idx < len(items) - 1:
+        cur = items[idx]
+        nxt = items[idx + 1]
+        cur_pos, next_pos = cur.position, nxt.position
+        Tariff.objects.filter(pk=cur.id).update(position=next_pos)
+        Tariff.objects.filter(pk=nxt.id).update(position=cur_pos)
+        _normalize_tariff_positions(created_by_id=obj.created_by_id)
     return _render_policy_updated(request)

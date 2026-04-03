@@ -14,6 +14,7 @@ from policy_app.models import (
     TypicalSection,
     TypicalServiceComposition,
 )
+from users_app.models import Employee
 
 
 class ServiceGoalReportViewsTests(TestCase):
@@ -440,3 +441,154 @@ class TariffViewsTests(TestCase):
         tariff = Tariff.objects.get()
         self.assertEqual(tariff.service_hours, 12)
         self.assertEqual(tariff.service_days_tkp, 7)
+
+    def test_move_up_normalizes_positions_before_reorder(self):
+        first = Tariff.objects.create(
+            product=self.product,
+            section=self.section,
+            base_rate_vpm="10.00",
+            service_hours=8,
+            service_days_tkp=2,
+            created_by=self.user,
+            position=1,
+        )
+        second = Tariff.objects.create(
+            product=self.product,
+            section=self.section,
+            base_rate_vpm="12.00",
+            service_hours=10,
+            service_days_tkp=3,
+            created_by=self.user,
+            position=3,
+        )
+
+        response = self.client.post(reverse("tariff_move_up", args=[second.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.position, 2)
+        self.assertEqual(second.position, 1)
+
+    def test_policy_partial_orders_tariff_groups_by_employee_position(self):
+        other_user = get_user_model().objects.create_user(
+            username="policy-admin-5",
+            password="secret123",
+            is_staff=True,
+        )
+        Employee.objects.create(user=self.user, job_title="Руководитель 1", position=2)
+        Employee.objects.create(user=other_user, job_title="Руководитель 2", position=1)
+
+        first = Tariff.objects.create(
+            product=self.product,
+            section=self.section,
+            base_rate_vpm="10.00",
+            service_hours=8,
+            service_days_tkp=2,
+            created_by=self.user,
+            position=1,
+        )
+        second = Tariff.objects.create(
+            product=self.product,
+            section=self.section,
+            base_rate_vpm="12.00",
+            service_hours=10,
+            service_days_tkp=3,
+            created_by=other_user,
+            position=1,
+        )
+
+        admin_user = get_user_model().objects.create_superuser(
+            username="policy-superuser",
+            email="superuser@example.com",
+            password="secret123",
+        )
+        client = self.client_class()
+        client.force_login(admin_user)
+
+        response = client.get(reverse("policy_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        tariffs = list(response.context["tariffs"])
+        self.assertEqual([item.pk for item in tariffs], [second.pk, first.pk])
+
+    def test_tariff_verbose_name_plural_matches_application(self):
+        self.assertEqual(Tariff._meta.verbose_name_plural, "Тарифы разделов (услуг)")
+
+
+class TariffAdminTests(TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.superuser = user_model.objects.create_superuser(
+            username="admin-root",
+            email="root@example.com",
+            password="secret123",
+        )
+        self.owner_first = user_model.objects.create_user(
+            username="dept-head-first",
+            password="secret123",
+            is_staff=True,
+        )
+        self.owner_second = user_model.objects.create_user(
+            username="dept-head-second",
+            password="secret123",
+            is_staff=True,
+        )
+        self.first_profile = Employee.objects.create(
+            user=self.owner_first,
+            job_title="Первый руководитель",
+            position=1,
+        )
+        self.second_profile = Employee.objects.create(
+            user=self.owner_second,
+            job_title="Второй руководитель",
+            position=2,
+        )
+        self.product = Product.objects.create(
+            short_name="TAR-ADMIN",
+            name_en="Tariff product admin",
+            display_name="Tariff product admin",
+            name_ru="Тарифный продукт админ",
+            service_type="Консалтинг",
+            position=1,
+        )
+        self.section = TypicalSection.objects.create(
+            product=self.product,
+            code="TSA",
+            short_name="tariff-section-admin",
+            short_name_ru="tariff-section-admin-ru",
+            name_en="Tariff section admin EN",
+            name_ru="Тарифный раздел админ",
+            accounting_type="Раздел",
+            position=1,
+        )
+        self.first_tariff = Tariff.objects.create(
+            product=self.product,
+            section=self.section,
+            base_rate_vpm="10.00",
+            service_hours=8,
+            service_days_tkp=2,
+            created_by=self.owner_first,
+            position=1,
+        )
+        self.second_tariff = Tariff.objects.create(
+            product=self.product,
+            section=self.section,
+            base_rate_vpm="12.00",
+            service_hours=10,
+            service_days_tkp=3,
+            created_by=self.owner_second,
+            position=1,
+        )
+        self.client.force_login(self.superuser)
+
+    def test_admin_move_owner_down_swaps_group_positions(self):
+        response = self.client.get(
+            reverse("admin:policy_app_tariff_move_owner_down", args=[self.first_tariff.pk])
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.first_profile.refresh_from_db()
+        self.second_profile.refresh_from_db()
+        self.assertEqual(self.first_profile.position, 2)
+        self.assertEqual(self.second_profile.position, 1)
