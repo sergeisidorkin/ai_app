@@ -72,8 +72,8 @@ def build_proposal_tkp_id(proposal):
 def _build_proposal_email(proposal, *, sender):
     tkp_id = build_proposal_tkp_id(proposal)
     template_vars = {"tkp_id": tkp_id}
-    subject = PROPOSAL_SENDING_DEFAULT_SUBJECT
-    content = PROPOSAL_SENDING_DEFAULT_BODY
+    subject = render_subject(PROPOSAL_SENDING_DEFAULT_SUBJECT, template_vars)
+    content = render_template(PROPOSAL_SENDING_DEFAULT_BODY, template_vars)
 
     tpl = get_effective_template(PROPOSAL_SENDING_TEMPLATE_TYPE, sender)
     if tpl:
@@ -148,7 +148,7 @@ def send_proposal_dispatch_emails(*, proposals, sender, delivery_channels):
         recipient_email = (getattr(proposal, "contact_email", "") or "").strip()
         recipient_label = f"{message_payload['tkp_id']} -> {recipient_email or 'без email'}"
         recipient = SimpleNamespace(email=recipient_email)
-        proposal_success = True
+        proposal_sent = False
 
         for channel in delivery_channels:
             email_delivery["attempted"] += 1
@@ -174,8 +174,8 @@ def send_proposal_dispatch_emails(*, proposals, sender, delivery_channels):
                 )
                 email_delivery["sent"] += 1
                 channel_summary["sent"] += 1
+                proposal_sent = True
             except EmailDeliveryError as exc:
-                proposal_success = False
                 _append_error(
                     email_delivery,
                     channel=channel,
@@ -183,7 +183,7 @@ def send_proposal_dispatch_emails(*, proposals, sender, delivery_channels):
                     error_message=str(exc),
                 )
 
-        if proposal_success:
+        if proposal_sent:
             sent_proposal_ids.append(proposal.pk)
 
     return {
