@@ -99,7 +99,6 @@ class TypicalSectionAdmin(TimestampedAdmin):
                 ("code", "accounting_type"),
                 ("short_name", "short_name_ru"),
                 ("name_en", "name_ru"),
-                "executor",
                 ("expertise_dir", "expertise_direction"),
                 "exclude_from_tkp_autofill",
             ),

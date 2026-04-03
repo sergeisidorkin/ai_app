@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase
 from django.urls import reverse
 
@@ -73,6 +74,23 @@ class TypicalSectionViewsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         section = TypicalSection.objects.get(code="SEC-2")
         self.assertTrue(section.exclude_from_tkp_autofill)
+
+    def test_section_csv_upload_accepts_rows_without_legacy_executor_column(self):
+        csv_file = SimpleUploadedFile(
+            "sections.csv",
+            (
+                "Продукт;Код;Краткое имя EN;Краткое имя RU;Наименование EN;Наименование RU;Тип учета;Направление экспертизы\n"
+                "SEC;SEC-3;section-3;section-3-ru;Section 3;Раздел 3;Раздел;\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("section_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        self.assertEqual(response.json()["warnings"], [])
+        self.assertTrue(TypicalSection.objects.filter(code="SEC-3").exists())
 
 
 class ServiceGoalReportViewsTests(TestCase):

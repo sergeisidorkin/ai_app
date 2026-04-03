@@ -170,6 +170,12 @@ class ProposalRegistration(models.Model):
     docx_file_link = models.CharField("Ссылка на DOCX", max_length=500, blank=True, default="")
     pdf_file_name = models.CharField("Наименование файла PDF", max_length=255, blank=True, default="")
     pdf_file_link = models.CharField("Ссылка на PDF", max_length=500, blank=True, default="")
+    proposal_workspace_disk_path = models.CharField(
+        "Путь к рабочей папке ТКП в облаке",
+        max_length=1024,
+        blank=True,
+        default="",
+    )
     sent_date = models.CharField("Дата отправки", max_length=255, blank=True, default="")
     recipient = models.CharField("Получатель", max_length=255, blank=True, default="")
     contact_full_name = models.CharField("ФИО", max_length=255, blank=True, default="")

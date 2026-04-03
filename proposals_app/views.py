@@ -1,6 +1,6 @@
 import json
+import logging
 import os
-import re
 from datetime import date as dt_date, datetime
 from urllib.parse import quote
 
@@ -13,7 +13,11 @@ from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from classifiers_app.models import LegalEntityRecord
+from core.cloud_storage import build_folder_url, get_primary_cloud_storage_label, is_nextcloud_primary
 from experts_app.models import ExpertProfile, ExpertProfileSpecialty
+from nextcloud_app.api import NextcloudApiClient, NextcloudApiError
+from nextcloud_app.models import NextcloudUserLink
+from nextcloud_app.workspace import create_proposal_workspace
 from policy_app.models import (
     ServiceGoalReport,
     SpecialtyTariff,
@@ -45,6 +49,7 @@ PROPOSAL_VARIABLE_FORM_TEMPLATE = "proposals_app/proposal_variable_form.html"
 
 HX_TRIGGER_HEADER = "HX-Trigger"
 HX_PROPOSALS_UPDATED_EVENT = "proposals-updated"
+logger = logging.getLogger(__name__)
 
 
 def staff_required(user):
@@ -91,7 +96,46 @@ def _sync_to_legal_entity_record(short_name, country, identifier, registration_n
         record.save()
 
 
-def _proposals_context():
+def _attach_proposal_folder_urls(proposals, user=None):
+    folder_cache = {}
+    for proposal in proposals:
+        path = getattr(proposal, "proposal_workspace_disk_path", "") or ""
+        proposal.proposal_workspace_folder_url = build_folder_url(path)
+        if path:
+            folder_cache.setdefault(path, proposal.proposal_workspace_folder_url)
+
+    if not proposals or not is_nextcloud_primary():
+        return
+    if user is None or not getattr(user, "is_authenticated", False):
+        return
+
+    client = NextcloudApiClient()
+    if not client.is_configured:
+        return
+
+    link = NextcloudUserLink.objects.filter(user=user).first()
+    if not link or not link.nextcloud_user_id or link.nextcloud_user_id == client.username:
+        return
+
+    try:
+        share_map = client.list_user_shares(client.username, link.nextcloud_user_id)
+    except NextcloudApiError as exc:
+        logger.warning("Could not resolve Nextcloud share targets for proposals table: %s", exc)
+        return
+
+    resolved_cache = dict(folder_cache)
+    for path in list(resolved_cache.keys()):
+        share = share_map.get(path)
+        if share and share.target_path:
+            resolved_cache[path] = client.build_files_url(share.target_path)
+
+    for proposal in proposals:
+        path = getattr(proposal, "proposal_workspace_disk_path", "") or ""
+        if path:
+            proposal.proposal_workspace_folder_url = resolved_cache.get(path, proposal.proposal_workspace_folder_url)
+
+
+def _proposals_context(user=None):
     proposals = ProposalRegistration.objects.select_related(
         "group_member",
         "country",
@@ -99,6 +143,7 @@ def _proposals_context():
         "type",
         "currency",
     ).all()
+    _attach_proposal_folder_urls(proposals, user=user)
     proposal_templates = list(ProposalTemplate.objects.select_related("group_member", "product").all())
     proposal_variables = ProposalVariable.objects.all()
     order_map = _proposal_group_member_order_map()
@@ -113,28 +158,30 @@ def _proposals_context():
         "proposals": proposals,
         "proposal_templates": proposal_templates,
         "proposal_variables": proposal_variables,
+        "primary_cloud_storage_label": get_primary_cloud_storage_label(),
         "proposal_request_sent_initial": timezone.localtime().replace(second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M"),
     }
 
 
 def _render_proposals_updated(request):
-    response = render(request, PROPOSALS_PARTIAL_TEMPLATE, _proposals_context())
+    response = render(request, PROPOSALS_PARTIAL_TEMPLATE, _proposals_context(request.user))
     response[HX_TRIGGER_HEADER] = HX_PROPOSALS_UPDATED_EVENT
     return response
 
 
-def _render_proposal_form(request, *, form, action, proposal=None):
-    def _primary_specialty(raw_value):
-        raw = str(raw_value or "").strip()
-        if not raw:
-            return ""
-        values = [
-            item.strip()
-            for item in re.split(r"\s*(?:;|,|\n|/)\s*", raw)
-            if item and item.strip()
-        ]
-        return values[0] if values else ""
+def _maybe_create_nextcloud_proposal_workspace(request, proposal) -> None:
+    if not is_nextcloud_primary():
+        return
+    try:
+        workspace_path = create_proposal_workspace(request.user, proposal)
+    except NextcloudApiError:
+        # The registry row should still be saved even if the cloud sync fails.
+        return
+    proposal.proposal_workspace_disk_path = workspace_path
+    proposal.save(update_fields=["proposal_workspace_disk_path"])
 
+
+def _render_proposal_form(request, *, form, action, proposal=None):
     def _section_specialty_names(section):
         names = []
         seen = set()
@@ -143,14 +190,7 @@ def _render_proposal_form(request, *, form, action, proposal=None):
             if specialty_name and specialty_name not in seen:
                 seen.add(specialty_name)
                 names.append(specialty_name)
-        if names:
-            return names
-        fallback = [
-            item.strip()
-            for item in re.split(r"\s*(?:;|,|\n|/)\s*", str(section.executor or "").strip())
-            if item and item.strip()
-        ]
-        return fallback
+        return names
 
     def _employee_short_name(employee):
         if not employee:
@@ -340,7 +380,7 @@ def _render_proposal_form(request, *, form, action, proposal=None):
         if not any(item.get("name") == section.name_ru for item in bucket):
             section_specialty_names = _section_specialty_names(section)
             specialty_name = section_specialty_names[0] if section_specialty_names else ""
-            executor_display = "\n".join(section_specialty_names) or (section.executor or "")
+            executor_display = "\n".join(section_specialty_names)
             specialist_options = list(specialty_candidates.get(specialty_name, []))
             default_candidate = specialty_defaults.get(
                 specialty_name, {"name": "", "professional_status": "", "base_rate_share": 0}
@@ -537,7 +577,7 @@ def _find_proposal_template(proposal, templates):
 @user_passes_test(staff_required)
 @require_GET
 def proposals_partial(request):
-    return render(request, PROPOSALS_PARTIAL_TEMPLATE, _proposals_context())
+    return render(request, PROPOSALS_PARTIAL_TEMPLATE, _proposals_context(request.user))
 
 
 @login_required
@@ -593,6 +633,7 @@ def proposal_form_create(request):
             legal_entity.registration_date,
             request.user,
         )
+    _maybe_create_nextcloud_proposal_workspace(request, proposal)
     return _render_proposals_updated(request)
 
 

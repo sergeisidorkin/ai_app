@@ -15,8 +15,11 @@ from django.urls import reverse
 from docx import Document
 
 from classifiers_app.models import OKSMCountry, OKVCurrency
+from core.models import CloudStorageSettings
 from experts_app.models import ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
 from group_app.models import GroupMember, OrgUnit
+from nextcloud_app.api import NextcloudShare
+from nextcloud_app.models import NextcloudUserLink
 from policy_app.models import (
     ExpertiseDirection,
     Grade,
@@ -189,6 +192,33 @@ class ProposalDocumentGenerationTests(TestCase):
 
 
 class ProposalRegistrationFormTests(TestCase):
+    def _base_form_payload(self, **overrides):
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            service_type="service",
+            position=1,
+        )
+        payload = {
+            "number": 3333,
+            "group_member": group_member.pk,
+            "type": product.pk,
+            "name": "Тестовое ТКП",
+            "kind": ProposalRegistration.ProposalKind.REGULAR,
+            "status": ProposalRegistration.ProposalStatus.FINAL,
+            "year": 2026,
+        }
+        payload.update(overrides)
+        return payload
+
     def test_new_form_uses_rub_as_default_currency(self):
         OKVCurrency.objects.create(
             code_numeric="643",
@@ -271,6 +301,62 @@ class ProposalRegistrationFormTests(TestCase):
 
         self.assertEqual(form.initial["report_languages"], "русский")
 
+    def test_new_form_requires_year(self):
+        form = ProposalRegistrationForm()
+
+        self.assertTrue(form.fields["year"].required)
+
+    def test_form_uses_russian_required_error_for_required_fields(self):
+        form = ProposalRegistrationForm(data={})
+
+        self.assertFalse(form.is_valid())
+        self.assertEqual(form.errors["type"][0], "Обязательное поле.")
+
+    def test_form_uses_russian_integer_error_message(self):
+        form = ProposalRegistrationForm(data=self._base_form_payload(number="abc"))
+
+        self.assertFalse(form.is_valid())
+        self.assertEqual(form.errors["number"][0], "Введите целое число.")
+
+    def test_form_uses_russian_date_error_message(self):
+        form = ProposalRegistrationForm(data=self._base_form_payload(registration_date="not-a-date"))
+
+        self.assertFalse(form.is_valid())
+        self.assertEqual(form.errors["registration_date"][0], "Введите дату в формате ДД.ММ.ГГГГ.")
+
+    def test_form_uses_russian_choice_error_message(self):
+        form = ProposalRegistrationForm(data=self._base_form_payload(kind="unknown"))
+
+        self.assertFalse(form.is_valid())
+        self.assertEqual(form.errors["kind"][0], "Выберите корректное значение.")
+
+    def test_existing_form_allows_empty_year(self):
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            service_type="service",
+            position=1,
+        )
+        proposal = ProposalRegistration.objects.create(
+            number=3333,
+            group_member=group_member,
+            type=product,
+            name="Тестовое ТКП",
+            year=None,
+        )
+
+        form = ProposalRegistrationForm(instance=proposal)
+
+        self.assertFalse(form.fields["year"].required)
+
     def test_new_form_defaults_percent_fields_to_40_with_integer_step(self):
         form = ProposalRegistrationForm()
 
@@ -317,6 +403,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "name": "Тестовое ТКП",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
                 "status": ProposalRegistration.ProposalStatus.FINAL,
+                "year": 2026,
                 "report_languages": "RU, EN, zh",
             }
         )
@@ -1021,10 +1108,10 @@ class ProposalFormContextTests(TestCase):
             short_name="FIN",
             name_en="Finance",
             name_ru="Финансы",
-            executor="Партнер",
             position=1,
         )
         specialty = ExpertSpecialty.objects.create(specialty="Партнер", position=1)
+        TypicalSectionSpecialty.objects.create(section=section, specialty=specialty, rank=1)
         grade_low = Grade.objects.create(
             grade_en="G1",
             grade_ru="G1",
@@ -1101,7 +1188,7 @@ class ProposalFormContextTests(TestCase):
             ["Анна Сидорова", "Иван Петров", "Петр Иванов"],
         )
 
-    def test_typical_sections_json_uses_ranked_section_specialties_over_legacy_executor_text(self):
+    def test_typical_sections_json_uses_ranked_section_specialties_for_executor_payload(self):
         product = Product.objects.create(
             short_name="CUR",
             name_en="Current specialties",
@@ -1115,7 +1202,6 @@ class ProposalFormContextTests(TestCase):
             short_name="CUR-1",
             name_en="Current section",
             name_ru="Актуальный раздел",
-            executor="Удаленная специальность",
             position=1,
         )
         specialty = ExpertSpecialty.objects.create(specialty="Новая специальность", position=1)
@@ -1215,12 +1301,12 @@ class ProposalFormContextTests(TestCase):
             short_name="VAL",
             name_en="Valuation",
             name_ru="Оценка бизнеса",
-            executor="Оценщик",
             expertise_dir=expertise,
             expertise_direction=direction,
             position=1,
         )
         specialty = ExpertSpecialty.objects.create(specialty="Оценщик", position=2)
+        TypicalSectionSpecialty.objects.create(section=section, specialty=specialty, rank=1)
         _, employee_candidate = self._create_staff_employee(
             username="valuation-candidate",
             first_name="Мария",
@@ -1270,13 +1356,13 @@ class ProposalFormContextTests(TestCase):
             short_name_ru="Налог 1",
             name_en="Tax Service",
             name_ru="Налоговый анализ",
-            executor="Партнер",
             position=1,
         )
         specialty = ExpertSpecialty.objects.create(
             specialty="Партнер",
             position=1,
         )
+        TypicalSectionSpecialty.objects.create(section=section, specialty=specialty, rank=1)
         grade = Grade.objects.create(
             grade_en="G2",
             grade_ru="G2",
@@ -1412,6 +1498,160 @@ class ProposalFormContextTests(TestCase):
         self.assertContains(response, 'id="proposal-report-languages-toggle"', html=False)
         self.assertContains(response, 'id="proposal-report-language-en"', html=False)
         self.assertContains(response, 'value="русский"', html=False)
+
+
+class ProposalNextcloudWorkspaceHookTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="proposal-nextcloud-staff",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        self.product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            service_type="service",
+            position=1,
+        )
+
+    def _payload(self, **overrides):
+        payload = {
+            "number": "3333",
+            "group_member": str(self.group_member.pk),
+            "type": str(self.product.pk),
+            "name": "Тестовое ТКП",
+            "kind": ProposalRegistration.ProposalKind.REGULAR,
+            "status": ProposalRegistration.ProposalStatus.FINAL,
+            "year": "2026",
+            "report_languages": "русский",
+        }
+        payload.update(overrides)
+        return payload
+
+    @patch("proposals_app.views.create_proposal_workspace")
+    @patch("proposals_app.views.is_nextcloud_primary", return_value=True)
+    def test_create_view_triggers_nextcloud_workspace_for_new_proposal(self, _mocked_is_nextcloud, mocked_workspace):
+        mocked_workspace.return_value = "/Corporate Root/ТКП/2026/333300RU DD Тестовое ТКП"
+        response = self.client.post(reverse("proposal_form_create"), self._payload())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(ProposalRegistration.objects.count(), 1)
+        mocked_workspace.assert_called_once()
+        self.assertEqual(mocked_workspace.call_args.args[0], self.user)
+        proposal = ProposalRegistration.objects.first()
+        self.assertEqual(mocked_workspace.call_args.args[1].pk, proposal.pk)
+        self.assertEqual(proposal.proposal_workspace_disk_path, mocked_workspace.return_value)
+
+    def test_create_view_rejects_new_proposal_without_year(self):
+        response = self.client.post(reverse("proposal_form_create"), self._payload(year=""))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(ProposalRegistration.objects.count(), 0)
+        self.assertContains(response, "year: Укажите год.", html=False)
+
+    @patch("proposals_app.views.create_proposal_workspace")
+    @patch("proposals_app.views.is_nextcloud_primary", return_value=True)
+    def test_edit_view_does_not_trigger_nextcloud_workspace(self, _mocked_is_nextcloud, mocked_workspace):
+        proposal = ProposalRegistration.objects.create(
+            number=3333,
+            group_member=self.group_member,
+            type=self.product,
+            name="Черновик",
+            year=2026,
+        )
+
+        response = self.client.post(
+            reverse("proposal_form_edit", args=[proposal.pk]),
+            self._payload(name="Обновленное ТКП", year=""),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        mocked_workspace.assert_not_called()
+        proposal.refresh_from_db()
+        self.assertIsNone(proposal.year)
+
+
+@override_settings(
+    NEXTCLOUD_PROVISIONING_BASE_URL="https://cloud.example.com",
+    NEXTCLOUD_PROVISIONING_USERNAME="cloud-admin",
+    NEXTCLOUD_PROVISIONING_TOKEN="token",
+    NEXTCLOUD_OIDC_PROVIDER_ID=1,
+)
+class ProposalDispatchDiskColumnTests(TestCase):
+    def setUp(self):
+        settings_obj = CloudStorageSettings.get_solo()
+        settings_obj.primary_storage = CloudStorageSettings.PrimaryStorage.NEXTCLOUD
+        settings_obj.nextcloud_root_path = "/Corporate Root"
+        settings_obj.save()
+
+        self.user = get_user_model().objects.create_user(
+            username="proposal-disk-user",
+            email="proposal-disk-user@example.com",
+            password="secret",
+            is_staff=True,
+            is_active=True,
+        )
+        self.client.force_login(self.user)
+        self.user_link = NextcloudUserLink.objects.create(
+            user=self.user,
+            nextcloud_user_id=f"ncstaff-{self.user.pk}",
+            nextcloud_username=f"ncstaff-{self.user.pk}",
+            nextcloud_email=self.user.email,
+        )
+        self.group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        self.product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            service_type="service",
+            position=1,
+        )
+        self.proposal = ProposalRegistration.objects.create(
+            number=3333,
+            group_member=self.group_member,
+            type=self.product,
+            name="Тестовое ТКП",
+            year=2026,
+            proposal_workspace_disk_path="/Corporate Root/ТКП/2026/333300RU DD Тестовое ТКП",
+        )
+
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
+    def test_proposals_partial_renders_disk_icon_with_nextcloud_share_target(self, mocked_list_user_shares):
+        mocked_list_user_shares.return_value = {
+            self.proposal.proposal_workspace_disk_path: NextcloudShare(
+                share_id="77",
+                path=self.proposal.proposal_workspace_disk_path,
+                share_with=self.user_link.nextcloud_user_id,
+                permissions=15,
+                target_path="/Shared/333300RU DD Тестовое ТКП",
+            )
+        }
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, ">Облако<", html=False)
+        self.assertContains(response, 'title="Открыть папку на Nextcloud"', html=False)
+        self.assertContains(
+            response,
+            "/apps/files/files?dir=/Shared/333300RU%20DD%20%D0%A2%D0%B5%D1%81%D1%82%D0%BE%D0%B2%D0%BE%D0%B5%20%D0%A2%D0%9A%D0%9F",
+            html=False,
+        )
 
 
 class ProposalAccessTests(TestCase):

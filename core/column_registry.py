@@ -164,6 +164,7 @@ COLUMN_REGISTRY = {
                     "expertise_direction": "Направление экспертизы",
                     "specialty": "Специальность",
                     "professional_status": "Профессиональный статус",
+                    "professional_status_short": "Профессиональный статус (кратко)",
                     "grade": "Грейд",
                     "country": "Страна",
                     "region": "Регион",

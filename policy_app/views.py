@@ -482,8 +482,8 @@ def section_csv_upload(request):
     for i, row in enumerate(data_rows, start=2):
         if not any(cell.strip() for cell in row):
             continue
-        if len(row) < 8:
-            warnings.append(f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 8–9: Продукт, Код, Краткое имя EN, Краткое имя RU, Наименование EN, Наименование RU, Тип учета, Исполнитель, [Направление экспертизы]).")
+        if len(row) < 7:
+            warnings.append(f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 7-9: Продукт, Код, Краткое имя EN, Краткое имя RU, Наименование EN, Наименование RU, Тип учета, [Направление экспертизы]).")
             continue
 
         product_name = row[0].strip()
@@ -493,8 +493,10 @@ def section_csv_upload(request):
         name_en = row[4].strip() if len(row) > 4 else ""
         name_ru = row[5].strip() if len(row) > 5 else ""
         accounting_type = row[6].strip() if len(row) > 6 else "Раздел"
-        executor = row[7].strip() if len(row) > 7 else ""
-        expertise_name = row[8].strip() if len(row) > 8 else ""
+        if len(row) > 8:
+            expertise_name = row[8].strip()
+        else:
+            expertise_name = row[7].strip() if len(row) > 7 else ""
 
         product = products_by_name.get(product_name.lower())
         if not product:
@@ -512,8 +514,6 @@ def section_csv_upload(request):
             missing.append("Наименование EN")
         if not name_ru:
             missing.append("Наименование RU")
-        if not executor:
-            missing.append("Исполнитель")
         if missing:
             warnings.append(f"Строка {i}: не заполнены обязательные поля: {', '.join(missing)}.")
             continue
@@ -538,7 +538,6 @@ def section_csv_upload(request):
                 name_en=name_en,
                 name_ru=name_ru,
                 accounting_type=accounting_type,
-                executor=executor,
                 expertise_direction=expertise_direction,
                 position=position,
             )

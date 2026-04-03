@@ -95,6 +95,45 @@ def _ensure_link_with_heartbeat(client, owner_user_id, path, progress, total):
     raise NextcloudApiError(f"Failed to create public link after {_LINK_MAX_RETRIES} attempts: {path}")
 
 
+def create_proposal_workspace(
+    user,
+    proposal,
+    *,
+    client: NextcloudApiClient | None = None,
+) -> str:
+    client = client or NextcloudApiClient()
+    if not client.is_configured:
+        raise NextcloudApiError("Nextcloud не настроен для создания рабочей папки ТКП.")
+
+    base_root = get_nextcloud_root_path()
+    if not base_root:
+        raise NextcloudApiError("Не задан корневой каталог Nextcloud в разделе «Подключения».")
+    if not proposal.year:
+        raise NextcloudApiError("Невозможно создать рабочую папку ТКП в Nextcloud: не заполнено поле «Год».")
+
+    base = "/" if base_root == "/" else base_root.rstrip("/")
+    owner_user_id = client.username
+
+    tkp_root_path = client.ensure_folder(owner_user_id, _join_path(base, _sanitize("ТКП")))
+    year_path = client.ensure_folder(owner_user_id, _join_path(tkp_root_path, _sanitize(str(proposal.year))))
+    proposal_path = client.ensure_folder(
+        owner_user_id,
+        _join_path(year_path, _build_proposal_workspace_folder_name(proposal)),
+    )
+
+    user_link = ensure_nextcloud_account(user, client=client)
+    if not user_link or not user_link.nextcloud_user_id:
+        raise NextcloudApiError("Не удалось определить Nextcloud-пользователя автора записи ТКП.")
+
+    client.ensure_user_share(
+        owner_user_id,
+        proposal_path,
+        user_link.nextcloud_user_id,
+        permissions=NextcloudApiClient.EDITOR_PERMISSIONS,
+    )
+    return proposal_path
+
+
 def create_basic_project_workspace_stream(
     user,
     project,
@@ -416,3 +455,10 @@ def _join_path(base: str, child: str) -> str:
     if clean_base in {"", "/"}:
         return "/" + clean_child
     return f"{clean_base}/{clean_child}"
+
+
+def _build_proposal_workspace_folder_name(proposal) -> str:
+    type_name = ""
+    if getattr(proposal, "type", None):
+        type_name = getattr(proposal.type, "short_name", "") or str(proposal.type)
+    return _sanitize(" ".join(part for part in (proposal.short_uid, type_name, proposal.name) if str(part or "").strip()))
