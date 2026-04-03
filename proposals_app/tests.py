@@ -25,6 +25,7 @@ from policy_app.models import (
     SpecialtyTariff,
     Tariff,
     TypicalSection,
+    TypicalSectionSpecialty,
     TypicalServiceComposition,
 )
 from users_app.models import Employee
@@ -1099,6 +1100,54 @@ class ProposalFormContextTests(TestCase):
             [item["name"] for item in finance_entry["specialist_options"]],
             ["Анна Сидорова", "Иван Петров", "Петр Иванов"],
         )
+
+    def test_typical_sections_json_uses_ranked_section_specialties_over_legacy_executor_text(self):
+        product = Product.objects.create(
+            short_name="CUR",
+            name_en="Current specialties",
+            name_ru="Актуальные специальности",
+            service_type="service",
+            position=1,
+        )
+        section = TypicalSection.objects.create(
+            product=product,
+            code="CUR-1",
+            short_name="CUR-1",
+            name_en="Current section",
+            name_ru="Актуальный раздел",
+            executor="Удаленная специальность",
+            position=1,
+        )
+        specialty = ExpertSpecialty.objects.create(specialty="Новая специальность", position=1)
+        TypicalSectionSpecialty.objects.create(section=section, specialty=specialty, rank=1)
+        grade = Grade.objects.create(
+            grade_en="G2",
+            grade_ru="G2",
+            qualification=2,
+            qualification_levels=5,
+            created_by=self.user,
+            position=1,
+        )
+        _, employee = self._create_staff_employee(
+            username="current-specialty-candidate",
+            first_name="Елена",
+            last_name="Экспертова",
+        )
+        profile = ExpertProfile.objects.create(
+            employee=employee,
+            professional_status="ACCA",
+            grade=grade,
+            position=1,
+        )
+        ExpertProfileSpecialty.objects.create(profile=profile, specialty=specialty, rank=1)
+
+        response = self.client.get(reverse("proposal_form_create"))
+
+        self.assertEqual(response.status_code, 200)
+        entries = response.context["typical_sections_json"][str(product.pk)]
+        section_entry = next(item for item in entries if item["name"] == section.name_ru)
+        self.assertEqual(section_entry["executor"], "Новая специальность")
+        self.assertEqual(section_entry["default_specialist"], "Елена Экспертова")
 
     def test_typical_sections_json_marks_sections_excluded_from_tkp_autofill(self):
         product = Product.objects.create(

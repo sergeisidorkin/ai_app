@@ -19,6 +19,7 @@ from policy_app.models import (
     SpecialtyTariff,
     Tariff,
     TypicalSection,
+    TypicalSectionSpecialty,
     TypicalServiceComposition,
 )
 from users_app.models import Employee
@@ -134,6 +135,23 @@ def _render_proposal_form(request, *, form, action, proposal=None):
         ]
         return values[0] if values else ""
 
+    def _section_specialty_names(section):
+        names = []
+        seen = set()
+        for link in section.ranked_specialties.all():
+            specialty_name = str(getattr(getattr(link, "specialty", None), "specialty", "") or "").strip()
+            if specialty_name and specialty_name not in seen:
+                seen.add(specialty_name)
+                names.append(specialty_name)
+        if names:
+            return names
+        fallback = [
+            item.strip()
+            for item in re.split(r"\s*(?:;|,|\n|/)\s*", str(section.executor or "").strip())
+            if item and item.strip()
+        ]
+        return fallback
+
     def _employee_short_name(employee):
         if not employee:
             return ""
@@ -237,6 +255,16 @@ def _render_proposal_form(request, *, form, action, proposal=None):
     sections = list(
         TypicalSection.objects
         .select_related("product", "expertise_dir", "expertise_direction")
+        .prefetch_related(
+            Prefetch(
+                "ranked_specialties",
+                queryset=(
+                    TypicalSectionSpecialty.objects
+                    .select_related("specialty")
+                    .order_by("rank", "id")
+                ),
+            )
+        )
         .order_by("product_id", "position", "id")
     )
     service_goal_reports = list(
@@ -310,7 +338,9 @@ def _render_proposal_form(request, *, form, action, proposal=None):
             continue
         bucket = sections_map.setdefault(product_id, [])
         if not any(item.get("name") == section.name_ru for item in bucket):
-            specialty_name = _primary_specialty(section.executor)
+            section_specialty_names = _section_specialty_names(section)
+            specialty_name = section_specialty_names[0] if section_specialty_names else ""
+            executor_display = "\n".join(section_specialty_names) or (section.executor or "")
             specialist_options = list(specialty_candidates.get(specialty_name, []))
             default_candidate = specialty_defaults.get(
                 specialty_name, {"name": "", "professional_status": "", "base_rate_share": 0}
@@ -353,7 +383,7 @@ def _render_proposal_form(request, *, form, action, proposal=None):
                 {
                     "name": section.name_ru,
                     "code": section.code or "",
-                    "executor": section.executor or "",
+                    "executor": executor_display,
                     "exclude_from_tkp_autofill": bool(section.exclude_from_tkp_autofill),
                     "default_specialist": default_specialist,
                     "default_professional_status": default_professional_status,
