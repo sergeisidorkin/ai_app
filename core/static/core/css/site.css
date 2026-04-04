@@ -546,11 +546,21 @@ body .second-sidebar + .flex-grow-1 {
   z-index: 1020;
 }
 
+#proposals > .templates-bleed > .section-header {
+  position: sticky;
+  top: 0;
+  z-index: 4000;
+}
+
 #notifications > .templates-bleed > .section-header {
   position: sticky;
   top: 0;
   z-index: 1020;
   margin-bottom: 16px;
+}
+
+#master-proposal-kind-filter-dropdown .dropdown-menu {
+  z-index: 4010;
 }
 
 .section-header .nav.nav-underline {
@@ -609,6 +619,11 @@ body .second-sidebar + .flex-grow-1 {
 
 .project-filter-menu .form-check-label {
   white-space: nowrap;
+}
+
+.project-filter-menu .form-check-input:disabled + .form-check-label {
+  opacity: .55;
+  cursor: default;
 }
 
 /* Чекбоксы в секции "Политика": точные отступы по 2px слева и справа */
@@ -1801,28 +1816,86 @@ section#templates .alert.alert-info .text-muted {
   width: 100%;
 }
 
-#proposals-pane .proposal-commercial-table .proposal-commercial-service-link {
+#proposals-pane .proposal-commercial-table .proposal-commercial-service-actions {
   position: absolute;
   left: .65rem;
   top: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
   transform: translateY(-50%);
+  z-index: 1;
+}
+
+#proposals-pane .proposal-commercial-table .proposal-commercial-service-action {
   text-decoration: none;
   line-height: 1;
   font-size: 1rem;
   color: #adb5bd;
-  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  width: 1.1rem;
+  height: 1.1rem;
+  cursor: pointer;
 }
 
-#proposals-pane .proposal-commercial-table .proposal-commercial-service-link:hover {
+#proposals-pane .proposal-commercial-table .proposal-commercial-service-action i {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  width: 1em;
+  height: 1em;
+}
+
+#proposals-pane .proposal-commercial-table .proposal-commercial-service-link i {
+  font-size: 1rem;
+  transform: translateY(0);
+}
+
+#proposals-pane .proposal-commercial-table .proposal-commercial-service-refresh i {
+  font-size: 1.2rem;
+  transform: translateY(1px);
+}
+
+#proposals-pane .proposal-commercial-table .proposal-commercial-service-action:hover,
+#proposals-pane .proposal-commercial-table .proposal-commercial-service-action:focus {
   color: #8f99a3;
   opacity: .9;
+}
+
+#proposals-pane .proposal-commercial-table .proposal-commercial-service-refresh:disabled {
+  opacity: .5;
+  cursor: progress;
+}
+
+#proposals-pane .proposal-commercial-table .proposal-commercial-service-refresh.is-loading i {
+  animation: proposal-refresh-spin .8s linear infinite;
+}
+
+html.proposal-progress-cursor,
+html.proposal-progress-cursor * {
+  cursor: progress !important;
+}
+
+@keyframes proposal-refresh-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 #proposals-pane .proposal-commercial-table .proposal-commercial-financial-service-wrap .proposal-commercial-service-text {
   width: 100%;
   min-width: 0;
   max-width: none;
-  padding-left: 2rem;
+  padding-left: 3.35rem;
 }
 
 
@@ -2160,8 +2233,13 @@ section#templates .alert.alert-info .text-muted {
   text-align: center !important;
 }
 
-#proposals-pane table.proposal-dispatch-table tbody td.proposal-id-cell {
-  color: #212529 !important;
+#proposals-pane table.proposal-dispatch-table .proposal-quick-edit-col {
+  width: 1% !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  white-space: nowrap !important;
+  vertical-align: top !important;
+  text-align: center !important;
 }
 
 .cloud-link-icon {
@@ -2429,7 +2507,8 @@ section#templates .alert.alert-info .text-muted {
 /* ==== Performers table ==== */
 .performer-quick-edit { cursor: pointer; opacity: .45; transition: opacity .15s; }
 .performer-quick-edit:hover { opacity: .85; }
-.proposal-quick-edit {
+.proposal-quick-edit,
+.proposal-dispatch-quick-edit {
   display: inline-block;
   vertical-align: middle;
   line-height: 1;
@@ -2438,7 +2517,8 @@ section#templates .alert.alert-info .text-muted {
   opacity: .45;
   transition: opacity .15s;
 }
-.proposal-quick-edit:hover { opacity: .85; }
+.proposal-quick-edit:hover,
+.proposal-dispatch-quick-edit:hover { opacity: .85; }
 .performer-locked-icon { opacity: .35; }
 
 .perf-nav-btn {

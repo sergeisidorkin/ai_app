@@ -137,3 +137,12 @@ def get_cbr_eur_rate_for_today() -> Decimal | None:
     _write_file_cache(today, eur_rate)
 
     return eur_rate
+
+
+def get_cbr_rate_date_label(target_date=None) -> str:
+    value = target_date or timezone.localdate()
+    return value.strftime("%d.%m.%Y")
+
+
+def get_cbr_eur_rate_text(target_date=None) -> str:
+    return f"Курс евро Банка России на {get_cbr_rate_date_label(target_date)}:"

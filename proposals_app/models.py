@@ -22,6 +22,8 @@ class ProposalRegistration(models.Model):
     class ProposalStatus(models.TextChoices):
         PRELIMINARY = "preliminary", "Предварительное"
         FINAL = "final", "Итоговое"
+        SENT = "sent", "Отправленное"
+        COMPLETED = "completed", "Завершённое"
 
     position = models.PositiveIntegerField(default=0, db_index=True, verbose_name="Позиция")
     number = models.PositiveIntegerField(

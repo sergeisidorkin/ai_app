@@ -26,7 +26,7 @@ from .models import (
     ProposalTemplate,
     ProposalVariable,
 )
-from .cbr import get_cbr_eur_rate_for_today
+from .cbr import get_cbr_eur_rate_for_today, get_cbr_eur_rate_text
 
 DATE_INPUT_ATTRS = {"class": "js-date", "autocomplete": "off"}
 DATE_INPUT_FORMATS = ["%Y-%m-%d", "%d.%m.%Y", "%d.%m.%y"]
@@ -47,6 +47,24 @@ PROPOSAL_REPORT_LANGUAGE_ALIASES = {
     "chinese": "китайский",
     "китайский": "китайский",
 }
+
+NON_EDITABLE_PROPOSAL_STATUSES = {
+    ProposalRegistration.ProposalStatus.SENT,
+    ProposalRegistration.ProposalStatus.COMPLETED,
+}
+
+
+class DisabledOptionsSelect(forms.Select):
+    def __init__(self, *args, disabled_values=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.disabled_values = {str(value) for value in (disabled_values or [])}
+
+    def create_option(self, name, value, label, selected, index, subindex=None, attrs=None):
+        option = super().create_option(name, value, label, selected, index, subindex=subindex, attrs=attrs)
+        option_value = option.get("value")
+        if option_value is not None and str(option_value) in self.disabled_values:
+            option["attrs"]["disabled"] = True
+        return option
 
 
 def normalize_proposal_report_languages(value) -> list[str]:
@@ -222,6 +240,12 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         queryset=GroupMember.objects.none(),
         required=True,
         widget=forms.Select(attrs={"id": "proposal-group-select"}),
+    )
+    status = forms.ChoiceField(
+        label="Статус",
+        required=True,
+        choices=ProposalRegistration.ProposalStatus.choices,
+        widget=DisabledOptionsSelect(disabled_values=NON_EDITABLE_PROPOSAL_STATUSES),
     )
     country = forms.ModelChoiceField(
         label="Страна",
@@ -524,6 +548,9 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         self.fields["group_member"].queryset = _group_choices()
         self.fields["group_member"].label_from_instance = lambda obj: obj.group_display_label
         self.fields["group_member"].empty_label = "— Не выбрано —"
+        self.fields["status"].widget.disabled_values = {str(value) for value in NON_EDITABLE_PROPOSAL_STATUSES}
+        if not (self.instance and self.instance.pk) and not self.is_bound:
+            self.fields["status"].initial = ProposalRegistration.ProposalStatus.FINAL
         self.fields["type"].queryset = Product.objects.order_by("position", "id")
         self.fields["type"].label_from_instance = lambda obj: obj.short_name
         self.fields["type"].required = True
@@ -668,9 +695,6 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 "discounted_total_service_text": "Размер скидки:",
                 **dict(self.instance.commercial_totals_json or {}),
             }
-            eur_rate = get_cbr_eur_rate_for_today()
-            if eur_rate is not None and not str(totals_payload.get("exchange_rate") or "").strip():
-                totals_payload["exchange_rate"] = format(eur_rate.quantize(Decimal("0.0001")), "f")
             self.fields["commercial_totals_payload"].initial = json.dumps(
                 totals_payload,
                 ensure_ascii=False,
@@ -678,7 +702,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         elif "commercial_totals_payload" not in self.data:
             totals_payload = {
                 "discount_percent": "5",
-                "rub_total_service_text": "Курс евро Банка России на текущую дату:",
+                "rub_total_service_text": get_cbr_eur_rate_text(),
                 "discounted_total_service_text": "Размер скидки:",
             }
             eur_rate = get_cbr_eur_rate_for_today()
@@ -755,6 +779,15 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         if member and not (member.country_alpha2 or "").strip():
             raise forms.ValidationError("Для выбранной строки состава группы не заполнен код Альфа-2.")
         return member
+
+    def clean_status(self):
+        status = self.cleaned_data.get("status")
+        if status in NON_EDITABLE_PROPOSAL_STATUSES:
+            current_status = str(getattr(self.instance, "status", "") or "")
+            if self.instance.pk and status == current_status:
+                return status
+            raise forms.ValidationError("Выберите корректное значение.")
+        return status
 
     def _calculate_final_report_percent(self, *, advance_percent, preliminary_report_percent):
         advance = self._parse_payload_decimal(

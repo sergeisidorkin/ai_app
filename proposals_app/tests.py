@@ -12,6 +12,7 @@ from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from docx import Document
 
@@ -458,7 +459,7 @@ class ProposalRegistrationFormTests(TestCase):
             json.loads(form.fields["commercial_totals_payload"].initial),
             {
                 "discount_percent": "5",
-                "rub_total_service_text": "Курс евро Банка России на текущую дату:",
+                "rub_total_service_text": f"Курс евро Банка России на {timezone.localdate().strftime('%d.%m.%Y')}:",
                 "discounted_total_service_text": "Размер скидки:",
                 "exchange_rate": "96.5432",
             },
@@ -503,10 +504,95 @@ class ProposalRegistrationFormTests(TestCase):
             "95.4321",
         )
 
+    @patch("proposals_app.forms.get_cbr_eur_rate_for_today")
+    def test_existing_form_keeps_stored_exchange_rate_label_text(self, mocked_rate):
+        mocked_rate.return_value = Decimal("101.1111")
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        product = Product.objects.create(
+            short_name="FIXTXT",
+            name_en="Fixed text",
+            name_ru="Фиксированный текст",
+            service_type="service",
+            position=1,
+        )
+        proposal = ProposalRegistration.objects.create(
+            number=3334,
+            group_member=group_member,
+            type=product,
+            name="Исторический текст курса",
+            kind=ProposalRegistration.ProposalKind.REGULAR,
+            status=ProposalRegistration.ProposalStatus.FINAL,
+            year=2026,
+            customer='ООО "История"',
+            commercial_totals_json={
+                "exchange_rate": "95.4321",
+                "discount_percent": "0",
+                "rub_total_service_text": "Курс евро Банка России на 15.01.2026:",
+            },
+        )
+
+        form = ProposalRegistrationForm(instance=proposal)
+
+        self.assertEqual(
+            json.loads(form.fields["commercial_totals_payload"].initial)["rub_total_service_text"],
+            "Курс евро Банка России на 15.01.2026:",
+        )
+
+    @patch("proposals_app.forms.get_cbr_eur_rate_for_today")
+    def test_existing_form_does_not_autofill_missing_exchange_rate(self, mocked_rate):
+        mocked_rate.return_value = Decimal("101.1111")
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        product = Product.objects.create(
+            short_name="FIXBLANK",
+            name_en="Blank rate",
+            name_ru="Пустой курс",
+            service_type="service",
+            position=1,
+        )
+        proposal = ProposalRegistration.objects.create(
+            number=3335,
+            group_member=group_member,
+            type=product,
+            name="Пустой курс",
+            kind=ProposalRegistration.ProposalKind.REGULAR,
+            status=ProposalRegistration.ProposalStatus.FINAL,
+            year=2026,
+            customer='ООО "История"',
+            commercial_totals_json={
+                "exchange_rate": "",
+                "discount_percent": "0",
+                "rub_total_service_text": "Курс евро Банка России на 15.01.2026:",
+            },
+        )
+
+        form = ProposalRegistrationForm(instance=proposal)
+
+        self.assertEqual(
+            json.loads(form.fields["commercial_totals_payload"].initial)["exchange_rate"],
+            "",
+        )
+
     def test_new_form_defaults_report_languages_to_russian(self):
         form = ProposalRegistrationForm()
 
         self.assertEqual(form.initial["report_languages"], "русский")
+
+    def test_new_form_defaults_status_to_final(self):
+        form = ProposalRegistrationForm()
+
+        self.assertEqual(form.fields["status"].initial, ProposalRegistration.ProposalStatus.FINAL)
 
     def test_new_form_requires_year(self):
         form = ProposalRegistrationForm()
@@ -541,6 +627,25 @@ class ProposalRegistrationFormTests(TestCase):
 
         self.assertFalse(form.is_valid())
         self.assertEqual(form.errors["kind"][0], "Выберите корректное значение.")
+
+    def test_form_renders_non_editable_statuses_as_disabled_options(self):
+        form = ProposalRegistrationForm()
+        choices = form.fields["status"].widget.optgroups("status", [])
+        options = [option for _group_name, group_options, _index in choices for option in group_options]
+        option_by_value = {str(option["value"]): option for option in options if option.get("value") is not None}
+
+        self.assertEqual(option_by_value["sent"]["label"], "Отправленное")
+        self.assertEqual(option_by_value["completed"]["label"], "Завершённое")
+        self.assertTrue(option_by_value["sent"]["attrs"].get("disabled"))
+        self.assertTrue(option_by_value["completed"]["attrs"].get("disabled"))
+
+    def test_form_rejects_manual_selection_of_non_editable_status(self):
+        form = ProposalRegistrationForm(
+            data=self._base_form_payload(status=ProposalRegistration.ProposalStatus.SENT)
+        )
+
+        self.assertFalse(form.is_valid())
+        self.assertEqual(form.errors["status"][0], "Выберите корректное значение.")
 
     def test_existing_form_allows_empty_year(self):
         group_member = GroupMember.objects.create(
@@ -1529,6 +1634,47 @@ class ProposalFormContextTests(TestCase):
         included_entry = next(item for item in entries if item["name"] == "Включенный раздел")
         self.assertFalse(included_entry["exclude_from_tkp_autofill"])
 
+    def test_typical_sections_json_exposes_accounting_type_for_tz_editor(self):
+        product = Product.objects.create(
+            short_name="SEC",
+            name_en="Section product",
+            name_ru="Продукт разделов",
+            service_type="service",
+            position=1,
+        )
+        TypicalSection.objects.create(
+            product=product,
+            code="SEC-1",
+            short_name="section-1",
+            short_name_ru="Раздел 1",
+            name_en="Section 1",
+            name_ru="Раздел 1",
+            accounting_type="Раздел",
+            position=1,
+        )
+        TypicalSection.objects.create(
+            product=product,
+            code="SRV-1",
+            short_name="service-1",
+            short_name_ru="Услуга 1",
+            name_en="Service 1",
+            name_ru="Услуга 1",
+            accounting_type="Услуги",
+            position=2,
+        )
+
+        response = self.client.get(reverse("proposal_form_create"))
+
+        self.assertEqual(response.status_code, 200)
+        entries = response.context["typical_sections_json"][str(product.pk)]
+        self.assertEqual(
+            {item["name"]: item["accounting_type"] for item in entries},
+            {
+                "Раздел 1": "Раздел",
+                "Услуга 1": "Услуги",
+            },
+        )
+
     def test_typical_sections_json_uses_direction_head_for_special_expertise_sections(self):
         product = Product.objects.create(
             short_name="VAL",
@@ -1755,6 +1901,7 @@ class ProposalFormContextTests(TestCase):
         self.assertContains(response, 'id="proposal-report-languages-toggle"', html=False)
         self.assertContains(response, 'id="proposal-report-language-en"', html=False)
         self.assertContains(response, 'value="русский"', html=False)
+        self.assertNotContains(response, 'id="proposal-kind-filter-toggle"', html=False)
 
 
 class ProposalNextcloudWorkspaceHookTests(TestCase):
@@ -1935,10 +2082,12 @@ class ProposalDispatchDiskColumnTests(TestCase):
             html=False,
         )
 
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_public_link_share", return_value="https://cloud.example.com/s/director-proposal-folder")
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
     def test_proposals_partial_resolves_cloud_link_from_parent_shared_folder_for_director(
         self,
         mocked_list_user_shares,
+        _mocked_ensure_public_link_share,
     ):
         Employee.objects.create(user=self.user, role="Директор")
         mocked_list_user_shares.return_value = {
@@ -1956,9 +2105,11 @@ class ProposalDispatchDiskColumnTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(
             response,
-            "/apps/files/files?dir=/Shared/%D0%A2%D0%9A%D0%9F/2026/333300RU%20DD%20%D0%A2%D0%B5%D1%81%D1%82%D0%BE%D0%B2%D0%BE%D0%B5%20%D0%A2%D0%9A%D0%9F",
+            'href="https://cloud.example.com/s/director-proposal-folder"',
             html=False,
         )
+        self.proposal.refresh_from_db()
+        self.assertEqual(self.proposal.proposal_workspace_public_url, "https://cloud.example.com/s/director-proposal-folder")
 
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
     def test_proposals_partial_keeps_cloud_link_when_direct_share_has_no_target_path(
@@ -2027,6 +2178,33 @@ class ProposalDispatchDiskColumnTests(TestCase):
         self.assertContains(
             response,
             'href="https://cloud.example.com/s/saved-proposal-folder"',
+            html=False,
+        )
+
+    def test_proposals_partial_preserves_saved_public_workspace_url_in_mixed_rows_without_viewer_link(self):
+        self.proposal.proposal_workspace_public_url = "https://cloud.example.com/s/saved-proposal-folder"
+        self.proposal.save(update_fields=["proposal_workspace_public_url"])
+        ProposalRegistration.objects.create(
+            number=3334,
+            group_member=self.group_member,
+            type=self.product,
+            name="Второе ТКП",
+            year=2026,
+            proposal_workspace_disk_path="/Corporate Root/ТКП/2026/333400RU DD Второе ТКП",
+        )
+        self.user_link.delete()
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            'href="https://cloud.example.com/s/saved-proposal-folder"',
+            html=False,
+        )
+        self.assertContains(
+            response,
+            'href="https://cloud.example.com/apps/files/files?dir=/Corporate%20Root/%D0%A2%D0%9A%D0%9F/2026/333400RU%20DD%20%D0%92%D1%82%D0%BE%D1%80%D0%BE%D0%B5%20%D0%A2%D0%9A%D0%9F"',
             html=False,
         )
 
