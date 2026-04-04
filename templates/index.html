@@ -442,7 +442,39 @@
         <div class="templates-bleed">
           <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
             <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
-              <h5 id="proposals-section-heading" class="mb-0 ps-3 fs-4 pt-2">ТКП</h5>
+              <div class="d-flex align-items-center gap-3">
+                <h5 id="proposals-section-heading" class="mb-0 ps-3 fs-4 pt-2">ТКП</h5>
+                <div class="dropdown pt-1" id="master-proposal-kind-filter-dropdown" style="transform: translateY(3px);">
+                  <button class="btn btn-primary btn-sm dropdown-toggle" type="button"
+                          id="proposal-kind-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                    Вид: <span class="js-proposal-kind-filter-label">Все</span>
+                  </button>
+                  <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="proposal-kind-filter-toggle"
+                       style="max-height: 240px; overflow-y: auto;">
+                    <div class="form-check mb-2">
+                      <input class="form-check-input js-proposal-kind-filter" type="checkbox" value="__all__" id="proposal-kind-filter-all" checked>
+                      <label class="form-check-label" for="proposal-kind-filter-all">Все виды</label>
+                    </div>
+                    <hr class="dropdown-divider">
+                    <div id="proposal-kind-filter-list"></div>
+                  </div>
+                </div>
+                <div class="dropdown pt-1" id="master-proposal-status-filter-dropdown" style="transform: translateY(3px);">
+                  <button class="btn btn-primary btn-sm dropdown-toggle" type="button"
+                          id="proposal-status-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                    Статус: <span class="js-proposal-status-filter-label">Все</span>
+                  </button>
+                  <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="proposal-status-filter-toggle"
+                       style="max-height: 240px; overflow-y: auto;">
+                    <div class="form-check mb-2">
+                      <input class="form-check-input js-proposal-status-filter" type="checkbox" value="__all__" id="proposal-status-filter-all" checked>
+                      <label class="form-check-label" for="proposal-status-filter-all">Все статусы</label>
+                    </div>
+                    <hr class="dropdown-divider">
+                    <div id="proposal-status-filter-list"></div>
+                  </div>
+                </div>
+              </div>
               <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
                  href="#notifications"
                  data-bs-toggle="tab"

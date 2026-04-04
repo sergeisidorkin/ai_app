@@ -2,6 +2,7 @@ import json
 import logging
 import os
 from datetime import date as dt_date, datetime
+from decimal import Decimal
 from urllib.parse import quote
 
 from django import forms
@@ -29,6 +30,7 @@ from policy_app.models import (
 from smtp_app.models import ExternalSMTPAccount
 from users_app.models import Employee
 
+from .cbr import get_cbr_eur_rate_for_today, get_cbr_eur_rate_text
 from .forms import (
     ProposalDispatchForm,
     ProposalRegistrationForm,
@@ -176,40 +178,21 @@ def _attach_proposal_folder_urls(proposals, user=None):
         return public_url
 
     if not proposals or not is_nextcloud_primary():
-        for proposal in proposals:
-            path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
-            if path:
-                proposal.proposal_workspace_folder_url = folder_cache.get(path, "")
         return
     if not share_resolution_paths:
         return
     if user is None or not getattr(user, "is_authenticated", False):
-        for proposal in proposals:
-            path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
-            if path:
-                proposal.proposal_workspace_folder_url = folder_cache.get(path, "")
         return
+    viewer_is_director = Employee.objects.filter(user=user, role="Директор").exists()
 
     client = NextcloudApiClient()
     if not client.is_configured:
-        for proposal in proposals:
-            path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
-            if path:
-                proposal.proposal_workspace_folder_url = folder_cache.get(path, "")
         return
 
     link = NextcloudUserLink.objects.filter(user=user).first()
     if link and link.nextcloud_user_id == client.username:
-        for proposal in proposals:
-            path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
-            if path:
-                proposal.proposal_workspace_folder_url = folder_cache.get(path, "")
         return
     if not link or not link.nextcloud_user_id:
-        for proposal in proposals:
-            path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
-            if path:
-                proposal.proposal_workspace_folder_url = folder_cache.get(path, "")
         return
 
     try:
@@ -242,12 +225,20 @@ def _attach_proposal_folder_urls(proposals, user=None):
     for proposal in proposals:
         path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
         if path:
-            proposal.proposal_workspace_folder_url = (
-                resolved_cache.get(path)
-                or _ensure_public_folder_url(proposal)
-                or proposal.proposal_workspace_folder_url
-                or folder_cache.get(path, "")
-            )
+            if viewer_is_director:
+                proposal.proposal_workspace_folder_url = (
+                    _ensure_public_folder_url(proposal)
+                    or resolved_cache.get(path)
+                    or proposal.proposal_workspace_folder_url
+                    or folder_cache.get(path, "")
+                )
+            else:
+                proposal.proposal_workspace_folder_url = (
+                    resolved_cache.get(path)
+                    or _ensure_public_folder_url(proposal)
+                    or proposal.proposal_workspace_folder_url
+                    or folder_cache.get(path, "")
+                )
 
 
 def _proposals_context(user=None):
@@ -547,6 +538,7 @@ def _render_proposal_form(request, *, form, action, proposal=None):
                 {
                     "name": section.name_ru,
                     "code": section.code or "",
+                    "accounting_type": str(getattr(section, "accounting_type", "") or "").strip(),
                     "executor": executor_display,
                     "exclude_from_tkp_autofill": bool(section.exclude_from_tkp_autofill),
                     "default_specialist": default_specialist,
@@ -759,6 +751,20 @@ def proposal_form_create(request):
         )
     _maybe_create_nextcloud_proposal_workspace(request, proposal)
     return _render_proposals_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_GET
+def proposal_cbr_eur_rate(request):
+    eur_rate = get_cbr_eur_rate_for_today()
+    return JsonResponse(
+        {
+            "ok": eur_rate is not None,
+            "exchange_rate": format(eur_rate.quantize(Decimal("0.0001")), "f") if eur_rate is not None else "",
+            "rub_total_service_text": get_cbr_eur_rate_text(),
+        }
+    )
 
 
 @login_required

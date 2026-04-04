@@ -151,7 +151,11 @@
       </thead>
       <tbody>
         {% for proposal in proposals %}
-          <tr data-edit-url="{% url 'proposal_form_edit' proposal.pk %}"
+          <tr data-kind="{{ proposal.kind }}"
+              data-kind-label="{{ proposal.get_kind_display }}"
+              data-status="{{ proposal.status }}"
+              data-status-label="{{ proposal.get_status_display }}"
+              data-edit-url="{% url 'proposal_form_edit' proposal.pk %}"
               data-delete-url="{% url 'proposal_delete' proposal.pk %}"
               data-move-up-url="{% url 'proposal_move_up' proposal.pk %}"
               data-move-down-url="{% url 'proposal_move_down' proposal.pk %}">
@@ -254,6 +258,9 @@
     <table class="table table-sm align-middle proposal-dispatch-table">
       <colgroup>
         <col class="checkbox">
+        <col class="proposal-number">
+        <col class="group">
+        <col class="quick-edit" style="width:1%">
         <col class="proposal-id">
         <col class="proposal-type">
         <col class="proposal-name">
@@ -281,6 +288,9 @@
               </div>
             {% endif %}
           </th>
+          <th>Номер</th>
+          <th>Группа</th>
+          <th class="proposal-quick-edit-col" style="width:1%; padding:0;"></th>
           <th>ТКП ID</th>
           <th>Тип</th>
           <th>Название</th>
@@ -297,7 +307,12 @@
       </thead>
       <tbody>
         {% for proposal in proposals %}
-          <tr data-edit-url="{% url 'proposal_dispatch_form_edit' proposal.pk %}">
+          <tr data-kind="{{ proposal.kind }}"
+              data-kind-label="{{ proposal.get_kind_display }}"
+              data-status="{{ proposal.status }}"
+              data-status-label="{{ proposal.get_status_display }}"
+              data-edit-url="{% url 'proposal_dispatch_form_edit' proposal.pk %}"
+              data-send-ready="{% if proposal.docx_file_name %}1{% else %}0{% endif %}">
             <td class="text-nowrap">
               {% if request.user.is_authenticated and request.user.is_staff %}
                 <div class="form-check">
@@ -308,6 +323,16 @@
                          value="{{ proposal.id }}"
                          aria-label="Выделить строку отправки ТКП">
                 </div>
+              {% endif %}
+            </td>
+            <td>{{ proposal.number }}</td>
+            <td>{{ proposal.group_display }}</td>
+            <td class="text-center p-0 proposal-quick-edit-col" style="width:1%;">
+              {% if request.user.is_authenticated and request.user.is_staff %}
+                <i class="bi bi-pencil-square text-secondary proposal-dispatch-quick-edit"
+                   role="button"
+                   title="Редактировать"
+                   aria-label="Редактировать отправку ТКП"></i>
               {% endif %}
             </td>
             <td class="proposal-id-cell">{{ proposal.short_uid }}</td>
@@ -340,7 +365,7 @@
             <td>{{ proposal.contact_email }}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="13" class="text-muted">Пока нет данных.</td></tr>
+          <tr><td colspan="16" class="text-muted">Пока нет данных.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -353,17 +378,10 @@
            data-refresh-url="{% url 'proposals_partial' %}">
         <button
           type="button"
-          id="proposal-dispatch-edit-btn"
-          class="btn btn-primary btn-sm d-flex align-items-center"
-          disabled>
-          <i class="bi bi-pencil-square me-2"></i>Редактировать
-        </button>
-        <button
-          type="button"
           id="proposal-create-btn"
           class="btn btn-primary btn-sm d-flex align-items-center"
           disabled>
-          <i class="bi bi-file-earmark-ruled me-2"></i>Создать ТКП
+          <i class="bi bi-file-earmark-ruled me-2"></i>Сформировать ТКП
         </button>
         <div class="btn-group">
           <button type="button"

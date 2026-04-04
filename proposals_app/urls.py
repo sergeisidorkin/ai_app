@@ -5,6 +5,7 @@ from . import views
 
 urlpatterns = [
     path("proposals/partial/", views.proposals_partial, name="proposals_partial"),
+    path("proposals/cbr-eur-rate/", views.proposal_cbr_eur_rate, name="proposal_cbr_eur_rate"),
     path("proposals/create/", views.proposal_form_create, name="proposal_form_create"),
     path("proposals/<int:pk>/edit/", views.proposal_form_edit, name="proposal_form_edit"),
     path("proposals/<int:pk>/dispatch/edit/", views.proposal_dispatch_form_edit, name="proposal_dispatch_form_edit"),

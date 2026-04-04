@@ -30,11 +30,17 @@
   const csrftoken = getCookie('csrftoken');
   const SELECT_NAMES = ['proposal-select', 'proposal-dispatch-select', 'proposal-template-select', 'proposal-variable-select'];
   const PROPOSAL_SEND_PREF_KEY = 'proposals:dispatch-send-settings';
+  const PROPOSAL_KIND_FILTER_PREF_KEY = 'proposals:kind-filter';
+  const PROPOSAL_STATUS_FILTER_PREF_KEY = 'proposals:status-filter';
+  const PROPOSAL_KIND_FILTER_ALL = '__all__';
+  const PROPOSAL_STATUS_FILTER_ALL = '__all__';
   const QUILL_JS = '/static/letters_app/vendor/quill/quill.min.js';
   const QUILL_CSS = '/static/letters_app/vendor/quill/quill.snow.css';
   let proposalQuillLoaded = false;
   let proposalQuillLoading = false;
   let proposalQuillReadyCallbacks = [];
+  window.__proposalKindFilter = window.__proposalKindFilter || [PROPOSAL_KIND_FILTER_ALL];
+  window.__proposalStatusFilter = window.__proposalStatusFilter || [PROPOSAL_STATUS_FILTER_ALL];
 
   function ensureProposalQuillFormats() {
     if (!window.Quill || window.__proposalQuillFormatsReady) return;
@@ -80,10 +86,14 @@
 
   function updateHeaderPath() {
     const heading = document.getElementById('proposals-section-heading');
+    const kindFilterDropdown = document.getElementById('master-proposal-kind-filter-dropdown');
+    const statusFilterDropdown = document.getElementById('master-proposal-status-filter-dropdown');
     if (!heading) return;
     const root = pane();
     if (!root) {
       heading.textContent = 'ТКП';
+      if (kindFilterDropdown) kindFilterDropdown.classList.add('d-none');
+      if (statusFilterDropdown) statusFilterDropdown.classList.add('d-none');
       return;
     }
 
@@ -91,6 +101,9 @@
     const rootUrl = root.dataset.headerRootUrl || '';
     const currentLabel = root.dataset.headerCurrentLabel || '';
     const currentUrl = root.dataset.headerCurrentUrl || '';
+
+    if (kindFilterDropdown) kindFilterDropdown.classList.toggle('d-none', !!currentLabel);
+    if (statusFilterDropdown) statusFilterDropdown.classList.toggle('d-none', !!currentLabel);
 
     if (!currentLabel) {
       heading.textContent = rootLabel;
@@ -160,13 +173,302 @@
   }
 
   function updateDispatchActionBtns() {
-    const hasChecked = getChecked('proposal-dispatch-select').length > 0;
-    const editBtn = pane()?.querySelector('#proposal-dispatch-edit-btn');
+    const checked = getChecked('proposal-dispatch-select');
+    const hasChecked = checked.length > 0;
+    const allCheckedReadyToSend = hasChecked && checked.every((box) => {
+      const row = box.closest('tr');
+      return row?.dataset?.sendReady === '1';
+    });
     const createBtn = pane()?.querySelector('#proposal-create-btn');
     const sendBtn = pane()?.querySelector('#proposal-send-btn');
-    if (editBtn) editBtn.disabled = !hasChecked;
     if (createBtn) createBtn.disabled = !hasChecked;
-    if (sendBtn) sendBtn.disabled = !hasChecked;
+    if (sendBtn) sendBtn.disabled = !allCheckedReadyToSend;
+  }
+
+  function bindProposalFilterMenuWidth(dropdown) {
+    if (!dropdown) return;
+    if (window.bindProjectFilterMenuWidth) {
+      window.bindProjectFilterMenuWidth(dropdown);
+      return;
+    }
+    if (dropdown.dataset.projectMenuWidthBound === '1') return;
+    dropdown.dataset.projectMenuWidthBound = '1';
+    const menu = dropdown.querySelector('.project-filter-menu');
+    if (!menu) return;
+    dropdown.addEventListener('shown.bs.dropdown', () => {
+      const labels = Array.from(menu.querySelectorAll('.form-check-label'));
+      const widestLabel = labels.reduce((maxWidth, item) => (
+        Math.max(maxWidth, Math.ceil(item.scrollWidth))
+      ), 0);
+      if (!widestLabel) return;
+      const controlWidth = Math.ceil(dropdown.querySelector('.dropdown-toggle')?.offsetWidth || 200);
+      const checkboxWidth = Math.ceil(menu.querySelector('.form-check-input')?.offsetWidth || 18);
+      const contentWidth = widestLabel + checkboxWidth + 64;
+      menu.style.minWidth = Math.max(controlWidth, 200, contentWidth) + 'px';
+    });
+  }
+
+  function initProposalMasterFilters() {
+    const root = pane();
+    if (!root) return;
+
+    const kindDropdown = document.getElementById('master-proposal-kind-filter-dropdown');
+    const kindListContainer = document.getElementById('proposal-kind-filter-list');
+    const kindLabel = document.querySelector('.js-proposal-kind-filter-label');
+    const statusDropdown = document.getElementById('master-proposal-status-filter-dropdown');
+    const statusListContainer = document.getElementById('proposal-status-filter-list');
+    const statusLabel = document.querySelector('.js-proposal-status-filter-label');
+    const registryRows = root.querySelectorAll('table.proposals-table tbody tr[data-kind]');
+    const dispatchRows = root.querySelectorAll('table.proposal-dispatch-table tbody tr[data-kind]');
+    const rows = Array.from([...registryRows, ...dispatchRows]);
+
+    if (!kindDropdown || !kindListContainer || !statusDropdown || !statusListContainer) return;
+    bindProposalFilterMenuWidth(kindDropdown);
+    bindProposalFilterMenuWidth(statusDropdown);
+
+    const availableKinds = [];
+    const seenKinds = new Set();
+    rows.forEach((row) => {
+      const kindValue = row.dataset.kind || '';
+      const kindLabel = row.dataset.kindLabel || kindValue;
+      if (!kindValue || seenKinds.has(kindValue)) return;
+      seenKinds.add(kindValue);
+      availableKinds.push({ value: kindValue, label: kindLabel });
+    });
+
+    const availableStatuses = [];
+    const seenStatuses = new Set();
+    rows.forEach((row) => {
+      const statusValue = row.dataset.status || '';
+      const statusText = row.dataset.statusLabel || statusValue;
+      if (!statusValue || seenStatuses.has(statusValue)) return;
+      seenStatuses.add(statusValue);
+      availableStatuses.push({ value: statusValue, label: statusText });
+    });
+
+    kindListContainer.innerHTML = '';
+    availableKinds.forEach((item) => {
+      const div = document.createElement('div');
+      div.className = 'form-check';
+      const input = document.createElement('input');
+      input.className = 'form-check-input js-proposal-kind-filter';
+      input.type = 'checkbox';
+      input.value = item.value;
+      input.id = 'proposal-kind-filter-' + item.value;
+      input.dataset.summaryLabel = item.label;
+      input.dataset.fullLabel = item.label;
+      const inputLabel = document.createElement('label');
+      inputLabel.className = 'form-check-label';
+      inputLabel.htmlFor = input.id;
+      inputLabel.textContent = item.label;
+      div.appendChild(input);
+      div.appendChild(inputLabel);
+      kindListContainer.appendChild(div);
+    });
+
+    statusListContainer.innerHTML = '';
+    availableStatuses.forEach((item) => {
+      const div = document.createElement('div');
+      div.className = 'form-check';
+      const input = document.createElement('input');
+      input.className = 'form-check-input js-proposal-status-filter';
+      input.type = 'checkbox';
+      input.value = item.value;
+      input.id = 'proposal-status-filter-' + item.value;
+      input.dataset.summaryLabel = item.label;
+      input.dataset.fullLabel = item.label;
+      const inputLabel = document.createElement('label');
+      inputLabel.className = 'form-check-label';
+      inputLabel.htmlFor = input.id;
+      inputLabel.textContent = item.label;
+      div.appendChild(input);
+      div.appendChild(inputLabel);
+      statusListContainer.appendChild(div);
+    });
+
+    const kindChecks = kindDropdown.querySelectorAll('.js-proposal-kind-filter');
+    const statusChecks = statusDropdown.querySelectorAll('.js-proposal-status-filter');
+
+    function syncCheckboxes(checks, values) {
+      const set = new Set(values);
+      checks.forEach((cb) => { cb.checked = set.has(cb.value); });
+    }
+
+    function selectOnlyAll(checks, allValue) {
+      checks.forEach((cb) => {
+        cb.checked = cb.value === allValue;
+      });
+      return [allValue];
+    }
+
+    function enforceExclusiveAllSelection(checks, allValue) {
+      const allCheckbox = Array.from(checks).find((cb) => cb.value === allValue);
+      if (!allCheckbox || !allCheckbox.checked) return;
+      selectOnlyAll(checks, allValue);
+    }
+
+    function updateLabel(labelNode, checks, values, allValue) {
+      if (values.includes(allValue) || !values.length) {
+        if (labelNode) labelNode.textContent = 'Все';
+        return;
+      }
+      if (values.length === 1) {
+        const input = Array.from(checks).find((cb) => cb.value === values[0]);
+        if (labelNode) labelNode.textContent = input?.dataset?.summaryLabel?.trim() || '1 выбрано';
+        return;
+      }
+      if (labelNode) labelNode.textContent = values.length + ' выбрано';
+    }
+
+    function normalizeSelection(checks, allValue) {
+      let values = Array.from(checks).filter((cb) => cb.checked).map((cb) => cb.value);
+      if (!values.length) values = [allValue];
+      if (values.includes(allValue)) return selectOnlyAll(checks, allValue);
+      syncCheckboxes(checks, values);
+      return values;
+    }
+
+    function getAvailableStatusValues(kindValues) {
+      const showAllKinds = kindValues.includes(PROPOSAL_KIND_FILTER_ALL) || !kindValues.length;
+      const values = new Set();
+      rows.forEach((row) => {
+        const kind = row.dataset.kind || '';
+        const status = row.dataset.status || '';
+        if (!status) return;
+        if (!showAllKinds && !kindValues.includes(kind)) return;
+        values.add(status);
+      });
+      return values;
+    }
+
+    function syncStatusAvailability(kindValues, statusValues) {
+      const availableStatusValues = getAvailableStatusValues(kindValues);
+      statusChecks.forEach((cb) => {
+        if (cb.value === PROPOSAL_STATUS_FILTER_ALL) {
+          cb.disabled = false;
+          return;
+        }
+        const isAvailable = availableStatusValues.has(cb.value);
+        cb.disabled = !isAvailable;
+        if (!isAvailable) cb.checked = false;
+      });
+
+      let nextStatusValues = (Array.isArray(statusValues) ? statusValues : [])
+        .filter((value) => value === PROPOSAL_STATUS_FILTER_ALL || availableStatusValues.has(value));
+      if (!nextStatusValues.length || nextStatusValues.includes(PROPOSAL_STATUS_FILTER_ALL)) {
+        nextStatusValues = selectOnlyAll(statusChecks, PROPOSAL_STATUS_FILTER_ALL);
+      } else {
+        syncCheckboxes(statusChecks, nextStatusValues);
+      }
+      return nextStatusValues;
+    }
+
+    function applyFilters(kindValues, statusValues) {
+      const normalizedStatusValues = syncStatusAvailability(kindValues, statusValues);
+      window.__proposalKindFilter = kindValues.slice();
+      window.__proposalStatusFilter = normalizedStatusValues.slice();
+      if (window.UIPref) {
+        UIPref.set(PROPOSAL_KIND_FILTER_PREF_KEY, kindValues);
+        UIPref.set(PROPOSAL_STATUS_FILTER_PREF_KEY, normalizedStatusValues);
+      }
+      const showAllKinds = kindValues.includes(PROPOSAL_KIND_FILTER_ALL) || !kindValues.length;
+      const showAllStatuses = normalizedStatusValues.includes(PROPOSAL_STATUS_FILTER_ALL) || !normalizedStatusValues.length;
+      [registryRows, dispatchRows].forEach((rowsCollection) => {
+        rowsCollection.forEach((row) => {
+          const kind = row.dataset.kind || '';
+          const status = row.dataset.status || '';
+          const visible = (showAllKinds || kindValues.includes(kind)) && (showAllStatuses || normalizedStatusValues.includes(status));
+          row.classList.toggle('d-none', !visible);
+          if (!visible) {
+            row.querySelectorAll('input.form-check-input[name]').forEach((cb) => {
+              cb.checked = false;
+            });
+          }
+        });
+      });
+      updateLabel(kindLabel, kindChecks, kindValues, PROPOSAL_KIND_FILTER_ALL);
+      updateLabel(statusLabel, statusChecks, normalizedStatusValues, PROPOSAL_STATUS_FILTER_ALL);
+      syncAllSelectionStates();
+    }
+
+    kindChecks.forEach((cb) => {
+      cb.onchange = (event) => {
+        const value = event.target.value;
+        if (value === PROPOSAL_KIND_FILTER_ALL && event.target.checked) {
+          applyFilters(selectOnlyAll(kindChecks, PROPOSAL_KIND_FILTER_ALL), normalizeSelection(statusChecks, PROPOSAL_STATUS_FILTER_ALL));
+          requestAnimationFrame(() => enforceExclusiveAllSelection(kindChecks, PROPOSAL_KIND_FILTER_ALL));
+          return;
+        }
+        if (value === PROPOSAL_KIND_FILTER_ALL && !event.target.checked) {
+          const first = Array.from(kindChecks).find((item) => item.value !== PROPOSAL_KIND_FILTER_ALL);
+          if (first) first.checked = true;
+        } else {
+          const allCb = document.getElementById('proposal-kind-filter-all');
+          if (allCb && allCb.checked) allCb.checked = false;
+        }
+        applyFilters(
+          normalizeSelection(kindChecks, PROPOSAL_KIND_FILTER_ALL),
+          normalizeSelection(statusChecks, PROPOSAL_STATUS_FILTER_ALL)
+        );
+      };
+    });
+
+    statusChecks.forEach((cb) => {
+      cb.onchange = (event) => {
+        const value = event.target.value;
+        if (value === PROPOSAL_STATUS_FILTER_ALL && event.target.checked) {
+          applyFilters(normalizeSelection(kindChecks, PROPOSAL_KIND_FILTER_ALL), selectOnlyAll(statusChecks, PROPOSAL_STATUS_FILTER_ALL));
+          requestAnimationFrame(() => enforceExclusiveAllSelection(statusChecks, PROPOSAL_STATUS_FILTER_ALL));
+          return;
+        }
+        if (value === PROPOSAL_STATUS_FILTER_ALL && !event.target.checked) {
+          const first = Array.from(statusChecks).find((item) => item.value !== PROPOSAL_STATUS_FILTER_ALL);
+          if (first) first.checked = true;
+        } else {
+          const allCb = document.getElementById('proposal-status-filter-all');
+          if (allCb && allCb.checked) allCb.checked = false;
+        }
+        applyFilters(
+          normalizeSelection(kindChecks, PROPOSAL_KIND_FILTER_ALL),
+          normalizeSelection(statusChecks, PROPOSAL_STATUS_FILTER_ALL)
+        );
+      };
+    });
+
+    const availableKindValues = new Set(Array.from(kindChecks).map((cb) => cb.value));
+    const savedKindValues = window.UIPref ? UIPref.get(PROPOSAL_KIND_FILTER_PREF_KEY, null) : null;
+    const preferredKindValues = Array.isArray(savedKindValues) && savedKindValues.length
+      ? savedKindValues
+      : window.__proposalKindFilter;
+    const initialKindValues = Array.isArray(preferredKindValues) && preferredKindValues.length
+      ? preferredKindValues.filter((value) => availableKindValues.has(value))
+      : [PROPOSAL_KIND_FILTER_ALL];
+
+    const availableStatusValues = new Set(Array.from(statusChecks).map((cb) => cb.value));
+    const savedStatusValues = window.UIPref ? UIPref.get(PROPOSAL_STATUS_FILTER_PREF_KEY, null) : null;
+    const preferredStatusValues = Array.isArray(savedStatusValues) && savedStatusValues.length
+      ? savedStatusValues
+      : window.__proposalStatusFilter;
+    const initialStatusValues = Array.isArray(preferredStatusValues) && preferredStatusValues.length
+      ? preferredStatusValues.filter((value) => availableStatusValues.has(value))
+      : [PROPOSAL_STATUS_FILTER_ALL];
+
+    syncCheckboxes(
+      kindChecks,
+      initialKindValues.includes(PROPOSAL_KIND_FILTER_ALL) || !initialKindValues.length
+        ? selectOnlyAll(kindChecks, PROPOSAL_KIND_FILTER_ALL)
+        : initialKindValues
+    );
+    syncCheckboxes(
+      statusChecks,
+      initialStatusValues.includes(PROPOSAL_STATUS_FILTER_ALL) || !initialStatusValues.length
+        ? selectOnlyAll(statusChecks, PROPOSAL_STATUS_FILTER_ALL)
+        : initialStatusValues
+    );
+    applyFilters(
+      normalizeSelection(kindChecks, PROPOSAL_KIND_FILTER_ALL),
+      normalizeSelection(statusChecks, PROPOSAL_STATUS_FILTER_ALL)
+    );
   }
 
   function getProposalChannels() {
@@ -697,12 +999,18 @@
     function positionList() {
       if (!list.classList.contains('show')) return;
       const rect = input.getBoundingClientRect();
+      const stickyHeader = document.querySelector('#proposals > .templates-bleed > .section-header');
+      const stickyHeaderRect = stickyHeader?.getBoundingClientRect?.() || null;
+      const stickyHeaderBottom = stickyHeaderRect ? Math.max(stickyHeaderRect.bottom, 0) : 0;
+      const nextTop = Math.max(rect.bottom + 2, stickyHeaderBottom + 6);
+      const maxHeight = Math.max(window.innerHeight - nextTop - 12, 120);
       list.style.position = 'fixed';
       list.style.left = rect.left + 'px';
-      list.style.top = (rect.bottom + 2) + 'px';
+      list.style.top = nextTop + 'px';
       list.style.minWidth = rect.width + 'px';
       list.style.width = 'max-content';
       list.style.maxWidth = 'none';
+      list.style.maxHeight = maxHeight + 'px';
       list.style.zIndex = '2000';
     }
 
@@ -980,6 +1288,11 @@
     }) || null;
   }
 
+  function isProposalTechnicalAssignmentSection(form, section) {
+    const entry = getProposalTypicalSectionEntry(form, section?.service_name || section?.name || '');
+    return String(entry?.accounting_type || '').trim() === 'Раздел';
+  }
+
   function getProposalTypicalSectionNames(form) {
     return getProposalTypicalSectionEntries(form)
       .map(function (entry) { return (entry?.name || '').trim(); })
@@ -1155,6 +1468,18 @@
       rub_total_service_text: String(source.rub_total_service_text || 'Курс евро Банка России на текущую дату:').trim(),
       discounted_total_service_text: String(source.discounted_total_service_text || 'Размер скидки:').trim(),
     };
+  }
+
+  function formatProposalCurrentDateLabel(date) {
+    const value = date instanceof Date ? date : new Date();
+    const day = String(value.getDate()).padStart(2, '0');
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const year = String(value.getFullYear());
+    return day + '.' + month + '.' + year;
+  }
+
+  function getProposalCbrRateText(dateLabel) {
+    return 'Курс евро Банка России на ' + String(dateLabel || formatProposalCurrentDateLabel()) + ':';
   }
 
   function roundProposalToHundredThousand(value) {
@@ -2895,15 +3220,56 @@
         const serviceWrap = document.createElement('div');
         serviceWrap.className = 'proposal-commercial-financial-service-wrap';
         if (config.showCbrLink) {
+          const serviceActions = document.createElement('div');
+          serviceActions.className = 'proposal-commercial-service-actions';
           const serviceLink = document.createElement('a');
-          serviceLink.className = 'proposal-commercial-service-link';
+          serviceLink.className = 'proposal-commercial-service-action proposal-commercial-service-link';
           serviceLink.href = PROPOSAL_CBR_EUR_DAILY_URL;
           serviceLink.target = '_blank';
           serviceLink.rel = 'noreferrer noopener';
           serviceLink.title = 'Открыть официальный курс евро Банка России';
           serviceLink.setAttribute('aria-label', 'Открыть официальный курс евро Банка России');
           serviceLink.innerHTML = '<i class="bi bi-globe2" aria-hidden="true"></i>';
-          serviceWrap.appendChild(serviceLink);
+          serviceActions.appendChild(serviceLink);
+
+          const refreshBtn = document.createElement('button');
+          refreshBtn.type = 'button';
+          refreshBtn.className = 'proposal-commercial-service-action proposal-commercial-service-refresh';
+          refreshBtn.title = 'Обновить курс Банка России на текущую дату';
+          refreshBtn.setAttribute('aria-label', 'Обновить курс Банка России на текущую дату');
+          refreshBtn.innerHTML = '<i class="bi bi-arrow-clockwise" aria-hidden="true"></i>';
+          refreshBtn.addEventListener('click', async function () {
+            const refreshUrl = form.dataset.cbrRateRefreshUrl || '';
+            if (!refreshUrl || refreshBtn.disabled) return;
+            document.documentElement.classList.add('proposal-progress-cursor');
+            refreshBtn.classList.add('is-loading');
+            refreshBtn.disabled = true;
+            try {
+              const response = await fetch(refreshUrl, {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                credentials: 'same-origin',
+              });
+              if (!response.ok) throw new Error('Failed to refresh CBR EUR rate');
+              const payload = await response.json();
+              if (!payload || payload.ok !== true) throw new Error('Empty CBR EUR rate payload');
+              serviceInput.value = String(payload.rub_total_service_text || getProposalCbrRateText()).trim();
+              const rubTotalRateInput = row.querySelector('.proposal-commercial-rate');
+              if (rubTotalRateInput) {
+                rubTotalRateInput.value = payload.exchange_rate
+                  ? formatProposalExchangeRateDisplay(String(payload.exchange_rate || '').trim())
+                  : '';
+              }
+              syncCommercialFinancialRows();
+            } catch (error) {
+              console.error(error);
+            } finally {
+              document.documentElement.classList.remove('proposal-progress-cursor');
+              refreshBtn.classList.remove('is-loading');
+              refreshBtn.disabled = false;
+            }
+          });
+          serviceActions.appendChild(refreshBtn);
+          serviceWrap.appendChild(serviceActions);
         }
         const serviceInput = document.createElement('input');
         serviceInput.type = 'text';
@@ -3396,16 +3762,17 @@
 
     function getSections() {
       const api = form.__proposalServiceSectionsTableApi;
-      if (api && typeof api.getSerializedRows === 'function') {
-        return api.getSerializedRows().filter(function (item) {
-          return (item.service_name || '').trim();
+      const onlyTechnicalAssignmentSections = function (items) {
+        return items.filter(function (item) {
+          return (item.service_name || '').trim() && isProposalTechnicalAssignmentSection(form, item);
         });
+      };
+      if (api && typeof api.getSerializedRows === 'function') {
+        return onlyTechnicalAssignmentSections(api.getSerializedRows());
       }
       try {
         const rows = JSON.parse(payloadInput.value || '[]');
-        return Array.isArray(rows) ? rows.filter(function (item) {
-          return (item?.service_name || '').trim();
-        }) : [];
+        return Array.isArray(rows) ? onlyTechnicalAssignmentSections(rows) : [];
       } catch (error) {
         return [];
       }
@@ -4188,24 +4555,22 @@
       return;
     }
 
-    const editBtn = event.target.closest('#proposal-dispatch-edit-btn');
-    if (!editBtn || !root.contains(editBtn)) return;
+    const dispatchQuickEdit = event.target.closest('.proposal-dispatch-quick-edit');
+    if (dispatchQuickEdit && root.contains(dispatchQuickEdit)) {
+      const tr = dispatchQuickEdit.closest('tr');
+      if (!tr) return;
+      const rowCheckbox = tr.querySelector('input.form-check-input[name="proposal-dispatch-select"]');
+      if (rowCheckbox) {
+        window.__tableSel['proposal-dispatch-select'] = [String(rowCheckbox.value)];
+        window.__tableSelLast = 'proposal-dispatch-select';
+      }
+      const url = tr.dataset.editUrl;
+      if (!url) return;
+      await htmx.ajax('GET', url, { target: '#proposals-modal .modal-content', swap: 'innerHTML' });
+      updateDispatchActionBtns();
+      return;
+    }
 
-    const checked = getChecked('proposal-dispatch-select');
-    if (!checked.length) return;
-
-    window.__tableSel['proposal-dispatch-select'] = checked.map((box) => String(box.value));
-    window.__tableSelLast = 'proposal-dispatch-select';
-
-    const url = checked[0].closest('tr')?.dataset?.editUrl;
-    if (!url) return;
-    await htmx.ajax('GET', url, { target: '#proposals-modal .modal-content', swap: 'innerHTML' });
-    updateDispatchActionBtns();
-  });
-
-  document.addEventListener('click', async (event) => {
-    const root = pane();
-    if (!root) return;
     const btn = event.target.closest('button[data-proposal-template-action]');
     if (!btn || !root.contains(btn)) return;
 
@@ -4434,6 +4799,7 @@
     }
     updateHeaderPath();
     syncAllSelectionStates();
+    initProposalMasterFilters();
     initProposalForm();
     restoreProposalSendSettings();
     restoreVariableCollapseState();
@@ -4442,6 +4808,7 @@
   document.addEventListener('DOMContentLoaded', function () {
     updateHeaderPath();
     syncAllSelectionStates();
+    initProposalMasterFilters();
     initProposalForm();
     restoreProposalSendSettings();
     if (typeof window.__proposalVarsExpanded === 'undefined') {

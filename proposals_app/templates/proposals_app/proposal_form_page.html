@@ -11,6 +11,7 @@
         data-proposal-form="1"
         data-country-identifier-url="{% url 'identifier_for_country' %}"
         data-ler-search-url="{% url 'ler_search' %}"
+        data-cbr-rate-refresh-url="{% url 'proposal_cbr_eur_rate' %}"
         {% if action == "create" %}
           hx-post="{% url 'proposal_form_create' %}"
         {% else %}
