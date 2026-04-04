@@ -2086,8 +2086,8 @@ class ProposalDispatchDiskColumnTests(TestCase):
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
     def test_proposals_partial_resolves_cloud_link_from_parent_shared_folder_for_director(
         self,
-        _mocked_ensure_public_link_share,
         mocked_list_user_shares,
+        _mocked_ensure_public_link_share,
     ):
         Employee.objects.create(user=self.user, role="Директор")
         mocked_list_user_shares.return_value = {
