@@ -176,6 +176,12 @@ class ProposalRegistration(models.Model):
         blank=True,
         default="",
     )
+    proposal_workspace_public_url = models.URLField(
+        "Публичная ссылка на рабочую папку ТКП",
+        max_length=500,
+        blank=True,
+        default="",
+    )
     sent_date = models.CharField("Дата отправки", max_length=255, blank=True, default="")
     recipient = models.CharField("Получатель", max_length=255, blank=True, default="")
     contact_full_name = models.CharField("ФИО", max_length=255, blank=True, default="")
