@@ -13,7 +13,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from classifiers_app.models import LegalEntityRecord
-from core.cloud_storage import build_folder_url, get_primary_cloud_storage_label, is_nextcloud_primary
+from core.cloud_storage import build_folder_url, get_primary_cloud_storage_label, is_nextcloud_primary, publish_resource
 from experts_app.models import ExpertProfile, ExpertProfileSpecialty
 from nextcloud_app.api import NextcloudApiClient, NextcloudApiError
 from nextcloud_app.models import NextcloudUserLink
@@ -142,17 +142,46 @@ def _sync_to_legal_entity_record(short_name, country, identifier, registration_n
 
 def _attach_proposal_folder_urls(proposals, user=None):
     folder_cache = {}
+    share_resolution_paths = set()
     for proposal in proposals:
         path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
-        proposal.proposal_workspace_folder_url = ""
+        proposal.proposal_workspace_folder_url = (getattr(proposal, "proposal_workspace_public_url", "") or "").strip()
         if path:
             folder_cache.setdefault(path, build_folder_url(path))
+            if not proposal.proposal_workspace_folder_url:
+                proposal.proposal_workspace_folder_url = folder_cache.get(path, "")
+                share_resolution_paths.add(path)
+
+    def _ensure_public_folder_url(proposal):
+        existing_url = (getattr(proposal, "proposal_workspace_public_url", "") or "").strip()
+        if existing_url:
+            return existing_url
+
+        path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
+        if not path:
+            return ""
+
+        try:
+            public_url = client.ensure_public_link_share(client.username, path, _quick=True)
+        except NextcloudApiError as exc:
+            logger.warning("Could not publish proposal workspace %s: %s", path, exc)
+            return ""
+
+        public_url = str(public_url or "").strip()
+        if not public_url:
+            return ""
+
+        proposal.proposal_workspace_public_url = public_url
+        ProposalRegistration.objects.filter(pk=proposal.pk).update(proposal_workspace_public_url=public_url)
+        return public_url
 
     if not proposals or not is_nextcloud_primary():
         for proposal in proposals:
             path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
             if path:
                 proposal.proposal_workspace_folder_url = folder_cache.get(path, "")
+        return
+    if not share_resolution_paths:
         return
     if user is None or not getattr(user, "is_authenticated", False):
         for proposal in proposals:
@@ -190,9 +219,11 @@ def _attach_proposal_folder_urls(proposals, user=None):
         share_map = {}
 
     resolved_cache = {}
-    for path in folder_cache:
+    for path in share_resolution_paths:
         target_path = _resolve_shared_target_path(path, share_map)
-        if not target_path:
+        direct_share = share_map.get(path)
+        direct_target_path = str(getattr(direct_share, "target_path", "") or "").strip()
+        if not target_path and direct_share is None:
             try:
                 share = client.get_user_share(client.username, path, link.nextcloud_user_id)
             except NextcloudApiError as exc:
@@ -203,13 +234,20 @@ def _attach_proposal_folder_urls(proposals, user=None):
                 )
                 share = None
             target_path = str(getattr(share, "target_path", "") or "").strip()
+        elif not target_path and direct_target_path:
+            target_path = direct_target_path
         if target_path:
             resolved_cache[path] = client.build_files_url(target_path)
 
     for proposal in proposals:
         path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
         if path:
-            proposal.proposal_workspace_folder_url = resolved_cache.get(path, folder_cache.get(path, ""))
+            proposal.proposal_workspace_folder_url = (
+                resolved_cache.get(path)
+                or _ensure_public_folder_url(proposal)
+                or proposal.proposal_workspace_folder_url
+                or folder_cache.get(path, "")
+            )
 
 
 def _proposals_context(user=None):
@@ -263,7 +301,8 @@ def _maybe_create_nextcloud_proposal_workspace(request, proposal) -> None:
         # The registry row should still be saved even if the cloud sync fails.
         return
     proposal.proposal_workspace_disk_path = workspace_path
-    proposal.save(update_fields=["proposal_workspace_disk_path"])
+    proposal.proposal_workspace_public_url = publish_resource(request.user, workspace_path)
+    proposal.save(update_fields=["proposal_workspace_disk_path", "proposal_workspace_public_url"])
 
 
 def _render_proposal_form(request, *, form, action, proposal=None):
