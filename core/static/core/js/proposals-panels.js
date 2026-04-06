@@ -129,8 +129,13 @@
     return pane()?.querySelector('input.form-check-input[data-target-name="' + name + '"]') || null;
   }
 
+  function isSelectableRowCheckbox(box) {
+    const row = box?.closest('tr');
+    return !!box && !box.disabled && !row?.classList.contains('d-none');
+  }
+
   function getRowChecks(name) {
-    return qa('tbody input.form-check-input[name="' + name + '"]', pane());
+    return qa('tbody input.form-check-input[name="' + name + '"]', pane()).filter(isSelectableRowCheckbox);
   }
 
   function getChecked(name) {
@@ -379,11 +384,10 @@
           const status = row.dataset.status || '';
           const visible = (showAllKinds || kindValues.includes(kind)) && (showAllStatuses || normalizedStatusValues.includes(status));
           row.classList.toggle('d-none', !visible);
-          if (!visible) {
-            row.querySelectorAll('input.form-check-input[name]').forEach((cb) => {
-              cb.checked = false;
-            });
-          }
+          row.querySelectorAll('input.form-check-input[name]').forEach((cb) => {
+            cb.disabled = !visible;
+            if (!visible) cb.checked = false;
+          });
         });
       });
       updateLabel(kindLabel, kindChecks, kindValues, PROPOSAL_KIND_FILTER_ALL);
@@ -696,12 +700,19 @@
     function bindLerAutocomplete(options) {
       const input = form.querySelector(options.inputSelector);
       const list = form.querySelector(options.listSelector);
+      const selectedIdentifierInput = form.querySelector(options.selectedIdentifierSelector);
+      const selectedFlagInput = form.querySelector(options.selectedFlagSelector);
       if (!input || !list || input.dataset[options.boundKey] === '1') return;
       input.dataset[options.boundKey] = '1';
 
       let debounce = null;
       let results = [];
       let picking = false;
+
+      function clearSelection() {
+        if (selectedIdentifierInput) selectedIdentifierInput.value = '';
+        if (selectedFlagInput) selectedFlagInput.value = '0';
+      }
 
       function highlight(text, query) {
         if (!query) return text;
@@ -748,6 +759,8 @@
           registrationDateField.dispatchEvent(new Event('input', { bubbles: true }));
           registrationDateField.dispatchEvent(new Event('change', { bubbles: true }));
         }
+        if (selectedIdentifierInput) selectedIdentifierInput.value = item.identifier_record_id || '';
+        if (selectedFlagInput) selectedFlagInput.value = '1';
 
         if (options.changeEventName === 'proposal-customer-changed') {
           const matchesCheckbox = form.querySelector('[name="asset_owner_matches_customer"]');
@@ -756,6 +769,8 @@
           const ownerIdentifier = form.querySelector('#proposal-asset-owner-identifier-field');
           const ownerRegistrationNumber = form.querySelector('input[name="asset_owner_registration_number"]');
           const ownerRegistrationDate = form.querySelector('input[name="asset_owner_registration_date"]');
+          const ownerSelectedIdentifier = form.querySelector('#proposal-asset-owner-autocomplete-identifier-record-id');
+          const ownerSelectedFlag = form.querySelector('#proposal-asset-owner-autocomplete-selected');
           if (
             matchesCheckbox?.checked
             && ownerInput
@@ -769,6 +784,8 @@
             ownerIdentifier.value = item.identifier || '';
             ownerRegistrationNumber.value = item.registration_number || '';
             setDateFieldValue(ownerRegistrationDate, item.registration_date || '');
+            if (ownerSelectedIdentifier) ownerSelectedIdentifier.value = item.identifier_record_id || '';
+            if (ownerSelectedFlag) ownerSelectedFlag.value = '1';
           }
         }
 
@@ -783,6 +800,7 @@
 
       input.addEventListener('input', function () {
         const query = input.value.trim();
+        clearSelection();
         clearTimeout(debounce);
         if (query.length < 1) {
           list.classList.remove('show');
@@ -829,6 +847,12 @@
       input.addEventListener('focus', function () {
         if (results.length && input.value.trim().length >= 1) list.classList.add('show');
       });
+
+      form.querySelector(options.countrySelector)?.addEventListener('change', clearSelection);
+      form.querySelector(options.registrationNumberSelector)?.addEventListener('input', clearSelection);
+      form.querySelector(options.registrationNumberSelector)?.addEventListener('change', clearSelection);
+      form.querySelector(options.registrationDateSelector)?.addEventListener('input', clearSelection);
+      form.querySelector(options.registrationDateSelector)?.addEventListener('change', clearSelection);
     }
 
     bindLerAutocomplete({
@@ -839,6 +863,8 @@
       identifierSelector: '#proposal-identifier-field',
       registrationNumberSelector: 'input[name="registration_number"]',
       registrationDateSelector: 'input[name="registration_date"]',
+      selectedIdentifierSelector: '#proposal-customer-autocomplete-identifier-record-id',
+      selectedFlagSelector: '#proposal-customer-autocomplete-selected',
       changeEventName: 'proposal-customer-changed',
     });
     bindLerAutocomplete({
@@ -849,6 +875,8 @@
       identifierSelector: '#proposal-asset-owner-identifier-field',
       registrationNumberSelector: 'input[name="asset_owner_registration_number"]',
       registrationDateSelector: 'input[name="asset_owner_registration_date"]',
+      selectedIdentifierSelector: '#proposal-asset-owner-autocomplete-identifier-record-id',
+      selectedFlagSelector: '#proposal-asset-owner-autocomplete-selected',
       changeEventName: 'proposal-asset-owner-changed',
     });
   }
@@ -1055,6 +1083,10 @@
       input.value = item.short_name || '';
       row.dataset.countryId = item.country_id || '';
       row.dataset.countryName = item.country_name || '';
+      row.dataset.region = item.region || '';
+      row.dataset.selectedIdentifierRecordId = item.identifier_record_id || '';
+      row.dataset.selectedFromAutocomplete = '1';
+      row.dataset.userEdited = '1';
       const country = row.querySelector(selectors.country);
       const identifier = row.querySelector(selectors.identifier);
       const regNumber = row.querySelector(selectors.regNumber);
@@ -1075,7 +1107,9 @@
       replaceQuotes(input);
       const query = input.value.trim();
       clearTimeout(debounce);
-        updatePayload();
+      row.dataset.selectedIdentifierRecordId = '';
+      row.dataset.selectedFromAutocomplete = '0';
+      updatePayload();
       if (query.length < 1) {
         hideList();
         return;
@@ -1536,6 +1570,7 @@
         identifier: String(source.identifier || '').trim() || String(defaults.identifier || '').trim(),
         registration_number: String(source.registration_number || '').trim() || String(defaults.registration_number || '').trim(),
         registration_date: String(source.registration_date || '').trim() || String(defaults.registration_date || '').trim(),
+        region: String(source.region || '').trim() || String(defaults.region || '').trim(),
       };
     }
 
@@ -1565,6 +1600,17 @@
       });
     }
 
+    function clearRowAutocompleteSelection(row) {
+      if (!row) return;
+      row.dataset.selectedIdentifierRecordId = '';
+      row.dataset.selectedFromAutocomplete = '0';
+    }
+
+    function markRowUserEdited(row, edited) {
+      if (!row) return;
+      row.dataset.userEdited = edited ? '1' : '0';
+    }
+
     function syncActions() {
       const hasSelected = getSelectedRows().length > 0;
       actions.classList.toggle('d-none', !hasSelected);
@@ -1579,6 +1625,10 @@
         identifier: (row.querySelector(config.selectors.identifier)?.value || '').trim(),
         registration_number: (row.querySelector(config.selectors.regNumber)?.value || '').trim(),
         registration_date: (row.querySelector(config.selectors.regDate)?.value || '').trim(),
+        region: row.dataset.region || '',
+        selected_identifier_record_id: row.dataset.selectedIdentifierRecordId || '',
+        selected_from_autocomplete: row.dataset.selectedFromAutocomplete === '1',
+        user_edited: row.dataset.userEdited === '1',
       };
       if (config.withAssetSelect) {
         data.asset_short_name = (row.querySelector(config.selectors.assetSelect)?.value || '').trim();
@@ -1607,6 +1657,10 @@
 
       row.dataset.countryId = data.country_id || '';
       row.dataset.countryName = data.country_name || '';
+      row.dataset.region = data.region || '';
+      row.dataset.selectedIdentifierRecordId = data.selected_identifier_record_id || '';
+      row.dataset.selectedFromAutocomplete = data.selected_from_autocomplete ? '1' : '0';
+      row.dataset.userEdited = data.user_edited ? '1' : '0';
 
       const shortInput = row.querySelector(config.selectors.shortInput);
       const countrySelect = row.querySelector(config.selectors.country);
@@ -1622,10 +1676,25 @@
     }
 
     function createRow(data) {
-      data = mergeWithDefaultRowData(data);
+      const sourceData = data && typeof data === 'object' ? data : {};
+      const hasExplicitSourceData = Boolean(
+        (sourceData.short_name || '').trim()
+        || (sourceData.country_id || '').trim()
+        || (sourceData.country_name || '').trim()
+        || (sourceData.identifier || '').trim()
+        || (sourceData.registration_number || '').trim()
+        || (sourceData.registration_date || '').trim()
+        || (sourceData.region || '').trim()
+        || (sourceData.selected_identifier_record_id || '').trim()
+      );
+      data = mergeWithDefaultRowData(sourceData);
       const row = document.createElement('tr');
       row.dataset.countryId = data.country_id || '';
       row.dataset.countryName = data.country_name || '';
+      row.dataset.region = data.region || '';
+      row.dataset.selectedIdentifierRecordId = data.selected_identifier_record_id || '';
+      row.dataset.selectedFromAutocomplete = data.selected_from_autocomplete ? '1' : '0';
+      row.dataset.userEdited = data.user_edited ? '1' : (hasExplicitSourceData ? '1' : '0');
 
       const checkTd = createProposalTableCell('proposal-asset-check-cell');
       const checkWrap = document.createElement('div');
@@ -1708,7 +1777,16 @@
         });
       });
 
+      shortInput.addEventListener('input', function () {
+        markRowUserEdited(row, true);
+      });
+      shortInput.addEventListener('change', function () {
+        markRowUserEdited(row, true);
+      });
+
       countrySelect.addEventListener('change', function () {
+        clearRowAutocompleteSelection(row);
+        markRowUserEdited(row, true);
         row.dataset.countryId = countrySelect.value || '';
         row.dataset.countryName = countrySelect.options[countrySelect.selectedIndex]?.textContent?.trim() || '';
         if (!identifierUrl) {
@@ -1730,6 +1808,23 @@
             identifierInput.value = '';
             updatePayload();
           });
+      });
+
+      regNumberInput.addEventListener('input', function () {
+        clearRowAutocompleteSelection(row);
+        markRowUserEdited(row, true);
+      });
+      regNumberInput.addEventListener('change', function () {
+        clearRowAutocompleteSelection(row);
+        markRowUserEdited(row, true);
+      });
+      regDateInput.addEventListener('input', function () {
+        clearRowAutocompleteSelection(row);
+        markRowUserEdited(row, true);
+      });
+      regDateInput.addEventListener('change', function () {
+        clearRowAutocompleteSelection(row);
+        markRowUserEdited(row, true);
       });
 
       bindProposalEntityAutocomplete(shortInput, shortList, row, updatePayload, searchUrl, config.selectors, function (targetRow) {
@@ -1864,6 +1959,9 @@
             registration_date: shouldOverwritePrefilledValue(serialized.registration_date, lastDefaultRowData?.registration_date)
               ? normalizePrefillValue(defaults.registration_date)
               : serialized.registration_date,
+            region: shouldOverwritePrefilledValue(serialized.region, lastDefaultRowData?.region)
+              ? normalizePrefillValue(defaults.region)
+              : serialized.region,
           };
           if (
             merged.short_name !== serialized.short_name
@@ -1872,7 +1970,9 @@
             || merged.identifier !== serialized.identifier
             || merged.registration_number !== serialized.registration_number
             || merged.registration_date !== serialized.registration_date
+            || merged.region !== serialized.region
           ) {
+            merged.user_edited = false;
             setRowData(row, merged);
             changed = true;
           }
@@ -2232,6 +2332,7 @@
           identifier: rows[meta.rowIndex].identifier || '',
           registration_number: rows[meta.rowIndex].registration_number || '',
           registration_date: rows[meta.rowIndex].registration_date || '',
+          region: rows[meta.rowIndex].region || '',
         });
       }
     }
@@ -2259,7 +2360,7 @@
         objectsApi.setRowDataByIndex(meta.rowIndex, {
           legal_entity_short_name: rows[meta.rowIndex].short_name || '',
           short_name: rows[meta.rowIndex].short_name || '',
-          region: rows[meta.rowIndex].country_name || '',
+          region: rows[meta.rowIndex].region || '',
           object_type: rows[meta.rowIndex].identifier || '',
           license: rows[meta.rowIndex].registration_number || '',
           registration_date: rows[meta.rowIndex].registration_date || '',
@@ -4238,6 +4339,10 @@
       const ownerIdentifier = form.querySelector('#proposal-asset-owner-identifier-field');
       const ownerRegistrationNumber = form.querySelector('input[name="asset_owner_registration_number"]');
       const ownerRegistrationDate = form.querySelector('input[name="asset_owner_registration_date"]');
+      const customerSelectedIdentifier = form.querySelector('#proposal-customer-autocomplete-identifier-record-id');
+      const customerSelectedFlag = form.querySelector('#proposal-customer-autocomplete-selected');
+      const ownerSelectedIdentifier = form.querySelector('#proposal-asset-owner-autocomplete-identifier-record-id');
+      const ownerSelectedFlag = form.querySelector('#proposal-asset-owner-autocomplete-selected');
       if (!matchesCheckbox || !ownerInput || !ownerCountry || !ownerIdentifier || !ownerRegistrationNumber || !ownerRegistrationDate) {
         return;
       }
@@ -4263,6 +4368,8 @@
         ownerIdentifier.value = customerIdentifier ? (customerIdentifier.value || '') : '';
         ownerRegistrationNumber.value = customerRegistrationNumber ? (customerRegistrationNumber.value || '') : '';
         setDateFieldValue(ownerRegistrationDate, customerRegistrationDate ? (customerRegistrationDate.value || '') : '');
+        if (ownerSelectedIdentifier) ownerSelectedIdentifier.value = customerSelectedIdentifier ? (customerSelectedIdentifier.value || '') : '';
+        if (ownerSelectedFlag) ownerSelectedFlag.value = customerSelectedFlag ? (customerSelectedFlag.value || '0') : '0';
         setLockedState(true);
         form.dispatchEvent(new CustomEvent('proposal-asset-owner-changed', { detail: { reason: reason || 'customer-sync' } }));
         return;

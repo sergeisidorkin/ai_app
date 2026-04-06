@@ -24,4 +24,5 @@ class YandexDiskAppConfig(AppConfig):
 
         if is_reloader_main or is_not_reloader:
             from yandexdisk_app.sync import start_background_sync
-            start_background_sync()
+            # Defer the first DB-backed sync until Django startup settles.
+            start_background_sync(initial_delay=5.0)

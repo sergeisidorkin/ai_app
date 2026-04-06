@@ -1,0 +1,66 @@
+<table class="table table-sm">
+    <thead class="align-bottom">
+    <tr>
+        <th style="width:1%">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+                <div class="form-check m-0">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           id="bei-master"
+                           data-target-name="bei-select"
+                           data-actions-id="bei-actions"
+                           aria-label="Выделить все строки">
+                </div>
+            {% endif %}
+        </th>
+        <th>ID-IDN</th>
+        <th>ID-BSN</th>
+        <th>Код страны</th>
+        <th>Страна регистр.</th>
+        <th>Тип идент.</th>
+        <th>Номер</th>
+        <th>Регион регистрации</th>
+        <th>Дата регистр.</th>
+        <th>Запись</th>
+        <th>Автор записи</th>
+        <th>Действ. от</th>
+        <th>Действ. до</th>
+    </tr>
+    </thead>
+    <tbody class="align-top">
+    {% for item in bei_items %}
+        <tr data-edit-url="{% url 'bei_form_edit' item.pk %}"
+            data-delete-url="{% url 'bei_delete' item.pk %}"
+            data-move-up-url="{% url 'bei_move_up' item.pk %}"
+            data-move-down-url="{% url 'bei_move_down' item.pk %}">
+            <td class="text-nowrap">
+                {% if request.user.is_authenticated and request.user.is_staff %}
+                    <div class="form-check">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="bei-sel-{{ item.id }}"
+                               name="bei-select"
+                               value="{{ item.id }}"
+                               aria-label="Выделить строку">
+                    </div>
+                {% endif %}
+            </td>
+            <td class="text-nowrap"><span class="clf-id-mono">{{ item.pk|stringformat:"05d" }}-IDN</span></td>
+            <td class="text-nowrap"><span class="clf-id-mono">{{ item.business_entity.pk|stringformat:"05d" }}-BSN</span></td>
+            <td class="text-nowrap">{{ item.registration_code|default:"—" }}</td>
+            <td>{% if item.registration_country %}{{ item.registration_country.short_name }}{% else %}—{% endif %}</td>
+            <td>{{ item.identifier_type|default:"—" }}</td>
+            <td>{{ item.number|default:"—" }}</td>
+            <td>{{ item.registration_region|default:"—" }}</td>
+            <td class="text-nowrap">{% if item.registration_date %}{{ item.registration_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>
+            <td class="text-nowrap">{% if item.record_date %}{{ item.record_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>
+            <td>{{ item.record_author|default:"—" }}</td>
+            <td class="text-nowrap">{% if item.valid_from %}{{ item.valid_from|date:"d.m.Y" }}{% else %}—{% endif %}</td>
+            <td class="text-nowrap">{% if item.valid_to %}{{ item.valid_to|date:"d.m.Y" }}{% else %}—{% endif %}</td>
+        </tr>
+    {% empty %}
+        <tr><td colspan="13" class="text-muted">Пока нет данных.</td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% include "classifiers_app/_registry_pagination.html" %}

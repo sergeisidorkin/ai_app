@@ -1,0 +1,56 @@
+<table class="table table-sm">
+    <thead class="align-bottom">
+    <tr>
+        <th style="width:1%">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+                <div class="form-check m-0">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           id="brl-master"
+                           data-target-name="brl-select"
+                           data-actions-id="brl-actions"
+                           aria-label="Выделить все строки">
+                </div>
+            {% endif %}
+        </th>
+        <th>ID-RLT</th>
+        <th>Тип связи</th>
+        <th>От ID-BSN</th>
+        <th>К ID-BSN</th>
+        <th>ID-REO</th>
+        <th>Дата события</th>
+        <th>Комментарий</th>
+    </tr>
+    </thead>
+    <tbody class="align-top">
+    {% for item in brl_items %}
+        <tr data-edit-url="{% url 'brl_form_edit' item.pk %}"
+            data-delete-url="{% url 'brl_delete' item.pk %}"
+            data-move-up-url="{% url 'brl_move_up' item.pk %}"
+            data-move-down-url="{% url 'brl_move_down' item.pk %}">
+            <td class="text-nowrap">
+                {% if request.user.is_authenticated and request.user.is_staff %}
+                    <div class="form-check">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="brl-sel-{{ item.id }}"
+                               name="brl-select"
+                               value="{{ item.id }}"
+                               aria-label="Выделить строку">
+                    </div>
+                {% endif %}
+            </td>
+            <td class="text-nowrap"><span class="clf-id-mono">{{ item.pk|stringformat:"05d" }}-RLT</span></td>
+            <td>{{ item.event.relation_type|default:"—" }}</td>
+            <td class="text-nowrap"><span class="clf-id-mono">{{ item.from_business_entity.pk|stringformat:"05d" }}-BSN</span></td>
+            <td class="text-nowrap"><span class="clf-id-mono">{{ item.to_business_entity.pk|stringformat:"05d" }}-BSN</span></td>
+            <td class="text-nowrap"><span class="clf-id-mono">{{ item.event.reorganization_event_uid|default:"—" }}</span></td>
+            <td class="text-nowrap">{% if item.event.event_date %}{{ item.event.event_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>
+            <td>{{ item.event.comment|default:"—" }}</td>
+        </tr>
+    {% empty %}
+        <tr><td colspan="8" class="text-muted">Пока нет данных.</td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% include "classifiers_app/_registry_pagination.html" %}

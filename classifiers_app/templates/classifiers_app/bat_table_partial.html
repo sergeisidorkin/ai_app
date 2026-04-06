@@ -1,0 +1,18 @@
+<table class="table table-sm">
+    <thead class="align-bottom">
+    <tr>
+        <th>Наименование атрибута</th>
+        <th>Наименование подраздела</th>
+    </tr>
+    </thead>
+    <tbody class="align-top">
+    {% for item in bat_items %}
+        <tr>
+            <td>{{ item.attribute_name|default:"—" }}</td>
+            <td>{{ item.subsection_name|default:"—" }}</td>
+        </tr>
+    {% empty %}
+        <tr><td colspan="2" class="text-muted">Пока нет данных.</td></tr>
+    {% endfor %}
+    </tbody>
+</table>

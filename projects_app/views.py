@@ -109,38 +109,39 @@ def _next_position(model, filters: dict | None = None) -> int:
     last = qs.aggregate(mx=Max("position")).get("mx") or 0
     return last + 1
 
-def _sync_to_legal_entity_record(short_name, country, identifier, registration_number, registration_date, user=None):
-    """Create or update a LegalEntityRecord from project data."""
-    short_name = (short_name or "").strip()
-    if not short_name:
-        return
-    defaults = {
-        "registration_country": country,
-        "identifier": identifier or "",
-        "registration_number": registration_number or "",
-        "registration_date": registration_date,
+def _sync_to_legal_entity_record(
+    short_name,
+    country,
+    identifier,
+    registration_number,
+    registration_date,
+    user=None,
+    selected_identifier_record_id=None,
+    selected_from_autocomplete=False,
+    business_entity_source="",
+):
+    """Create or update autocomplete registry chain from project data."""
+    from classifiers_app.views import sync_autocomplete_registry_entry
+
+    sync_autocomplete_registry_entry(
+        short_name=short_name,
+        country=country,
+        identifier_type=identifier,
+        registration_number=registration_number,
+        registration_date=registration_date,
+        user=user,
+        selected_identifier_record_id=selected_identifier_record_id,
+        selected_from_autocomplete=selected_from_autocomplete,
+        business_entity_source=business_entity_source,
+    )
+
+
+def _sync_selection_kwargs(request, prefix):
+    selected_flag = str(request.POST.get(f"{prefix}_selected_from_autocomplete") or "").strip().lower()
+    return {
+        "selected_identifier_record_id": (request.POST.get(f"{prefix}_identifier_record_id") or "").strip(),
+        "selected_from_autocomplete": selected_flag in {"1", "true", "yes", "on"},
     }
-    if user:
-        from classifiers_app.views import _ler_record_author
-        from datetime import date as _date
-        defaults["record_date"] = _date.today()
-        defaults["record_author"] = _ler_record_author(user)
-    try:
-        ler, created = LegalEntityRecord.objects.get_or_create(
-            short_name=short_name,
-            defaults=defaults,
-        )
-    except LegalEntityRecord.MultipleObjectsReturned:
-        ler = LegalEntityRecord.objects.filter(short_name=short_name).order_by("id").first()
-        created = False
-    if not created:
-        changed = False
-        for field, val in defaults.items():
-            if getattr(ler, field) != val:
-                setattr(ler, field, val)
-                changed = True
-        if changed:
-            ler.save()
 
 
 @login_required
@@ -167,6 +168,8 @@ def registration_form_create(request):
     _sync_to_legal_entity_record(
         obj.customer, obj.country, obj.identifier,
         obj.registration_number, obj.registration_date, request.user,
+        business_entity_source="[Проекты / Заказчик]",
+        **_sync_selection_kwargs(request, "customer_autocomplete"),
     )
     return _render_projects_updated(request)
 
@@ -185,6 +188,8 @@ def registration_form_edit(request, pk: int):
     _sync_to_legal_entity_record(
         obj.customer, obj.country, obj.identifier,
         obj.registration_number, obj.registration_date, request.user,
+        business_entity_source="[Проекты / Заказчик]",
+        **_sync_selection_kwargs(request, "customer_autocomplete"),
     )
     return _render_projects_updated(request)
 
@@ -295,6 +300,8 @@ def work_form_create(request):
     _sync_to_legal_entity_record(
         obj.asset_name, obj.country, obj.identifier,
         obj.registration_number, obj.registration_date, request.user,
+        business_entity_source="[Проекты / Наименование актива]",
+        **_sync_selection_kwargs(request, "asset_autocomplete"),
     )
     response = _render_projects_updated(request)
     response[HX_TRIGGER_HEADER] = json.dumps({
@@ -399,6 +406,8 @@ def work_form_edit(request, pk: int):
     _sync_to_legal_entity_record(
         obj.asset_name, obj.country, obj.identifier,
         obj.registration_number, obj.registration_date, request.user,
+        business_entity_source="[Проекты / Наименование актива]",
+        **_sync_selection_kwargs(request, "asset_autocomplete"),
     )
     response = _render_projects_updated(request)
     response[HX_TRIGGER_HEADER] = json.dumps({
@@ -556,6 +565,8 @@ def legal_entity_form_create(request):
     _sync_to_legal_entity_record(
         entity.legal_name, entity.country, entity.identifier,
         entity.registration_number, entity.registration_date, request.user,
+        business_entity_source="[Проекты / Наименование юридического лица]",
+        **_sync_selection_kwargs(request, "legal_autocomplete"),
     )
     return _render_projects_updated(request)
 
@@ -574,6 +585,8 @@ def legal_entity_form_edit(request, pk: int):
     _sync_to_legal_entity_record(
         obj.legal_name, obj.country, obj.identifier,
         obj.registration_number, obj.registration_date, request.user,
+        business_entity_source="[Проекты / Наименование юридического лица]",
+        **_sync_selection_kwargs(request, "legal_autocomplete"),
     )
     return _render_projects_updated(request)
 

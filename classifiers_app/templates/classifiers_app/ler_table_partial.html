@@ -1,5 +1,5 @@
 <table class="table table-sm">
-    <thead class="align-bottom">
+    <thead class="align-bottom text-nowrap">
     <tr>
         <th style="width:1%">
             {% if request.user.is_authenticated and request.user.is_staff %}
@@ -13,16 +13,14 @@
                 </div>
             {% endif %}
         </th>
+        <th>ID-ATR</th>
+        <th>ID-IDN</th>
         <th>Наименование (краткое)</th>
         <th>Наименование (полное)</th>
-        <th>Страна регистрации</th>
-        <th>Идент.</th>
-        <th>Регистр. номер</th>
-        <th>Дата регистрации</th>
-        <th>Дата записи</th>
+        <th>Запись</th>
         <th>Автор записи</th>
-        <th>Дата получения наименования</th>
-        <th>Дата смены наименования</th>
+        <th>Действ. от</th>
+        <th>Действ. до</th>
     </tr>
     </thead>
     <tbody class="align-top">
@@ -44,54 +42,18 @@
                     </div>
                 {% endif %}
             </td>
+            <td class="text-nowrap"><span class="clf-id-mono">{{ item.pk|stringformat:"05d" }}-ATR</span></td>
+            <td class="text-nowrap"><span class="clf-id-mono">{% if item.identifier_record %}{{ item.identifier_record.pk|stringformat:"05d" }}-IDN{% else %}—{% endif %}</span></td>
             <td>{{ item.short_name }}</td>
             <td>{{ item.full_name|default:"—" }}</td>
-            <td>{% if item.registration_country %}{{ item.registration_country.short_name }}{% else %}—{% endif %}</td>
-            <td class="text-nowrap">{{ item.identifier|default:"—" }}</td>
-            <td class="text-nowrap">{{ item.registration_number|default:"—" }}</td>
-            <td class="text-nowrap">{% if item.registration_date %}{{ item.registration_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>
             <td class="text-nowrap">{% if item.record_date %}{{ item.record_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>
             <td>{{ item.record_author|default:"—" }}</td>
             <td class="text-nowrap">{% if item.name_received_date %}{{ item.name_received_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>
             <td class="text-nowrap">{% if item.name_changed_date %}{{ item.name_changed_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>
         </tr>
     {% empty %}
-        <tr><td colspan="11" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="9" class="text-muted">Пока нет данных.</td></tr>
     {% endfor %}
     </tbody>
 </table>
-
-{% if request.user.is_authenticated and request.user.is_staff %}
-<div class="d-flex align-items-stretch gap-2 products-actions-row">
-  <button
-          class="btn btn-primary btn-sm d-flex align-items-center"
-          hx-get="{% url 'ler_form_create' %}"
-          hx-target="#classifiers-modal .modal-content"
-          hx-swap="innerHTML">
-    <i class="bi bi-plus-circle me-2"></i>Добавить строку
-  </button>
-  <div id="ler-actions" class="d-none d-flex">
-    <div class="btn-group">
-      <button type="button" id="ler-actions-up" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
-        <i class="bi bi-arrow-up-square"></i>
-      </button>
-      <button type="button" id="ler-actions-down" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
-        <i class="bi bi-arrow-down-square"></i>
-      </button>
-      <button type="button" id="ler-actions-edit" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
-        <i class="bi bi-pencil-square"></i>
-      </button>
-      <button type="button" id="ler-actions-delete" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
-        <i class="bi bi-x-square"></i>
-      </button>
-    </div>
-  </div>
-  <button type="button"
-          id="ler-csv-upload-btn"
-          class="btn btn-primary btn-sm d-flex align-items-center"
-          title="Загрузить CSV">
-    <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
-  </button>
-  <input type="file" id="ler-csv-file-input" accept=".csv" style="display:none;">
-</div>
-{% endif %}
+{% include "classifiers_app/_registry_pagination.html" %}

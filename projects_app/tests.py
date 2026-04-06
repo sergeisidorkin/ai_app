@@ -8,6 +8,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from checklists_app.models import ChecklistItem, SourceDataItemFolder, SourceDataSectionFolder, SourceDataWorkspace
+from classifiers_app.models import BusinessEntityIdentifierRecord, BusinessEntityRecord, LegalEntityRecord, OKSMCountry
 from core.models import CloudStorageSettings
 from contracts_app.models import ContractTemplate
 from nextcloud_app.models import NextcloudUserLink
@@ -111,6 +112,131 @@ class ProjectRegistrationFormTests(TestCase):
         self.assertFalse(form.is_valid())
         self.assertIn("type", form.errors)
         self.assertIn("deadline", form.errors)
+
+
+class ProjectRegistrationRegistrySyncTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="projects-registry-user",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.group_member = GroupMember.objects.create(
+            short_name="IMC",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        self.product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            service_type="service",
+            position=1,
+        )
+        self.country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+
+    def _post_registration(self, **extra):
+        payload = {
+            "number": 4444,
+            "group_member": self.group_member.pk,
+            "agreement_type": "MAIN",
+            "type": self.product.pk,
+            "name": "Проект Альфа",
+            "status": "Не начат",
+            "deadline": "2026-01-10",
+            "year": 2026,
+            "customer": 'ООО "Синхронизация"',
+            "country": self.country.pk,
+            "identifier": "ОГРН",
+            "registration_number": "1234567890",
+            "registration_date": "2025-02-10",
+            "project_manager": "",
+            "customer_autocomplete_identifier_record_id": "",
+            "customer_autocomplete_selected_from_autocomplete": "0",
+        }
+        payload.update(extra)
+        return self.client.post(reverse("registration_form_create"), payload)
+
+    def test_manual_registration_save_creates_new_registry_chain(self):
+        existing_entity = BusinessEntityRecord.objects.create(name='ООО "Синхронизация"', position=1)
+        existing_identifier = BusinessEntityIdentifierRecord.objects.create(
+            business_entity=existing_entity,
+            identifier_type="ОГРН",
+            registration_country=self.country,
+            registration_region="Москва",
+            registration_date=timezone.datetime(2025, 2, 10).date(),
+            number="1234567890",
+            valid_from=timezone.datetime(2025, 2, 10).date(),
+            position=1,
+        )
+        LegalEntityRecord.objects.create(
+            attribute=LegalEntityRecord.ATTRIBUTE_NAME,
+            identifier_record=existing_identifier,
+            short_name='ООО "Синхронизация"',
+            registration_country=self.country,
+            identifier="ОГРН",
+            registration_number="1234567890",
+            registration_date=timezone.datetime(2025, 2, 10).date(),
+            position=1,
+        )
+
+        response = self._post_registration()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(BusinessEntityRecord.objects.count(), 2)
+        self.assertEqual(
+            LegalEntityRecord.objects.filter(
+                attribute=LegalEntityRecord.ATTRIBUTE_NAME,
+                short_name='ООО "Синхронизация"',
+            ).count(),
+            2,
+        )
+        newest_entity = BusinessEntityRecord.objects.order_by("-id").first()
+        self.assertEqual(newest_entity.source, "[Проекты / Заказчик]")
+        self.assertEqual(newest_entity.record_author, "projects-registry-user")
+
+    def test_selected_autocomplete_registration_save_does_not_create_new_chain(self):
+        existing_entity = BusinessEntityRecord.objects.create(name='ООО "Связать"', position=1)
+        existing_identifier = BusinessEntityIdentifierRecord.objects.create(
+            business_entity=existing_entity,
+            identifier_type="ОГРН",
+            registration_country=self.country,
+            registration_region="Москва",
+            registration_date=timezone.datetime(2025, 2, 10).date(),
+            number="1234567890",
+            valid_from=timezone.datetime(2025, 2, 10).date(),
+            position=1,
+        )
+        LegalEntityRecord.objects.create(
+            attribute=LegalEntityRecord.ATTRIBUTE_NAME,
+            identifier_record=existing_identifier,
+            short_name='ООО "Связать"',
+            registration_country=self.country,
+            identifier="ОГРН",
+            registration_number="1234567890",
+            registration_date=timezone.datetime(2025, 2, 10).date(),
+            position=1,
+        )
+
+        response = self._post_registration(
+            customer='ООО "Связать"',
+            customer_autocomplete_identifier_record_id=str(existing_identifier.pk),
+            customer_autocomplete_selected_from_autocomplete="1",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(BusinessEntityRecord.objects.count(), 1)
 
 
 class WorkVolumePerformerCreationTests(TestCase):

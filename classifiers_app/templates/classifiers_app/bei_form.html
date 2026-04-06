@@ -1,0 +1,407 @@
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    class="bei-modal-form"
+    method="post"
+    style="display:flex; flex-direction:column; overflow:hidden; flex:1 1 auto; min-height:0;"
+    {% if action == "create" %}
+      hx-post="{% url 'bei_form_create' %}"
+    {% else %}
+      hx-post="{% url 'bei_form_edit' item.pk %}"
+    {% endif %}
+    hx-target="#business-entity-identifiers-table-wrap"
+    hx-swap="innerHTML">
+  <div class="modal-body" style="overflow-y:auto; flex:1 1 auto; min-height:0;">
+    {% csrf_token %}
+    <div class="mb-3">
+      <label class="form-label">ID-BSN</label>
+      <div class="ler-ac-wrap flex-grow-1">
+        <input
+          type="text"
+          id="id_business_entity_autocomplete"
+          name="business_entity_autocomplete"
+          class="form-control"
+          value="{{ form.business_entity_autocomplete_label }}"
+          placeholder="Искать по ID-BSN и наименованию"
+          autocomplete="off">
+        <input type="hidden" id="id_business_entity" name="business_entity" value="{{ form.business_entity_autocomplete_value }}">
+        <div id="id_business_entity_autocomplete_list" class="ler-ac-list"></div>
+      </div>
+    </div>
+    <div class="row g-3">
+      <div class="col-md-2">
+        <label class="form-label">Код страны</label>
+        <input
+          type="text"
+          id="id_registration_country_code_display"
+          class="form-control"
+          readonly
+          tabindex="-1"
+          style="background-color:#f8f9fa; color:#6c757d;"
+          value="{% if form.instance and form.instance.registration_code %}{{ form.instance.registration_code }}{% endif %}">
+      </div>
+      <div class="col-md-10">
+        <label class="form-label">Страна регистрации</label>
+        {{ form.registration_country }}
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Тип идент.</label>
+        {{ form.identifier_type }}
+      </div>
+      <div class="col-md-10">
+        <label class="form-label">Номер</label>
+        {{ form.number }}
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Дата регистрации</label>
+        {{ form.registration_date }}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Регион регистрации</label>
+        {{ form.registration_region }}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Код региона</label>
+        <input
+          type="text"
+          id="id_registration_region_code_display"
+          class="form-control"
+          readonly
+          tabindex="-1"
+          style="background-color:#f8f9fa; color:#6c757d;"
+          value="{% if form.instance and form.instance.registration_region_code %}{{ form.instance.registration_region_code }}{% endif %}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Запись</label>
+        <input
+          type="text"
+          class="form-control"
+          readonly
+          tabindex="-1"
+          style="background-color:#f8f9fa; color:#6c757d;"
+          value="{% if form.instance and form.instance.record_date %}{{ form.instance.record_date|date:'d.m.Y' }}{% endif %}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Автор записи</label>
+        <input
+          type="text"
+          class="form-control"
+          readonly
+          tabindex="-1"
+          style="background-color:#f8f9fa; color:#6c757d;"
+          value="{% if form.instance and form.instance.record_author %}{{ form.instance.record_author }}{% endif %}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Действителен от</label>
+        {{ form.valid_from }}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Действителен до</label>
+        {{ form.valid_to }}
+      </div>
+    </div>
+    <div class="mt-3 mb-3">
+      <label class="form-label">Актуален</label>
+      {{ form.is_active }}
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mb-0">
+        Проверьте введённые данные.
+      </div>
+    {% endif %}
+  </div>
+  <div class="modal-footer" style="flex-shrink:0;">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>
+
+<script>
+(function() {
+  var businessEntityInput = document.getElementById('id_business_entity_autocomplete');
+  var businessEntityHidden = document.getElementById('id_business_entity');
+  var businessEntityList = document.getElementById('id_business_entity_autocomplete_list');
+  var countryEl = document.getElementById('id_registration_country');
+  var regionEl = document.getElementById('id_registration_region');
+  var registrationDateEl = document.getElementById('id_registration_date');
+  var countryCodeEl = document.getElementById('id_registration_country_code_display');
+  var regionCodeEl = document.getElementById('id_registration_region_code_display');
+  var identifierTypeEl = document.getElementById('id_identifier_type');
+  var validToEl = document.getElementById('id_valid_to');
+  var isActiveEl = document.getElementById('id_is_active');
+  if (!validToEl || !isActiveEl) return;
+  var searchUrl = '{% url "brl_business_entity_search" %}';
+
+  function fitListWidth(list) {
+    if (!list) return;
+    list.style.minWidth = '0px';
+    list.style.width = 'max-content';
+    var width = Math.max(list.scrollWidth + 4, list.parentElement ? list.parentElement.offsetWidth : 0);
+    list.style.width = width + 'px';
+  }
+
+  function hideBusinessEntityList() {
+    if (!businessEntityList) return;
+    businessEntityList.classList.remove('show');
+    businessEntityList.innerHTML = '';
+  }
+
+  function highlight(text, query) {
+    if (!query) return text;
+    var escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return text.replace(new RegExp('(' + escaped + ')', 'gi'), '<mark>$1</mark>');
+  }
+
+  function renderBusinessEntityResults(results, query, totalCount) {
+    if (!businessEntityList) return;
+    businessEntityList.innerHTML = '';
+    if (!results.length) {
+      hideBusinessEntityList();
+      return;
+    }
+    var visible = results.slice(0, 3);
+    var html = visible.map(function(item, index) {
+      return '<div class="ler-ac-item" data-idx="' + index + '">'
+        + '<div class="ler-ac-main">' + highlight(item.label || '', query) + '</div>'
+        + '</div>';
+    }).join('');
+    if (totalCount > 3) {
+      html += '<div class="ler-ac-item ler-ac-more">Найдено еще ' + (totalCount - 3) + ' бизнес-сущностей</div>';
+    }
+    businessEntityList.innerHTML = html;
+    businessEntityList.classList.add('show');
+    fitListWidth(businessEntityList);
+  }
+
+  function bindBusinessEntityAutocomplete() {
+    if (!businessEntityInput || !businessEntityHidden || !businessEntityList) return;
+    var debounce = null;
+    var results = [];
+    var picking = false;
+
+    function pick(item) {
+      if (businessEntityInput) businessEntityInput.value = item.formatted_id || '';
+      if (businessEntityHidden) businessEntityHidden.value = item.id || '';
+      hideBusinessEntityList();
+    }
+
+    businessEntityInput.addEventListener('input', function() {
+      var query = businessEntityInput.value || '';
+      businessEntityHidden.value = '';
+      if (debounce) clearTimeout(debounce);
+      if (query.trim().length < 1) {
+        hideBusinessEntityList();
+        return;
+      }
+      debounce = setTimeout(function() {
+        fetch(searchUrl + '?q=' + encodeURIComponent(query.trim()))
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            results = data.results || [];
+            renderBusinessEntityResults(results, query.trim(), data.total_count || 0);
+          })
+          .catch(function() {
+            hideBusinessEntityList();
+          });
+      }, 150);
+    });
+
+    businessEntityList.addEventListener('mousedown', function(event) {
+      event.preventDefault();
+      picking = true;
+      var item = event.target.closest('.ler-ac-item');
+      if (!item) return;
+      var idx = parseInt(item.dataset.idx, 10);
+      if (results[idx]) pick(results[idx]);
+    });
+
+    businessEntityList.addEventListener('click', function(event) {
+      var item = event.target.closest('.ler-ac-item');
+      if (!item) return;
+      var idx = parseInt(item.dataset.idx, 10);
+      if (results[idx]) pick(results[idx]);
+      picking = false;
+    });
+
+    businessEntityInput.addEventListener('focus', function() {
+      if ((businessEntityInput.value || '').trim() && !businessEntityHidden.value) {
+        businessEntityInput.dispatchEvent(new Event('input'));
+      }
+    });
+
+    businessEntityInput.addEventListener('blur', function() {
+      if (picking) {
+        picking = false;
+        return;
+      }
+      window.setTimeout(hideBusinessEntityList, 150);
+    });
+  }
+
+  function syncCountryCode() {
+    if (!countryEl || !countryCodeEl) return;
+    var countryId = countryEl.value || '';
+    if (!countryId) {
+      countryCodeEl.value = '';
+      return;
+    }
+    fetch('{% url "country_code_lookup" %}?country_id=' + encodeURIComponent(countryId))
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        countryCodeEl.value = data.code || '';
+      })
+      .catch(function() {
+        countryCodeEl.value = '';
+      });
+  }
+
+  function syncRegionCode() {
+    if (!regionCodeEl) return;
+    var countryId = countryEl ? (countryEl.value || '') : '';
+    var regionName = regionEl ? (regionEl.value || '') : '';
+    var registrationDate = registrationDateEl ? (registrationDateEl.value || '').trim() : '';
+    if (!countryId || !regionName) {
+      regionCodeEl.value = '';
+      return;
+    }
+    var url = '{% url "ler_region_code_for_country" %}?country_id=' + encodeURIComponent(countryId)
+      + '&region_name=' + encodeURIComponent(regionName);
+    if (registrationDate) {
+      url += '&date=' + encodeURIComponent(registrationDate);
+    }
+    fetch(url)
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        regionCodeEl.value = data.code || '';
+      })
+      .catch(function() {
+        regionCodeEl.value = '';
+      });
+  }
+
+  function ensureRegionOption(regionName) {
+    if (!regionEl || !regionName) return;
+    for (var i = 0; i < regionEl.options.length; i++) {
+      if (regionEl.options[i].value === regionName) return;
+    }
+    var opt = document.createElement('option');
+    opt.value = regionName;
+    opt.textContent = regionName;
+    regionEl.appendChild(opt);
+  }
+
+  function loadRegions(countryId, preserveCurrent) {
+    if (!countryEl || !regionEl) return;
+    var currentRegion = preserveCurrent ? (regionEl.value || '') : '';
+    if (!countryId) {
+      regionEl.innerHTML = '<option value="">---------</option>';
+      syncRegionCode();
+      return;
+    }
+    var url = '{% url "ler_regions_for_country" %}?country_id=' + encodeURIComponent(countryId);
+    var registrationDate = registrationDateEl ? (registrationDateEl.value || '').trim() : '';
+    if (registrationDate) {
+      url += '&date=' + encodeURIComponent(registrationDate);
+    }
+    fetch(url)
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var regions = data.regions || [];
+        if (currentRegion && regions.indexOf(currentRegion) === -1) {
+          regions.push(currentRegion);
+        }
+        regionEl.innerHTML = '<option value="">---------</option>';
+        regions.forEach(function(regionName) {
+          var opt = document.createElement('option');
+          opt.value = regionName;
+          opt.textContent = regionName;
+          if (regionName === currentRegion) opt.selected = true;
+          regionEl.appendChild(opt);
+        });
+        syncRegionCode();
+      })
+      .catch(function() {
+        regionEl.innerHTML = '<option value="">---------</option>';
+        ensureRegionOption(currentRegion);
+        regionEl.value = currentRegion;
+        syncRegionCode();
+      });
+  }
+
+  function loadIdentifierTypes(countryId, preserveCurrent) {
+    if (!identifierTypeEl) return;
+    var currentValue = preserveCurrent ? (identifierTypeEl.value || '') : '';
+    identifierTypeEl.innerHTML = '<option value="">---------</option>';
+    if (!countryId) {
+      return;
+    }
+    fetch('{% url "ler_identifiers_for_country" %}?country_id=' + encodeURIComponent(countryId))
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var ids = data.identifiers || [];
+        var hasCurrent = false;
+        ids.forEach(function(item) {
+          var opt = document.createElement('option');
+          opt.value = item.identifier;
+          opt.textContent = item.identifier;
+          if (item.identifier === currentValue) {
+            opt.selected = true;
+            hasCurrent = true;
+          }
+          identifierTypeEl.appendChild(opt);
+        });
+        if (!currentValue && !preserveCurrent && ids.length) {
+          identifierTypeEl.value = ids[0].identifier;
+          return;
+        }
+        if (currentValue && !hasCurrent) {
+          var currentOpt = document.createElement('option');
+          currentOpt.value = currentValue;
+          currentOpt.textContent = currentValue;
+          currentOpt.selected = true;
+          identifierTypeEl.appendChild(currentOpt);
+        }
+      })
+      .catch(function() {});
+  }
+
+  function syncIsActive() {
+    isActiveEl.value = validToEl.value ? 'false' : 'true';
+  }
+
+  if (countryEl) {
+    countryEl.addEventListener('change', function() {
+      syncCountryCode();
+      loadIdentifierTypes(this.value, false);
+      loadRegions(this.value, false);
+    });
+    syncCountryCode();
+    loadIdentifierTypes(countryEl.value, !!identifierTypeEl.value);
+    loadRegions(countryEl.value, true);
+  }
+  if (regionEl) {
+    regionEl.addEventListener('change', syncRegionCode);
+  }
+  if (registrationDateEl) {
+    registrationDateEl.addEventListener('input', function() {
+      if (!countryEl || !countryEl.value) return;
+      loadRegions(countryEl.value, true);
+    });
+    registrationDateEl.addEventListener('change', function() {
+      if (!countryEl || !countryEl.value) return;
+      loadRegions(countryEl.value, true);
+    });
+  }
+  validToEl.addEventListener('input', syncIsActive);
+  validToEl.addEventListener('change', syncIsActive);
+  bindBusinessEntityAutocomplete();
+  syncIsActive();
+  syncRegionCode();
+})();
+</script>

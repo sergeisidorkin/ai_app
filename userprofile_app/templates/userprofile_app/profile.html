@@ -32,7 +32,7 @@
     <!-- Низ: профиль (sticky) -->
     <div class="mt-auto py-3 border-top sidebar-profile">
       {% if request.user.is_authenticated %}
-      <div class="d-flex align-items-center">
+      <div class="d-flex align-items-center w-100 min-w-0">
         <span class="flex-shrink-0">
           {% if employee and employee.avatar %}
             <img src="{{ employee.avatar.url }}" alt="Аватар" class="sidebar-avatar-img rounded-circle" width="32" height="32" style="object-fit:cover;">
@@ -42,7 +42,7 @@
             <span class="profile-icon"><i class="bi bi-person-circle"></i></span>
           {% endif %}
         </span>
-        <span class="link-text small text-truncate ms-2 me-auto">{{ request.user.get_full_name|default:request.user.email }}</span>
+        <span class="link-text small text-truncate ms-2 me-auto min-w-0">{{ request.user.get_full_name|default:request.user.email }}</span>
         <form method="post" action="{% url 'logout' %}" class="flex-shrink-0 link-text">
           {% csrf_token %}
           <button type="submit" class="sidebar-logout-btn" title="Выйти">

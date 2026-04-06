@@ -66,6 +66,7 @@ ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=[
 INSTALLED_APPS = [
     "core","django.contrib.admin","django.contrib.auth","django.contrib.contenttypes",
     "django.contrib.sessions","django.contrib.messages","django.contrib.staticfiles",
+    "django.contrib.postgres",
     "policy_app","onedrive_app","blocks_app","blockseditor_app","openai_app","googledrive_app","projects_app",
     "requests_app","debugger_app","office_addin","corsheaders","channels","docops_app",
     "docops_queue","macroops_app","checklists_app","logs_app.apps.LogsAppConfig","yandexdisk_app",

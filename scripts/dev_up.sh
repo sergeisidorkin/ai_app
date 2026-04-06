@@ -16,5 +16,8 @@ for p in 6380 8001 8000 3000; do
   lsof -nP -iTCP:$p -sTCP:LISTEN -t | xargs -r kill || true
 done
 
+echo "[dev_up] preflight: ensuring local PostgreSQL"
+"$ROOT/scripts/dev_postgres_preflight.sh"
+
 echo "[dev_up] starting honcho"
 exec "$VENV_BIN/python" -m honcho -e "$ROOT/.env.dev" -f "$ROOT/Procfile.dev" start

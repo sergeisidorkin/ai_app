@@ -1,0 +1,54 @@
+<table class="table table-sm">
+    <thead class="align-bottom">
+    <tr>
+        <th style="width:1%">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+                <div class="form-check m-0">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           id="ber-master"
+                           data-target-name="ber-select"
+                           data-actions-id="ber-actions"
+                           aria-label="Выделить все строки">
+                </div>
+            {% endif %}
+        </th>
+        <th>ID-BSN</th>
+        <th>Наименование</th>
+        <th>Комментарий</th>
+        <th>Дата записи</th>
+        <th>Автор записи</th>
+        <th>Источник</th>
+    </tr>
+    </thead>
+    <tbody class="align-top">
+    {% for item in ber_items %}
+        <tr data-edit-url="{% url 'ber_form_edit' item.pk %}"
+            data-delete-url="{% url 'ber_delete' item.pk %}"
+            data-move-up-url="{% url 'ber_move_up' item.pk %}"
+            data-move-down-url="{% url 'ber_move_down' item.pk %}">
+            <td class="text-nowrap">
+                {% if request.user.is_authenticated and request.user.is_staff %}
+                    <div class="form-check">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="ber-sel-{{ item.id }}"
+                               name="ber-select"
+                               value="{{ item.id }}"
+                               aria-label="Выделить строку">
+                    </div>
+                {% endif %}
+            </td>
+            <td class="text-nowrap"><span class="clf-id-mono">{{ item.pk|stringformat:"05d" }}-BSN</span></td>
+            <td>{{ item.name }}</td>
+            <td>{{ item.comment|default:"—" }}</td>
+            <td class="text-nowrap">{% if item.record_date %}{{ item.record_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>
+            <td>{{ item.record_author|default:"—" }}</td>
+            <td>{{ item.source|default:"—" }}</td>
+        </tr>
+    {% empty %}
+        <tr><td colspan="7" class="text-muted">Пока нет данных.</td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% include "classifiers_app/_registry_pagination.html" %}

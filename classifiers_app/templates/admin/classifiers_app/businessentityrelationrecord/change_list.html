@@ -1,0 +1,40 @@
+{% extends "admin/change_list.html" %}
+
+{% block extrahead %}
+  {{ block.super }}
+  <style>
+    .object-tools .clf-reset-counter-form {
+      display: inline;
+    }
+
+    .object-tools .clf-reset-counter-btn {
+      background: #7a1f1f;
+      border: none;
+      border-radius: 9999px;
+      color: #fff;
+      cursor: pointer;
+      font-size: 0.68rem;
+      font-weight: 400;
+      letter-spacing: 0.04em;
+      line-height: 1;
+      padding: 7.5px 0.6rem;
+      text-transform: uppercase;
+    }
+
+    .object-tools .clf-reset-counter-btn:hover,
+    .object-tools .clf-reset-counter-btn:focus {
+      background: #651818;
+      color: #fff;
+    }
+  </style>
+{% endblock %}
+
+{% block object-tools-items %}
+  <li>
+    <form action="{{ reset_counter_url }}" method="post" class="clf-reset-counter-form">
+      {% csrf_token %}
+      <button type="submit" class="clf-reset-counter-btn">Сбросить счетчик ID-RLT</button>
+    </form>
+  </li>
+  {{ block.super }}
+{% endblock %}

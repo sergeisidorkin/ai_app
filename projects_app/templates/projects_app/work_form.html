@@ -36,6 +36,8 @@
       <label class="form-label">Наименование актива</label>
       <div class="ler-ac-wrap">
         {{ form.asset_name }}
+        <input type="hidden" name="asset_autocomplete_identifier_record_id" id="work-asset-autocomplete-identifier-record-id" value="">
+        <input type="hidden" name="asset_autocomplete_selected_from_autocomplete" id="work-asset-autocomplete-selected" value="0">
         <div class="ler-ac-list" id="work-ler-ac-list"></div>
       </div>
     </div>
@@ -156,8 +158,17 @@
   (function() {
     var input = assetInput;
     var list = form.querySelector('#work-ler-ac-list');
+    var selectedIdInput = form.querySelector('#work-asset-autocomplete-identifier-record-id');
+    var selectedFlagInput = form.querySelector('#work-asset-autocomplete-selected');
+    var regNum = form.querySelector('input[name="registration_number"]');
+    var regDate = form.querySelector('input[name="registration_date"]');
     if (!input || !list) return;
     var debounce = null, results = [], picking = false;
+
+    function clearSelection() {
+      if (selectedIdInput) selectedIdInput.value = '';
+      if (selectedFlagInput) selectedFlagInput.value = '0';
+    }
 
     function hl(text, q) {
       if (!q) return text;
@@ -188,14 +199,15 @@
       input.value = r.short_name || '';
       if (countrySel && r.country_id) countrySel.value = r.country_id;
       if (identField) identField.value = r.identifier || '';
-      var regNum = form.querySelector('input[name="registration_number"]');
-      var regDate = form.querySelector('input[name="registration_date"]');
       if (regNum) regNum.value = r.registration_number || '';
       if (regDate) regDate.value = r.registration_date || '';
+      if (selectedIdInput) selectedIdInput.value = r.identifier_record_id || '';
+      if (selectedFlagInput) selectedFlagInput.value = '1';
       list.classList.remove('show');
     }
     input.addEventListener('input', function() {
       var q = input.value.trim();
+      clearSelection();
       clearTimeout(debounce);
       if (q.length < 1) { list.classList.remove('show'); return; }
       debounce = setTimeout(function() {
@@ -227,6 +239,11 @@
     input.addEventListener('focus', function() {
       if (results.length && input.value.trim().length >= 1) list.classList.add('show');
     });
+    countrySel?.addEventListener('change', clearSelection);
+    regNum?.addEventListener('input', clearSelection);
+    regNum?.addEventListener('change', clearSelection);
+    regDate?.addEventListener('input', clearSelection);
+    regDate?.addEventListener('change', clearSelection);
   })();
 
   if (countrySel && identField) {

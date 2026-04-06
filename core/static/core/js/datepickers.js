@@ -51,7 +51,7 @@
   document.body.addEventListener('htmx:afterSwap', function (e) {
     if (!e.target) return;
     // Если прилетело содержимое модалки или панель проектов — инициализируем в её пределах
-    if (e.target.closest && (e.target.closest('#projects-modal') || e.target.id === 'projects-pane')) {
+    if (e.target.closest && (e.target.closest('#projects-modal') || e.target.closest('#classifiers-modal') || e.target.id === 'projects-pane')) {
       initDatepickers(e.target);
     }
   });
