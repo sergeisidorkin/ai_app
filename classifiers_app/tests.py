@@ -288,16 +288,20 @@ class BusinessEntityRelationAutocompleteTests(TestCase):
         payload = response.json()
         self.assertEqual(payload["total_count"], 4)
         self.assertEqual(len(payload["results"]), 4)
-        self.assertEqual(payload["results"][0]["label"], '00001-BSN ТОО "Ecil-Mining"')
+        self.assertEqual(
+            payload["results"][0]["label"],
+            f'{self.entities[0].pk:05d}-BSN ТОО "Ecil-Mining"',
+        )
 
     def test_search_matches_formatted_bsn_id(self):
-        response = self.client.get(reverse("brl_business_entity_search"), {"q": "00003-BSN"})
+        expected_formatted_id = f"{self.entities[2].pk:05d}-BSN"
+        response = self.client.get(reverse("brl_business_entity_search"), {"q": expected_formatted_id})
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["total_count"], 1)
         self.assertEqual(payload["results"][0]["id"], self.entities[2].pk)
-        self.assertEqual(payload["results"][0]["formatted_id"], "00003-BSN")
+        self.assertEqual(payload["results"][0]["formatted_id"], expected_formatted_id)
 
 
 class BusinessEntityLegalAddressIdentifierAutocompleteTests(TestCase):
@@ -341,7 +345,7 @@ class BusinessEntityLegalAddressIdentifierAutocompleteTests(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["total_count"], 1)
-        self.assertEqual(payload["results"][0]["formatted_id"], "00001-IDN")
+        self.assertEqual(payload["results"][0]["formatted_id"], f"{self.identifier_record.pk:05d}-IDN")
         self.assertEqual(payload["results"][0]["identifier_type"], "ОГРН")
         self.assertEqual(payload["results"][0]["number"], "7700123456")
         self.assertEqual(payload["results"][0]["short_name"], 'ООО "Альфа"')
@@ -392,6 +396,93 @@ class BusinessEntityLegalAddressFormTests(TestCase):
         form = BusinessEntityLegalAddressRecordForm()
 
         self.assertEqual(form.fields["registration_country"].initial, self.country.pk)
+
+
+class BusinessEntityLegalAddressReorderTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="bea-reorder-user",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+        self.entity_a = BusinessEntityRecord.objects.create(name='ООО "Альфа"', position=1)
+        self.entity_b = BusinessEntityRecord.objects.create(name='ООО "Бета"', position=2)
+        self.identifier_a = BusinessEntityIdentifierRecord.objects.create(
+            business_entity=self.entity_a,
+            identifier_type="ОГРН",
+            registration_country=self.country,
+            number="7700000001",
+            valid_from=date(2024, 1, 1),
+            position=1,
+        )
+        self.identifier_b = BusinessEntityIdentifierRecord.objects.create(
+            business_entity=self.entity_b,
+            identifier_type="ОГРН",
+            registration_country=self.country,
+            number="7700000002",
+            valid_from=date(2024, 1, 1),
+            position=2,
+        )
+        self.name_a = LegalEntityRecord.objects.create(
+            attribute=LegalEntityRecord.ATTRIBUTE_NAME,
+            identifier_record=self.identifier_a,
+            short_name='ООО "Альфа"',
+            position=1,
+        )
+        self.address_a = LegalEntityRecord.objects.create(
+            attribute=LegalEntityRecord.ATTRIBUTE_LEGAL_ADDRESS,
+            identifier_record=self.identifier_a,
+            registration_country=self.country,
+            registration_region="Москва",
+            valid_from=date(2024, 1, 1),
+            position=2,
+        )
+        self.name_b = LegalEntityRecord.objects.create(
+            attribute=LegalEntityRecord.ATTRIBUTE_NAME,
+            identifier_record=self.identifier_b,
+            short_name='ООО "Бета"',
+            position=3,
+        )
+        self.address_b = LegalEntityRecord.objects.create(
+            attribute=LegalEntityRecord.ATTRIBUTE_LEGAL_ADDRESS,
+            identifier_record=self.identifier_b,
+            registration_country=self.country,
+            registration_region="Тюмень",
+            valid_from=date(2024, 1, 1),
+            position=4,
+        )
+
+    def test_move_up_reorders_only_legal_address_rows(self):
+        response = self.client.get(reverse("bea_move_up", args=[self.address_b.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.address_a.refresh_from_db()
+        self.address_b.refresh_from_db()
+        self.name_a.refresh_from_db()
+        self.name_b.refresh_from_db()
+        self.assertEqual((self.address_b.position, self.address_a.position), (1, 2))
+        self.assertEqual((self.name_a.position, self.name_b.position), (1, 3))
+
+    def test_move_down_reorders_only_legal_address_rows(self):
+        response = self.client.get(reverse("bea_move_down", args=[self.address_a.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.address_a.refresh_from_db()
+        self.address_b.refresh_from_db()
+        self.name_a.refresh_from_db()
+        self.name_b.refresh_from_db()
+        self.assertEqual((self.address_b.position, self.address_a.position), (1, 2))
+        self.assertEqual((self.name_a.position, self.name_b.position), (1, 3))
 
 
 class BusinessEntityAttributeTableTests(TestCase):
@@ -702,7 +793,7 @@ class BusinessEntityIdentifierFormTests(TestCase):
             reverse("bei_form_create"),
             {
                 "business_entity": str(self.business_entity.pk),
-                "business_entity_autocomplete": "00001-BSN",
+                "business_entity_autocomplete": f"{self.business_entity.pk:05d}-BSN",
                 "registration_country": str(self.country.pk),
                 "registration_region": "Москва",
                 "identifier_type": "ОГРН",
@@ -893,8 +984,8 @@ class BusinessEntityRelationSplitTests(TestCase):
             identifier_type="ИНН",
             number="111",
             valid_from=date(2024, 1, 1),
-            valid_to=None,
-            is_active=True,
+            valid_to=date(2024, 5, 31),
+            is_active=False,
             position=1,
         )
         self.latest_identifier = BusinessEntityIdentifierRecord.objects.create(

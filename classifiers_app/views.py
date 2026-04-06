@@ -2798,14 +2798,25 @@ def bea_delete(request, pk: int):
 
 
 def _normalize_bea_positions():
-    _normalize_ler_positions()
+    items = (
+        LegalEntityRecord.objects.filter(attribute=LegalEntityRecord.ATTRIBUTE_LEGAL_ADDRESS)
+        .order_by("position", "id")
+        .only("id", "position")
+    )
+    for idx, it in enumerate(items, start=1):
+        if it.position != idx:
+            LegalEntityRecord.objects.filter(pk=it.pk).update(position=idx)
 
 
 @require_http_methods(["POST", "GET"])
 @login_required
 def bea_move_up(request, pk: int):
     _normalize_bea_positions()
-    items = list(LegalEntityRecord.objects.order_by("position", "id").only("id", "position"))
+    items = list(
+        LegalEntityRecord.objects.filter(attribute=LegalEntityRecord.ATTRIBUTE_LEGAL_ADDRESS)
+        .order_by("position", "id")
+        .only("id", "position")
+    )
     idx = next((i for i, it in enumerate(items) if it.id == pk), None)
     if idx is not None and idx > 0:
         cur, prev = items[idx], items[idx - 1]
@@ -2819,7 +2830,11 @@ def bea_move_up(request, pk: int):
 @login_required
 def bea_move_down(request, pk: int):
     _normalize_bea_positions()
-    items = list(LegalEntityRecord.objects.order_by("position", "id").only("id", "position"))
+    items = list(
+        LegalEntityRecord.objects.filter(attribute=LegalEntityRecord.ATTRIBUTE_LEGAL_ADDRESS)
+        .order_by("position", "id")
+        .only("id", "position")
+    )
     idx = next((i for i, it in enumerate(items) if it.id == pk), None)
     if idx is not None and idx < len(items) - 1:
         cur, nxt = items[idx], items[idx + 1]
