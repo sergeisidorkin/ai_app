@@ -59,6 +59,8 @@
         <label class="form-label">{{ form.customer.label }}</label>
         <div class="ler-ac-wrap">
           {{ form.customer }}
+          <input type="hidden" name="customer_autocomplete_identifier_record_id" id="proposal-customer-autocomplete-identifier-record-id" value="">
+          <input type="hidden" name="customer_autocomplete_selected_from_autocomplete" id="proposal-customer-autocomplete-selected" value="0">
           <div class="ler-ac-list" id="proposal-ler-ac-list"></div>
         </div>
       </div>
@@ -87,6 +89,8 @@
         <label class="form-label">{{ form.asset_owner.label }}</label>
         <div class="ler-ac-wrap">
           {{ form.asset_owner }}
+          <input type="hidden" name="asset_owner_autocomplete_identifier_record_id" id="proposal-asset-owner-autocomplete-identifier-record-id" value="">
+          <input type="hidden" name="asset_owner_autocomplete_selected_from_autocomplete" id="proposal-asset-owner-autocomplete-selected" value="0">
           <div class="ler-ac-list" id="proposal-asset-owner-ler-ac-list"></div>
         </div>
       </div>

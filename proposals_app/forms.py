@@ -1196,6 +1196,9 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             identifier = str(row.get("identifier") or "").strip()
             registration_number = str(row.get("registration_number") or "").strip()
             registration_date_raw = str(row.get("registration_date") or "").strip()
+            selected_identifier_record_id = str(row.get("selected_identifier_record_id") or "").strip()
+            selected_from_autocomplete_raw = str(row.get("selected_from_autocomplete") or "").strip().lower()
+            user_edited_raw = str(row.get("user_edited") or "").strip().lower()
 
             row_has_data = any(
                 [
@@ -1205,6 +1208,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     identifier,
                     registration_number,
                     registration_date_raw,
+                    selected_identifier_record_id,
                 ]
             )
             if not row_has_data:
@@ -1235,6 +1239,9 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     "identifier": identifier,
                     "registration_number": registration_number,
                     "registration_date": registration_date,
+                    "selected_identifier_record_id": selected_identifier_record_id,
+                    "selected_from_autocomplete": selected_from_autocomplete_raw in {"1", "true", "yes", "on"},
+                    "user_edited": user_edited_raw in {"1", "true", "yes", "on"},
                 }
             )
         return cleaned_rows
@@ -1256,6 +1263,9 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     "registration_date": item["registration_date"].strftime("%d.%m.%Y")
                     if item["registration_date"]
                     else "",
+                    "selected_identifier_record_id": item.get("selected_identifier_record_id", ""),
+                    "selected_from_autocomplete": bool(item.get("selected_from_autocomplete")),
+                    "user_edited": bool(item.get("user_edited")),
                 }
                 for item in items
             ],

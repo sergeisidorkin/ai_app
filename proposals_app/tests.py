@@ -16,7 +16,7 @@ from django.utils import timezone
 
 from docx import Document
 
-from classifiers_app.models import OKSMCountry, OKVCurrency
+from classifiers_app.models import BusinessEntityRecord, OKSMCountry, OKVCurrency
 from core.models import CloudStorageSettings
 from experts_app.models import ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
 from group_app.models import GroupMember, OrgUnit
@@ -448,6 +448,40 @@ class ProposalRegistrationFormTests(TestCase):
             form.fields["assets_payload"].initial,
             '[{"short_name": "", "country_id": "", "country_name": "", "identifier": "", "registration_number": "", "registration_date": ""}]',
         )
+
+    def test_form_preserves_explicit_autocomplete_flags_in_related_payload(self):
+        country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+        form = ProposalRegistrationForm(
+            data=self._base_form_payload(
+                assets_payload=json.dumps(
+                    [
+                        {
+                            "short_name": 'ООО "Актив"',
+                            "country_id": str(country.pk),
+                            "country_name": "Россия",
+                            "identifier": "ОГРН",
+                            "registration_number": "1234567890",
+                            "registration_date": "01.04.2026",
+                            "selected_identifier_record_id": "55",
+                            "selected_from_autocomplete": True,
+                        }
+                    ],
+                    ensure_ascii=False,
+                )
+            )
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.cleaned_assets[0]["selected_identifier_record_id"], "55")
+        self.assertTrue(form.cleaned_assets[0]["selected_from_autocomplete"])
 
     @patch("proposals_app.forms.get_cbr_eur_rate_for_today")
     def test_new_form_prefills_cbr_exchange_rate_in_commercial_totals(self, mocked_rate):
@@ -1962,6 +1996,56 @@ class ProposalNextcloudWorkspaceHookTests(TestCase):
         self.assertEqual(ProposalRegistration.objects.count(), 0)
         self.assertContains(response, "year: Укажите год.", html=False)
 
+    def test_create_view_does_not_duplicate_bsn_for_synced_customer_owner_and_default_asset(self):
+        country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+
+        response = self.client.post(
+            reverse("proposal_form_create"),
+            self._payload(
+                customer='ООО "Заказчик"',
+                country=str(country.pk),
+                identifier="ОГРН",
+                registration_number="1234567890",
+                registration_date="01.04.2026",
+                asset_owner='ООО "Заказчик"',
+                asset_owner_country=str(country.pk),
+                asset_owner_identifier="ОГРН",
+                asset_owner_registration_number="1234567890",
+                asset_owner_registration_date="01.04.2026",
+                asset_owner_matches_customer="on",
+                assets_payload=json.dumps(
+                    [
+                        {
+                            "short_name": 'ООО "Заказчик"',
+                            "country_id": str(country.pk),
+                            "country_name": "Россия",
+                            "identifier": "ОГРН",
+                            "registration_number": "1234567890",
+                            "registration_date": "01.04.2026",
+                            "selected_identifier_record_id": "",
+                            "selected_from_autocomplete": False,
+                            "user_edited": False,
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(BusinessEntityRecord.objects.count(), 1)
+        entity = BusinessEntityRecord.objects.get()
+        self.assertEqual(entity.name, 'ООО "Заказчик"')
+        self.assertEqual(entity.source, "[ТКП / Заказчик]")
+
     @patch("proposals_app.views.create_proposal_workspace")
     @patch("proposals_app.views.is_nextcloud_primary", return_value=True)
     def test_edit_view_does_not_trigger_nextcloud_workspace(self, _mocked_is_nextcloud, mocked_workspace):
@@ -2082,12 +2166,10 @@ class ProposalDispatchDiskColumnTests(TestCase):
             html=False,
         )
 
-    @patch("nextcloud_app.api.NextcloudApiClient.ensure_public_link_share", return_value="https://cloud.example.com/s/director-proposal-folder")
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
-    def test_proposals_partial_resolves_cloud_link_from_parent_shared_folder_for_director(
+    def test_proposals_partial_resolves_editor_cloud_link_from_parent_shared_folder_for_director(
         self,
         mocked_list_user_shares,
-        _mocked_ensure_public_link_share,
     ):
         Employee.objects.create(user=self.user, role="Директор")
         mocked_list_user_shares.return_value = {
@@ -2103,13 +2185,15 @@ class ProposalDispatchDiskColumnTests(TestCase):
         response = self.client.get(reverse("proposals_partial"))
 
         self.assertEqual(response.status_code, 200)
+        director_url = (
+            "https://cloud.example.com/apps/files/files?dir="
+            f"{quote('/Shared/ТКП/2026/333300RU DD Тестовое ТКП', safe='/')}"
+        )
         self.assertContains(
             response,
-            'href="https://cloud.example.com/s/director-proposal-folder"',
+            f'href="{director_url}"',
             html=False,
         )
-        self.proposal.refresh_from_db()
-        self.assertEqual(self.proposal.proposal_workspace_public_url, "https://cloud.example.com/s/director-proposal-folder")
 
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
     def test_proposals_partial_keeps_cloud_link_when_direct_share_has_no_target_path(

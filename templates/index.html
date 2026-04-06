@@ -161,7 +161,7 @@
     <!-- Низ: профиль -->
     <div class="mt-auto py-3 border-top sidebar-profile">
       {% if request.user.is_authenticated %}
-      <div class="d-flex align-items-center">
+      <div class="d-flex align-items-center w-100 min-w-0">
         <a href="{% if request.user.is_superuser %}{% url 'admin:index' %}{% else %}{% url 'user_profile' %}{% endif %}" class="flex-shrink-0" title="{% if request.user.is_superuser %}Панель администратора{% else %}Профиль пользователя{% endif %}">
           {% if employee and employee.avatar %}
             <img src="{{ employee.avatar.url }}" alt="Аватар" class="sidebar-avatar-img rounded-circle" width="32" height="32" style="object-fit:cover;">
@@ -171,7 +171,7 @@
             <span class="profile-icon"><i class="bi bi-person-circle"></i></span>
           {% endif %}
         </a>
-        <a href="{% if request.user.is_superuser %}{% url 'admin:index' %}{% else %}{% url 'user_profile' %}{% endif %}" class="link-text small text-truncate ms-2 me-auto text-decoration-none text-body">{{ request.user.get_full_name|default:request.user.email }}</a>
+        <a href="{% if request.user.is_superuser %}{% url 'admin:index' %}{% else %}{% url 'user_profile' %}{% endif %}" class="link-text small text-truncate ms-2 me-auto min-w-0 text-decoration-none text-body">{{ request.user.get_full_name|default:request.user.email }}</a>
         <form method="post" action="{% url 'logout' %}" class="flex-shrink-0 link-text">
           {% csrf_token %}
           <button type="submit" class="sidebar-logout-btn" title="Выйти">
@@ -807,13 +807,38 @@
             <div class="second-sidebar-header-spacer"></div>
             <hr class="my-0">
             <div class="list-group list-group-flush p-3 m-0" id="classifiers-second-sidebar-list">
+              <a href="#clf-business-entities"
+                 class="list-group-item list-group-item-action active"
+                 data-clf-section="business-entities">
+                База юрлиц: бизнес-сущность
+              </a>
+              <a href="#clf-business-entity-identifiers"
+                 class="list-group-item list-group-item-action"
+                 data-clf-section="business-entity-identifiers">
+                База юрлиц: идентификатор
+              </a>
               <a href="#clf-legal-entities"
                  class="list-group-item list-group-item-action"
                  data-clf-section="legal-entities">
-                База юрлиц
+                База юрлиц: наименование
+              </a>
+              <a href="#clf-business-entity-addresses"
+                 class="list-group-item list-group-item-action"
+                 data-clf-section="business-entity-addresses">
+                База юрлиц: юрадрес
+              </a>
+              <a href="#clf-business-entity-relations"
+                 class="list-group-item list-group-item-action"
+                 data-clf-section="business-entity-relations">
+                База юрлиц: связи
+              </a>
+              <a href="#clf-business-entity-attributes"
+                 class="list-group-item list-group-item-action"
+                 data-clf-section="business-entity-attributes">
+                База юрлиц: атрибуты
               </a>
               <a href="#clf-classifiers"
-                 class="list-group-item list-group-item-action active"
+                 class="list-group-item list-group-item-action"
                  data-clf-section="classifiers">
                 Классификаторы
               </a>
@@ -829,7 +854,37 @@
           <div class="flex-grow-1 ps-3 pe-0" style="min-width:0;">
             <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
               <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
-                <h5 class="mb-0 ps-3 fs-4 pt-2" id="classifiers-section-title">Классификаторы</h5>
+                <div class="d-flex align-items-center gap-3">
+                  <h5 class="mb-0 ps-3 fs-4 pt-2" id="classifiers-section-title">База юрлиц</h5>
+                  <div class="dropdown pt-1" id="master-classifiers-bsn-filter-dropdown" style="transform: translateY(3px);">
+                    <button class="btn btn-primary btn-sm dropdown-toggle" type="button"
+                            id="classifiers-bsn-filter-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+                      ID-BSN: <span class="js-classifiers-bsn-filter-label">Все</span>
+                    </button>
+                    <div class="dropdown-menu p-3 project-filter-menu classifiers-bsn-filter-menu" aria-labelledby="classifiers-bsn-filter-toggle">
+                      <div id="classifiers-bsn-filter-selected" class="classifiers-bsn-filter-selected mb-3"></div>
+                      <div class="ler-ac-wrap">
+                        <input type="text"
+                               id="classifiers-bsn-filter-search"
+                               class="form-control"
+                               placeholder="Искать по ID-BSN и наименованию"
+                               autocomplete="off">
+                        <div id="classifiers-bsn-filter-search-list" class="ler-ac-list classifiers-bsn-filter-search-list"></div>
+                      </div>
+                      <div id="classifiers-bsn-filter-hint" class="small text-muted mt-2">
+                        Если ничего не выбрано, фильтр применяется ко всем ID-BSN.
+                      </div>
+                      <div class="d-flex justify-content-end gap-2 mt-3">
+                        <button type="button" id="classifiers-bsn-filter-clear" class="btn btn-sm classifiers-bsn-filter-clear">
+                          <i class="bi bi-x-square me-2"></i>Очистить
+                        </button>
+                        <button type="button" id="classifiers-bsn-filter-apply" class="btn btn-sm classifiers-bsn-filter-apply">
+                          <i class="bi bi-check-square me-2"></i>Применить
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
                 <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
                    href="#notifications"
                    data-bs-toggle="tab"
@@ -843,6 +898,209 @@
 
             <!-- Панели контента -->
             <div class="ps-3">
+              <div id="clf-content-business-entities" class="clf-section-content">
+                <div class="card shadow-sm mt-3">
+                  <div class="card-body">
+                    <div id="business-entities-pane">
+                      <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 0px;">
+                        <h5 class="table-section-title">
+                          <i class="bi bi-table me-2"></i>
+                          Реестр бизнес-сущностей
+                        </h5>
+                      </div>
+                      <div class="table-responsive">
+                        <div id="business-entities-table-wrap"
+                             hx-get="{% url 'ber_table_partial' %}"
+                             hx-trigger="business-entities:load from:body once"
+                             hx-swap="innerHTML">
+                          <div class="text-muted p-3">Загрузка данных…</div>
+                        </div>
+                      </div>
+                      {% if request.user.is_authenticated and request.user.is_staff %}
+                      <div class="d-flex align-items-stretch gap-2 products-actions-row">
+                        <button class="btn btn-primary btn-sm d-flex align-items-center"
+                                hx-get="{% url 'ber_form_create' %}"
+                                hx-target="#classifiers-modal .modal-content"
+                                hx-swap="innerHTML">
+                          <i class="bi bi-plus-circle me-2"></i>Добавить строку
+                        </button>
+                        <div id="ber-actions" class="d-none d-flex">
+                          <div class="btn-group">
+                            <button type="button" id="ber-actions-up" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+                              <i class="bi bi-arrow-up-square"></i>
+                            </button>
+                            <button type="button" id="ber-actions-down" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+                              <i class="bi bi-arrow-down-square"></i>
+                            </button>
+                            <button type="button" id="ber-actions-edit" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+                              <i class="bi bi-pencil-square"></i>
+                            </button>
+                            <button type="button" id="ber-actions-delete" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+                              <i class="bi bi-x-square"></i>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      {% endif %}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div id="clf-content-business-entity-identifiers" class="clf-section-content d-none">
+                <div class="card shadow-sm mt-3">
+                  <div class="card-body">
+                    <div id="business-entity-identifiers-pane">
+                      <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 0px;">
+                        <div class="d-flex align-items-center gap-3">
+                          <h5 class="table-section-title">
+                            <i class="bi bi-table me-2"></i>
+                            Реестр идентификаторов
+                          </h5>
+                          <div class="dropdown pt-1" id="bei-duplicates-filter-dropdown" style="transform: translateY(0px);">
+                            <button class="btn btn-outline-secondary btn-sm dropdown-toggle text-nowrap" type="button"
+                                    id="bei-duplicates-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                              Дубли: <span class="js-bei-duplicates-filter-label">
+                                {% if bei_duplicates_filter == "yes" %}Да{% elif bei_duplicates_filter == "no" %}Нет{% else %}Все{% endif %}
+                              </span>
+                            </button>
+                            <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="bei-duplicates-filter-toggle"
+                                 style="max-height: 240px; overflow-y: auto;">
+                              <div class="form-check">
+                                <input class="form-check-input js-bei-duplicates-filter-option" type="radio"
+                                       name="bei_duplicates_choice" value="all" id="bei-duplicates-all"
+                                       {% if bei_duplicates_filter != "yes" and bei_duplicates_filter != "no" %}checked{% endif %}>
+                                <label class="form-check-label text-nowrap" for="bei-duplicates-all">Все</label>
+                              </div>
+                              <div class="form-check">
+                                <input class="form-check-input js-bei-duplicates-filter-option" type="radio"
+                                       name="bei_duplicates_choice" value="yes" id="bei-duplicates-yes"
+                                       {% if bei_duplicates_filter == "yes" %}checked{% endif %}>
+                                <label class="form-check-label text-nowrap" for="bei-duplicates-yes">Да</label>
+                              </div>
+                              <div class="form-check">
+                                <input class="form-check-input js-bei-duplicates-filter-option" type="radio"
+                                       name="bei_duplicates_choice" value="no" id="bei-duplicates-no"
+                                       {% if bei_duplicates_filter == "no" %}checked{% endif %}>
+                                <label class="form-check-label text-nowrap" for="bei-duplicates-no">Нет</label>
+                              </div>
+                            </div>
+                            <input type="hidden"
+                                   id="bei-duplicates-filter-input"
+                                   name="bei_duplicates"
+                                   value="{{ bei_duplicates_filter|default:'all' }}"
+                                   hx-get="{% url 'bei_table_partial' %}"
+                                   hx-target="#business-entity-identifiers-table-wrap"
+                                   hx-swap="innerHTML"
+                                   hx-trigger="change"
+                                   hx-include="#bei-date-filter, #bei-duplicates-filter-input">
+                          </div>
+                        </div>
+                        <div class="d-flex align-items-center gap-2">
+                          <label class="form-label mb-0 text-nowrap small" for="bei-date-filter">Действителен на дату:</label>
+                          <input type="date"
+                                 class="form-control form-control-sm"
+                                 id="bei-date-filter"
+                                 name="bei_date"
+                                 value="{{ bei_date_filter }}"
+                                 style="width: auto;"
+                                 hx-get="{% url 'bei_table_partial' %}"
+                                 hx-target="#business-entity-identifiers-table-wrap"
+                                 hx-swap="innerHTML"
+                                 hx-trigger="change"
+                                 hx-include="#bei-date-filter, #bei-duplicates-filter-input">
+                        </div>
+                      </div>
+                      <div class="table-responsive">
+                        <div id="business-entity-identifiers-table-wrap"
+                             hx-get="{% url 'bei_table_partial' %}"
+                             hx-trigger="business-entity-identifiers:load from:body once"
+                             hx-swap="innerHTML">
+                          <div class="text-muted p-3">Загрузка данных…</div>
+                        </div>
+                      </div>
+                      {% if request.user.is_authenticated and request.user.is_staff %}
+                      <div class="d-flex align-items-stretch gap-2 products-actions-row">
+                        <button class="btn btn-primary btn-sm d-flex align-items-center"
+                                hx-get="{% url 'bei_form_create' %}"
+                                hx-target="#classifiers-modal .modal-content"
+                                hx-swap="innerHTML">
+                          <i class="bi bi-plus-circle me-2"></i>Добавить строку
+                        </button>
+                        <div id="bei-actions" class="d-none d-flex">
+                          <div class="btn-group">
+                            <button type="button" id="bei-actions-up" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+                              <i class="bi bi-arrow-up-square"></i>
+                            </button>
+                            <button type="button" id="bei-actions-down" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+                              <i class="bi bi-arrow-down-square"></i>
+                            </button>
+                            <button type="button" id="bei-actions-edit" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+                              <i class="bi bi-pencil-square"></i>
+                            </button>
+                            <button type="button" id="bei-actions-delete" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+                              <i class="bi bi-x-square"></i>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      {% endif %}
+                      <script>
+                        (function() {
+                          var dropdown = document.getElementById('bei-duplicates-filter-dropdown');
+                          var hiddenInput = document.getElementById('bei-duplicates-filter-input');
+                          var label = document.querySelector('.js-bei-duplicates-filter-label');
+                          if (!dropdown || !hiddenInput || !label || dropdown.dataset.bound === '1') return;
+                          dropdown.dataset.bound = '1';
+                          if (window.bindProjectFilterMenuWidth) {
+                            window.bindProjectFilterMenuWidth(dropdown);
+                          }
+                          var radios = dropdown.querySelectorAll('.js-bei-duplicates-filter-option');
+                          function syncLabel(value) {
+                            if (value === 'yes') {
+                              label.textContent = 'Да';
+                            } else if (value === 'no') {
+                              label.textContent = 'Нет';
+                            } else {
+                              label.textContent = 'Все';
+                            }
+                          }
+                          radios.forEach(function(radio) {
+                            radio.addEventListener('change', function() {
+                              if (!radio.checked) return;
+                              hiddenInput.value = radio.value || 'all';
+                              syncLabel(hiddenInput.value);
+                              hiddenInput.dispatchEvent(new Event('change', { bubbles: true }));
+                            });
+                          });
+                          syncLabel(hiddenInput.value || 'all');
+                        })();
+                      </script>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div id="clf-content-business-entity-attributes" class="clf-section-content d-none">
+                <div class="card shadow-sm mt-3">
+                  <div class="card-body">
+                    <div id="business-entity-attributes-pane">
+                      <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 0px;">
+                        <h5 class="table-section-title">
+                          <i class="bi bi-table me-2"></i>
+                          Реестр атрибутов
+                        </h5>
+                      </div>
+                      <div class="table-responsive">
+                        <div id="business-entity-attributes-table-wrap"
+                             hx-get="{% url 'bat_table_partial' %}"
+                             hx-trigger="business-entity-attributes:load from:body once"
+                             hx-swap="innerHTML">
+                          <div class="text-muted p-3">Загрузка данных…</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
               <div id="clf-content-legal-entities" class="clf-section-content d-none">
                 <div class="card shadow-sm mt-3">
                   <div class="card-body">
@@ -850,7 +1108,7 @@
                       <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 0px;">
                         <h5 class="table-section-title">
                           <i class="bi bi-table me-2"></i>
-                          Юридические лица
+                          Реестр наименований
                         </h5>
                         <div class="d-flex align-items-center gap-2">
                           <label class="form-label mb-0 text-nowrap small" for="ler-date-filter">Действителен на дату:</label>
@@ -875,11 +1133,290 @@
                           <div class="text-muted p-3">Загрузка данных…</div>
                         </div>
                       </div>
+                      {% if request.user.is_authenticated and request.user.is_staff %}
+                      <div class="d-flex align-items-stretch gap-2 products-actions-row">
+                        <button class="btn btn-primary btn-sm d-flex align-items-center"
+                                hx-get="{% url 'ler_form_create' %}"
+                                hx-target="#classifiers-modal .modal-content"
+                                hx-swap="innerHTML">
+                          <i class="bi bi-plus-circle me-2"></i>Добавить строку
+                        </button>
+                        <div id="ler-actions" class="d-none d-flex">
+                          <div class="btn-group">
+                            <button type="button" id="ler-actions-up" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+                              <i class="bi bi-arrow-up-square"></i>
+                            </button>
+                            <button type="button" id="ler-actions-down" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+                              <i class="bi bi-arrow-down-square"></i>
+                            </button>
+                            <button type="button" id="ler-actions-edit" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+                              <i class="bi bi-pencil-square"></i>
+                            </button>
+                            <button type="button" id="ler-actions-delete" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+                              <i class="bi bi-x-square"></i>
+                            </button>
+                          </div>
+                        </div>
+                        <button type="button"
+                                id="ler-csv-upload-btn"
+                                class="btn btn-primary btn-sm d-flex align-items-center"
+                                title="Загрузить CSV">
+                          <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+                        </button>
+                        <input type="file" id="ler-csv-file-input" accept=".csv" style="display:none;">
+                      </div>
+                      {% endif %}
                     </div>
                   </div>
                 </div>
               </div>
-              <div id="clf-content-classifiers" class="clf-section-content">
+              <div id="clf-content-business-entity-addresses" class="clf-section-content d-none">
+                <div class="card shadow-sm mt-3">
+                  <div class="card-body">
+                    <div id="business-entity-addresses-pane">
+                      <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 0px;">
+                        <h5 class="table-section-title">
+                          <i class="bi bi-table me-2"></i>
+                          Реестр юридических адресов
+                        </h5>
+                        <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+                          <span class="small text-muted text-nowrap">Отображаемые поля:</span>
+                          <div class="bea-colpicker" id="bea-colpicker-wrap">
+                            <button type="button" class="form-select form-select-sm text-start bea-colpicker-btn" id="bea-colpicker-btn">
+                              Все поля
+                            </button>
+                            <div class="bea-colpicker-menu" id="bea-colpicker-menu">
+                              <div class="bea-colpicker-item">
+                                <div class="form-check">
+                                  <input class="form-check-input" type="checkbox" value="all" id="bea-col-all" checked>
+                                  <label class="form-check-label" for="bea-col-all">Все поля</label>
+                                </div>
+                              </div>
+                              <div class="bea-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="id-atr" id="bea-col-id-atr" checked><label class="form-check-label" for="bea-col-id-atr">ID-ATR</label></div></div>
+                              <div class="bea-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="id-idn" id="bea-col-id-idn" checked><label class="form-check-label" for="bea-col-id-idn">ID-IDN</label></div></div>
+                              <div class="bea-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="country" id="bea-col-country" checked><label class="form-check-label" for="bea-col-country">Страна</label></div></div>
+                              <div class="bea-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="region" id="bea-col-region" checked><label class="form-check-label" for="bea-col-region">Регион</label></div></div>
+                              <div class="bea-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="postal-code" id="bea-col-postal-code" checked><label class="form-check-label" for="bea-col-postal-code">Индекс</label></div></div>
+                              <div class="bea-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="municipality" id="bea-col-municipality" checked><label class="form-check-label" for="bea-col-municipality">Муниципальное образование</label></div></div>
+                              <div class="bea-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="settlement" id="bea-col-settlement" checked><label class="form-check-label" for="bea-col-settlement">Поселение</label></div></div>
+                              <div class="bea-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="locality" id="bea-col-locality" checked><label class="form-check-label" for="bea-col-locality">Населенный пункт</label></div></div>
+                              <div class="bea-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="district" id="bea-col-district" checked><label class="form-check-label" for="bea-col-district">Квартал / район</label></div></div>
+                              <div class="bea-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="street" id="bea-col-street" checked><label class="form-check-label" for="bea-col-street">Улица</label></div></div>
+                              <div class="bea-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="building" id="bea-col-building" checked><label class="form-check-label" for="bea-col-building">Здание</label></div></div>
+                              <div class="bea-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="premise" id="bea-col-premise" checked><label class="form-check-label" for="bea-col-premise">Помещ.</label></div></div>
+                              <div class="bea-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="premise-part" id="bea-col-premise-part" checked><label class="form-check-label" for="bea-col-premise-part">Часть помещ.</label></div></div>
+                              <div class="bea-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="record-date" id="bea-col-record-date" checked><label class="form-check-label" for="bea-col-record-date">Запись</label></div></div>
+                              <div class="bea-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="record-author" id="bea-col-record-author" checked><label class="form-check-label" for="bea-col-record-author">Автор записи</label></div></div>
+                              <div class="bea-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="valid-from" id="bea-col-valid-from" checked><label class="form-check-label" for="bea-col-valid-from">Действ. от</label></div></div>
+                              <div class="bea-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="valid-to" id="bea-col-valid-to" checked><label class="form-check-label" for="bea-col-valid-to">Действ. до</label></div></div>
+                            </div>
+                          </div>
+                          <label class="form-label mb-0 text-nowrap small" for="bea-date-filter">Действителен на дату:</label>
+                          <input type="date"
+                                 class="form-control form-control-sm"
+                                 id="bea-date-filter"
+                                 name="bea_date"
+                                 value="{{ bea_date_filter }}"
+                                 style="width: auto;"
+                                 hx-get="{% url 'bea_table_partial' %}"
+                                 hx-target="#business-entity-addresses-table-wrap"
+                                 hx-swap="innerHTML"
+                                 hx-trigger="change"
+                                 hx-include="this">
+                        </div>
+                      </div>
+                      <div class="table-responsive">
+                        <div id="business-entity-addresses-table-wrap"
+                             hx-get="{% url 'bea_table_partial' %}"
+                             hx-trigger="business-entity-addresses:load from:body once"
+                             hx-swap="innerHTML">
+                          <div class="text-muted p-3">Загрузка данных…</div>
+                        </div>
+                      </div>
+                      {% if request.user.is_authenticated and request.user.is_staff %}
+                      <div class="d-flex align-items-stretch gap-2 products-actions-row">
+                        <button class="btn btn-primary btn-sm d-flex align-items-center"
+                                hx-get="{% url 'bea_form_create' %}"
+                                hx-target="#classifiers-modal .modal-content"
+                                hx-swap="innerHTML">
+                          <i class="bi bi-plus-circle me-2"></i>Добавить строку
+                        </button>
+                        <div id="bea-actions" class="d-none d-flex">
+                          <div class="btn-group">
+                            <button type="button" id="bea-actions-up" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+                              <i class="bi bi-arrow-up-square"></i>
+                            </button>
+                            <button type="button" id="bea-actions-down" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+                              <i class="bi bi-arrow-down-square"></i>
+                            </button>
+                            <button type="button" id="bea-actions-edit" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+                              <i class="bi bi-pencil-square"></i>
+                            </button>
+                            <button type="button" id="bea-actions-delete" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+                              <i class="bi bi-x-square"></i>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      {% endif %}
+                      <script>
+                        (function() {
+                          if (window.__beaColPickerBound) return;
+                          window.__beaColPickerBound = true;
+
+                          var P = window.UIPref;
+                          var cfg = {
+                            prefKey: 'classifiers:beaHiddenCols',
+                            wrapId: 'bea-colpicker-wrap',
+                            btnId: 'bea-colpicker-btn',
+                            menuId: 'bea-colpicker-menu',
+                            allId: 'bea-col-all',
+                            tableId: 'bea-table',
+                            hidden: P ? P.get('classifiers:beaHiddenCols', {}) : {},
+                          };
+
+                          function saveHidden() {
+                            if (P) P.set(cfg.prefKey, cfg.hidden);
+                          }
+
+                          function updateBtnLabel(btn, menu) {
+                            var cbs = menu.querySelectorAll('input.form-check-input:not([value="all"])');
+                            var checked = 0;
+                            cbs.forEach(function(c) { if (c.checked) checked++; });
+                            btn.textContent = checked === cbs.length ? 'Все поля' : checked + ' из ' + cbs.length;
+                          }
+
+                          function applyVisibility() {
+                            var table = document.getElementById(cfg.tableId);
+                            if (!table) return;
+                            var hidden = Object.keys(cfg.hidden);
+                            table.querySelectorAll('[data-col]').forEach(function(cell) {
+                              cell.style.display = hidden.indexOf(cell.getAttribute('data-col')) !== -1 ? 'none' : '';
+                            });
+                          }
+
+                          function initPicker() {
+                            var wrap = document.getElementById(cfg.wrapId);
+                            var btn = document.getElementById(cfg.btnId);
+                            var menu = document.getElementById(cfg.menuId);
+                            if (!wrap || !btn || !menu || wrap.dataset.initialized === 'true') {
+                              applyVisibility();
+                              return;
+                            }
+
+                            wrap.dataset.initialized = 'true';
+
+                            btn.addEventListener('click', function(e) {
+                              e.stopPropagation();
+                              menu.classList.toggle('show');
+                            });
+
+                            var cbs = menu.querySelectorAll('input.form-check-input:not([value="all"])');
+                            cbs.forEach(function(cb) {
+                              if (cfg.hidden[cb.value]) cb.checked = false;
+                            });
+
+                            var allCb = document.getElementById(cfg.allId);
+                            if (allCb) {
+                              var allChecked = true;
+                              cbs.forEach(function(c) { if (!c.checked) allChecked = false; });
+                              allCb.checked = allChecked;
+                            }
+
+                            updateBtnLabel(btn, menu);
+                            applyVisibility();
+
+                            menu.addEventListener('change', function(e) {
+                              var cb = e.target;
+                              if (!cb.classList.contains('form-check-input')) return;
+                              var items = menu.querySelectorAll('input.form-check-input:not([value="all"])');
+                              if (cb.value === 'all') {
+                                items.forEach(function(c) { c.checked = cb.checked; });
+                              } else {
+                                var ac = document.getElementById(cfg.allId);
+                                var all = true;
+                                items.forEach(function(c) { if (!c.checked) all = false; });
+                                if (ac) ac.checked = all;
+                              }
+                              cfg.hidden = {};
+                              items.forEach(function(c) { if (!c.checked) cfg.hidden[c.value] = true; });
+                              saveHidden();
+                              updateBtnLabel(btn, menu);
+                              applyVisibility();
+                            });
+                          }
+
+                          document.addEventListener('click', function(e) {
+                            var wrap = document.getElementById(cfg.wrapId);
+                            var menu = document.getElementById(cfg.menuId);
+                            if (wrap && menu && !wrap.contains(e.target)) menu.classList.remove('show');
+                          });
+
+                          document.body.addEventListener('htmx:afterSettle', function(e) {
+                            var pane = document.getElementById('business-entity-addresses-pane');
+                            if (pane && pane.contains(e.target)) {
+                              initPicker();
+                              applyVisibility();
+                            }
+                          });
+
+                          initPicker();
+                          applyVisibility();
+                        })();
+                      </script>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div id="clf-content-business-entity-relations" class="clf-section-content d-none">
+                <div class="card shadow-sm mt-3">
+                  <div class="card-body">
+                    <div id="business-entity-relations-pane">
+                      <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 0px;">
+                        <h5 class="table-section-title">
+                          <i class="bi bi-table me-2"></i>
+                          Реестр реорганизаций
+                        </h5>
+                      </div>
+                      <div class="table-responsive">
+                        <div id="business-entity-relations-table-wrap"
+                             hx-get="{% url 'brl_table_partial' %}"
+                             hx-trigger="business-entity-relations:load from:body once"
+                             hx-swap="innerHTML">
+                          <div class="text-muted p-3">Загрузка данных…</div>
+                        </div>
+                      </div>
+                      {% if request.user.is_authenticated and request.user.is_staff %}
+                      <div class="d-flex align-items-stretch gap-2 products-actions-row">
+                        <button class="btn btn-primary btn-sm d-flex align-items-center"
+                                hx-get="{% url 'brl_form_create' %}"
+                                hx-target="#classifiers-modal .modal-content"
+                                hx-swap="innerHTML">
+                          <i class="bi bi-plus-circle me-2"></i>Добавить строку
+                        </button>
+                        <div id="brl-actions" class="d-none d-flex">
+                          <div class="btn-group">
+                            <button type="button" id="brl-actions-up" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+                              <i class="bi bi-arrow-up-square"></i>
+                            </button>
+                            <button type="button" id="brl-actions-down" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+                              <i class="bi bi-arrow-down-square"></i>
+                            </button>
+                            <button type="button" id="brl-actions-edit" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+                              <i class="bi bi-pencil-square"></i>
+                            </button>
+                            <button type="button" id="brl-actions-delete" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+                              <i class="bi bi-x-square"></i>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      {% endif %}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div id="clf-content-classifiers" class="clf-section-content d-none">
                 {% include "classifiers_app/panel.html" %}
               </div>
               <div id="clf-content-normatives" class="clf-section-content d-none">
@@ -956,14 +1493,28 @@
 
         <script>
         (function () {
+          const BUSINESS_REGISTRY_SECTIONS = [
+            'business-entities',
+            'business-entity-identifiers',
+            'business-entity-attributes',
+            'legal-entities',
+            'business-entity-addresses',
+            'business-entity-relations',
+          ];
           const SECTION_TITLES = {
+            'business-entities': 'База юрлиц',
+            'business-entity-identifiers': 'База юрлиц',
+            'business-entity-attributes': 'База юрлиц',
             'legal-entities': 'База юрлиц',
+            'business-entity-addresses': 'База юрлиц',
+            'business-entity-relations': 'База юрлиц',
             'classifiers': 'Классификаторы',
             'normatives': 'Нормативы',
           };
 
           const sidebar = document.getElementById('classifiers-second-sidebar-list');
           const titleEl = document.getElementById('classifiers-section-title');
+          const masterFilterDropdown = document.getElementById('master-classifiers-bsn-filter-dropdown');
 
           function activateSidebarLink(key) {
             if (!sidebar) return;
@@ -973,16 +1524,38 @@
           }
 
           function switchClfSection(key) {
+            window.__currentClassifiersSection = key;
             document.querySelectorAll('.clf-section-content').forEach(el => el.classList.add('d-none'));
             const target = document.getElementById('clf-content-' + key);
             if (target) target.classList.remove('d-none');
             if (titleEl) titleEl.textContent = SECTION_TITLES[key] || '';
+            if (masterFilterDropdown) {
+              masterFilterDropdown.classList.toggle('d-none', !BUSINESS_REGISTRY_SECTIONS.includes(key));
+            }
             if (key === 'normatives') {
               document.body.dispatchEvent(new CustomEvent('normatives:load'));
+            }
+            if (key === 'business-entities') {
+              document.body.dispatchEvent(new CustomEvent('business-entities:load'));
+            }
+            if (key === 'business-entity-identifiers') {
+              document.body.dispatchEvent(new CustomEvent('business-entity-identifiers:load'));
+            }
+            if (key === 'business-entity-attributes') {
+              document.body.dispatchEvent(new CustomEvent('business-entity-attributes:load'));
             }
             if (key === 'legal-entities') {
               document.body.dispatchEvent(new CustomEvent('legal-entities:load'));
             }
+            if (key === 'business-entity-addresses') {
+              document.body.dispatchEvent(new CustomEvent('business-entity-addresses:load'));
+            }
+            if (key === 'business-entity-relations') {
+              document.body.dispatchEvent(new CustomEvent('business-entity-relations:load'));
+            }
+            document.body.dispatchEvent(new CustomEvent('classifiers:section-shown', {
+              detail: { section: key }
+            }));
           }
 
           if (sidebar) {
@@ -1002,7 +1575,10 @@
             if (saved && SECTION_TITLES[saved]) {
               activateSidebarLink(saved);
               switchClfSection(saved);
+              return;
             }
+            activateSidebarLink('business-entities');
+            switchClfSection('business-entities');
           });
         })();
         </script>

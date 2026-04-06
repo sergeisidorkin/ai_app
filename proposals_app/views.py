@@ -107,39 +107,48 @@ def _next_position(model) -> int:
     return last + 1
 
 
-def _sync_to_legal_entity_record(short_name, country, identifier, registration_number, registration_date, user=None):
-    short_name = (short_name or "").strip()
-    if not short_name:
-        return
+def _sync_to_legal_entity_record(
+    short_name,
+    country,
+    identifier,
+    registration_number,
+    registration_date,
+    user=None,
+    selected_identifier_record_id=None,
+    selected_from_autocomplete=False,
+    business_entity_source="",
+):
+    from classifiers_app.views import sync_autocomplete_registry_entry
 
-    defaults = {
-        "registration_country": country,
-        "identifier": identifier or "",
-        "registration_number": registration_number or "",
-        "registration_date": registration_date,
+    sync_autocomplete_registry_entry(
+        short_name=short_name,
+        country=country,
+        identifier_type=identifier,
+        registration_number=registration_number,
+        registration_date=registration_date,
+        user=user,
+        selected_identifier_record_id=selected_identifier_record_id,
+        selected_from_autocomplete=selected_from_autocomplete,
+        business_entity_source=business_entity_source,
+    )
+
+
+def _sync_selection_kwargs(request, prefix):
+    selected_flag = str(request.POST.get(f"{prefix}_selected_from_autocomplete") or "").strip().lower()
+    return {
+        "selected_identifier_record_id": (request.POST.get(f"{prefix}_identifier_record_id") or "").strip(),
+        "selected_from_autocomplete": selected_flag in {"1", "true", "yes", "on"},
     }
-    if user:
-        from classifiers_app.views import _ler_record_author
 
-        defaults["record_date"] = dt_date.today()
-        defaults["record_author"] = _ler_record_author(user)
 
-    try:
-        record, created = LegalEntityRecord.objects.get_or_create(short_name=short_name, defaults=defaults)
-    except LegalEntityRecord.MultipleObjectsReturned:
-        record = LegalEntityRecord.objects.filter(short_name=short_name).order_by("id").first()
-        created = False
-
-    if created:
-        return
-
-    changed = False
-    for field, value in defaults.items():
-        if getattr(record, field) != value:
-            setattr(record, field, value)
-            changed = True
-    if changed:
-        record.save()
+def _should_sync_proposal_related_row(item):
+    return bool(
+        (item.get("short_name") or "").strip()
+        and (
+            item.get("selected_from_autocomplete")
+            or item.get("user_edited")
+        )
+    )
 
 
 def _attach_proposal_folder_urls(proposals, user=None):
@@ -183,8 +192,6 @@ def _attach_proposal_folder_urls(proposals, user=None):
         return
     if user is None or not getattr(user, "is_authenticated", False):
         return
-    viewer_is_director = Employee.objects.filter(user=user, role="Директор").exists()
-
     client = NextcloudApiClient()
     if not client.is_configured:
         return
@@ -225,20 +232,12 @@ def _attach_proposal_folder_urls(proposals, user=None):
     for proposal in proposals:
         path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
         if path:
-            if viewer_is_director:
-                proposal.proposal_workspace_folder_url = (
-                    _ensure_public_folder_url(proposal)
-                    or resolved_cache.get(path)
-                    or proposal.proposal_workspace_folder_url
-                    or folder_cache.get(path, "")
-                )
-            else:
-                proposal.proposal_workspace_folder_url = (
-                    resolved_cache.get(path)
-                    or _ensure_public_folder_url(proposal)
-                    or proposal.proposal_workspace_folder_url
-                    or folder_cache.get(path, "")
-                )
+            proposal.proposal_workspace_folder_url = (
+                resolved_cache.get(path)
+                or _ensure_public_folder_url(proposal)
+                or proposal.proposal_workspace_folder_url
+                or folder_cache.get(path, "")
+            )
 
 
 def _proposals_context(user=None):
@@ -722,32 +721,47 @@ def proposal_form_create(request):
         proposal.registration_number,
         proposal.registration_date,
         request.user,
+        business_entity_source="[ТКП / Заказчик]",
+        **_sync_selection_kwargs(request, "customer_autocomplete"),
     )
-    _sync_to_legal_entity_record(
-        proposal.asset_owner,
-        proposal.asset_owner_country,
-        proposal.asset_owner_identifier,
-        proposal.asset_owner_registration_number,
-        proposal.asset_owner_registration_date,
-        request.user,
-    )
-    for asset in proposal.assets.all():
+    if not proposal.asset_owner_matches_customer:
         _sync_to_legal_entity_record(
-            asset.short_name,
-            asset.country,
-            asset.identifier,
-            asset.registration_number,
-            asset.registration_date,
+            proposal.asset_owner,
+            proposal.asset_owner_country,
+            proposal.asset_owner_identifier,
+            proposal.asset_owner_registration_number,
+            proposal.asset_owner_registration_date,
             request.user,
+            business_entity_source="[ТКП / Владелец активов]",
+            **_sync_selection_kwargs(request, "asset_owner_autocomplete"),
         )
-    for legal_entity in proposal.legal_entities.all():
+    for asset in getattr(form, "cleaned_assets", []):
+        if not _should_sync_proposal_related_row(asset):
+            continue
         _sync_to_legal_entity_record(
-            legal_entity.short_name,
-            legal_entity.country,
-            legal_entity.identifier,
-            legal_entity.registration_number,
-            legal_entity.registration_date,
+            asset["short_name"],
+            asset["country"],
+            asset["identifier"],
+            asset["registration_number"],
+            asset["registration_date"],
             request.user,
+            selected_identifier_record_id=asset.get("selected_identifier_record_id"),
+            selected_from_autocomplete=asset.get("selected_from_autocomplete", False),
+            business_entity_source="[ТКП / Объем услуг: активы]",
+        )
+    for legal_entity in getattr(form, "cleaned_legal_entities", []):
+        if not _should_sync_proposal_related_row(legal_entity):
+            continue
+        _sync_to_legal_entity_record(
+            legal_entity["short_name"],
+            legal_entity["country"],
+            legal_entity["identifier"],
+            legal_entity["registration_number"],
+            legal_entity["registration_date"],
+            request.user,
+            selected_identifier_record_id=legal_entity.get("selected_identifier_record_id"),
+            selected_from_autocomplete=legal_entity.get("selected_from_autocomplete", False),
+            business_entity_source="[ТКП / Объем услуг: юрлица]",
         )
     _maybe_create_nextcloud_proposal_workspace(request, proposal)
     return _render_proposals_updated(request)
@@ -796,32 +810,47 @@ def proposal_form_edit(request, pk: int):
         proposal.registration_number,
         proposal.registration_date,
         request.user,
+        business_entity_source="[ТКП / Заказчик]",
+        **_sync_selection_kwargs(request, "customer_autocomplete"),
     )
-    _sync_to_legal_entity_record(
-        proposal.asset_owner,
-        proposal.asset_owner_country,
-        proposal.asset_owner_identifier,
-        proposal.asset_owner_registration_number,
-        proposal.asset_owner_registration_date,
-        request.user,
-    )
-    for asset in proposal.assets.all():
+    if not proposal.asset_owner_matches_customer:
         _sync_to_legal_entity_record(
-            asset.short_name,
-            asset.country,
-            asset.identifier,
-            asset.registration_number,
-            asset.registration_date,
+            proposal.asset_owner,
+            proposal.asset_owner_country,
+            proposal.asset_owner_identifier,
+            proposal.asset_owner_registration_number,
+            proposal.asset_owner_registration_date,
             request.user,
+            business_entity_source="[ТКП / Владелец активов]",
+            **_sync_selection_kwargs(request, "asset_owner_autocomplete"),
         )
-    for legal_entity in proposal.legal_entities.all():
+    for asset in getattr(form, "cleaned_assets", []):
+        if not _should_sync_proposal_related_row(asset):
+            continue
         _sync_to_legal_entity_record(
-            legal_entity.short_name,
-            legal_entity.country,
-            legal_entity.identifier,
-            legal_entity.registration_number,
-            legal_entity.registration_date,
+            asset["short_name"],
+            asset["country"],
+            asset["identifier"],
+            asset["registration_number"],
+            asset["registration_date"],
             request.user,
+            selected_identifier_record_id=asset.get("selected_identifier_record_id"),
+            selected_from_autocomplete=asset.get("selected_from_autocomplete", False),
+            business_entity_source="[ТКП / Объем услуг: активы]",
+        )
+    for legal_entity in getattr(form, "cleaned_legal_entities", []):
+        if not _should_sync_proposal_related_row(legal_entity):
+            continue
+        _sync_to_legal_entity_record(
+            legal_entity["short_name"],
+            legal_entity["country"],
+            legal_entity["identifier"],
+            legal_entity["registration_number"],
+            legal_entity["registration_date"],
+            request.user,
+            selected_identifier_record_id=legal_entity.get("selected_identifier_record_id"),
+            selected_from_autocomplete=legal_entity.get("selected_from_autocomplete", False),
+            business_entity_source="[ТКП / Объем услуг: юрлица]",
         )
     return _render_proposals_updated(request)
 

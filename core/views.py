@@ -52,6 +52,9 @@ def home_entry(request):
         "can_access_connections": can_access_connections,
         "smtp_only_connections": smtp_only_connections,
         "ler_date_filter": date.today().isoformat(),
+        "bei_date_filter": date.today().isoformat(),
+        "bei_duplicates_filter": "all",
+        "bea_date_filter": date.today().isoformat(),
     }
     context.update(build_learning_overview(request.user))
     context.update(build_nextcloud_overview(request.user))

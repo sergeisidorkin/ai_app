@@ -68,6 +68,8 @@
         <label class="form-label">Заказчик: краткое наименование юрлица</label>
         <div class="ler-ac-wrap">
           {{ form.customer }}
+          <input type="hidden" name="customer_autocomplete_identifier_record_id" id="reg-customer-autocomplete-identifier-record-id" value="">
+          <input type="hidden" name="customer_autocomplete_selected_from_autocomplete" id="reg-customer-autocomplete-selected" value="0">
           <div class="ler-ac-list" id="reg-ler-ac-list"></div>
         </div>
       </div>
@@ -224,11 +226,21 @@
     if (!node) return;
     var input = node.querySelector('input[name="customer"]');
     var list = node.querySelector('#reg-ler-ac-list');
+    var selectedIdInput = node.querySelector('#reg-customer-autocomplete-identifier-record-id');
+    var selectedFlagInput = node.querySelector('#reg-customer-autocomplete-selected');
+    var countrySel = node.querySelector('#reg-country-select');
+    var regNumField = node.querySelector('input[name="registration_number"]');
+    var regDateField = node.querySelector('input[name="registration_date"]');
     if (!input || !list || input.dataset.lerBound === '1') return;
     input.dataset.lerBound = '1';
     var debounce = null;
     var results = [];
     var picking = false;
+
+    function clearSelection() {
+      if (selectedIdInput) selectedIdInput.value = '';
+      if (selectedFlagInput) selectedFlagInput.value = '0';
+    }
 
     function highlight(text, q) {
       if (!q) return text;
@@ -259,19 +271,19 @@
 
     function pick(r) {
       input.value = r.short_name || '';
-      var countrySel = node.querySelector('#reg-country-select');
       var identField = node.querySelector('#reg-identifier-field');
-      var regNumField = node.querySelector('input[name="registration_number"]');
-      var regDateField = node.querySelector('input[name="registration_date"]');
       if (countrySel && r.country_id) countrySel.value = r.country_id;
       if (identField) identField.value = r.identifier || '';
       if (regNumField) regNumField.value = r.registration_number || '';
       if (regDateField) regDateField.value = r.registration_date || '';
+      if (selectedIdInput) selectedIdInput.value = r.identifier_record_id || '';
+      if (selectedFlagInput) selectedFlagInput.value = '1';
       list.classList.remove('show');
     }
 
     input.addEventListener('input', function() {
       var q = input.value.trim();
+      clearSelection();
       clearTimeout(debounce);
       if (q.length < 1) { list.classList.remove('show'); return; }
       debounce = setTimeout(function() {
@@ -307,6 +319,11 @@
     input.addEventListener('focus', function() {
       if (results.length && input.value.trim().length >= 1) list.classList.add('show');
     });
+    countrySel?.addEventListener('change', clearSelection);
+    regNumField?.addEventListener('input', clearSelection);
+    regNumField?.addEventListener('change', clearSelection);
+    regDateField?.addEventListener('input', clearSelection);
+    regDateField?.addEventListener('change', clearSelection);
   }
 
   function initCurrentModal() {

@@ -6,6 +6,7 @@
 </div>
 
 <form
+    class="ler-modal-form"
     method="post"
     style="display:flex; flex-direction:column; overflow:hidden; flex:1 1 auto; min-height:0;"
     {% if action == "create" %}
@@ -17,56 +18,74 @@
     hx-swap="innerHTML">
   <div class="modal-body" style="overflow-y:auto; flex:1 1 auto; min-height:0;">
     {% csrf_token %}
-    <div class="mb-3">
-      <label class="form-label">Наименование (краткое)</label>
-      {{ form.short_name }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Наименование (полное)</label>
-      {{ form.full_name }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Страна регистрации</label>
-      {{ form.registration_country }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Идентификатор</label>
-      {{ form.identifier }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Регистрационный номер</label>
-      {{ form.registration_number }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Дата регистрации</label>
-      {{ form.registration_date }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Дата записи</label>
-      <input type="text" class="form-control" readonly tabindex="-1"
-             style="background-color:#e9ecef; color:#6c757d;"
-             value="{% if record and record.record_date %}{{ record.record_date|date:'d.m.Y' }}{% endif %}">
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Автор записи</label>
-      <input type="text" class="form-control" readonly tabindex="-1"
-             style="background-color:#e9ecef; color:#6c757d;"
-             value="{% if record and record.record_author %}{{ record.record_author }}{% endif %}">
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Дата получения наименования</label>
-      {{ form.name_received_date }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Дата смены наименования</label>
-      {{ form.name_changed_date }}
-    </div>
-
     {% if form.errors %}
-      <div class="alert alert-danger mb-0">
+      <div class="alert alert-danger mb-3">
         Проверьте введённые данные.
+        <ul class="mb-0 mt-2 ps-3">
+          {% for error in form.non_field_errors %}
+            <li>{{ error }}</li>
+          {% endfor %}
+          {% for field in form %}
+            {% for error in field.errors %}
+              <li>{% if field.label %}{{ field.label }}: {% endif %}{{ error }}</li>
+            {% endfor %}
+          {% endfor %}
+          {% if not form.non_field_errors and not form_error_messages %}
+            {% for field, errors in form.errors.items %}
+              {% for error in errors %}
+                <li>{% if field != "__all__" %}{{ field }}: {% endif %}{{ error }}</li>
+              {% endfor %}
+            {% endfor %}
+          {% endif %}
+        </ul>
       </div>
     {% endif %}
+    <div class="mb-3">
+      <label class="form-label">ID-IDN</label>
+      <div class="ler-ac-wrap flex-grow-1">
+        <input
+          type="text"
+          id="id_identifier_record_autocomplete"
+          name="identifier_record_autocomplete"
+          class="form-control"
+          value="{{ form.identifier_record_autocomplete_label }}"
+          placeholder="Искать по ID-IDN, регистрационному номеру и наименованию"
+          autocomplete="off">
+        <input type="hidden" id="id_identifier_record" name="identifier_record" value="{{ form.identifier_record_autocomplete_value }}">
+        <div id="id_identifier_record_autocomplete_list" class="ler-ac-list"></div>
+      </div>
+    </div>
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label">Наименование (краткое)</label>
+        {{ form.short_name }}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Наименование (полное)</label>
+        {{ form.full_name }}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Дата записи</label>
+        <input type="text" class="form-control" readonly tabindex="-1"
+               style="background-color:#f8f9fa; color:#6c757d;"
+               value="{% if record and record.record_date %}{{ record.record_date|date:'d.m.Y' }}{% endif %}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Автор записи</label>
+        <input type="text" class="form-control" readonly tabindex="-1"
+               style="background-color:#f8f9fa; color:#6c757d;"
+               value="{% if record and record.record_author %}{{ record.record_author }}{% endif %}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Действителен от</label>
+        {{ form.name_received_date }}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Действителен до</label>
+        {{ form.name_changed_date }}
+      </div>
+    </div>
+
   </div>
   <div class="modal-footer" style="flex-shrink:0;">
     <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
@@ -76,26 +95,197 @@
 
 <script>
 (function() {
+  var identifierInput = document.getElementById('id_identifier_record_autocomplete');
+  var identifierHidden = document.getElementById('id_identifier_record');
+  var identifierList = document.getElementById('id_identifier_record_autocomplete_list');
   var countryEl = document.getElementById('id_registration_country');
-  var identifierEl = document.getElementById('id_identifier');
-  if (!countryEl || !identifierEl) return;
+  var regionEl = document.getElementById('id_registration_region');
+  var searchUrl = '{% url "bea_identifier_record_search" %}';
 
-  countryEl.addEventListener('change', function() {
-    if (!this.value) {
-      identifierEl.value = '';
+  function resetRegions() {
+    if (!regionEl) return;
+    regionEl.innerHTML = '<option value="">---------</option>';
+  }
+
+  function fitListWidth(list, input) {
+    if (!list || !input) return;
+    list.style.width = 'auto';
+    list.style.minWidth = input.offsetWidth + 'px';
+    var items = Array.prototype.slice.call(list.querySelectorAll('.ler-ac-item'));
+    if (!items.length) return;
+    var widest = items.reduce(function(maxWidth, item) {
+      return Math.max(maxWidth, Math.ceil(item.scrollWidth));
+    }, 0);
+    if (widest > 0) {
+      list.style.width = Math.max(input.offsetWidth, widest + 2) + 'px';
+    }
+  }
+
+  function renderRegionOptions(regions, preserveCurrent) {
+    if (!regionEl) return;
+    var currentRegion = preserveCurrent ? regionEl.value : '';
+    if (currentRegion && regions.indexOf(currentRegion) === -1) {
+      regions.push(currentRegion);
+    }
+    regionEl.innerHTML = '<option value="">---------</option>';
+    regions.forEach(function(regionName) {
+      var opt = document.createElement('option');
+      opt.value = regionName;
+      opt.textContent = regionName;
+      if (regionName === currentRegion) opt.selected = true;
+      regionEl.appendChild(opt);
+    });
+  }
+
+  function ensureRegionOption(regionName) {
+    if (!regionEl) return;
+    if (!regionName) return;
+    for (var i = 0; i < regionEl.options.length; i++) {
+      if (regionEl.options[i].value === regionName) return;
+    }
+    var opt = document.createElement('option');
+    opt.value = regionName;
+    opt.textContent = regionName;
+    regionEl.appendChild(opt);
+  }
+
+  function loadRegions(countryId, preserveCurrent, selectedRegion) {
+    if (!regionEl) return;
+    if (!countryId) {
+      resetRegions();
       return;
     }
-    fetch('{% url "ler_identifiers_for_country" %}?country_id=' + encodeURIComponent(this.value))
+    fetch('{% url "ler_regions_for_country" %}?country_id=' + encodeURIComponent(countryId))
       .then(function(r) { return r.json(); })
       .then(function(data) {
-        var ids = data.identifiers || [];
-        if (ids.length > 0) {
-          identifierEl.value = ids.map(function(i) { return i.identifier; }).join(', ');
-        } else {
-          identifierEl.value = '';
+        var regions = data.regions || [];
+        renderRegionOptions(regions, preserveCurrent);
+        if (selectedRegion) {
+          ensureRegionOption(selectedRegion);
+          regionEl.value = selectedRegion;
         }
+      })
+      .catch(function() {
+        resetRegions();
       });
-  });
+  }
+
+  function hideIdentifierList() {
+    if (!identifierList) return;
+    identifierList.classList.remove('show');
+  }
+
+  function highlight(text, query) {
+    if (!query) return text;
+    var escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return text.replace(new RegExp('(' + escaped + ')', 'gi'), '<mark>$1</mark>');
+  }
+
+  function bindIdentifierAutocomplete() {
+    if (!identifierInput || !identifierHidden || !identifierList) return;
+    var debounce = null;
+    var results = [];
+    var picking = false;
+
+    function render(data, query, totalCount) {
+      results = data;
+      if (!data.length) {
+        hideIdentifierList();
+        return;
+      }
+      var visible = data.slice(0, 3);
+      var html = visible.map(function(item, index) {
+        return '<div class="ler-ac-item" data-idx="' + index + '">'
+          + '<div class="ler-ac-main">' + highlight(item.label || '', query) + '</div>'
+          + '</div>';
+      }).join('');
+      var remaining = totalCount - 3;
+      if (remaining > 0) {
+        html += '<div class="ler-ac-item ler-ac-more">Найдено еще ' + remaining + ' идентификаторов</div>';
+      }
+      identifierList.innerHTML = html;
+      identifierList.classList.add('show');
+      fitListWidth(identifierList, identifierInput);
+    }
+
+    function pick(item) {
+      identifierInput.value = item.formatted_id || '';
+      identifierHidden.value = item.id || '';
+      if (countryEl && item.country_id) {
+        countryEl.value = String(item.country_id);
+        loadRegions(String(item.country_id), false, item.region || '');
+      } else if (regionEl && item.region) {
+        ensureRegionOption(item.region);
+        regionEl.value = item.region;
+      }
+      hideIdentifierList();
+    }
+
+    identifierInput.addEventListener('input', function() {
+      var query = identifierInput.value.trim();
+      identifierHidden.value = '';
+      clearTimeout(debounce);
+      if (query.length < 1) {
+        hideIdentifierList();
+        return;
+      }
+      debounce = setTimeout(function() {
+        fetch(searchUrl + '?q=' + encodeURIComponent(query))
+          .then(function(response) { return response.json(); })
+          .then(function(data) { render(data.results || [], query, data.total_count || 0); })
+          .catch(function() { hideIdentifierList(); });
+      }, 200);
+    });
+
+    identifierList.addEventListener('mousedown', function(event) {
+      event.preventDefault();
+      picking = true;
+      var item = event.target.closest('.ler-ac-item');
+      if (!item) return;
+      var idx = parseInt(item.dataset.idx, 10);
+      if (results[idx]) pick(results[idx]);
+    });
+
+    identifierList.addEventListener('click', function(event) {
+      var item = event.target.closest('.ler-ac-item');
+      if (!item) return;
+      var idx = parseInt(item.dataset.idx, 10);
+      if (results[idx]) pick(results[idx]);
+      picking = false;
+    });
+
+    identifierInput.addEventListener('focus', function() {
+      if ((identifierInput.value || '').trim() && !identifierHidden.value) {
+        identifierInput.dispatchEvent(new Event('input'));
+      }
+    });
+
+    identifierInput.addEventListener('blur', function() {
+      if (picking) {
+        picking = false;
+        return;
+      }
+      window.setTimeout(hideIdentifierList, 150);
+    });
+  }
+
+  if (countryEl && regionEl) {
+    countryEl.addEventListener('change', function() {
+      var countryId = this.value;
+      if (!countryId) {
+        resetRegions();
+        return;
+      }
+      loadRegions(countryId, false);
+    });
+
+    if (!countryEl.value) {
+      resetRegions();
+    } else {
+      loadRegions(countryEl.value, true);
+    }
+  }
+  bindIdentifierAutocomplete();
 
   function replaceQuotes(el) {
     var v = el.value;

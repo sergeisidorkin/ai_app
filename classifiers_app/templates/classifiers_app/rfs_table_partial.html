@@ -1,0 +1,90 @@
+<table class="table table-sm align-middle clf-truncated">
+    <thead>
+    <tr>
+        <th style="width:1%">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+                <div class="form-check m-0">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           id="rfs-master"
+                           data-target-name="rfs-select"
+                           data-actions-id="rfs-actions"
+                           aria-label="Выделить все строки">
+                </div>
+            {% endif %}
+        </th>
+        <th>Наименование субъекта Российской Федерации</th>
+        <th>Код региона ОКТМО</th>
+        <th>Код ФНС России</th>
+        <th style="position:relative">
+            <span>Источник</span>
+            <button type="button" class="clf-wrap-btn active" id="rfs-wrap-toggle"
+                    title="Свернуть/развернуть строки">
+              <i class="bi bi-text-wrap"></i>
+            </button>
+        </th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for item in rfs_items %}
+        <tr data-edit-url="{% url 'rfs_form_edit' item.pk %}"
+            data-delete-url="{% url 'rfs_delete' item.pk %}"
+            data-move-up-url="{% url 'rfs_move_up' item.pk %}"
+            data-move-down-url="{% url 'rfs_move_down' item.pk %}">
+            <td class="text-nowrap">
+                {% if request.user.is_authenticated and request.user.is_staff %}
+                    <div class="form-check">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="rfs-sel-{{ item.id }}"
+                               name="rfs-select"
+                               value="{{ item.id }}"
+                               aria-label="Выделить строку">
+                    </div>
+                {% endif %}
+            </td>
+            <td>{{ item.subject_name|default:"—" }}</td>
+            <td class="text-nowrap">{{ item.oktmo_code|default:"—" }}</td>
+            <td class="text-nowrap">{{ item.fns_code|default:"—" }}</td>
+            <td class="rfs-source-cell" title="{{ item.source }}">{{ item.source }}</td>
+        </tr>
+    {% empty %}
+        <tr><td colspan="5" class="text-muted">Пока нет данных.</td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+
+{% if request.user.is_authenticated and request.user.is_staff %}
+<div class="d-flex align-items-stretch gap-2 products-actions-row">
+  <button
+          class="btn btn-primary btn-sm d-flex align-items-center"
+          hx-get="{% url 'rfs_form_create' %}"
+          hx-target="#classifiers-modal .modal-content"
+          hx-swap="innerHTML">
+    <i class="bi bi-plus-circle me-2"></i>Добавить строку
+  </button>
+  <div id="rfs-actions" class="d-none d-flex">
+    <div class="btn-group">
+      <button type="button" id="rfs-actions-up" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+        <i class="bi bi-arrow-up-square"></i>
+      </button>
+      <button type="button" id="rfs-actions-down" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+        <i class="bi bi-arrow-down-square"></i>
+      </button>
+      <button type="button" id="rfs-actions-edit" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+        <i class="bi bi-pencil-square"></i>
+      </button>
+      <button type="button" id="rfs-actions-delete" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+        <i class="bi bi-x-square"></i>
+      </button>
+    </div>
+  </div>
+  <button type="button"
+          id="rfs-csv-upload-btn"
+          class="btn btn-primary btn-sm d-flex align-items-center"
+          title="Загрузить CSV">
+    <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+  </button>
+  <input type="file" id="rfs-csv-file-input" accept=".csv" style="display:none;">
+</div>
+{% endif %}

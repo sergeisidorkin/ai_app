@@ -1,0 +1,412 @@
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    style="display:flex; flex-direction:column; overflow:hidden; flex:1 1 auto; min-height:0;"
+    {% if action == "create" %}
+      hx-post="{% url 'brl_form_create' %}"
+    {% else %}
+      hx-post="{% url 'brl_form_edit' item.pk %}"
+    {% endif %}
+    hx-target="#business-entity-relations-table-wrap"
+    hx-swap="innerHTML">
+  <div class="modal-body" style="overflow-y:auto; flex:1 1 auto; min-height:0;">
+    {% csrf_token %}
+    <div class="mb-3">
+      <label class="form-label">Тип связи</label>
+      {{ form.relation_type }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">От ID-BSN</label>
+      <div id="brl-from-container">
+        {% for row in form.from_business_entity_rows %}
+        <div class="d-flex align-items-center gap-2 mb-2 brl-entity-row">
+          <span class="badge rounded-circle d-flex align-items-center justify-content-center brl-entity-badge"
+                style="width:18px; height:18px; font-size:.65rem; flex-shrink:0; border:1px solid #6c757d; color:#6c757d; background:transparent; font-weight:400; font-family:'SF Pro Text',system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums;">{{ forloop.counter }}</span>
+          <div class="ler-ac-wrap flex-grow-1">
+            <input type="text"
+                   class="form-control brl-entity-autocomplete"
+                   value="{{ row.label }}"
+                   placeholder="Искать по ID-BSN и наименованию"
+                   autocomplete="off">
+            <input type="hidden" name="from_business_entity_ids" value="{{ row.id }}">
+            <div class="ler-ac-list"></div>
+          </div>
+          <button type="button" class="btn btn-sm brl-entity-remove" title="Удалить"
+                  style="flex-shrink:0; color:#adb5bd; border:none; font-size:1.25rem; line-height:1; padding:0 .25rem;" onmouseenter="this.style.color='#dc3545'" onmouseleave="this.style.color='#adb5bd'">&times;</button>
+        </div>
+        {% endfor %}
+      </div>
+      <button type="button" id="brl-add-from" class="btn mt-1"
+              style="border:1px solid #ced4da; background-color:#f8f9fa; color:#495057; font-size:1rem; padding:.375rem .75rem; margin-left:26px;">
+        <i class="bi bi-plus-circle me-2"></i>Добавить строку
+      </button>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">К ID-BSN</label>
+      <div id="brl-to-normal-section"{% if form.is_merge_mode or form.is_split_mode %} class="d-none"{% endif %}>
+        <div id="brl-to-container">
+          {% for row in form.to_business_entity_rows %}
+          <div class="d-flex align-items-center gap-2 mb-2 brl-entity-row">
+            <span class="badge rounded-circle d-flex align-items-center justify-content-center brl-entity-badge"
+                  style="width:18px; height:18px; font-size:.65rem; flex-shrink:0; border:1px solid #6c757d; color:#6c757d; background:transparent; font-weight:400; font-family:'SF Pro Text',system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums;">{{ forloop.counter }}</span>
+            <div class="ler-ac-wrap flex-grow-1">
+              <input type="text"
+                     class="form-control brl-entity-autocomplete"
+                     value="{{ row.label }}"
+                     placeholder="Искать по ID-BSN и наименованию"
+                     autocomplete="off">
+              <input type="hidden" name="to_business_entity_ids" value="{{ row.id }}">
+              <div class="ler-ac-list"></div>
+            </div>
+            <button type="button" class="btn btn-sm brl-entity-remove" title="Удалить"
+                    style="flex-shrink:0; color:#adb5bd; border:none; font-size:1.25rem; line-height:1; padding:0 .25rem;" onmouseenter="this.style.color='#dc3545'" onmouseleave="this.style.color='#adb5bd'">&times;</button>
+          </div>
+          {% endfor %}
+        </div>
+        <button type="button" id="brl-add-to" class="btn mt-1"
+                style="border:1px solid #ced4da; background-color:#f8f9fa; color:#495057; font-size:1rem; padding:.375rem .75rem; margin-left:26px;">
+          <i class="bi bi-plus-circle me-2"></i>Добавить строку
+        </button>
+      </div>
+      <div id="brl-to-merge-section"{% if not form.is_merge_mode %} class="d-none"{% endif %}>
+        {{ form.merge_target_preview }}
+        <div class="mt-3">
+          <label class="form-label">Наименование</label>
+          {{ form.merge_target_name }}
+        </div>
+      </div>
+      <div id="brl-to-split-section" data-next-preview-number="{{ form.split_next_preview_number }}"{% if not form.is_split_mode %} class="d-none"{% endif %}>
+        <div id="brl-split-target-container">
+          {% for row in form.split_target_rows %}
+          <div class="mb-3 brl-split-target-row">
+            <div class="d-flex align-items-center gap-2 mb-2">
+              <span class="badge rounded-circle d-flex align-items-center justify-content-center brl-split-badge"
+                    style="width:18px; height:18px; font-size:.65rem; flex-shrink:0; border:1px solid #6c757d; color:#6c757d; background:transparent; font-weight:400; font-family:'SF Pro Text',system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums;">{{ forloop.counter }}</span>
+              <input type="text"
+                     class="form-control"
+                     value="{{ row.preview }}"
+                     readonly
+                     tabindex="-1"
+                     style="background-color:#f8f9fa; color:#6c757d;">
+              <input type="hidden" name="split_target_existing_ids" value="{{ row.existing_id }}">
+            </div>
+            <div style="margin-left:26px;">
+              <label class="form-label">Наименование</label>
+              <input type="text"
+                     name="split_target_names"
+                     class="form-control"
+                     value="{{ row.name }}"
+                     placeholder="Наименование">
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        <button type="button" id="brl-add-split-target" class="btn mt-1"
+                style="border:1px solid #ced4da; background-color:#f8f9fa; color:#495057; font-size:1rem; padding:.375rem .75rem; margin-left:26px;">
+          <i class="bi bi-plus-circle me-2"></i>Добавить строку
+        </button>
+      </div>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">ID-REO</label>
+      {{ form.reorganization_event_uid_display }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Дата события</label>
+      {{ form.event_date }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Комментарий</label>
+      {{ form.comment }}
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mb-0">
+        Проверьте введённые данные.
+        <ul class="mb-0 mt-2 ps-3">
+          {% for field in form %}
+            {% for error in field.errors %}
+              <li>{{ field.label }}: {{ error }}</li>
+            {% endfor %}
+          {% endfor %}
+          {% for error in form.non_field_errors %}
+            <li>{{ error }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+  </div>
+  <div class="modal-footer" style="flex-shrink:0;">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>
+
+<script>
+(function() {
+  var fromContainer = document.getElementById('brl-from-container');
+  var toContainer = document.getElementById('brl-to-container');
+  var addFromBtn = document.getElementById('brl-add-from');
+  var addToBtn = document.getElementById('brl-add-to');
+  var relationTypeEl = document.getElementById('id_relation_type');
+  var toNormalSection = document.getElementById('brl-to-normal-section');
+  var toMergeSection = document.getElementById('brl-to-merge-section');
+  var toSplitSection = document.getElementById('brl-to-split-section');
+  var splitTargetContainer = document.getElementById('brl-split-target-container');
+  var addSplitTargetBtn = document.getElementById('brl-add-split-target');
+  if (!fromContainer || !toContainer || !addFromBtn || !relationTypeEl || !toNormalSection || !toMergeSection || !toSplitSection || !splitTargetContainer || !addSplitTargetBtn) return;
+  var searchUrl = '{% url "brl_business_entity_search" %}';
+
+  function ensureSingleRow(container, fieldName) {
+    var rows = container.querySelectorAll('.brl-entity-row');
+    if (!rows.length) {
+      addRow(container, fieldName);
+      rows = container.querySelectorAll('.brl-entity-row');
+    }
+    Array.prototype.slice.call(rows, 1).forEach(function(row) {
+      row.remove();
+    });
+    refreshBadges(container);
+  }
+
+  function refreshSplitBadges() {
+    splitTargetContainer.querySelectorAll('.brl-split-badge').forEach(function(badge, index) {
+      badge.textContent = String(index + 1);
+    });
+  }
+
+  function nextSplitPreview() {
+    var nextNumber = parseInt(toSplitSection.dataset.nextPreviewNumber || '1', 10);
+    if (!nextNumber || nextNumber < 1) nextNumber = 1;
+    toSplitSection.dataset.nextPreviewNumber = String(nextNumber + 1);
+    return String(nextNumber).padStart(5, '0') + '-BSN';
+  }
+
+  function addSplitTargetRow(previewValue, nameValue, existingId) {
+    var row = document.createElement('div');
+    row.className = 'mb-3 brl-split-target-row';
+    row.innerHTML =
+      '<div class="d-flex align-items-center gap-2 mb-2">'
+      + '<span class="badge rounded-circle d-flex align-items-center justify-content-center brl-split-badge" '
+      + 'style="width:18px; height:18px; font-size:.65rem; flex-shrink:0; border:1px solid #6c757d; color:#6c757d; background:transparent; font-weight:400; font-family:\'SF Pro Text\',system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums;"></span>'
+      + '<input type="text" class="form-control" value="' + (previewValue || nextSplitPreview()) + '" readonly tabindex="-1" style="background-color:#f8f9fa; color:#6c757d;">'
+      + '<input type="hidden" name="split_target_existing_ids" value="' + (existingId || '') + '">'
+      + '</div>'
+      + '<div style="margin-left:26px;">'
+      + '<label class="form-label">Наименование</label>'
+      + '<input type="text" name="split_target_names" class="form-control" value="' + (nameValue || '') + '" placeholder="Наименование">'
+      + '</div>';
+    splitTargetContainer.appendChild(row);
+    refreshSplitBadges();
+  }
+
+  function syncRelationMode() {
+    var isMerge = relationTypeEl.value === 'Слияние';
+    var isSplit = relationTypeEl.value === 'Разделение' || relationTypeEl.value === 'Выделение';
+    var isSingleTo = relationTypeEl.value === 'Присоединение';
+    var isSingleFrom = isSplit;
+    toNormalSection.classList.toggle('d-none', isMerge || isSplit);
+    toMergeSection.classList.toggle('d-none', !isMerge);
+    toSplitSection.classList.toggle('d-none', !isSplit);
+    if (addToBtn) {
+      addToBtn.classList.toggle('d-none', isMerge || isSingleTo || isSplit);
+    }
+    addFromBtn.classList.toggle('d-none', isSingleFrom);
+    addSplitTargetBtn.classList.toggle('d-none', !isSplit);
+    if (isSingleTo) {
+      ensureSingleRow(toContainer, 'to_business_entity_ids');
+    }
+    if (isSingleFrom) {
+      ensureSingleRow(fromContainer, 'from_business_entity_ids');
+    }
+    if (isSplit && !splitTargetContainer.querySelector('.brl-split-target-row')) {
+      addSplitTargetRow();
+    }
+    toContainer.querySelectorAll('.brl-entity-row').forEach(function(row) {
+      var badge = row.querySelector('.brl-entity-badge');
+      var removeBtn = row.querySelector('.brl-entity-remove');
+      if (badge) badge.classList.toggle('d-none', isSingleTo);
+      if (removeBtn) removeBtn.classList.toggle('d-none', isSingleTo);
+    });
+    fromContainer.querySelectorAll('.brl-entity-row').forEach(function(row) {
+      var badge = row.querySelector('.brl-entity-badge');
+      var removeBtn = row.querySelector('.brl-entity-remove');
+      if (badge) badge.classList.toggle('d-none', isSingleFrom);
+      if (removeBtn) removeBtn.classList.toggle('d-none', isSingleFrom);
+    });
+  }
+
+  function refreshBadges(container) {
+    container.querySelectorAll('.brl-entity-badge').forEach(function(badge, index) {
+      badge.textContent = String(index + 1);
+    });
+  }
+
+  function highlight(text, query) {
+    if (!query) return text;
+    var escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return text.replace(new RegExp('(' + escaped + ')', 'gi'), '<mark>$1</mark>');
+  }
+
+  function bindAutocompleteRow(row) {
+    if (!row || row.dataset.autocompleteBound === '1') return;
+    row.dataset.autocompleteBound = '1';
+
+    var input = row.querySelector('.brl-entity-autocomplete');
+    var hidden = row.querySelector('input[type="hidden"]');
+    var list = row.querySelector('.ler-ac-list');
+    if (!input || !hidden || !list) return;
+
+    var debounce = null;
+    var results = [];
+    var picking = false;
+
+    function hideList() {
+      list.classList.remove('show');
+    }
+
+    function fitListWidth() {
+      list.style.width = 'auto';
+      list.style.minWidth = input.offsetWidth + 'px';
+      var items = Array.prototype.slice.call(list.querySelectorAll('.ler-ac-item'));
+      if (!items.length) return;
+      var widest = items.reduce(function(maxWidth, item) {
+        return Math.max(maxWidth, Math.ceil(item.scrollWidth));
+      }, 0);
+      if (widest > 0) {
+        list.style.width = Math.max(input.offsetWidth, widest + 2) + 'px';
+      }
+    }
+
+    function render(data, query, totalCount) {
+      results = data;
+      if (!data.length) {
+        hideList();
+        return;
+      }
+      var visible = data.slice(0, 3);
+      var html = visible.map(function(item, index) {
+        return '<div class="ler-ac-item" data-idx="' + index + '">'
+          + '<div class="ler-ac-main">' + highlight(item.label || '', query) + '</div>'
+          + '</div>';
+      }).join('');
+      var remaining = totalCount - 3;
+      if (remaining > 0) {
+        html += '<div class="ler-ac-item ler-ac-more">Найдено еще ' + remaining + ' бизнес-сущностей</div>';
+      }
+      list.innerHTML = html;
+      list.classList.add('show');
+      fitListWidth();
+    }
+
+    function pick(item) {
+      input.value = item.formatted_id || '';
+      hidden.value = item.id || '';
+      hideList();
+    }
+
+    input.addEventListener('input', function() {
+      var query = input.value.trim();
+      hidden.value = '';
+      clearTimeout(debounce);
+      if (query.length < 1) {
+        hideList();
+        return;
+      }
+      debounce = setTimeout(function() {
+        fetch(searchUrl + '?q=' + encodeURIComponent(query))
+          .then(function(response) { return response.json(); })
+          .then(function(data) { render(data.results || [], query, data.total_count || 0); })
+          .catch(function() { hideList(); });
+      }, 200);
+    });
+
+    list.addEventListener('mousedown', function(event) {
+      event.preventDefault();
+      picking = true;
+      var item = event.target.closest('.ler-ac-item');
+      if (!item) return;
+      var idx = parseInt(item.dataset.idx, 10);
+      if (results[idx]) pick(results[idx]);
+    });
+
+    list.addEventListener('click', function(event) {
+      var item = event.target.closest('.ler-ac-item');
+      if (!item) return;
+      var idx = parseInt(item.dataset.idx, 10);
+      if (results[idx]) pick(results[idx]);
+      picking = false;
+    });
+
+    input.addEventListener('blur', function() {
+      if (picking) {
+        picking = false;
+        return;
+      }
+      setTimeout(hideList, 200);
+    });
+
+    input.addEventListener('focus', function() {
+      if (results.length && input.value.trim().length >= 1) {
+        list.classList.add('show');
+        fitListWidth();
+      }
+    });
+  }
+
+  function addRow(container, fieldName) {
+    var row = document.createElement('div');
+    row.className = 'd-flex align-items-center gap-2 mb-2 brl-entity-row';
+    row.innerHTML =
+      '<span class="badge rounded-circle d-flex align-items-center justify-content-center brl-entity-badge" ' +
+      'style="width:18px; height:18px; font-size:.65rem; flex-shrink:0; border:1px solid #6c757d; color:#6c757d; background:transparent; font-weight:400; font-family:\'SF Pro Text\',system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums;"></span>' +
+      '<div class="ler-ac-wrap flex-grow-1">'
+      + '<input type="text" class="form-control brl-entity-autocomplete" placeholder="Искать по ID-BSN и наименованию" autocomplete="off">'
+      + '<input type="hidden" name="' + fieldName + '" value="">'
+      + '<div class="ler-ac-list"></div>'
+      + '</div>' +
+      '<button type="button" class="btn btn-sm brl-entity-remove" title="Удалить" ' +
+      'style="flex-shrink:0; color:#adb5bd; border:none; font-size:1.25rem; line-height:1; padding:0 .25rem;">&times;</button>';
+    container.appendChild(row);
+    bindAutocompleteRow(row);
+    refreshBadges(container);
+  }
+
+  addFromBtn.addEventListener('click', function() {
+    addRow(fromContainer, 'from_business_entity_ids');
+  });
+
+  addToBtn.addEventListener('click', function() {
+    addRow(toContainer, 'to_business_entity_ids');
+  });
+
+  addSplitTargetBtn.addEventListener('click', function() {
+    addSplitTargetRow();
+  });
+
+  relationTypeEl.addEventListener('change', syncRelationMode);
+
+  document.addEventListener('click', function(event) {
+    var removeBtn = event.target.closest('.brl-entity-remove');
+    if (!removeBtn) return;
+    var row = removeBtn.closest('.brl-entity-row');
+    var container = row && row.parentElement;
+    if (!row || !container) return;
+    row.remove();
+    refreshBadges(container);
+  });
+
+  refreshBadges(fromContainer);
+  refreshBadges(toContainer);
+  refreshSplitBadges();
+  fromContainer.querySelectorAll('.brl-entity-row').forEach(bindAutocompleteRow);
+  toContainer.querySelectorAll('.brl-entity-row').forEach(bindAutocompleteRow);
+  syncRelationMode();
+})();
+</script>

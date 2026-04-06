@@ -9,6 +9,9 @@
 
     <!-- HTMX -->
     <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <script>
+      window.__uiPrefScope = "{% if request.user.is_authenticated %}user:{{ request.user.pk }}:{{ request.user.username|escapejs }}{% else %}anon{% endif %}";
+    </script>
     <!-- UI preferences (must load before any content scripts) -->
     <script src="{% static 'core/js/ui-prefs.js' %}"></script>
     <!-- Bootstrap 5 (CSS) -->

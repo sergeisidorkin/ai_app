@@ -1,0 +1,76 @@
+<table id="bea-table" class="table table-sm">
+    <thead class="align-bottom text-nowrap">
+    <tr>
+        <th style="width:1%">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+                <div class="form-check m-0">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           id="bea-master"
+                           data-target-name="bea-select"
+                           data-actions-id="bea-actions"
+                           aria-label="Выделить все строки">
+                </div>
+            {% endif %}
+        </th>
+        <th data-col="id-atr">ID-ATR</th>
+        <th data-col="id-idn">ID-IDN</th>
+        <th data-col="country">Страна</th>
+        <th data-col="region">Регион</th>
+        <th data-col="postal-code">Индекс</th>
+        <th data-col="municipality">Муниципальное образование</th>
+        <th data-col="settlement">Поселение</th>
+        <th data-col="locality">Населенный пункт</th>
+        <th data-col="district">Квартал / район</th>
+        <th data-col="street">Улица</th>
+        <th data-col="building">Здание</th>
+        <th data-col="premise">Помещ.</th>
+        <th data-col="premise-part">Часть помещ.</th>
+        <th data-col="record-date">Запись</th>
+        <th data-col="record-author">Автор записи</th>
+        <th data-col="valid-from">Действ. от</th>
+        <th data-col="valid-to">Действ. до</th>
+    </tr>
+    </thead>
+    <tbody class="align-top">
+    {% for item in bea_items %}
+        <tr data-edit-url="{% url 'bea_form_edit' item.pk %}"
+            data-delete-url="{% url 'bea_delete' item.pk %}"
+            data-move-up-url="{% url 'bea_move_up' item.pk %}"
+            data-move-down-url="{% url 'bea_move_down' item.pk %}">
+            <td class="text-nowrap">
+                {% if request.user.is_authenticated and request.user.is_staff %}
+                    <div class="form-check">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="bea-sel-{{ item.id }}"
+                               name="bea-select"
+                               value="{{ item.id }}"
+                               aria-label="Выделить строку">
+                    </div>
+                {% endif %}
+            </td>
+            <td data-col="id-atr" class="text-nowrap"><span class="clf-id-mono">{{ item.pk|stringformat:"05d" }}-ATR</span></td>
+            <td data-col="id-idn" class="text-nowrap"><span class="clf-id-mono">{% if item.identifier_record %}{{ item.identifier_record.pk|stringformat:"05d" }}-IDN{% else %}—{% endif %}</span></td>
+            <td data-col="country">{% if item.registration_country %}{{ item.registration_country.short_name }}{% else %}—{% endif %}</td>
+            <td data-col="region">{{ item.registration_region|default:"—" }}</td>
+            <td data-col="postal-code">{{ item.postal_code|default:"—" }}</td>
+            <td data-col="municipality">{{ item.municipality|default:"—" }}</td>
+            <td data-col="settlement">{{ item.settlement|default:"—" }}</td>
+            <td data-col="locality">{{ item.locality|default:"—" }}</td>
+            <td data-col="district">{{ item.district|default:"—" }}</td>
+            <td data-col="street">{{ item.street|default:"—" }}</td>
+            <td data-col="building">{{ item.building|default:"—" }}</td>
+            <td data-col="premise">{{ item.premise|default:"—" }}</td>
+            <td data-col="premise-part">{{ item.premise_part|default:"—" }}</td>
+            <td data-col="record-date" class="text-nowrap">{% if item.record_date %}{{ item.record_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>
+            <td data-col="record-author">{{ item.record_author|default:"—" }}</td>
+            <td data-col="valid-from" class="text-nowrap">{% if item.valid_from %}{{ item.valid_from|date:"d.m.Y" }}{% else %}—{% endif %}</td>
+            <td data-col="valid-to" class="text-nowrap">{% if item.valid_to %}{{ item.valid_to|date:"d.m.Y" }}{% else %}—{% endif %}</td>
+        </tr>
+    {% empty %}
+        <tr><td colspan="18" class="text-muted">Пока нет данных.</td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% include "classifiers_app/_registry_pagination.html" %}

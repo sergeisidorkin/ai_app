@@ -179,9 +179,11 @@ def run_sync(delay: float = API_DELAY) -> int:
     return total_updated
 
 
-def _sync_loop(interval: float, delay: float):
+def _sync_loop(interval: float, delay: float, initial_delay: float = 0.0):
     """Бесконечный цикл синхронизации, запускаемый в фоновом потоке."""
     logger.info("Фоновая синхронизация Яндекс.Диска запущена (интервал %ds)", interval)
+    if initial_delay > 0:
+        time.sleep(initial_delay)
     while True:
         try:
             close_old_connections()
@@ -197,7 +199,7 @@ _started = False
 _lock = threading.Lock()
 
 
-def start_background_sync(interval: float = DEFAULT_INTERVAL, delay: float = API_DELAY):
+def start_background_sync(interval: float = DEFAULT_INTERVAL, delay: float = API_DELAY, initial_delay: float = 0.0):
     """
     Запускает фоновый daemon-поток для периодической синхронизации.
     Безопасен для повторного вызова — поток создаётся только один раз.
@@ -210,7 +212,7 @@ def start_background_sync(interval: float = DEFAULT_INTERVAL, delay: float = API
 
     t = threading.Thread(
         target=_sync_loop,
-        args=(interval, delay),
+        args=(interval, delay, initial_delay),
         name="yadisk-sync",
         daemon=True,
     )

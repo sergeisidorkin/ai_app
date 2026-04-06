@@ -1,0 +1,57 @@
+{% if pagination.show %}
+<div class="classifiers-pagination-wrap d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 mt-3">
+    <input type="hidden" id="{{ pagination.page_input_id }}" value="{{ pagination.current_page }}">
+    <div class="small text-muted">
+        Показаны {{ pagination.start_index }}-{{ pagination.end_index }} из {{ pagination.total_count }}
+    </div>
+    <nav aria-label="Пагинация таблицы">
+        <ul class="pagination pagination-sm mb-0 classifiers-pagination">
+            <li class="page-item {% if not page_obj.has_previous %}disabled{% endif %}">
+                {% if page_obj.has_previous %}
+                    <button type="button"
+                            class="page-link"
+                            hx-get="{{ pagination.prev_url }}"
+                            hx-target="{{ pagination.target }}"
+                            hx-swap="{{ pagination.swap }}"
+                            aria-label="Предыдущая страница">
+                        <span aria-hidden="true">&laquo;</span>
+                    </button>
+                {% else %}
+                    <span class="page-link" aria-hidden="true">&laquo;</span>
+                {% endif %}
+            </li>
+            {% for item in pagination.pages %}
+                {% if item.ellipsis %}
+                    <li class="page-item disabled"><span class="page-link">…</span></li>
+                {% elif item.current %}
+                    <li class="page-item active" aria-current="page"><span class="page-link">{{ item.number }}</span></li>
+                {% else %}
+                    <li class="page-item">
+                        <button type="button"
+                                class="page-link"
+                                hx-get="{{ item.url }}"
+                                hx-target="{{ pagination.target }}"
+                                hx-swap="{{ pagination.swap }}">
+                            {{ item.number }}
+                        </button>
+                    </li>
+                {% endif %}
+            {% endfor %}
+            <li class="page-item {% if not page_obj.has_next %}disabled{% endif %}">
+                {% if page_obj.has_next %}
+                    <button type="button"
+                            class="page-link"
+                            hx-get="{{ pagination.next_url }}"
+                            hx-target="{{ pagination.target }}"
+                            hx-swap="{{ pagination.swap }}"
+                            aria-label="Следующая страница">
+                        <span aria-hidden="true">&raquo;</span>
+                    </button>
+                {% else %}
+                    <span class="page-link" aria-hidden="true">&raquo;</span>
+                {% endif %}
+            </li>
+        </ul>
+    </nav>
+</div>
+{% endif %}
