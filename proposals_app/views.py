@@ -154,17 +154,27 @@ def _should_sync_proposal_related_row(item):
 def _attach_proposal_folder_urls(proposals, user=None):
     folder_cache = {}
     share_resolution_paths = set()
+
+    def _stored_public(proposal):
+        return (getattr(proposal, "proposal_workspace_public_url", "") or "").strip()
+
+    def _assign_fallback_urls_without_share_resolution():
+        for proposal in proposals:
+            path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
+            if not path:
+                continue
+            folder_cache.setdefault(path, build_folder_url(path))
+            proposal.proposal_workspace_folder_url = _stored_public(proposal) or folder_cache.get(path, "")
+
     for proposal in proposals:
         path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
-        proposal.proposal_workspace_folder_url = (getattr(proposal, "proposal_workspace_public_url", "") or "").strip()
+        proposal.proposal_workspace_folder_url = ""
         if path:
             folder_cache.setdefault(path, build_folder_url(path))
-            if not proposal.proposal_workspace_folder_url:
-                proposal.proposal_workspace_folder_url = folder_cache.get(path, "")
-                share_resolution_paths.add(path)
+            share_resolution_paths.add(path)
 
     def _ensure_public_folder_url(proposal):
-        existing_url = (getattr(proposal, "proposal_workspace_public_url", "") or "").strip()
+        existing_url = _stored_public(proposal)
         if existing_url:
             return existing_url
 
@@ -187,47 +197,47 @@ def _attach_proposal_folder_urls(proposals, user=None):
         return public_url
 
     if not proposals or not is_nextcloud_primary():
+        _assign_fallback_urls_without_share_resolution()
         return
-    if not share_resolution_paths:
-        return
-    if user is None or not getattr(user, "is_authenticated", False):
-        return
+
     client = NextcloudApiClient()
     if not client.is_configured:
+        _assign_fallback_urls_without_share_resolution()
         return
-
-    link = NextcloudUserLink.objects.filter(user=user).first()
-    if link and link.nextcloud_user_id == client.username:
-        return
-    if not link or not link.nextcloud_user_id:
-        return
-
-    try:
-        share_map = client.list_user_shares(client.username, link.nextcloud_user_id)
-    except NextcloudApiError as exc:
-        logger.warning("Could not resolve Nextcloud share targets for proposals table: %s", exc)
-        share_map = {}
 
     resolved_cache = {}
-    for path in share_resolution_paths:
-        target_path = _resolve_shared_target_path(path, share_map)
-        direct_share = share_map.get(path)
-        direct_target_path = str(getattr(direct_share, "target_path", "") or "").strip()
-        if not target_path and direct_share is None:
+    if share_resolution_paths and user is not None and getattr(user, "is_authenticated", False):
+        link = NextcloudUserLink.objects.filter(user=user).first()
+        if (
+            link
+            and link.nextcloud_user_id
+            and link.nextcloud_user_id != client.username
+        ):
             try:
-                share = client.get_user_share(client.username, path, link.nextcloud_user_id)
+                share_map = client.list_user_shares(client.username, link.nextcloud_user_id)
             except NextcloudApiError as exc:
-                logger.warning(
-                    "Could not resolve Nextcloud share target for proposal path %s: %s",
-                    path,
-                    exc,
-                )
-                share = None
-            target_path = str(getattr(share, "target_path", "") or "").strip()
-        elif not target_path and direct_target_path:
-            target_path = direct_target_path
-        if target_path:
-            resolved_cache[path] = client.build_files_url(target_path)
+                logger.warning("Could not resolve Nextcloud share targets for proposals table: %s", exc)
+                share_map = {}
+
+            for path in share_resolution_paths:
+                target_path = _resolve_shared_target_path(path, share_map)
+                direct_share = share_map.get(path)
+                direct_target_path = str(getattr(direct_share, "target_path", "") or "").strip()
+                if not target_path and direct_share is None:
+                    try:
+                        share = client.get_user_share(client.username, path, link.nextcloud_user_id)
+                    except NextcloudApiError as exc:
+                        logger.warning(
+                            "Could not resolve Nextcloud share target for proposal path %s: %s",
+                            path,
+                            exc,
+                        )
+                        share = None
+                    target_path = str(getattr(share, "target_path", "") or "").strip()
+                elif not target_path and direct_target_path:
+                    target_path = direct_target_path
+                if target_path:
+                    resolved_cache[path] = client.build_files_url(target_path)
 
     for proposal in proposals:
         path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
@@ -235,7 +245,7 @@ def _attach_proposal_folder_urls(proposals, user=None):
             proposal.proposal_workspace_folder_url = (
                 resolved_cache.get(path)
                 or _ensure_public_folder_url(proposal)
-                or proposal.proposal_workspace_folder_url
+                or _stored_public(proposal)
                 or folder_cache.get(path, "")
             )
 

@@ -2142,6 +2142,33 @@ class ProposalDispatchDiskColumnTests(TestCase):
             html=False,
         )
 
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
+    def test_proposals_partial_uses_editor_files_url_instead_of_saved_public_link(
+        self,
+        mocked_list_user_shares,
+    ):
+        self.proposal.proposal_workspace_public_url = "https://cloud.example.com/s/readonly"
+        self.proposal.save(update_fields=["proposal_workspace_public_url"])
+        mocked_list_user_shares.return_value = {
+            self.proposal.proposal_workspace_disk_path: NextcloudShare(
+                share_id="82",
+                path=self.proposal.proposal_workspace_disk_path,
+                share_with=self.user_link.nextcloud_user_id,
+                permissions=15,
+                target_path="/Shared/333300RU DD Тестовое ТКП",
+            )
+        }
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'href="https://cloud.example.com/s/readonly"', html=False)
+        self.assertContains(
+            response,
+            "/apps/files/files?dir=/Shared/333300RU%20DD%20%D0%A2%D0%B5%D1%81%D1%82%D0%BE%D0%B2%D0%BE%D0%B5%20%D0%A2%D0%9A%D0%9F",
+            html=False,
+        )
+
     @patch("nextcloud_app.api.NextcloudApiClient.get_user_share")
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
     def test_proposals_partial_falls_back_to_direct_share_lookup_for_new_workspace(
@@ -2252,7 +2279,13 @@ class ProposalDispatchDiskColumnTests(TestCase):
         self.proposal.refresh_from_db()
         self.assertEqual(self.proposal.proposal_workspace_public_url, "https://cloud.example.com/s/proposal-folder")
 
-    def test_proposals_partial_prefers_saved_public_workspace_url(self):
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_proposals_partial_falls_back_to_saved_public_workspace_url_when_no_share_target(
+        self,
+        _mocked_list_user_shares,
+        _mocked_get_user_share,
+    ):
         self.proposal.proposal_workspace_public_url = "https://cloud.example.com/s/saved-proposal-folder"
         self.proposal.save(update_fields=["proposal_workspace_public_url"])
 
