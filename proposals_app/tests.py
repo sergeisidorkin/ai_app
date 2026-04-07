@@ -2241,9 +2241,10 @@ class ProposalDispatchDiskColumnTests(TestCase):
         response = self.client.get(reverse("proposals_partial"))
 
         self.assertEqual(response.status_code, 200)
+        expected_suffix = self.proposal.proposal_workspace_disk_path.split("/ТКП/", 1)[1]
         expected_url = (
             "https://cloud.example.com/apps/files/files?dir="
-            f"{quote(f'/ТКП/2026/{self.proposal.short_uid} DD Тестовое ТКП', safe='/')}"
+            f"{quote(f'/ТКП/{expected_suffix}', safe='/')}"
         )
         self.assertContains(
             response,
@@ -2278,9 +2279,10 @@ class ProposalDispatchDiskColumnTests(TestCase):
         response = self.client.get(reverse("proposals_partial"))
 
         self.assertEqual(response.status_code, 200)
+        expected_suffix = self.proposal.proposal_workspace_disk_path.split("/Corporate Root/ТКП/", 1)[1]
         expected_url = (
             "https://cloud.example.com/apps/files/files?dir="
-            f"{quote(f'/Shared/ТКП/2026/{self.proposal.short_uid} DD Тестовое ТКП', safe='/')}"
+            f"{quote(f'/Shared/ТКП/{expected_suffix}', safe='/')}"
         )
         self.assertContains(
             response,
@@ -2337,6 +2339,7 @@ class ProposalDispatchDiskColumnTests(TestCase):
     ):
         self.proposal.proposal_workspace_public_url = "https://cloud.example.com/s/saved-proposal-folder"
         self.proposal.save(update_fields=["proposal_workspace_public_url"])
+        owner_url = f"https://cloud.example.com/apps/files/files?dir={quote(self.proposal.proposal_workspace_disk_path, safe='/')}"
 
         response = self.client.get(reverse("proposals_partial"))
 
@@ -2348,7 +2351,7 @@ class ProposalDispatchDiskColumnTests(TestCase):
         )
         self.assertNotContains(
             response,
-            f'href="https://cloud.example.com/apps/files/files?dir={quote(self.proposal.proposal_workspace_disk_path, safe='/')}"',
+            f'href="{owner_url}"',
             html=False,
         )
 
@@ -2386,6 +2389,7 @@ class ProposalDispatchDiskColumnTests(TestCase):
         _mocked_list_user_shares,
         _mocked_get_user_share,
     ):
+        self.user_link.delete()
         self.proposal.proposal_workspace_disk_path = ""
         self.proposal.save(update_fields=["proposal_workspace_disk_path"])
 
