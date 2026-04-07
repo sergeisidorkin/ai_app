@@ -2224,7 +2224,7 @@ class ProposalDispatchDiskColumnTests(TestCase):
         )
 
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
-    def test_proposals_partial_keeps_cloud_link_when_direct_share_has_no_target_path(
+    def test_proposals_partial_resolves_parent_shared_folder_when_direct_share_has_no_target_path(
         self,
         mocked_list_user_shares,
     ):
@@ -2235,7 +2235,14 @@ class ProposalDispatchDiskColumnTests(TestCase):
                 share_with=self.user_link.nextcloud_user_id,
                 permissions=15,
                 target_path="",
-            )
+            ),
+            "/Corporate Root/ТКП": NextcloudShare(
+                share_id="81",
+                path="/Corporate Root/ТКП",
+                share_with=self.user_link.nextcloud_user_id,
+                permissions=15,
+                target_path="/Shared/ТКП",
+            ),
         }
 
         response = self.client.get(reverse("proposals_partial"))
@@ -2243,7 +2250,7 @@ class ProposalDispatchDiskColumnTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(
             response,
-            "/apps/files/files?dir=/Corporate%20Root/%D0%A2%D0%9A%D0%9F/2026/333300RU%20DD%20%D0%A2%D0%B5%D1%81%D1%82%D0%BE%D0%B2%D0%BE%D0%B5%20%D0%A2%D0%9A%D0%9F",
+            "/apps/files/files?dir=/Shared/%D0%A2%D0%9A%D0%9F/2026/333300RU%20DD%20%D0%A2%D0%B5%D1%81%D1%82%D0%BE%D0%B2%D0%BE%D0%B5%20%D0%A2%D0%9A%D0%9F",
             html=False,
         )
 
