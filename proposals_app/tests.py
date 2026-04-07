@@ -246,7 +246,7 @@ class ProposalDispatchSendTests(TestCase):
             contact_email="",
         )
 
-    @patch("proposals_app.services.send_notification_email")
+    @patch("ai_app.proposals_app.services.send_notification_email")
     def test_dispatch_send_updates_only_successfully_sent_rows(self, mocked_send_notification_email):
         mocked_send_notification_email.return_value = {
             "recipient_email": "recipient@example.com",
@@ -293,9 +293,9 @@ class ProposalDispatchSendTests(TestCase):
         self.assertEqual(self.successful_proposal.sent_date, "04.04.2026 12:30")
         self.assertEqual(self.failed_proposal.sent_date, "")
 
-    @patch("proposals_app.services.send_notification_email")
+    @patch("ai_app.proposals_app.services.send_notification_email")
     @patch(
-        "proposals_app.services.get_user_notification_email_options",
+        "ai_app.proposals_app.services.get_user_notification_email_options",
         return_value={},
     )
     def test_dispatch_send_marks_row_sent_when_at_least_one_channel_succeeds(
@@ -332,7 +332,7 @@ class ProposalDispatchSendTests(TestCase):
         self.successful_proposal.refresh_from_db()
         self.assertEqual(self.successful_proposal.sent_date, "04.04.2026 12:30")
 
-    @patch("proposals_app.services.send_notification_email")
+    @patch("ai_app.proposals_app.services.send_notification_email")
     def test_dispatch_send_uses_rendered_fallback_subject_when_template_subject_empty(self, mocked_send_notification_email):
         mocked_send_notification_email.return_value = {
             "recipient_email": "recipient@example.com",
@@ -370,8 +370,8 @@ class ProposalDispatchSendTests(TestCase):
             f"Технико-коммерческое предложение IMC Montan {expected_tkp_id}",
         )
 
-    @patch("proposals_app.services.send_notification_email")
-    @patch("proposals_app.services.get_user_notification_email_options", return_value={})
+    @patch("ai_app.proposals_app.services.send_notification_email")
+    @patch("ai_app.proposals_app.services.get_user_notification_email_options", return_value={})
     def test_dispatch_send_returns_error_when_connected_email_unavailable(
         self,
         _mocked_email_options,
@@ -1976,8 +1976,8 @@ class ProposalNextcloudWorkspaceHookTests(TestCase):
         payload.update(overrides)
         return payload
 
-    @patch("proposals_app.views.create_proposal_workspace")
-    @patch("proposals_app.views.is_nextcloud_primary", return_value=True)
+    @patch("ai_app.proposals_app.views.create_proposal_workspace")
+    @patch("ai_app.proposals_app.views.is_nextcloud_primary", return_value=True)
     def test_create_view_triggers_nextcloud_workspace_for_new_proposal(self, _mocked_is_nextcloud, mocked_workspace):
         mocked_workspace.return_value = "/Corporate Root/ТКП/2026/333300RU DD Тестовое ТКП"
         response = self.client.post(reverse("proposal_form_create"), self._payload())
@@ -2048,8 +2048,8 @@ class ProposalNextcloudWorkspaceHookTests(TestCase):
         self.assertEqual(entity.name, 'ООО "Заказчик"')
         self.assertEqual(entity.source, "[ТКП / Заказчик]")
 
-    @patch("proposals_app.views.create_proposal_workspace")
-    @patch("proposals_app.views.is_nextcloud_primary", return_value=True)
+    @patch("ai_app.proposals_app.views.create_proposal_workspace")
+    @patch("ai_app.proposals_app.views.is_nextcloud_primary", return_value=True)
     def test_edit_view_does_not_trigger_nextcloud_workspace(self, _mocked_is_nextcloud, mocked_workspace):
         proposal = ProposalRegistration.objects.create(
             number=3333,
