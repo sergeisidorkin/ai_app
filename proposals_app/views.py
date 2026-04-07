@@ -204,7 +204,7 @@ def _attach_proposal_folder_urls(proposals, user=None):
                 target_path = _resolve_shared_target_path(path, share_map)
                 direct_share = share_map.get(path)
                 direct_target_path = str(getattr(direct_share, "target_path", "") or "").strip()
-                if not target_path and direct_share is None:
+                if not target_path:
                     try:
                         share = client.get_user_share(client.username, path, link.nextcloud_user_id)
                     except NextcloudApiError as exc:
@@ -215,7 +215,7 @@ def _attach_proposal_folder_urls(proposals, user=None):
                         )
                         share = None
                     target_path = str(getattr(share, "target_path", "") or "").strip()
-                elif not target_path and direct_target_path:
+                if not target_path and direct_target_path:
                     target_path = direct_target_path
                 if target_path:
                     resolved_cache[path] = client.build_files_url(target_path)

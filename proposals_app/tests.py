@@ -2223,10 +2223,12 @@ class ProposalDispatchDiskColumnTests(TestCase):
             html=False,
         )
 
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
     def test_proposals_partial_resolves_parent_shared_folder_when_direct_share_has_no_target_path(
         self,
         mocked_list_user_shares,
+        _mocked_get_user_share,
     ):
         mocked_list_user_shares.return_value = {
             self.proposal.proposal_workspace_disk_path: NextcloudShare(
@@ -2248,9 +2250,13 @@ class ProposalDispatchDiskColumnTests(TestCase):
         response = self.client.get(reverse("proposals_partial"))
 
         self.assertEqual(response.status_code, 200)
+        expected_url = (
+            "https://cloud.example.com/apps/files/files?dir="
+            f"{quote(f'/Shared/ТКП/2026/{self.proposal.short_uid} DD Тестовое ТКП', safe='/')}"
+        )
         self.assertContains(
             response,
-            "/apps/files/files?dir=/Shared/%D0%A2%D0%9A%D0%9F/2026/333300RU%20DD%20%D0%A2%D0%B5%D1%81%D1%82%D0%BE%D0%B2%D0%BE%D0%B5%20%D0%A2%D0%9A%D0%9F",
+            expected_url,
             html=False,
         )
 
