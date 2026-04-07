@@ -675,8 +675,9 @@ class NextcloudProposalWorkspaceTests(TestCase):
         client.ensure_folder.assert_not_called()
 
     @patch("nextcloud_app.workspace.ensure_nextcloud_account")
-    def test_create_proposal_workspace_skips_editor_share_for_director(self, mocked_ensure_account):
+    def test_create_proposal_workspace_grants_editor_share_for_director(self, mocked_ensure_account):
         Employee.objects.create(user=self.author, role="Директор")
+        mocked_ensure_account.return_value = Mock(nextcloud_user_id=f"ncstaff-{self.author.pk}")
         client = Mock()
         client.is_configured = True
         client.username = "cloud-admin"
@@ -688,8 +689,13 @@ class NextcloudProposalWorkspaceTests(TestCase):
         workspace_path = create_proposal_workspace(self.author, self.proposal, client=client)
 
         self.assertEqual(workspace_path, f"/Corporate Root/ТКП/2026/{folder_name}")
-        mocked_ensure_account.assert_not_called()
-        client.ensure_user_share.assert_not_called()
+        mocked_ensure_account.assert_called_once()
+        client.ensure_user_share.assert_called_once_with(
+            "cloud-admin",
+            f"/Corporate Root/ТКП/2026/{folder_name}",
+            f"ncstaff-{self.author.pk}",
+            permissions=15,
+        )
 
 
 @override_settings(

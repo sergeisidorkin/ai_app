@@ -118,9 +118,6 @@ def create_proposal_workspace(
     year_path = client.ensure_folder(owner_user_id, _join_path(tkp_root_path, _sanitize(str(proposal.year))))
     proposal_path = client.ensure_folder(owner_user_id, proposal_path)
 
-    if _should_skip_proposal_editor_share(user):
-        return proposal_path
-
     user_link = ensure_nextcloud_account(user, client=client)
     if not user_link or not user_link.nextcloud_user_id:
         raise NextcloudApiError("Не удалось определить Nextcloud-пользователя автора записи ТКП.")
@@ -476,8 +473,3 @@ def build_proposal_workspace_path(proposal, *, base_root: str | None = None) -> 
     tkp_root_path = _join_path(base, _sanitize("ТКП"))
     year_path = _join_path(tkp_root_path, _sanitize(str(proposal.year)))
     return _join_path(year_path, _build_proposal_workspace_folder_name(proposal))
-
-
-def _should_skip_proposal_editor_share(user) -> bool:
-    employee = getattr(user, "employee_profile", None)
-    return str(getattr(employee, "role", "") or "").strip() == "Директор"
