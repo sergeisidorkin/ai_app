@@ -100,7 +100,8 @@ def create_proposal_workspace(
     proposal,
     *,
     client: NextcloudApiClient | None = None,
-) -> str:
+    return_share_target: bool = False,
+) -> str | tuple[str, str]:
     client = client or NextcloudApiClient()
     if not client.is_configured:
         raise NextcloudApiError("Nextcloud не настроен для создания рабочей папки ТКП.")
@@ -122,12 +123,15 @@ def create_proposal_workspace(
     if not user_link or not user_link.nextcloud_user_id:
         raise NextcloudApiError("Не удалось определить Nextcloud-пользователя автора записи ТКП.")
 
-    client.ensure_user_share(
+    share = client.ensure_user_share(
         owner_user_id,
         proposal_path,
         user_link.nextcloud_user_id,
         permissions=NextcloudApiClient.EDITOR_PERMISSIONS,
     )
+    share_target_path = str(getattr(share, "target_path", "") or "").strip()
+    if return_share_target:
+        return proposal_path, share_target_path
     return proposal_path
 
 

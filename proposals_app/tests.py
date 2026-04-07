@@ -48,6 +48,7 @@ from .models import (
     ProposalTemplate,
     ProposalVariable,
 )
+from .views import PROPOSAL_NEXTCLOUD_TARGETS_SESSION_KEY
 from .variable_resolver import resolve_variables
 
 
@@ -245,7 +246,7 @@ class ProposalDispatchSendTests(TestCase):
             contact_email="",
         )
 
-    @patch("proposals_app.services.send_notification_email")
+    @patch("ai_app.proposals_app.services.send_notification_email")
     def test_dispatch_send_updates_only_successfully_sent_rows(self, mocked_send_notification_email):
         mocked_send_notification_email.return_value = {
             "recipient_email": "recipient@example.com",
@@ -292,9 +293,9 @@ class ProposalDispatchSendTests(TestCase):
         self.assertEqual(self.successful_proposal.sent_date, "04.04.2026 12:30")
         self.assertEqual(self.failed_proposal.sent_date, "")
 
-    @patch("proposals_app.services.send_notification_email")
+    @patch("ai_app.proposals_app.services.send_notification_email")
     @patch(
-        "proposals_app.services.get_user_notification_email_options",
+        "ai_app.proposals_app.services.get_user_notification_email_options",
         return_value={},
     )
     def test_dispatch_send_marks_row_sent_when_at_least_one_channel_succeeds(
@@ -331,7 +332,7 @@ class ProposalDispatchSendTests(TestCase):
         self.successful_proposal.refresh_from_db()
         self.assertEqual(self.successful_proposal.sent_date, "04.04.2026 12:30")
 
-    @patch("proposals_app.services.send_notification_email")
+    @patch("ai_app.proposals_app.services.send_notification_email")
     def test_dispatch_send_uses_rendered_fallback_subject_when_template_subject_empty(self, mocked_send_notification_email):
         mocked_send_notification_email.return_value = {
             "recipient_email": "recipient@example.com",
@@ -369,8 +370,8 @@ class ProposalDispatchSendTests(TestCase):
             f"Технико-коммерческое предложение IMC Montan {expected_tkp_id}",
         )
 
-    @patch("proposals_app.services.send_notification_email")
-    @patch("proposals_app.services.get_user_notification_email_options", return_value={})
+    @patch("ai_app.proposals_app.services.send_notification_email")
+    @patch("ai_app.proposals_app.services.get_user_notification_email_options", return_value={})
     def test_dispatch_send_returns_error_when_connected_email_unavailable(
         self,
         _mocked_email_options,
@@ -1975,8 +1976,8 @@ class ProposalNextcloudWorkspaceHookTests(TestCase):
         payload.update(overrides)
         return payload
 
-    @patch("proposals_app.views.create_proposal_workspace")
-    @patch("proposals_app.views.is_nextcloud_primary", return_value=True)
+    @patch("ai_app.proposals_app.views.create_proposal_workspace")
+    @patch("ai_app.proposals_app.views.is_nextcloud_primary", return_value=True)
     def test_create_view_triggers_nextcloud_workspace_for_new_proposal(self, _mocked_is_nextcloud, mocked_workspace):
         mocked_workspace.return_value = "/Corporate Root/ТКП/2026/333300RU DD Тестовое ТКП"
         response = self.client.post(reverse("proposal_form_create"), self._payload())
@@ -2047,8 +2048,8 @@ class ProposalNextcloudWorkspaceHookTests(TestCase):
         self.assertEqual(entity.name, 'ООО "Заказчик"')
         self.assertEqual(entity.source, "[ТКП / Заказчик]")
 
-    @patch("proposals_app.views.create_proposal_workspace")
-    @patch("proposals_app.views.is_nextcloud_primary", return_value=True)
+    @patch("ai_app.proposals_app.views.create_proposal_workspace")
+    @patch("ai_app.proposals_app.views.is_nextcloud_primary", return_value=True)
     def test_edit_view_does_not_trigger_nextcloud_workspace(self, _mocked_is_nextcloud, mocked_workspace):
         proposal = ProposalRegistration.objects.create(
             number=3333,
@@ -2261,6 +2262,43 @@ class ProposalDispatchDiskColumnTests(TestCase):
         )
 
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
+    def test_proposals_partial_strips_owner_root_from_direct_share_target_path_for_viewer(
+        self,
+        mocked_list_user_shares,
+    ):
+        mocked_list_user_shares.return_value = {
+            self.proposal.proposal_workspace_disk_path: NextcloudShare(
+                share_id="79-direct-owner-path",
+                path=self.proposal.proposal_workspace_disk_path,
+                share_with=self.user_link.nextcloud_user_id,
+                permissions=15,
+                target_path="/Corporate Root/ТКП/2026/333300RU DD Тестовое ТКП",
+            )
+        }
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        stripped_url = (
+            "https://cloud.example.com/apps/files/files?dir="
+            f"{quote('/ТКП/2026/333300RU DD Тестовое ТКП', safe='/')}"
+        )
+        owner_url = (
+            "https://cloud.example.com/apps/files/files?dir="
+            f"{quote('/Corporate Root/ТКП/2026/333300RU DD Тестовое ТКП', safe='/')}"
+        )
+        self.assertContains(
+            response,
+            f'href="{stripped_url}"',
+            html=False,
+        )
+        self.assertNotContains(
+            response,
+            f'href="{owner_url}"',
+            html=False,
+        )
+
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
     def test_proposals_partial_resolves_editor_cloud_link_from_parent_share_without_owner_root_prefix(
         self,
         mocked_list_user_shares,
@@ -2393,11 +2431,76 @@ class ProposalDispatchDiskColumnTests(TestCase):
 
     @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
-    def test_proposals_partial_does_not_fall_back_to_owner_cloud_link_when_share_target_is_missing_for_viewer_with_nextcloud(
+    def test_proposals_partial_falls_back_to_root_stripped_shared_path_when_share_target_is_missing_for_viewer_with_nextcloud(
         self,
         _mocked_list_user_shares,
         _mocked_get_user_share,
     ):
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        owner_url = f"https://cloud.example.com/apps/files/files?dir={quote(self.proposal.proposal_workspace_disk_path, safe='/')}"
+        stripped_url = (
+            "https://cloud.example.com/apps/files/files?dir="
+            f"{quote('/ТКП/2026/333300RU DD Тестовое ТКП', safe='/')}"
+        )
+        self.assertNotContains(
+            response,
+            f'href="{owner_url}"',
+            html=False,
+        )
+        self.assertContains(
+            response,
+            f'href="{stripped_url}"',
+            html=False,
+        )
+
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_proposals_partial_uses_cached_session_target_path_when_share_api_lags(
+        self,
+        _mocked_list_user_shares,
+        _mocked_get_user_share,
+    ):
+        session = self.client.session
+        session[PROPOSAL_NEXTCLOUD_TARGETS_SESSION_KEY] = {
+            self.proposal.proposal_workspace_disk_path: "/333300RU DD Тестовое ТКП",
+        }
+        session.save()
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        cached_url = (
+            "https://cloud.example.com/apps/files/files?dir="
+            f"{quote('/333300RU DD Тестовое ТКП', safe='/')}"
+        )
+        stripped_url = (
+            "https://cloud.example.com/apps/files/files?dir="
+            f"{quote('/ТКП/2026/333300RU DD Тестовое ТКП', safe='/')}"
+        )
+        self.assertContains(
+            response,
+            f'href="{cached_url}"',
+            html=False,
+        )
+        self.assertNotContains(
+            response,
+            f'href="{stripped_url}"',
+            html=False,
+        )
+
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_proposals_partial_keeps_gray_icon_when_root_stripped_fallback_is_unavailable(
+        self,
+        _mocked_list_user_shares,
+        _mocked_get_user_share,
+    ):
+        settings_obj = CloudStorageSettings.get_solo()
+        settings_obj.nextcloud_root_path = "/Another Root"
+        settings_obj.save(update_fields=["nextcloud_root_path"])
+
         response = self.client.get(reverse("proposals_partial"))
 
         self.assertEqual(response.status_code, 200)

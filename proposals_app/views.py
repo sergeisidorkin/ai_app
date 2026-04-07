@@ -14,7 +14,12 @@ from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from classifiers_app.models import LegalEntityRecord
-from core.cloud_storage import build_folder_url, get_primary_cloud_storage_label, is_nextcloud_primary
+from core.cloud_storage import (
+    build_folder_url,
+    get_nextcloud_root_path,
+    get_primary_cloud_storage_label,
+    is_nextcloud_primary,
+)
 from experts_app.models import ExpertProfile, ExpertProfileSpecialty
 from nextcloud_app.api import NextcloudApiClient, NextcloudApiError
 from nextcloud_app.models import NextcloudUserLink
@@ -53,6 +58,7 @@ PROPOSAL_VARIABLE_FORM_TEMPLATE = "proposals_app/proposal_variable_form.html"
 
 HX_TRIGGER_HEADER = "HX-Trigger"
 HX_PROPOSALS_UPDATED_EVENT = "proposals-updated"
+PROPOSAL_NEXTCLOUD_TARGETS_SESSION_KEY = "proposal_nextcloud_target_paths"
 logger = logging.getLogger(__name__)
 
 
@@ -124,14 +130,21 @@ def _build_shared_target_candidate(
     return None
 
 
-def _resolve_shared_target_path(path: str, share_map: dict[str, object]) -> str:
+def _get_normalized_nextcloud_root_path() -> str:
+    return _normalize_nextcloud_path(get_nextcloud_root_path())
+
+
+def _resolve_shared_target_path(path: str, share_map: dict[str, object], *, root_path: str = "") -> str:
     normalized_path = _normalize_nextcloud_path(path)
     if not normalized_path:
         return ""
 
     candidates = []
     for shared_path, share in share_map.items():
-        target_path = str(getattr(share, "target_path", "") or "").strip()
+        target_path = _normalize_viewer_target_path(
+            getattr(share, "target_path", "") or "",
+            root_path=root_path,
+        )
         candidate = _build_shared_target_candidate(normalized_path, shared_path, target_path)
         if candidate is not None:
             candidates.append(candidate)
@@ -143,7 +156,14 @@ def _resolve_shared_target_path(path: str, share_map: dict[str, object]) -> str:
     return resolved_target_path
 
 
-def _resolve_target_path_via_user_share_lookup(client, owner_user_id: str, path: str, share_with_user_id: str):
+def _resolve_target_path_via_user_share_lookup(
+    client,
+    owner_user_id: str,
+    path: str,
+    share_with_user_id: str,
+    *,
+    root_path: str = "",
+):
     normalized_path = _normalize_nextcloud_path(path)
     if not normalized_path or normalized_path == "/":
         return "", None
@@ -154,7 +174,10 @@ def _resolve_target_path_via_user_share_lookup(client, owner_user_id: str, path:
         share = client.get_user_share(owner_user_id, current_path, share_with_user_id)
         if share is not None:
             last_share = share
-            target_path = str(getattr(share, "target_path", "") or "").strip()
+            target_path = _normalize_viewer_target_path(
+                getattr(share, "target_path", "") or "",
+                root_path=root_path,
+            )
             if target_path:
                 candidate = _build_shared_target_candidate(normalized_path, current_path, target_path)
                 if candidate is not None:
@@ -162,6 +185,66 @@ def _resolve_target_path_via_user_share_lookup(client, owner_user_id: str, path:
         current_path = current_path.rsplit("/", 1)[0] or "/"
 
     return "", last_share
+
+
+def _build_root_stripped_nextcloud_url(client, path: str, *, root_path: str = "") -> str:
+    normalized_path = _normalize_nextcloud_path(path)
+    if not normalized_path or not root_path or root_path == "/":
+        return ""
+    if normalized_path == root_path:
+        return client.build_files_url("/")
+    if not normalized_path.startswith(f"{root_path}/"):
+        return ""
+    stripped_path = _normalize_nextcloud_path(normalized_path[len(root_path) :])
+    if not stripped_path or stripped_path == normalized_path:
+        return ""
+    return client.build_files_url(stripped_path)
+
+
+def _normalize_viewer_target_path(path: str, *, root_path: str = "") -> str:
+    normalized_path = _normalize_nextcloud_path(path)
+    if not normalized_path:
+        return ""
+    if not root_path or root_path == "/":
+        return normalized_path
+    if normalized_path == root_path:
+        return "/"
+    if normalized_path.startswith(f"{root_path}/"):
+        stripped_path = _normalize_nextcloud_path(normalized_path[len(root_path) :])
+        if stripped_path:
+            return stripped_path
+    return normalized_path
+
+
+def _get_cached_proposal_target_paths(request=None, *, root_path: str = "") -> dict[str, str]:
+    if request is None or not hasattr(request, "session"):
+        return {}
+    raw_value = request.session.get(PROPOSAL_NEXTCLOUD_TARGETS_SESSION_KEY)
+    if not isinstance(raw_value, dict):
+        return {}
+    cached = {}
+    for path, target_path in raw_value.items():
+        normalized_path = _normalize_nextcloud_path(path)
+        normalized_target_path = _normalize_viewer_target_path(target_path, root_path=root_path)
+        if normalized_path and normalized_target_path:
+            cached[normalized_path] = normalized_target_path
+    return cached
+
+
+def _cache_proposal_target_path(request, proposal_path: str, target_path: str, *, root_path: str = "") -> None:
+    normalized_path = _normalize_nextcloud_path(proposal_path)
+    normalized_target_path = _normalize_viewer_target_path(target_path, root_path=root_path)
+    if (
+        request is None
+        or not hasattr(request, "session")
+        or not normalized_path
+        or not normalized_target_path
+    ):
+        return
+    cached = _get_cached_proposal_target_paths(request, root_path=root_path)
+    cached[normalized_path] = normalized_target_path
+    request.session[PROPOSAL_NEXTCLOUD_TARGETS_SESSION_KEY] = cached
+    request.session.modified = True
 
 
 def _serialize_nextcloud_share(share) -> dict[str, object]:
@@ -277,7 +360,7 @@ def _should_sync_proposal_related_row(item):
     )
 
 
-def _attach_proposal_folder_urls(proposals, user=None, *, debug_nextcloud_links=False):
+def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_nextcloud_links=False):
     folder_cache = {}
     share_resolution_paths = set()
     viewer_has_nextcloud_link = False
@@ -309,7 +392,9 @@ def _attach_proposal_folder_urls(proposals, user=None, *, debug_nextcloud_links=
         _assign_fallback_urls_without_share_resolution()
         return
 
+    normalized_root_path = _get_normalized_nextcloud_root_path()
     resolved_cache = {}
+    cached_target_paths = _get_cached_proposal_target_paths(request, root_path=normalized_root_path)
     if share_resolution_paths and user is not None and getattr(user, "is_authenticated", False):
         link = NextcloudUserLink.objects.filter(user=user).first()
         if (
@@ -325,9 +410,12 @@ def _attach_proposal_folder_urls(proposals, user=None, *, debug_nextcloud_links=
                 share_map = {}
 
             for path in share_resolution_paths:
-                target_path = _resolve_shared_target_path(path, share_map)
+                target_path = _resolve_shared_target_path(path, share_map, root_path=normalized_root_path)
                 direct_share = share_map.get(path)
-                direct_target_path = str(getattr(direct_share, "target_path", "") or "").strip()
+                direct_target_path = _normalize_viewer_target_path(
+                    getattr(direct_share, "target_path", "") or "",
+                    root_path=normalized_root_path,
+                )
                 lookup_share = None
                 if not target_path:
                     try:
@@ -336,6 +424,7 @@ def _attach_proposal_folder_urls(proposals, user=None, *, debug_nextcloud_links=
                             client.username,
                             path,
                             link.nextcloud_user_id,
+                            root_path=normalized_root_path,
                         )
                     except NextcloudApiError as exc:
                         logger.warning(
@@ -347,13 +436,19 @@ def _attach_proposal_folder_urls(proposals, user=None, *, debug_nextcloud_links=
                         lookup_share = None
                 if not target_path and direct_target_path:
                     target_path = direct_target_path
+                if not target_path:
+                    target_path = cached_target_paths.get(path, "")
                 if target_path:
                     resolved_cache[path] = client.build_files_url(target_path)
                 _log_nextcloud_resolution_debug(
                     path=path,
                     share_map=share_map,
                     direct_share=direct_share,
-                    resolved_target_path=_resolve_shared_target_path(path, share_map),
+                    resolved_target_path=_resolve_shared_target_path(
+                        path,
+                        share_map,
+                        root_path=normalized_root_path,
+                    ),
                     lookup_share=lookup_share,
                     final_target_path=target_path,
                     final_url=resolved_cache.get(path, ""),
@@ -367,7 +462,11 @@ def _attach_proposal_folder_urls(proposals, user=None, *, debug_nextcloud_links=
         path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
         if path:
             if viewer_has_nextcloud_link:
-                proposal.proposal_workspace_folder_url = resolved_cache.get(path) or _stored_public(proposal)
+                proposal.proposal_workspace_folder_url = (
+                    resolved_cache.get(path)
+                    or _stored_public(proposal)
+                    or _build_root_stripped_nextcloud_url(client, path, root_path=normalized_root_path)
+                )
                 if not resolved_cache.get(path):
                     _log_nextcloud_resolution_debug(
                         path=path,
@@ -386,7 +485,9 @@ def _attach_proposal_folder_urls(proposals, user=None, *, debug_nextcloud_links=
                 )
 
 
-def _proposals_context(user=None, *, debug_nextcloud_links=False):
+def _proposals_context(request=None, user=None, *, debug_nextcloud_links=False):
+    if request is not None and user is None:
+        user = request.user
     proposals = ProposalRegistration.objects.select_related(
         "group_member",
         "country",
@@ -394,7 +495,7 @@ def _proposals_context(user=None, *, debug_nextcloud_links=False):
         "type",
         "currency",
     ).all()
-    _attach_proposal_folder_urls(proposals, user=user, debug_nextcloud_links=debug_nextcloud_links)
+    _attach_proposal_folder_urls(proposals, user=user, request=request, debug_nextcloud_links=debug_nextcloud_links)
     proposal_templates = list(ProposalTemplate.objects.select_related("group_member", "product").all())
     proposal_variables = ProposalVariable.objects.all()
     order_map = _proposal_group_member_order_map()
@@ -426,7 +527,7 @@ def _render_proposals_updated(request):
     response = render(
         request,
         PROPOSALS_PARTIAL_TEMPLATE,
-        _proposals_context(request.user, debug_nextcloud_links=_proposal_link_debug_enabled(request)),
+        _proposals_context(request=request, debug_nextcloud_links=_proposal_link_debug_enabled(request)),
     )
     response[HX_TRIGGER_HEADER] = HX_PROPOSALS_UPDATED_EVENT
     return response
@@ -436,15 +537,29 @@ def _maybe_create_nextcloud_proposal_workspace(request, proposal) -> None:
     if not is_nextcloud_primary():
         return
     try:
-        workspace_path = create_proposal_workspace(request.user, proposal)
+        workspace_result = create_proposal_workspace(
+            request.user,
+            proposal,
+            return_share_target=True,
+        )
     except NextcloudApiError:
         # The registry row should still be saved even if the cloud sync fails.
         return
+    if isinstance(workspace_result, tuple):
+        workspace_path, share_target_path = workspace_result
+    else:
+        workspace_path, share_target_path = workspace_result, ""
     proposal.proposal_workspace_disk_path = workspace_path
     # For Nextcloud we want the table icon to resolve to a user share with editor
     # permissions, not to a public readonly link.
     proposal.proposal_workspace_public_url = ""
     proposal.save(update_fields=["proposal_workspace_disk_path", "proposal_workspace_public_url"])
+    _cache_proposal_target_path(
+        request,
+        workspace_path,
+        share_target_path,
+        root_path=_get_normalized_nextcloud_root_path(),
+    )
 
 
 def _render_proposal_form(request, *, form, action, proposal=None):
@@ -847,7 +962,7 @@ def proposals_partial(request):
     return render(
         request,
         PROPOSALS_PARTIAL_TEMPLATE,
-        _proposals_context(request.user, debug_nextcloud_links=_proposal_link_debug_enabled(request)),
+        _proposals_context(request=request, debug_nextcloud_links=_proposal_link_debug_enabled(request)),
     )
 
 
