@@ -74,8 +74,6 @@ def _resolve_shared_target_path(path: str, share_map: dict[str, object]) -> str:
     direct_target_path = str(getattr(direct_share, "target_path", "") or "").strip()
     if direct_target_path:
         return direct_target_path
-    if direct_share is not None:
-        return normalized_path
 
     parent_candidates = []
     for shared_path, share in share_map.items():
@@ -89,9 +87,13 @@ def _resolve_shared_target_path(path: str, share_map: dict[str, object]) -> str:
     if not parent_candidates:
         return ""
 
-    _, shared_path, target_path = max(parent_candidates, key=lambda item: item[0])
+    candidates_with_target = [item for item in parent_candidates if item[2]]
+    if candidates_with_target:
+        _, shared_path, target_path = max(candidates_with_target, key=lambda item: item[0])
+    else:
+        _, shared_path, target_path = max(parent_candidates, key=lambda item: item[0])
     if not target_path:
-        return normalized_path
+        return ""
     suffix = normalized_path[len(shared_path) :].strip("/")
     if not suffix:
         return target_path
