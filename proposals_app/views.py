@@ -230,8 +230,8 @@ def _attach_proposal_folder_urls(proposals, user=None):
             else:
                 proposal.proposal_workspace_folder_url = (
                     resolved_cache.get(path)
-                    or folder_cache.get(path, "")
                     or _stored_public(proposal)
+                    or folder_cache.get(path, "")
                 )
 
 

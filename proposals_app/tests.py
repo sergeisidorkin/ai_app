@@ -2347,9 +2347,10 @@ class ProposalDispatchDiskColumnTests(TestCase):
         response = self.client.get(reverse("proposals_partial"))
 
         self.assertEqual(response.status_code, 200)
+        expected_workspace_path = f"/Corporate Root/ТКП/2026/{self.proposal.short_uid} DD Тестовое ТКП"
         owner_url = (
             "https://cloud.example.com/apps/files/files?dir="
-            f"{quote('/Corporate Root/ТКП/2026/333300RU DD Тестовое ТКП', safe='/')}"
+            f"{quote(expected_workspace_path, safe='/')}"
         )
         self.assertContains(
             response,
