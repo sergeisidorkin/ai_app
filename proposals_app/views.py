@@ -72,20 +72,31 @@ def _nextcloud_path_parts(path: str) -> list[str]:
     return [part for part in normalized.strip("/").split("/") if part]
 
 
-def _build_shared_target_candidate(normalized_path: str, shared_path: str, target_path: str) -> tuple[int, int, str] | None:
+def _build_shared_target_candidate(
+    normalized_path: str,
+    shared_path: str,
+    target_path: str,
+) -> tuple[int, int, int, int, str, str] | None:
     normalized_shared_path = _normalize_nextcloud_path(shared_path)
     clean_target_path = str(target_path or "").strip()
     if not normalized_shared_path or not clean_target_path:
         return None
 
+    shared_parts = _nextcloud_path_parts(normalized_shared_path)
     if normalized_path == normalized_shared_path or normalized_path.startswith(f"{normalized_shared_path}/"):
         suffix = normalized_path[len(normalized_shared_path) :].strip("/")
         if not suffix:
-            return (2, len(_nextcloud_path_parts(normalized_shared_path)), clean_target_path)
-        return (2, len(_nextcloud_path_parts(normalized_shared_path)), f"{clean_target_path.rstrip('/')}/{suffix}")
+            return (2, len(shared_parts), 0, len(normalized_shared_path), normalized_shared_path, clean_target_path)
+        return (
+            2,
+            len(shared_parts),
+            0,
+            len(normalized_shared_path),
+            normalized_shared_path,
+            f"{clean_target_path.rstrip('/')}/{suffix}",
+        )
 
     path_parts = _nextcloud_path_parts(normalized_path)
-    shared_parts = _nextcloud_path_parts(normalized_shared_path)
     if not path_parts or not shared_parts or len(shared_parts) > len(path_parts):
         return None
 
@@ -94,8 +105,22 @@ def _build_shared_target_candidate(normalized_path: str, shared_path: str, targe
             continue
         suffix_parts = path_parts[start_index + len(shared_parts) :]
         if not suffix_parts:
-            return (1, len(shared_parts), clean_target_path)
-        return (1, len(shared_parts), f"{clean_target_path.rstrip('/')}/{'/'.join(suffix_parts)}")
+            return (
+                1,
+                len(shared_parts),
+                -start_index,
+                len(normalized_shared_path),
+                normalized_shared_path,
+                clean_target_path,
+            )
+        return (
+            1,
+            len(shared_parts),
+            -start_index,
+            len(normalized_shared_path),
+            normalized_shared_path,
+            f"{clean_target_path.rstrip('/')}/{'/'.join(suffix_parts)}",
+        )
     return None
 
 
@@ -114,8 +139,29 @@ def _resolve_shared_target_path(path: str, share_map: dict[str, object]) -> str:
     if not candidates:
         return ""
 
-    _, _, resolved_target_path = max(candidates, key=lambda item: (item[0], item[1]))
+    _, _, _, _, _, resolved_target_path = max(candidates, key=lambda item: item[:5])
     return resolved_target_path
+
+
+def _resolve_target_path_via_user_share_lookup(client, owner_user_id: str, path: str, share_with_user_id: str):
+    normalized_path = _normalize_nextcloud_path(path)
+    if not normalized_path or normalized_path == "/":
+        return "", None
+
+    current_path = normalized_path
+    last_share = None
+    while current_path and current_path != "/":
+        share = client.get_user_share(owner_user_id, current_path, share_with_user_id)
+        if share is not None:
+            last_share = share
+            target_path = str(getattr(share, "target_path", "") or "").strip()
+            if target_path:
+                candidate = _build_shared_target_candidate(normalized_path, current_path, target_path)
+                if candidate is not None:
+                    return candidate[-1], share
+        current_path = current_path.rsplit("/", 1)[0] or "/"
+
+    return "", last_share
 
 
 def _serialize_nextcloud_share(share) -> dict[str, object]:
@@ -285,15 +331,20 @@ def _attach_proposal_folder_urls(proposals, user=None, *, debug_nextcloud_links=
                 lookup_share = None
                 if not target_path:
                     try:
-                        lookup_share = client.get_user_share(client.username, path, link.nextcloud_user_id)
+                        target_path, lookup_share = _resolve_target_path_via_user_share_lookup(
+                            client,
+                            client.username,
+                            path,
+                            link.nextcloud_user_id,
+                        )
                     except NextcloudApiError as exc:
                         logger.warning(
                             "Could not resolve Nextcloud share target for proposal path %s: %s",
                             path,
                             exc,
                         )
+                        target_path = ""
                         lookup_share = None
-                    target_path = str(getattr(lookup_share, "target_path", "") or "").strip()
                 if not target_path and direct_target_path:
                     target_path = direct_target_path
                 if target_path:

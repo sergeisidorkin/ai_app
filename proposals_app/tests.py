@@ -2194,6 +2194,43 @@ class ProposalDispatchDiskColumnTests(TestCase):
             html=False,
         )
 
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share")
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_proposals_partial_resolves_new_workspace_from_parent_share_lookup_when_direct_share_is_missing(
+        self,
+        _mocked_list_user_shares,
+        mocked_get_user_share,
+    ):
+        def _share_lookup(_owner_user_id, lookup_path, _share_with_user_id):
+            normalized_lookup_path = str(lookup_path or "").strip()
+            if normalized_lookup_path == self.proposal.proposal_workspace_disk_path:
+                return None
+            if normalized_lookup_path == "/Corporate Root/ТКП":
+                return NextcloudShare(
+                    share_id="78-parent",
+                    path="/Corporate Root/ТКП",
+                    share_with=self.user_link.nextcloud_user_id,
+                    permissions=15,
+                    target_path="/ТКП",
+                )
+            return None
+
+        mocked_get_user_share.side_effect = _share_lookup
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        expected_suffix = self.proposal.proposal_workspace_disk_path.split("/ТКП/", 1)[1]
+        expected_url = (
+            "https://cloud.example.com/apps/files/files?dir="
+            f"{quote(f'/ТКП/{expected_suffix}', safe='/')}"
+        )
+        self.assertContains(
+            response,
+            f'href="{expected_url}"',
+            html=False,
+        )
+
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
     def test_proposals_partial_resolves_editor_cloud_link_from_parent_shared_folder_for_director(
         self,
@@ -2287,6 +2324,52 @@ class ProposalDispatchDiskColumnTests(TestCase):
         self.assertContains(
             response,
             expected_url,
+            html=False,
+        )
+
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
+    def test_proposals_partial_prefers_earlier_parent_share_when_same_depth_candidates_exist(
+        self,
+        mocked_list_user_shares,
+    ):
+        mocked_list_user_shares.return_value = {
+            "/2026": NextcloudShare(
+                share_id="84",
+                path="/2026",
+                share_with=self.user_link.nextcloud_user_id,
+                permissions=15,
+                target_path="/2026",
+            ),
+            "/ТКП": NextcloudShare(
+                share_id="85",
+                path="/ТКП",
+                share_with=self.user_link.nextcloud_user_id,
+                permissions=15,
+                target_path="/ТКП",
+            ),
+        }
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        expected_suffix = self.proposal.proposal_workspace_disk_path.split("/ТКП/", 1)[1]
+        competing_suffix = self.proposal.proposal_workspace_disk_path.rsplit("/2026/", 1)[1]
+        expected_url = (
+            "https://cloud.example.com/apps/files/files?dir="
+            f"{quote(f'/ТКП/{expected_suffix}', safe='/')}"
+        )
+        competing_url = (
+            "https://cloud.example.com/apps/files/files?dir="
+            f"{quote(f'/2026/{competing_suffix}', safe='/')}"
+        )
+        self.assertContains(
+            response,
+            f'href="{expected_url}"',
+            html=False,
+        )
+        self.assertNotContains(
+            response,
+            f'href="{competing_url}"',
             html=False,
         )
 
