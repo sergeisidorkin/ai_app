@@ -1988,6 +1988,7 @@ class ProposalNextcloudWorkspaceHookTests(TestCase):
         proposal = ProposalRegistration.objects.first()
         self.assertEqual(mocked_workspace.call_args.args[1].pk, proposal.pk)
         self.assertEqual(proposal.proposal_workspace_disk_path, mocked_workspace.return_value)
+        self.assertEqual(proposal.proposal_workspace_public_url, "")
 
     def test_create_view_rejects_new_proposal_without_year(self):
         response = self.client.post(reverse("proposal_form_create"), self._payload(year=""))
@@ -2246,7 +2247,11 @@ class ProposalDispatchDiskColumnTests(TestCase):
             html=False,
         )
 
-    def test_proposals_partial_falls_back_to_direct_cloud_link_when_viewer_has_no_nextcloud_link(self):
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_public_link_share")
+    def test_proposals_partial_falls_back_to_direct_cloud_link_when_viewer_has_no_nextcloud_link(
+        self,
+        mocked_ensure_public_link_share,
+    ):
         self.user_link.delete()
 
         response = self.client.get(reverse("proposals_partial"))
@@ -2258,30 +2263,28 @@ class ProposalDispatchDiskColumnTests(TestCase):
             f'href="{owner_url}"',
             html=False,
         )
+        mocked_ensure_public_link_share.assert_not_called()
 
-    @patch("nextcloud_app.api.NextcloudApiClient.ensure_public_link_share", return_value="https://cloud.example.com/s/proposal-folder")
     @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
-    def test_proposals_partial_falls_back_to_public_cloud_link_when_share_target_is_missing(
+    def test_proposals_partial_falls_back_to_direct_cloud_link_when_share_target_is_missing_for_viewer_with_nextcloud(
         self,
         _mocked_list_user_shares,
         _mocked_get_user_share,
-        _mocked_ensure_public_link_share,
     ):
         response = self.client.get(reverse("proposals_partial"))
 
         self.assertEqual(response.status_code, 200)
+        owner_url = f"https://cloud.example.com/apps/files/files?dir={quote(self.proposal.proposal_workspace_disk_path, safe='/')}"
         self.assertContains(
             response,
-            'href="https://cloud.example.com/s/proposal-folder"',
+            f'href="{owner_url}"',
             html=False,
         )
-        self.proposal.refresh_from_db()
-        self.assertEqual(self.proposal.proposal_workspace_public_url, "https://cloud.example.com/s/proposal-folder")
 
     @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
-    def test_proposals_partial_falls_back_to_saved_public_workspace_url_when_no_share_target(
+    def test_proposals_partial_prefers_direct_cloud_link_over_saved_public_workspace_url_for_viewer_with_nextcloud(
         self,
         _mocked_list_user_shares,
         _mocked_get_user_share,
@@ -2292,7 +2295,13 @@ class ProposalDispatchDiskColumnTests(TestCase):
         response = self.client.get(reverse("proposals_partial"))
 
         self.assertEqual(response.status_code, 200)
+        owner_url = f"https://cloud.example.com/apps/files/files?dir={quote(self.proposal.proposal_workspace_disk_path, safe='/')}"
         self.assertContains(
+            response,
+            f'href="{owner_url}"',
+            html=False,
+        )
+        self.assertNotContains(
             response,
             'href="https://cloud.example.com/s/saved-proposal-folder"',
             html=False,
@@ -2325,17 +2334,35 @@ class ProposalDispatchDiskColumnTests(TestCase):
             html=False,
         )
 
-    @patch("nextcloud_app.api.NextcloudApiClient.ensure_public_link_share", return_value="https://cloud.example.com/s/legacy-proposal-folder")
     @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
-    def test_proposals_partial_builds_cloud_link_from_expected_workspace_path_for_legacy_rows(
+    def test_proposals_partial_builds_direct_cloud_link_from_expected_workspace_path_for_legacy_rows(
         self,
         _mocked_list_user_shares,
         _mocked_get_user_share,
-        _mocked_ensure_public_link_share,
     ):
         self.proposal.proposal_workspace_disk_path = ""
         self.proposal.save(update_fields=["proposal_workspace_disk_path"])
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        owner_url = (
+            "https://cloud.example.com/apps/files/files?dir="
+            f"{quote('/Corporate Root/ТКП/2026/333300RU DD Тестовое ТКП', safe='/')}"
+        )
+        self.assertContains(
+            response,
+            f'href="{owner_url}"',
+            html=False,
+        )
+
+    def test_proposals_partial_preserves_saved_public_workspace_url_when_path_is_missing(self):
+        self.user_link.delete()
+        self.proposal.year = None
+        self.proposal.proposal_workspace_disk_path = ""
+        self.proposal.proposal_workspace_public_url = "https://cloud.example.com/s/legacy-proposal-folder"
+        self.proposal.save(update_fields=["year", "proposal_workspace_disk_path", "proposal_workspace_public_url"])
 
         response = self.client.get(reverse("proposals_partial"))
 

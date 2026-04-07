@@ -558,7 +558,7 @@ body .second-sidebar + .flex-grow-1 {
 #proposals > .templates-bleed > .section-header {
   position: sticky;
   top: 0;
-  z-index: 4000;
+  z-index: 1020;
 }
 
 #classifiers .templates-bleed > .flex-grow-1 > .section-header {
@@ -1658,11 +1658,11 @@ section#templates .alert.alert-info .text-muted {
    ========================= */
 
 #proposals-pane table.proposals-table col.checkbox            { width: 1% !important; }
-#proposals-pane table.proposals-table col.proposal-number     { width: 4% !important; }
-#proposals-pane table.proposals-table col.group               { width: 3% !important; }
+#proposals-pane table.proposals-table col.proposal-number     { width: 1% !important; }
+#proposals-pane table.proposals-table col.group               { width: 1% !important; }
 #proposals-pane table.proposals-table col.quick-edit          { width: 1% !important; }
-#proposals-pane table.proposals-table col.proposal-id         { width: 4% !important; }
-#proposals-pane table.proposals-table col.proposal-type       { width: 3% !important; }
+#proposals-pane table.proposals-table col.proposal-id         { width: 1% !important; }
+#proposals-pane table.proposals-table col.proposal-type       { width: 1% !important; }
 #proposals-pane table.proposals-table col.proposal-name       { width: 8% !important; }
 #proposals-pane table.proposals-table col.proposal-kind,
 #proposals-pane table.proposals-table col.proposal-status,
@@ -1688,8 +1688,11 @@ section#templates .alert.alert-info .text-muted {
 #proposals-pane table.proposals-table col.proposal-report-languages,
 #proposals-pane table.proposals-table col.proposal-service-cost { width: 8% !important; }
 #proposals-pane table.proposal-dispatch-table col.checkbox     { width: 1% !important; }
-#proposals-pane table.proposal-dispatch-table col.proposal-id   { width: 4% !important; }
-#proposals-pane table.proposal-dispatch-table col.proposal-type { width: 3% !important; }
+#proposals-pane table.proposal-dispatch-table col.proposal-number { width: 1% !important; }
+#proposals-pane table.proposal-dispatch-table col.group           { width: 1% !important; }
+#proposals-pane table.proposal-dispatch-table col.quick-edit      { width: 1% !important; }
+#proposals-pane table.proposal-dispatch-table col.proposal-id     { width: 1% !important; }
+#proposals-pane table.proposal-dispatch-table col.proposal-type   { width: 1% !important; }
 #proposals-pane table.proposal-dispatch-table col.proposal-name { width: 8% !important; }
 #proposals-pane table.proposal-dispatch-table col.docx-name     { width: 16% !important; }
 #proposals-pane table.proposal-dispatch-table col.docx-link     { width: 4% !important; }
@@ -1715,6 +1718,17 @@ section#templates .alert.alert-info .text-muted {
 }
 
 #proposals-pane .registration-table-wrap > table.proposals-table {
+  width: max-content;
+  min-width: 100%;
+}
+
+#proposals-pane .proposal-dispatch-table-wrap {
+  overflow-x: auto;
+  overflow-y: visible;
+  width: 100%;
+}
+
+#proposals-pane .proposal-dispatch-table-wrap > table.proposal-dispatch-table {
   width: max-content;
   min-width: 100%;
 }
@@ -2481,9 +2495,35 @@ html.proposal-progress-cursor * {
 #proposals-pane table.proposals-table thead th:nth-child(4),
 #proposals-pane table.proposals-table tbody td:nth-child(4) {
   width: 1% !important;
+  min-width: 1% !important;
+  max-width: 1% !important;
   white-space: nowrap !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
+}
+
+#proposals-pane table.proposals-table thead th:nth-child(2),
+#proposals-pane table.proposals-table thead th:nth-child(3),
+#proposals-pane table.proposals-table thead th:nth-child(5),
+#proposals-pane table.proposals-table thead th:nth-child(6),
+#proposals-pane table.proposals-table tbody td:nth-child(2),
+#proposals-pane table.proposals-table tbody td:nth-child(3),
+#proposals-pane table.proposals-table tbody td:nth-child(5),
+#proposals-pane table.proposals-table tbody td:nth-child(6),
+#proposals-pane table.proposal-dispatch-table thead th:nth-child(2),
+#proposals-pane table.proposal-dispatch-table thead th:nth-child(3),
+#proposals-pane table.proposal-dispatch-table thead th:nth-child(4),
+#proposals-pane table.proposal-dispatch-table thead th:nth-child(5),
+#proposals-pane table.proposal-dispatch-table thead th:nth-child(6),
+#proposals-pane table.proposal-dispatch-table tbody td:nth-child(2),
+#proposals-pane table.proposal-dispatch-table tbody td:nth-child(3),
+#proposals-pane table.proposal-dispatch-table tbody td:nth-child(4),
+#proposals-pane table.proposal-dispatch-table tbody td:nth-child(5),
+#proposals-pane table.proposal-dispatch-table tbody td:nth-child(6) {
+  width: 1% !important;
+  min-width: 1% !important;
+  max-width: 1% !important;
+  white-space: nowrap !important;
 }
 
 #proposals-pane table.proposals-table .proposal-quick-edit-col {

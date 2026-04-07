@@ -1,0 +1,56 @@
+=== workflow 2026-04-03T19:12:12+03:00 ===
+--- recent commit style ---
+3a3e7b1a Align policy section TKP test with the updated header icon.
+1db97ec0 Refine policy section TKP autofill controls and admin safety.
+7f34af30 Expand Django admin for policy products and tariff ordering. Fix proposal commercial totals in forms, templates, and panel JavaScript; add migration for tariff Meta ordering and extend policy and proposals tests.
+a064d680 Update proposal commercial offer flow and registry fields. Add proposal financial summary improvements, official CBR rate autofill, registry status support, and related UI/backend fixes.
+92b374e5 Merge branch 'main' into feature/proposals-commercial-offer-flow-v5
+--- initial status ---
+## feature/policy-sections-tkp-autofill-controls-v2...origin/feature/policy-sections-tkp-autofill-controls-v2
+ M proposals_app/tests.py
+ M proposals_app/views.py
+?? .pr-workflow-result.txt
+--- current branch: feature/policy-sections-tkp-autofill-controls-v2 ---
+--- creating fix/sync-typical-section-specialties from feature/policy-sections-tkp-autofill-controls-v2 ---
+Switched to a new branch 'fix/sync-typical-section-specialties'
+--- status after branch ---
+## fix/sync-typical-section-specialties
+ M proposals_app/tests.py
+ M proposals_app/views.py
+?? .pr-workflow-result.txt
+--- diff (names) ---
+proposals_app/tests.py
+proposals_app/views.py
+--- status after add ---
+## fix/sync-typical-section-specialties
+M  proposals_app/tests.py
+M  proposals_app/views.py
+?? .pr-workflow-result.txt
+[fix/sync-typical-section-specialties ffc8163f] Align typical section specialties with expected proposal behavior
+ 2 files changed, 81 insertions(+), 2 deletions(-)
+--- post-commit status ---
+On branch fix/sync-typical-section-specialties
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	.pr-workflow-result.txt
+
+nothing added to commit but untracked files present (use "git add" to track)
+--- commit sha ---
+ffc8163f320bd5fbc9e71c54748cce84e87d5473
+--- log -1 ---
+ffc8163f320bd5fbc9e71c54748cce84e87d5473
+Align typical section specialties with expected proposal behavior
+--- push ---
+remote: 
+remote: Create a pull request for 'fix/sync-typical-section-specialties' on GitHub by visiting:        
+remote:      https://github.com/sergeisidorkin/ai_app/pull/new/fix/sync-typical-section-specialties        
+remote: 
+To github.com:sergeisidorkin/ai_app.git
+ * [new branch]        HEAD -> fix/sync-typical-section-specialties
+branch 'fix/sync-typical-section-specialties' set up to track 'origin/fix/sync-typical-section-specialties'.
+--- gh pr create ---
+https://github.com/sergeisidorkin/ai_app/pull/194
+PR_URL=https://github.com/sergeisidorkin/ai_app/pull/194
+RESULT_BRANCH=fix/sync-typical-section-specialties
+RESULT_SHA=ffc8163f320bd5fbc9e71c54748cce84e87d5473
+RESULT_MSG=Align typical section specialties with expected proposal behavior
