@@ -233,14 +233,18 @@
   }
 
   function applySentProposalState(updates, fallbackStatusValue, fallbackStatusLabel, fallbackSentDate) {
-    const items = Array.isArray(updates) && updates.length
-      ? updates
-      : (updates || []).map((proposalId) => ({
-        id: proposalId,
+    const sourceItems = Array.isArray(updates) ? updates : [];
+    const items = sourceItems.map((item) => {
+      if (item && typeof item === 'object' && !Array.isArray(item)) {
+        return item;
+      }
+      return {
+        id: item,
         status: fallbackStatusValue,
         status_label: fallbackStatusLabel,
         sent_date: fallbackSentDate,
-      }));
+      };
+    });
     items.forEach((item) => {
       const proposalId = String(item?.id || '');
       if (!proposalId) return;
