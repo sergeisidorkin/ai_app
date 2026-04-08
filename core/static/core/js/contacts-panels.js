@@ -13,6 +13,10 @@
     persons: 'База контактов',
     positions: 'База контактов',
   };
+  const PANEL_NAME_MAP = {
+    'prs-actions': 'prs-select',
+    'psn-actions': 'psn-select',
+  };
 
   function inContacts(node) {
     return !!(node && node.closest && node.closest(rootSelector));
@@ -176,7 +180,7 @@
     var panel = button.closest('#prs-actions, #psn-actions');
     if (!panel) return;
     var master = paneOf(panel) && paneOf(panel).querySelector('input.form-check-input[data-actions-id]');
-    var name = master && master.dataset ? master.dataset.targetName : '';
+    var name = (master && master.dataset ? master.dataset.targetName : '') || PANEL_NAME_MAP[panel.id] || '';
     if (!name) return;
     var checked = getCheckedByName(name);
     if (!checked.length) return;

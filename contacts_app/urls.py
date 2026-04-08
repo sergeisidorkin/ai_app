@@ -4,6 +4,7 @@ from . import views
 
 
 urlpatterns = [
+    path("prs/autocomplete/", views.prs_autocomplete, name="prs_autocomplete"),
     path("prs/table/", views.prs_table_partial, name="prs_table_partial"),
     path("prs/create/", views.prs_form_create, name="prs_form_create"),
     path("prs/<int:pk>/edit/", views.prs_form_edit, name="prs_form_edit"),

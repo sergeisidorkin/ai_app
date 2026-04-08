@@ -4,8 +4,8 @@ from urllib.parse import urlencode
 
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core.paginator import Paginator
-from django.db.models import Max
-from django.http import HttpResponse
+from django.db.models import Max, Q
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_http_methods, require_POST
 
@@ -174,6 +174,31 @@ def _render_prs_updated(request, *, affected=None):
 def _render_psn_updated(request, *, affected=None):
     response = render(request, PSN_TABLE_TEMPLATE, _psn_context(request))
     return _set_contacts_trigger(response, source="psn-select", affected=affected)
+
+
+@login_required
+@require_http_methods(["GET"])
+def prs_autocomplete(request):
+    query = str(request.GET.get("q") or "").strip()
+    if not query:
+        return JsonResponse({"results": [], "total_count": 0})
+
+    queryset = (
+        PersonRecord.objects
+        .filter(Q(last_name__icontains=query))
+        .order_by("last_name", "first_name", "middle_name", "position", "id")
+    )
+    results = [
+        {
+            "id": item.pk,
+            "last_name": item.last_name or "",
+            "first_name": item.first_name or "",
+            "middle_name": item.middle_name or "",
+            "display_name": item.display_name or item.last_name or "",
+        }
+        for item in queryset[:10]
+    ]
+    return JsonResponse({"results": results, "total_count": queryset.count()})
 
 
 def _refresh_person_position_sources(person: PersonRecord):

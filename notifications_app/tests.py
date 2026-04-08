@@ -1,8 +1,10 @@
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from django.core import mail
 from django.test import SimpleTestCase, override_settings
 
+from core.email_backend import DomainSMTPEmailBackend
 from notifications_app.email_delivery import (
     EmailDeliveryError,
     build_plain_text_body,
@@ -51,6 +53,7 @@ class NotificationEmailDeliveryTests(SimpleTestCase):
         self.assertEqual(mail.outbox[0].subject, "Тест")
         self.assertEqual(mail.outbox[0].body, "Привет!\nЭто письмо.")
         self.assertEqual(mail.outbox[0].alternatives, [])
+        self.assertIn("@example.com>", mail.outbox[0].message()["Message-ID"])
 
     def test_send_notification_email_sends_html_alternative(self):
         recipient = SimpleNamespace(email="expert@example.com", username="expert")
@@ -79,3 +82,25 @@ class NotificationEmailDeliveryTests(SimpleTestCase):
     def test_build_plain_text_body_strips_basic_html(self):
         plain = build_plain_text_body("<p>Hello</p><p>World</p>")
         self.assertEqual(plain, "Hello\nWorld")
+
+
+@override_settings(
+    EMAIL_HOST="smtp.example.com",
+    EMAIL_PORT=587,
+    EMAIL_USE_TLS=False,
+    EMAIL_USE_SSL=False,
+    EMAIL_LOCAL_HOSTNAME="imcmontanai.ru",
+)
+class DomainSMTPEmailBackendTests(SimpleTestCase):
+    @patch("core.email_backend.smtplib.SMTP")
+    def test_open_uses_configured_local_hostname(self, smtp_mock):
+        backend = DomainSMTPEmailBackend()
+
+        backend.open()
+
+        smtp_mock.assert_called_once_with(
+            "smtp.example.com",
+            587,
+            local_hostname="imcmontanai.ru",
+            timeout=10,
+        )

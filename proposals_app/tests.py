@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import tempfile
+from datetime import date
 from decimal import Decimal
 from io import BytesIO
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.parse import quote
 
 from django.contrib.auth import get_user_model
@@ -16,6 +17,7 @@ from django.utils import timezone
 from docx import Document
 
 from classifiers_app.models import BusinessEntityRecord, OKSMCountry, OKVCurrency
+from contacts_app.models import PersonRecord
 from core.models import CloudStorageSettings
 from experts_app.models import ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
 from group_app.models import GroupMember, OrgUnit
@@ -36,8 +38,8 @@ from policy_app.models import (
 from users_app.models import Employee
 from yandexdisk_app.models import YandexDiskAccount
 
-from .document_generation import store_generated_documents
-from .forms import ProposalRegistrationForm
+from .document_generation import generate_and_store_proposal_pdf, store_generated_documents
+from .forms import ProposalDispatchForm, ProposalRegistrationForm
 from .forms import ProposalVariableForm
 from .models import (
     ProposalAsset,
@@ -89,6 +91,15 @@ class ProposalDocumentGenerationTests(TestCase):
             name_en="Due Diligence",
             name_ru="ДД",
             service_type="service",
+            position=1,
+        )
+        self.country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
             position=1,
         )
         self.proposal = ProposalRegistration.objects.create(
@@ -231,6 +242,74 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertFalse(payload["ok"])
         self.assertIn("рабочая папка", payload["error"])
 
+    @override_settings(
+        ONLYOFFICE_DOCUMENT_SERVER_URL="https://docs.example.com",
+        ONLYOFFICE_VERIFY_SSL=True,
+    )
+    @patch("proposals_app.document_generation.cloud_upload_file", return_value=True)
+    @patch("proposals_app.document_generation.requests.get")
+    @patch("proposals_app.document_generation.requests.post")
+    @patch("proposals_app.document_generation._get_cloud_upload_user")
+    def test_generate_and_store_pdf_uses_onlyoffice_and_uploads_result_to_workspace(
+        self,
+        mocked_get_cloud_upload_user,
+        mocked_requests_post,
+        mocked_requests_get,
+        mocked_cloud_upload_file,
+    ):
+        mocked_get_cloud_upload_user.return_value = self.user
+        mocked_requests_post.return_value = Mock(
+            json=Mock(
+                return_value={
+                    "endConvert": True,
+                    "fileType": "pdf",
+                    "fileUrl": "https://docs.example.com/cache/generated.pdf",
+                    "percent": 100,
+                }
+            ),
+            raise_for_status=Mock(),
+        )
+        mocked_requests_get.return_value = Mock(
+            content=b"pdf-bytes",
+            raise_for_status=Mock(),
+        )
+        self.proposal.docx_file_name = "existing-offer.docx"
+        self.proposal.docx_file_link = (
+            "/Corporate Root/ТКП/2026/33330RU DD Приморское/existing-offer.docx"
+        )
+        self.proposal.save(update_fields=["docx_file_name", "docx_file_link"])
+
+        result = generate_and_store_proposal_pdf(
+            self.user,
+            self.proposal,
+            source_url="https://app.example.com/proposals/docx-source/1/?token=abc",
+        )
+
+        self.assertEqual(result["pdf_name"], "existing-offer.pdf")
+        self.assertEqual(
+            result["pdf_path"],
+            "/Corporate Root/ТКП/2026/33330RU DD Приморское/existing-offer.pdf",
+        )
+        mocked_requests_post.assert_called_once()
+        self.assertTrue(
+            mocked_requests_post.call_args.args[0].startswith("https://docs.example.com/converter?shardkey=")
+        )
+        self.assertEqual(
+            mocked_requests_post.call_args.kwargs["json"]["url"],
+            "https://app.example.com/proposals/docx-source/1/?token=abc",
+        )
+        self.assertEqual(mocked_requests_post.call_args.kwargs["json"]["outputtype"], "pdf")
+        mocked_requests_get.assert_called_once_with(
+            "https://docs.example.com/cache/generated.pdf",
+            timeout=120,
+            verify=True,
+        )
+        mocked_cloud_upload_file.assert_called_once_with(
+            self.user,
+            "/Corporate Root/ТКП/2026/33330RU DD Приморское/existing-offer.pdf",
+            b"pdf-bytes",
+        )
+
 
 @override_settings(ROOT_URLCONF="proposals_app.urls")
 class ProposalDispatchSendTests(TestCase):
@@ -273,6 +352,9 @@ class ProposalDispatchSendTests(TestCase):
             name="Приморское",
             year=2026,
             contact_email="recipient@example.com",
+            docx_file_name="ТКП_333300RU_DD_Приморское.docx",
+            docx_file_link="/Corporate Root/ТКП/2026/333300RU DD Приморское/ТКП_333300RU_DD_Приморское.docx",
+            proposal_workspace_disk_path="/Corporate Root/ТКП/2026/333300RU DD Приморское",
         )
         self.failed_proposal = ProposalRegistration.objects.create(
             number=3334,
@@ -281,9 +363,13 @@ class ProposalDispatchSendTests(TestCase):
             name="Балтика",
             year=2026,
             contact_email="",
+            docx_file_name="ТКП_333400RU_DD_Балтика.docx",
+            docx_file_link="/Corporate Root/ТКП/2026/333400RU DD Балтика/ТКП_333400RU_DD_Балтика.docx",
+            proposal_workspace_disk_path="/Corporate Root/ТКП/2026/333400RU DD Балтика",
         )
 
-    @patch("ai_app.proposals_app.services.send_notification_email")
+    @override_settings(PROPOSAL_SYSTEM_FROM_EMAIL="ai@imcmontanai.ru")
+    @patch("proposals_app.services.send_notification_email")
     def test_dispatch_send_updates_only_successfully_sent_rows(self, mocked_send_notification_email):
         mocked_send_notification_email.return_value = {
             "recipient_email": "recipient@example.com",
@@ -324,15 +410,43 @@ class ProposalDispatchSendTests(TestCase):
             call_kwargs["content"],
             f"<p>Направляем проект ТКП {expected_tkp_id}</p>",
         )
+        self.assertEqual(call_kwargs["from_email"], "ai@imcmontanai.ru")
 
         self.successful_proposal.refresh_from_db()
         self.failed_proposal.refresh_from_db()
         self.assertEqual(self.successful_proposal.sent_date, "04.04.2026 12:30")
         self.assertEqual(self.failed_proposal.sent_date, "")
+        self.assertEqual(self.successful_proposal.pdf_file_name, "")
+        self.assertEqual(self.successful_proposal.pdf_file_link, "")
 
-    @patch("ai_app.proposals_app.services.send_notification_email")
+    @patch("proposals_app.views.generate_and_store_proposal_pdf")
+    @patch("proposals_app.services.send_notification_email")
+    def test_dispatch_send_does_not_generate_pdf(self, mocked_send_notification_email, mocked_generate_pdf):
+        mocked_send_notification_email.return_value = {
+            "recipient_email": "recipient@example.com",
+            "subject": "ignored",
+            "is_html": True,
+        }
+
+        response = self.client.post(
+            reverse("proposal_dispatch_send"),
+            {
+                "proposal_ids[]": [self.successful_proposal.pk],
+                "delivery_channels[]": ["system_email"],
+                "sent_at": "2026-04-04T12:30",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        mocked_generate_pdf.assert_not_called()
+        self.successful_proposal.refresh_from_db()
+        self.assertEqual(self.successful_proposal.pdf_file_name, "")
+        self.assertEqual(self.successful_proposal.pdf_file_link, "")
+
+
+    @patch("proposals_app.services.send_notification_email")
     @patch(
-        "ai_app.proposals_app.services.get_user_notification_email_options",
+        "proposals_app.services.get_user_notification_email_options",
         return_value={},
     )
     def test_dispatch_send_marks_row_sent_when_at_least_one_channel_succeeds(
@@ -369,7 +483,8 @@ class ProposalDispatchSendTests(TestCase):
         self.successful_proposal.refresh_from_db()
         self.assertEqual(self.successful_proposal.sent_date, "04.04.2026 12:30")
 
-    @patch("ai_app.proposals_app.services.send_notification_email")
+    @override_settings(PROPOSAL_SYSTEM_FROM_EMAIL="ai@imcmontanai.ru")
+    @patch("proposals_app.services.send_notification_email")
     def test_dispatch_send_uses_rendered_fallback_subject_when_template_subject_empty(self, mocked_send_notification_email):
         mocked_send_notification_email.return_value = {
             "recipient_email": "recipient@example.com",
@@ -406,9 +521,10 @@ class ProposalDispatchSendTests(TestCase):
             call_kwargs["subject"],
             f"Технико-коммерческое предложение IMC Montan {expected_tkp_id}",
         )
+        self.assertEqual(call_kwargs["from_email"], "ai@imcmontanai.ru")
 
-    @patch("ai_app.proposals_app.services.send_notification_email")
-    @patch("ai_app.proposals_app.services.get_user_notification_email_options", return_value={})
+    @patch("proposals_app.services.send_notification_email")
+    @patch("proposals_app.services.get_user_notification_email_options", return_value={})
     def test_dispatch_send_returns_error_when_connected_email_unavailable(
         self,
         _mocked_email_options,
@@ -435,6 +551,177 @@ class ProposalDispatchSendTests(TestCase):
         mocked_send_notification_email.assert_not_called()
         self.successful_proposal.refresh_from_db()
         self.assertEqual(self.successful_proposal.sent_date, "")
+
+
+@override_settings(ROOT_URLCONF="proposals_app.urls")
+class ProposalDispatchSignTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="proposal-dispatch-pdf-staff",
+            email="staff@example.com",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+
+        self.group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        self.product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            service_type="service",
+            position=1,
+        )
+        LetterTemplate.objects.update_or_create(
+            template_type="proposal_sending",
+            user=None,
+            defaults={
+                "subject_template": "Технико-коммерческое предложение IMC Montan {{tkp_id}}",
+                "body_html": "<p>Направляем проект ТКП {{tkp_id}}</p>",
+                "is_default": True,
+            },
+        )
+        self.proposal = ProposalRegistration.objects.create(
+            number=3333,
+            group_member=self.group_member,
+            type=self.product,
+            name="Приморское",
+            year=2026,
+            contact_email="recipient@example.com",
+            docx_file_name="existing-offer.docx",
+            docx_file_link="/Corporate Root/ТКП/2026/333300RU DD Приморское/existing-offer.docx",
+            proposal_workspace_disk_path="/Corporate Root/ТКП/2026/333300RU DD Приморское",
+        )
+
+    @override_settings(ONLYOFFICE_DOCUMENT_SERVER_URL="https://docs.example.com")
+    @patch("proposals_app.views.generate_and_store_proposal_pdf")
+    def test_dispatch_sign_generates_pdf_via_dedicated_endpoint(
+        self,
+        mocked_generate_and_store_proposal_pdf,
+    ):
+        mocked_generate_and_store_proposal_pdf.return_value = {
+            "pdf_name": "existing-offer.pdf",
+            "pdf_path": "/Corporate Root/ТКП/2026/333300RU DD Приморское/existing-offer.pdf",
+        }
+
+        response = self.client.post(
+            reverse("proposal_dispatch_sign_documents"),
+            {
+                "proposal_ids[]": [self.proposal.pk],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["generated"], 1)
+
+        self.proposal.refresh_from_db()
+        self.assertEqual(self.proposal.pdf_file_name, "existing-offer.pdf")
+        self.assertEqual(
+            self.proposal.pdf_file_link,
+            "/Corporate Root/ТКП/2026/333300RU DD Приморское/existing-offer.pdf",
+        )
+        mocked_generate_and_store_proposal_pdf.assert_called_once()
+        self.assertEqual(mocked_generate_and_store_proposal_pdf.call_args.args[0], self.user)
+        self.assertEqual(mocked_generate_and_store_proposal_pdf.call_args.args[1], self.proposal)
+        self.assertTrue(
+            mocked_generate_and_store_proposal_pdf.call_args.kwargs["source_url"].startswith(
+                f"http://testserver{reverse('proposal_onlyoffice_docx_source', args=[self.proposal.pk])}?token="
+            )
+        )
+
+
+@override_settings(ROOT_URLCONF="proposals_app.urls")
+class ProposalDispatchFormTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="proposal-dispatch-form-staff",
+            email="staff@example.com",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        self.product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            service_type="service",
+            position=1,
+        )
+        self.country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+        self.proposal = ProposalRegistration.objects.create(
+            number=3333,
+            group_member=self.group_member,
+            type=self.product,
+            name="Приморское",
+            year=2026,
+            contact_full_name="Иванов Иван Иванович",
+            contact_email="contact@example.com",
+            position=1,
+        )
+
+    def test_dispatch_form_edit_saves_contact_name_parts_to_person_registry(self):
+        response = self.client.post(
+            reverse("proposal_dispatch_form_edit", args=[self.proposal.pk]),
+            {
+                "docx_file_name": "",
+                "docx_file_link": "",
+                "pdf_file_name": "",
+                "pdf_file_link": "",
+                "sent_date": "08.04.2026 12:00",
+                "recipient": 'ООО "Альфа"',
+                "recipient_country": str(self.country.pk),
+                "recipient_identifier": "ОГРН",
+                "recipient_registration_number": "1234567890123",
+                "recipient_registration_date": "10.04.2026",
+                "recipient_job_title": "Генеральный директор",
+                "contact_last_name": "Петров",
+                "contact_first_name": "Петр",
+                "contact_middle_name": "Петрович",
+                "contact_email": "contact@example.com",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.proposal.refresh_from_db()
+        self.assertEqual(self.proposal.recipient, 'ООО "Альфа"')
+        self.assertEqual(self.proposal.recipient_country, self.country)
+        self.assertEqual(self.proposal.recipient_identifier, "ОГРН")
+        self.assertEqual(self.proposal.recipient_registration_number, "1234567890123")
+        self.assertEqual(self.proposal.recipient_registration_date, date(2026, 4, 10))
+        self.assertEqual(self.proposal.recipient_job_title, "Генеральный директор")
+        self.assertEqual(self.proposal.contact_full_name, "Петров Петр Петрович")
+        self.assertEqual(self.proposal.contact_short_name, "Петров П.П.")
+
+        person = PersonRecord.objects.get(last_name="Петров")
+        self.assertEqual(person.first_name, "Петр")
+        self.assertEqual(person.middle_name, "Петрович")
+
+    def test_dispatch_form_defaults_recipient_country_to_russia(self):
+        form = ProposalDispatchForm()
+        self.assertEqual(form.fields["recipient_country"].initial, self.country.pk)
 
 
 class ProposalRegistrationFormTests(TestCase):
@@ -2220,6 +2507,47 @@ class ProposalDispatchDiskColumnTests(TestCase):
         owner_url = f"https://cloud.example.com/apps/files/files?dir={quote(self.proposal.docx_file_link, safe='/')}"
         self.assertContains(response, f'href="{expected_url}"', html=False)
         self.assertNotContains(response, f'href="{owner_url}"', html=False)
+
+    @patch("nextcloud_app.api.NextcloudApiClient.list_resources")
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
+    def test_proposals_partial_builds_pdf_link_from_viewer_share_target(
+        self,
+        mocked_list_user_shares,
+        mocked_list_resources,
+    ):
+        self.proposal.pdf_file_name = "ТКП_333300RU_DD_Тестовое_ТКП.pdf"
+        self.proposal.pdf_file_link = (
+            f"{self.proposal.proposal_workspace_disk_path}/{self.proposal.pdf_file_name}"
+        )
+        self.proposal.save(update_fields=["pdf_file_name", "pdf_file_link"])
+        mocked_list_user_shares.return_value = {
+            self.proposal.proposal_workspace_disk_path: NextcloudShare(
+                share_id="77-pdf",
+                path=self.proposal.proposal_workspace_disk_path,
+                share_with=self.user_link.nextcloud_user_id,
+                permissions=15,
+                target_path="/Shared/333300RU DD Тестовое ТКП",
+            )
+        }
+        mocked_list_resources.return_value = [
+            {
+                "name": self.proposal.pdf_file_name,
+                "path": self.proposal.pdf_file_link,
+                "type": "file",
+                "size": 42,
+                "modified": "Mon, 30 Mar 2026 10:00:00 GMT",
+                "file_id": "3099",
+            }
+        ]
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        expected_url = "https://cloud.example.com/apps/files/files/3099?dir=/Shared/333300RU%20DD%20%D0%A2%D0%B5%D1%81%D1%82%D0%BE%D0%B2%D0%BE%D0%B5%20%D0%A2%D0%9A%D0%9F&amp;openfile=true"
+        owner_url = f"https://cloud.example.com/apps/files/files?dir={quote(self.proposal.pdf_file_link, safe='/')}"
+        self.assertContains(response, f'href="{expected_url}"', html=False)
+        self.assertNotContains(response, f'href="{owner_url}"', html=False)
+        self.assertContains(response, "bi-file-pdf-fill", html=False)
 
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
     def test_proposals_partial_preserves_legacy_media_docx_link(self, _mocked_list_user_shares):

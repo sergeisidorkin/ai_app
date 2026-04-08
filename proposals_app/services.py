@@ -1,6 +1,8 @@
 import logging
 from types import SimpleNamespace
 
+from django.conf import settings
+
 from letters_app.services import get_effective_template, render_subject, render_template
 from notifications_app.email_delivery import EmailDeliveryError, send_notification_email
 from notifications_app.services import (
@@ -22,6 +24,11 @@ SUPPORTED_PROPOSAL_DELIVERY_CHANNELS = (
 PROPOSAL_DELIVERY_CHANNEL_ALIASES = {
     "email": DELIVERY_CHANNEL_SYSTEM_EMAIL,
 }
+
+
+def _proposal_system_from_email() -> str | None:
+    value = str(getattr(settings, "PROPOSAL_SYSTEM_FROM_EMAIL", "") or "").strip()
+    return value or None
 
 
 def normalize_proposal_delivery_channels(delivery_channels):
@@ -163,6 +170,10 @@ def send_proposal_dispatch_emails(*, proposals, sender, delivery_channels):
                     if connected_delivery_error:
                         raise EmailDeliveryError(connected_delivery_error)
                     delivery_options = connected_delivery_options
+                elif channel == DELIVERY_CHANNEL_SYSTEM_EMAIL:
+                    delivery_options = {
+                        "from_email": _proposal_system_from_email(),
+                    }
 
                 send_notification_email(
                     recipient=recipient,

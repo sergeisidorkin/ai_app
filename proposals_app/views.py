@@ -9,7 +9,7 @@ from django import forms
 from django.conf import settings
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.db.models import Max, Prefetch
-from django.http import FileResponse, Http404, JsonResponse
+from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
@@ -46,7 +46,16 @@ from .forms import (
     _proposal_group_member_short,
     proposal_variable_registry_json,
 )
-from .document_generation import get_generated_docx_path, store_generated_documents
+from .document_generation import (
+    DOCX_CONTENT_TYPE,
+    build_proposal_docx_source_url,
+    generate_and_store_proposal_pdf,
+    get_generated_docx_path,
+    is_onlyoffice_conversion_configured,
+    is_valid_proposal_docx_source_token,
+    load_existing_proposal_docx_bytes,
+    store_generated_documents,
+)
 from .models import ProposalRegistration, ProposalTemplate, ProposalVariable
 from .services import normalize_proposal_delivery_channels, send_proposal_dispatch_emails
 from .variable_resolver import resolve_variables
@@ -343,6 +352,65 @@ def _sync_to_legal_entity_record(
     )
 
 
+def _sync_dispatch_contact_to_person_registry(*, last_name, first_name="", middle_name=""):
+    normalized_last_name = str(last_name or "").strip()
+    normalized_first_name = str(first_name or "").strip()
+    normalized_middle_name = str(middle_name or "").strip()
+    if not normalized_last_name:
+        return
+
+    from contacts_app.models import PersonRecord, PositionRecord
+
+    def refresh_related_position_sources():
+        queryset = (
+            PositionRecord.objects
+            .filter(person__last_name=normalized_last_name)
+            .select_related("person")
+            .order_by("position", "id")
+        )
+        for position_record in queryset:
+            new_source = position_record.resolve_source()
+            if position_record.source != new_source:
+                PositionRecord.objects.filter(pk=position_record.pk).update(source=new_source)
+
+    person = (
+        PersonRecord.objects.filter(
+            last_name=normalized_last_name,
+            first_name=normalized_first_name,
+            middle_name=normalized_middle_name,
+        )
+        .order_by("position", "id")
+        .first()
+    )
+    if person is None:
+        person = (
+            PersonRecord.objects.filter(last_name=normalized_last_name)
+            .order_by("position", "id")
+            .first()
+        )
+    if person is None:
+        next_position = (PersonRecord.objects.aggregate(mx=Max("position")).get("mx") or 0) + 1
+        PersonRecord.objects.create(
+            last_name=normalized_last_name,
+            first_name=normalized_first_name,
+            middle_name=normalized_middle_name,
+            position=next_position,
+        )
+        refresh_related_position_sources()
+        return
+
+    updates = []
+    if person.first_name != normalized_first_name:
+        person.first_name = normalized_first_name
+        updates.append("first_name")
+    if person.middle_name != normalized_middle_name:
+        person.middle_name = normalized_middle_name
+        updates.append("middle_name")
+    if updates:
+        person.save(update_fields=updates)
+    refresh_related_position_sources()
+
+
 def _sync_selection_kwargs(request, prefix):
     selected_flag = str(request.POST.get(f"{prefix}_selected_from_autocomplete") or "").strip().lower()
     return {
@@ -369,8 +437,16 @@ def _build_proposal_docx_disk_path(proposal) -> str:
     return f"{workspace_path.rstrip('/')}/{filename}"
 
 
+def _stored_proposal_file_link(proposal, attr_name: str) -> str:
+    return str(getattr(proposal, attr_name, "") or "").strip()
+
+
 def _stored_docx_link(proposal) -> str:
-    return str(getattr(proposal, "docx_file_link", "") or "").strip()
+    return _stored_proposal_file_link(proposal, "docx_file_link")
+
+
+def _stored_pdf_link(proposal) -> str:
+    return _stored_proposal_file_link(proposal, "pdf_file_link")
 
 
 def _build_nextcloud_child_url(client, parent_path: str, child_name: str) -> str:
@@ -414,17 +490,20 @@ def _build_nextcloud_editor_url(client, file_id: str, dir_path: str) -> str:
     return client.build_files_open_url(file_id, normalized_dir)
 
 
-def _resolve_proposal_docx_open_url(
+def _resolve_proposal_file_open_url(
     proposal,
     *,
+    file_name_attr: str,
+    file_link_attr: str,
     client=None,
     viewer_has_nextcloud_link: bool = False,
     resolved_workspace_target_path: str = "",
     root_path: str = "",
     owner_file_id: str = "",
 ) -> str:
-    raw_link = _stored_docx_link(proposal)
-    if not raw_link and not getattr(proposal, "docx_file_name", ""):
+    raw_link = _stored_proposal_file_link(proposal, file_link_attr)
+    file_name = str(getattr(proposal, file_name_attr, "") or "").strip()
+    if not raw_link and not file_name:
         return ""
     if raw_link.startswith(("http://", "https://")):
         return raw_link
@@ -441,10 +520,52 @@ def _resolve_proposal_docx_open_url(
             return _build_nextcloud_editor_url(client, owner_file_id, parent_path)
     if viewer_has_nextcloud_link:
         return (
-            _build_nextcloud_child_url(client, resolved_workspace_target_path, proposal.docx_file_name)
+            _build_nextcloud_child_url(client, resolved_workspace_target_path, file_name)
             or _build_root_stripped_nextcloud_url(client, raw_link, root_path=root_path)
         )
     return build_folder_url(raw_link)
+
+
+def _resolve_proposal_docx_open_url(
+    proposal,
+    *,
+    client=None,
+    viewer_has_nextcloud_link: bool = False,
+    resolved_workspace_target_path: str = "",
+    root_path: str = "",
+    owner_file_id: str = "",
+) -> str:
+    return _resolve_proposal_file_open_url(
+        proposal,
+        file_name_attr="docx_file_name",
+        file_link_attr="docx_file_link",
+        client=client,
+        viewer_has_nextcloud_link=viewer_has_nextcloud_link,
+        resolved_workspace_target_path=resolved_workspace_target_path,
+        root_path=root_path,
+        owner_file_id=owner_file_id,
+    )
+
+
+def _resolve_proposal_pdf_open_url(
+    proposal,
+    *,
+    client=None,
+    viewer_has_nextcloud_link: bool = False,
+    resolved_workspace_target_path: str = "",
+    root_path: str = "",
+    owner_file_id: str = "",
+) -> str:
+    return _resolve_proposal_file_open_url(
+        proposal,
+        file_name_attr="pdf_file_name",
+        file_link_attr="pdf_file_link",
+        client=client,
+        viewer_has_nextcloud_link=viewer_has_nextcloud_link,
+        resolved_workspace_target_path=resolved_workspace_target_path,
+        root_path=root_path,
+        owner_file_id=owner_file_id,
+    )
 
 
 def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_nextcloud_links=False):
@@ -465,11 +586,13 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
             folder_cache.setdefault(path, build_folder_url(path))
             proposal.proposal_workspace_folder_url = _stored_public(proposal) or folder_cache.get(path, "")
             proposal.proposal_docx_file_url = _resolve_proposal_docx_open_url(proposal)
+            proposal.proposal_pdf_file_url = _resolve_proposal_pdf_open_url(proposal)
 
     for proposal in proposals:
         path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
         proposal.proposal_workspace_folder_url = _stored_public(proposal)
         proposal.proposal_docx_file_url = ""
+        proposal.proposal_pdf_file_url = ""
         if path:
             folder_cache.setdefault(path, build_folder_url(path))
             share_resolution_paths.add(path)
@@ -560,6 +683,7 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                     or _build_root_stripped_nextcloud_url(client, path, root_path=normalized_root_path)
                 )
                 owner_docx_path = _stored_docx_link(proposal)
+                owner_pdf_path = _stored_pdf_link(proposal)
                 media_url = str(getattr(settings, "MEDIA_URL", "") or "").strip()
                 owner_file_id = _resolve_nextcloud_file_id(
                     client,
@@ -567,6 +691,12 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                     owner_docx_path,
                     resource_cache=resource_cache,
                 ) if owner_docx_path and not owner_docx_path.startswith(("http://", "https://")) and not (media_url and owner_docx_path.startswith(media_url)) else ""
+                owner_pdf_file_id = _resolve_nextcloud_file_id(
+                    client,
+                    client.username,
+                    owner_pdf_path,
+                    resource_cache=resource_cache,
+                ) if owner_pdf_path and not owner_pdf_path.startswith(("http://", "https://")) and not (media_url and owner_pdf_path.startswith(media_url)) else ""
                 proposal.proposal_docx_file_url = _resolve_proposal_docx_open_url(
                     proposal,
                     client=client,
@@ -574,6 +704,14 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                     resolved_workspace_target_path=resolved_target_cache.get(path, ""),
                     root_path=normalized_root_path,
                     owner_file_id=owner_file_id,
+                )
+                proposal.proposal_pdf_file_url = _resolve_proposal_pdf_open_url(
+                    proposal,
+                    client=client,
+                    viewer_has_nextcloud_link=True,
+                    resolved_workspace_target_path=resolved_target_cache.get(path, ""),
+                    root_path=normalized_root_path,
+                    owner_file_id=owner_pdf_file_id,
                 )
                 if not resolved_cache.get(path):
                     _log_nextcloud_resolution_debug(
@@ -592,6 +730,7 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                     or folder_cache.get(path, "")
                 )
                 owner_docx_path = _stored_docx_link(proposal)
+                owner_pdf_path = _stored_pdf_link(proposal)
                 media_url = str(getattr(settings, "MEDIA_URL", "") or "").strip()
                 owner_file_id = _resolve_nextcloud_file_id(
                     client,
@@ -599,10 +738,21 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                     owner_docx_path,
                     resource_cache=resource_cache,
                 ) if owner_docx_path and not owner_docx_path.startswith(("http://", "https://")) and not (media_url and owner_docx_path.startswith(media_url)) else ""
+                owner_pdf_file_id = _resolve_nextcloud_file_id(
+                    client,
+                    client.username,
+                    owner_pdf_path,
+                    resource_cache=resource_cache,
+                ) if owner_pdf_path and not owner_pdf_path.startswith(("http://", "https://")) and not (media_url and owner_pdf_path.startswith(media_url)) else ""
                 proposal.proposal_docx_file_url = _resolve_proposal_docx_open_url(
                     proposal,
                     client=client,
                     owner_file_id=owner_file_id,
+                )
+                proposal.proposal_pdf_file_url = _resolve_proposal_pdf_open_url(
+                    proposal,
+                    client=client,
+                    owner_file_id=owner_pdf_file_id,
                 )
 
 
@@ -1264,7 +1414,22 @@ def proposal_dispatch_form_edit(request, pk: int):
     if not form.is_valid():
         return _render_dispatch_form(request, form=form, proposal=proposal)
 
-    form.save()
+    proposal = form.save()
+    _sync_to_legal_entity_record(
+        proposal.recipient,
+        proposal.recipient_country,
+        proposal.recipient_identifier,
+        proposal.recipient_registration_number,
+        proposal.recipient_registration_date,
+        request.user,
+        business_entity_source="[ТКП / Отправка ТКП / Наименование организации]",
+        **_sync_selection_kwargs(request, "recipient_autocomplete"),
+    )
+    _sync_dispatch_contact_to_person_registry(
+        last_name=form.cleaned_data.get("contact_last_name", ""),
+        first_name=form.cleaned_data.get("contact_first_name", ""),
+        middle_name=form.cleaned_data.get("contact_middle_name", ""),
+    )
     return _render_proposals_updated(request)
 
 
@@ -1330,6 +1495,78 @@ def proposal_dispatch_send(request):
             "sent_at": sent_at_display,
             "delivery_channels": list(email_result["delivery_channels"]),
             "email_delivery": email_result["email_delivery"],
+        }
+    )
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def proposal_dispatch_sign_documents(request):
+    if not is_onlyoffice_conversion_configured():
+        return JsonResponse(
+            {"ok": False, "error": "Не настроен ONLYOFFICE Document Server для генерации PDF."},
+            status=400,
+        )
+
+    raw_ids = request.POST.getlist("proposal_ids[]") or request.POST.getlist("proposal_ids")
+    if not raw_ids:
+        return JsonResponse({"ok": False, "error": "Не выбраны строки для подписи ТКП."}, status=400)
+
+    try:
+        proposal_ids = sorted({int(value) for value in raw_ids if str(value).strip()})
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Передан некорректный список строк."}, status=400)
+
+    proposals = list(
+        ProposalRegistration.objects
+        .filter(pk__in=proposal_ids)
+        .select_related("type")
+        .order_by("position", "id")
+    )
+    if len(proposals) != len(proposal_ids):
+        return JsonResponse({"ok": False, "error": "Часть выбранных строк не найдена."}, status=400)
+
+    pdf_updates = []
+    errors = []
+
+    for proposal in proposals:
+        if not str(getattr(proposal, "docx_file_name", "") or "").strip():
+            errors.append(f"Для {proposal.short_uid} сначала сформируйте DOCX-файл ТКП.")
+            continue
+        try:
+            stored_pdf = generate_and_store_proposal_pdf(
+                request.user,
+                proposal,
+                source_url=build_proposal_docx_source_url(request, proposal),
+            )
+        except Exception as exc:
+            errors.append(f"{proposal.short_uid}: {exc}")
+            continue
+        proposal.pdf_file_name = stored_pdf["pdf_name"]
+        proposal.pdf_file_link = stored_pdf["pdf_path"]
+        pdf_updates.append(proposal)
+
+    if errors and not pdf_updates:
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "; ".join(errors),
+                "generated": 0,
+                "warnings": [],
+            },
+            status=400,
+        )
+
+    if pdf_updates:
+        ProposalRegistration.objects.bulk_update(pdf_updates, ["pdf_file_name", "pdf_file_link"])
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "message": "PDF для ТКП успешно сформирован.",
+            "generated": len(pdf_updates),
+            "warnings": errors,
         }
     )
 
@@ -1429,6 +1666,28 @@ def proposal_dispatch_create_documents(request):
             "warnings": warnings,
         }
     )
+
+
+@require_GET
+def proposal_onlyoffice_docx_source(request, pk: int):
+    proposal = get_object_or_404(ProposalRegistration, pk=pk)
+    token = str(request.GET.get("token") or "").strip()
+    if not is_valid_proposal_docx_source_token(proposal, token):
+        return HttpResponseForbidden("Недействительная ссылка на DOCX-файл ТКП.")
+
+    try:
+        docx_bytes = load_existing_proposal_docx_bytes(
+            request.user if getattr(request.user, "is_authenticated", False) else None,
+            proposal,
+        )
+    except RuntimeError as exc:
+        raise Http404(str(exc))
+
+    file_name = str(getattr(proposal, "docx_file_name", "") or "").strip() or "proposal.docx"
+    response = HttpResponse(docx_bytes, content_type=DOCX_CONTENT_TYPE)
+    response["Content-Disposition"] = f"inline; filename*=UTF-8''{quote(file_name)}"
+    response["Cache-Control"] = "no-store"
+    return response
 
 
 @login_required

@@ -185,9 +185,13 @@
       return row?.dataset?.sendReady === '1';
     });
     const createBtn = pane()?.querySelector('#proposal-create-btn');
+    const signBtn = pane()?.querySelector('#proposal-sign-btn');
     const sendBtn = pane()?.querySelector('#proposal-send-btn');
+    const transferContractBtn = pane()?.querySelector('#proposal-transfer-contract-btn');
     if (createBtn) createBtn.disabled = !hasChecked;
+    if (signBtn) signBtn.disabled = !allCheckedReadyToSend;
     if (sendBtn) sendBtn.disabled = !allCheckedReadyToSend;
+    if (transferContractBtn) transferContractBtn.disabled = !hasChecked;
   }
 
   function bindProposalFilterMenuWidth(dropdown) {
@@ -630,7 +634,7 @@
 
   function attachCountryIdentifierSync(root) {
     if (!root) return;
-    const form = root.closest('form[data-proposal-form]') || root;
+    const form = root.closest('form[data-proposal-form], form[data-proposal-dispatch-form]') || root;
     const url = form.dataset.countryIdentifierUrl;
     if (!url) return;
 
@@ -660,6 +664,11 @@
       form.dispatchEvent(new CustomEvent('proposal-customer-changed'));
     });
     bindCountryIdentifierSync('#proposal-asset-owner-country-select', '#proposal-asset-owner-identifier-field', 'identBoundAssetOwner');
+    bindCountryIdentifierSync(
+      '#proposal-dispatch-recipient-country-select',
+      '#proposal-dispatch-recipient-identifier-field',
+      'identBoundDispatchRecipient'
+    );
   }
 
   function replaceQuotes(element) {
@@ -681,7 +690,7 @@
 
   function attachGuillemets(root) {
     if (!root) return;
-    ['customer', 'asset_owner'].forEach(function (fieldName) {
+    ['customer', 'asset_owner', 'recipient'].forEach(function (fieldName) {
       const input = root.querySelector('input[name="' + fieldName + '"]');
       if (!input || input.dataset.guillBound === '1') return;
       input.dataset.guillBound = '1';
@@ -693,7 +702,7 @@
 
   function attachLerAutocomplete(root) {
     if (!root) return;
-    const form = root.closest('form[data-proposal-form]') || root;
+    const form = root.closest('form[data-proposal-form], form[data-proposal-dispatch-form]') || root;
     const searchUrl = form.dataset.lerSearchUrl;
     if (!searchUrl) return;
 
@@ -704,6 +713,11 @@
       const selectedFlagInput = form.querySelector(options.selectedFlagSelector);
       if (!input || !list || input.dataset[options.boundKey] === '1') return;
       input.dataset[options.boundKey] = '1';
+
+      function queryOptional(selector) {
+        if (!selector) return null;
+        return form.querySelector(selector);
+      }
 
       let debounce = null;
       let results = [];
@@ -745,10 +759,10 @@
       }
 
       function pick(item) {
-        const countrySelect = form.querySelector(options.countrySelector);
-        const identifierField = form.querySelector(options.identifierSelector);
-        const registrationNumberField = form.querySelector(options.registrationNumberSelector);
-        const registrationDateField = form.querySelector(options.registrationDateSelector);
+        const countrySelect = queryOptional(options.countrySelector);
+        const identifierField = queryOptional(options.identifierSelector);
+        const registrationNumberField = queryOptional(options.registrationNumberSelector);
+        const registrationDateField = queryOptional(options.registrationDateSelector);
 
         input.value = item.short_name || '';
         if (countrySelect && item.country_id) countrySelect.value = item.country_id;
@@ -848,11 +862,11 @@
         if (results.length && input.value.trim().length >= 1) list.classList.add('show');
       });
 
-      form.querySelector(options.countrySelector)?.addEventListener('change', clearSelection);
-      form.querySelector(options.registrationNumberSelector)?.addEventListener('input', clearSelection);
-      form.querySelector(options.registrationNumberSelector)?.addEventListener('change', clearSelection);
-      form.querySelector(options.registrationDateSelector)?.addEventListener('input', clearSelection);
-      form.querySelector(options.registrationDateSelector)?.addEventListener('change', clearSelection);
+      queryOptional(options.countrySelector)?.addEventListener('change', clearSelection);
+      queryOptional(options.registrationNumberSelector)?.addEventListener('input', clearSelection);
+      queryOptional(options.registrationNumberSelector)?.addEventListener('change', clearSelection);
+      queryOptional(options.registrationDateSelector)?.addEventListener('input', clearSelection);
+      queryOptional(options.registrationDateSelector)?.addEventListener('change', clearSelection);
     }
 
     bindLerAutocomplete({
@@ -878,6 +892,124 @@
       selectedIdentifierSelector: '#proposal-asset-owner-autocomplete-identifier-record-id',
       selectedFlagSelector: '#proposal-asset-owner-autocomplete-selected',
       changeEventName: 'proposal-asset-owner-changed',
+    });
+    bindLerAutocomplete({
+      inputSelector: 'input[name="recipient"]',
+      listSelector: '#proposal-dispatch-ler-ac-list',
+      boundKey: 'lerBoundDispatchRecipient',
+      countrySelector: '#proposal-dispatch-recipient-country-select',
+      identifierSelector: '#proposal-dispatch-recipient-identifier-field',
+      registrationNumberSelector: 'input[name="recipient_registration_number"]',
+      registrationDateSelector: 'input[name="recipient_registration_date"]',
+      selectedIdentifierSelector: '#proposal-dispatch-recipient-autocomplete-identifier-record-id',
+      selectedFlagSelector: '#proposal-dispatch-recipient-autocomplete-selected',
+      changeEventName: null,
+    });
+  }
+
+  function attachDispatchPersonAutocomplete(root) {
+    if (!root) return;
+    const form = root.closest('form[data-proposal-dispatch-form]') || root;
+    const searchUrl = form.dataset.prsSearchUrl;
+    const input = form.querySelector('input[name="contact_last_name"]');
+    const firstNameInput = form.querySelector('input[name="contact_first_name"]');
+    const middleNameInput = form.querySelector('input[name="contact_middle_name"]');
+    const list = form.querySelector('#proposal-dispatch-prs-ac-list');
+    if (!searchUrl || !input || !firstNameInput || !middleNameInput || !list || input.dataset.prsAutocompleteBound === '1') return;
+    input.dataset.prsAutocompleteBound = '1';
+
+    let debounce = null;
+    let results = [];
+    let picking = false;
+
+    function escapeHtml(value) {
+      return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function highlight(text, query) {
+      const safeText = escapeHtml(text);
+      if (!query) return safeText;
+      const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return safeText.replace(new RegExp('(' + escaped + ')', 'gi'), '<mark>$1</mark>');
+    }
+
+    function render(query) {
+      if (!results.length) {
+        list.classList.remove('show');
+        return;
+      }
+      list.innerHTML = results.map(function (item, index) {
+        const fullName = [item.last_name, item.first_name, item.middle_name].filter(Boolean).join(' ').trim();
+        return '<div class="ler-ac-item" data-idx="' + index + '">'
+          + '<div class="ler-ac-main">' + highlight(fullName, query) + '</div>'
+          + '</div>';
+      }).join('');
+      list.classList.add('show');
+    }
+
+    function pick(item) {
+      input.value = item.last_name || '';
+      firstNameInput.value = item.first_name || '';
+      middleNameInput.value = item.middle_name || '';
+      list.classList.remove('show');
+    }
+
+    input.addEventListener('input', function () {
+      const query = input.value.trim();
+      clearTimeout(debounce);
+      if (query.length < 1) {
+        results = [];
+        list.classList.remove('show');
+        return;
+      }
+      debounce = setTimeout(function () {
+        fetch(searchUrl + '?q=' + encodeURIComponent(query))
+          .then(function (response) { return response.json(); })
+          .then(function (data) {
+            results = data.results || [];
+            render(query);
+          })
+          .catch(function () {
+            results = [];
+            list.classList.remove('show');
+          });
+      }, 200);
+    });
+
+    list.addEventListener('mousedown', function (event) {
+      event.preventDefault();
+      picking = true;
+      const item = event.target.closest('.ler-ac-item');
+      if (!item) return;
+      const idx = parseInt(item.dataset.idx, 10);
+      if (results[idx]) pick(results[idx]);
+    });
+
+    list.addEventListener('click', function (event) {
+      const item = event.target.closest('.ler-ac-item');
+      if (!item) return;
+      const idx = parseInt(item.dataset.idx, 10);
+      if (results[idx]) pick(results[idx]);
+      picking = false;
+    });
+
+    input.addEventListener('blur', function () {
+      if (picking) {
+        picking = false;
+        return;
+      }
+      setTimeout(function () {
+        list.classList.remove('show');
+      }, 200);
+    });
+
+    input.addEventListener('focus', function () {
+      if (results.length && input.value.trim().length >= 1) list.classList.add('show');
     });
   }
 
@@ -4553,6 +4685,48 @@
     assetsApi?.fillEmptyRowsFromDefaults();
   }
 
+  function initProposalDispatchForm() {
+    const form = document.querySelector('#proposals-modal form[data-proposal-dispatch-form]');
+    if (!form) return;
+    attachGuillemets(form);
+    attachCountryIdentifierSync(form);
+    attachLerAutocomplete(form);
+    attachDispatchPersonAutocomplete(form);
+    initProposalDateInput(form.querySelector('input[name="recipient_registration_date"]'));
+    const countrySelect = form.querySelector('#proposal-dispatch-recipient-country-select');
+    const identifierField = form.querySelector('#proposal-dispatch-recipient-identifier-field');
+    if (countrySelect && identifierField && countrySelect.value && !String(identifierField.value || '').trim()) {
+      countrySelect.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  }
+
+  function getProposalDispatchFormForRequest(target) {
+    if (!(target instanceof Element)) return null;
+    if (target.matches('form[data-proposal-dispatch-form]')) return target;
+    return target.closest('form[data-proposal-dispatch-form]');
+  }
+
+  function setProposalDispatchSaveLoading(form, isLoading) {
+    if (!form) return;
+    const saveBtn = form.querySelector('[data-proposal-dispatch-save-btn]');
+    if (!(saveBtn instanceof HTMLButtonElement)) return;
+
+    if (isLoading) {
+      if (saveBtn.dataset.loading === '1') return;
+      saveBtn.dataset.loading = '1';
+      saveBtn.dataset.originalHtml = saveBtn.innerHTML;
+      saveBtn.disabled = true;
+      saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Сохранение...';
+      return;
+    }
+
+    if (saveBtn.dataset.originalHtml) {
+      saveBtn.innerHTML = saveBtn.dataset.originalHtml;
+    }
+    saveBtn.disabled = false;
+    delete saveBtn.dataset.loading;
+  }
+
   document.addEventListener('click', async (event) => {
     const root = pane();
     if (!root) return;
@@ -4796,6 +4970,25 @@
       alert('Выберите хотя бы один способ отправки.');
       return;
     }
+    const rowsWithoutEmail = checked
+      .map((cb) => cb.closest('tr'))
+      .filter((row) => row && !String(row.dataset.contactEmail || '').trim());
+    if (rowsWithoutEmail.length) {
+      const preview = rowsWithoutEmail
+        .slice(0, 8)
+        .map((row) => '- ' + (row.dataset.tkpId || 'без ID'))
+        .join('\n');
+      const moreCount = rowsWithoutEmail.length - Math.min(rowsWithoutEmail.length, 8);
+      const details = [
+        'Нельзя отправить ТКП: у части выбранных строк не заполнено поле «Эл. почта».',
+        preview,
+      ];
+      if (moreCount > 0) {
+        details.push('- И еще ' + moreCount + ' строк(и).');
+      }
+      alert(details.join('\n'));
+      return;
+    }
     if (!sendUrl || !refreshUrl) return;
 
     const formData = new FormData();
@@ -4803,7 +4996,9 @@
     formData.append('sent_at', sentAtInput?.value || '');
     selectedChannels.forEach((value) => formData.append('delivery_channels[]', value));
 
+    const originalHtml = sendBtn.innerHTML;
     sendBtn.disabled = true;
+    sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Отправка...';
     try {
       const response = await fetch(sendUrl, {
         method: 'POST',
@@ -4845,6 +5040,54 @@
     } catch (err) {
       alert(err.message || 'Не удалось отправить ТКП.');
       updateDispatchActionBtns();
+    } finally {
+      sendBtn.innerHTML = originalHtml;
+    }
+  });
+
+  document.addEventListener('click', async (event) => {
+    const root = pane();
+    if (!root) return;
+    const signBtn = event.target.closest('#proposal-sign-btn');
+    if (!signBtn || !root.contains(signBtn)) return;
+
+    const checked = getChecked('proposal-dispatch-select');
+    if (!checked.length || signBtn.disabled) return;
+
+    const panel = root.querySelector('#proposal-dispatch-controls');
+    const signUrl = panel?.dataset?.signUrl;
+    const refreshUrl = panel?.dataset?.refreshUrl;
+    if (!signUrl || !refreshUrl) return;
+
+    const formData = new FormData();
+    checked.forEach((cb) => formData.append('proposal_ids[]', cb.value));
+
+    const originalHtml = signBtn.innerHTML;
+    signBtn.disabled = true;
+    signBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Подписание...';
+    try {
+      const response = await fetch(signUrl, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrftoken },
+        body: formData,
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        throw new Error(data?.error || 'Не удалось сформировать PDF для ТКП.');
+      }
+
+      window.__tableSel['proposal-dispatch-select'] = [];
+      window.__tableSelLast = null;
+      await htmx.ajax('GET', refreshUrl, { target: '#proposals-pane', swap: 'outerHTML' });
+
+      if (data.warnings && data.warnings.length) {
+        alert((data.message || 'PDF для ТКП сформирован.') + '\n\n' + data.warnings.join('\n'));
+      }
+    } catch (err) {
+      alert(err.message || 'Не удалось сформировать PDF для ТКП.');
+      updateDispatchActionBtns();
+    } finally {
+      signBtn.innerHTML = originalHtml;
     }
   });
 
@@ -4912,6 +5155,31 @@
     restoreVariableCollapseState();
   });
 
+  document.body.addEventListener('htmx:afterSwap', function (event) {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (!target.closest('#proposals-modal .modal-content')) return;
+    initProposalDispatchForm();
+  });
+
+  document.body.addEventListener('htmx:beforeRequest', function (event) {
+    const form = getProposalDispatchFormForRequest(event.detail?.elt);
+    if (!form) return;
+    setProposalDispatchSaveLoading(form, true);
+  });
+
+  document.body.addEventListener('htmx:afterRequest', function (event) {
+    const form = getProposalDispatchFormForRequest(event.detail?.elt);
+    if (!form || !document.body.contains(form)) return;
+    setProposalDispatchSaveLoading(form, false);
+  });
+
+  document.body.addEventListener('htmx:sendError', function (event) {
+    const form = getProposalDispatchFormForRequest(event.detail?.elt);
+    if (!form || !document.body.contains(form)) return;
+    setProposalDispatchSaveLoading(form, false);
+  });
+
   document.addEventListener('DOMContentLoaded', function () {
     updateHeaderPath();
     syncAllSelectionStates();
@@ -4922,5 +5190,6 @@
       window.__proposalVarsExpanded = !!varsCollapse()?.classList.contains('show');
     }
     restoreVariableCollapseState();
+    initProposalDispatchForm();
   });
 })();
