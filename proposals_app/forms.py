@@ -1441,7 +1441,6 @@ class ProposalDispatchForm(BootstrapMixin, forms.ModelForm):
             "pdf_file_name",
             "pdf_file_link",
             "sent_date",
-            "transfer_to_contract_date",
             "recipient",
             "recipient_country",
             "recipient_identifier",
@@ -1456,13 +1455,6 @@ class ProposalDispatchForm(BootstrapMixin, forms.ModelForm):
             "pdf_file_name": forms.TextInput(),
             "pdf_file_link": forms.TextInput(),
             "sent_date": forms.TextInput(
-                attrs={
-                    "readonly": True,
-                    "tabindex": "-1",
-                    "class": "readonly-field",
-                }
-            ),
-            "transfer_to_contract_date": forms.TextInput(
                 attrs={
                     "readonly": True,
                     "tabindex": "-1",

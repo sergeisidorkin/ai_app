@@ -1477,11 +1477,28 @@ def proposal_dispatch_send(request):
     )
     sent_proposal_ids = email_result["sent_proposal_ids"]
     updated = 0
+    sent_updates = []
     if sent_proposal_ids:
-        updated = ProposalRegistration.objects.filter(pk__in=sent_proposal_ids).update(
-            sent_date=sent_at_display,
-            status=ProposalRegistration.ProposalStatus.SENT,
-        )
+        sent_proposal_ids_set = {int(pk) for pk in sent_proposal_ids}
+        proposals_to_update = []
+        for proposal in selected_proposals:
+            if proposal.pk not in sent_proposal_ids_set:
+                continue
+            proposal.sent_date = sent_at_display
+            if proposal.status != ProposalRegistration.ProposalStatus.COMPLETED:
+                proposal.status = ProposalRegistration.ProposalStatus.SENT
+            proposals_to_update.append(proposal)
+            sent_updates.append(
+                {
+                    "id": proposal.pk,
+                    "status": proposal.status,
+                    "status_label": proposal.get_status_display(),
+                    "sent_date": sent_at_display,
+                }
+            )
+        if proposals_to_update:
+            ProposalRegistration.objects.bulk_update(proposals_to_update, ["sent_date", "status"])
+            updated = len(proposals_to_update)
 
     if updated == 0:
         return JsonResponse(
@@ -1502,6 +1519,7 @@ def proposal_dispatch_send(request):
             "proposal_ids": sent_proposal_ids,
             "status": ProposalRegistration.ProposalStatus.SENT,
             "status_label": ProposalRegistration.ProposalStatus.SENT.label,
+            "updates": sent_updates,
             "delivery_channels": list(email_result["delivery_channels"]),
             "email_delivery": email_result["email_delivery"],
         }
