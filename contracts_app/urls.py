@@ -3,6 +3,32 @@ from . import views
 
 urlpatterns = [
     path("partial/", views.contracts_partial, name="contracts_partial"),
+    path("development/partial/", views.contracts_development_partial, name="contracts_development_partial"),
+    path(
+        "development/projects/create/",
+        views.contracts_project_registration_create,
+        name="contracts_project_registration_create",
+    ),
+    path(
+        "development/projects/<int:pk>/edit/",
+        views.contracts_project_registration_edit,
+        name="contracts_project_registration_edit",
+    ),
+    path(
+        "development/projects/<int:pk>/delete/",
+        views.contracts_project_registration_delete,
+        name="contracts_project_registration_delete",
+    ),
+    path(
+        "development/projects/<int:pk>/move-up/",
+        views.contracts_project_registration_move_up,
+        name="contracts_project_registration_move_up",
+    ),
+    path(
+        "development/projects/<int:pk>/move-down/",
+        views.contracts_project_registration_move_down,
+        name="contracts_project_registration_move_down",
+    ),
     path("<int:pk>/edit/", views.contract_form_edit, name="contracts_edit"),
     path("signing/<int:pk>/edit/", views.contract_signing_edit, name="contracts_signing_edit"),
     path("signing/<int:pk>/upload-scan/", views.contract_scan_upload, name="contract_scan_upload"),

@@ -21,7 +21,14 @@ from nextcloud_app.api import NextcloudApiClient, NextcloudApiError
 from nextcloud_app.models import NextcloudUserLink
 from notifications_app.models import Notification, NotificationPerformerLink
 from projects_app.models import Performer, ProjectRegistration
-from .forms import ContractEditForm, ContractSigningForm, ContractSubjectForm, ContractTemplateForm, ContractVariableForm
+from .forms import (
+    ContractEditForm,
+    ContractProjectRegistrationForm,
+    ContractSigningForm,
+    ContractSubjectForm,
+    ContractTemplateForm,
+    ContractVariableForm,
+)
 from .models import ContractSubject, ContractTemplate, ContractVariable
 
 logger = logging.getLogger(__name__)
@@ -32,6 +39,8 @@ def staff_required(user):
 
 
 CONTRACTS_PARTIAL_TEMPLATE = "contracts_app/contracts_partial.html"
+CONTRACTS_DEVELOPMENT_PARTIAL_TEMPLATE = "contracts_app/contracts_development_partial.html"
+CONTRACTS_PROJECT_REG_FORM_TEMPLATE = "contracts_app/contracts_project_registration_form.html"
 CT_PARTIAL_TEMPLATE = "contracts_app/contract_templates_partial.html"
 CT_FORM_TEMPLATE = "contracts_app/contract_template_form.html"
 CT_HX_EVENT = "contract-templates-updated"
@@ -175,10 +184,158 @@ def _attach_contract_folder_urls(contracts, user=None):
             performer.contract_project_folder_url = resolved_cache.get(path, performer.contract_project_folder_url)
 
 
+def _contracts_development_context():
+    registrations = (
+        ProjectRegistration.objects
+        .select_related("country", "group_member", "type")
+        .all()
+    )
+    return {"registrations": registrations}
+
+
+def _render_contracts_development_updated(request):
+    resp = render(request, CONTRACTS_DEVELOPMENT_PARTIAL_TEMPLATE, _contracts_development_context())
+    resp["HX-Trigger"] = "contracts-updated"
+    return resp
+
+
+def _render_contracts_project_registration_form(request, form, *, action, registration=None):
+    return render(
+        request,
+        CONTRACTS_PROJECT_REG_FORM_TEMPLATE,
+        {"form": form, "action": action, "registration": registration},
+    )
+
+
+def _normalize_contract_development_positions():
+    items = ProjectRegistration.objects.order_by("position", "id").only("id", "position")
+    for idx, item in enumerate(items, start=1):
+        if item.position != idx:
+            ProjectRegistration.objects.filter(pk=item.pk).update(position=idx)
+
+
 @login_required
 @require_http_methods(["GET"])
 def contracts_partial(request):
     return render(request, CONTRACTS_PARTIAL_TEMPLATE, _contracts_context(request.user))
+
+
+@login_required
+@require_http_methods(["GET"])
+def contracts_development_partial(request):
+    return render(request, CONTRACTS_DEVELOPMENT_PARTIAL_TEMPLATE, _contracts_development_context())
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def contracts_project_registration_create(request):
+    if request.method == "GET":
+        return _render_contracts_project_registration_form(
+            request, ContractProjectRegistrationForm(), action="create",
+        )
+
+    form = ContractProjectRegistrationForm(request.POST)
+    if not form.is_valid():
+        resp = _render_contracts_project_registration_form(request, form, action="create")
+        resp["HX-Retarget"] = "#contracts-modal .modal-content"
+        resp["HX-Reswap"] = "innerHTML"
+        return resp
+
+    from projects_app.views import _next_position, _sync_selection_kwargs, _sync_to_legal_entity_record
+
+    obj = form.save(commit=False)
+    if not getattr(obj, "position", 0):
+        obj.position = _next_position(ProjectRegistration)
+    obj.save()
+    _sync_to_legal_entity_record(
+        obj.customer,
+        obj.country,
+        obj.identifier,
+        obj.registration_number,
+        obj.registration_date,
+        request.user,
+        business_entity_source="[Проекты / Заказчик]",
+        **_sync_selection_kwargs(request, "customer_autocomplete"),
+    )
+    return _render_contracts_development_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def contracts_project_registration_edit(request, pk):
+    registration = get_object_or_404(ProjectRegistration, pk=pk)
+    if request.method == "GET":
+        return _render_contracts_project_registration_form(
+            request,
+            ContractProjectRegistrationForm(instance=registration),
+            action="edit",
+            registration=registration,
+        )
+
+    form = ContractProjectRegistrationForm(request.POST, instance=registration)
+    if not form.is_valid():
+        resp = _render_contracts_project_registration_form(
+            request, form, action="edit", registration=registration,
+        )
+        resp["HX-Retarget"] = "#contracts-modal .modal-content"
+        resp["HX-Reswap"] = "innerHTML"
+        return resp
+
+    from projects_app.views import _sync_selection_kwargs, _sync_to_legal_entity_record
+
+    obj = form.save()
+    _sync_to_legal_entity_record(
+        obj.customer,
+        obj.country,
+        obj.identifier,
+        obj.registration_number,
+        obj.registration_date,
+        request.user,
+        business_entity_source="[Проекты / Заказчик]",
+        **_sync_selection_kwargs(request, "customer_autocomplete"),
+    )
+    return _render_contracts_development_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def contracts_project_registration_delete(request, pk):
+    registration = get_object_or_404(ProjectRegistration, pk=pk)
+    registration.delete()
+    return _render_contracts_development_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["POST", "GET"])
+def contracts_project_registration_move_up(request, pk):
+    _normalize_contract_development_positions()
+    items = list(ProjectRegistration.objects.order_by("position", "id").only("id", "position"))
+    idx = next((i for i, item in enumerate(items) if item.id == pk), None)
+    if idx is not None and idx > 0:
+        current, previous = items[idx], items[idx - 1]
+        ProjectRegistration.objects.filter(pk=current.id).update(position=previous.position)
+        ProjectRegistration.objects.filter(pk=previous.id).update(position=current.position)
+        _normalize_contract_development_positions()
+    return _render_contracts_development_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["POST", "GET"])
+def contracts_project_registration_move_down(request, pk):
+    _normalize_contract_development_positions()
+    items = list(ProjectRegistration.objects.order_by("position", "id").only("id", "position"))
+    idx = next((i for i, item in enumerate(items) if item.id == pk), None)
+    if idx is not None and idx < len(items) - 1:
+        current, nxt = items[idx], items[idx + 1]
+        ProjectRegistration.objects.filter(pk=current.id).update(position=nxt.position)
+        ProjectRegistration.objects.filter(pk=nxt.id).update(position=current.position)
+        _normalize_contract_development_positions()
+    return _render_contracts_development_updated(request)
 
 
 def _get_cloud_upload_user(user):

@@ -9,6 +9,7 @@ from urllib.parse import quote
 from django import forms
 from django.conf import settings
 from django.contrib.auth.decorators import login_required, user_passes_test
+from django.db import transaction
 from django.db.models import Max, Prefetch
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -34,6 +35,7 @@ from policy_app.models import (
     TypicalSectionSpecialty,
     TypicalServiceComposition,
 )
+from projects_app.models import ProjectRegistration
 from smtp_app.models import ExternalSMTPAccount
 from users_app.models import Employee
 
@@ -1476,7 +1478,10 @@ def proposal_dispatch_send(request):
     sent_proposal_ids = email_result["sent_proposal_ids"]
     updated = 0
     if sent_proposal_ids:
-        updated = ProposalRegistration.objects.filter(pk__in=sent_proposal_ids).update(sent_date=sent_at_display)
+        updated = ProposalRegistration.objects.filter(pk__in=sent_proposal_ids).update(
+            sent_date=sent_at_display,
+            status=ProposalRegistration.ProposalStatus.SENT,
+        )
 
     if updated == 0:
         return JsonResponse(
@@ -1494,8 +1499,89 @@ def proposal_dispatch_send(request):
             "ok": True,
             "updated": updated,
             "sent_at": sent_at_display,
+            "proposal_ids": sent_proposal_ids,
+            "status": ProposalRegistration.ProposalStatus.SENT,
+            "status_label": ProposalRegistration.ProposalStatus.SENT.label,
             "delivery_channels": list(email_result["delivery_channels"]),
             "email_delivery": email_result["email_delivery"],
+        }
+    )
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def proposal_dispatch_transfer_to_contract(request):
+    raw_ids = request.POST.getlist("proposal_ids[]") or request.POST.getlist("proposal_ids")
+    if not raw_ids:
+        return JsonResponse({"ok": False, "error": "Не выбраны строки для передачи в договор."}, status=400)
+
+    try:
+        proposal_ids = sorted({int(value) for value in raw_ids if str(value).strip()})
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Передан некорректный список строк."}, status=400)
+
+    proposals = list(
+        ProposalRegistration.objects
+        .filter(pk__in=proposal_ids)
+        .select_related("group_member", "type", "country")
+        .order_by("position", "id")
+    )
+    if len(proposals) != len(proposal_ids):
+        return JsonResponse({"ok": False, "error": "Часть выбранных строк не найдена."}, status=400)
+
+    created = 0
+    existing = 0
+    transferred_at_display = timezone.localtime().strftime("%d.%m.%Y %H:%M")
+
+    with transaction.atomic():
+        next_position = (ProjectRegistration.objects.aggregate(mx=Max("position")).get("mx") or 0) + 1
+        for proposal in proposals:
+            group_alpha2 = (
+                getattr(getattr(proposal, "group_member", None), "country_alpha2", "")
+                or getattr(proposal, "group", "")
+                or ""
+            ).strip().upper()
+            agreement_number = f"IMCM/{proposal.number}" if group_alpha2 == "RU" else ""
+            project, was_created = ProjectRegistration.objects.get_or_create(
+                number=proposal.number,
+                group_member=proposal.group_member,
+                agreement_type=ProjectRegistration.AgreementType.MAIN,
+                agreement_number=agreement_number,
+                defaults={
+                    "position": next_position,
+                    "group": proposal.group,
+                    "type": proposal.type,
+                    "name": proposal.name,
+                    "year": proposal.year,
+                    "customer": proposal.customer,
+                    "country": proposal.country,
+                    "identifier": proposal.identifier,
+                    "registration_number": proposal.registration_number,
+                    "registration_date": proposal.registration_date,
+                },
+            )
+            if was_created:
+                created += 1
+                next_position += 1
+            else:
+                existing += 1
+
+        ProposalRegistration.objects.filter(pk__in=proposal_ids).update(
+            status=ProposalRegistration.ProposalStatus.COMPLETED,
+            transfer_to_contract_date=transferred_at_display,
+        )
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "created": created,
+            "existing": existing,
+            "updated": len(proposal_ids),
+            "proposal_ids": proposal_ids,
+            "status": ProposalRegistration.ProposalStatus.COMPLETED,
+            "status_label": ProposalRegistration.ProposalStatus.COMPLETED.label,
+            "transfer_to_contract_date": transferred_at_display,
         }
     )
 
@@ -1561,6 +1647,7 @@ def proposal_dispatch_sign_documents(request):
 
     if pdf_updates:
         ProposalRegistration.objects.bulk_update(pdf_updates, ["pdf_file_name", "pdf_file_link"])
+        _attach_proposal_folder_urls(pdf_updates, request.user, request=request)
 
     return JsonResponse(
         {
@@ -1568,6 +1655,14 @@ def proposal_dispatch_sign_documents(request):
             "message": "PDF для ТКП успешно сформирован.",
             "generated": len(pdf_updates),
             "warnings": errors,
+            "updates": [
+                {
+                    "id": proposal.pk,
+                    "pdf_file_name": proposal.pdf_file_name,
+                    "proposal_pdf_file_url": getattr(proposal, "proposal_pdf_file_url", "") or "",
+                }
+                for proposal in pdf_updates
+            ],
         }
     )
 
@@ -1610,6 +1705,7 @@ def proposal_dispatch_create_documents(request):
     errors = []
     warnings = []
     generated_count = 0
+    generated_updates = []
 
     for proposal in proposals:
         template = _find_proposal_template(proposal, templates)
@@ -1643,6 +1739,11 @@ def proposal_dispatch_create_documents(request):
             pdf_file_name=stored["pdf_name"],
             pdf_file_link=stored["pdf_path"],
         )
+        proposal.docx_file_name = stored["docx_name"]
+        proposal.docx_file_link = stored["docx_path"]
+        proposal.pdf_file_name = stored["pdf_name"]
+        proposal.pdf_file_link = stored["pdf_path"]
+        generated_updates.append(proposal)
         generated_count += 1
 
     if errors and not generated_count:
@@ -1659,12 +1760,25 @@ def proposal_dispatch_create_documents(request):
     if errors:
         warnings.extend(errors)
 
+    if generated_updates:
+        _attach_proposal_folder_urls(generated_updates, request.user, request=request)
+
     return JsonResponse(
         {
             "ok": True,
             "message": "Документы ТКП успешно созданы.",
             "generated": generated_count,
             "warnings": warnings,
+            "updates": [
+                {
+                    "id": proposal.pk,
+                    "docx_file_name": proposal.docx_file_name,
+                    "proposal_docx_file_url": getattr(proposal, "proposal_docx_file_url", "") or "",
+                    "pdf_file_name": proposal.pdf_file_name,
+                    "proposal_pdf_file_url": getattr(proposal, "proposal_pdf_file_url", "") or "",
+                }
+                for proposal in generated_updates
+            ],
         }
     )
 

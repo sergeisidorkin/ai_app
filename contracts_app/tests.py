@@ -12,6 +12,7 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from core.models import CloudStorageSettings
+from group_app.models import GroupMember
 from nextcloud_app.api import NextcloudApiError, NextcloudShare
 from nextcloud_app.models import NextcloudUserLink
 from policy_app.models import EXPERT_GROUP, Product
@@ -48,8 +49,16 @@ class ContractsCloudLabelTests(TestCase):
             name_ru="ДД",
             service_type="service",
         )
+        self.group_member = GroupMember.objects.create(
+            short_name="Россия",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
         self.project = ProjectRegistration.objects.create(
             number=7001,
+            group_member=self.group_member,
             type=self.product,
             name="Договорный проект",
             year=2026,
@@ -86,6 +95,25 @@ class ContractsCloudLabelTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'title="Открыть папку на Nextcloud"', html=False)
+
+    def test_contracts_development_partial_renders_client_contract_projects_table(self):
+        response = self.client.get(reverse("contracts_development_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Проекты договоров с клиентами")
+        self.assertContains(response, "Вид соглашения")
+        self.assertContains(response, "Проект ID")
+        self.assertContains(response, "Заказчик")
+        self.assertContains(response, reverse("contracts_project_registration_create"))
+        self.assertContains(response, reverse("contracts_project_registration_edit", args=[self.project.pk]))
+
+    def test_contracts_project_registration_create_form_targets_contracts_drafts_pane(self):
+        response = self.client.get(reverse("contracts_project_registration_create"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'hx-post="%s"' % reverse("contracts_project_registration_create"), html=False)
+        self.assertContains(response, 'hx-target="#contracts-drafts-pane"', html=False)
+        self.assertNotContains(response, "Дедлайн")
 
     @patch("contracts_app.views._upload_scan_to_cloud_bytes", return_value="https://cloud.example.com/s/scan")
     def test_contract_scan_upload_returns_storage_label(self, _mock_upload):

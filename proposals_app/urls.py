@@ -17,6 +17,11 @@ urlpatterns = [
     path("proposals/docx-source/<int:pk>/", views.proposal_onlyoffice_docx_source, name="proposal_onlyoffice_docx_source"),
     path("proposals/<int:pk>/dispatch/docx/download/", views.proposal_generated_docx_download, name="proposal_generated_docx_download"),
     path("proposals/dispatch/send/", views.proposal_dispatch_send, name="proposal_dispatch_send"),
+    path(
+        "proposals/dispatch/transfer-to-contract/",
+        views.proposal_dispatch_transfer_to_contract,
+        name="proposal_dispatch_transfer_to_contract",
+    ),
     path("proposals/dispatch/sign/", views.proposal_dispatch_sign_documents, name="proposal_dispatch_sign_documents"),
     path("proposals/dispatch/create-documents/", views.proposal_dispatch_create_documents, name="proposal_dispatch_create_documents"),
     path("proposals/templates/create/", views.proposal_template_form_create, name="proposal_template_form_create"),

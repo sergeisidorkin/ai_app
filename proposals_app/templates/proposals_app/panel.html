@@ -45,7 +45,10 @@
          hx-target="#proposals-pane"
          hx-swap="outerHTML"
          hx-indicator="#proposals-loading">
-      <div id="proposals-loading" class="text-muted htmx-indicator">Загрузка ТКП…</div>
+      <div id="proposals-loading" class="text-muted htmx-indicator d-inline-flex align-items-center gap-2">
+        <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+        <span>Загрузка ТКП…</span>
+      </div>
     </div>
     <div class="modal fade" id="proposals-modal" tabindex="-1" aria-hidden="true">
       <div class="modal-dialog modal-dialog-scrollable">

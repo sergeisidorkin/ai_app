@@ -128,6 +128,13 @@
       </div>
     </div>
 
+    <div class="row g-2 mb-3">
+      <div class="col-6">
+        <label class="form-label">Дата передачи ТКП для составления договора</label>
+        {{ form.transfer_to_contract_date }}
+      </div>
+    </div>
+
     {% if form.errors %}
       <div class="alert alert-danger mt-3 mb-0">
         <div class="fw-semibold mb-1">Проверьте введённые данные:</div>
