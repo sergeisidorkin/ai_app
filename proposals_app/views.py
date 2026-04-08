@@ -9,7 +9,7 @@ from django import forms
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.db.models import Max, Prefetch
 from django.http import FileResponse, Http404, JsonResponse
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
@@ -360,10 +360,56 @@ def _should_sync_proposal_related_row(item):
     )
 
 
+def _build_proposal_docx_disk_path(proposal) -> str:
+    workspace_path = _normalize_nextcloud_path(getattr(proposal, "proposal_workspace_disk_path", "") or "")
+    filename = str(getattr(proposal, "docx_file_name", "") or "").strip()
+    if not workspace_path or not filename:
+        return ""
+    return f"{workspace_path.rstrip('/')}/{filename}"
+
+
+def _stored_docx_link(proposal) -> str:
+    return str(getattr(proposal, "docx_file_link", "") or "").strip()
+
+
+def _build_nextcloud_child_url(client, parent_path: str, child_name: str) -> str:
+    normalized_parent = _normalize_nextcloud_path(parent_path)
+    clean_child_name = str(child_name or "").strip().strip("/")
+    if not normalized_parent or not clean_child_name:
+        return ""
+    if normalized_parent == "/":
+        return client.build_files_url(f"/{clean_child_name}")
+    return client.build_files_url(f"{normalized_parent.rstrip('/')}/{clean_child_name}")
+
+
+def _resolve_proposal_docx_open_url(
+    proposal,
+    *,
+    client=None,
+    viewer_has_nextcloud_link: bool = False,
+    resolved_workspace_target_path: str = "",
+    root_path: str = "",
+) -> str:
+    raw_link = _stored_docx_link(proposal)
+    if not raw_link and not getattr(proposal, "docx_file_name", ""):
+        return ""
+    if raw_link.startswith(("http://", "https://")):
+        return raw_link
+    if client is None:
+        return build_folder_url(raw_link)
+    if viewer_has_nextcloud_link:
+        return (
+            _build_nextcloud_child_url(client, resolved_workspace_target_path, proposal.docx_file_name)
+            or _build_root_stripped_nextcloud_url(client, raw_link, root_path=root_path)
+        )
+    return build_folder_url(raw_link)
+
+
 def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_nextcloud_links=False):
     folder_cache = {}
     share_resolution_paths = set()
     viewer_has_nextcloud_link = False
+    resolved_target_cache = {}
 
     def _stored_public(proposal):
         return (getattr(proposal, "proposal_workspace_public_url", "") or "").strip()
@@ -375,10 +421,12 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                 continue
             folder_cache.setdefault(path, build_folder_url(path))
             proposal.proposal_workspace_folder_url = _stored_public(proposal) or folder_cache.get(path, "")
+            proposal.proposal_docx_file_url = _resolve_proposal_docx_open_url(proposal)
 
     for proposal in proposals:
         path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
         proposal.proposal_workspace_folder_url = _stored_public(proposal)
+        proposal.proposal_docx_file_url = ""
         if path:
             folder_cache.setdefault(path, build_folder_url(path))
             share_resolution_paths.add(path)
@@ -439,6 +487,7 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                 if not target_path:
                     target_path = cached_target_paths.get(path, "")
                 if target_path:
+                    resolved_target_cache[path] = target_path
                     resolved_cache[path] = client.build_files_url(target_path)
                 _log_nextcloud_resolution_debug(
                     path=path,
@@ -467,6 +516,13 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                     or _stored_public(proposal)
                     or _build_root_stripped_nextcloud_url(client, path, root_path=normalized_root_path)
                 )
+                proposal.proposal_docx_file_url = _resolve_proposal_docx_open_url(
+                    proposal,
+                    client=client,
+                    viewer_has_nextcloud_link=True,
+                    resolved_workspace_target_path=resolved_target_cache.get(path, ""),
+                    root_path=normalized_root_path,
+                )
                 if not resolved_cache.get(path):
                     _log_nextcloud_resolution_debug(
                         path=path,
@@ -483,6 +539,7 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                     or _stored_public(proposal)
                     or folder_cache.get(path, "")
                 )
+                proposal.proposal_docx_file_url = _resolve_proposal_docx_open_url(proposal, client=client)
 
 
 def _proposals_context(request=None, user=None, *, debug_nextcloud_links=False):
@@ -853,6 +910,7 @@ def _render_proposal_form(request, *, form, action, proposal=None):
 
 
 def _render_dispatch_form(request, *, form, proposal):
+    _attach_proposal_folder_urls([proposal], user=request.user, request=request)
     return render(
         request,
         PROPOSAL_DISPATCH_FORM_TEMPLATE,
@@ -1279,9 +1337,9 @@ def proposal_dispatch_create_documents(request):
 
         ProposalRegistration.objects.filter(pk=proposal.pk).update(
             docx_file_name=stored["docx_name"],
-            docx_file_link=stored["docx_url"],
+            docx_file_link=stored["docx_path"],
             pdf_file_name=stored["pdf_name"],
-            pdf_file_link=stored["pdf_url"],
+            pdf_file_link=stored["pdf_path"],
         )
         generated_count += 1
 
@@ -1315,6 +1373,10 @@ def proposal_generated_docx_download(request, pk: int):
     proposal = get_object_or_404(ProposalRegistration, pk=pk)
     file_path = get_generated_docx_path(proposal)
     if not file_path:
+        _attach_proposal_folder_urls([proposal], user=request.user, request=request)
+        proposal_docx_file_url = str(getattr(proposal, "proposal_docx_file_url", "") or "").strip()
+        if proposal_docx_file_url:
+            return redirect(proposal_docx_file_url)
         raise Http404("Файл DOCX не найден")
 
     response = FileResponse(

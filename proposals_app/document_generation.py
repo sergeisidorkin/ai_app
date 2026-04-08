@@ -10,7 +10,13 @@ from urllib.parse import quote
 
 from django.conf import settings
 
-from core.cloud_storage import build_folder_url, sanitize_folder_name, upload_file as cloud_upload_file
+from core.cloud_storage import (
+    CloudStorageNotReadyError,
+    get_any_connected_service_user,
+    is_nextcloud_primary,
+    sanitize_folder_name,
+    upload_file as cloud_upload_file,
+)
 
 
 PROPOSAL_DOCUMENTS_SUBDIR = "proposal_documents"
@@ -82,11 +88,18 @@ def build_proposal_workspace_document_paths(proposal) -> dict[str, str]:
         "workspace_root": workspace_root,
         "docx_name": docx_name,
         "docx_path": docx_path,
-        "docx_url": build_folder_url(docx_path),
         "pdf_name": pdf_name,
         "pdf_path": pdf_path,
-        "pdf_url": build_folder_url(pdf_path),
     }
+
+
+def _get_cloud_upload_user(user):
+    if is_nextcloud_primary():
+        return user
+    try:
+        return get_any_connected_service_user()
+    except CloudStorageNotReadyError as exc:
+        raise RuntimeError(str(exc)) from exc
 
 
 def get_generated_docx_path(proposal) -> Path | None:
@@ -148,19 +161,22 @@ def convert_docx_bytes_to_pdf(docx_bytes: bytes, *, source_name: str = "proposal
 
 def store_generated_documents(user, proposal, docx_bytes: bytes, pdf_bytes: bytes | None = None) -> dict[str, str]:
     paths = build_proposal_workspace_document_paths(proposal)
-    if not cloud_upload_file(user, paths["docx_path"], docx_bytes):
+    cloud_user = _get_cloud_upload_user(user)
+    if not cloud_user:
+        raise RuntimeError("Не найден пользователь с подключенным облачным хранилищем для загрузки DOCX.")
+    if not cloud_upload_file(cloud_user, paths["docx_path"], docx_bytes):
         raise RuntimeError("Не удалось загрузить DOCX в рабочую папку ТКП.")
     result = {
         "docx_name": str(paths["docx_name"]),
-        "docx_url": str(paths["docx_url"]),
+        "docx_path": str(paths["docx_path"]),
         "output_dir": str(paths["workspace_root"]),
     }
     if pdf_bytes is not None:
-        if not cloud_upload_file(user, paths["pdf_path"], pdf_bytes):
+        if not cloud_upload_file(cloud_user, paths["pdf_path"], pdf_bytes):
             raise RuntimeError("Не удалось загрузить PDF в рабочую папку ТКП.")
         result["pdf_name"] = str(paths["pdf_name"])
-        result["pdf_url"] = str(paths["pdf_url"])
+        result["pdf_path"] = str(paths["pdf_path"])
     else:
         result["pdf_name"] = ""
-        result["pdf_url"] = ""
+        result["pdf_path"] = ""
     return result

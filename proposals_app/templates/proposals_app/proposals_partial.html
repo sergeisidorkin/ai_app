@@ -355,8 +355,8 @@
               {% endif %}
             </td>
             <td class="text-nowrap">
-              {% if proposal.docx_file_link %}
-                <a href="{{ proposal.docx_file_link }}" target="_blank" rel="noopener" title="Открыть файл DOCX на {{ primary_cloud_storage_label }}">
+              {% if proposal.proposal_docx_file_url %}
+                <a href="{{ proposal.proposal_docx_file_url }}" target="_blank" rel="noopener" title="Открыть файл DOCX на {{ primary_cloud_storage_label }}">
                   <i class="bi bi-link-45deg proposal-file-link-icon" style="color: var(--bs-primary, #075D94);"></i>
                 </a>
               {% else %}
