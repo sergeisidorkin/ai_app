@@ -24,10 +24,12 @@
       <div class="col-6">
         <label class="form-label">Наименование файла DOCX</label>
         {{ form.docx_file_name.as_hidden }}
-        {% if proposal.docx_file_name %}
-          <a href="{% url 'proposal_generated_docx_download' proposal.pk %}" download class="form-control text-decoration-none text-truncate d-block">
+        {% if proposal.docx_file_name and proposal.proposal_docx_file_url %}
+          <a href="{{ proposal.proposal_docx_file_url }}" target="_blank" rel="noopener" class="form-control text-decoration-none text-truncate d-block">
             {{ proposal.docx_file_name }}
           </a>
+        {% elif proposal.docx_file_name %}
+          <input type="text" class="form-control readonly-field" readonly tabindex="-1" value="{{ proposal.docx_file_name }}">
         {% else %}
           <input type="text" class="form-control readonly-field" readonly tabindex="-1" value="">
         {% endif %}
@@ -35,7 +37,7 @@
       <div class="col-6">
         <label class="form-label">Ссылка</label>
         {{ form.docx_file_link.as_hidden }}
-        <input type="text" class="form-control readonly-field" readonly tabindex="-1" value="">
+        <input type="text" class="form-control readonly-field" readonly tabindex="-1" value="{{ proposal.proposal_docx_file_url|default:'' }}">
       </div>
 
       <div class="col-6">
