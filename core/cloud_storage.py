@@ -249,6 +249,23 @@ def upload_file(user, path: str, data: bytes, *, overwrite: bool = True) -> bool
     return yadisk_upload_file(user, path, data, overwrite=overwrite)
 
 
+def download_file(user, path: str):
+    if is_nextcloud_primary():
+        from nextcloud_app.api import NextcloudApiClient, NextcloudApiError
+
+        client = NextcloudApiClient()
+        if not client.is_configured:
+            raise CloudStorageNotReadyError("Nextcloud не настроен для скачивания файлов из облачного хранилища.")
+        try:
+            return client.download_file(client.username, path)
+        except NextcloudApiError:
+            return (None, b"")
+
+    from yandexdisk_app.service import download_file as yadisk_download_file
+
+    return yadisk_download_file(user, path)
+
+
 def publish_resource(user, path: str) -> str:
     if is_nextcloud_primary():
         from nextcloud_app.api import NextcloudApiClient, NextcloudApiError

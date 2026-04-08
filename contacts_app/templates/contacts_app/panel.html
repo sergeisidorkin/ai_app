@@ -135,3 +135,164 @@
     </div>
   </div>
 </div>
+
+<script>
+(function () {
+  if (window.__contactsPanelActionsBound) return;
+  window.__contactsPanelActionsBound = true;
+
+  var root = document.getElementById('contacts');
+  if (!root) return;
+
+  var panelConfig = {
+    'prs-actions': {
+      name: 'prs-select',
+      target: '#contacts-persons-table-wrap',
+      url: '/contacts/prs/table/',
+      modalTarget: '#contacts-modal .modal-content',
+    },
+    'psn-actions': {
+      name: 'psn-select',
+      target: '#contacts-positions-table-wrap',
+      url: '/contacts/psn/table/',
+      modalTarget: '#contacts-modal .modal-content',
+    },
+  };
+
+  function getCookie(name) {
+    var cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+      var cookies = document.cookie.split(';');
+      for (var i = 0; i < cookies.length; i++) {
+        var cookie = cookies[i].trim();
+        if (cookie.substring(0, name.length + 1) === (name + '=')) {
+          cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+          break;
+        }
+      }
+    }
+    return cookieValue;
+  }
+
+  function getChecked(name) {
+    return Array.from(root.querySelectorAll('tbody input.form-check-input[name="' + name + '"]:checked'));
+  }
+
+  function restoreSelection(name, ids) {
+    var idSet = new Set((ids || []).map(String));
+    var boxes = root.querySelectorAll('tbody input.form-check-input[name="' + name + '"]');
+    boxes.forEach(function (checkbox) {
+      checkbox.checked = idSet.has(String(checkbox.value));
+      var row = checkbox.closest('tr');
+      if (row) row.classList.toggle('table-active', checkbox.checked);
+    });
+    var master = root.querySelector('input.form-check-input[data-target-name="' + name + '"]');
+    if (master) {
+      var all = Array.from(boxes);
+      var checkedCount = all.filter(function (checkbox) { return checkbox.checked; }).length;
+      master.checked = !!all.length && checkedCount === all.length;
+      master.indeterminate = checkedCount > 0 && checkedCount < all.length;
+      var actions = document.getElementById(master.dataset.actionsId || '');
+      if (actions) actions.classList.toggle('d-none', checkedCount === 0);
+    }
+  }
+
+  async function refreshTable(config, selectionIds) {
+    if (!window.htmx) return;
+    await htmx.ajax('GET', config.url, {
+      target: config.target,
+      swap: 'innerHTML',
+    });
+    restoreSelection(config.name, selectionIds);
+  }
+
+  root.addEventListener('click', function (event) {
+    var button = event.target.closest('button[data-panel-action]');
+    if (!button) return;
+    var panel = button.closest('#prs-actions, #psn-actions');
+    if (!panel) return;
+
+    var config = panelConfig[panel.id];
+    if (!config) return;
+
+    var checked = getChecked(config.name);
+    if (!checked.length) return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    var action = button.dataset.panelAction;
+    var selectionIds = checked.map(function (checkbox) { return String(checkbox.value); });
+
+    if (action === 'edit') {
+      var editRow = checked[0].closest('tr');
+      var editUrl = editRow && editRow.dataset ? editRow.dataset.editUrl : '';
+      if (editUrl && window.htmx) {
+        htmx.ajax('GET', editUrl, {
+          target: config.modalTarget,
+          swap: 'innerHTML',
+        });
+      }
+      return;
+    }
+
+    if (action === 'delete') {
+      if (!window.confirm('Удалить ' + checked.length + ' строк(у/и)?')) return;
+      Promise.resolve().then(async function () {
+        for (var i = 0; i < checked.length; i++) {
+          var row = checked[i].closest('tr');
+          var deleteUrl = row && row.dataset ? row.dataset.deleteUrl : '';
+          if (!deleteUrl) continue;
+          var response = await fetch(deleteUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              'X-CSRFToken': getCookie('csrftoken'),
+              'HX-Request': 'true',
+            },
+          });
+          if (!response.ok) {
+            var text = await response.text();
+            window.alert(text || 'Операцию не удалось выполнить.');
+            break;
+          }
+        }
+        await refreshTable(config, []);
+        if (config.name === 'prs-select') {
+          await refreshTable(panelConfig['psn-actions'], []);
+        }
+      });
+      return;
+    }
+
+    if (action === 'up' || action === 'down') {
+      Promise.resolve().then(async function () {
+        var urls = checked.map(function (checkbox) {
+          var row = checkbox.closest('tr');
+          if (!row || !row.dataset) return '';
+          return action === 'up' ? row.dataset.moveUpUrl : row.dataset.moveDownUrl;
+        }).filter(Boolean);
+        if (action === 'down') urls.reverse();
+
+        for (var i = 0; i < urls.length; i++) {
+          var response = await fetch(urls[i], {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              'X-CSRFToken': getCookie('csrftoken'),
+              'HX-Request': 'true',
+            },
+          });
+          if (!response.ok) {
+            var text = await response.text();
+            window.alert(text || 'Операцию не удалось выполнить.');
+            return;
+          }
+        }
+
+        await refreshTable(config, selectionIds);
+      });
+    }
+  }, true);
+})();
+</script>

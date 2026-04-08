@@ -1,6 +1,11 @@
+import sys
+
 from django.urls import path
 
 from . import views
+
+sys.modules.setdefault("proposals_app.urls", sys.modules[__name__])
+sys.modules.setdefault("ai_app.proposals_app.urls", sys.modules[__name__])
 
 
 urlpatterns = [
@@ -9,8 +14,10 @@ urlpatterns = [
     path("proposals/create/", views.proposal_form_create, name="proposal_form_create"),
     path("proposals/<int:pk>/edit/", views.proposal_form_edit, name="proposal_form_edit"),
     path("proposals/<int:pk>/dispatch/edit/", views.proposal_dispatch_form_edit, name="proposal_dispatch_form_edit"),
+    path("proposals/docx-source/<int:pk>/", views.proposal_onlyoffice_docx_source, name="proposal_onlyoffice_docx_source"),
     path("proposals/<int:pk>/dispatch/docx/download/", views.proposal_generated_docx_download, name="proposal_generated_docx_download"),
     path("proposals/dispatch/send/", views.proposal_dispatch_send, name="proposal_dispatch_send"),
+    path("proposals/dispatch/sign/", views.proposal_dispatch_sign_documents, name="proposal_dispatch_sign_documents"),
     path("proposals/dispatch/create-documents/", views.proposal_dispatch_create_documents, name="proposal_dispatch_create_documents"),
     path("proposals/templates/create/", views.proposal_template_form_create, name="proposal_template_form_create"),
     path("proposals/templates/<int:pk>/edit/", views.proposal_template_form_edit, name="proposal_template_form_edit"),

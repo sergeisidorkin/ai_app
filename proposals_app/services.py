@@ -1,5 +1,8 @@
 import logging
+import sys
 from types import SimpleNamespace
+
+from django.conf import settings
 
 from letters_app.services import get_effective_template, render_subject, render_template
 from notifications_app.email_delivery import EmailDeliveryError, send_notification_email
@@ -12,6 +15,12 @@ from smtp_app.services import get_user_notification_email_options
 
 logger = logging.getLogger(__name__)
 
+# CI can import this module through either `proposals_app.services` or
+# `ai_app.proposals_app.services`. Keep both names bound to the same module
+# object so patch() targets stay stable.
+sys.modules.setdefault("proposals_app.services", sys.modules[__name__])
+sys.modules.setdefault("ai_app.proposals_app.services", sys.modules[__name__])
+
 PROPOSAL_SENDING_TEMPLATE_TYPE = "proposal_sending"
 PROPOSAL_SENDING_DEFAULT_SUBJECT = "Технико-коммерческое предложение IMC Montan {{tkp_id}}"
 PROPOSAL_SENDING_DEFAULT_BODY = "<p>Направляем проект ТКП {{tkp_id}}</p>"
@@ -22,6 +31,11 @@ SUPPORTED_PROPOSAL_DELIVERY_CHANNELS = (
 PROPOSAL_DELIVERY_CHANNEL_ALIASES = {
     "email": DELIVERY_CHANNEL_SYSTEM_EMAIL,
 }
+
+
+def _proposal_system_from_email() -> str | None:
+    value = str(getattr(settings, "PROPOSAL_SYSTEM_FROM_EMAIL", "") or "").strip()
+    return value or None
 
 
 def normalize_proposal_delivery_channels(delivery_channels):
@@ -163,6 +177,10 @@ def send_proposal_dispatch_emails(*, proposals, sender, delivery_channels):
                     if connected_delivery_error:
                         raise EmailDeliveryError(connected_delivery_error)
                     delivery_options = connected_delivery_options
+                elif channel == DELIVERY_CHANNEL_SYSTEM_EMAIL:
+                    delivery_options = {
+                        "from_email": _proposal_system_from_email(),
+                    }
 
                 send_notification_email(
                     recipient=recipient,

@@ -1,4 +1,5 @@
 import re
+from email.utils import make_msgid, parseaddr
 from html import unescape
 
 from django.conf import settings
@@ -8,6 +9,14 @@ from django.utils.html import strip_tags
 
 class EmailDeliveryError(RuntimeError):
     """Controlled email-delivery error for notification channels."""
+
+
+def _message_id_domain(from_email: str) -> str | None:
+    address = parseaddr(str(from_email or "").strip())[1]
+    if "@" not in address:
+        return None
+    domain = address.rsplit("@", 1)[1].strip().strip(">")
+    return domain or None
 
 
 def looks_like_html(content: str) -> bool:
@@ -55,13 +64,17 @@ def send_notification_email(
         raise EmailDeliveryError("Не указано содержание письма.")
 
     text_body = build_plain_text_body(clean_content)
+    effective_from_email = from_email or settings.DEFAULT_FROM_EMAIL
     message = EmailMultiAlternatives(
         subject=clean_subject,
         body=text_body,
-        from_email=from_email or settings.DEFAULT_FROM_EMAIL,
+        from_email=effective_from_email,
         to=[recipient_email],
         reply_to=reply_to,
         connection=connection,
+        headers={
+            "Message-ID": make_msgid(domain=_message_id_domain(effective_from_email)),
+        },
     )
     if looks_like_html(clean_content):
         message.attach_alternative(clean_content, "text/html")

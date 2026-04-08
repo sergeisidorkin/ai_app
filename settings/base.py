@@ -1,5 +1,6 @@
 from pathlib import Path
 import environ, os
+import sys
 from urllib.parse import urlparse
 
 from core.oidc_settings import oidc_pkce_required
@@ -26,6 +27,18 @@ elif env.bool("READ_DOTENV", False) or (
     os.environ.get("DJANGO_ENV", "local") == "local" and (BASE_DIR / ".env").exists()
 ):
     environ.Env.read_env(BASE_DIR / ".env")
+
+# On local macOS development, make Python SMTP TLS use certifi by default.
+# This avoids per-shell manual exports while leaving server environments unchanged.
+if sys.platform == "darwin" and os.environ.get("DJANGO_ENV", "local") == "local":
+    try:
+        import certifi
+    except Exception:
+        certifi = None
+    if certifi is not None:
+        cert_path = certifi.where()
+        os.environ.setdefault("SSL_CERT_FILE", cert_path)
+        os.environ.setdefault("REQUESTS_CA_BUNDLE", cert_path)
 
 # В dev удобно читать .env
 if env.bool("READ_DOTENV", False) or (
@@ -134,7 +147,15 @@ LOGOUT_REDIRECT_URL = "login"
 # Email (SMTP)
 # Backward compatible with explicit EMAIL_* settings, but can also be configured
 # via a single EMAIL_URL value (e.g. smtp+tls://user:pass@127.0.0.1:587).
-EMAIL_BACKEND = env("EMAIL_BACKEND", default="django.core.mail.backends.smtp.EmailBackend")
+DJANGO_SMTP_EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+CUSTOM_SMTP_EMAIL_BACKEND = "core.email_backend.DomainSMTPEmailBackend"
+
+
+def _normalize_email_backend(value):
+    return CUSTOM_SMTP_EMAIL_BACKEND if value == DJANGO_SMTP_EMAIL_BACKEND else value
+
+
+EMAIL_BACKEND = _normalize_email_backend(env("EMAIL_BACKEND", default=CUSTOM_SMTP_EMAIL_BACKEND))
 EMAIL_HOST = env("EMAIL_HOST", default="smtp.yandex.ru")
 EMAIL_PORT = env.int("EMAIL_PORT", default=465)
 EMAIL_USE_SSL = env.bool("EMAIL_USE_SSL", default=True)
@@ -142,6 +163,11 @@ EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=False)
 EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
 EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="noreply@imcmontanai.ru")
+PROPOSAL_SYSTEM_FROM_EMAIL = env("PROPOSAL_SYSTEM_FROM_EMAIL", default="ai@imcmontanai.ru")
+EMAIL_LOCAL_HOSTNAME = env(
+    "EMAIL_LOCAL_HOSTNAME",
+    default=(DEFAULT_FROM_EMAIL.split("@", 1)[1] if "@" in DEFAULT_FROM_EMAIL else "localhost"),
+)
 EMAIL_TIMEOUT = env.int("EMAIL_TIMEOUT", default=10)
 EMAIL_FILE_PATH = env("EMAIL_FILE_PATH", default="")
 SMTP_APP_ENCRYPTION_KEY = env("SMTP_APP_ENCRYPTION_KEY", default=SECRET_KEY)
@@ -149,7 +175,7 @@ SMTP_APP_ENCRYPTION_KEY = env("SMTP_APP_ENCRYPTION_KEY", default=SECRET_KEY)
 EMAIL_URL = env("EMAIL_URL", default="")
 if EMAIL_URL:
     _email_cfg = env.email_url("EMAIL_URL")
-    EMAIL_BACKEND = _email_cfg.get("EMAIL_BACKEND", EMAIL_BACKEND)
+    EMAIL_BACKEND = _normalize_email_backend(_email_cfg.get("EMAIL_BACKEND", EMAIL_BACKEND))
     EMAIL_HOST = _email_cfg.get("EMAIL_HOST", EMAIL_HOST)
     EMAIL_PORT = _email_cfg.get("EMAIL_PORT", EMAIL_PORT)
     EMAIL_USE_SSL = _email_cfg.get("EMAIL_USE_SSL", EMAIL_USE_SSL)
@@ -191,6 +217,7 @@ ENFORCE_LOGIN_EXEMPT = (
     "/site.webmanifest",
     "/checklists/shared/",
     "/media/",
+    "/proposals/docx-source/",
     "/o/authorize/",
     "/o/token/",
     "/o/revoke_token/",
@@ -352,6 +379,11 @@ NEXTCLOUD_PROVISIONING_USERNAME = env("NEXTCLOUD_PROVISIONING_USERNAME", default
 NEXTCLOUD_PROVISIONING_TOKEN = env("NEXTCLOUD_PROVISIONING_TOKEN", default="")
 NEXTCLOUD_OIDC_PROVIDER_ID = env.int("NEXTCLOUD_OIDC_PROVIDER_ID", default=0)
 NEXTCLOUD_OIDC_CLIENT_ID = env("NEXTCLOUD_OIDC_CLIENT_ID", default="").strip()
+ONLYOFFICE_DOCUMENT_SERVER_URL = env("ONLYOFFICE_DOCUMENT_SERVER_URL", default="")
+ONLYOFFICE_JWT_SECRET = env("ONLYOFFICE_JWT_SECRET", default="")
+ONLYOFFICE_VERIFY_SSL = env.bool("ONLYOFFICE_VERIFY_SSL", default=True)
+ONLYOFFICE_CONVERSION_TIMEOUT = env.int("ONLYOFFICE_CONVERSION_TIMEOUT", default=120)
+ONLYOFFICE_DOCX_SOURCE_TOKEN_TTL = env.int("ONLYOFFICE_DOCX_SOURCE_TOKEN_TTL", default=300)
 NEXTCLOUD_DEFAULT_GROUP = env("NEXTCLOUD_DEFAULT_GROUP", default="staff")
 NEXTCLOUD_DEFAULT_QUOTA = env("NEXTCLOUD_DEFAULT_QUOTA", default="")
 

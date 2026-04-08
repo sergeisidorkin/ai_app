@@ -270,9 +270,10 @@
         <col class="pdf-name">
         <col class="pdf-link">
         <col class="sent-date">
-        <col class="recipient">
         <col class="contact-name">
         <col class="contact-email">
+        <col class="job-title">
+        <col class="organization">
       </colgroup>
       <thead>
         <tr>
@@ -300,9 +301,10 @@
           <th>Наименование файла PDF</th>
           <th>Ссылка</th>
           <th>Дата отправки</th>
-          <th>Получатель</th>
           <th>ФИО</th>
           <th>Эл. почта</th>
+          <th>Должность</th>
+          <th>Организация</th>
         </tr>
       </thead>
       <tbody>
@@ -311,6 +313,8 @@
               data-kind-label="{{ proposal.get_kind_display }}"
               data-status="{{ proposal.status }}"
               data-status-label="{{ proposal.get_status_display }}"
+              data-tkp-id="{{ proposal.short_uid }}"
+              data-contact-email="{{ proposal.contact_email|default:'' }}"
               data-edit-url="{% url 'proposal_dispatch_form_edit' proposal.pk %}"
               data-send-ready="{% if proposal.docx_file_name %}1{% else %}0{% endif %}">
             <td class="text-nowrap">
@@ -351,7 +355,10 @@
             </td>
             <td>
               {% if proposal.docx_file_name %}
-                <span class="proposal-docx-file-name">{{ proposal.docx_file_name }}</span>
+                <span class="proposal-docx-file-name d-inline-flex align-items-center gap-1">
+                  <i class="bi bi-file-word-fill" style="color: var(--bs-primary, #075D94);"></i>
+                  <span>{{ proposal.docx_file_name }}</span>
+                </span>
               {% endif %}
             </td>
             <td class="text-nowrap">
@@ -363,15 +370,31 @@
                 <i class="bi bi-link-45deg proposal-file-link-icon" style="color: #ccc;"></i>
               {% endif %}
             </td>
-            <td>{{ proposal.pdf_file_name }}</td>
-            <td>{{ proposal.pdf_file_link }}</td>
+            <td>
+              {% if proposal.pdf_file_name %}
+                <span class="proposal-pdf-file-name d-inline-flex align-items-center gap-1">
+                  <i class="bi bi-file-pdf-fill" style="color: var(--bs-primary, #075D94);"></i>
+                  <span>{{ proposal.pdf_file_name }}</span>
+                </span>
+              {% endif %}
+            </td>
+            <td class="text-nowrap">
+              {% if proposal.proposal_pdf_file_url %}
+                <a href="{{ proposal.proposal_pdf_file_url }}" target="_blank" rel="noopener" title="Открыть файл PDF на {{ primary_cloud_storage_label }}">
+                  <i class="bi bi-link-45deg proposal-file-link-icon" style="color: var(--bs-primary, #075D94);"></i>
+                </a>
+              {% else %}
+                <i class="bi bi-link-45deg proposal-file-link-icon" style="color: #ccc;"></i>
+              {% endif %}
+            </td>
             <td>{{ proposal.sent_date }}</td>
-            <td>{{ proposal.recipient }}</td>
-            <td>{{ proposal.contact_full_name }}</td>
+            <td>{{ proposal.contact_short_name }}</td>
             <td>{{ proposal.contact_email }}</td>
+            <td>{{ proposal.recipient_job_title }}</td>
+            <td>{{ proposal.recipient }}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="16" class="text-muted">Пока нет данных.</td></tr>
+          <tr><td colspan="17" class="text-muted">Пока нет данных.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -380,6 +403,7 @@
       <div class="d-flex align-items-stretch gap-2 products-actions-row"
            id="proposal-dispatch-controls"
            data-send-url="{% url 'proposal_dispatch_send' %}"
+           data-sign-url="{% url 'proposal_dispatch_sign_documents' %}"
            data-create-url="{% url 'proposal_dispatch_create_documents' %}"
            data-refresh-url="{% url 'proposals_partial' %}">
         <button
@@ -388,6 +412,13 @@
           class="btn btn-primary btn-sm d-flex align-items-center"
           disabled>
           <i class="bi bi-file-earmark-ruled me-2"></i>Сформировать ТКП
+        </button>
+        <button
+          type="button"
+          id="proposal-sign-btn"
+          class="btn btn-primary btn-sm d-flex align-items-center"
+          disabled>
+          <i class="bi bi-vector-pen me-2"></i>Подписать ТКП
         </button>
         <div class="btn-group">
           <button type="button"
@@ -405,6 +436,12 @@
             <i class="bi bi-gear"></i>
           </button>
         </div>
+        <button type="button"
+                id="proposal-transfer-contract-btn"
+                class="btn btn-primary btn-sm d-flex align-items-center"
+                disabled>
+          <i class="bi bi-arrow-right-circle me-2"></i>Передать для договора
+        </button>
         <div id="proposal-dispatch-actions" class="d-none"></div>
       </div>
 
@@ -443,13 +480,6 @@
                     Сначала настройте активное внешнее SMTP-подключение в разделе «Подключения».
                   </div>
                 {% endif %}
-              </div>
-              <div class="mb-0">
-                <label for="proposal-request-sent-at" class="form-label">Дата отправки</label>
-                <input type="datetime-local"
-                       id="proposal-request-sent-at"
-                       class="form-control"
-                       value="{{ proposal_request_sent_initial }}">
               </div>
             </div>
             <div class="modal-footer">

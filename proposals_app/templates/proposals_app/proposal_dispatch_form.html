@@ -5,22 +5,97 @@
 
 <form
   method="post"
+  data-proposal-dispatch-form="1"
+  data-ler-search-url="{% url 'ler_search' %}"
+  data-prs-search-url="{% url 'prs_autocomplete' %}"
+  data-country-identifier-url="{% url 'identifier_for_country' %}"
   hx-post="{% url 'proposal_dispatch_form_edit' proposal.pk %}"
   hx-target="#proposals-pane"
   hx-swap="outerHTML">
   <div class="modal-body modal-body-scroll">
     {% csrf_token %}
 
-    <div class="row g-2">
-      <div class="col-3">
+    <div class="row g-2 mb-3">
+      <div class="col-12">
         <label class="form-label">ТКП ID</label>
         <input type="text" class="form-control readonly-field" readonly tabindex="-1" value="{{ proposal.short_uid }}">
       </div>
-      <div class="col-9">
-        <label class="form-label">Получатель</label>
-        {{ form.recipient }}
-      </div>
+    </div>
 
+    <div class="row g-2 mb-3">
+      <div class="col-4">
+        <label class="form-label">Фамилия</label>
+        <div class="ler-ac-wrap">
+          {{ form.contact_last_name }}
+          <div class="ler-ac-list" id="proposal-dispatch-prs-ac-list"></div>
+        </div>
+      </div>
+      <div class="col-4">
+        <label class="form-label">Имя</label>
+        {{ form.contact_first_name }}
+      </div>
+      <div class="col-4">
+        <label class="form-label">Отчество</label>
+        {{ form.contact_middle_name }}
+      </div>
+    </div>
+
+    <div class="row g-2 mb-3">
+      <div class="col-8">
+        <label class="form-label">Эл. почта</label>
+        {{ form.contact_email }}
+      </div>
+      <div class="col-4">
+        <label class="form-label">Дата отправки</label>
+        {{ form.sent_date }}
+      </div>
+    </div>
+
+    <div class="row g-2 mb-3">
+      <div class="col-12">
+        <label class="form-label">Наименование организации (краткое)</label>
+        <div class="ler-ac-wrap">
+          {{ form.recipient }}
+          <input type="hidden"
+                 name="recipient_autocomplete_identifier_record_id"
+                 id="proposal-dispatch-recipient-autocomplete-identifier-record-id"
+                 value="">
+          <input type="hidden"
+                 name="recipient_autocomplete_selected_from_autocomplete"
+                 id="proposal-dispatch-recipient-autocomplete-selected"
+                 value="0">
+          <div class="ler-ac-list" id="proposal-dispatch-ler-ac-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row g-2 mb-3">
+      <div class="col-3">
+        <label class="form-label">{{ form.recipient_country.label }}</label>
+        {{ form.recipient_country }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">{{ form.recipient_identifier.label }}</label>
+        {{ form.recipient_identifier }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">{{ form.recipient_registration_number.label }}</label>
+        {{ form.recipient_registration_number }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">{{ form.recipient_registration_date.label }}</label>
+        {{ form.recipient_registration_date }}
+      </div>
+    </div>
+
+    <div class="row g-2 mb-3">
+      <div class="col-12">
+        <label class="form-label">Должность</label>
+        {{ form.recipient_job_title }}
+      </div>
+    </div>
+
+    <div class="row g-2 mb-3">
       <div class="col-6">
         <label class="form-label">Наименование файла DOCX</label>
         {{ form.docx_file_name.as_hidden }}
@@ -39,7 +114,9 @@
         {{ form.docx_file_link.as_hidden }}
         <input type="text" class="form-control readonly-field" readonly tabindex="-1" value="{{ proposal.proposal_docx_file_url|default:'' }}">
       </div>
+    </div>
 
+    <div class="row g-2 mb-3">
       <div class="col-6">
         <label class="form-label">Наименование файла PDF</label>
         {{ form.pdf_file_name }}
@@ -47,19 +124,6 @@
       <div class="col-6">
         <label class="form-label">Ссылка</label>
         {{ form.pdf_file_link }}
-      </div>
-
-      <div class="col-4">
-        <label class="form-label">Дата отправки</label>
-        {{ form.sent_date }}
-      </div>
-      <div class="col-4">
-        <label class="form-label">ФИО</label>
-        {{ form.contact_full_name }}
-      </div>
-      <div class="col-4">
-        <label class="form-label">Эл. почта</label>
-        {{ form.contact_email }}
       </div>
     </div>
 
@@ -79,7 +143,7 @@
 
     <div class="modal-footer pb-3">
       <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
-      <button type="submit" class="btn btn-primary">Сохранить</button>
+      <button type="submit" class="btn btn-primary" data-proposal-dispatch-save-btn="1">Сохранить</button>
     </div>
   </div>
 </form>

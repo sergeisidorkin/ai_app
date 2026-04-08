@@ -122,7 +122,7 @@ class PositionRecord(models.Model):
             return ""
         qs = ProposalRegistration.objects.exclude(contact_full_name="").order_by("position", "id")
         for proposal in qs.iterator():
-            if _normalize_compare_value(proposal.recipient) != title:
+            if _normalize_compare_value(proposal.recipient_job_title) != title:
                 continue
             full_name = _normalize_compare_value(proposal.contact_full_name)
             proposal_surname = full_name.split(" ", 1)[0] if full_name else ""

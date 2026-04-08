@@ -185,7 +185,19 @@ class ProposalRegistration(models.Model):
         default="",
     )
     sent_date = models.CharField("Дата отправки", max_length=255, blank=True, default="")
-    recipient = models.CharField("Получатель", max_length=255, blank=True, default="")
+    recipient = models.CharField("Наименование организации (краткое)", max_length=255, blank=True, default="")
+    recipient_country = models.ForeignKey(
+        OKSMCountry,
+        verbose_name="Страна",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="proposal_dispatch_recipients",
+    )
+    recipient_identifier = models.CharField("Идентификатор", max_length=64, blank=True, default="")
+    recipient_registration_number = models.CharField("Регистрационный номер", max_length=100, blank=True, default="")
+    recipient_registration_date = models.DateField("Дата регистрации", null=True, blank=True)
+    recipient_job_title = models.CharField("Должность", max_length=255, blank=True, default="")
     contact_full_name = models.CharField("ФИО", max_length=255, blank=True, default="")
     contact_email = models.CharField("Эл. почта", max_length=255, blank=True, default="")
 
@@ -203,6 +215,15 @@ class ProposalRegistration(models.Model):
 
     def __str__(self):
         return f"{self.short_uid} — {self.get_kind_display()}"
+
+    @property
+    def contact_short_name(self):
+        parts = [part for part in str(self.contact_full_name or "").strip().split() if part]
+        if not parts:
+            return ""
+        last_name = parts[0]
+        initials = "".join(f"{part[0]}." for part in parts[1:] if part)
+        return f"{last_name} {initials}".strip()
 
     @property
     def group_alpha2(self):

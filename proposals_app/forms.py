@@ -1390,6 +1390,49 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
 
 
 class ProposalDispatchForm(BootstrapMixin, forms.ModelForm):
+    recipient_country = forms.ModelChoiceField(
+        label="Страна",
+        queryset=OKSMCountry.objects.none(),
+        required=False,
+        widget=forms.Select(attrs={"id": "proposal-dispatch-recipient-country-select"}),
+    )
+    recipient_identifier = forms.CharField(
+        label="Идентификатор",
+        required=False,
+        widget=forms.TextInput(
+            attrs={
+                "readonly": True,
+                "tabindex": "-1",
+                "class": "form-control readonly-field",
+                "id": "proposal-dispatch-recipient-identifier-field",
+            }
+        ),
+    )
+    recipient_registration_date = forms.DateField(
+        label="Дата регистрации",
+        required=False,
+        widget=forms.TextInput(attrs={**DATE_INPUT_ATTRS, "id": "proposal-dispatch-recipient-registration-date"}),
+        input_formats=DATE_INPUT_FORMATS,
+    )
+    recipient_job_title = forms.CharField(label="Должность", required=False, widget=forms.TextInput())
+    contact_last_name = forms.CharField(
+        label="Фамилия",
+        required=False,
+        widget=forms.TextInput(attrs={"placeholder": "Искать по фамилии контакта"}),
+    )
+    contact_first_name = forms.CharField(label="Имя", required=False, widget=forms.TextInput())
+    contact_middle_name = forms.CharField(label="Отчество", required=False, widget=forms.TextInput())
+
+    @staticmethod
+    def _split_contact_name_parts(value):
+        parts = [part for part in str(value or "").strip().split() if part]
+        if not parts:
+            return "", "", ""
+        last_name = parts[0]
+        first_name = parts[1] if len(parts) > 1 else ""
+        middle_name = " ".join(parts[2:]) if len(parts) > 2 else ""
+        return last_name, first_name, middle_name
+
     class Meta:
         model = ProposalRegistration
         fields = [
@@ -1399,7 +1442,11 @@ class ProposalDispatchForm(BootstrapMixin, forms.ModelForm):
             "pdf_file_link",
             "sent_date",
             "recipient",
-            "contact_full_name",
+            "recipient_country",
+            "recipient_identifier",
+            "recipient_registration_number",
+            "recipient_registration_date",
+            "recipient_job_title",
             "contact_email",
         ]
         widgets = {
@@ -1407,15 +1454,67 @@ class ProposalDispatchForm(BootstrapMixin, forms.ModelForm):
             "docx_file_link": forms.TextInput(),
             "pdf_file_name": forms.TextInput(),
             "pdf_file_link": forms.TextInput(),
-            "sent_date": forms.TextInput(),
-            "recipient": forms.TextInput(),
-            "contact_full_name": forms.TextInput(),
+            "sent_date": forms.TextInput(
+                attrs={
+                    "readonly": True,
+                    "tabindex": "-1",
+                    "class": "readonly-field",
+                }
+            ),
+            "recipient": forms.TextInput(
+                attrs={
+                    "placeholder": "Искать по наименованию и регистрационному номеру",
+                    "id": "proposal-dispatch-recipient-field",
+                }
+            ),
+            "recipient_registration_number": forms.TextInput(),
+            "recipient_job_title": forms.TextInput(),
             "contact_email": forms.EmailInput(),
         }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        for field in self.fields.values():
+            _apply_russian_error_messages(field)
+        today = timezone.now().date()
+        country_qs = OKSMCountry.objects.filter(
+            models.Q(expiry_date__isnull=True) | models.Q(expiry_date__gte=today)
+        ).order_by("short_name")
+        if self.instance and self.instance.pk and self.instance.recipient_country_id:
+            country_qs = (country_qs | OKSMCountry.objects.filter(pk=self.instance.recipient_country_id)).distinct().order_by(
+                "short_name"
+            )
+        self.fields["recipient_country"].queryset = country_qs
+        self.fields["recipient_country"].label_from_instance = lambda obj: obj.short_name
+        if not self.is_bound and not getattr(self.instance, "recipient_country_id", None):
+            default_country = country_qs.filter(code="643").order_by("position", "id").first()
+            if default_country is not None:
+                self.fields["recipient_country"].initial = default_country.pk
+        if self.is_bound:
+            self.fields["contact_last_name"].initial = (self.data.get("contact_last_name") or "").strip()
+            self.fields["contact_first_name"].initial = (self.data.get("contact_first_name") or "").strip()
+            self.fields["contact_middle_name"].initial = (self.data.get("contact_middle_name") or "").strip()
+        else:
+            last_name, first_name, middle_name = self._split_contact_name_parts(
+                getattr(self.instance, "contact_full_name", "")
+            )
+            self.fields["contact_last_name"].initial = last_name
+            self.fields["contact_first_name"].initial = first_name
+            self.fields["contact_middle_name"].initial = middle_name
         self._bootstrapify()
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        name_parts = [
+            (self.cleaned_data.get("contact_last_name") or "").strip(),
+            (self.cleaned_data.get("contact_first_name") or "").strip(),
+            (self.cleaned_data.get("contact_middle_name") or "").strip(),
+        ]
+        instance.contact_full_name = " ".join(part for part in name_parts if part).strip()
+        if commit:
+            instance.save()
+            self.save_m2m()
+        return instance
 
 
 class ProposalTemplateForm(forms.ModelForm):

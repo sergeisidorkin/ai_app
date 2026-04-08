@@ -67,7 +67,8 @@ class ContactsAppTests(TestCase):
         ProposalRegistration.objects.create(
             number=3333,
             group="RU",
-            recipient="Генеральный директор",
+            recipient='ООО "Альфа"',
+            recipient_job_title="Генеральный директор",
             contact_full_name="Иванов Петр Сергеевич",
             position=1,
         )
@@ -83,7 +84,8 @@ class ContactsAppTests(TestCase):
         ProposalRegistration.objects.create(
             number=3333,
             group="RU",
-            recipient="Генеральный директор",
+            recipient='ООО "Альфа"',
+            recipient_job_title="Генеральный директор",
             contact_full_name="Петров Петр Сергеевич",
             position=1,
         )
@@ -110,7 +112,8 @@ class ContactsAppTests(TestCase):
         ProposalRegistration.objects.create(
             number=3333,
             group="RU",
-            recipient="Генеральный директор",
+            recipient='ООО "Альфа"',
+            recipient_job_title="Генеральный директор",
             contact_full_name="Иванов Петр Сергеевич",
             position=1,
         )
@@ -136,7 +139,8 @@ class ContactsAppTests(TestCase):
         ProposalRegistration.objects.create(
             number=3333,
             group="RU",
-            recipient="Генеральный директор",
+            recipient='ООО "Альфа"',
+            recipient_job_title="Генеральный директор",
             contact_full_name="Иванов Петр Сергеевич",
             position=1,
         )
@@ -180,3 +184,20 @@ class ContactsAppTests(TestCase):
         self.assertContains(response, "Фамилия 51")
         self.assertContains(response, "Фамилия 52")
         self.assertNotContains(response, "Фамилия 50")
+
+    def test_prs_autocomplete_returns_full_person_name_by_surname(self):
+        second_person = PersonRecord.objects.create(
+            last_name="Иваненко",
+            first_name="Петр",
+            middle_name="Сергеевич",
+            position=2,
+        )
+
+        response = self.client.get(reverse("prs_autocomplete"), {"q": "Иван"})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertGreaterEqual(payload["total_count"], 2)
+        display_names = [item["display_name"] for item in payload["results"]]
+        self.assertIn(self.person.display_name, display_names)
+        self.assertIn(second_person.display_name, display_names)
