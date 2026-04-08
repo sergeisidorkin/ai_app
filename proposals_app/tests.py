@@ -340,6 +340,14 @@ class ProposalDispatchSendTests(TestCase):
             service_type="service",
             position=1,
         )
+        self.country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+        )
         LetterTemplate.objects.update_or_create(
             template_type="proposal_sending",
             user=None,
