@@ -10,7 +10,7 @@ from urllib.parse import quote
 
 from django.conf import settings
 
-from core.cloud_storage import sanitize_folder_name
+from core.cloud_storage import build_folder_url, sanitize_folder_name, upload_file as cloud_upload_file
 
 
 PROPOSAL_DOCUMENTS_SUBDIR = "proposal_documents"
@@ -63,6 +63,29 @@ def build_proposal_documents_paths(proposal) -> dict[str, str | Path]:
         "docx_url": docx_url,
         "pdf_url": pdf_url,
         "output_dir": output_dir,
+    }
+
+
+def build_proposal_workspace_document_paths(proposal) -> dict[str, str]:
+    workspace_path = str(getattr(proposal, "proposal_workspace_disk_path", "") or "").strip()
+    if not workspace_path:
+        raise RuntimeError("Для ТКП не задана рабочая папка в облачном хранилище.")
+
+    base_name = build_proposal_document_base_name(proposal)
+    docx_name = f"{base_name}.docx"
+    pdf_name = f"{base_name}.pdf"
+    workspace_root = workspace_path.rstrip("/")
+    docx_path = posixpath.join(workspace_root, docx_name)
+    pdf_path = posixpath.join(workspace_root, pdf_name)
+
+    return {
+        "workspace_root": workspace_root,
+        "docx_name": docx_name,
+        "docx_path": docx_path,
+        "docx_url": build_folder_url(docx_path),
+        "pdf_name": pdf_name,
+        "pdf_path": pdf_path,
+        "pdf_url": build_folder_url(pdf_path),
     }
 
 
@@ -123,22 +146,21 @@ def convert_docx_bytes_to_pdf(docx_bytes: bytes, *, source_name: str = "proposal
         return pdf_path.read_bytes()
 
 
-def store_generated_documents(proposal, docx_bytes: bytes, pdf_bytes: bytes | None = None) -> dict[str, str]:
-    paths = build_proposal_documents_paths(proposal)
-    Path(paths["docx_path"]).write_bytes(docx_bytes)
+def store_generated_documents(user, proposal, docx_bytes: bytes, pdf_bytes: bytes | None = None) -> dict[str, str]:
+    paths = build_proposal_workspace_document_paths(proposal)
+    if not cloud_upload_file(user, paths["docx_path"], docx_bytes):
+        raise RuntimeError("Не удалось загрузить DOCX в рабочую папку ТКП.")
     result = {
         "docx_name": str(paths["docx_name"]),
         "docx_url": str(paths["docx_url"]),
-        "output_dir": str(paths["output_dir"]),
+        "output_dir": str(paths["workspace_root"]),
     }
     if pdf_bytes is not None:
-        Path(paths["pdf_path"]).write_bytes(pdf_bytes)
+        if not cloud_upload_file(user, paths["pdf_path"], pdf_bytes):
+            raise RuntimeError("Не удалось загрузить PDF в рабочую папку ТКП.")
         result["pdf_name"] = str(paths["pdf_name"])
         result["pdf_url"] = str(paths["pdf_url"])
     else:
-        pdf_path = Path(paths["pdf_path"])
-        if pdf_path.exists():
-            pdf_path.unlink()
         result["pdf_name"] = ""
         result["pdf_url"] = ""
     return result

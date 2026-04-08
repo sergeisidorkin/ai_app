@@ -2549,6 +2549,12 @@ html.proposal-progress-cursor * {
   text-shadow: 0 0 0.2px currentColor;
 }
 
+.proposal-file-link-icon {
+  -webkit-text-stroke: 0.35px currentColor;
+  text-shadow: 0 0 0.3px currentColor;
+  font-weight: 700;
+}
+
 #proposals-pane table.table > thead tr > :first-child,
 #proposals-pane table.table > tbody tr > :first-child {
   padding-left: calc(var(--bs-table-cell-padding-x, .4rem) + 0px);
@@ -3594,19 +3600,13 @@ body.proposal-service-text-modal-open {
   background-color: rgba(0, 0, 0, .08);
 }
 
-#proposals-pane .proposal-docx-download-link {
+#proposals-pane .proposal-docx-file-name {
   display: block;
   max-width: 100%;
   color: #6c757d;
-  text-decoration: none;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-#proposals-pane .proposal-docx-download-link:hover {
-  color: #212529;
-  text-decoration: underline;
 }
 .ct-upload-link {
   display: inline-flex;

@@ -1272,14 +1272,14 @@ def proposal_dispatch_create_documents(request):
             from contracts_app.docx_processor import process_template
 
             docx_bytes = process_template(template_bytes, replacements)
-            stored = store_generated_documents(proposal, docx_bytes, None)
+            stored = store_generated_documents(request.user, proposal, docx_bytes, None)
         except Exception as exc:
             errors.append(f"{proposal.short_uid}: {exc}")
             continue
 
         ProposalRegistration.objects.filter(pk=proposal.pk).update(
             docx_file_name=stored["docx_name"],
-            docx_file_link="",
+            docx_file_link=stored["docx_url"],
             pdf_file_name=stored["pdf_name"],
             pdf_file_link=stored["pdf_url"],
         )

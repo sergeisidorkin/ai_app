@@ -351,12 +351,18 @@
             </td>
             <td>
               {% if proposal.docx_file_name %}
-                <a href="{% url 'proposal_generated_docx_download' proposal.pk %}" download class="proposal-docx-download-link">
-                  {{ proposal.docx_file_name }}
-                </a>
+                <span class="proposal-docx-file-name">{{ proposal.docx_file_name }}</span>
               {% endif %}
             </td>
-            <td></td>
+            <td class="text-nowrap">
+              {% if proposal.docx_file_link %}
+                <a href="{{ proposal.docx_file_link }}" target="_blank" rel="noopener" title="Открыть файл DOCX на {{ primary_cloud_storage_label }}">
+                  <i class="bi bi-link-45deg proposal-file-link-icon" style="color: var(--bs-primary, #075D94);"></i>
+                </a>
+              {% else %}
+                <i class="bi bi-link-45deg proposal-file-link-icon" style="color: #ccc;"></i>
+              {% endif %}
+            </td>
             <td>{{ proposal.pdf_file_name }}</td>
             <td>{{ proposal.pdf_file_link }}</td>
             <td>{{ proposal.sent_date }}</td>

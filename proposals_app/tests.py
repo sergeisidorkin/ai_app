@@ -4,7 +4,6 @@ import json
 import tempfile
 from decimal import Decimal
 from io import BytesIO
-from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import quote
 
@@ -36,7 +35,6 @@ from policy_app.models import (
 )
 from users_app.models import Employee
 
-from .document_generation import get_generated_docx_path
 from .forms import ProposalRegistrationForm
 from .forms import ProposalVariableForm
 from .models import (
@@ -101,6 +99,7 @@ class ProposalDocumentGenerationTests(TestCase):
             country=self.country,
             identifier="ОГРН",
             registration_number="1174910001683",
+            proposal_workspace_disk_path="/Corporate Root/ТКП/2026/33330RU DD Приморское",
         )
 
         template_doc = Document()
@@ -140,7 +139,16 @@ class ProposalDocumentGenerationTests(TestCase):
             position=2,
         )
 
-    def test_create_documents_generates_docx_and_updates_dispatch_fields(self):
+    @patch("ai_app.proposals_app.document_generation.build_folder_url")
+    @patch("ai_app.proposals_app.document_generation.cloud_upload_file", return_value=True)
+    def test_create_documents_generates_docx_and_uploads_it_to_workspace_folder(
+        self,
+        mocked_cloud_upload,
+        mocked_build_folder_url,
+    ):
+        mocked_build_folder_url.side_effect = (
+            lambda path: f"https://cloud.example.com/apps/files/files?dir={quote(path, safe='/')}"
+        )
         response = self.client.post(
             reverse("proposal_dispatch_create_documents"),
             {"proposal_ids[]": [self.proposal.pk]},
@@ -152,47 +160,45 @@ class ProposalDocumentGenerationTests(TestCase):
 
         self.proposal.refresh_from_db()
         self.assertTrue(self.proposal.docx_file_name.endswith(".docx"))
-        self.assertEqual(self.proposal.docx_file_link, "")
+        expected_docx_path = (
+            f"{self.proposal.proposal_workspace_disk_path}/{self.proposal.docx_file_name}"
+        )
+        expected_docx_url = f"https://cloud.example.com/apps/files/files?dir={quote(expected_docx_path, safe='/')}"
+        self.assertEqual(self.proposal.docx_file_link, expected_docx_url)
         self.assertEqual(self.proposal.pdf_file_name, "")
         self.assertEqual(self.proposal.pdf_file_link, "")
 
-        docx_path = Path(self.temp_media.name) / "proposal_documents" / "2026" / self.proposal.short_uid / self.proposal.docx_file_name
-        self.assertTrue(docx_path.exists())
-
-        generated_doc = Document(str(docx_path))
+        mocked_cloud_upload.assert_called_once()
+        self.assertEqual(mocked_cloud_upload.call_args.args[0], self.user)
+        self.assertEqual(mocked_cloud_upload.call_args.args[1], expected_docx_path)
+        generated_doc = Document(BytesIO(mocked_cloud_upload.call_args.args[2]))
         full_text = "\n".join(paragraph.text for paragraph in generated_doc.paragraphs)
         self.assertIn('Заказчик: ООО "Приморское"', full_text)
         self.assertIn("Страна: Российская Федерация", full_text)
 
-        download_response = self.client.get(reverse("proposal_generated_docx_download", args=[self.proposal.pk]))
-        self.assertEqual(download_response.status_code, 200)
-        self.assertIn("attachment;", download_response["Content-Disposition"])
+        partial_response = self.client.get(reverse("proposals_partial"))
+        self.assertEqual(partial_response.status_code, 200)
+        self.assertContains(partial_response, self.proposal.docx_file_name, html=False)
+        self.assertContains(partial_response, f'href="{expected_docx_url}"', html=False)
+        self.assertNotContains(
+            partial_response,
+            reverse("proposal_generated_docx_download", args=[self.proposal.pk]),
+            html=False,
+        )
 
-    def test_generated_docx_download_survives_proposal_metadata_edits(self):
-        self.client.post(
+    def test_create_documents_returns_error_when_workspace_folder_is_missing(self):
+        self.proposal.proposal_workspace_disk_path = ""
+        self.proposal.save(update_fields=["proposal_workspace_disk_path"])
+
+        response = self.client.post(
             reverse("proposal_dispatch_create_documents"),
             {"proposal_ids[]": [self.proposal.pk]},
         )
-        self.proposal.refresh_from_db()
-        original_docx_name = self.proposal.docx_file_name
 
-        self.proposal.year = 2027
-        self.proposal.number = 4444
-        self.proposal.group_member = GroupMember.objects.create(
-            short_name="IMC Alt",
-            country_name="Россия",
-            country_code="643",
-            country_alpha2="RU",
-            position=2,
-        )
-        self.proposal.save()
-
-        resolved_path = get_generated_docx_path(self.proposal)
-        self.assertIsNotNone(resolved_path)
-        self.assertEqual(resolved_path.name, original_docx_name)
-
-        download_response = self.client.get(reverse("proposal_generated_docx_download", args=[self.proposal.pk]))
-        self.assertEqual(download_response.status_code, 200)
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertIn("рабочая папка", payload["error"])
 
 
 @override_settings(ROOT_URLCONF="proposals_app.urls")
