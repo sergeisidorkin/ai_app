@@ -1,0 +1,137 @@
+<div class="d-flex templates-bleed">
+  <aside class="second-sidebar bg-body-tertiary border-end">
+    <div class="second-sidebar-header-spacer"></div>
+    <hr class="my-0">
+    <div class="list-group list-group-flush p-3 m-0" id="contacts-second-sidebar-list">
+      <a href="#cnt-persons" class="list-group-item list-group-item-action active" data-contacts-section="persons">
+        База контактов: лицо
+      </a>
+      <a href="#cnt-positions" class="list-group-item list-group-item-action" data-contacts-section="positions">
+        База контактов: должность
+      </a>
+    </div>
+  </aside>
+
+  <div class="flex-grow-1 ps-3 pe-0" style="min-width:0;">
+    <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
+      <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
+        <h5 class="mb-0 ps-3 fs-4 pt-2" id="contacts-section-title">База контактов</h5>
+        <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
+           href="#notifications"
+           data-bs-toggle="tab"
+           aria-label="Открыть уведомления">
+          <i class="bi bi-bell fs-5"></i>
+          <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
+                data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
+        </a>
+      </div>
+    </div>
+
+    <div class="ps-3">
+      <div id="cnt-content-persons" class="contacts-section-content">
+        <div class="card shadow-sm mt-3">
+          <div class="card-body">
+            <div id="contacts-persons-pane">
+              <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 0px;">
+                <h5 class="table-section-title">
+                  <i class="bi bi-table me-2"></i>
+                  Реестр лиц
+                </h5>
+              </div>
+              <div class="table-responsive">
+                <div id="contacts-persons-table-wrap"
+                     hx-get="{% url 'prs_table_partial' %}"
+                     hx-trigger="contacts-persons:load from:body once"
+                     hx-swap="innerHTML">
+                  <div class="text-muted p-3">Загрузка данных…</div>
+                </div>
+              </div>
+              {% if request.user.is_authenticated and request.user.is_staff %}
+              <div class="d-flex align-items-stretch gap-2 products-actions-row">
+                <button class="btn btn-primary btn-sm d-flex align-items-center"
+                        hx-get="{% url 'prs_form_create' %}"
+                        hx-target="#contacts-modal .modal-content"
+                        hx-swap="innerHTML">
+                  <i class="bi bi-plus-circle me-2"></i>Добавить строку
+                </button>
+                <div id="prs-actions" class="d-none d-flex">
+                  <div class="btn-group">
+                    <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+                      <i class="bi bi-arrow-up-square"></i>
+                    </button>
+                    <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+                      <i class="bi bi-arrow-down-square"></i>
+                    </button>
+                    <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+                      <i class="bi bi-pencil-square"></i>
+                    </button>
+                    <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+                      <i class="bi bi-x-square"></i>
+                    </button>
+                  </div>
+                </div>
+              </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="cnt-content-positions" class="contacts-section-content d-none">
+        <div class="card shadow-sm mt-3">
+          <div class="card-body">
+            <div id="contacts-positions-pane">
+              <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 0px;">
+                <h5 class="table-section-title">
+                  <i class="bi bi-table me-2"></i>
+                  Реестр должностей
+                </h5>
+              </div>
+              <div class="table-responsive">
+                <div id="contacts-positions-table-wrap"
+                     hx-get="{% url 'psn_table_partial' %}"
+                     hx-trigger="contacts-positions:load from:body once"
+                     hx-swap="innerHTML">
+                  <div class="text-muted p-3">Загрузка данных…</div>
+                </div>
+              </div>
+              {% if request.user.is_authenticated and request.user.is_staff %}
+              <div class="d-flex align-items-stretch gap-2 products-actions-row">
+                <button class="btn btn-primary btn-sm d-flex align-items-center"
+                        hx-get="{% url 'psn_form_create' %}"
+                        hx-target="#contacts-modal .modal-content"
+                        hx-swap="innerHTML">
+                  <i class="bi bi-plus-circle me-2"></i>Добавить строку
+                </button>
+                <div id="psn-actions" class="d-none d-flex">
+                  <div class="btn-group">
+                    <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+                      <i class="bi bi-arrow-up-square"></i>
+                    </button>
+                    <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+                      <i class="bi bi-arrow-down-square"></i>
+                    </button>
+                    <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+                      <i class="bi bi-pencil-square"></i>
+                    </button>
+                    <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+                      <i class="bi bi-x-square"></i>
+                    </button>
+                  </div>
+                </div>
+              </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal fade" id="contacts-modal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-scrollable modal-lg">
+        <div class="modal-content">
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

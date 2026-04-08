@@ -6,6 +6,7 @@ from decimal import Decimal
 from urllib.parse import quote
 
 from django import forms
+from django.conf import settings
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.db.models import Max, Prefetch
 from django.http import FileResponse, Http404, JsonResponse
@@ -382,6 +383,37 @@ def _build_nextcloud_child_url(client, parent_path: str, child_name: str) -> str
     return client.build_files_url(f"{normalized_parent.rstrip('/')}/{clean_child_name}")
 
 
+def _nextcloud_parent_path(path: str) -> str:
+    normalized_path = _normalize_nextcloud_path(path)
+    if not normalized_path or normalized_path == "/":
+        return ""
+    parent = normalized_path.rsplit("/", 1)[0]
+    return parent or "/"
+
+
+def _resolve_nextcloud_file_id(client, owner_user_id: str, path: str, *, resource_cache=None) -> str:
+    normalized_path = _normalize_nextcloud_path(path)
+    parent_path = _nextcloud_parent_path(normalized_path)
+    if not normalized_path or not parent_path:
+        return ""
+    if resource_cache is None:
+        resource_cache = {}
+    if parent_path not in resource_cache:
+        items = client.list_resources(owner_user_id, parent_path, limit=500)
+        resource_cache[parent_path] = {
+            _normalize_nextcloud_path(item.get("path") or ""): str(item.get("file_id") or "").strip()
+            for item in items
+        }
+    return str(resource_cache.get(parent_path, {}).get(normalized_path) or "")
+
+
+def _build_nextcloud_editor_url(client, file_id: str, dir_path: str) -> str:
+    normalized_dir = _normalize_nextcloud_path(dir_path)
+    if not file_id or not normalized_dir:
+        return ""
+    return client.build_files_open_url(file_id, normalized_dir)
+
+
 def _resolve_proposal_docx_open_url(
     proposal,
     *,
@@ -389,14 +421,24 @@ def _resolve_proposal_docx_open_url(
     viewer_has_nextcloud_link: bool = False,
     resolved_workspace_target_path: str = "",
     root_path: str = "",
+    owner_file_id: str = "",
 ) -> str:
     raw_link = _stored_docx_link(proposal)
     if not raw_link and not getattr(proposal, "docx_file_name", ""):
         return ""
     if raw_link.startswith(("http://", "https://")):
         return raw_link
+    media_url = str(getattr(settings, "MEDIA_URL", "") or "").strip()
+    if media_url and raw_link.startswith(media_url):
+        return raw_link
     if client is None:
         return build_folder_url(raw_link)
+    if owner_file_id:
+        if viewer_has_nextcloud_link and resolved_workspace_target_path:
+            return _build_nextcloud_editor_url(client, owner_file_id, resolved_workspace_target_path)
+        parent_path = _nextcloud_parent_path(raw_link)
+        if parent_path:
+            return _build_nextcloud_editor_url(client, owner_file_id, parent_path)
     if viewer_has_nextcloud_link:
         return (
             _build_nextcloud_child_url(client, resolved_workspace_target_path, proposal.docx_file_name)
@@ -410,6 +452,7 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
     share_resolution_paths = set()
     viewer_has_nextcloud_link = False
     resolved_target_cache = {}
+    resource_cache = {}
 
     def _stored_public(proposal):
         return (getattr(proposal, "proposal_workspace_public_url", "") or "").strip()
@@ -516,12 +559,21 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                     or _stored_public(proposal)
                     or _build_root_stripped_nextcloud_url(client, path, root_path=normalized_root_path)
                 )
+                owner_docx_path = _stored_docx_link(proposal)
+                media_url = str(getattr(settings, "MEDIA_URL", "") or "").strip()
+                owner_file_id = _resolve_nextcloud_file_id(
+                    client,
+                    client.username,
+                    owner_docx_path,
+                    resource_cache=resource_cache,
+                ) if owner_docx_path and not owner_docx_path.startswith(("http://", "https://")) and not (media_url and owner_docx_path.startswith(media_url)) else ""
                 proposal.proposal_docx_file_url = _resolve_proposal_docx_open_url(
                     proposal,
                     client=client,
                     viewer_has_nextcloud_link=True,
                     resolved_workspace_target_path=resolved_target_cache.get(path, ""),
                     root_path=normalized_root_path,
+                    owner_file_id=owner_file_id,
                 )
                 if not resolved_cache.get(path):
                     _log_nextcloud_resolution_debug(
@@ -539,7 +591,19 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                     or _stored_public(proposal)
                     or folder_cache.get(path, "")
                 )
-                proposal.proposal_docx_file_url = _resolve_proposal_docx_open_url(proposal, client=client)
+                owner_docx_path = _stored_docx_link(proposal)
+                media_url = str(getattr(settings, "MEDIA_URL", "") or "").strip()
+                owner_file_id = _resolve_nextcloud_file_id(
+                    client,
+                    client.username,
+                    owner_docx_path,
+                    resource_cache=resource_cache,
+                ) if owner_docx_path and not owner_docx_path.startswith(("http://", "https://")) and not (media_url and owner_docx_path.startswith(media_url)) else ""
+                proposal.proposal_docx_file_url = _resolve_proposal_docx_open_url(
+                    proposal,
+                    client=client,
+                    owner_file_id=owner_file_id,
+                )
 
 
 def _proposals_context(request=None, user=None, *, debug_nextcloud_links=False):

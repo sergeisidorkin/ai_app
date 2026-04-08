@@ -72,6 +72,7 @@ INSTALLED_APPS = [
     "docops_queue","macroops_app","checklists_app","logs_app.apps.LogsAppConfig","yandexdisk_app",
     "oauth2_provider",
     "classifiers_app",
+    "contacts_app.apps.ContactsAppConfig",
     "group_app",
     "experts_app",
     "users_app",

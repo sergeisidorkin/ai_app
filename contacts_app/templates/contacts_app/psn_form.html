@@ -1,0 +1,81 @@
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    style="display:flex; flex-direction:column; overflow:hidden; flex:1 1 auto; min-height:0;"
+    {% if action == "create" %}
+      hx-post="{% url 'psn_form_create' %}"
+    {% else %}
+      hx-post="{% url 'psn_form_edit' item.pk %}"
+    {% endif %}
+    hx-target="#contacts-positions-table-wrap"
+    hx-swap="innerHTML"
+    hx-on::after-request="if(event.detail.successful && !event.detail.xhr.getResponseHeader('HX-Retarget')) window.bootstrap?.Modal.getOrCreateInstance(document.getElementById('contacts-modal'))?.hide()">
+  <div class="modal-body" style="overflow-y:auto; flex:1 1 auto; min-height:0;">
+    {% csrf_token %}
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label">ID-PRS</label>
+        {{ form.person }}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Наименование организации (краткое)</label>
+        {{ form.organization_short_name }}
+      </div>
+      <div class="col-md-12">
+        <label class="form-label">Должность</label>
+        {{ form.job_title }}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Действ. от</label>
+        {{ form.valid_from }}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Действ. до</label>
+        {{ form.valid_to }}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Запись</label>
+        <input type="text"
+               class="form-control"
+               readonly
+               tabindex="-1"
+               style="background-color:#f8f9fa; color:#6c757d;"
+               value="{{ record_date_display|default:'' }}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Автор записи</label>
+        <input type="text"
+               class="form-control"
+               readonly
+               tabindex="-1"
+               style="background-color:#f8f9fa; color:#6c757d;"
+               value="{{ record_author_display|default:'' }}">
+      </div>
+      <div class="col-12">
+        <label class="form-label">Источник</label>
+        <input type="text"
+               class="form-control"
+               readonly
+               tabindex="-1"
+               style="background-color:#f8f9fa; color:#6c757d;"
+               value="{{ source_display|default:'' }}">
+      </div>
+    </div>
+
+    {% if form.errors %}
+    <div class="alert alert-danger mt-3 mb-0">
+      Проверьте введённые данные.
+    </div>
+    {% endif %}
+  </div>
+  <div class="modal-footer" style="flex-shrink:0;">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>

@@ -209,6 +209,7 @@ class NextcloudApiClientFileOpsTests(TestCase):
                     "type": "dir",
                     "size": None,
                     "modified": None,
+                    "file_id": None,
                 },
                 {
                     "name": "contract.docx",
@@ -216,6 +217,7 @@ class NextcloudApiClientFileOpsTests(TestCase):
                     "type": "file",
                     "size": 42,
                     "modified": "Mon, 30 Mar 2026 10:00:00 GMT",
+                    "file_id": None,
                 },
             ],
         )

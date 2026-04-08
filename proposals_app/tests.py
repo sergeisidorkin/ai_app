@@ -34,6 +34,7 @@ from policy_app.models import (
     TypicalServiceComposition,
 )
 from users_app.models import Employee
+from yandexdisk_app.models import YandexDiskAccount
 
 from .document_generation import store_generated_documents
 from .forms import ProposalRegistrationForm
@@ -192,6 +193,29 @@ class ProposalDocumentGenerationTests(TestCase):
 
         mocked_cloud_upload.assert_called_once()
         self.assertEqual(mocked_cloud_upload.call_args.args[0], connected_user)
+
+    @patch("ai_app.proposals_app.document_generation.get_any_connected_service_user")
+    @patch("ai_app.proposals_app.document_generation.is_nextcloud_primary", return_value=False)
+    @patch("ai_app.proposals_app.document_generation.cloud_upload_file", return_value=True)
+    def test_store_generated_documents_prefers_request_user_yandex_account(
+        self,
+        mocked_cloud_upload,
+        _mocked_is_nextcloud_primary,
+        mocked_get_any_connected_service_user,
+    ):
+        YandexDiskAccount.objects.create(user=self.user, access_token="request-user-token")
+        fallback_user = get_user_model().objects.create_user(
+            username="fallback-cloud-user",
+            password="secret",
+            is_staff=True,
+        )
+        mocked_get_any_connected_service_user.return_value = fallback_user
+
+        store_generated_documents(self.user, self.proposal, b"docx-bytes")
+
+        mocked_get_any_connected_service_user.assert_not_called()
+        mocked_cloud_upload.assert_called_once()
+        self.assertEqual(mocked_cloud_upload.call_args.args[0], self.user)
 
     def test_create_documents_returns_error_when_workspace_folder_is_missing(self):
         self.proposal.proposal_workspace_disk_path = ""
@@ -2157,8 +2181,13 @@ class ProposalDispatchDiskColumnTests(TestCase):
             html=False,
         )
 
+    @patch("nextcloud_app.api.NextcloudApiClient.list_resources")
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
-    def test_proposals_partial_builds_docx_link_from_viewer_share_target(self, mocked_list_user_shares):
+    def test_proposals_partial_builds_docx_link_from_viewer_share_target(
+        self,
+        mocked_list_user_shares,
+        mocked_list_resources,
+    ):
         self.proposal.docx_file_name = "ТКП_333300RU_DD_Тестовое_ТКП.docx"
         self.proposal.docx_file_link = (
             f"{self.proposal.proposal_workspace_disk_path}/{self.proposal.docx_file_name}"
@@ -2173,23 +2202,47 @@ class ProposalDispatchDiskColumnTests(TestCase):
                 target_path="/Shared/333300RU DD Тестовое ТКП",
             )
         }
+        mocked_list_resources.return_value = [
+            {
+                "name": self.proposal.docx_file_name,
+                "path": self.proposal.docx_file_link,
+                "type": "file",
+                "size": 42,
+                "modified": "Mon, 30 Mar 2026 10:00:00 GMT",
+                "file_id": "2068",
+            }
+        ]
 
         response = self.client.get(reverse("proposals_partial"))
 
         self.assertEqual(response.status_code, 200)
-        expected_url = (
-            "https://cloud.example.com/apps/files/files?dir="
-            f"{quote('/Shared/333300RU DD Тестовое ТКП/ТКП_333300RU_DD_Тестовое_ТКП.docx', safe='/')}"
-        )
-        owner_url = (
-            "https://cloud.example.com/apps/files/files?dir="
-            f"{quote(self.proposal.docx_file_link, safe='/')}"
-        )
+        expected_url = "https://cloud.example.com/apps/files/files/2068?dir=/Shared/333300RU%20DD%20%D0%A2%D0%B5%D1%81%D1%82%D0%BE%D0%B2%D0%BE%D0%B5%20%D0%A2%D0%9A%D0%9F&amp;openfile=true"
+        owner_url = f"https://cloud.example.com/apps/files/files?dir={quote(self.proposal.docx_file_link, safe='/')}"
         self.assertContains(response, f'href="{expected_url}"', html=False)
         self.assertNotContains(response, f'href="{owner_url}"', html=False)
 
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_proposals_partial_preserves_legacy_media_docx_link(self, _mocked_list_user_shares):
+        self.proposal.docx_file_name = "legacy.docx"
+        self.proposal.docx_file_link = "/media/proposal_documents/2026/33330RU/legacy.docx"
+        self.proposal.save(update_fields=["docx_file_name", "docx_file_link"])
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            'href="/media/proposal_documents/2026/33330RU/legacy.docx"',
+            html=False,
+        )
+
+    @patch("nextcloud_app.api.NextcloudApiClient.list_resources")
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
-    def test_generated_docx_download_redirects_to_cloud_file_when_local_copy_missing(self, mocked_list_user_shares):
+    def test_generated_docx_download_redirects_to_cloud_file_when_local_copy_missing(
+        self,
+        mocked_list_user_shares,
+        mocked_list_resources,
+    ):
         self.proposal.docx_file_name = "ТКП_333300RU_DD_Тестовое_ТКП.docx"
         self.proposal.docx_file_link = (
             f"{self.proposal.proposal_workspace_disk_path}/{self.proposal.docx_file_name}"
@@ -2204,13 +2257,20 @@ class ProposalDispatchDiskColumnTests(TestCase):
                 target_path="/Shared/333300RU DD Тестовое ТКП",
             )
         }
+        mocked_list_resources.return_value = [
+            {
+                "name": self.proposal.docx_file_name,
+                "path": self.proposal.docx_file_link,
+                "type": "file",
+                "size": 42,
+                "modified": "Mon, 30 Mar 2026 10:00:00 GMT",
+                "file_id": "2068",
+            }
+        ]
 
         response = self.client.get(reverse("proposal_generated_docx_download", args=[self.proposal.pk]))
 
-        expected_url = (
-            "https://cloud.example.com/apps/files/files?dir="
-            f"{quote('/Shared/333300RU DD Тестовое ТКП/ТКП_333300RU_DD_Тестовое_ТКП.docx', safe='/')}"
-        )
+        expected_url = "https://cloud.example.com/apps/files/files/2068?dir=/Shared/333300RU%20DD%20%D0%A2%D0%B5%D1%81%D1%82%D0%BE%D0%B2%D0%BE%D0%B5%20%D0%A2%D0%9A%D0%9F&openfile=true"
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response["Location"], expected_url)
 
