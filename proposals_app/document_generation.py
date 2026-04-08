@@ -96,6 +96,10 @@ def build_proposal_workspace_document_paths(proposal) -> dict[str, str]:
 def _get_cloud_upload_user(user):
     if is_nextcloud_primary():
         return user
+    from yandexdisk_app.models import YandexDiskAccount
+
+    if user is not None and YandexDiskAccount.objects.filter(user=user, access_token__gt="").exists():
+        return user
     try:
         return get_any_connected_service_user()
     except CloudStorageNotReadyError as exc:

@@ -1,0 +1,56 @@
+<table class="table table-sm">
+  <thead class="align-bottom">
+    <tr>
+      <th style="width:1%">
+        {% if request.user.is_authenticated and request.user.is_staff %}
+        <div class="form-check m-0">
+          <input class="form-check-input"
+                 type="checkbox"
+                 id="prs-master"
+                 data-target-name="prs-select"
+                 data-actions-id="prs-actions"
+                 aria-label="Выделить все строки">
+        </div>
+        {% endif %}
+      </th>
+      <th>ID-PRS</th>
+      <th>Фамилия</th>
+      <th>Имя</th>
+      <th>Отчество</th>
+      <th>Гражданство</th>
+      <th>Идентификатор</th>
+      <th>Номер</th>
+    </tr>
+  </thead>
+  <tbody class="align-top">
+    {% for item in prs_items %}
+    <tr data-edit-url="{% url 'prs_form_edit' item.pk %}"
+        data-delete-url="{% url 'prs_delete' item.pk %}"
+        data-move-up-url="{% url 'prs_move_up' item.pk %}"
+        data-move-down-url="{% url 'prs_move_down' item.pk %}">
+      <td class="text-nowrap">
+        {% if request.user.is_authenticated and request.user.is_staff %}
+        <div class="form-check">
+          <input class="form-check-input"
+                 type="checkbox"
+                 id="prs-sel-{{ item.id }}"
+                 name="prs-select"
+                 value="{{ item.id }}"
+                 aria-label="Выделить строку">
+        </div>
+        {% endif %}
+      </td>
+      <td class="text-nowrap"><span class="clf-id-mono">{{ item.pk|stringformat:"05d" }}-PRS</span></td>
+      <td>{{ item.last_name|default:"—" }}</td>
+      <td>{{ item.first_name|default:"—" }}</td>
+      <td>{{ item.middle_name|default:"—" }}</td>
+      <td>{% if item.citizenship %}{{ item.citizenship.short_name }}{% else %}—{% endif %}</td>
+      <td>{{ item.identifier|default:"—" }}</td>
+      <td>{{ item.number|default:"—" }}</td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="8" class="text-muted">Пока нет данных.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% include "classifiers_app/_registry_pagination.html" %}

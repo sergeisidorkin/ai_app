@@ -245,6 +245,10 @@ class NextcloudApiClient:
         normalized = self._normalize_folder_path(path)
         return f"{self.base_url}/apps/files/files?dir={quote(normalized, safe='/')}"
 
+    def build_files_open_url(self, file_id: str | int, dir_path: str) -> str:
+        normalized_dir = self._normalize_folder_path(dir_path)
+        return f"{self.base_url}/apps/files/files/{file_id}?dir={quote(normalized_dir, safe='/')}&openfile=true"
+
     def list_resources(self, owner_user_id: str, path: str, *, limit: int = 100) -> list[dict[str, object]]:
         normalized = self._normalize_folder_path(path)
         response = self._dav_request(
@@ -253,8 +257,8 @@ class NextcloudApiClient:
             headers={"Depth": "1", "Content-Type": "application/xml"},
             data=(
                 '<?xml version="1.0"?>'
-                '<d:propfind xmlns:d="DAV:">'
-                "<d:prop><d:displayname/><d:resourcetype/><d:getcontentlength/><d:getlastmodified/></d:prop>"
+                '<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">'
+                "<d:prop><d:displayname/><d:resourcetype/><d:getcontentlength/><d:getlastmodified/><oc:fileid/></d:prop>"
                 "</d:propfind>"
             ),
             allow_statuses={207, 404},
@@ -265,7 +269,7 @@ class NextcloudApiClient:
         requested_path = self._normalize_folder_path(path)
         items: list[dict[str, object]] = []
         root = ET.fromstring(response.content)
-        ns = {"d": "DAV:"}
+        ns = {"d": "DAV:", "oc": "http://owncloud.org/ns"}
         for node in root.findall("d:response", ns):
             href = node.findtext("d:href", default="", namespaces=ns)
             item_path = self._extract_cloud_path(owner_user_id, href)
@@ -279,6 +283,7 @@ class NextcloudApiClient:
             name = prop.findtext("d:displayname", default="", namespaces=ns) or item_path.rstrip("/").split("/")[-1]
             size_raw = prop.findtext("d:getcontentlength", default="", namespaces=ns)
             modified = prop.findtext("d:getlastmodified", default="", namespaces=ns) or None
+            file_id_raw = prop.findtext("oc:fileid", default="", namespaces=ns)
             items.append(
                 {
                     "name": name,
@@ -286,6 +291,7 @@ class NextcloudApiClient:
                     "type": "dir" if is_dir else "file",
                     "size": int(size_raw) if str(size_raw).isdigit() else None,
                     "modified": modified,
+                    "file_id": str(file_id_raw).strip() or None,
                 }
             )
             if len(items) >= limit:

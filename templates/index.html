@@ -41,9 +41,9 @@
           </a>
         </li>
         <li class="nav-item">
-          <a class="nav-link d-flex align-items-center" href="#policy" data-bs-toggle="tab">
-            <i class="bi bi-bag me-2"></i>
-            <span class="link-text">Продукты</span>
+          <a class="nav-link d-flex align-items-center" href="#contacts" data-bs-toggle="tab">
+            <i class="bi bi-person-lines-fill me-2"></i>
+            <span class="link-text">Контакты</span>
           </a>
         </li>
         <li class="nav-item">
@@ -52,6 +52,13 @@
             <span class="link-text">Эксперты</span>
           </a>
         </li>
+        <li class="nav-item">
+          <a class="nav-link d-flex align-items-center" href="#policy" data-bs-toggle="tab">
+            <i class="bi bi-bag me-2"></i>
+            <span class="link-text">Продукты</span>
+          </a>
+        </li>
+        <li class="nav-item">
         {% endif %}
         {% if not is_expert %}
         <li class="nav-item">
@@ -254,6 +261,10 @@
             {% include "users_app/panel.html" %}
           </div>
         </div>
+      </section>
+      <!-- Контакты -->
+      <section id="contacts" class="tab-pane fade">
+        {% include "contacts_app/panel.html" %}
       </section>
       <!-- Продукты -->
       <section id="policy" class="tab-pane fade">
