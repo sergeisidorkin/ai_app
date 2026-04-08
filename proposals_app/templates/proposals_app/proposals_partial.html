@@ -266,9 +266,7 @@
         <col class="proposal-name">
         <col class="proposal-disk">
         <col class="docx-name">
-        <col class="docx-link">
         <col class="pdf-name">
-        <col class="pdf-link">
         <col class="sent-date">
         <col class="contact-name">
         <col class="contact-email">
@@ -297,9 +295,7 @@
           <th>Название</th>
           <th>Облако</th>
           <th>Наименование файла DOCX</th>
-          <th>Ссылка</th>
           <th>Наименование файла PDF</th>
-          <th>Ссылка</th>
           <th>Дата отправки</th>
           <th>ФИО</th>
           <th>Эл. почта</th>
@@ -355,36 +351,40 @@
             </td>
             <td>
               {% if proposal.docx_file_name %}
-                <span class="proposal-docx-file-name d-inline-flex align-items-center gap-1">
-                  <i class="bi bi-file-word-fill" style="color: var(--bs-primary, #075D94);"></i>
-                  <span>{{ proposal.docx_file_name }}</span>
-                </span>
-              {% endif %}
-            </td>
-            <td class="text-nowrap">
-              {% if proposal.proposal_docx_file_url %}
-                <a href="{{ proposal.proposal_docx_file_url }}" target="_blank" rel="noopener" title="Открыть файл DOCX на {{ primary_cloud_storage_label }}">
-                  <i class="bi bi-link-45deg proposal-file-link-icon" style="color: var(--bs-primary, #075D94);"></i>
-                </a>
-              {% else %}
-                <i class="bi bi-link-45deg proposal-file-link-icon" style="color: #ccc;"></i>
+                {% if proposal.proposal_docx_file_url %}
+                  <a href="{{ proposal.proposal_docx_file_url }}"
+                     target="_blank"
+                     rel="noopener"
+                     class="proposal-file-name-link proposal-docx-file-name d-inline-flex align-items-center gap-1"
+                     title="Открыть файл DOCX на {{ primary_cloud_storage_label }}">
+                    <i class="bi bi-file-word-fill" style="color: var(--bs-primary, #075D94);"></i>
+                    <span class="proposal-file-name-text">{{ proposal.docx_file_name }}</span>
+                  </a>
+                {% else %}
+                  <span class="proposal-file-name-link proposal-docx-file-name d-inline-flex align-items-center gap-1">
+                    <i class="bi bi-file-word-fill" style="color: var(--bs-primary, #075D94);"></i>
+                    <span class="proposal-file-name-text">{{ proposal.docx_file_name }}</span>
+                  </span>
+                {% endif %}
               {% endif %}
             </td>
             <td>
               {% if proposal.pdf_file_name %}
-                <span class="proposal-pdf-file-name d-inline-flex align-items-center gap-1">
-                  <i class="bi bi-file-pdf-fill" style="color: var(--bs-primary, #075D94);"></i>
-                  <span>{{ proposal.pdf_file_name }}</span>
-                </span>
-              {% endif %}
-            </td>
-            <td class="text-nowrap">
-              {% if proposal.proposal_pdf_file_url %}
-                <a href="{{ proposal.proposal_pdf_file_url }}" target="_blank" rel="noopener" title="Открыть файл PDF на {{ primary_cloud_storage_label }}">
-                  <i class="bi bi-link-45deg proposal-file-link-icon" style="color: var(--bs-primary, #075D94);"></i>
-                </a>
-              {% else %}
-                <i class="bi bi-link-45deg proposal-file-link-icon" style="color: #ccc;"></i>
+                {% if proposal.proposal_pdf_file_url %}
+                  <a href="{{ proposal.proposal_pdf_file_url }}"
+                     target="_blank"
+                     rel="noopener"
+                     class="proposal-file-name-link proposal-pdf-file-name d-inline-flex align-items-center gap-1"
+                     title="Открыть файл PDF на {{ primary_cloud_storage_label }}">
+                    <i class="bi bi-file-pdf-fill" style="color: var(--bs-primary, #075D94);"></i>
+                    <span class="proposal-file-name-text">{{ proposal.pdf_file_name }}</span>
+                  </a>
+                {% else %}
+                  <span class="proposal-file-name-link proposal-pdf-file-name d-inline-flex align-items-center gap-1">
+                    <i class="bi bi-file-pdf-fill" style="color: var(--bs-primary, #075D94);"></i>
+                    <span class="proposal-file-name-text">{{ proposal.pdf_file_name }}</span>
+                  </span>
+                {% endif %}
               {% endif %}
             </td>
             <td>{{ proposal.sent_date }}</td>
@@ -394,7 +394,7 @@
             <td>{{ proposal.recipient }}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="17" class="text-muted">Пока нет данных.</td></tr>
+          <tr><td colspan="15" class="text-muted">Пока нет данных.</td></tr>
         {% endfor %}
       </tbody>
     </table>

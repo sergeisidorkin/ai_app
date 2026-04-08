@@ -123,7 +123,8 @@
       </div>
       <div class="col-6">
         <label class="form-label">Ссылка</label>
-        {{ form.pdf_file_link }}
+        {{ form.pdf_file_link.as_hidden }}
+        <input type="text" class="form-control readonly-field" readonly tabindex="-1" value="{{ proposal.proposal_pdf_file_url|default:'' }}">
       </div>
     </div>
 
