@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import sys
 from datetime import date as dt_date, datetime
 from decimal import Decimal
 from urllib.parse import quote
@@ -70,6 +71,12 @@ HX_TRIGGER_HEADER = "HX-Trigger"
 HX_PROPOSALS_UPDATED_EVENT = "proposals-updated"
 PROPOSAL_NEXTCLOUD_TARGETS_SESSION_KEY = "proposal_nextcloud_target_paths"
 logger = logging.getLogger(__name__)
+
+# CI can import this module through either `proposals_app.views` or
+# `ai_app.proposals_app.views`. Keep both names bound to the same module object
+# so patch() targets stay stable.
+sys.modules.setdefault("proposals_app.views", sys.modules[__name__])
+sys.modules.setdefault("ai_app.proposals_app.views", sys.modules[__name__])
 
 
 def _normalize_nextcloud_path(path: str) -> str:
@@ -382,12 +389,6 @@ def _sync_dispatch_contact_to_person_registry(*, last_name, first_name="", middl
         .order_by("position", "id")
         .first()
     )
-    if person is None:
-        person = (
-            PersonRecord.objects.filter(last_name=normalized_last_name)
-            .order_by("position", "id")
-            .first()
-        )
     if person is None:
         next_position = (PersonRecord.objects.aggregate(mx=Max("position")).get("mx") or 0) + 1
         PersonRecord.objects.create(

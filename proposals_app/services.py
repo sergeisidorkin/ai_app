@@ -1,4 +1,5 @@
 import logging
+import sys
 from types import SimpleNamespace
 
 from django.conf import settings
@@ -13,6 +14,12 @@ from notifications_app.services import (
 from smtp_app.services import get_user_notification_email_options
 
 logger = logging.getLogger(__name__)
+
+# CI can import this module through either `proposals_app.services` or
+# `ai_app.proposals_app.services`. Keep both names bound to the same module
+# object so patch() targets stay stable.
+sys.modules.setdefault("proposals_app.services", sys.modules[__name__])
+sys.modules.setdefault("ai_app.proposals_app.services", sys.modules[__name__])
 
 PROPOSAL_SENDING_TEMPLATE_TYPE = "proposal_sending"
 PROPOSAL_SENDING_DEFAULT_SUBJECT = "Технико-коммерческое предложение IMC Montan {{tkp_id}}"

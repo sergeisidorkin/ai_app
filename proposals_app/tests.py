@@ -723,6 +723,49 @@ class ProposalDispatchFormTests(TestCase):
         form = ProposalDispatchForm()
         self.assertEqual(form.fields["recipient_country"].initial, self.country.pk)
 
+    def test_dispatch_form_edit_does_not_overwrite_existing_person_with_same_last_name(self):
+        existing_person = PersonRecord.objects.create(
+            last_name="Иванов",
+            first_name="Иван",
+            middle_name="Иванович",
+            position=1,
+        )
+
+        response = self.client.post(
+            reverse("proposal_dispatch_form_edit", args=[self.proposal.pk]),
+            {
+                "docx_file_name": "",
+                "docx_file_link": "",
+                "pdf_file_name": "",
+                "pdf_file_link": "",
+                "sent_date": "08.04.2026 12:00",
+                "recipient": 'ООО "Альфа"',
+                "recipient_country": str(self.country.pk),
+                "recipient_identifier": "ОГРН",
+                "recipient_registration_number": "1234567890123",
+                "recipient_registration_date": "10.04.2026",
+                "recipient_job_title": "Генеральный директор",
+                "contact_last_name": "Иванов",
+                "contact_first_name": "Петр",
+                "contact_middle_name": "Петрович",
+                "contact_email": "contact@example.com",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        existing_person.refresh_from_db()
+        self.assertEqual(existing_person.first_name, "Иван")
+        self.assertEqual(existing_person.middle_name, "Иванович")
+
+        matching_people = list(PersonRecord.objects.filter(last_name="Иванов").order_by("position", "id"))
+        self.assertEqual(len(matching_people), 2)
+        self.assertTrue(
+            any(
+                person.first_name == "Петр" and person.middle_name == "Петрович"
+                for person in matching_people
+            )
+        )
+
 
 class ProposalRegistrationFormTests(TestCase):
     def _base_form_payload(self, **overrides):

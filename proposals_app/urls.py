@@ -1,6 +1,11 @@
+import sys
+
 from django.urls import path
 
 from . import views
+
+sys.modules.setdefault("proposals_app.urls", sys.modules[__name__])
+sys.modules.setdefault("ai_app.proposals_app.urls", sys.modules[__name__])
 
 
 urlpatterns = [

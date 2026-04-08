@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import posixpath
+import sys
 from types import SimpleNamespace
 from pathlib import Path
 from urllib.parse import quote, urlencode
@@ -25,6 +26,12 @@ from core.cloud_storage import (
 PROPOSAL_DOCUMENTS_SUBDIR = "proposal_documents"
 PROPOSAL_DOCX_SOURCE_TOKEN_SALT = "proposals_app.proposal_docx_source"
 DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+# CI can import this module through either `proposals_app.document_generation`
+# or `ai_app.proposals_app.document_generation`. Keep both names bound to the
+# same module object so patch() targets stay stable.
+sys.modules.setdefault("proposals_app.document_generation", sys.modules[__name__])
+sys.modules.setdefault("ai_app.proposals_app.document_generation", sys.modules[__name__])
 
 
 def ensure_proposal_documents_root() -> Path:
