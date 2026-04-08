@@ -68,6 +68,14 @@
         </li>
         {% endif %}
         <li class="nav-item">
+          <a class="nav-link d-flex align-items-center" href="#contracts" data-bs-toggle="tab">
+            <i class="bi bi-files me-2"></i>
+            <span class="link-text">Договоры</span>
+            <span class="badge rounded-pill text-bg-danger ms-2 {% if NOTIFICATION_SECTION_COUNTS.contracts|default:0 <= 0 %}d-none{% endif %}"
+                  data-notification-counter-section="contracts">{{ NOTIFICATION_SECTION_COUNTS.contracts|default:0 }}</span>
+          </a>
+        </li>
+        <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#projects" data-bs-toggle="tab">
             <i class="bi bi-kanban me-2"></i>
             <span class="link-text">Проекты</span>
@@ -89,14 +97,6 @@
             <span class="link-text">Чек-листы</span>
             <span class="badge rounded-pill text-bg-danger ms-2 {% if NOTIFICATION_SECTION_COUNTS.checklists|default:0 <= 0 %}d-none{% endif %}"
                   data-notification-counter-section="checklists">{{ NOTIFICATION_SECTION_COUNTS.checklists|default:0 }}</span>
-          </a>
-        </li>
-        <li class="nav-item">
-          <a class="nav-link d-flex align-items-center" href="#contracts" data-bs-toggle="tab">
-            <i class="bi bi-files me-2"></i>
-            <span class="link-text">Договоры</span>
-            <span class="badge rounded-pill text-bg-danger ms-2 {% if NOTIFICATION_SECTION_COUNTS.contracts|default:0 <= 0 %}d-none{% endif %}"
-                  data-notification-counter-section="contracts">{{ NOTIFICATION_SECTION_COUNTS.contracts|default:0 }}</span>
           </a>
         </li>
         {% if not is_expert %}
@@ -536,6 +536,10 @@
             <hr class="my-0">
             <div class="list-group list-group-flush p-3 m-0" id="contracts-second-sidebar-list">
               <a href="#" class="list-group-item list-group-item-action active"
+                 data-contracts-section="in-development">
+                В разработке
+              </a>
+              <a href="#" class="list-group-item list-group-item-action"
                  data-contracts-section="in-progress">
                 В работе
               </a>
@@ -559,7 +563,7 @@
           <div class="flex-grow-1 ps-3 pe-0" style="min-width:0;">
             <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
               <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
-                <h5 class="mb-0 ps-3 fs-4 pt-2" id="contracts-section-title">Договоры</h5>
+                <h5 class="mb-0 ps-3 fs-4 pt-2" id="contracts-section-title">В разработке</h5>
                 <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
                    href="#notifications"
                    data-bs-toggle="tab"
@@ -572,7 +576,10 @@
             </div>
 
             <div class="ps-3">
-              <div id="contracts-content-in-progress" class="contracts-section-content">
+              <div id="contracts-content-in-development" class="contracts-section-content">
+                {% include "contracts_app/contracts_development_panel.html" %}
+              </div>
+              <div id="contracts-content-in-progress" class="contracts-section-content d-none">
                 {% include "contracts_app/panel.html" %}
               </div>
               {% if not is_expert %}
@@ -1596,7 +1603,8 @@
         <script>
         (function () {
           var CONTRACTS_TITLES = {
-            'in-progress': 'Договоры',
+            'in-development': 'В разработке',
+            'in-progress': 'В работе',
             'templates': 'Образцы шаблонов',
             'field-params': 'Параметры полей',
             'archive': 'Архив',

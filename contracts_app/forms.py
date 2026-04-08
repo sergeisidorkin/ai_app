@@ -7,6 +7,7 @@ from django.db.models import Q
 from classifiers_app.models import OKSMCountry
 from group_app.models import GroupMember
 from policy_app.models import Product, TypicalSection
+from projects_app.forms import ProjectRegistrationForm
 from projects_app.models import Performer
 from .models import ContractSubject, ContractTemplate, ContractVariable
 
@@ -31,6 +32,16 @@ class _ContractFileInput(forms.ClearableFileInput):
             import os
             ctx["widget"]["file_basename"] = os.path.basename(value.name)
         return ctx
+
+
+class ContractProjectRegistrationForm(ProjectRegistrationForm):
+    class Meta(ProjectRegistrationForm.Meta):
+        fields = [
+            "number", "group_member", "agreement_type", "type", "name",
+            "status", "year",
+            "country", "customer", "identifier", "registration_number",
+            "registration_date", "project_manager",
+        ]
 
 PARTY_SHORT = {"individual": "ФЗЛ", "legal_entity": "ЮРЛ", "ip": "ИП"}
 TYPE_SHORT = {"gph": "ГПХ", "smz": "СМЗ"}

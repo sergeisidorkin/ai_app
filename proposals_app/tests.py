@@ -35,6 +35,7 @@ from policy_app.models import (
     TypicalSectionSpecialty,
     TypicalServiceComposition,
 )
+from projects_app.models import ProjectRegistration
 from users_app.models import Employee
 from yandexdisk_app.models import YandexDiskAccount
 
@@ -166,8 +167,11 @@ class ProposalDocumentGenerationTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.json()["ok"])
-        self.assertEqual(response.json()["generated"], 1)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["generated"], 1)
+        self.assertEqual(payload["updates"][0]["id"], self.proposal.pk)
+        self.assertTrue(payload["updates"][0]["docx_file_name"].endswith(".docx"))
 
         self.proposal.refresh_from_db()
         self.assertTrue(self.proposal.docx_file_name.endswith(".docx"))
@@ -336,6 +340,14 @@ class ProposalDispatchSendTests(TestCase):
             service_type="service",
             position=1,
         )
+        self.country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+        )
         LetterTemplate.objects.update_or_create(
             template_type="proposal_sending",
             user=None,
@@ -368,6 +380,89 @@ class ProposalDispatchSendTests(TestCase):
             proposal_workspace_disk_path="/Corporate Root/ТКП/2026/333400RU DD Балтика",
         )
 
+    def test_dispatch_transfer_to_contract_creates_project_registration_and_completes_proposal(self):
+        self.successful_proposal.customer = 'ООО "Приморское"'
+        self.successful_proposal.country = self.country
+        self.successful_proposal.identifier = "ОГРН"
+        self.successful_proposal.registration_number = "1174910001683"
+        self.successful_proposal.registration_date = date(2017, 11, 1)
+        self.successful_proposal.save(
+            update_fields=[
+                "customer",
+                "country",
+                "identifier",
+                "registration_number",
+                "registration_date",
+            ]
+        )
+
+        response = self.client.post(
+            reverse("proposal_dispatch_transfer_to_contract"),
+            {"proposal_ids[]": [self.successful_proposal.pk]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["created"], 1)
+
+        project = ProjectRegistration.objects.get(
+            number=self.successful_proposal.number,
+            group_member=self.successful_proposal.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            agreement_number=f"IMCM/{self.successful_proposal.number}",
+        )
+        self.assertEqual(project.type, self.successful_proposal.type)
+        self.assertEqual(project.name, self.successful_proposal.name)
+        self.assertEqual(project.year, self.successful_proposal.year)
+        self.assertEqual(project.customer, self.successful_proposal.customer)
+        self.assertEqual(project.country, self.successful_proposal.country)
+        self.assertEqual(project.identifier, self.successful_proposal.identifier)
+        self.assertEqual(project.registration_number, self.successful_proposal.registration_number)
+        self.assertEqual(project.registration_date, self.successful_proposal.registration_date)
+        self.assertEqual(BusinessEntityRecord.objects.count(), 0)
+
+        self.successful_proposal.refresh_from_db()
+        self.assertEqual(
+            self.successful_proposal.status,
+            ProposalRegistration.ProposalStatus.COMPLETED,
+        )
+        self.assertTrue(self.successful_proposal.transfer_to_contract_date)
+
+    def test_dispatch_transfer_to_contract_reuses_existing_main_contract_for_ru_group(self):
+        existing_project = ProjectRegistration.objects.create(
+            number=self.successful_proposal.number,
+            group_member=self.successful_proposal.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Уже существует",
+            year=2026,
+            position=1,
+        )
+
+        response = self.client.post(
+            reverse("proposal_dispatch_transfer_to_contract"),
+            {"proposal_ids[]": [self.successful_proposal.pk]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["created"], 0)
+        self.assertEqual(payload["existing"], 1)
+        self.assertEqual(
+            ProjectRegistration.objects.filter(
+                number=self.successful_proposal.number,
+                group_member=self.successful_proposal.group_member,
+                agreement_type=ProjectRegistration.AgreementType.MAIN,
+            ).count(),
+            1,
+        )
+        self.assertEqual(
+            ProjectRegistration.objects.get(pk=existing_project.pk).agreement_number,
+            f"IMCM/{self.successful_proposal.number}",
+        )
+
     @override_settings(PROPOSAL_SYSTEM_FROM_EMAIL="ai@imcmontanai.ru")
     @patch("proposals_app.services.send_notification_email")
     def test_dispatch_send_updates_only_successfully_sent_rows(self, mocked_send_notification_email):
@@ -392,6 +487,8 @@ class ProposalDispatchSendTests(TestCase):
         self.assertEqual(payload["updated"], 1)
         self.assertEqual(payload["email_delivery"]["sent"], 1)
         self.assertEqual(payload["email_delivery"]["failed"], 1)
+        self.assertEqual(payload["proposal_ids"], [self.successful_proposal.pk])
+        self.assertEqual(payload["status"], ProposalRegistration.ProposalStatus.SENT)
         self.assertEqual(mocked_send_notification_email.call_count, 1)
 
         call_kwargs = mocked_send_notification_email.call_args.kwargs
@@ -415,7 +512,9 @@ class ProposalDispatchSendTests(TestCase):
         self.successful_proposal.refresh_from_db()
         self.failed_proposal.refresh_from_db()
         self.assertEqual(self.successful_proposal.sent_date, "04.04.2026 12:30")
+        self.assertEqual(self.successful_proposal.status, ProposalRegistration.ProposalStatus.SENT)
         self.assertEqual(self.failed_proposal.sent_date, "")
+        self.assertNotEqual(self.failed_proposal.status, ProposalRegistration.ProposalStatus.SENT)
         self.assertEqual(self.successful_proposal.pdf_file_name, "")
         self.assertEqual(self.successful_proposal.pdf_file_link, "")
 
@@ -621,6 +720,8 @@ class ProposalDispatchSignTests(TestCase):
         payload = response.json()
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["generated"], 1)
+        self.assertEqual(payload["updates"][0]["id"], self.proposal.pk)
+        self.assertEqual(payload["updates"][0]["pdf_file_name"], "existing-offer.pdf")
 
         self.proposal.refresh_from_db()
         self.assertEqual(self.proposal.pdf_file_name, "existing-offer.pdf")
@@ -2606,6 +2707,38 @@ class ProposalDispatchDiskColumnTests(TestCase):
             'href="/media/proposal_documents/2026/33330RU/legacy.docx"',
             html=False,
         )
+
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_proposals_partial_keeps_docx_link_when_filename_is_missing(self, _mocked_list_user_shares):
+        self.proposal.docx_file_name = ""
+        self.proposal.docx_file_link = "/media/proposal_documents/2026/33330RU/legacy.docx"
+        self.proposal.save(update_fields=["docx_file_name", "docx_file_link"])
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            'href="/media/proposal_documents/2026/33330RU/legacy.docx"',
+            html=False,
+        )
+        self.assertContains(response, "DOCX файл", html=False)
+
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_proposals_partial_keeps_pdf_link_when_filename_is_missing(self, _mocked_list_user_shares):
+        self.proposal.pdf_file_name = ""
+        self.proposal.pdf_file_link = "/media/proposal_documents/2026/33330RU/legacy.pdf"
+        self.proposal.save(update_fields=["pdf_file_name", "pdf_file_link"])
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            'href="/media/proposal_documents/2026/33330RU/legacy.pdf"',
+            html=False,
+        )
+        self.assertContains(response, "PDF файл", html=False)
 
     @patch("nextcloud_app.api.NextcloudApiClient.list_resources")
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")

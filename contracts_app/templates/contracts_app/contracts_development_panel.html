@@ -1,0 +1,12 @@
+<div class="card shadow-sm mt-3">
+  <div class="card-body">
+    <div id="contracts-drafts-pane"
+         hx-get="{% url 'contracts_development_partial' %}"
+         hx-trigger="load, contracts-updated from:body"
+         hx-target="#contracts-drafts-pane"
+         hx-swap="innerHTML"
+         hx-indicator="#contracts-drafts-loading">
+      <div id="contracts-drafts-loading" class="text-muted htmx-indicator">Загрузка проектов договоров…</div>
+    </div>
+  </div>
+</div>

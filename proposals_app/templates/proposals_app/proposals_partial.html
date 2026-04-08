@@ -151,7 +151,8 @@
       </thead>
       <tbody>
         {% for proposal in proposals %}
-          <tr data-kind="{{ proposal.kind }}"
+          <tr data-proposal-id="{{ proposal.id }}"
+              data-kind="{{ proposal.kind }}"
               data-kind-label="{{ proposal.get_kind_display }}"
               data-status="{{ proposal.status }}"
               data-status-label="{{ proposal.get_status_display }}"
@@ -185,7 +186,7 @@
             <td data-col="type">{{ proposal.type.short_name|default:proposal.type }}</td>
             <td data-col="name">{{ proposal.name }}</td>
             <td data-col="kind">{{ proposal.get_kind_display }}</td>
-            <td data-col="status">{{ proposal.get_status_display }}</td>
+            <td data-col="status" class="proposal-status-cell">{{ proposal.get_status_display }}</td>
             <td data-col="year">{{ proposal.year }}</td>
             <td data-col="customer">{{ proposal.customer }}</td>
             <td data-col="country">{{ proposal.country.short_name|default:"" }}</td>
@@ -272,6 +273,7 @@
         <col class="contact-email">
         <col class="job-title">
         <col class="organization">
+        <col class="sent-date">
       </colgroup>
       <thead>
         <tr>
@@ -301,18 +303,21 @@
           <th>Эл. почта</th>
           <th>Должность</th>
           <th>Организация</th>
+          <th>Передано</th>
         </tr>
       </thead>
       <tbody>
         {% for proposal in proposals %}
-          <tr data-kind="{{ proposal.kind }}"
+          <tr data-proposal-id="{{ proposal.id }}"
+              data-kind="{{ proposal.kind }}"
               data-kind-label="{{ proposal.get_kind_display }}"
               data-status="{{ proposal.status }}"
               data-status-label="{{ proposal.get_status_display }}"
               data-tkp-id="{{ proposal.short_uid }}"
               data-contact-email="{{ proposal.contact_email|default:'' }}"
               data-edit-url="{% url 'proposal_dispatch_form_edit' proposal.pk %}"
-              data-send-ready="{% if proposal.docx_file_name %}1{% else %}0{% endif %}">
+              data-send-ready="{% if proposal.docx_file_name %}1{% else %}0{% endif %}"
+              data-transfer-ready="{% if proposal.sent_date %}1{% else %}0{% endif %}">
             <td class="text-nowrap">
               {% if request.user.is_authenticated and request.user.is_staff %}
                 <div class="form-check">
@@ -349,8 +354,8 @@
               {% endif %}
               {% endwith %}
             </td>
-            <td>
-              {% if proposal.docx_file_name %}
+            <td class="proposal-docx-cell">
+              {% if proposal.proposal_docx_file_url or proposal.docx_file_name %}
                 {% if proposal.proposal_docx_file_url %}
                   <a href="{{ proposal.proposal_docx_file_url }}"
                      target="_blank"
@@ -358,7 +363,7 @@
                      class="proposal-file-name-link proposal-docx-file-name d-inline-flex align-items-center gap-1"
                      title="Открыть файл DOCX на {{ primary_cloud_storage_label }}">
                     <i class="bi bi-file-word-fill" style="color: var(--bs-primary, #075D94);"></i>
-                    <span class="proposal-file-name-text">{{ proposal.docx_file_name }}</span>
+                    <span class="proposal-file-name-text">{{ proposal.docx_file_name|default:'DOCX файл' }}</span>
                   </a>
                 {% else %}
                   <span class="proposal-file-name-link proposal-docx-file-name d-inline-flex align-items-center gap-1">
@@ -368,8 +373,8 @@
                 {% endif %}
               {% endif %}
             </td>
-            <td>
-              {% if proposal.pdf_file_name %}
+            <td class="proposal-pdf-cell">
+              {% if proposal.proposal_pdf_file_url or proposal.pdf_file_name %}
                 {% if proposal.proposal_pdf_file_url %}
                   <a href="{{ proposal.proposal_pdf_file_url }}"
                      target="_blank"
@@ -377,7 +382,7 @@
                      class="proposal-file-name-link proposal-pdf-file-name d-inline-flex align-items-center gap-1"
                      title="Открыть файл PDF на {{ primary_cloud_storage_label }}">
                     <i class="bi bi-file-pdf-fill" style="color: var(--bs-primary, #075D94);"></i>
-                    <span class="proposal-file-name-text">{{ proposal.pdf_file_name }}</span>
+                    <span class="proposal-file-name-text">{{ proposal.pdf_file_name|default:'PDF файл' }}</span>
                   </a>
                 {% else %}
                   <span class="proposal-file-name-link proposal-pdf-file-name d-inline-flex align-items-center gap-1">
@@ -387,14 +392,15 @@
                 {% endif %}
               {% endif %}
             </td>
-            <td>{{ proposal.sent_date }}</td>
+            <td class="proposal-sent-date-cell">{{ proposal.sent_date }}</td>
             <td>{{ proposal.contact_short_name }}</td>
             <td>{{ proposal.contact_email }}</td>
             <td>{{ proposal.recipient_job_title }}</td>
             <td>{{ proposal.recipient }}</td>
+            <td class="proposal-transfer-date-cell">{{ proposal.transfer_to_contract_date }}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="15" class="text-muted">Пока нет данных.</td></tr>
+          <tr><td colspan="16" class="text-muted">Пока нет данных.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -403,6 +409,7 @@
       <div class="d-flex align-items-stretch gap-2 products-actions-row"
            id="proposal-dispatch-controls"
            data-send-url="{% url 'proposal_dispatch_send' %}"
+           data-transfer-contract-url="{% url 'proposal_dispatch_transfer_to_contract' %}"
            data-sign-url="{% url 'proposal_dispatch_sign_documents' %}"
            data-create-url="{% url 'proposal_dispatch_create_documents' %}"
            data-refresh-url="{% url 'proposals_partial' %}">

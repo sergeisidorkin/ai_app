@@ -185,6 +185,7 @@ class ProposalRegistration(models.Model):
         default="",
     )
     sent_date = models.CharField("Дата отправки", max_length=255, blank=True, default="")
+    transfer_to_contract_date = models.CharField("Дата передачи для составления договора", max_length=255, blank=True, default="")
     recipient = models.CharField("Наименование организации (краткое)", max_length=255, blank=True, default="")
     recipient_country = models.ForeignKey(
         OKSMCountry,

@@ -115,6 +115,194 @@
 
 
 /* -----------------------------------------------------------------------
+   Development table ("В разработке") panel
+   ----------------------------------------------------------------------- */
+(function () {
+  if (window.__contractsDraftsBound) return;
+  window.__contractsDraftsBound = true;
+  window.__contractsDraftSel = window.__contractsDraftSel || [];
+
+  function pane() { return document.getElementById('contracts-drafts-pane'); }
+  var qa = function(sel, root) { return Array.from((root || document).querySelectorAll(sel)); };
+
+  function getCookie(name) {
+    var m = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
+    return m ? m.pop() : '';
+  }
+
+  function getRowChecks() {
+    return qa('tbody input.form-check-input[name="contracts-draft-select"]', pane());
+  }
+
+  function getChecked() {
+    return getRowChecks().filter(function(box) { return box.checked; });
+  }
+
+  function updateRowHighlight() {
+    getRowChecks().forEach(function(box) {
+      var tr = box.closest('tr');
+      if (tr) tr.classList.toggle('table-active', !!box.checked);
+    });
+  }
+
+  function updateMasterState() {
+    var boxes = getRowChecks();
+    var master = pane() && pane().querySelector('#contracts-drafts-master');
+    if (!master) return;
+    var checkedCount = boxes.filter(function(box) { return box.checked; }).length;
+    master.checked = boxes.length > 0 && checkedCount === boxes.length;
+    master.indeterminate = checkedCount > 0 && checkedCount < boxes.length;
+  }
+
+  function ensureActionsVisibility() {
+    var actions = pane() && pane().querySelector('#contracts-drafts-actions');
+    if (!actions) return;
+    var anyChecked = getChecked().length > 0;
+    actions.classList.toggle('d-none', !anyChecked);
+    actions.classList.toggle('d-flex', anyChecked);
+  }
+
+  function showContractsModal() {
+    var modalEl = document.getElementById('contracts-modal');
+    if (!modalEl || !window.bootstrap) return;
+    var dlg = modalEl.querySelector('.modal-dialog');
+    if (dlg) {
+      dlg.classList.remove('modal-sm', 'modal-lg', 'modal-xl');
+      var sizeEl = modalEl.querySelector('[data-modal-size]');
+      if (sizeEl) dlg.classList.add('modal-' + sizeEl.dataset.modalSize);
+    }
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+  }
+
+  function openModal(url) {
+    var target = document.querySelector('#contracts-modal .modal-content');
+    if (!url || !target) return Promise.resolve();
+    return htmx.ajax('GET', url, target).then(function() {
+      showContractsModal();
+    });
+  }
+
+  function refreshDraftsPane() {
+    var root = pane();
+    if (!root) return Promise.resolve();
+    var refreshUrl = root.getAttribute('hx-get') || root.dataset.refreshUrl;
+    if (!refreshUrl) return Promise.resolve();
+    return htmx.ajax('GET', refreshUrl, { target: '#contracts-drafts-pane', swap: 'innerHTML' });
+  }
+
+  function postSequential(urls) {
+    var csrftoken = getCookie('csrftoken');
+    return urls.reduce(function(chain, url) {
+      return chain.then(function() {
+        return fetch(url, {
+          method: 'POST',
+          headers: { 'X-CSRFToken': csrftoken, 'HX-Request': 'true' },
+        }).then(function(response) {
+          if (!response.ok) {
+            throw new Error('Операция не выполнена.');
+          }
+        });
+      });
+    }, Promise.resolve());
+  }
+
+  function restoreSelection(ids) {
+    var selected = {};
+    (ids || []).forEach(function(id) { selected[String(id)] = true; });
+    getRowChecks().forEach(function(box) { box.checked = !!selected[String(box.value)]; });
+    updateMasterState();
+    updateRowHighlight();
+    ensureActionsVisibility();
+  }
+
+  document.addEventListener('click', function(e) {
+    var root = pane();
+    if (!root) return;
+
+    var createBtn = e.target.closest('#contracts-drafts-create-btn');
+    if (createBtn && root.contains(createBtn)) {
+      openModal(createBtn.dataset.url);
+      return;
+    }
+
+    var panelBtn = e.target.closest('#contracts-drafts-actions button[data-panel-action]');
+    if (!panelBtn || !root.contains(panelBtn)) return;
+
+    var checked = getChecked();
+    if (!checked.length) return;
+    window.__contractsDraftSel = checked.map(function(box) { return String(box.value); });
+
+    var action = panelBtn.dataset.panelAction;
+    if (action === 'edit') {
+      var tr = checked[0].closest('tr');
+      openModal(tr && tr.dataset.editUrl);
+      return;
+    }
+
+    if (action === 'delete') {
+      if (!confirm('Удалить ' + checked.length + ' строк(у/и)?')) return;
+      var urls = checked.map(function(box) {
+        var tr = box.closest('tr');
+        return tr && tr.dataset.deleteUrl;
+      }).filter(Boolean);
+      postSequential(urls)
+        .then(function() { return refreshDraftsPane(); })
+        .catch(function(err) { alert(err.message || 'Не удалось удалить строки.'); });
+      return;
+    }
+
+    if (action === 'up' || action === 'down') {
+      var selectedIds = checked.map(function(box) { return String(box.value); });
+      var urls = checked.map(function(box) {
+        var tr = box.closest('tr');
+        return tr && tr.dataset[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'];
+      }).filter(Boolean);
+      if (action === 'down') urls = urls.reverse();
+      postSequential(urls)
+        .then(function() { return refreshDraftsPane(); })
+        .then(function() { restoreSelection(selectedIds); })
+        .catch(function(err) { alert(err.message || 'Не удалось изменить порядок строк.'); });
+    }
+  });
+
+  document.addEventListener('change', function(e) {
+    var root = pane();
+    if (!root) return;
+
+    var master = e.target.closest('#contracts-drafts-master');
+    if (master && root.contains(master)) {
+      getRowChecks().forEach(function(box) { box.checked = master.checked; });
+      master.indeterminate = false;
+      updateMasterState();
+      updateRowHighlight();
+      ensureActionsVisibility();
+      return;
+    }
+
+    var rowCb = e.target.closest('tbody input.form-check-input[name="contracts-draft-select"]');
+    if (rowCb && root.contains(rowCb)) {
+      updateMasterState();
+      updateRowHighlight();
+      ensureActionsVisibility();
+    }
+  });
+
+  document.body.addEventListener('htmx:afterSettle', function(e) {
+    if (!(e.target && e.target.id === 'contracts-drafts-pane')) return;
+    var ids = window.__contractsDraftSel || [];
+    restoreSelection(ids);
+    window.__contractsDraftSel = [];
+  });
+
+  document.addEventListener('DOMContentLoaded', function() {
+    updateMasterState();
+    updateRowHighlight();
+    ensureActionsVisibility();
+  });
+})();
+
+
+/* -----------------------------------------------------------------------
    Signing table ("Подписание договора") panel
    ----------------------------------------------------------------------- */
 (function () {

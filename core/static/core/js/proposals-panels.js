@@ -184,6 +184,10 @@
       const row = box.closest('tr');
       return row?.dataset?.sendReady === '1';
     });
+    const singleCheckedReadyToTransfer = checked.length === 1 && (() => {
+      const row = checked[0]?.closest('tr');
+      return row?.dataset?.transferReady === '1';
+    })();
     const createBtn = pane()?.querySelector('#proposal-create-btn');
     const signBtn = pane()?.querySelector('#proposal-sign-btn');
     const sendBtn = pane()?.querySelector('#proposal-send-btn');
@@ -191,7 +195,114 @@
     if (createBtn) createBtn.disabled = !hasChecked;
     if (signBtn) signBtn.disabled = !allCheckedReadyToSend;
     if (sendBtn) sendBtn.disabled = !allCheckedReadyToSend;
-    if (transferContractBtn) transferContractBtn.disabled = !hasChecked;
+    if (transferContractBtn) transferContractBtn.disabled = !singleCheckedReadyToTransfer;
+  }
+
+  function applyTransferredProposalState(proposalIds, statusValue, statusLabel, transferDate) {
+    const ids = (proposalIds || []).map((value) => String(value));
+    ids.forEach((proposalId) => {
+      qa('tr[data-proposal-id="' + proposalId + '"]', pane()).forEach((row) => {
+        row.dataset.status = statusValue || row.dataset.status || '';
+        row.dataset.statusLabel = statusLabel || row.dataset.statusLabel || '';
+        row.dataset.transferReady = '1';
+        const statusCell = row.querySelector('.proposal-status-cell');
+        if (statusCell && statusLabel) statusCell.textContent = statusLabel;
+        const transferCell = row.querySelector('.proposal-transfer-date-cell');
+        if (transferCell) transferCell.textContent = transferDate || '';
+      });
+    });
+    initProposalMasterFilters();
+  }
+
+  function renderProposalFileCell(name, url, iconClass) {
+    const fileName = String(name || '').trim();
+    const href = String(url || '').trim();
+    if (!fileName && !href) return '';
+    if (href) {
+      return '<a href="' + escapeHtml(href) + '" target="_blank" rel="noopener"'
+        + ' class="proposal-file-name-link d-inline-flex align-items-center gap-1"'
+        + ' title="Открыть файл">'
+        + '<i class="bi ' + escapeHtml(iconClass) + '" style="color: var(--bs-primary, #075D94);"></i>'
+        + '<span class="proposal-file-name-text">' + escapeHtml(fileName || 'Файл') + '</span>'
+        + '</a>';
+    }
+    return '<span class="proposal-file-name-link d-inline-flex align-items-center gap-1">'
+      + '<i class="bi ' + escapeHtml(iconClass) + '" style="color: var(--bs-primary, #075D94);"></i>'
+      + '<span class="proposal-file-name-text">' + escapeHtml(fileName) + '</span>'
+      + '</span>';
+  }
+
+  function applySentProposalState(proposalIds, statusValue, statusLabel, sentDate) {
+    const ids = (proposalIds || []).map((value) => String(value));
+    ids.forEach((proposalId) => {
+      qa('tr[data-proposal-id="' + proposalId + '"]', pane()).forEach((row) => {
+        row.dataset.status = statusValue || row.dataset.status || '';
+        row.dataset.statusLabel = statusLabel || row.dataset.statusLabel || '';
+        row.dataset.transferReady = sentDate ? '1' : (row.dataset.transferReady || '0');
+        const statusCell = row.querySelector('.proposal-status-cell');
+        if (statusCell && statusLabel) statusCell.textContent = statusLabel;
+        const sentDateCell = row.querySelector('.proposal-sent-date-cell');
+        if (sentDateCell) sentDateCell.textContent = sentDate || '';
+      });
+    });
+    initProposalMasterFilters();
+  }
+
+  function applyCreatedDocumentsState(updates) {
+    (updates || []).forEach((item) => {
+      const proposalId = String(item?.id || '');
+      if (!proposalId) return;
+      qa('tr[data-proposal-id="' + proposalId + '"]', pane()).forEach((row) => {
+        const docxCell = row.querySelector('.proposal-docx-cell');
+        const pdfCell = row.querySelector('.proposal-pdf-cell');
+        if (docxCell) {
+          docxCell.innerHTML = renderProposalFileCell(
+            item?.docx_file_name || '',
+            item?.proposal_docx_file_url || '',
+            'bi-file-word-fill'
+          );
+        }
+        if (pdfCell) {
+          pdfCell.innerHTML = renderProposalFileCell(
+            item?.pdf_file_name || '',
+            item?.proposal_pdf_file_url || '',
+            'bi-file-pdf-fill'
+          );
+        }
+        if (item?.docx_file_name) row.dataset.sendReady = '1';
+      });
+    });
+  }
+
+  function applySignedDocumentsState(updates) {
+    (updates || []).forEach((item) => {
+      const proposalId = String(item?.id || '');
+      if (!proposalId) return;
+      qa('tr[data-proposal-id="' + proposalId + '"]', pane()).forEach((row) => {
+        const pdfCell = row.querySelector('.proposal-pdf-cell');
+        if (pdfCell) {
+          pdfCell.innerHTML = renderProposalFileCell(
+            item?.pdf_file_name || '',
+            item?.proposal_pdf_file_url || '',
+            'bi-file-pdf-fill'
+          );
+        }
+      });
+    });
+  }
+
+  async function parseJsonResponse(response, fallbackMessage) {
+    const rawText = await response.text();
+    let data = null;
+    try {
+      data = rawText ? JSON.parse(rawText) : {};
+    } catch (parseError) {
+      if (!response.ok) {
+        throw new Error(fallbackMessage);
+      }
+      throw new Error('Сервер вернул некорректный ответ.');
+    }
+    return data;
   }
 
   function bindProposalFilterMenuWidth(dropdown) {
@@ -4799,8 +4910,7 @@
 
       const panel = root.querySelector('#proposal-dispatch-controls');
       const createUrl = panel?.dataset?.createUrl;
-      const refreshUrl = panel?.dataset?.refreshUrl;
-      if (!createUrl || !refreshUrl) return;
+      if (!createUrl) return;
 
       const formData = new FormData();
       checked.forEach((cb) => formData.append('proposal_ids[]', cb.value));
@@ -4814,14 +4924,16 @@
           headers: { 'X-CSRFToken': csrftoken },
           body: formData,
         });
-        const data = await response.json();
+      const data = await parseJsonResponse(response, 'Не удалось создать ТКП.');
         if (!response.ok || !data.ok) {
           throw new Error(data?.error || 'Не удалось создать ТКП.');
         }
 
+        checked.forEach((cb) => { cb.checked = false; });
         window.__tableSel['proposal-dispatch-select'] = [];
         window.__tableSelLast = null;
-        await htmx.ajax('GET', refreshUrl, { target: '#proposals-pane', swap: 'outerHTML' });
+        applyCreatedDocumentsState(data?.updates || []);
+        syncSelectionState('proposal-dispatch-select');
 
         if (data.warnings && data.warnings.length) {
           alert((data.message || 'Документы ТКП созданы.') + '\n\n' + data.warnings.join('\n'));
@@ -4962,7 +5074,6 @@
 
     const panel = root.querySelector('#proposal-dispatch-controls');
     const sendUrl = panel?.dataset?.sendUrl;
-    const refreshUrl = panel?.dataset?.refreshUrl;
     const sentAtInput = root.querySelector('#proposal-request-sent-at');
     const selectedChannels = getProposalChannels().filter((cb) => cb.checked).map((cb) => cb.value);
 
@@ -4989,7 +5100,7 @@
       alert(details.join('\n'));
       return;
     }
-    if (!sendUrl || !refreshUrl) return;
+    if (!sendUrl) return;
 
     const formData = new FormData();
     checked.forEach((cb) => formData.append('proposal_ids[]', cb.value));
@@ -5005,11 +5116,12 @@
         headers: { 'X-CSRFToken': csrftoken },
         body: formData,
       });
-      const data = await response.json();
+      const data = await parseJsonResponse(response, 'Не удалось отправить ТКП.');
       if (!response.ok || !data.ok) {
         throw new Error(data?.error || 'Не удалось отправить ТКП.');
       }
 
+      checked.forEach((cb) => { cb.checked = false; });
       window.__tableSel['proposal-dispatch-select'] = [];
       window.__tableSelLast = null;
 
@@ -5036,12 +5148,73 @@
         alert(details.join('\n'));
       }
 
-      await htmx.ajax('GET', refreshUrl, { target: '#proposals-pane', swap: 'outerHTML' });
+      applySentProposalState(
+        data?.proposal_ids || [],
+        data?.status || 'sent',
+        data?.status_label || 'Отправленное',
+        data?.sent_at || '',
+      );
+      syncSelectionState('proposal-dispatch-select');
     } catch (err) {
       alert(err.message || 'Не удалось отправить ТКП.');
       updateDispatchActionBtns();
     } finally {
       sendBtn.innerHTML = originalHtml;
+    }
+  });
+
+  document.addEventListener('click', async (event) => {
+    const root = pane();
+    if (!root) return;
+    const transferBtn = event.target.closest('#proposal-transfer-contract-btn');
+    if (!transferBtn || !root.contains(transferBtn)) return;
+
+    const checked = getChecked('proposal-dispatch-select');
+    if (!checked.length || transferBtn.disabled) return;
+
+    const panel = root.querySelector('#proposal-dispatch-controls');
+    const transferUrl = panel?.dataset?.transferContractUrl;
+    if (!transferUrl) return;
+
+    const formData = new FormData();
+    checked.forEach((cb) => formData.append('proposal_ids[]', cb.value));
+
+    const originalHtml = transferBtn.innerHTML;
+    transferBtn.disabled = true;
+    transferBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Передача...';
+    try {
+      const response = await fetch(transferUrl, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrftoken },
+        body: formData,
+      });
+      const data = await parseJsonResponse(response, 'Не удалось передать строки для договора.');
+      if (!response.ok || !data.ok) {
+        throw new Error(data?.error || 'Не удалось передать строки для договора.');
+      }
+
+      checked.forEach((cb) => { cb.checked = false; });
+      window.__tableSel['proposal-dispatch-select'] = [];
+      window.__tableSelLast = null;
+      applyTransferredProposalState(
+        data?.proposal_ids || checked.map((cb) => cb.value),
+        data?.status || 'completed',
+        data?.status_label || 'Завершённое',
+        data?.transfer_to_contract_date || '',
+      );
+      syncSelectionState('proposal-dispatch-select');
+      htmx.trigger(document.body, 'contracts-updated');
+
+      const projectsPane = document.getElementById('projects-pane');
+      const projectsRefreshUrl = projectsPane?.getAttribute('hx-get') || projectsPane?.dataset?.refreshUrl;
+      if (projectsPane && projectsRefreshUrl) {
+        htmx.ajax('GET', projectsRefreshUrl, { target: '#projects-pane', swap: 'outerHTML' });
+      }
+    } catch (err) {
+      alert(err.message || 'Не удалось передать строки для договора.');
+      updateDispatchActionBtns();
+    } finally {
+      transferBtn.innerHTML = originalHtml;
     }
   });
 
@@ -5056,8 +5229,7 @@
 
     const panel = root.querySelector('#proposal-dispatch-controls');
     const signUrl = panel?.dataset?.signUrl;
-    const refreshUrl = panel?.dataset?.refreshUrl;
-    if (!signUrl || !refreshUrl) return;
+    if (!signUrl) return;
 
     const formData = new FormData();
     checked.forEach((cb) => formData.append('proposal_ids[]', cb.value));
@@ -5071,14 +5243,16 @@
         headers: { 'X-CSRFToken': csrftoken },
         body: formData,
       });
-      const data = await response.json();
+      const data = await parseJsonResponse(response, 'Не удалось сформировать PDF для ТКП.');
       if (!response.ok || !data.ok) {
         throw new Error(data?.error || 'Не удалось сформировать PDF для ТКП.');
       }
 
+      checked.forEach((cb) => { cb.checked = false; });
       window.__tableSel['proposal-dispatch-select'] = [];
       window.__tableSelLast = null;
-      await htmx.ajax('GET', refreshUrl, { target: '#proposals-pane', swap: 'outerHTML' });
+      applySignedDocumentsState(data?.updates || []);
+      syncSelectionState('proposal-dispatch-select');
 
       if (data.warnings && data.warnings.length) {
         alert((data.message || 'PDF для ТКП сформирован.') + '\n\n' + data.warnings.join('\n'));

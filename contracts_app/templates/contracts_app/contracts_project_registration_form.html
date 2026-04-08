@@ -1,0 +1,344 @@
+<div class="modal-header" data-modal-size="xl">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+  method="post"
+  {% if action == "create" %}
+    hx-post="{% url 'contracts_project_registration_create' %}"
+  {% else %}
+    hx-post="{% url 'contracts_project_registration_edit' registration.pk %}"
+  {% endif %}
+  hx-target="#contracts-drafts-pane"
+  hx-swap="innerHTML">
+  <div class="modal-body modal-body-scroll">
+    {% csrf_token %}
+
+    <div class="row g-2">
+      <div class="col-3">
+        <label class="form-label">Номер</label>
+        {{ form.number }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Вид соглашения</label>
+        {{ form.agreement_type }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Группа</label>
+        <div class="group-select-shell">
+          {{ form.group_member }}
+          <div class="group-select-display" id="registration-group-display" aria-hidden="true"></div>
+        </div>
+      </div>
+      <div class="col-3">
+        <label class="form-label">Тип</label>
+        {{ form.type }}
+      </div>
+
+      <div class="col-3">
+        <label class="form-label">Название</label>
+        {{ form.name }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Статус</label>
+        {{ form.status }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Год</label>
+        {{ form.year }}
+      </div>
+
+      <div class="col-6">
+        <label class="form-label">Руководитель проекта</label>
+        {{ form.project_manager }}
+      </div>
+      <div class="w-100"></div>
+
+      <div class="col-6">
+        <label class="form-label">Заказчик: краткое наименование юрлица</label>
+        <div class="ler-ac-wrap">
+          {{ form.customer }}
+          <input type="hidden" name="customer_autocomplete_identifier_record_id" id="reg-customer-autocomplete-identifier-record-id" value="">
+          <input type="hidden" name="customer_autocomplete_selected_from_autocomplete" id="reg-customer-autocomplete-selected" value="0">
+          <div class="ler-ac-list" id="reg-ler-ac-list"></div>
+        </div>
+      </div>
+      <div class="w-100"></div>
+
+      <div class="col-3">
+        <label class="form-label">Заказчик: страна регистрации</label>
+        {{ form.country }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Идентификатор</label>
+        {{ form.identifier }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Регистрационный номер</label>
+        {{ form.registration_number }}
+      </div>
+      <div class="col-3 mb-3">
+        <label class="form-label">Дата регистрации</label>
+        {{ form.registration_date }}
+      </div>
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mt-3 mb-0">
+        <div class="fw-semibold mb-1">Проверьте введённые данные:</div>
+        <ul class="mb-0">
+          {% for field, errors in form.errors.items %}
+            {% for err in errors %}
+              <li>{{ field }}: {{ err }}</li>
+            {% endfor %}
+          {% endfor %}
+          {% for err in form.non_field_errors %}<li>{{ err }}</li>{% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
+    <div class="modal-footer pb-3">
+      <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+      <button type="submit" class="btn btn-primary">Сохранить</button>
+    </div>
+  </div>
+</form>
+
+<style>
+  #contracts-modal .readonly-field {
+    background-color: #f8f9fa;
+    color: #6c757d;
+  }
+  #contracts-modal .group-select-shell {
+    position: relative;
+  }
+  #contracts-modal .group-select-shell select {
+    position: relative;
+    z-index: 2;
+    opacity: 0.01;
+  }
+  #contracts-modal .group-select-display {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    padding: .25rem 2.25rem .25rem .75rem;
+    font: inherit;
+    line-height: inherit;
+    color: #212529;
+    background-color: #fff;
+    border: 1px solid #ced4da;
+    border-radius: .375rem;
+    pointer-events: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #contracts-modal .group-select-display::after {
+    content: "";
+    position: absolute;
+    right: .75rem;
+    top: 50%;
+    width: 16px;
+    height: 16px;
+    transform: translateY(-50%);
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 16px 12px;
+    opacity: .7;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M2 5l6 6 6-6'/%3e%3c/svg%3e");
+  }
+</style>
+
+<script>
+  function attachGroupSelectDisplay(node) {
+    if (!node) return;
+    const select = node.querySelector("#registration-group-select");
+    const display = node.querySelector("#registration-group-display");
+    if (!select || !display || select.dataset.displayBound === "1") return;
+    select.dataset.displayBound = "1";
+
+    const syncDisplay = () => {
+      const selected = select.options[select.selectedIndex];
+      const label = selected && selected.value ? selected.textContent.trim() : "";
+      display.textContent = label ? label.split(/\s+/, 1)[0] : "";
+    };
+
+    select.addEventListener("change", syncDisplay);
+    syncDisplay();
+  }
+
+  function attachCountryIdentifierSync(node) {
+    if (!node) return;
+    const countrySelect = node.querySelector("#reg-country-select");
+    const identifierField = node.querySelector("#reg-identifier-field");
+    if (!countrySelect || !identifierField || countrySelect.dataset.identBound === "1") return;
+    countrySelect.dataset.identBound = "1";
+
+    countrySelect.addEventListener("change", () => {
+      const countryId = countrySelect.value;
+      if (!countryId) {
+        identifierField.value = "";
+        return;
+      }
+      fetch("{% url 'identifier_for_country' %}?country_id=" + encodeURIComponent(countryId))
+        .then(r => r.json())
+        .then(data => { identifierField.value = data.identifier || ""; });
+    });
+  }
+
+  function replaceQuotes(el) {
+    var v = el.value;
+    if (v.indexOf('"') === -1) return;
+    var pos = el.selectionStart;
+    var out = '';
+    for (var i = 0; i < v.length; i++) {
+      if (v[i] === '"') {
+        var prev = out.length ? out[out.length - 1] : '';
+        out += (!prev || /[\s(\[{\u00AB]/.test(prev)) ? '\u00AB' : '\u00BB';
+      } else {
+        out += v[i];
+      }
+    }
+    el.value = out;
+    el.setSelectionRange(pos, pos);
+  }
+
+  function attachGuillemets(node) {
+    if (!node) return;
+    const input = node.querySelector('input[name="customer"]');
+    if (!input || input.dataset.guillBound === "1") return;
+    input.dataset.guillBound = "1";
+    input.addEventListener("input", function() { replaceQuotes(input); });
+  }
+
+  function attachLerAutocomplete(node) {
+    if (!node) return;
+    var input = node.querySelector('input[name="customer"]');
+    var list = node.querySelector('#reg-ler-ac-list');
+    var selectedIdInput = node.querySelector('#reg-customer-autocomplete-identifier-record-id');
+    var selectedFlagInput = node.querySelector('#reg-customer-autocomplete-selected');
+    var countrySel = node.querySelector('#reg-country-select');
+    var regNumField = node.querySelector('input[name="registration_number"]');
+    var regDateField = node.querySelector('input[name="registration_date"]');
+    if (!input || !list || input.dataset.lerBound === '1') return;
+    input.dataset.lerBound = '1';
+    var debounce = null;
+    var results = [];
+    var picking = false;
+
+    function clearSelection() {
+      if (selectedIdInput) selectedIdInput.value = '';
+      if (selectedFlagInput) selectedFlagInput.value = '0';
+    }
+
+    function highlight(text, q) {
+      if (!q) return text;
+      var esc = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return text.replace(new RegExp('(' + esc + ')', 'gi'), '<mark>$1</mark>');
+    }
+
+    function render(data, q, totalCount) {
+      results = data;
+      if (!data.length) { list.classList.remove('show'); return; }
+      var visible = data.slice(0, 3);
+      var html = visible.map(function(r, i) {
+        var main = highlight(r.short_name || '', q);
+        var parts = [r.full_name, r.identifier, r.registration_number].filter(Boolean);
+        var sub = parts.length ? highlight(parts.join(' · '), q) : '';
+        return '<div class="ler-ac-item" data-idx="' + i + '">'
+          + '<div class="ler-ac-main">' + main + '</div>'
+          + (sub ? '<div class="ler-ac-sub">' + sub + '</div>' : '')
+          + '</div>';
+      }).join('');
+      var remaining = totalCount - 3;
+      if (remaining > 0) {
+        html += '<div class="ler-ac-item ler-ac-more">Найдено ещё ' + remaining + ' юрлиц</div>';
+      }
+      list.innerHTML = html;
+      list.classList.add('show');
+    }
+
+    function pick(r) {
+      input.value = r.short_name || '';
+      var identField = node.querySelector('#reg-identifier-field');
+      if (countrySel && r.country_id) countrySel.value = r.country_id;
+      if (identField) identField.value = r.identifier || '';
+      if (regNumField) regNumField.value = r.registration_number || '';
+      if (regDateField) regDateField.value = r.registration_date || '';
+      if (selectedIdInput) selectedIdInput.value = r.identifier_record_id || '';
+      if (selectedFlagInput) selectedFlagInput.value = '1';
+      list.classList.remove('show');
+    }
+
+    input.addEventListener('input', function() {
+      var q = input.value.trim();
+      clearSelection();
+      clearTimeout(debounce);
+      if (q.length < 1) { list.classList.remove('show'); return; }
+      debounce = setTimeout(function() {
+        fetch('{% url "ler_search" %}?q=' + encodeURIComponent(q))
+          .then(function(r) { return r.json(); })
+          .then(function(d) { render(d.results || [], q, d.total_count || 0); })
+          .catch(function() { list.classList.remove('show'); });
+      }, 200);
+    });
+
+    list.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      picking = true;
+      var item = e.target.closest('.ler-ac-item');
+      if (!item) return;
+      var idx = parseInt(item.dataset.idx, 10);
+      if (results[idx]) pick(results[idx]);
+    });
+
+    list.addEventListener('click', function(e) {
+      var item = e.target.closest('.ler-ac-item');
+      if (!item) return;
+      var idx = parseInt(item.dataset.idx, 10);
+      if (results[idx]) pick(results[idx]);
+      picking = false;
+    });
+
+    input.addEventListener('blur', function() {
+      if (picking) { picking = false; return; }
+      setTimeout(function() { list.classList.remove('show'); }, 200);
+    });
+
+    input.addEventListener('focus', function() {
+      if (results.length && input.value.trim().length >= 1) list.classList.add('show');
+    });
+    countrySel?.addEventListener('change', clearSelection);
+    regNumField?.addEventListener('input', clearSelection);
+    regNumField?.addEventListener('change', clearSelection);
+    regDateField?.addEventListener('input', clearSelection);
+    regDateField?.addEventListener('change', clearSelection);
+  }
+
+  function initCurrentModal() {
+    const modal = document.querySelector("#contracts-modal");
+    if (!modal) return;
+    const form = modal.querySelector("form");
+    attachGroupSelectDisplay(form);
+    attachCountryIdentifierSync(form);
+    attachGuillemets(form);
+    attachLerAutocomplete(form);
+  }
+
+  document.addEventListener("DOMContentLoaded", initCurrentModal);
+
+  document.addEventListener("htmx:afterSwap", (event) => {
+    if (!event.detail.target) return;
+    if (!event.detail.target.closest("#contracts-modal")) return;
+    initCurrentModal();
+  });
+
+  (function bootstrapImmediately() {
+    initCurrentModal();
+  })();
+</script>

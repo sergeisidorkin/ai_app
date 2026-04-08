@@ -1,0 +1,122 @@
+{% load projects_extras %}
+
+<div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
+  <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
+    <i class="bi bi-table"></i> Проекты договоров с клиентами
+  </h5>
+</div>
+
+<div class="registration-table-wrap">
+  <table class="table table-sm align-middle reg-table mb-0">
+    <colgroup>
+      <col class="checkbox">
+      <col class="project-number">
+      <col class="agreement-type">
+      <col class="group">
+      <col class="project-id">
+      <col class="reg-type">
+      <col class="reg-name">
+      <col class="reg-status">
+      <col class="reg-year">
+      <col class="reg-customer">
+      <col class="reg-country">
+      <col class="reg-identifier">
+      <col class="reg-regnumber">
+      <col class="reg-regdate">
+    </colgroup>
+    <thead>
+      <tr>
+        <th class="w-checkbox">
+          {% if request.user.is_authenticated and request.user.is_staff %}
+            <div class="form-check m-0">
+              <input class="form-check-input"
+                     type="checkbox"
+                     id="contracts-drafts-master"
+                     data-target-name="contracts-draft-select"
+                     data-actions-id="contracts-drafts-actions"
+                     aria-label="Выделить все строки проектов договоров">
+            </div>
+          {% endif %}
+        </th>
+        <th class="col-project-number">Номер</th>
+        <th>Вид соглашения</th>
+        <th>Группа</th>
+        <th>Проект ID</th>
+        <th>Тип</th>
+        <th class="nowrap">Название</th>
+        <th>Статус</th>
+        <th>Год</th>
+        <th>Заказчик</th>
+        <th>Страна</th>
+        <th>Идент.</th>
+        <th>Регистр. номер</th>
+        <th>Дата</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in registrations %}
+        <tr
+          data-project-id="{{ r.id }}"
+          data-edit-url="{% url 'contracts_project_registration_edit' r.pk %}"
+          data-delete-url="{% url 'contracts_project_registration_delete' r.pk %}"
+          data-move-up-url="{% url 'contracts_project_registration_move_up' r.pk %}"
+          data-move-down-url="{% url 'contracts_project_registration_move_down' r.pk %}">
+          <td class="text-nowrap">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+              <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       id="contracts-draft-sel-{{ r.id }}"
+                       name="contracts-draft-select"
+                       value="{{ r.id }}"
+                       aria-label="Выделить строку проекта договора">
+              </div>
+            {% endif %}
+          </td>
+          <td class="col-project-number">{{ r.number }}</td>
+          <td>{{ r.get_agreement_type_display }}</td>
+          <td>{{ r.group_display }}</td>
+          <td class="project-id-cell">{{ r.short_uid }}</td>
+          <td>{{ r.type }}</td>
+          <td>{{ r.name }}</td>
+          <td>{{ r.status }}</td>
+          <td>{{ r.year }}</td>
+          <td>{{ r.customer }}</td>
+          <td>{{ r.country.short_name|default:"" }}</td>
+          <td>{{ r.identifier }}</td>
+          <td>{{ r.registration_number }}</td>
+          <td>{{ r.registration_date|date:"d.m.y" }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="14" class="text-muted">Пока нет данных.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if request.user.is_authenticated and request.user.is_staff %}
+    <div class="d-flex align-items-stretch gap-2 products-actions-row mt-2">
+      <button type="button"
+              id="contracts-drafts-create-btn"
+              class="btn btn-primary btn-sm d-flex align-items-center"
+              data-url="{% url 'contracts_project_registration_create' %}">
+        <i class="bi bi-plus-circle me-2"></i>Добавить строку
+      </button>
+      <div id="contracts-drafts-actions" class="d-none">
+        <div class="btn-group">
+          <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+            <i class="bi bi-arrow-up-square"></i>
+          </button>
+          <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+            <i class="bi bi-arrow-down-square"></i>
+          </button>
+          <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+            <i class="bi bi-pencil-square"></i>
+          </button>
+          <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+            <i class="bi bi-x-square"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+  {% endif %}
+</div>
