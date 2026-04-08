@@ -489,6 +489,8 @@ class ProposalDispatchSendTests(TestCase):
         self.assertEqual(payload["email_delivery"]["failed"], 1)
         self.assertEqual(payload["proposal_ids"], [self.successful_proposal.pk])
         self.assertEqual(payload["status"], ProposalRegistration.ProposalStatus.SENT)
+        self.assertEqual(payload["updates"][0]["id"], self.successful_proposal.pk)
+        self.assertEqual(payload["updates"][0]["status"], ProposalRegistration.ProposalStatus.SENT)
         self.assertEqual(mocked_send_notification_email.call_count, 1)
 
         call_kwargs = mocked_send_notification_email.call_args.kwargs
@@ -517,6 +519,35 @@ class ProposalDispatchSendTests(TestCase):
         self.assertNotEqual(self.failed_proposal.status, ProposalRegistration.ProposalStatus.SENT)
         self.assertEqual(self.successful_proposal.pdf_file_name, "")
         self.assertEqual(self.successful_proposal.pdf_file_link, "")
+
+    @override_settings(PROPOSAL_SYSTEM_FROM_EMAIL="ai@imcmontanai.ru")
+    @patch("proposals_app.services.send_notification_email")
+    def test_dispatch_send_preserves_completed_status(self, mocked_send_notification_email):
+        mocked_send_notification_email.return_value = {
+            "recipient_email": "recipient@example.com",
+            "subject": "ignored",
+            "is_html": True,
+        }
+        self.successful_proposal.status = ProposalRegistration.ProposalStatus.COMPLETED
+        self.successful_proposal.transfer_to_contract_date = "08.04.2026 11:00"
+        self.successful_proposal.save(update_fields=["status", "transfer_to_contract_date"])
+
+        response = self.client.post(
+            reverse("proposal_dispatch_send"),
+            {
+                "proposal_ids[]": [self.successful_proposal.pk],
+                "delivery_channels[]": ["system_email"],
+                "sent_at": "2026-04-04T12:30",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["updates"][0]["status"], ProposalRegistration.ProposalStatus.COMPLETED)
+        self.successful_proposal.refresh_from_db()
+        self.assertEqual(self.successful_proposal.sent_date, "04.04.2026 12:30")
+        self.assertEqual(self.successful_proposal.status, ProposalRegistration.ProposalStatus.COMPLETED)
 
     @patch("proposals_app.views.generate_and_store_proposal_pdf")
     @patch("proposals_app.services.send_notification_email")
@@ -866,6 +897,36 @@ class ProposalDispatchFormTests(TestCase):
                 for person in matching_people
             )
         )
+
+    def test_dispatch_form_edit_does_not_allow_overwriting_transfer_date(self):
+        self.proposal.transfer_to_contract_date = "08.04.2026 11:00"
+        self.proposal.save(update_fields=["transfer_to_contract_date"])
+
+        response = self.client.post(
+            reverse("proposal_dispatch_form_edit", args=[self.proposal.pk]),
+            {
+                "docx_file_name": "",
+                "docx_file_link": "",
+                "pdf_file_name": "",
+                "pdf_file_link": "",
+                "sent_date": "08.04.2026 12:00",
+                "transfer_to_contract_date": "99.99.9999 99:99",
+                "recipient": 'ООО "Альфа"',
+                "recipient_country": str(self.country.pk),
+                "recipient_identifier": "ОГРН",
+                "recipient_registration_number": "1234567890123",
+                "recipient_registration_date": "10.04.2026",
+                "recipient_job_title": "Генеральный директор",
+                "contact_last_name": "Петров",
+                "contact_first_name": "Петр",
+                "contact_middle_name": "Петрович",
+                "contact_email": "contact@example.com",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.proposal.refresh_from_db()
+        self.assertEqual(self.proposal.transfer_to_contract_date, "08.04.2026 11:00")
 
 
 class ProposalRegistrationFormTests(TestCase):

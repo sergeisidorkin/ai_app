@@ -232,17 +232,29 @@
       + '</span>';
   }
 
-  function applySentProposalState(proposalIds, statusValue, statusLabel, sentDate) {
-    const ids = (proposalIds || []).map((value) => String(value));
-    ids.forEach((proposalId) => {
+  function applySentProposalState(updates, fallbackStatusValue, fallbackStatusLabel, fallbackSentDate) {
+    const items = Array.isArray(updates) && updates.length
+      ? updates
+      : (updates || []).map((proposalId) => ({
+        id: proposalId,
+        status: fallbackStatusValue,
+        status_label: fallbackStatusLabel,
+        sent_date: fallbackSentDate,
+      }));
+    items.forEach((item) => {
+      const proposalId = String(item?.id || '');
+      if (!proposalId) return;
       qa('tr[data-proposal-id="' + proposalId + '"]', pane()).forEach((row) => {
-        row.dataset.status = statusValue || row.dataset.status || '';
-        row.dataset.statusLabel = statusLabel || row.dataset.statusLabel || '';
+        const statusValue = item?.status || fallbackStatusValue || row.dataset.status || '';
+        const statusLabel = item?.status_label || fallbackStatusLabel || row.dataset.statusLabel || '';
+        const sentDate = item?.sent_date || fallbackSentDate || '';
+        row.dataset.status = statusValue;
+        row.dataset.statusLabel = statusLabel;
         row.dataset.transferReady = sentDate ? '1' : (row.dataset.transferReady || '0');
         const statusCell = row.querySelector('.proposal-status-cell');
         if (statusCell && statusLabel) statusCell.textContent = statusLabel;
         const sentDateCell = row.querySelector('.proposal-sent-date-cell');
-        if (sentDateCell) sentDateCell.textContent = sentDate || '';
+        if (sentDateCell) sentDateCell.textContent = sentDate;
       });
     });
     initProposalMasterFilters();
@@ -5149,7 +5161,7 @@
       }
 
       applySentProposalState(
-        data?.proposal_ids || [],
+        data?.updates || data?.proposal_ids || [],
         data?.status || 'sent',
         data?.status_label || 'Отправленное',
         data?.sent_at || '',

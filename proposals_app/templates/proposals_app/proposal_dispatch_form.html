@@ -131,7 +131,12 @@
     <div class="row g-2 mb-3">
       <div class="col-6">
         <label class="form-label">Дата передачи ТКП для составления договора</label>
-        {{ form.transfer_to_contract_date }}
+        <input
+          type="text"
+          class="form-control readonly-field"
+          readonly
+          tabindex="-1"
+          value="{{ proposal.transfer_to_contract_date|default:'' }}">
       </div>
     </div>
 
