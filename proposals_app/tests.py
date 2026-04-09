@@ -16,7 +16,7 @@ from django.utils import timezone
 
 from docx import Document
 
-from classifiers_app.models import BusinessEntityRecord, OKSMCountry, OKVCurrency
+from classifiers_app.models import BusinessEntityRecord, BusinessEntityIdentifierRecord, LegalEntityRecord, OKSMCountry, OKVCurrency
 from contacts_app.models import PersonRecord
 from core.models import CloudStorageSettings
 from experts_app.models import ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
@@ -1341,11 +1341,13 @@ class ProposalRegistrationFormTests(TestCase):
                 "year": 2026,
                 "customer": 'ООО "Приморское"',
                 "country": country.pk,
+                "registration_region": "Приморский край",
                 "identifier": "ОГРН",
                 "registration_number": "1174910001683",
                 "registration_date": "01.04.2026",
                 "asset_owner": 'ООО "Другое"',
                 "asset_owner_country": "",
+                "asset_owner_region": "",
                 "asset_owner_identifier": "",
                 "asset_owner_registration_number": "",
                 "asset_owner_registration_date": "",
@@ -1358,6 +1360,7 @@ class ProposalRegistrationFormTests(TestCase):
 
         self.assertEqual(proposal.asset_owner, proposal.customer)
         self.assertEqual(proposal.asset_owner_country, proposal.country)
+        self.assertEqual(proposal.asset_owner_region, proposal.registration_region)
         self.assertEqual(proposal.asset_owner_identifier, proposal.identifier)
         self.assertEqual(proposal.asset_owner_registration_number, proposal.registration_number)
         self.assertEqual(proposal.asset_owner_registration_date, proposal.registration_date)
@@ -2576,6 +2579,50 @@ class ProposalNextcloudWorkspaceHookTests(TestCase):
         entity = BusinessEntityRecord.objects.get()
         self.assertEqual(entity.name, 'ООО "Заказчик"')
         self.assertEqual(entity.source, "[ТКП / Заказчик]")
+
+    def test_create_view_syncs_customer_region_into_registry_chain(self):
+        country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+
+        response = self.client.post(
+            reverse("proposal_form_create"),
+            self._payload(
+                customer='ООО "Регион"',
+                country=str(country.pk),
+                registration_region="Тюменская область",
+                identifier="ОГРН",
+                registration_number="1234567890",
+                registration_date="01.04.2026",
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        proposal = ProposalRegistration.objects.get()
+        self.assertEqual(proposal.registration_region, "Тюменская область")
+
+        identifier_record = BusinessEntityIdentifierRecord.objects.get(
+            business_entity__name='ООО "Регион"',
+        )
+        self.assertEqual(identifier_record.registration_region, "Тюменская область")
+
+        name_record = LegalEntityRecord.objects.get(
+            attribute=LegalEntityRecord.ATTRIBUTE_NAME,
+            identifier_record=identifier_record,
+        )
+        self.assertEqual(name_record.registration_region, "Тюменская область")
+
+        address_record = LegalEntityRecord.objects.get(
+            attribute=LegalEntityRecord.ATTRIBUTE_LEGAL_ADDRESS,
+            identifier_record=identifier_record,
+        )
+        self.assertEqual(address_record.registration_region, "Тюменская область")
 
     @patch("ai_app.proposals_app.views.create_proposal_workspace")
     @patch("ai_app.proposals_app.views.is_nextcloud_primary", return_value=True)

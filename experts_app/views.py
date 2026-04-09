@@ -1,9 +1,10 @@
 import json
+import os
 
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.db import models
 from django.db.models import Max, Q
-from django.http import JsonResponse
+from django.http import FileResponse, Http404, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_http_methods, require_POST
 
@@ -269,13 +270,39 @@ def contract_details_form_edit(request, pk: int):
         return render(request, CONTRACT_DETAILS_FORM_TEMPLATE, {
             "form": form, "profile": profile,
         })
-    form = ExpertContractDetailsForm(request.POST, instance=profile)
+    old_facsimile_name = profile.facsimile_file.name if profile.facsimile_file else ""
+    has_new_facsimile = "facsimile_file" in request.FILES
+    clear_facsimile = bool(request.POST.get("facsimile_file-clear")) and not has_new_facsimile
+    form = ExpertContractDetailsForm(request.POST, request.FILES, instance=profile)
     if not form.is_valid():
         return render(request, CONTRACT_DETAILS_FORM_TEMPLATE, {
             "form": form, "profile": profile,
         })
-    form.save()
+    saved_profile = form.save()
+    new_facsimile_name = saved_profile.facsimile_file.name if saved_profile.facsimile_file else ""
+    if old_facsimile_name and (clear_facsimile or (has_new_facsimile and old_facsimile_name != new_facsimile_name)):
+        storage = saved_profile._meta.get_field("facsimile_file").storage
+        if storage.exists(old_facsimile_name):
+            storage.delete(old_facsimile_name)
     return _render_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def contract_facsimile_download(request, pk: int):
+    profile = get_object_or_404(ExpertProfile, pk=pk)
+    if not profile.facsimile_file:
+        raise Http404("Файл не найден")
+    file_path = profile.facsimile_file.path
+    if not os.path.isfile(file_path):
+        raise Http404("Файл не найден на диске")
+    from urllib.parse import quote
+
+    basename = os.path.basename(file_path)
+    response = FileResponse(open(file_path, "rb"), content_type="application/octet-stream")
+    response["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(basename)}"
+    return response
 
 
 # ---------------------------------------------------------------------------

@@ -1,7 +1,13 @@
+import os
+
 from django.db import models
 
 from group_app.models import GroupMember, OrgUnit
 from users_app.models import Employee
+
+
+def expert_facsimile_upload_to(instance, filename):
+    return f"experts/facsimiles/{instance.pk or 'new'}/{os.path.basename(filename)}"
 
 
 class ExpertSpecialty(models.Model):
@@ -169,6 +175,12 @@ class ExpertProfile(models.Model):
     corr_bank_swift = models.CharField("SWIFT банка-корреспондента", max_length=50, blank=True, default="")
     corr_bank_settlement_account = models.CharField("Рас. счет банка-корреспондента", max_length=50, blank=True, default="")
     corr_bank_corr_account = models.CharField("Кор. счет банка-корреспондента", max_length=50, blank=True, default="")
+    facsimile_file = models.FileField(
+        "Факсимиле",
+        upload_to=expert_facsimile_upload_to,
+        blank=True,
+        default="",
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

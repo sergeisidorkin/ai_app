@@ -8,7 +8,7 @@ from django.db import models
 from django.db.models import Max
 from django.utils import timezone
 
-from classifiers_app.models import LegalEntityIdentifier, OKSMCountry, OKVCurrency
+from classifiers_app.models import LegalEntityIdentifier, OKSMCountry, OKVCurrency, TerritorialDivision
 from contracts_app.forms import _ContractFileInput
 from group_app.models import GroupMember
 from policy_app.models import Product, TypicalSection
@@ -227,6 +227,40 @@ def _proposal_variable_column_choices(section_key, table_key):
     return list(table.get("columns", {}).items())
 
 
+def _parse_proposal_form_date(raw_value):
+    value = str(raw_value or "").strip()
+    if not value:
+        return None
+    for fmt in DATE_INPUT_FORMATS:
+        try:
+            return datetime.strptime(value, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _proposal_region_choices_for_country(country_id, current_value="", as_of=None):
+    choices = []
+    seen = set()
+    if country_id:
+        qs = TerritorialDivision.objects.filter(country_id=country_id)
+        if as_of:
+            qs = qs.filter(
+                effective_date__lte=as_of,
+            ).filter(
+                models.Q(abolished_date__isnull=True) | models.Q(abolished_date__gte=as_of),
+            )
+        for region_name in qs.order_by("region_name", "id").values_list("region_name", flat=True):
+            if not region_name or region_name in seen:
+                continue
+            seen.add(region_name)
+            choices.append(region_name)
+    current_region = str(current_value or "").strip()
+    if current_region and current_region not in seen:
+        choices.append(current_region)
+    return choices
+
+
 class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
     number = forms.IntegerField(
         label="Номер",
@@ -252,6 +286,12 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         queryset=OKSMCountry.objects.none(),
         required=False,
         widget=forms.Select(attrs={"id": "proposal-country-select"}),
+    )
+    registration_region = forms.ChoiceField(
+        label="Регион",
+        choices=[("", "---------")],
+        required=False,
+        widget=forms.Select(attrs={"id": "proposal-region-select"}),
     )
     identifier = forms.CharField(
         label="Идентификатор",
@@ -286,6 +326,12 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         queryset=OKSMCountry.objects.none(),
         required=False,
         widget=forms.Select(attrs={"id": "proposal-asset-owner-country-select"}),
+    )
+    asset_owner_region = forms.ChoiceField(
+        label="Регион",
+        choices=[("", "---------")],
+        required=False,
+        widget=forms.Select(attrs={"id": "proposal-asset-owner-region-select"}),
     )
     asset_owner_identifier = forms.CharField(
         label="Идентификатор",
@@ -499,11 +545,13 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             "year",
             "customer",
             "country",
+            "registration_region",
             "identifier",
             "registration_number",
             "registration_date",
             "asset_owner",
             "asset_owner_country",
+            "asset_owner_region",
             "asset_owner_identifier",
             "asset_owner_registration_number",
             "asset_owner_registration_date",
@@ -570,6 +618,50 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         self.fields["country"].label_from_instance = lambda obj: obj.short_name
         self.fields["asset_owner_country"].queryset = country_qs
         self.fields["asset_owner_country"].label_from_instance = lambda obj: obj.short_name
+
+        customer_country_id = self.data.get("country") if self.is_bound else getattr(self.instance, "country_id", None)
+        customer_region = self.data.get("registration_region") if self.is_bound else getattr(self.instance, "registration_region", "")
+        customer_registration_date = (
+            _parse_proposal_form_date(self.data.get("registration_date"))
+            if self.is_bound
+            else getattr(self.instance, "registration_date", None)
+        )
+        customer_region_choices = [("", "---------")]
+        customer_region_choices.extend(
+            (name, name)
+            for name in _proposal_region_choices_for_country(
+                customer_country_id,
+                current_value=customer_region,
+                as_of=customer_registration_date,
+            )
+        )
+        self.fields["registration_region"].choices = customer_region_choices
+
+        asset_owner_country_id = (
+            self.data.get("asset_owner_country")
+            if self.is_bound
+            else getattr(self.instance, "asset_owner_country_id", None)
+        )
+        asset_owner_region = (
+            self.data.get("asset_owner_region")
+            if self.is_bound
+            else getattr(self.instance, "asset_owner_region", "")
+        )
+        asset_owner_registration_date = (
+            _parse_proposal_form_date(self.data.get("asset_owner_registration_date"))
+            if self.is_bound
+            else getattr(self.instance, "asset_owner_registration_date", None)
+        )
+        asset_owner_region_choices = [("", "---------")]
+        asset_owner_region_choices.extend(
+            (name, name)
+            for name in _proposal_region_choices_for_country(
+                asset_owner_country_id,
+                current_value=asset_owner_region,
+                as_of=asset_owner_registration_date,
+            )
+        )
+        self.fields["asset_owner_region"].choices = asset_owner_region_choices
 
         currency_qs = OKVCurrency.objects.filter(
             models.Q(approval_date__isnull=True) | models.Q(approval_date__lte=today),
@@ -822,6 +914,9 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         elif final_percent is not None:
             cleaned["final_report_percent"] = final_percent
 
+        cleaned["registration_region"] = (cleaned.get("registration_region") or "").strip()
+        cleaned["asset_owner_region"] = (cleaned.get("asset_owner_region") or "").strip()
+
         asset_owner_country = cleaned.get("asset_owner_country")
         asset_owner_identifier = ""
         if asset_owner_country:
@@ -835,6 +930,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         if cleaned.get("asset_owner_matches_customer"):
             cleaned["asset_owner"] = cleaned.get("customer") or ""
             cleaned["asset_owner_country"] = cleaned.get("country")
+            cleaned["asset_owner_region"] = cleaned.get("registration_region") or ""
             cleaned["asset_owner_identifier"] = cleaned.get("identifier") or ""
             cleaned["asset_owner_registration_number"] = cleaned.get("registration_number") or ""
             cleaned["asset_owner_registration_date"] = cleaned.get("registration_date")

@@ -1196,6 +1196,7 @@ def _create_registry_entry_from_manual_input(
     identifier_type,
     registration_number,
     registration_date,
+    registration_region="",
     user=None,
     business_entity_source="",
 ):
@@ -1204,7 +1205,7 @@ def _create_registry_entry_from_manual_input(
         short_name=short_name,
         full_name="",
         registration_country=country,
-        registration_region="",
+        registration_region=(registration_region or "").strip(),
         identifier=identifier_type,
         registration_number=registration_number,
         registration_date=registration_date,
@@ -1225,6 +1226,7 @@ def sync_autocomplete_registry_entry(
     identifier_type,
     registration_number,
     registration_date,
+    registration_region="",
     user=None,
     selected_identifier_record_id=None,
     selected_from_autocomplete=False,
@@ -1236,9 +1238,47 @@ def sync_autocomplete_registry_entry(
 
     identifier_type = (identifier_type or "").strip()
     registration_number = (registration_number or "").strip()
+    registration_region = (registration_region or "").strip()
     if selected_from_autocomplete:
         explicit_identifier = _selected_identifier_record_for_registry_sync(selected_identifier_record_id)
         if explicit_identifier is not None:
+            update_fields = []
+            if country is not None and explicit_identifier.registration_country_id != getattr(country, "pk", None):
+                explicit_identifier.registration_country = country
+                update_fields.append("registration_country")
+            if registration_date and explicit_identifier.registration_date != registration_date:
+                explicit_identifier.registration_date = registration_date
+                update_fields.append("registration_date")
+            if registration_region and (explicit_identifier.registration_region or "") != registration_region:
+                explicit_identifier.registration_region = registration_region
+                update_fields.append("registration_region")
+            if update_fields:
+                update_fields.append("updated_at")
+                explicit_identifier.save(update_fields=update_fields)
+                _ensure_identifier_has_legal_address_record(explicit_identifier, user)
+                address_record = (
+                    LegalEntityRecord.objects.filter(
+                        identifier_record=explicit_identifier,
+                        attribute=LegalEntityRecord.ATTRIBUTE_LEGAL_ADDRESS,
+                        is_active=True,
+                    )
+                    .order_by("position", "id")
+                    .first()
+                )
+                if address_record is not None:
+                    address_updates = []
+                    if country is not None and address_record.registration_country_id != getattr(country, "pk", None):
+                        address_record.registration_country = country
+                        address_updates.append("registration_country")
+                    if registration_region and (address_record.registration_region or "") != registration_region:
+                        address_record.registration_region = registration_region
+                        address_updates.append("registration_region")
+                    if registration_date and address_record.valid_from is None:
+                        address_record.valid_from = registration_date
+                        address_updates.append("valid_from")
+                    if address_updates:
+                        address_updates.append("updated_at")
+                        address_record.save(update_fields=address_updates)
             return explicit_identifier
 
     return _create_registry_entry_from_manual_input(
@@ -1247,6 +1287,7 @@ def sync_autocomplete_registry_entry(
         identifier_type=identifier_type,
         registration_number=registration_number,
         registration_date=registration_date,
+        registration_region=registration_region,
         user=user,
         business_entity_source=business_entity_source,
     )
@@ -2139,8 +2180,17 @@ def ler_region_code_for_country(request):
 
 
 def ler_region_autofill(request):
+    country_id = request.GET.get("country_id")
     identifier = (request.GET.get("identifier") or "").strip()
     registration_number = (request.GET.get("registration_number") or "").strip()
+    if not country_id:
+        return JsonResponse({"region": ""})
+    try:
+        country_id = int(country_id)
+    except (TypeError, ValueError):
+        return JsonResponse({"region": ""})
+    if not OKSMCountry.objects.filter(pk=country_id, short_name="Россия").exists():
+        return JsonResponse({"region": ""})
     region = detect_legal_entity_region_by_identifier(identifier, registration_number)
     return JsonResponse({"region": region})
 

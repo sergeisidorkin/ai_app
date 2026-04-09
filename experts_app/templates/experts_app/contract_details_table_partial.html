@@ -43,6 +43,7 @@
         <th class="text-nowrap" data-col="27">SWIFT банка-корр.</th>
         <th class="text-nowrap" data-col="28">Рас. счет банка-корр.</th>
         <th class="text-nowrap" data-col="29">Кор. счет банка-корр.</th>
+        <th class="text-nowrap text-center" data-col="30">Факсимиле</th>
     </tr>
     </thead>
     <tbody>
@@ -91,9 +92,18 @@
             <td class="text-nowrap" data-col="27">{{ p.corr_bank_swift }}</td>
             <td class="text-nowrap" data-col="28">{{ p.corr_bank_settlement_account }}</td>
             <td class="text-nowrap" data-col="29">{{ p.corr_bank_corr_account }}</td>
+            <td class="text-nowrap text-center" data-col="30">
+                {% if p.facsimile_file %}
+                  <a href="{% url 'epr_contract_facsimile_download' p.pk %}" title="Скачать факсимиле">
+                    <i class="bi bi-link-45deg file-link-icon" style="color: var(--bs-primary, #075D94);"></i>
+                  </a>
+                {% else %}
+                  <i class="bi bi-link-45deg" style="color: #d6d9dd;"></i>
+                {% endif %}
+            </td>
         </tr>
     {% empty %}
-        <tr><td colspan="30" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="31" class="text-muted">Пока нет данных.</td></tr>
     {% endfor %}
     </tbody>
 </table>

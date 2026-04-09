@@ -80,6 +80,7 @@ class ProposalRegistration(models.Model):
         null=True,
         blank=True,
     )
+    registration_region = models.CharField("Регион", max_length=255, blank=True, default="")
     identifier = models.CharField("Идентификатор", max_length=64, blank=True, default="")
     registration_number = models.CharField("Регистрационный номер", max_length=100, blank=True)
     registration_date = models.DateField("Дата регистрации", null=True, blank=True)
@@ -93,6 +94,7 @@ class ProposalRegistration(models.Model):
         null=True,
         blank=True,
     )
+    asset_owner_region = models.CharField("Регион владельца активов", max_length=255, blank=True, default="")
     asset_owner_identifier = models.CharField("Идентификатор владельца активов", max_length=64, blank=True, default="")
     asset_owner_registration_number = models.CharField(
         "Регистрационный номер владельца активов", max_length=100, blank=True, default=""
