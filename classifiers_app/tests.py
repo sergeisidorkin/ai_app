@@ -16,6 +16,7 @@ from classifiers_app.models import (
     LegalEntityIdentifier,
     LegalEntityRecord,
     OKSMCountry,
+    RussianFederationSubjectCode,
     TerritorialDivision,
 )
 from classifiers_app.forms import (
@@ -171,6 +172,26 @@ class LegalEntityAutocompleteTests(TestCase):
         self.assertEqual(item["full_name"], "Новая запись")
         self.assertEqual(item["region"], "Новый регион")
 
+    def test_ler_region_autofill_uses_russian_fns_subject_codes_for_russia(self):
+        RussianFederationSubjectCode.objects.create(
+            subject_name="Тюменская область",
+            oktmo_code="71000000",
+            fns_code="72",
+            position=1,
+        )
+
+        response = self.client.get(
+            reverse("ler_region_autofill"),
+            {
+                "country_id": str(self.country.pk),
+                "identifier": "ОГРН",
+                "registration_number": "1177200000123",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["region"], "Тюменская область")
+
     def test_sync_autocomplete_registry_entry_creates_new_identifier_chain_for_manual_input(self):
         user = get_user_model().objects.create_user(
             username="registry-sync-user",
@@ -184,6 +205,7 @@ class LegalEntityAutocompleteTests(TestCase):
             identifier_type="ОГРН",
             registration_number="1234567890",
             registration_date=date(2025, 2, 10),
+            registration_region="Тюменская область",
             user=user,
             business_entity_source="[Тесты / Ручной ввод]",
         )
@@ -192,6 +214,7 @@ class LegalEntityAutocompleteTests(TestCase):
         self.assertEqual(identifier_record.identifier_type, "ОГРН")
         self.assertEqual(identifier_record.number, "1234567890")
         self.assertEqual(identifier_record.registration_country, self.country)
+        self.assertEqual(identifier_record.registration_region, "Тюменская область")
         self.assertEqual(identifier_record.registration_date, date(2025, 2, 10))
 
         name_record = LegalEntityRecord.objects.get(
@@ -202,6 +225,7 @@ class LegalEntityAutocompleteTests(TestCase):
         self.assertEqual(name_record.identifier, "ОГРН")
         self.assertEqual(name_record.registration_number, "1234567890")
         self.assertEqual(name_record.registration_date, date(2025, 2, 10))
+        self.assertEqual(name_record.registration_region, "Тюменская область")
         self.assertEqual(name_record.name_received_date, date(2025, 2, 10))
         self.assertEqual(name_record.valid_from, date(2025, 2, 10))
         self.assertEqual(identifier_record.business_entity.record_author, "registry-sync-user")
@@ -212,6 +236,7 @@ class LegalEntityAutocompleteTests(TestCase):
             identifier_record=identifier_record,
         )
         self.assertEqual(address_record.registration_country, self.country)
+        self.assertEqual(address_record.registration_region, "Тюменская область")
 
         second_identifier_record = sync_autocomplete_registry_entry(
             short_name='ООО "Синхронизация"',

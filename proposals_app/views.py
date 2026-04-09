@@ -345,6 +345,7 @@ def _sync_to_legal_entity_record(
     selected_identifier_record_id=None,
     selected_from_autocomplete=False,
     business_entity_source="",
+    registration_region="",
 ):
     from classifiers_app.views import sync_autocomplete_registry_entry
 
@@ -354,6 +355,7 @@ def _sync_to_legal_entity_record(
         identifier_type=identifier,
         registration_number=registration_number,
         registration_date=registration_date,
+        registration_region=registration_region,
         user=user,
         selected_identifier_record_id=selected_identifier_record_id,
         selected_from_autocomplete=selected_from_autocomplete,
@@ -1266,7 +1268,8 @@ def proposal_form_create(request):
         proposal.identifier,
         proposal.registration_number,
         proposal.registration_date,
-        request.user,
+        registration_region=proposal.registration_region,
+        user=request.user,
         business_entity_source="[ТКП / Заказчик]",
         **_sync_selection_kwargs(request, "customer_autocomplete"),
     )
@@ -1277,7 +1280,8 @@ def proposal_form_create(request):
             proposal.asset_owner_identifier,
             proposal.asset_owner_registration_number,
             proposal.asset_owner_registration_date,
-            request.user,
+            registration_region=proposal.asset_owner_region,
+            user=request.user,
             business_entity_source="[ТКП / Владелец активов]",
             **_sync_selection_kwargs(request, "asset_owner_autocomplete"),
         )
@@ -1355,7 +1359,8 @@ def proposal_form_edit(request, pk: int):
         proposal.identifier,
         proposal.registration_number,
         proposal.registration_date,
-        request.user,
+        registration_region=proposal.registration_region,
+        user=request.user,
         business_entity_source="[ТКП / Заказчик]",
         **_sync_selection_kwargs(request, "customer_autocomplete"),
     )
@@ -1366,7 +1371,8 @@ def proposal_form_edit(request, pk: int):
             proposal.asset_owner_identifier,
             proposal.asset_owner_registration_number,
             proposal.asset_owner_registration_date,
-            request.user,
+            registration_region=proposal.asset_owner_region,
+            user=request.user,
             business_entity_source="[ТКП / Владелец активов]",
             **_sync_selection_kwargs(request, "asset_owner_autocomplete"),
         )

@@ -2555,6 +2555,12 @@ html.proposal-progress-cursor * {
   font-weight: 700;
 }
 
+.file-link-icon {
+  -webkit-text-stroke: 0.35px currentColor;
+  text-shadow: 0 0 0.3px currentColor;
+  font-weight: 700;
+}
+
 #proposals-pane table.table > thead tr > :first-child,
 #proposals-pane table.table > tbody tr > :first-child {
   padding-left: calc(var(--bs-table-cell-padding-x, .4rem) + 0px);
@@ -2594,7 +2600,7 @@ html.proposal-progress-cursor * {
 
 #proposals-pane .proposal-customer-meta-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 0.75rem;
 }
 

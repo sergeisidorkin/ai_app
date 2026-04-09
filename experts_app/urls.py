@@ -15,4 +15,5 @@ urlpatterns = [
     path("profile/<int:pk>/move-down/", views.profile_move_down, name="epr_move_down"),
     # Contract Details
     path("profile/<int:pk>/contract-details/", views.contract_details_form_edit, name="epr_contract_details_edit"),
+    path("profile/<int:pk>/contract-details/facsimile/download/", views.contract_facsimile_download, name="epr_contract_facsimile_download"),
 ]

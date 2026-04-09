@@ -10,6 +10,8 @@
   <form method="post"
         data-proposal-form="1"
         data-country-identifier-url="{% url 'identifier_for_country' %}"
+        data-country-region-url="{% url 'ler_regions_for_country' %}"
+        data-region-autofill-url="{% url 'ler_region_autofill' %}"
         data-ler-search-url="{% url 'ler_search' %}"
         data-cbr-rate-refresh-url="{% url 'proposal_cbr_eur_rate' %}"
         {% if action == "create" %}
@@ -55,7 +57,7 @@
         {{ form.name }}
       </div>
 
-      <div class="col-6">
+      <div class="col-4">
         <label class="form-label">{{ form.customer.label }}</label>
         <div class="ler-ac-wrap">
           {{ form.customer }}
@@ -64,7 +66,7 @@
           <div class="ler-ac-list" id="proposal-ler-ac-list"></div>
         </div>
       </div>
-      <div class="col-6">
+      <div class="col-8">
         <div class="proposal-customer-meta-grid">
           <div>
             <label class="form-label">{{ form.country.label }}</label>
@@ -79,13 +81,17 @@
             {{ form.registration_number }}
           </div>
           <div>
+            <label class="form-label">{{ form.registration_region.label }}</label>
+            {{ form.registration_region }}
+          </div>
+          <div>
             <label class="form-label">{{ form.registration_date.label }}</label>
             {{ form.registration_date }}
           </div>
         </div>
       </div>
 
-      <div class="col-6">
+      <div class="col-4">
         <label class="form-label">{{ form.asset_owner.label }}</label>
         <div class="ler-ac-wrap">
           {{ form.asset_owner }}
@@ -94,7 +100,7 @@
           <div class="ler-ac-list" id="proposal-asset-owner-ler-ac-list"></div>
         </div>
       </div>
-      <div class="col-6">
+      <div class="col-8">
         <div class="proposal-customer-meta-grid">
           <div>
             <label class="form-label">{{ form.asset_owner_country.label }}</label>
@@ -107,6 +113,10 @@
           <div>
             <label class="form-label">{{ form.asset_owner_registration_number.label }}</label>
             {{ form.asset_owner_registration_number }}
+          </div>
+          <div>
+            <label class="form-label">{{ form.asset_owner_region.label }}</label>
+            {{ form.asset_owner_region }}
           </div>
           <div>
             <label class="form-label">{{ form.asset_owner_registration_date.label }}</label>
@@ -579,12 +589,13 @@
     <div class="d-flex justify-content-start align-items-center gap-2 pt-4">
       <button type="button"
               class="btn btn-outline-secondary"
+              data-proposal-form-cancel-btn="1"
               hx-get="{% url 'proposals_partial' %}"
               hx-target="#proposals-pane"
               hx-swap="outerHTML">
         Отмена
       </button>
-      <button type="submit" class="btn btn-primary">Сохранить</button>
+      <button type="submit" class="btn btn-primary" data-proposal-form-save-btn="1">Сохранить</button>
     </div>
   </form>
 </div>

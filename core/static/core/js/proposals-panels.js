@@ -798,6 +798,239 @@
     );
   }
 
+  function resetProposalRegionSelect(regionSelect) {
+    if (!(regionSelect instanceof HTMLSelectElement)) return;
+    regionSelect.innerHTML = '<option value="">---------</option>';
+  }
+
+  function ensureProposalRegionOption(regionSelect, regionName) {
+    if (!(regionSelect instanceof HTMLSelectElement)) return;
+    const value = String(regionName || '').trim();
+    if (!value) return;
+    for (let i = 0; i < regionSelect.options.length; i += 1) {
+      if (regionSelect.options[i].value === value) return;
+    }
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    regionSelect.appendChild(option);
+  }
+
+  function loadProposalRegionOptions(regionUrl, countryId, regionSelect, options) {
+    if (!(regionSelect instanceof HTMLSelectElement)) return Promise.resolve();
+    const settings = options || {};
+    const hasExplicitSelectedRegion = (
+      Object.prototype.hasOwnProperty.call(settings, 'selectedRegion')
+      && settings.selectedRegion !== undefined
+    );
+    const hasPendingSelectedRegion = regionSelect.dataset.pendingSelectedRegionSet === '1';
+    const pendingRegion = String(regionSelect.dataset.pendingSelectedRegion || '').trim();
+    const selectedRegion = String(
+      hasExplicitSelectedRegion && settings.selectedRegion !== null
+        ? settings.selectedRegion
+        : pendingRegion
+    ).trim();
+    const preserveCurrent = !!settings.preserveCurrent;
+    const currentRegion = preserveCurrent ? String(regionSelect.value || '').trim() : '';
+    const nextRegion = hasExplicitSelectedRegion
+      ? selectedRegion
+      : (hasPendingSelectedRegion ? pendingRegion : currentRegion);
+    const dateValue = String(settings.dateValue || '').trim();
+
+    if (!countryId) {
+      resetProposalRegionSelect(regionSelect);
+      if (nextRegion) {
+        ensureProposalRegionOption(regionSelect, nextRegion);
+        regionSelect.value = nextRegion;
+      }
+      return Promise.resolve();
+    }
+
+    let requestUrl = regionUrl + '?country_id=' + encodeURIComponent(countryId);
+    if (dateValue) requestUrl += '&date=' + encodeURIComponent(dateValue);
+
+    return fetch(requestUrl)
+      .then((response) => response.json())
+      .then((data) => {
+        const regions = Array.isArray(data?.regions) ? data.regions.slice() : [];
+        resetProposalRegionSelect(regionSelect);
+        if (nextRegion && !regions.includes(nextRegion)) {
+          regions.push(nextRegion);
+        }
+        regions.forEach((regionName) => {
+          const option = document.createElement('option');
+          option.value = regionName;
+          option.textContent = regionName;
+          regionSelect.appendChild(option);
+        });
+        regionSelect.value = nextRegion;
+        if (hasPendingSelectedRegion) {
+          delete regionSelect.dataset.pendingSelectedRegion;
+          delete regionSelect.dataset.pendingSelectedRegionSet;
+        }
+      })
+      .catch(() => {
+        resetProposalRegionSelect(regionSelect);
+        if (nextRegion) {
+          ensureProposalRegionOption(regionSelect, nextRegion);
+          regionSelect.value = nextRegion;
+        }
+        if (hasPendingSelectedRegion) {
+          delete regionSelect.dataset.pendingSelectedRegion;
+          delete regionSelect.dataset.pendingSelectedRegionSet;
+        }
+      });
+  }
+
+  function attachCountryRegionSync(root) {
+    if (!root) return;
+    const form = root.closest('form[data-proposal-form]') || root;
+    const regionUrl = form.dataset.countryRegionUrl;
+    if (!regionUrl) return;
+
+    function bindCountryRegionSync(countrySelector, regionSelector, dateSelector, boundKey, onSync) {
+      const countrySelect = form.querySelector(countrySelector);
+      const regionSelect = form.querySelector(regionSelector);
+      const dateInput = form.querySelector(dateSelector);
+      if (!countrySelect || !regionSelect || countrySelect.dataset[boundKey] === '1') return;
+      countrySelect.dataset[boundKey] = '1';
+
+      function syncRegions(preserveCurrent, selectedRegion) {
+        const regionOptions = {
+          preserveCurrent: preserveCurrent,
+          dateValue: dateInput?.value || '',
+        };
+        if (selectedRegion !== undefined) {
+          regionOptions.selectedRegion = selectedRegion;
+        }
+        return loadProposalRegionOptions(regionUrl, countrySelect.value, regionSelect, regionOptions).then(() => {
+          if (typeof onSync === 'function') onSync();
+        });
+      }
+
+      countrySelect.addEventListener('change', () => {
+        syncRegions(false);
+      });
+      dateInput?.addEventListener('change', () => {
+        syncRegions(true);
+      });
+
+      if (!countrySelect.value) {
+        resetProposalRegionSelect(regionSelect);
+      } else {
+        syncRegions(true, regionSelect.value || '');
+      }
+    }
+
+    bindCountryRegionSync(
+      '#proposal-country-select',
+      '#proposal-region-select',
+      'input[name="registration_date"]',
+      'regionBoundCustomer',
+      function () {
+        form.dispatchEvent(new CustomEvent('proposal-customer-changed'));
+      }
+    );
+    bindCountryRegionSync(
+      '#proposal-asset-owner-country-select',
+      '#proposal-asset-owner-region-select',
+      'input[name="asset_owner_registration_date"]',
+      'regionBoundAssetOwner',
+      function () {
+        form.dispatchEvent(new CustomEvent('proposal-asset-owner-changed', { detail: { reason: 'owner-change' } }));
+      }
+    );
+  }
+
+  function attachProposalRegistrationRegionAutofill(root) {
+    if (!root) return;
+    const form = root.closest('form[data-proposal-form]') || root;
+    const autofillUrl = form.dataset.regionAutofillUrl;
+    if (!autofillUrl) return;
+
+    function bindRegionAutofill(options) {
+      const countrySelect = form.querySelector(options.countrySelector);
+      const identifierInput = form.querySelector(options.identifierSelector);
+      const registrationNumberInput = form.querySelector(options.registrationNumberSelector);
+      const regionSelect = form.querySelector(options.regionSelector);
+      if (!countrySelect || !identifierInput || !registrationNumberInput || !regionSelect || registrationNumberInput.dataset[options.boundKey] === '1') {
+        return;
+      }
+      registrationNumberInput.dataset[options.boundKey] = '1';
+      let requestSeq = 0;
+      let debounce = null;
+
+      function applyRegion(regionName) {
+        const value = String(regionName || '').trim();
+        regionSelect.dataset.pendingSelectedRegion = value;
+        regionSelect.dataset.pendingSelectedRegionSet = '1';
+        loadProposalRegionOptions(form.dataset.countryRegionUrl || '', countrySelect.value || '', regionSelect, {
+          preserveCurrent: false,
+          selectedRegion: value,
+        }).then(() => {
+          if (typeof options.onApplied === 'function') options.onApplied(value);
+        });
+      }
+
+      function scheduleAutofill() {
+        clearTimeout(debounce);
+        debounce = setTimeout(() => {
+          const seq = requestSeq + 1;
+          requestSeq = seq;
+          const countryId = String(countrySelect.value || '').trim();
+          const identifier = String(identifierInput.value || '').trim();
+          const registrationNumber = String(registrationNumberInput.value || '').trim();
+
+          if (!countryId) {
+            applyRegion('');
+            return;
+          }
+
+          const requestUrl = autofillUrl
+            + '?country_id=' + encodeURIComponent(countryId)
+            + '&identifier=' + encodeURIComponent(identifier)
+            + '&registration_number=' + encodeURIComponent(registrationNumber);
+
+          fetch(requestUrl)
+            .then((response) => response.json())
+            .then((data) => {
+              if (seq !== requestSeq) return;
+              applyRegion(data?.region || '');
+            })
+            .catch(() => {
+              if (seq !== requestSeq) return;
+              applyRegion('');
+            });
+        }, 150);
+      }
+
+      registrationNumberInput.addEventListener('input', scheduleAutofill);
+      registrationNumberInput.addEventListener('change', scheduleAutofill);
+      countrySelect.addEventListener('change', scheduleAutofill);
+    }
+
+    bindRegionAutofill({
+      countrySelector: '#proposal-country-select',
+      identifierSelector: '#proposal-identifier-field',
+      registrationNumberSelector: 'input[name="registration_number"]',
+      regionSelector: '#proposal-region-select',
+      boundKey: 'regionAutofillBoundCustomer',
+      onApplied: function () {
+        form.dispatchEvent(new CustomEvent('proposal-customer-changed'));
+      },
+    });
+    bindRegionAutofill({
+      countrySelector: '#proposal-asset-owner-country-select',
+      identifierSelector: '#proposal-asset-owner-identifier-field',
+      registrationNumberSelector: 'input[name="asset_owner_registration_number"]',
+      regionSelector: '#proposal-asset-owner-region-select',
+      boundKey: 'regionAutofillBoundAssetOwner',
+      onApplied: function () {
+        form.dispatchEvent(new CustomEvent('proposal-asset-owner-changed', { detail: { reason: 'owner-change' } }));
+      },
+    });
+  }
+
   function replaceQuotes(element) {
     const value = element.value;
     if (value.indexOf('"') === -1) return;
@@ -831,6 +1064,7 @@
     if (!root) return;
     const form = root.closest('form[data-proposal-form], form[data-proposal-dispatch-form]') || root;
     const searchUrl = form.dataset.lerSearchUrl;
+    const regionUrl = form.dataset.countryRegionUrl || '';
     if (!searchUrl) return;
 
     function bindLerAutocomplete(options) {
@@ -887,16 +1121,31 @@
 
       function pick(item) {
         const countrySelect = queryOptional(options.countrySelector);
+        const regionSelect = queryOptional(options.regionSelector);
         const identifierField = queryOptional(options.identifierSelector);
         const registrationNumberField = queryOptional(options.registrationNumberSelector);
         const registrationDateField = queryOptional(options.registrationDateSelector);
 
         input.value = item.short_name || '';
         if (countrySelect && item.country_id) countrySelect.value = item.country_id;
+        if (regionSelect) {
+          regionSelect.dataset.pendingSelectedRegion = item.region || '';
+          regionSelect.dataset.pendingSelectedRegionSet = '1';
+        }
+        if (registrationDateField) {
+          setDateFieldValue(registrationDateField, item.registration_date || '');
+        }
+        if (regionSelect) {
+          const countryId = item.country_id || countrySelect?.value || '';
+          loadProposalRegionOptions(regionUrl, countryId, regionSelect, {
+            preserveCurrent: false,
+            selectedRegion: item.region || '',
+            dateValue: item.registration_date || registrationDateField?.value || '',
+          });
+        }
         if (identifierField) identifierField.value = item.identifier || '';
         if (registrationNumberField) registrationNumberField.value = item.registration_number || '';
         if (registrationDateField) {
-          setDateFieldValue(registrationDateField, item.registration_date || '');
           registrationDateField.dispatchEvent(new Event('input', { bubbles: true }));
           registrationDateField.dispatchEvent(new Event('change', { bubbles: true }));
         }
@@ -907,6 +1156,7 @@
           const matchesCheckbox = form.querySelector('[name="asset_owner_matches_customer"]');
           const ownerInput = form.querySelector('input[name="asset_owner"]');
           const ownerCountry = form.querySelector('#proposal-asset-owner-country-select');
+          const ownerRegion = form.querySelector('#proposal-asset-owner-region-select');
           const ownerIdentifier = form.querySelector('#proposal-asset-owner-identifier-field');
           const ownerRegistrationNumber = form.querySelector('input[name="asset_owner_registration_number"]');
           const ownerRegistrationDate = form.querySelector('input[name="asset_owner_registration_date"]');
@@ -916,15 +1166,23 @@
             matchesCheckbox?.checked
             && ownerInput
             && ownerCountry
+            && ownerRegion
             && ownerIdentifier
             && ownerRegistrationNumber
             && ownerRegistrationDate
           ) {
             ownerInput.value = item.short_name || '';
             ownerCountry.value = item.country_id || '';
+            ownerRegion.dataset.pendingSelectedRegion = item.region || '';
+            ownerRegion.dataset.pendingSelectedRegionSet = '1';
+            setDateFieldValue(ownerRegistrationDate, item.registration_date || '');
+            loadProposalRegionOptions(regionUrl, item.country_id || '', ownerRegion, {
+              preserveCurrent: false,
+              selectedRegion: item.region || '',
+              dateValue: item.registration_date || '',
+            });
             ownerIdentifier.value = item.identifier || '';
             ownerRegistrationNumber.value = item.registration_number || '';
-            setDateFieldValue(ownerRegistrationDate, item.registration_date || '');
             if (ownerSelectedIdentifier) ownerSelectedIdentifier.value = item.identifier_record_id || '';
             if (ownerSelectedFlag) ownerSelectedFlag.value = '1';
           }
@@ -1001,6 +1259,7 @@
       listSelector: '#proposal-ler-ac-list',
       boundKey: 'lerBoundCustomer',
       countrySelector: '#proposal-country-select',
+      regionSelector: '#proposal-region-select',
       identifierSelector: '#proposal-identifier-field',
       registrationNumberSelector: 'input[name="registration_number"]',
       registrationDateSelector: 'input[name="registration_date"]',
@@ -1013,6 +1272,7 @@
       listSelector: '#proposal-asset-owner-ler-ac-list',
       boundKey: 'lerBoundAssetOwner',
       countrySelector: '#proposal-asset-owner-country-select',
+      regionSelector: '#proposal-asset-owner-region-select',
       identifierSelector: '#proposal-asset-owner-identifier-field',
       registrationNumberSelector: 'input[name="asset_owner_registration_number"]',
       registrationDateSelector: 'input[name="asset_owner_registration_date"]',
@@ -1025,6 +1285,7 @@
       listSelector: '#proposal-dispatch-ler-ac-list',
       boundKey: 'lerBoundDispatchRecipient',
       countrySelector: '#proposal-dispatch-recipient-country-select',
+      regionSelector: null,
       identifierSelector: '#proposal-dispatch-recipient-identifier-field',
       registrationNumberSelector: 'input[name="recipient_registration_number"]',
       registrationDateSelector: 'input[name="recipient_registration_date"]',
@@ -4590,11 +4851,13 @@
       const matchesCheckbox = form.querySelector('[name="asset_owner_matches_customer"]');
       const customerInput = form.querySelector('input[name="customer"]');
       const customerCountry = form.querySelector('#proposal-country-select');
+      const customerRegion = form.querySelector('#proposal-region-select');
       const customerIdentifier = form.querySelector('#proposal-identifier-field');
       const customerRegistrationNumber = form.querySelector('input[name="registration_number"]');
       const customerRegistrationDate = form.querySelector('input[name="registration_date"]');
       const ownerInput = form.querySelector('input[name="asset_owner"]');
       const ownerCountry = form.querySelector('#proposal-asset-owner-country-select');
+      const ownerRegion = form.querySelector('#proposal-asset-owner-region-select');
       const ownerIdentifier = form.querySelector('#proposal-asset-owner-identifier-field');
       const ownerRegistrationNumber = form.querySelector('input[name="asset_owner_registration_number"]');
       const ownerRegistrationDate = form.querySelector('input[name="asset_owner_registration_date"]');
@@ -4602,7 +4865,15 @@
       const customerSelectedFlag = form.querySelector('#proposal-customer-autocomplete-selected');
       const ownerSelectedIdentifier = form.querySelector('#proposal-asset-owner-autocomplete-identifier-record-id');
       const ownerSelectedFlag = form.querySelector('#proposal-asset-owner-autocomplete-selected');
-      if (!matchesCheckbox || !ownerInput || !ownerCountry || !ownerIdentifier || !ownerRegistrationNumber || !ownerRegistrationDate) {
+      if (
+        !matchesCheckbox
+        || !ownerInput
+        || !ownerCountry
+        || !ownerRegion
+        || !ownerIdentifier
+        || !ownerRegistrationNumber
+        || !ownerRegistrationDate
+      ) {
         return;
       }
 
@@ -4612,6 +4883,8 @@
         ownerInput.classList.toggle('readonly-field', locked);
         ownerCountry.disabled = locked;
         ownerCountry.classList.toggle('readonly-field', locked);
+        ownerRegion.disabled = locked;
+        ownerRegion.classList.toggle('readonly-field', locked);
         ownerRegistrationNumber.readOnly = locked;
         ownerRegistrationNumber.tabIndex = locked ? -1 : 0;
         ownerRegistrationNumber.classList.toggle('readonly-field', locked);
@@ -4624,6 +4897,11 @@
       if (matchesCheckbox.checked) {
         ownerInput.value = customerInput ? (customerInput.value || '') : '';
         ownerCountry.value = customerCountry ? (customerCountry.value || '') : '';
+        loadProposalRegionOptions(form.dataset.countryRegionUrl || '', ownerCountry.value || '', ownerRegion, {
+          preserveCurrent: false,
+          selectedRegion: customerRegion ? (customerRegion.value || '') : '',
+          dateValue: customerRegistrationDate ? (customerRegistrationDate.value || '') : '',
+        });
         ownerIdentifier.value = customerIdentifier ? (customerIdentifier.value || '') : '';
         ownerRegistrationNumber.value = customerRegistrationNumber ? (customerRegistrationNumber.value || '') : '';
         setDateFieldValue(ownerRegistrationDate, customerRegistrationDate ? (customerRegistrationDate.value || '') : '');
@@ -4732,6 +5010,8 @@
     attachGroupSelectDisplay(form);
     attachReportLanguagesDropdown(form);
     attachCountryIdentifierSync(form);
+    attachCountryRegionSync(form);
+    attachProposalRegistrationRegionAutofill(form);
     attachGuillemets(form);
     attachLerAutocomplete(form);
     initCompositeProposalField({
@@ -4787,6 +5067,9 @@
         syncAssetOwnerFromCustomer('customer-sync');
       });
     });
+    form.querySelector('#proposal-region-select')?.addEventListener('change', function () {
+      syncAssetOwnerFromCustomer('customer-sync');
+    });
     form.querySelector('#proposal-country-select')?.addEventListener('change', function () {
       syncAssetOwnerFromCustomer('customer-sync');
     });
@@ -4803,6 +5086,9 @@
       form.querySelector('[name="' + fieldName + '"]')?.addEventListener('change', function () {
         form.dispatchEvent(new CustomEvent('proposal-asset-owner-changed', { detail: { reason: 'owner-change' } }));
       });
+    });
+    form.querySelector('#proposal-asset-owner-region-select')?.addEventListener('change', function () {
+      form.dispatchEvent(new CustomEvent('proposal-asset-owner-changed', { detail: { reason: 'owner-change' } }));
     });
     form.querySelector('#proposal-asset-owner-country-select')?.addEventListener('change', function () {
       form.dispatchEvent(new CustomEvent('proposal-asset-owner-changed', { detail: { reason: 'owner-change' } }));
@@ -4833,6 +5119,15 @@
     return target.closest('form[data-proposal-dispatch-form]');
   }
 
+  function getProposalFormForRequest(target) {
+    if (!(target instanceof Element)) return null;
+    if (target.matches('form[data-proposal-form]')) return target;
+    if (target.matches('[data-proposal-form-save-btn]')) {
+      return target.closest('form[data-proposal-form]');
+    }
+    return null;
+  }
+
   function setProposalDispatchSaveLoading(form, isLoading) {
     if (!form) return;
     const saveBtn = form.querySelector('[data-proposal-dispatch-save-btn]');
@@ -4852,6 +5147,83 @@
     }
     saveBtn.disabled = false;
     delete saveBtn.dataset.loading;
+  }
+
+  function setProposalFormSaveLoading(form, isLoading) {
+    if (!form) return;
+    const saveBtn = form.querySelector('[data-proposal-form-save-btn]');
+    if (!(saveBtn instanceof HTMLButtonElement)) return;
+
+    if (isLoading) {
+      if (saveBtn.dataset.loading === '1') return;
+      saveBtn.dataset.loading = '1';
+      saveBtn.dataset.originalHtml = saveBtn.innerHTML;
+      saveBtn.disabled = true;
+      saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Сохранение...';
+      return;
+    }
+
+    if (saveBtn.dataset.originalHtml) {
+      saveBtn.innerHTML = saveBtn.dataset.originalHtml;
+    }
+    saveBtn.disabled = false;
+    delete saveBtn.dataset.loading;
+  }
+
+  function getProposalFormCancelButtonForRequest(target) {
+    if (!(target instanceof Element)) return null;
+    if (target.matches('[data-proposal-form-cancel-btn]')) return target;
+    return target.closest('[data-proposal-form-cancel-btn]');
+  }
+
+  function setProposalFormCancelLoading(button, isLoading) {
+    if (!(button instanceof HTMLButtonElement)) return;
+
+    if (isLoading) {
+      if (button.dataset.loading === '1') return;
+      button.dataset.loading = '1';
+      button.dataset.originalHtml = button.innerHTML;
+      button.disabled = true;
+      button.innerHTML = '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Отмена';
+      return;
+    }
+
+    if (button.dataset.originalHtml) {
+      button.innerHTML = button.dataset.originalHtml;
+    }
+    button.disabled = false;
+    delete button.dataset.loading;
+  }
+
+  function getProposalCreateButtonForRequest(target) {
+    if (!(target instanceof Element)) return null;
+    if (target.matches('#proposal-new-btn')) return target;
+    return target.closest('#proposal-new-btn');
+  }
+
+  function setProposalCreateButtonLoading(button, isLoading) {
+    if (!(button instanceof HTMLButtonElement)) return;
+
+    if (isLoading) {
+      if (button.dataset.loading === '1') return;
+      button.dataset.loading = '1';
+      button.dataset.originalHtml = button.innerHTML;
+      button.disabled = true;
+      button.innerHTML = '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Создание ТКП...';
+      return;
+    }
+
+    if (button.dataset.originalHtml) {
+      button.innerHTML = button.dataset.originalHtml;
+    }
+    button.disabled = false;
+    delete button.dataset.loading;
+  }
+
+  function getProposalHeaderLinkForRequest(target) {
+    if (!(target instanceof Element)) return null;
+    if (target.matches('.proposal-header-link[hx-target="#proposals-pane"]')) return target;
+    return target.closest('.proposal-header-link[hx-target="#proposals-pane"]');
   }
 
   document.addEventListener('click', async (event) => {
@@ -5353,9 +5725,39 @@
   });
 
   document.body.addEventListener('htmx:beforeRequest', function (event) {
+    const form = getProposalFormForRequest(event.detail?.elt);
+    if (!form) return;
+    setProposalFormSaveLoading(form, true);
+  });
+
+  document.body.addEventListener('htmx:beforeRequest', function (event) {
     const form = getProposalDispatchFormForRequest(event.detail?.elt);
     if (!form) return;
     setProposalDispatchSaveLoading(form, true);
+  });
+
+  document.body.addEventListener('htmx:beforeRequest', function (event) {
+    const button = getProposalFormCancelButtonForRequest(event.detail?.elt);
+    if (!button) return;
+    setProposalFormCancelLoading(button, true);
+  });
+
+  document.body.addEventListener('htmx:beforeRequest', function (event) {
+    const button = getProposalCreateButtonForRequest(event.detail?.elt);
+    if (!button) return;
+    setProposalCreateButtonLoading(button, true);
+  });
+
+  document.body.addEventListener('htmx:beforeRequest', function (event) {
+    const headerLink = getProposalHeaderLinkForRequest(event.detail?.elt);
+    if (!headerLink) return;
+    document.documentElement.classList.add('proposal-progress-cursor');
+  });
+
+  document.body.addEventListener('htmx:afterRequest', function (event) {
+    const form = getProposalFormForRequest(event.detail?.elt);
+    if (!form || !document.body.contains(form)) return;
+    setProposalFormSaveLoading(form, false);
   });
 
   document.body.addEventListener('htmx:afterRequest', function (event) {
@@ -5364,10 +5766,62 @@
     setProposalDispatchSaveLoading(form, false);
   });
 
+  document.body.addEventListener('htmx:afterRequest', function (event) {
+    if (event.detail?.successful) return;
+    const button = getProposalFormCancelButtonForRequest(event.detail?.elt);
+    if (!button || !document.body.contains(button)) return;
+    setProposalFormCancelLoading(button, false);
+  });
+
+  document.body.addEventListener('htmx:afterRequest', function (event) {
+    if (event.detail?.successful) return;
+    const button = getProposalCreateButtonForRequest(event.detail?.elt);
+    if (!button || !document.body.contains(button)) return;
+    setProposalCreateButtonLoading(button, false);
+  });
+
+  document.body.addEventListener('htmx:afterRequest', function (event) {
+    if (event.detail?.successful) return;
+    const headerLink = getProposalHeaderLinkForRequest(event.detail?.elt);
+    if (!headerLink) return;
+    document.documentElement.classList.remove('proposal-progress-cursor');
+  });
+
+  document.body.addEventListener('htmx:sendError', function (event) {
+    const form = getProposalFormForRequest(event.detail?.elt);
+    if (!form || !document.body.contains(form)) return;
+    setProposalFormSaveLoading(form, false);
+  });
+
   document.body.addEventListener('htmx:sendError', function (event) {
     const form = getProposalDispatchFormForRequest(event.detail?.elt);
     if (!form || !document.body.contains(form)) return;
     setProposalDispatchSaveLoading(form, false);
+  });
+
+  document.body.addEventListener('htmx:sendError', function (event) {
+    const button = getProposalFormCancelButtonForRequest(event.detail?.elt);
+    if (!button || !document.body.contains(button)) return;
+    setProposalFormCancelLoading(button, false);
+  });
+
+  document.body.addEventListener('htmx:sendError', function (event) {
+    const button = getProposalCreateButtonForRequest(event.detail?.elt);
+    if (!button || !document.body.contains(button)) return;
+    setProposalCreateButtonLoading(button, false);
+  });
+
+  document.body.addEventListener('htmx:sendError', function (event) {
+    const headerLink = getProposalHeaderLinkForRequest(event.detail?.elt);
+    if (!headerLink) return;
+    document.documentElement.classList.remove('proposal-progress-cursor');
+  });
+
+  document.body.addEventListener('htmx:afterSwap', function (event) {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (!target.closest('#proposals-pane')) return;
+    document.documentElement.classList.remove('proposal-progress-cursor');
   });
 
   document.addEventListener('DOMContentLoaded', function () {

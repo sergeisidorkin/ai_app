@@ -5,7 +5,9 @@
 
 <form
     method="post"
+    enctype="multipart/form-data"
     hx-post="{% url 'epr_contract_details_edit' profile.pk %}"
+    hx-encoding="multipart/form-data"
     hx-target="#experts-pane"
     hx-swap="outerHTML"
     style="display:flex; flex-direction:column; overflow:hidden; flex:1 1 auto; min-height:0;">
@@ -170,6 +172,12 @@
       </div>
     </div>
 
+    <hr style="margin: 2rem -1rem 1.5rem -1rem;">
+    <div class="mb-3">
+      <label class="form-label">{{ form.facsimile_file.label }}</label>
+      {{ form.facsimile_file }}
+    </div>
+
     {% if form.errors %}
       <div class="alert alert-danger mb-0">
         {% for field, errors in form.errors.items %}
@@ -185,3 +193,23 @@
     <button type="submit" class="btn btn-primary">Сохранить</button>
   </div>
 </form>
+
+<script>
+(function() {
+  var form = document.querySelector('#experts-contract-details-modal form');
+  if (!form) return;
+  var fileInput = form.querySelector('input[type="file"][name="facsimile_file"]');
+  var clearCb = form.querySelector('input[type="checkbox"][name="facsimile_file-clear"]');
+  if (fileInput && clearCb) {
+    fileInput.addEventListener('change', function() {
+      if (this.files && this.files.length) {
+        clearCb.checked = true;
+        clearCb.disabled = true;
+      } else {
+        clearCb.checked = false;
+        clearCb.disabled = false;
+      }
+    });
+  }
+})();
+</script>

@@ -5,6 +5,7 @@ from django import forms
 from django.db.models import Q
 
 from classifiers_app.models import OKSMCountry, TerritorialDivision
+from contracts_app.forms import _ContractFileInput
 from group_app.models import GroupMember, OrgUnit
 from policy_app.models import ExpertiseDirection, Grade
 from users_app.models import Employee
@@ -250,6 +251,18 @@ class ExpertProfileForm(forms.ModelForm):
 
 
 class ExpertContractDetailsForm(forms.ModelForm):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        instance = self.instance
+        if instance is None:
+            return
+        self.fields["facsimile_file"].widget.attrs.update(
+            {
+                "cloud_current_url": getattr(instance.facsimile_file, "url", "") if getattr(instance, "facsimile_file", None) else "",
+                "cloud_current_name": getattr(instance.facsimile_file, "name", "") if getattr(instance, "facsimile_file", None) else "",
+            }
+        )
+
     class Meta:
         model = ExpertProfile
         fields = [
@@ -262,6 +275,7 @@ class ExpertContractDetailsForm(forms.ModelForm):
             "settlement_account", "corr_account", "bank_address",
             "corr_bank_name", "corr_bank_address", "corr_bank_bik", "corr_bank_swift",
             "corr_bank_settlement_account", "corr_bank_corr_account",
+            "facsimile_file",
         ]
         widgets = {
             "full_name_genitive": forms.TextInput(attrs={"class": "form-control"}),
@@ -292,4 +306,5 @@ class ExpertContractDetailsForm(forms.ModelForm):
             "corr_bank_swift": forms.TextInput(attrs={"class": "form-control"}),
             "corr_bank_settlement_account": forms.TextInput(attrs={"class": "form-control"}),
             "corr_bank_corr_account": forms.TextInput(attrs={"class": "form-control"}),
+            "facsimile_file": _ContractFileInput(attrs={"class": "form-control"}),
         }
