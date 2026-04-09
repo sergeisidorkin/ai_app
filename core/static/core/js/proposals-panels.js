@@ -4,6 +4,7 @@
 
   window.__tableSel = window.__tableSel || {};
   window.__tableSelLast = window.__tableSelLast || null;
+  window.__proposalPendingScrollRestore = window.__proposalPendingScrollRestore || null;
 
   function pane() {
     return document.getElementById('proposals-pane');
@@ -645,19 +646,36 @@
     return pane()?.querySelector('a[href="#proposal-dispatch-vars"]') || null;
   }
 
+  function restoreSavedSelection(name) {
+    const savedIds = new Set((window.__tableSel && window.__tableSel[name]) || []);
+    getRowChecks(name).forEach((box) => {
+      box.checked = savedIds.has(String(box.value));
+    });
+    try {
+      delete window.__tableSel[name];
+    } catch (error) {
+      window.__tableSel[name] = [];
+    }
+    window.__tableSelLast = null;
+  }
+
   function restoreVariableCollapseState() {
     const collapseEl = varsCollapse();
     if (!collapseEl) return;
     const expanded = !!window.__proposalVarsExpanded;
     const toggle = varsToggle();
-    if (toggle) toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-    if (!window.bootstrap?.Collapse) {
-      collapseEl.classList.toggle('show', expanded);
-      return;
+    if (toggle) {
+      toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      toggle.classList.toggle('collapsed', !expanded);
     }
-    const instance = window.bootstrap.Collapse.getOrCreateInstance(collapseEl, { toggle: false });
-    if (expanded) instance.show();
-    else instance.hide();
+    if (window.bootstrap?.Collapse) {
+      const instance = window.bootstrap.Collapse.getInstance(collapseEl);
+      if (instance) instance._isTransitioning = false;
+    }
+    collapseEl.classList.remove('collapsing');
+    collapseEl.classList.add('collapse');
+    collapseEl.classList.toggle('show', expanded);
+    collapseEl.style.height = '';
   }
 
   function syncSelectionState(name) {
@@ -819,6 +837,8 @@
   function loadProposalRegionOptions(regionUrl, countryId, regionSelect, options) {
     if (!(regionSelect instanceof HTMLSelectElement)) return Promise.resolve();
     const settings = options || {};
+    const nextRequestSeq = String((Number(regionSelect.dataset.regionRequestSeq || '0') || 0) + 1);
+    regionSelect.dataset.regionRequestSeq = nextRequestSeq;
     const hasExplicitSelectedRegion = (
       Object.prototype.hasOwnProperty.call(settings, 'selectedRegion')
       && settings.selectedRegion !== undefined
@@ -852,6 +872,7 @@
     return fetch(requestUrl)
       .then((response) => response.json())
       .then((data) => {
+        if (regionSelect.dataset.regionRequestSeq !== nextRequestSeq) return;
         const regions = Array.isArray(data?.regions) ? data.regions.slice() : [];
         resetProposalRegionSelect(regionSelect);
         if (nextRegion && !regions.includes(nextRegion)) {
@@ -870,6 +891,7 @@
         }
       })
       .catch(() => {
+        if (regionSelect.dataset.regionRequestSeq !== nextRequestSeq) return;
         resetProposalRegionSelect(regionSelect);
         if (nextRegion) {
           ensureProposalRegionOption(regionSelect, nextRegion);
@@ -5405,6 +5427,8 @@
     if (!root) return;
     const btn = event.target.closest('button[data-proposal-variable-action]');
     if (!btn || !root.contains(btn)) return;
+    event.preventDefault();
+    event.stopPropagation();
 
     const checked = getChecked('proposal-variable-select');
     if (!checked.length) return;
@@ -5436,16 +5460,33 @@
     }
 
     if (action === 'up' || action === 'down') {
+      const scrollX = window.scrollX;
+      const scrollY = window.scrollY;
+      const actionsPanel = root.querySelector('#proposal-variable-actions');
+      window.__proposalPendingScrollRestore = {
+        x: scrollX,
+        y: scrollY,
+        anchorSelector: '#proposal-variable-actions',
+        anchorTop: actionsPanel ? actionsPanel.getBoundingClientRect().top : null,
+      };
+      if (typeof btn.blur === 'function') btn.blur();
       let urls = checked
         .map((box) => box.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'])
         .filter(Boolean);
       if (action === 'down') urls = urls.reverse();
-      for (let i = 0; i < urls.length; i += 1) {
-        const isLast = i === urls.length - 1;
-        if (isLast) {
-          await htmx.ajax('POST', urls[i], { target: '#proposals-pane', swap: 'outerHTML' });
-        } else {
-          await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
+      document.documentElement.classList.add('proposal-progress-cursor');
+      try {
+        for (let i = 0; i < urls.length; i += 1) {
+          const isLast = i === urls.length - 1;
+          if (isLast) {
+            await htmx.ajax('POST', urls[i], { target: '#proposal-variables-section', swap: 'outerHTML' });
+          } else {
+            await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
+          }
+        }
+      } finally {
+        if (!window.__proposalPendingScrollRestore) {
+          document.documentElement.classList.remove('proposal-progress-cursor');
         }
       }
     }
@@ -5698,16 +5739,7 @@
     if (!(event.target && event.target.id === 'proposals-pane')) return;
     const last = window.__tableSelLast;
     if (SELECT_NAMES.includes(last)) {
-      const savedIds = new Set((window.__tableSel && window.__tableSel[last]) || []);
-      getRowChecks(last).forEach((box) => {
-        box.checked = savedIds.has(String(box.value));
-      });
-      try {
-        delete window.__tableSel[last];
-      } catch (error) {
-        window.__tableSel[last] = [];
-      }
-      window.__tableSelLast = null;
+      restoreSavedSelection(last);
     }
     updateHeaderPath();
     syncAllSelectionStates();
@@ -5715,6 +5747,53 @@
     initProposalForm();
     restoreProposalSendSettings();
     restoreVariableCollapseState();
+    const pendingScroll = window.__proposalPendingScrollRestore;
+    if (pendingScroll) {
+      const restoreScroll = () => {
+        window.scrollTo(pendingScroll.x, pendingScroll.y);
+        if (pendingScroll.anchorSelector && pendingScroll.anchorTop !== null) {
+          const anchor = document.querySelector(pendingScroll.anchorSelector);
+          if (anchor) {
+            const delta = anchor.getBoundingClientRect().top - pendingScroll.anchorTop;
+            if (delta) window.scrollBy(0, delta);
+          }
+        }
+      };
+      requestAnimationFrame(() => {
+        restoreScroll();
+        requestAnimationFrame(restoreScroll);
+      });
+      window.__proposalPendingScrollRestore = null;
+      document.documentElement.classList.remove('proposal-progress-cursor');
+    }
+  });
+
+  document.body.addEventListener('htmx:afterSettle', function (event) {
+    if (!(event.target && event.target.id === 'proposal-variables-section')) return;
+    if (window.__tableSelLast === 'proposal-variable-select') {
+      restoreSavedSelection('proposal-variable-select');
+    }
+    restoreVariableCollapseState();
+    syncSelectionState('proposal-variable-select');
+    const pendingScroll = window.__proposalPendingScrollRestore;
+    if (pendingScroll) {
+      const restoreScroll = () => {
+        window.scrollTo(pendingScroll.x, pendingScroll.y);
+        if (pendingScroll.anchorSelector && pendingScroll.anchorTop !== null) {
+          const anchor = document.querySelector(pendingScroll.anchorSelector);
+          if (anchor) {
+            const delta = anchor.getBoundingClientRect().top - pendingScroll.anchorTop;
+            if (delta) window.scrollBy(0, delta);
+          }
+        }
+      };
+      requestAnimationFrame(() => {
+        restoreScroll();
+        requestAnimationFrame(restoreScroll);
+      });
+      window.__proposalPendingScrollRestore = null;
+      document.documentElement.classList.remove('proposal-progress-cursor');
+    }
   });
 
   document.body.addEventListener('htmx:afterSwap', function (event) {
@@ -5820,7 +5899,7 @@
   document.body.addEventListener('htmx:afterSwap', function (event) {
     const target = event.target;
     if (!(target instanceof Element)) return;
-    if (!target.closest('#proposals-pane')) return;
+    if (!target.closest('#proposals-pane') && !target.closest('#proposal-variables-section')) return;
     document.documentElement.classList.remove('proposal-progress-cursor');
   });
 

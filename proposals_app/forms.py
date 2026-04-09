@@ -242,8 +242,14 @@ def _parse_proposal_form_date(raw_value):
 def _proposal_region_choices_for_country(country_id, current_value="", as_of=None):
     choices = []
     seen = set()
-    if country_id:
-        qs = TerritorialDivision.objects.filter(country_id=country_id)
+    normalized_country_id = None
+    if country_id not in (None, ""):
+        try:
+            normalized_country_id = int(country_id)
+        except (TypeError, ValueError):
+            normalized_country_id = None
+    if normalized_country_id:
+        qs = TerritorialDivision.objects.filter(country_id=normalized_country_id)
         if as_of:
             qs = qs.filter(
                 effective_date__lte=as_of,
@@ -1746,14 +1752,17 @@ class ProposalTemplateForm(forms.ModelForm):
 class ProposalVariableForm(forms.ModelForm):
     source_section = forms.ChoiceField(
         label="Раздел",
+        required=False,
         widget=forms.Select(attrs={"class": "form-select", "id": "id_proposal_var_source_section"}),
     )
     source_table = forms.ChoiceField(
         label="Таблица",
+        required=False,
         widget=forms.Select(attrs={"class": "form-select", "id": "id_proposal_var_source_table"}),
     )
     source_column = forms.ChoiceField(
         label="Столбец",
+        required=False,
         widget=forms.Select(attrs={"class": "form-select", "id": "id_proposal_var_source_column"}),
     )
 
@@ -1773,6 +1782,9 @@ class ProposalVariableForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.is_computed = bool(
+            self.instance and self.instance.pk and self.instance.is_computed
+        )
 
         default_section = "proposals"
         default_table = "registry"
@@ -1780,18 +1792,34 @@ class ProposalVariableForm(forms.ModelForm):
             self.data.get("source_section")
             or self.initial.get("source_section")
             or (self.instance.source_section if self.instance and self.instance.pk else "")
-            or default_section
         )
         table_value = (
             self.data.get("source_table")
             or self.initial.get("source_table")
             or (self.instance.source_table if self.instance and self.instance.pk else "")
-            or default_table
         )
 
-        self.fields["source_section"].choices = _proposal_variable_section_choices()
-        self.fields["source_table"].choices = _proposal_variable_table_choices(section_value)
-        self.fields["source_column"].choices = _proposal_variable_column_choices(section_value, table_value)
+        if self.is_computed:
+            self.fields["source_section"].choices = [("", "---")]
+            self.fields["source_table"].choices = [("", "---")]
+            self.fields["source_column"].choices = [("", "---")]
+            locked_style = "background-color:#f8f9fa; color:#6c757d;"
+            self.fields["key"].widget.attrs.update({
+                "readonly": True,
+                "tabindex": "-1",
+                "style": locked_style,
+            })
+            for field_name in ("source_section", "source_table", "source_column"):
+                self.fields[field_name].widget.attrs.update({
+                    "disabled": True,
+                    "style": locked_style,
+                })
+        else:
+            section_value = section_value or default_section
+            table_value = table_value or default_table
+            self.fields["source_section"].choices = _proposal_variable_section_choices()
+            self.fields["source_table"].choices = _proposal_variable_table_choices(section_value)
+            self.fields["source_column"].choices = _proposal_variable_column_choices(section_value, table_value)
 
         if not self.instance.pk and "source_section" not in self.data:
             self.fields["source_section"].initial = default_section
@@ -1801,6 +1829,8 @@ class ProposalVariableForm(forms.ModelForm):
     def clean_key(self):
         import re
 
+        if self.is_computed:
+            return self.instance.key
         raw = self.cleaned_data.get("key", "").strip()
         inner = raw.removeprefix("{{").removesuffix("}}")
         inner = inner.removeprefix("{").removesuffix("}")
@@ -1816,6 +1846,11 @@ class ProposalVariableForm(forms.ModelForm):
 
     def clean(self):
         cleaned = super().clean()
+        if self.is_computed:
+            cleaned["source_section"] = self.instance.source_section
+            cleaned["source_table"] = self.instance.source_table
+            cleaned["source_column"] = self.instance.source_column
+            return cleaned
         sec = cleaned.get("source_section", "")
         tbl = cleaned.get("source_table", "")
         col = cleaned.get("source_column", "")

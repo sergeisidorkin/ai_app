@@ -82,6 +82,12 @@ def _proposal_asset_owner_country(proposal) -> str:
     return proposal.asset_owner_country.short_name or proposal.asset_owner_country.full_name or ""
 
 
+def _proposal_asset_owner_country_full_name(proposal) -> str:
+    if not proposal.asset_owner_country_id:
+        return ""
+    return proposal.asset_owner_country.full_name or proposal.asset_owner_country.short_name or ""
+
+
 def _proposal_asset_owner_identifier(proposal) -> str:
     return proposal.asset_owner_identifier or ""
 
@@ -199,6 +205,20 @@ def _proposal_final_report_term_days(proposal) -> str:
     return str(proposal.final_report_term_days or "")
 
 
+def _computed_year(_proposal) -> str:
+    return str(date.today().year)
+
+
+def _computed_day(_proposal) -> str:
+    return f"{date.today().day:02d}"
+
+
+def _computed_month(_proposal) -> str:
+    from core.dates import MONTHS_RU_GENITIVE
+
+    return MONTHS_RU_GENITIVE[date.today().month]
+
+
 FIELD_MAP = {
     ("proposals", "registry", "number"): _proposal_number,
     ("proposals", "registry", "group"): _proposal_group,
@@ -238,9 +258,24 @@ FIELD_MAP = {
 }
 
 
+COMPUTED_MAP = {
+    "{{year}}": _computed_year,
+    "{{day}}": _computed_day,
+    "{{month}}": _computed_month,
+    "{{client_country_full_name}}": _proposal_country_full_name,
+    "{{owner_country_full_name}}": _proposal_asset_owner_country_full_name,
+    "{{country_full_name}}": _proposal_country_full_name,
+}
+
+
 def resolve_variables(proposal, variables) -> tuple[dict[str, str], dict]:
     replacements: dict[str, str] = {}
     for variable in variables:
+        if getattr(variable, "is_computed", False):
+            computed_resolver = COMPUTED_MAP.get(variable.key)
+            if computed_resolver:
+                replacements[variable.key] = str(computed_resolver(proposal) or "")
+            continue
         key = (
             variable.source_section or "",
             variable.source_table or "",
