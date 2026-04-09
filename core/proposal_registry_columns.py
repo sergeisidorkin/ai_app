@@ -288,8 +288,12 @@ def get_proposal_registry_ui_columns():
 
 
 def get_proposal_registry_variable_columns():
-    return {
+    columns = {
         item["source_column"]: item["label"]
         for item in PROPOSAL_REGISTRY_UI_COLUMNS
         if item.get("variable_available", True)
     }
+    # Keep the legacy source column available so old non-computed variables
+    # bound before the computed-variable migration can still be edited/saved.
+    columns.setdefault("country_full_name", "Наименование страны (полное)")
+    return columns

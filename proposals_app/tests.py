@@ -1329,6 +1329,10 @@ class ProposalRegistrationFormTests(TestCase):
             ("customer", "Заказчик: наименование"),
             _proposal_variable_column_choices("proposals", "registry"),
         )
+        self.assertIn(
+            ("country_full_name", "Наименование страны (полное)"),
+            _proposal_variable_column_choices("proposals", "registry"),
+        )
 
     def test_proposal_variable_form_locks_computed_variable_fields(self):
         variable = ProposalVariable.objects.create(
