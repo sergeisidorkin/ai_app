@@ -40,7 +40,7 @@ from users_app.models import Employee
 from yandexdisk_app.models import YandexDiskAccount
 
 from .document_generation import generate_and_store_proposal_pdf, store_generated_documents
-from .forms import ProposalDispatchForm, ProposalRegistrationForm
+from .forms import ProposalDispatchForm, ProposalRegistrationForm, _proposal_variable_column_choices
 from .forms import ProposalVariableForm
 from .models import (
     ProposalAsset,
@@ -1323,6 +1323,16 @@ class ProposalRegistrationFormTests(TestCase):
         )
 
         self.assertTrue(form.is_valid(), form.errors)
+
+    def test_proposal_variable_column_choices_use_current_registry_headers(self):
+        self.assertIn(
+            ("customer", "Заказчик: наименование"),
+            _proposal_variable_column_choices("proposals", "registry"),
+        )
+        self.assertIn(
+            ("country_full_name", "Наименование страны (полное)"),
+            _proposal_variable_column_choices("proposals", "registry"),
+        )
 
     def test_proposal_variable_form_locks_computed_variable_fields(self):
         variable = ProposalVariable.objects.create(

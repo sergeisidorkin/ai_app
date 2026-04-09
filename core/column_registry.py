@@ -7,6 +7,9 @@ to a specific column in a specific table of a specific section.
 
 import json
 
+from core.proposal_registry_columns import get_proposal_registry_variable_columns
+
+
 COLUMN_REGISTRY = {
     "users": {
         "label": "Пользователи",
@@ -368,43 +371,7 @@ COLUMN_REGISTRY = {
         "tables": {
             "registry": {
                 "label": "Реестр ТКП",
-                "columns": {
-                    "number": "Номер",
-                    "group": "Группа",
-                    "tkp_id": "ТКП ID",
-                    "type": "Тип",
-                    "name": "Название",
-                    "kind": "Вид",
-                    "status": "Статус",
-                    "year": "Год",
-                    "customer": "Заказчик",
-                    "country": "Страна",
-                    "country_full_name": "Наименование страны (полное)",
-                    "identifier": "Идент.",
-                    "registration_number": "Регистр. номер",
-                    "date": "Дата",
-                    "asset_owner": "Владелец активов",
-                    "asset_owner_country": "Страна владельца активов",
-                    "asset_owner_identifier": "Идентификатор владельца активов",
-                    "asset_owner_registration_number": "Регистрационный номер владельца активов",
-                    "asset_owner_registration_date": "Дата регистрации владельца активов",
-                    "proposal_project_name": "Наименование ТКП (проекта)",
-                    "purpose": "Цель",
-                    "service_composition": "Состав услуг",
-                    "evaluation_date": "Дата оценки",
-                    "term": "Срок",
-                    "preliminary_report_date": "Дата предв. отчёта",
-                    "final_report_date": "Дата итог. отчёта",
-                    "report_languages": "Языки отчёта",
-                    "service_cost": "Стоимость услуг",
-                    "currency": "Валюта",
-                    "advance_percent": "Предоплата, проц.",
-                    "advance_term": "Предоплата, срок",
-                    "preliminary_report_percent": "Предв. отчёт, проц.",
-                    "preliminary_report_term": "Предв. отчёт, срок",
-                    "final_report_percent": "Итог. отчёт, проц.",
-                    "final_report_term": "Итог. отчёт, срок",
-                },
+                "columns": get_proposal_registry_variable_columns(),
             },
         },
     },
