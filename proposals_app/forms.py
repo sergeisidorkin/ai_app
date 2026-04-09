@@ -1809,7 +1809,9 @@ class ProposalVariableForm(forms.ModelForm):
                 "tabindex": "-1",
                 "style": locked_style,
             })
+            self.fields["key"].disabled = True
             for field_name in ("source_section", "source_table", "source_column"):
+                self.fields[field_name].disabled = True
                 self.fields[field_name].widget.attrs.update({
                     "disabled": True,
                     "style": locked_style,

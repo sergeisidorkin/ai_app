@@ -1728,11 +1728,7 @@ def proposal_dispatch_create_documents(request):
         .filter(file__gt="")
     )
     variables = list(
-        ProposalVariable.objects.filter(
-            source_section__gt="",
-            source_table__gt="",
-            source_column__gt="",
-        ).order_by("position", "id")
+        ProposalVariable.objects.order_by("position", "id")
     )
 
     errors = []

@@ -119,6 +119,7 @@ class ProposalDocumentGenerationTests(TestCase):
         template_doc = Document()
         template_doc.add_paragraph("Заказчик: {{name}}")
         template_doc.add_paragraph("Страна: {{client_country_full_name}}")
+        template_doc.add_paragraph("Страна legacy: {{country_full_name}}")
         buffer = BytesIO()
         template_doc.save(buffer)
         buffer.seek(0)
@@ -187,6 +188,7 @@ class ProposalDocumentGenerationTests(TestCase):
         full_text = "\n".join(paragraph.text for paragraph in generated_doc.paragraphs)
         self.assertIn('Заказчик: ООО "Приморское"', full_text)
         self.assertIn("Страна: Российская Федерация", full_text)
+        self.assertIn("Страна legacy: Российская Федерация", full_text)
 
     @patch("ai_app.proposals_app.document_generation._get_cloud_upload_user")
     @patch("ai_app.proposals_app.document_generation.cloud_upload_file", return_value=True)
@@ -1621,8 +1623,7 @@ class ProposalRegistrationFormTests(TestCase):
             ProposalVariable(key="{{month}}", is_computed=True),
         ]
 
-        with patch("proposals_app.variable_resolver.date") as mocked_date:
-            mocked_date.today.return_value = date(2026, 4, 9)
+        with patch("proposals_app.variable_resolver._today", return_value=date(2026, 4, 9)):
             replacements, _ = resolve_variables(proposal, variables)
 
         self.assertEqual(replacements["{{proposal_project_name}}"], "Проект Приморское")
@@ -1634,6 +1635,7 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(replacements["{{currency}}"], "RUB")
         self.assertEqual(replacements["{{country}}"], "Россия")
         self.assertEqual(replacements["{{client_country_full_name}}"], "Российская Федерация")
+        self.assertEqual(replacements["{{country_full_name}}"], "Российская Федерация")
         self.assertEqual(replacements["{{owner_country_full_name}}"], "Российская Федерация")
         self.assertEqual(replacements["{{year}}"], "2026")
         self.assertEqual(replacements["{{day}}"], "09")
