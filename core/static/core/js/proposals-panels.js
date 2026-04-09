@@ -646,6 +646,15 @@
     return pane()?.querySelector('a[href="#proposal-dispatch-vars"]') || null;
   }
 
+  function clearProposalPendingScrollRestore() {
+    window.__proposalPendingScrollRestore = null;
+    document.documentElement.classList.remove('proposal-progress-cursor');
+  }
+
+  function isProposalVariablesSectionElement(element) {
+    return element instanceof Element && (element.id === 'proposal-variables-section' || !!element.closest('#proposal-variables-section'));
+  }
+
   function restoreSavedSelection(name) {
     const savedIds = new Set((window.__tableSel && window.__tableSel[name]) || []);
     getRowChecks(name).forEach((box) => {
@@ -5463,6 +5472,8 @@
       const scrollX = window.scrollX;
       const scrollY = window.scrollY;
       const actionsPanel = root.querySelector('#proposal-variable-actions');
+      let awaitingSettle = false;
+      let reorderFailed = false;
       window.__proposalPendingScrollRestore = {
         x: scrollX,
         y: scrollY,
@@ -5479,15 +5490,20 @@
         for (let i = 0; i < urls.length; i += 1) {
           const isLast = i === urls.length - 1;
           if (isLast) {
+            awaitingSettle = true;
             await htmx.ajax('POST', urls[i], { target: '#proposal-variables-section', swap: 'outerHTML' });
           } else {
             await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
           }
         }
+      } catch (error) {
+        reorderFailed = true;
       } finally {
+        if (!reorderFailed && awaitingSettle && window.__proposalPendingScrollRestore) return;
         if (!window.__proposalPendingScrollRestore) {
           document.documentElement.classList.remove('proposal-progress-cursor');
         }
+        clearProposalPendingScrollRestore();
       }
     }
   });
@@ -5763,8 +5779,7 @@
         restoreScroll();
         requestAnimationFrame(restoreScroll);
       });
-      window.__proposalPendingScrollRestore = null;
-      document.documentElement.classList.remove('proposal-progress-cursor');
+      clearProposalPendingScrollRestore();
     }
   });
 
@@ -5866,6 +5881,13 @@
     document.documentElement.classList.remove('proposal-progress-cursor');
   });
 
+  document.body.addEventListener('htmx:afterRequest', function (event) {
+    if (event.detail?.successful) return;
+    const target = event.detail?.target || event.target;
+    if (!isProposalVariablesSectionElement(target)) return;
+    clearProposalPendingScrollRestore();
+  });
+
   document.body.addEventListener('htmx:sendError', function (event) {
     const form = getProposalFormForRequest(event.detail?.elt);
     if (!form || !document.body.contains(form)) return;
@@ -5894,6 +5916,12 @@
     const headerLink = getProposalHeaderLinkForRequest(event.detail?.elt);
     if (!headerLink) return;
     document.documentElement.classList.remove('proposal-progress-cursor');
+  });
+
+  document.body.addEventListener('htmx:sendError', function (event) {
+    const target = event.detail?.target || event.target;
+    if (!isProposalVariablesSectionElement(target)) return;
+    clearProposalPendingScrollRestore();
   });
 
   document.body.addEventListener('htmx:afterSwap', function (event) {

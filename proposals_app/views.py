@@ -37,6 +37,7 @@ from policy_app.models import (
 )
 from projects_app.models import ProjectRegistration
 from smtp_app.models import ExternalSMTPAccount
+from core.proposal_registry_columns import get_proposal_registry_ui_columns
 from users_app.models import Employee
 
 from .cbr import get_cbr_eur_rate_for_today, get_cbr_eur_rate_text
@@ -794,6 +795,7 @@ def _proposals_context(request=None, user=None, *, debug_nextcloud_links=False):
         "proposals": proposals,
         "proposal_templates": proposal_templates,
         "proposal_variables": proposal_variables,
+        "proposal_registry_ui_columns": get_proposal_registry_ui_columns(),
         "primary_cloud_storage_label": get_primary_cloud_storage_label(),
         "proposal_request_sent_initial": timezone.localtime().replace(second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M"),
         "has_active_smtp_connection": has_active_smtp_connection,
