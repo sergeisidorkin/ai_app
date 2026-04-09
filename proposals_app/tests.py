@@ -118,7 +118,8 @@ class ProposalDocumentGenerationTests(TestCase):
 
         template_doc = Document()
         template_doc.add_paragraph("Заказчик: {{name}}")
-        template_doc.add_paragraph("Страна: {{country_full_name}}")
+        template_doc.add_paragraph("Страна: {{client_country_full_name}}")
+        template_doc.add_paragraph("Страна legacy: {{country_full_name}}")
         buffer = BytesIO()
         template_doc.save(buffer)
         buffer.seek(0)
@@ -145,11 +146,9 @@ class ProposalDocumentGenerationTests(TestCase):
             position=1,
         )
         ProposalVariable.objects.create(
-            key="{{country_full_name}}",
-            description="Наименование страны (полное)",
-            source_section="proposals",
-            source_table="registry",
-            source_column="country_full_name",
+            key="{{client_country_full_name}}",
+            description="Наименование страны Заказчика (полное)",
+            is_computed=True,
             position=2,
         )
 
@@ -189,6 +188,7 @@ class ProposalDocumentGenerationTests(TestCase):
         full_text = "\n".join(paragraph.text for paragraph in generated_doc.paragraphs)
         self.assertIn('Заказчик: ООО "Приморское"', full_text)
         self.assertIn("Страна: Российская Федерация", full_text)
+        self.assertIn("Страна legacy: Российская Федерация", full_text)
 
     @patch("ai_app.proposals_app.document_generation._get_cloud_upload_user")
     @patch("ai_app.proposals_app.document_generation.cloud_upload_file", return_value=True)
@@ -971,6 +971,25 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertIsNotNone(currency_id)
         self.assertEqual(form.fields["currency"].queryset.get(pk=currency_id).code_alpha, "RUB")
 
+    def test_bound_form_ignores_invalid_country_ids_when_building_region_choices(self):
+        form = ProposalRegistrationForm(
+            data=self._base_form_payload(
+                country="not-a-number",
+                registration_region="Приморский край",
+                asset_owner_country="still-not-a-number",
+                asset_owner_region="Хабаровский край",
+            )
+        )
+
+        self.assertEqual(
+            form.fields["registration_region"].choices,
+            [("", "---------"), ("Приморский край", "Приморский край")],
+        )
+        self.assertEqual(
+            form.fields["asset_owner_region"].choices,
+            [("", "---------"), ("Хабаровский край", "Хабаровский край")],
+        )
+
     def test_new_form_initializes_single_empty_asset_row(self):
         form = ProposalRegistrationForm()
 
@@ -1305,6 +1324,34 @@ class ProposalRegistrationFormTests(TestCase):
 
         self.assertTrue(form.is_valid(), form.errors)
 
+    def test_proposal_variable_form_locks_computed_variable_fields(self):
+        variable = ProposalVariable.objects.create(
+            key="{{client_country_full_name}}",
+            description="Наименование страны Заказчика (полное)",
+            is_computed=True,
+            position=1,
+        )
+
+        form = ProposalVariableForm(
+            data={
+                "key": "{{tampered}}",
+                "description": "Обновлённое описание",
+                "source_section": "proposals",
+                "source_table": "registry",
+                "source_column": "country_full_name",
+            },
+            instance=variable,
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.cleaned_data["key"], "{{client_country_full_name}}")
+        self.assertEqual(form.cleaned_data["source_section"], "")
+        self.assertEqual(form.cleaned_data["source_table"], "")
+        self.assertEqual(form.cleaned_data["source_column"], "")
+        self.assertEqual(form.fields["source_section"].choices, [("", "---")])
+        self.assertEqual(form.fields["source_table"].choices, [("", "---")])
+        self.assertEqual(form.fields["source_column"].choices, [("", "---")])
+
     def test_asset_owner_copies_customer_when_checkbox_enabled(self):
         country = OKSMCountry.objects.create(
             number=643,
@@ -1502,6 +1549,7 @@ class ProposalRegistrationFormTests(TestCase):
             status=ProposalRegistration.ProposalStatus.PRELIMINARY,
             proposal_project_name="Проект Приморское",
             country=country,
+            asset_owner_country=country,
             purpose="Проверка актива",
             service_composition="Этап 1\nЭтап 2",
             evaluation_date="2026-04-01",
@@ -1563,14 +1611,20 @@ class ProposalRegistrationFormTests(TestCase):
                 source_column="country",
             ),
             ProposalVariable(
-                key="{{country_full_name}}",
-                source_section="proposals",
-                source_table="registry",
-                source_column="country_full_name",
+                key="{{client_country_full_name}}",
+                is_computed=True,
             ),
+            ProposalVariable(
+                key="{{owner_country_full_name}}",
+                is_computed=True,
+            ),
+            ProposalVariable(key="{{year}}", is_computed=True),
+            ProposalVariable(key="{{day}}", is_computed=True),
+            ProposalVariable(key="{{month}}", is_computed=True),
         ]
 
-        replacements, _ = resolve_variables(proposal, variables)
+        with patch("proposals_app.variable_resolver._today", return_value=date(2026, 4, 9)):
+            replacements, _ = resolve_variables(proposal, variables)
 
         self.assertEqual(replacements["{{proposal_project_name}}"], "Проект Приморское")
         self.assertEqual(replacements["{{purpose}}"], "Проверка актива")
@@ -1580,7 +1634,17 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(replacements["{{advance_percent}}"], "50")
         self.assertEqual(replacements["{{currency}}"], "RUB")
         self.assertEqual(replacements["{{country}}"], "Россия")
+        self.assertEqual(replacements["{{client_country_full_name}}"], "Российская Федерация")
         self.assertEqual(replacements["{{country_full_name}}"], "Российская Федерация")
+        self.assertEqual(replacements["{{owner_country_full_name}}"], "Российская Федерация")
+        self.assertEqual(replacements["{{year}}"], "2026")
+        self.assertEqual(replacements["{{day}}"], "09")
+        self.assertEqual(replacements["{{month}}"], "апреля")
+
+        self.assertEqual(
+            ProposalVariable(key="{{year}}", is_computed=True).binding_display,
+            "Расчётное поле",
+        )
 
     def test_form_saves_assets_from_payload(self):
         country = OKSMCountry.objects.create(

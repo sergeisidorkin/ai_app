@@ -10,6 +10,10 @@ sys.modules.setdefault("proposals_app.variable_resolver", sys.modules[__name__])
 sys.modules.setdefault("ai_app.proposals_app.variable_resolver", sys.modules[__name__])
 
 
+def _today() -> date:
+    return date.today()
+
+
 def _proposal_number(proposal) -> str:
     return str(proposal.number or "")
 
@@ -80,6 +84,12 @@ def _proposal_asset_owner_country(proposal) -> str:
     if not proposal.asset_owner_country_id:
         return ""
     return proposal.asset_owner_country.short_name or proposal.asset_owner_country.full_name or ""
+
+
+def _proposal_asset_owner_country_full_name(proposal) -> str:
+    if not proposal.asset_owner_country_id:
+        return ""
+    return proposal.asset_owner_country.full_name or proposal.asset_owner_country.short_name or ""
 
 
 def _proposal_asset_owner_identifier(proposal) -> str:
@@ -199,6 +209,20 @@ def _proposal_final_report_term_days(proposal) -> str:
     return str(proposal.final_report_term_days or "")
 
 
+def _computed_year(_proposal) -> str:
+    return str(_today().year)
+
+
+def _computed_day(_proposal) -> str:
+    return f"{_today().day:02d}"
+
+
+def _computed_month(_proposal) -> str:
+    from core.dates import MONTHS_RU_GENITIVE
+
+    return MONTHS_RU_GENITIVE[_today().month]
+
+
 FIELD_MAP = {
     ("proposals", "registry", "number"): _proposal_number,
     ("proposals", "registry", "group"): _proposal_group,
@@ -238,9 +262,32 @@ FIELD_MAP = {
 }
 
 
+COMPUTED_MAP = {
+    "{{year}}": _computed_year,
+    "{{day}}": _computed_day,
+    "{{month}}": _computed_month,
+    "{{client_country_full_name}}": _proposal_country_full_name,
+    "{{owner_country_full_name}}": _proposal_asset_owner_country_full_name,
+    "{{country_full_name}}": _proposal_country_full_name,
+}
+
+VARIABLE_ALIASES = {
+    "{{client_country_full_name}}": ["{{country_full_name}}"],
+    "{{country_full_name}}": ["{{client_country_full_name}}"],
+}
+
+
 def resolve_variables(proposal, variables) -> tuple[dict[str, str], dict]:
     replacements: dict[str, str] = {}
     for variable in variables:
+        if getattr(variable, "is_computed", False):
+            computed_resolver = COMPUTED_MAP.get(variable.key)
+            if computed_resolver:
+                value = str(computed_resolver(proposal) or "")
+                replacements[variable.key] = value
+                for alias in VARIABLE_ALIASES.get(variable.key, []):
+                    replacements[alias] = value
+            continue
         key = (
             variable.source_section or "",
             variable.source_table or "",
@@ -249,5 +296,8 @@ def resolve_variables(proposal, variables) -> tuple[dict[str, str], dict]:
         resolver = FIELD_MAP.get(key)
         if not resolver:
             continue
-        replacements[variable.key] = str(resolver(proposal) or "")
+        value = str(resolver(proposal) or "")
+        replacements[variable.key] = value
+        for alias in VARIABLE_ALIASES.get(variable.key, []):
+            replacements[alias] = value
     return replacements, {}

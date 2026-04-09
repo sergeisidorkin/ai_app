@@ -1,0 +1,83 @@
+<div id="proposal-variables-section" class="mt-3">
+  <a class="text-muted small text-decoration-none" data-bs-toggle="collapse"
+     href="#proposal-dispatch-vars" role="button" aria-expanded="false">
+    <i class="bi bi-info-circle me-1"></i>Доступные переменные
+  </a>
+  <div class="collapse mt-2" id="proposal-dispatch-vars">
+    <div class="table-responsive">
+      <table class="table table-bordered mb-0 small align-top">
+        <thead class="table-light">
+          <tr>
+            <th style="width:1%; vertical-align:middle !important; padding:.5rem .5rem;" class="text-center">
+              {% if request.user.is_authenticated and request.user.is_staff %}
+                <input class="form-check-input"
+                       style="margin:0 !important; float:none !important; vertical-align:middle !important;"
+                       type="checkbox"
+                       id="proposal-variable-master"
+                       data-target-name="proposal-variable-select"
+                       data-actions-id="proposal-variable-actions"
+                       aria-label="Выделить все строки">
+              {% endif %}
+            </th>
+            <th class="ps-3 py-2">Переменная</th>
+            <th class="ps-3 py-2">Описание</th>
+            <th class="ps-3 py-2">Связь</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for variable in proposal_variables %}
+            <tr data-edit-url="{% url 'proposal_variable_form_edit' variable.pk %}"
+                data-delete-url="{% url 'proposal_variable_delete' variable.pk %}"
+                data-move-up-url="{% url 'proposal_variable_move_up' variable.pk %}"
+                data-move-down-url="{% url 'proposal_variable_move_down' variable.pk %}">
+              <td style="vertical-align:middle !important; padding:.5rem .5rem;" class="text-center">
+                {% if request.user.is_authenticated and request.user.is_staff %}
+                  <input class="form-check-input"
+                         style="margin:0 !important; float:none !important; vertical-align:middle !important;"
+                         type="checkbox"
+                         id="proposal-variable-sel-{{ variable.id }}"
+                         name="proposal-variable-select"
+                         value="{{ variable.id }}"
+                         aria-label="Выделить строку">
+                {% endif %}
+              </td>
+              <td class="ps-3 py-2"><code>{{ variable.key }}</code></td>
+              <td class="ps-3 py-2">{{ variable.description }}</td>
+              <td class="ps-3 py-2 text-muted">{{ variable.binding_display }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="4" class="text-muted py-2">Пока нет данных.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if request.user.is_authenticated and request.user.is_staff %}
+      <div class="d-flex align-items-stretch gap-2 products-actions-row mt-2">
+        <button
+                class="btn btn-primary btn-sm d-flex align-items-center"
+                hx-get="{% url 'proposal_variable_form_create' %}"
+                hx-target="#proposals-modal .modal-content"
+                hx-swap="innerHTML">
+          <i class="bi bi-plus-circle me-2"></i>Добавить строку
+        </button>
+        <div id="proposal-variable-actions" class="d-none d-flex">
+          <div class="btn-group">
+            <button type="button" data-proposal-variable-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+              <i class="bi bi-arrow-up-square"></i>
+            </button>
+            <button type="button" data-proposal-variable-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+              <i class="bi bi-arrow-down-square"></i>
+            </button>
+            <button type="button" data-proposal-variable-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+              <i class="bi bi-pencil-square"></i>
+            </button>
+            <button type="button" data-proposal-variable-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+              <i class="bi bi-x-square"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+</div>

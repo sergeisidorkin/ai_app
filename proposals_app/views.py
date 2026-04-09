@@ -68,6 +68,7 @@ PROPOSAL_FORM_TEMPLATE = "proposals_app/proposal_form_page.html"
 PROPOSAL_DISPATCH_FORM_TEMPLATE = "proposals_app/proposal_dispatch_form.html"
 PROPOSAL_TEMPLATE_FORM_TEMPLATE = "proposals_app/proposal_template_form.html"
 PROPOSAL_VARIABLE_FORM_TEMPLATE = "proposals_app/proposal_variable_form.html"
+PROPOSAL_VARIABLES_SECTION_TEMPLATE = "proposals_app/proposal_variables_section.html"
 
 HX_TRIGGER_HEADER = "HX-Trigger"
 HX_PROPOSALS_UPDATED_EVENT = "proposals-updated"
@@ -807,6 +808,14 @@ def _render_proposals_updated(request):
     )
     response[HX_TRIGGER_HEADER] = HX_PROPOSALS_UPDATED_EVENT
     return response
+
+
+def _render_proposal_variables_updated(request):
+    return render(
+        request,
+        PROPOSAL_VARIABLES_SECTION_TEMPLATE,
+        _proposals_context(request=request, debug_nextcloud_links=_proposal_link_debug_enabled(request)),
+    )
 
 
 def _maybe_create_nextcloud_proposal_workspace(request, proposal) -> None:
@@ -1719,11 +1728,7 @@ def proposal_dispatch_create_documents(request):
         .filter(file__gt="")
     )
     variables = list(
-        ProposalVariable.objects.filter(
-            source_section__gt="",
-            source_table__gt="",
-            source_column__gt="",
-        ).order_by("position", "id")
+        ProposalVariable.objects.order_by("position", "id")
     )
 
     errors = []
@@ -2010,7 +2015,7 @@ def proposal_variable_move_up(request, pk: int):
         obj.position, prev.position = prev.position, obj.position
         ProposalVariable.objects.filter(pk=obj.pk).update(position=obj.position)
         ProposalVariable.objects.filter(pk=prev.pk).update(position=prev.position)
-    return _render_proposals_updated(request)
+    return _render_proposal_variables_updated(request)
 
 
 @login_required
@@ -2023,7 +2028,7 @@ def proposal_variable_move_down(request, pk: int):
         obj.position, nxt.position = nxt.position, obj.position
         ProposalVariable.objects.filter(pk=obj.pk).update(position=obj.position)
         ProposalVariable.objects.filter(pk=nxt.pk).update(position=nxt.position)
-    return _render_proposals_updated(request)
+    return _render_proposal_variables_updated(request)
 
 
 @login_required

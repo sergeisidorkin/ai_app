@@ -17,6 +17,7 @@
       <div class="col-4">
         <label class="form-label">{{ form.key.label }}</label>
         {{ form.key }}
+        {% if form.is_computed %}<input type="hidden" name="key" value="{{ form.instance.key }}">{% endif %}
       </div>
       <div class="col">
         <label class="form-label">{{ form.description.label }}</label>
@@ -24,11 +25,20 @@
       </div>
     </div>
 
+    {% if form.is_computed %}
+    <div class="mb-3">
+      <label class="form-label">Тип</label>
+      <input type="text" class="form-control" readonly tabindex="-1"
+             style="background-color:#f8f9fa; color:#6c757d;"
+             value="Расчётное поле">
+    </div>
+    {% endif %}
+
     <div class="mb-3">
       <label class="form-label">Связь</label>
       <input type="text" class="form-control" id="id_proposal_var_binding_display" readonly tabindex="-1"
              style="background-color:#f8f9fa; color:#6c757d;"
-             value="{{ variable.binding_display|default:'' }}">
+             value="{% if form.is_computed %}Расчётное поле{% else %}{{ variable.binding_display|default:'' }}{% endif %}">
     </div>
 
     <hr style="margin: 1.5rem -1rem 1rem -1rem;">
@@ -74,6 +84,7 @@
   var colSel = document.getElementById('id_proposal_var_source_column');
   var bindingInput = document.getElementById('id_proposal_var_binding_display');
   if (!secSel || !tblSel || !colSel) return;
+  if (secSel.disabled) return;
 
   function selectedText(sel) {
     return sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex].text : '';
