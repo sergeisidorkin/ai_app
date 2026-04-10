@@ -161,6 +161,11 @@ class ServiceGoalReport(models.Model):
         related_name="service_goal_reports",
     )
     service_goal = models.TextField("Цели оказания услуг", blank=True, default="")
+    service_goal_genitive = models.TextField(
+        "Цели оказания услуг в родительном падеже",
+        blank=True,
+        default="",
+    )
     report_title = models.TextField("Название отчета", blank=True, default="")
     position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
 

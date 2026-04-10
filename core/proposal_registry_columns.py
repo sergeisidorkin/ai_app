@@ -102,7 +102,7 @@ PROPOSAL_REGISTRY_UI_COLUMNS = [
         "label": "Заказчик: регион",
         "split_prefix": "Заказчик: ",
         "split_suffix": "регион",
-        "variable_available": False,
+        "variable_available": True,
     },
     {
         "picker_value": "date",
@@ -157,7 +157,7 @@ PROPOSAL_REGISTRY_UI_COLUMNS = [
         "label": "Владелец: регион",
         "split_prefix": "Владелец: ",
         "split_suffix": "регион",
-        "variable_available": False,
+        "variable_available": True,
     },
     {
         "picker_value": "asset-owner-date",

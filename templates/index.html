@@ -114,6 +114,12 @@
         </li>
         {% endif %}
         <li class="nav-item">
+          <a class="nav-link d-flex align-items-center" href="#worktime" data-bs-toggle="tab">
+            <i class="bi bi-stopwatch me-2"></i>
+            <span class="link-text">Рабочее время</span>
+          </a>
+        </li>
+        <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#learning" data-bs-toggle="tab">
             <i class="bi bi-mortarboard me-2"></i>
             <span class="link-text">Обучение</span>
@@ -686,6 +692,51 @@
         </div>
       </section>
       {% endif %}
+
+      <!-- Рабочее время -->
+      <section id="worktime" class="tab-pane fade">
+        <div class="d-flex templates-bleed">
+          <aside class="second-sidebar bg-body-tertiary border-end">
+            <div class="second-sidebar-header-spacer"></div>
+            <hr class="my-0">
+            <div class="list-group list-group-flush p-3 m-0" id="worktime-second-sidebar-list">
+              <a href="#" class="list-group-item list-group-item-action active"
+                 data-worktime-section="manager-load">
+                Загрузка руководителей
+              </a>
+              <a href="#" class="list-group-item list-group-item-action"
+                 data-worktime-section="timesheet">
+                Табель учета времени
+              </a>
+            </div>
+          </aside>
+
+          <div class="flex-grow-1 ps-3 pe-0" style="min-width:0;">
+            <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
+              <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
+                <h5 class="mb-0 ps-3 fs-4 pt-2" id="worktime-section-title">Загрузка руководителей</h5>
+                <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
+                   href="#notifications"
+                   data-bs-toggle="tab"
+                   aria-label="Открыть уведомления">
+                  <i class="bi bi-bell fs-5"></i>
+                  <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
+                        data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
+                </a>
+              </div>
+            </div>
+
+            <div class="ps-3">
+              <div id="worktime-content-manager-load" class="worktime-section-content">
+                {% include "worktime_app/manager_load_panel.html" %}
+              </div>
+              <div id="worktime-content-timesheet" class="worktime-section-content d-none">
+                {% include "worktime_app/panel.html" %}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
 
       <!-- Обучение -->
       <section id="learning" class="tab-pane fade">
@@ -1704,6 +1755,51 @@
             if (saved && LETTERS_TITLES[saved]) {
               activateSidebarLink(saved);
               switchLettersSection(saved);
+            }
+          });
+        })();
+        </script>
+
+        <script>
+        (function () {
+          var WORKTIME_TITLES = {
+            'manager-load': 'Загрузка руководителей',
+            'timesheet': 'Табель учета времени',
+          };
+
+          var sidebar = document.getElementById('worktime-second-sidebar-list');
+          var titleEl = document.getElementById('worktime-section-title');
+
+          function activateSidebarLink(key) {
+            if (!sidebar) return;
+            sidebar.querySelectorAll('.list-group-item').forEach(function(a) { a.classList.remove('active'); });
+            var link = sidebar.querySelector('[data-worktime-section="' + key + '"]');
+            if (link) link.classList.add('active');
+          }
+
+          function switchWorktimeSection(key) {
+            document.querySelectorAll('.worktime-section-content').forEach(function(el) { el.classList.add('d-none'); });
+            var target = document.getElementById('worktime-content-' + key);
+            if (target) target.classList.remove('d-none');
+            if (titleEl) titleEl.textContent = WORKTIME_TITLES[key] || '';
+          }
+
+          if (sidebar) {
+            sidebar.addEventListener('click', function (e) {
+              var link = e.target.closest('.list-group-item');
+              if (!link) return;
+              e.preventDefault();
+              activateSidebarLink(link.dataset.worktimeSection);
+              switchWorktimeSection(link.dataset.worktimeSection);
+              if (window.UIPref) UIPref.set('worktime:section', link.dataset.worktimeSection);
+            });
+          }
+
+          document.addEventListener('DOMContentLoaded', function () {
+            var saved = window.UIPref ? UIPref.get('worktime:section', null) : null;
+            if (saved && WORKTIME_TITLES[saved] && document.getElementById('worktime-content-' + saved)) {
+              activateSidebarLink(saved);
+              switchWorktimeSection(saved);
             }
           });
         })();
@@ -2801,6 +2897,21 @@
 <script>
   document.body.addEventListener('contracts-updated', function () {
     var el = document.getElementById('contracts-modal');
+    if (!el) return;
+    var modal = bootstrap.Modal.getInstance(el) || bootstrap.Modal.getOrCreateInstance(el);
+    modal.hide();
+  });
+</script>
+
+<div class="modal fade" id="worktime-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable">
+    <div class="modal-content">
+    </div>
+  </div>
+</div>
+<script>
+  document.body.addEventListener('worktime-updated', function () {
+    var el = document.getElementById('worktime-modal');
     if (!el) return;
     var modal = bootstrap.Modal.getInstance(el) || bootstrap.Modal.getOrCreateInstance(el);
     modal.hide();

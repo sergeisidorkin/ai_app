@@ -5,6 +5,7 @@ import sys
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
+from policy_app.models import ServiceGoalReport
 
 sys.modules.setdefault("proposals_app.variable_resolver", sys.modules[__name__])
 sys.modules.setdefault("ai_app.proposals_app.variable_resolver", sys.modules[__name__])
@@ -72,6 +73,10 @@ def _proposal_registration_number(proposal) -> str:
     return proposal.registration_number or ""
 
 
+def _proposal_registration_region(proposal) -> str:
+    return proposal.registration_region or ""
+
+
 def _proposal_date(proposal) -> str:
     return _format_date(proposal.registration_date, "%d.%m.%y")
 
@@ -120,6 +125,12 @@ def _proposal_asset_owner_identifier(proposal) -> str:
 
 def _proposal_asset_owner_registration_number(proposal) -> str:
     return proposal.asset_owner_registration_number or ""
+
+
+def _proposal_asset_owner_region(proposal) -> str:
+    if getattr(proposal, "asset_owner_matches_customer", False):
+        return proposal.registration_region or ""
+    return proposal.asset_owner_region or ""
 
 
 def _proposal_asset_owner_registration_date(proposal) -> str:
@@ -171,6 +182,20 @@ def _format_money(value) -> str:
 
 def _proposal_purpose(proposal) -> str:
     return proposal.purpose or ""
+
+
+def _proposal_service_goal_genitive(proposal) -> str:
+    if not getattr(proposal, "type_id", None):
+        return ""
+    item = (
+        ServiceGoalReport.objects.filter(product_id=proposal.type_id)
+        .order_by("position", "id")
+        .only("service_goal_genitive")
+        .first()
+    )
+    if not item:
+        return ""
+    return item.service_goal_genitive or ""
 
 
 def _proposal_service_composition(proposal) -> str:
@@ -259,11 +284,13 @@ FIELD_MAP = {
     ("proposals", "registry", "country_full_name"): _proposal_country_full_name,
     ("proposals", "registry", "identifier"): _proposal_identifier,
     ("proposals", "registry", "registration_number"): _proposal_registration_number,
+    ("proposals", "registry", "registration_region"): _proposal_registration_region,
     ("proposals", "registry", "date"): _proposal_date,
     ("proposals", "registry", "asset_owner"): _proposal_asset_owner,
     ("proposals", "registry", "asset_owner_country"): _proposal_asset_owner_country,
     ("proposals", "registry", "asset_owner_identifier"): _proposal_asset_owner_identifier,
     ("proposals", "registry", "asset_owner_registration_number"): _proposal_asset_owner_registration_number,
+    ("proposals", "registry", "asset_owner_region"): _proposal_asset_owner_region,
     ("proposals", "registry", "asset_owner_registration_date"): _proposal_asset_owner_registration_date,
     ("proposals", "registry", "proposal_project_name"): _proposal_project_name,
     ("proposals", "registry", "purpose"): _proposal_purpose,
@@ -291,6 +318,7 @@ COMPUTED_MAP = {
     "{{client_country_full_name}}": _proposal_country_full_name,
     "{{client_owner_name}}": _proposal_client_owner_name,
     "{{service_type_short}}": _proposal_service_type_short,
+    "{{service_goal_genitive}}": _proposal_service_goal_genitive,
     "{{owner_country_full_name}}": _proposal_asset_owner_country_full_name,
     "{{country_full_name}}": _proposal_country_full_name,
 }

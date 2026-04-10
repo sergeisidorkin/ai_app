@@ -1111,6 +1111,7 @@ def _render_proposal_form(request, *, form, action, proposal=None):
         service_goal_reports_map[product_id] = {
             "report_title": item.report_title or "",
             "service_goal": item.service_goal or "",
+            "service_goal_genitive": item.service_goal_genitive or "",
         }
     typical_service_compositions_map = {}
     for item in typical_service_compositions:

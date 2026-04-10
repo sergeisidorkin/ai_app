@@ -93,6 +93,7 @@ INSTALLED_APPS = [
     "notifications_app",
     "contracts_app",
     "letters_app",
+    "worktime_app.apps.WorktimeAppConfig",
     "learning_app",
     "proposals_app.apps.ProposalsAppConfig",
     "nextcloud_app.apps.NextcloudAppConfig",
