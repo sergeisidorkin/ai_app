@@ -34,6 +34,7 @@ from policy_app.models import (
     TypicalSection,
     TypicalSectionSpecialty,
     TypicalServiceComposition,
+    TypicalServiceTerm,
 )
 from projects_app.models import ProjectRegistration
 from smtp_app.models import ExternalSMTPAccount
@@ -985,6 +986,11 @@ def _render_proposal_form(request, *, form, action, proposal=None):
         .select_related("product", "section")
         .order_by("product_id", "position", "id")
     )
+    typical_service_terms = list(
+        TypicalServiceTerm.objects
+        .select_related("product")
+        .order_by("product_id", "position", "id")
+    )
     specialty_tariffs = list(
         SpecialtyTariff.objects
         .prefetch_related("specialties")
@@ -1126,6 +1132,15 @@ def _render_proposal_form(request, *, form, action, proposal=None):
                 "service_composition": item.service_composition or "",
             }
         )
+    typical_service_terms_map = {}
+    for item in typical_service_terms:
+        product_id = str(item.product_id or "")
+        if not product_id or product_id in typical_service_terms_map:
+            continue
+        typical_service_terms_map[product_id] = {
+            "preliminary_report_months": format(item.preliminary_report_months, ".1f"),
+            "final_report_weeks": format(item.final_report_weeks, ".1f"),
+        }
     return render(
         request,
         PROPOSAL_FORM_TEMPLATE,
@@ -1136,6 +1151,7 @@ def _render_proposal_form(request, *, form, action, proposal=None):
             "typical_sections_json": sections_map,
             "service_goal_reports_json": service_goal_reports_map,
             "typical_service_compositions_json": typical_service_compositions_map,
+            "typical_service_terms_json": typical_service_terms_map,
         },
     )
 
@@ -1756,10 +1772,15 @@ def proposal_dispatch_create_documents(request):
             continue
 
         try:
-            replacements, _ = resolve_variables(proposal, variables)
+            replacements, list_replacements = resolve_variables(proposal, variables)
             from contracts_app.docx_processor import process_template
 
-            docx_bytes = process_template(template_bytes, replacements)
+            docx_bytes = process_template(
+                template_bytes,
+                replacements,
+                list_replacements=list_replacements or None,
+                plain_list_keys={"[[actives_name]]"},
+            )
             stored = store_generated_documents(request.user, proposal, docx_bytes, None)
         except Exception as exc:
             errors.append(f"{proposal.short_uid}: {exc}")

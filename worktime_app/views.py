@@ -1,4 +1,6 @@
 from django.contrib.auth.decorators import login_required, user_passes_test
+from django.db.models import Q
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_http_methods
 
@@ -14,19 +16,43 @@ def staff_required(user):
     return user.is_staff
 
 
-def _worktime_context():
+def _worktime_queryset(user, personal_only=False):
     items = (
         Performer.objects
-        .select_related("registration", "registration__type")
+        .select_related("registration", "registration__type", "employee", "employee__user")
         .order_by("registration__number", "registration__id", "position", "id")
     )
-    return {"items": items}
+    if personal_only:
+        filters = Q(employee__user=user)
+        employee = getattr(user, "employee_profile", None)
+        employee_name = Performer.employee_full_name(employee)
+        if employee_name:
+            filters |= Q(executor=employee_name)
+        items = items.filter(filters)
+    return items
+
+
+def _worktime_context(user, personal_only=False):
+    return {
+        "items": _worktime_queryset(user, personal_only=personal_only),
+        "show_executor_column": not personal_only,
+    }
 
 
 @login_required
 @require_http_methods(["GET"])
 def worktime_partial(request):
-    return render(request, WORKTIME_PARTIAL_TEMPLATE, _worktime_context())
+    return render(request, WORKTIME_PARTIAL_TEMPLATE, _worktime_context(request.user))
+
+
+@login_required
+@require_http_methods(["GET"])
+def personal_worktime_partial(request):
+    return render(
+        request,
+        WORKTIME_PARTIAL_TEMPLATE,
+        _worktime_context(request.user, personal_only=True),
+    )
 
 
 @login_required
@@ -41,7 +67,7 @@ def worktime_form_edit(request, pk):
         form = WorktimeEditForm(request.POST, instance=performer)
         if form.is_valid():
             form.save()
-            response = render(request, WORKTIME_PARTIAL_TEMPLATE, _worktime_context())
+            response = HttpResponse(status=204)
             response["HX-Trigger"] = "worktime-updated"
             return response
     else:

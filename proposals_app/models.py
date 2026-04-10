@@ -109,15 +109,23 @@ class ProposalRegistration(models.Model):
     commercial_totals_json = models.JSONField("Итоги коммерческого предложения", default=dict, blank=True)
     evaluation_date = models.DateField("Дата оценки", null=True, blank=True)
     service_term_months = models.DecimalField(
-        "Срок оказания услуг, мес.",
+        "Срок подготовки Предварительного отчёта, мес.",
         max_digits=5,
         decimal_places=1,
         null=True,
         blank=True,
         validators=[MinValueValidator(0)],
     )
-    preliminary_report_date = models.DateField("Дата предварительного отчёта", null=True, blank=True)
-    final_report_date = models.DateField("Дата итогового отчёта", null=True, blank=True)
+    preliminary_report_date = models.DateField("Дата Предварительного отчёта", null=True, blank=True)
+    final_report_term_weeks = models.DecimalField(
+        "Срок подготовки Итогового отчёта, нед.",
+        max_digits=5,
+        decimal_places=1,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0)],
+    )
+    final_report_date = models.DateField("Дата Итогового отчёта", null=True, blank=True)
     report_languages = models.CharField("Языки отчёта", max_length=255, blank=True, default="")
     service_cost = models.DecimalField(
         "Стоимость услуг",

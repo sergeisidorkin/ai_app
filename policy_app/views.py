@@ -19,6 +19,7 @@ from .models import (
     SectionStructure,
     ServiceGoalReport,
     TypicalServiceComposition,
+    TypicalServiceTerm,
     ExpertiseDirection,
     Grade,
     SpecialtyTariff,
@@ -31,6 +32,7 @@ from .forms import (
     SectionStructureForm,
     ServiceGoalReportForm,
     TypicalServiceCompositionForm,
+    TypicalServiceTermForm,
     ExpertiseDirectionForm,
     GradeForm,
     SpecialtyTariffForm,
@@ -44,6 +46,7 @@ SECTION_FORM_TEMPLATE = "policy_app/section_form.html"
 STRUCTURE_FORM_TEMPLATE = "policy_app/structure_form.html"
 SERVICE_GOAL_REPORT_FORM_TEMPLATE = "policy_app/service_goal_report_form.html"
 TYPICAL_SERVICE_COMPOSITION_FORM_TEMPLATE = "policy_app/typical_service_composition_form.html"
+TYPICAL_SERVICE_TERM_FORM_TEMPLATE = "policy_app/typical_service_term_form.html"
 EXPERTISE_DIR_FORM_TEMPLATE = "policy_app/expertise_direction_form.html"
 GRADE_FORM_TEMPLATE = "policy_app/grade_form.html"
 SPECIALTY_TARIFF_FORM_TEMPLATE = "policy_app/specialty_tariff_form.html"
@@ -117,6 +120,7 @@ def _policy_context(request):
     structures = SectionStructure.objects.select_related("product", "section").all()
     service_goal_reports = ServiceGoalReport.objects.select_related("product").all()
     typical_service_compositions = TypicalServiceComposition.objects.select_related("product", "section").all()
+    typical_service_terms = TypicalServiceTerm.objects.select_related("product").all()
     expertise_directions = ExpertiseDirection.objects.prefetch_related("owners").all()
     grades = _get_grades_for_user(request.user)
     specialty_tariffs = _get_specialty_tariffs_for_user(request.user)
@@ -128,6 +132,7 @@ def _policy_context(request):
         "structures": structures,
         "service_goal_reports": service_goal_reports,
         "typical_service_compositions": typical_service_compositions,
+        "typical_service_terms": typical_service_terms,
         "expertise_directions": expertise_directions,
         "grades": grades,
         "specialty_tariffs": specialty_tariffs,
@@ -261,6 +266,16 @@ def _typical_service_composition_form_context(form, action, composition=None):
     }
     if composition:
         ctx["composition"] = composition
+    return ctx
+
+
+def _typical_service_term_form_context(form, action, term=None):
+    ctx = {
+        "form": form,
+        "action": action,
+    }
+    if term:
+        ctx["term"] = term
     return ctx
 
 
@@ -831,6 +846,106 @@ def typical_service_composition_move_down(request, pk: int):
         TypicalServiceComposition.objects.filter(pk=cur.id).update(position=next_pos)
         TypicalServiceComposition.objects.filter(pk=nxt.id).update(position=cur_pos)
         _normalize_typical_service_composition_positions()
+    return _render_policy_updated(request)
+
+
+# --- Типовые сроки оказания услуг ---
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def typical_service_term_form_create(request):
+    if request.method == "GET":
+        form = TypicalServiceTermForm()
+        return render(
+            request,
+            TYPICAL_SERVICE_TERM_FORM_TEMPLATE,
+            _typical_service_term_form_context(form, "create"),
+        )
+    form = TypicalServiceTermForm(request.POST)
+    if not form.is_valid():
+        return render(
+            request,
+            TYPICAL_SERVICE_TERM_FORM_TEMPLATE,
+            _typical_service_term_form_context(form, "create"),
+        )
+    obj = form.save(commit=False)
+    if not getattr(obj, "position", 0):
+        obj.position = _next_position(TypicalServiceTerm)
+    obj.save()
+    return _render_policy_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def typical_service_term_form_edit(request, pk: int):
+    term = get_object_or_404(TypicalServiceTerm, pk=pk)
+    if request.method == "GET":
+        form = TypicalServiceTermForm(instance=term)
+        return render(
+            request,
+            TYPICAL_SERVICE_TERM_FORM_TEMPLATE,
+            _typical_service_term_form_context(form, "edit", term),
+        )
+    form = TypicalServiceTermForm(request.POST, instance=term)
+    if not form.is_valid():
+        return render(
+            request,
+            TYPICAL_SERVICE_TERM_FORM_TEMPLATE,
+            _typical_service_term_form_context(form, "edit", term),
+        )
+    form.save()
+    return _render_policy_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def typical_service_term_delete(request, pk: int):
+    term = get_object_or_404(TypicalServiceTerm, pk=pk)
+    term.delete()
+    return _render_policy_updated(request)
+
+
+def _normalize_typical_service_term_positions():
+    items = TypicalServiceTerm.objects.order_by("position", "id").only("id", "position")
+    for idx, item in enumerate(items, start=1):
+        if item.position != idx:
+            TypicalServiceTerm.objects.filter(pk=item.pk).update(position=idx)
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+@user_passes_test(staff_required)
+def typical_service_term_move_up(request, pk: int):
+    _normalize_typical_service_term_positions()
+    items = list(TypicalServiceTerm.objects.order_by("position", "id").only("id", "position"))
+    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+    if idx is not None and idx > 0:
+        cur = items[idx]
+        prev = items[idx - 1]
+        cur_pos, prev_pos = cur.position, prev.position
+        TypicalServiceTerm.objects.filter(pk=cur.id).update(position=prev_pos)
+        TypicalServiceTerm.objects.filter(pk=prev.id).update(position=cur_pos)
+        _normalize_typical_service_term_positions()
+    return _render_policy_updated(request)
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+@user_passes_test(staff_required)
+def typical_service_term_move_down(request, pk: int):
+    _normalize_typical_service_term_positions()
+    items = list(TypicalServiceTerm.objects.order_by("position", "id").only("id", "position"))
+    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+    if idx is not None and idx < len(items) - 1:
+        cur = items[idx]
+        nxt = items[idx + 1]
+        cur_pos, next_pos = cur.position, nxt.position
+        TypicalServiceTerm.objects.filter(pk=cur.id).update(position=next_pos)
+        TypicalServiceTerm.objects.filter(pk=nxt.id).update(position=cur_pos)
+        _normalize_typical_service_term_positions()
     return _render_policy_updated(request)
 
 

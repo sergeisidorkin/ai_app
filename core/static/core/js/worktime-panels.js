@@ -2,47 +2,55 @@
   if (window.__worktimePanelBound) return;
   window.__worktimePanelBound = true;
 
-  function pane() { return document.getElementById('worktime-pane'); }
   function qa(sel, root) { return Array.from((root || document).querySelectorAll(sel)); }
+  function panels() { return qa('[data-worktime-panel]'); }
+  function panelFor(el) { return el && el.closest('[data-worktime-panel]'); }
 
-  function getRowChecks() {
-    return qa('tbody input.form-check-input[name="worktime-row-select"]', pane());
+  function getRowChecks(root) {
+    return qa('tbody input.form-check-input[name="worktime-row-select"]', root);
   }
 
-  function getChecked() {
-    return getRowChecks().filter(function (box) { return box.checked; });
+  function getChecked(root) {
+    return getRowChecks(root).filter(function (box) { return box.checked; });
   }
 
-  function updateRowHighlight() {
-    getRowChecks().forEach(function (box) {
+  function updateRowHighlight(root) {
+    getRowChecks(root).forEach(function (box) {
       var tr = box.closest('tr');
       if (tr) tr.classList.toggle('table-active', !!box.checked);
     });
   }
 
-  function updateMasterState() {
-    var boxes = getRowChecks();
-    var master = pane() && pane().querySelector('#worktime-master');
+  function updateMasterState(root) {
+    var boxes = getRowChecks(root);
+    var master = root && root.querySelector('[data-worktime-master]');
     if (!master) return;
     var checkedCount = boxes.filter(function (box) { return box.checked; }).length;
     master.checked = boxes.length > 0 && checkedCount === boxes.length;
     master.indeterminate = checkedCount > 0 && checkedCount < boxes.length;
   }
 
-  function ensureActionsVisibility() {
-    var actions = pane() && pane().querySelector('#worktime-actions');
+  function ensureActionsVisibility(root) {
+    var actions = root && root.querySelector('[data-worktime-actions]');
     if (!actions) return;
-    var anyChecked = getChecked().length > 0;
+    var anyChecked = getChecked(root).length > 0;
     actions.classList.toggle('d-none', !anyChecked);
     actions.classList.toggle('d-flex', anyChecked);
   }
 
-  function updateEditBtn() {
-    var root = pane();
+  function updateEditBtn(root) {
     if (!root) return;
-    var btn = root.querySelector('#worktime-edit-btn');
+    var btn = root.querySelector('[data-worktime-edit-btn]');
     if (!btn) return;
-    btn.disabled = getChecked().length === 0;
+    btn.disabled = getChecked(root).length === 0;
+  }
+
+  function updatePaneState(root) {
+    if (!root) return;
+    updateMasterState(root);
+    updateRowHighlight(root);
+    ensureActionsVisibility(root);
+    updateEditBtn(root);
   }
 
   function showWorktimeModal() {
@@ -57,8 +65,14 @@
     bootstrap.Modal.getOrCreateInstance(modalEl).show();
   }
 
-  function openEditModal() {
-    var checked = getChecked();
+  function hideWorktimeModal() {
+    var modalEl = document.getElementById('worktime-modal');
+    if (!modalEl || !window.bootstrap) return;
+    bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+  }
+
+  function openEditModal(root) {
+    var checked = getChecked(root);
     if (!checked.length) return;
     var tr = checked[0].closest('tr');
     var url = tr && tr.dataset.editUrl;
@@ -70,59 +84,51 @@
   }
 
   document.addEventListener('click', function (e) {
-    var root = pane();
+    var root = panelFor(e.target);
     if (!root) return;
 
-    var editBtn = e.target.closest('#worktime-edit-btn');
-    if (editBtn && root.contains(editBtn)) {
-      openEditModal();
+    var editBtn = e.target.closest('[data-worktime-edit-btn]');
+    if (editBtn) {
+      openEditModal(root);
       return;
     }
 
-    var actionBtn = e.target.closest('#worktime-actions [data-panel-action="edit"]');
-    if (actionBtn && root.contains(actionBtn)) {
-      openEditModal();
+    var actionBtn = e.target.closest('[data-worktime-actions] [data-panel-action="edit"]');
+    if (actionBtn) {
+      openEditModal(root);
     }
   });
 
   document.addEventListener('change', function (e) {
-    var root = pane();
+    var root = panelFor(e.target);
     if (!root) return;
 
-    var master = e.target.closest('#worktime-master');
-    if (master && root.contains(master)) {
-      getRowChecks().forEach(function (box) { box.checked = master.checked; });
+    var master = e.target.closest('[data-worktime-master]');
+    if (master) {
+      getRowChecks(root).forEach(function (box) { box.checked = master.checked; });
       master.indeterminate = false;
-      updateMasterState();
-      updateRowHighlight();
-      ensureActionsVisibility();
-      updateEditBtn();
+      updatePaneState(root);
       return;
     }
 
     var rowCb = e.target.closest('tbody input.form-check-input[name="worktime-row-select"]');
-    if (rowCb && root.contains(rowCb)) {
-      updateMasterState();
-      updateRowHighlight();
-      ensureActionsVisibility();
-      updateEditBtn();
+    if (rowCb) {
+      updatePaneState(root);
     }
   });
 
   document.body.addEventListener('htmx:afterSettle', function (e) {
-    var root = pane();
-    if (!root) return;
-    if (!(e.target === root || root.contains(e.target))) return;
-    updateMasterState();
-    updateRowHighlight();
-    ensureActionsVisibility();
-    updateEditBtn();
+    var root = e.target && e.target.matches('[data-worktime-panel]')
+      ? e.target
+      : panelFor(e.target);
+    updatePaneState(root);
+  });
+
+  document.body.addEventListener('worktime-updated', function () {
+    hideWorktimeModal();
   });
 
   document.addEventListener('DOMContentLoaded', function () {
-    updateMasterState();
-    updateRowHighlight();
-    ensureActionsVisibility();
-    updateEditBtn();
+    panels().forEach(updatePaneState);
   });
 })();

@@ -1,12 +1,14 @@
+{% url 'worktime_partial' as default_worktime_partial_url %}
 <div class="card shadow-sm mt-3">
   <div class="card-body">
-    <div id="worktime-pane"
-         hx-get="{% url 'worktime_partial' %}"
-         hx-trigger="load, worktime-updated from:body"
-         hx-target="#worktime-pane"
+    <div class="worktime-panel"
+         data-worktime-panel
+         hx-get="{{ partial_url|default:default_worktime_partial_url }}"
+         hx-trigger="{{ load_event|default:'worktime-timesheet-load' }} once from:body, worktime-updated from:body"
+         hx-target="this"
          hx-swap="innerHTML"
-         hx-indicator="#worktime-loading">
-      <div id="worktime-loading" class="text-muted htmx-indicator">Загрузка табеля учета времени…</div>
+         hx-indicator="find .htmx-indicator">
+      <div class="text-muted htmx-indicator">Загрузка табеля учета времени…</div>
     </div>
   </div>
 </div>

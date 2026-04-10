@@ -388,7 +388,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         input_formats=DATE_INPUT_FORMATS,
     )
     service_term_months = forms.DecimalField(
-        label="Срок оказания услуг, мес.",
+        label="Срок подготовки Предварительного отчёта, мес.",
         required=False,
         min_value=0,
         max_digits=5,
@@ -396,13 +396,21 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         widget=forms.NumberInput(attrs={"min": 0, "step": "0.1"}),
     )
     preliminary_report_date = forms.DateField(
-        label="Дата предварительного отчёта",
+        label="Дата Предварительного отчёта",
         required=False,
         widget=forms.TextInput(attrs=DATE_INPUT_ATTRS),
         input_formats=DATE_INPUT_FORMATS,
     )
+    final_report_term_weeks = forms.DecimalField(
+        label="Срок подготовки Итогового отчёта, нед.",
+        required=False,
+        min_value=0,
+        max_digits=5,
+        decimal_places=1,
+        widget=forms.NumberInput(attrs={"min": 0, "step": "0.1"}),
+    )
     final_report_date = forms.DateField(
-        label="Дата итогового отчёта",
+        label="Дата Итогового отчёта",
         required=False,
         widget=forms.TextInput(attrs=DATE_INPUT_ATTRS),
         input_formats=DATE_INPUT_FORMATS,
@@ -532,6 +540,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
 
     _decimal_text_fields = (
         "service_term_months",
+        "final_report_term_weeks",
         "service_cost",
         "advance_percent",
         "preliminary_report_percent",
@@ -570,6 +579,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             "evaluation_date",
             "service_term_months",
             "preliminary_report_date",
+            "final_report_term_weeks",
             "final_report_date",
             "report_languages",
             "service_cost",

@@ -7,6 +7,7 @@
   {{ typical_sections_json|json_script:"proposal-typical-sections-data" }}
   {{ service_goal_reports_json|json_script:"proposal-service-goal-reports-data" }}
   {{ typical_service_compositions_json|json_script:"proposal-typical-service-compositions-data" }}
+  {{ typical_service_terms_json|json_script:"proposal-typical-service-terms-data" }}
   <form method="post"
         data-proposal-form="1"
         data-country-identifier-url="{% url 'identifier_for_country' %}"
@@ -426,22 +427,28 @@
         </div>
       </div>
 
-      <div class="col-3">
+      <div class="col">
         <label class="form-label">{{ form.evaluation_date.label }}</label>
         {{ form.evaluation_date }}
       </div>
-      <div class="col-3">
+      <div class="col">
         <label class="form-label">{{ form.service_term_months.label }}</label>
         {{ form.service_term_months }}
       </div>
-      <div class="col-3">
+      <div class="col">
         <label class="form-label">{{ form.preliminary_report_date.label }}</label>
         {{ form.preliminary_report_date }}
       </div>
-      <div class="col-3">
+      <div class="col">
+        <label class="form-label">{{ form.final_report_term_weeks.label }}</label>
+        {{ form.final_report_term_weeks }}
+      </div>
+      <div class="col">
         <label class="form-label">{{ form.final_report_date.label }}</label>
         {{ form.final_report_date }}
       </div>
+
+      <div class="w-100"></div>
 
       <div class="col-3">
         <label class="form-label">{{ form.report_languages.label }}</label>

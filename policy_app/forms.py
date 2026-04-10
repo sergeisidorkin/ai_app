@@ -13,6 +13,7 @@ from .models import (
     SectionStructure,
     ServiceGoalReport,
     TypicalServiceComposition,
+    TypicalServiceTerm,
     ExpertiseDirection,
     Grade,
     SpecialtyTariff,
@@ -22,6 +23,21 @@ from .models import (
 )
 
 OWNER_GROUP_VALUE = "__group__"
+
+
+class CommaDecimalField(forms.DecimalField):
+    def to_python(self, value):
+        if isinstance(value, str):
+            value = value.replace("\u00a0", "").replace(" ", "").replace(",", ".")
+        return super().to_python(value)
+
+    def prepare_value(self, value):
+        prepared = super().prepare_value(value)
+        if prepared in self.empty_values:
+            return prepared
+        if isinstance(prepared, str):
+            return prepared.replace(".", ",")
+        return str(prepared).replace(".", ",")
 
 
 class ProductForm(forms.ModelForm):
@@ -251,6 +267,37 @@ class TypicalServiceCompositionForm(forms.ModelForm):
         if product and section and section.product_id != product.id:
             self.add_error("section", "Раздел должен относиться к выбранному продукту.")
         return cleaned
+
+
+class TypicalServiceTermForm(forms.ModelForm):
+    product = forms.ModelChoiceField(
+        label="Продукт",
+        queryset=Product.objects.all(),
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+    preliminary_report_months = CommaDecimalField(
+        label="Срок подготовки Предварительного отчёта, мес.",
+        min_value=0,
+        decimal_places=1,
+        max_digits=6,
+        widget=forms.TextInput(attrs={
+            "class": "form-control",
+            "inputmode": "decimal",
+            "placeholder": "0,0",
+        }),
+    )
+
+    class Meta:
+        model = TypicalServiceTerm
+        fields = ["product", "preliminary_report_months", "final_report_weeks"]
+        widgets = {
+            "final_report_weeks": forms.NumberInput(attrs={
+                "class": "form-control",
+                "min": "0",
+                "step": "1",
+                "placeholder": "0",
+            }),
+        }
 
 
 class ExpertiseDirectionForm(forms.ModelForm):

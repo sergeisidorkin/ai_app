@@ -97,12 +97,13 @@ def _replace_list_in_paragraph(
     bullet_num_id: str,
     multilevel_num_id: str,
     bullet_style_id: str,
+    plain_list_keys: set[str] | None = None,
 ) -> bool:
     """If the paragraph contains a ``[[list_var]]`` placeholder, replace the
     entire paragraph with a list of items.  Returns True if replaced.
 
     Items may be:
-    - ``list[str]`` — flat bullet list
+    - ``list[str]`` — flat bullet list or plain paragraphs
     - ``list[tuple[int, str]]`` — multi-level numbered list
 
     Formatting (font, size, bold, italic) is copied from the run containing
@@ -123,10 +124,11 @@ def _replace_list_in_paragraph(
         return False
 
     is_multilevel = items and isinstance(items[0], (tuple, list))
+    is_plain_list = not is_multilevel and key in (plain_list_keys or set())
 
     if is_multilevel and not multilevel_num_id:
         return False
-    if not is_multilevel and not bullet_num_id:
+    if not is_multilevel and not is_plain_list and not bullet_num_id:
         return False
 
     run_texts = [r.text for r in runs]
@@ -162,7 +164,9 @@ def _replace_list_in_paragraph(
         new_p = OxmlElement("w:p")
         pPr = OxmlElement("w:pPr")
 
-        if not is_multilevel and bullet_style_id:
+        if is_plain_list:
+            pass
+        elif not is_multilevel and bullet_style_id:
             pStyle = OxmlElement("w:pStyle")
             pStyle.set(qn("w:val"), bullet_style_id)
             pPr.append(pStyle)
@@ -396,11 +400,13 @@ def _process_list_paragraphs(
     bullet_num_id: str,
     multilevel_num_id: str,
     bullet_style_id: str,
+    plain_list_keys: set[str] | None = None,
 ) -> None:
     for para in list(paragraphs):
         _replace_list_in_paragraph(
             para, list_replacements,
             bullet_num_id, multilevel_num_id, bullet_style_id,
+            plain_list_keys,
         )
 
 
@@ -411,6 +417,7 @@ def _process_tables(
     bullet_num_id: str = "",
     multilevel_num_id: str = "",
     bullet_style_id: str = "",
+    plain_list_keys: set[str] | None = None,
 ) -> None:
     for table in tables:
         for row in table.rows:
@@ -419,11 +426,13 @@ def _process_tables(
                     _process_list_paragraphs(
                         cell.paragraphs, list_replacements,
                         bullet_num_id, multilevel_num_id, bullet_style_id,
+                        plain_list_keys,
                     )
                 _process_paragraphs(cell.paragraphs, replacements)
                 _process_tables(
                     cell.tables, replacements, list_replacements,
                     bullet_num_id, multilevel_num_id, bullet_style_id,
+                    plain_list_keys,
                 )
 
 
@@ -431,12 +440,15 @@ def process_template(
     file_bytes: bytes,
     replacements: dict[str, str],
     list_replacements: dict | None = None,
+    plain_list_keys: set[str] | None = None,
 ) -> bytes:
     """Return modified .docx bytes with all placeholders substituted.
 
     *file_bytes*: raw bytes of the source .docx template.
     *replacements*: mapping ``{"{{key}}": "value", ...}``.
     *list_replacements*: mapping ``{"[[key]]": ["item1", ...], ...}``.
+    *plain_list_keys*: list placeholders that should be inserted as plain
+    paragraphs without bullet formatting.
     """
     if not replacements and not list_replacements:
         return file_bytes
@@ -465,12 +477,13 @@ def process_template(
         _process_list_paragraphs(
             doc.paragraphs, list_replacements,
             bullet_num_id, multilevel_num_id, bullet_style_id,
+            plain_list_keys,
         )
 
     _process_paragraphs(doc.paragraphs, replacements)
     _process_tables(
         doc.tables, replacements, list_replacements,
-        bullet_num_id, multilevel_num_id, bullet_style_id,
+        bullet_num_id, multilevel_num_id, bullet_style_id, plain_list_keys,
     )
 
     for section in doc.sections:
@@ -484,11 +497,13 @@ def process_template(
                     _process_list_paragraphs(
                         header_footer.paragraphs, list_replacements,
                         bullet_num_id, multilevel_num_id, bullet_style_id,
+                        plain_list_keys,
                     )
                 _process_paragraphs(header_footer.paragraphs, replacements)
                 _process_tables(
                     header_footer.tables, replacements, list_replacements,
                     bullet_num_id, multilevel_num_id, bullet_style_id,
+                    plain_list_keys,
                 )
 
     out = BytesIO()

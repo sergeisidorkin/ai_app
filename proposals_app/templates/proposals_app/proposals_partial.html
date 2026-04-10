@@ -58,6 +58,7 @@
         <col class="proposal-evaluation-date">
         <col class="proposal-term">
         <col class="proposal-preliminary-report-date">
+        <col class="proposal-final-report-weeks">
         <col class="proposal-final-report-date">
         <col class="proposal-report-languages">
         <col class="proposal-service-cost">
@@ -148,6 +149,7 @@
             <td data-col="evaluation-date">{{ proposal.evaluation_date|date:"d.m.Y" }}</td>
             <td data-col="term">{{ proposal.service_term_months|floatformat:"1" }}</td>
             <td data-col="preliminary-report-date">{{ proposal.preliminary_report_date|date:"d.m.Y" }}</td>
+            <td data-col="final-report-weeks">{{ proposal.final_report_term_weeks|floatformat:"1" }}</td>
             <td data-col="final-report-date">{{ proposal.final_report_date|date:"d.m.Y" }}</td>
             <td data-col="report-languages" class="text-nowrap">{{ proposal.report_languages }}</td>
             <td data-col="service-cost" class="text-end">{{ proposal.service_cost|format_money }}</td>
@@ -160,7 +162,7 @@
             <td data-col="final-report-term">{{ proposal.final_report_term_days }}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="38" class="text-muted">Пока нет данных.</td></tr>
+          <tr><td colspan="39" class="text-muted">Пока нет данных.</td></tr>
         {% endfor %}
       </tbody>
     </table>

@@ -701,12 +701,16 @@
             <hr class="my-0">
             <div class="list-group list-group-flush p-3 m-0" id="worktime-second-sidebar-list">
               <a href="#" class="list-group-item list-group-item-action active"
-                 data-worktime-section="manager-load">
-                Загрузка руководителей
+                 data-worktime-section="personal-timesheet">
+                Личный табель учета времени
               </a>
               <a href="#" class="list-group-item list-group-item-action"
                  data-worktime-section="timesheet">
-                Табель учета времени
+                Общий табель учета времени
+              </a>
+              <a href="#" class="list-group-item list-group-item-action"
+                 data-worktime-section="manager-load">
+                Загрузка руководителей
               </a>
             </div>
           </aside>
@@ -714,7 +718,7 @@
           <div class="flex-grow-1 ps-3 pe-0" style="min-width:0;">
             <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
               <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
-                <h5 class="mb-0 ps-3 fs-4 pt-2" id="worktime-section-title">Загрузка руководителей</h5>
+                <h5 class="mb-0 ps-3 fs-4 pt-2" id="worktime-section-title">Личный табель учета времени</h5>
                 <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
                    href="#notifications"
                    data-bs-toggle="tab"
@@ -727,11 +731,16 @@
             </div>
 
             <div class="ps-3">
-              <div id="worktime-content-manager-load" class="worktime-section-content">
-                {% include "worktime_app/manager_load_panel.html" %}
+              {% url 'worktime_partial' as worktime_partial_url %}
+              {% url 'personal_worktime_partial' as personal_worktime_partial_url %}
+              <div id="worktime-content-personal-timesheet" class="worktime-section-content">
+                {% include "worktime_app/panel.html" with partial_url=personal_worktime_partial_url load_event="worktime-personal-timesheet-load" %}
               </div>
               <div id="worktime-content-timesheet" class="worktime-section-content d-none">
-                {% include "worktime_app/panel.html" %}
+                {% include "worktime_app/panel.html" with partial_url=worktime_partial_url load_event="worktime-timesheet-load" %}
+              </div>
+              <div id="worktime-content-manager-load" class="worktime-section-content d-none">
+                {% include "worktime_app/manager_load_panel.html" %}
               </div>
             </div>
           </div>
@@ -1763,8 +1772,13 @@
         <script>
         (function () {
           var WORKTIME_TITLES = {
+            'timesheet': 'Общий табель учета времени',
+            'personal-timesheet': 'Личный табель учета времени',
             'manager-load': 'Загрузка руководителей',
-            'timesheet': 'Табель учета времени',
+          };
+          var WORKTIME_LOAD_EVENTS = {
+            'timesheet': 'worktime-timesheet-load',
+            'personal-timesheet': 'worktime-personal-timesheet-load',
           };
 
           var sidebar = document.getElementById('worktime-second-sidebar-list');
@@ -1777,11 +1791,24 @@
             if (link) link.classList.add('active');
           }
 
+          function requestWorktimeSectionLoadIfVisible(key) {
+            var worktimeTab = document.getElementById('worktime');
+            var section = document.getElementById('worktime-content-' + key);
+            var eventName = WORKTIME_LOAD_EVENTS[key];
+            if (!worktimeTab || !section || !eventName) return;
+            var worktimeVisible = worktimeTab.classList.contains('show') && worktimeTab.classList.contains('active');
+            var sectionVisible = !section.classList.contains('d-none');
+            if (worktimeVisible && sectionVisible) {
+              document.body.dispatchEvent(new Event(eventName));
+            }
+          }
+
           function switchWorktimeSection(key) {
             document.querySelectorAll('.worktime-section-content').forEach(function(el) { el.classList.add('d-none'); });
             var target = document.getElementById('worktime-content-' + key);
             if (target) target.classList.remove('d-none');
             if (titleEl) titleEl.textContent = WORKTIME_TITLES[key] || '';
+            requestWorktimeSectionLoadIfVisible(key);
           }
 
           if (sidebar) {
@@ -1801,6 +1828,13 @@
               activateSidebarLink(saved);
               switchWorktimeSection(saved);
             }
+            document.querySelectorAll('[href="#worktime"][data-bs-toggle="tab"]').forEach(function (link) {
+              link.addEventListener('shown.bs.tab', function () {
+                var activeLink = sidebar && sidebar.querySelector('.list-group-item.active');
+                requestWorktimeSectionLoadIfVisible(activeLink ? activeLink.dataset.worktimeSection : 'personal-timesheet');
+              });
+            });
+            requestWorktimeSectionLoadIfVisible('personal-timesheet');
           });
         })();
         </script>

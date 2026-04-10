@@ -119,6 +119,21 @@ def _proposal_service_type_short(proposal) -> str:
     return full
 
 
+def _proposal_actives_name_list(proposal) -> list[str]:
+    if not getattr(proposal, "pk", None):
+        return []
+    from proposals_app.models import ProposalAsset
+
+    seen = set()
+    result = []
+    for asset in ProposalAsset.objects.filter(proposal_id=proposal.pk).order_by("position", "id").only("short_name"):
+        name = str(asset.short_name or "").strip()
+        if name and name not in seen:
+            seen.add(name)
+            result.append(name)
+    return result
+
+
 def _proposal_asset_owner_identifier(proposal) -> str:
     return proposal.asset_owner_identifier or ""
 
@@ -214,6 +229,10 @@ def _proposal_preliminary_report_date(proposal) -> str:
     return _format_date(proposal.preliminary_report_date)
 
 
+def _proposal_final_report_term_weeks(proposal) -> str:
+    return _format_decimal(proposal.final_report_term_weeks, precision=1)
+
+
 def _proposal_final_report_date(proposal) -> str:
     return _format_date(proposal.final_report_date)
 
@@ -298,6 +317,7 @@ FIELD_MAP = {
     ("proposals", "registry", "evaluation_date"): _proposal_evaluation_date,
     ("proposals", "registry", "term"): _proposal_service_term_months,
     ("proposals", "registry", "preliminary_report_date"): _proposal_preliminary_report_date,
+    ("proposals", "registry", "final_report_term_weeks"): _proposal_final_report_term_weeks,
     ("proposals", "registry", "final_report_date"): _proposal_final_report_date,
     ("proposals", "registry", "report_languages"): _proposal_report_languages,
     ("proposals", "registry", "service_cost"): _proposal_service_cost,
@@ -323,6 +343,10 @@ COMPUTED_MAP = {
     "{{country_full_name}}": _proposal_country_full_name,
 }
 
+COMPUTED_LIST_MAP = {
+    "[[actives_name]]": _proposal_actives_name_list,
+}
+
 VARIABLE_ALIASES = {
     "{{client_country_full_name}}": ["{{country_full_name}}"],
     "{{country_full_name}}": ["{{client_country_full_name}}"],
@@ -331,8 +355,13 @@ VARIABLE_ALIASES = {
 
 def resolve_variables(proposal, variables) -> tuple[dict[str, str], dict]:
     replacements: dict[str, str] = {}
+    list_replacements: dict[str, list[str]] = {}
     for variable in variables:
         if getattr(variable, "is_computed", False):
+            computed_list_resolver = COMPUTED_LIST_MAP.get(variable.key)
+            if computed_list_resolver:
+                list_replacements[variable.key] = list(computed_list_resolver(proposal) or [])
+                continue
             computed_resolver = COMPUTED_MAP.get(variable.key)
             if computed_resolver:
                 value = str(computed_resolver(proposal) or "")
@@ -352,4 +381,4 @@ def resolve_variables(proposal, variables) -> tuple[dict[str, str], dict]:
         replacements[variable.key] = value
         for alias in VARIABLE_ALIASES.get(variable.key, []):
             replacements[alias] = value
-    return replacements, {}
+    return replacements, list_replacements
