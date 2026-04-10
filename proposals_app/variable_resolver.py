@@ -88,6 +88,28 @@ def _proposal_asset_owner_country_full_name(proposal) -> str:
     return proposal.asset_owner_country.full_name or proposal.asset_owner_country.short_name or ""
 
 
+def _proposal_client_owner_name(proposal) -> str:
+    customer = str(getattr(proposal, "customer", "") or "").strip()
+    if getattr(proposal, "asset_owner_matches_customer", True):
+        return customer
+    asset_owner = str(getattr(proposal, "asset_owner", "") or "").strip()
+    if customer and asset_owner:
+        return f"{customer} / {asset_owner}"
+    return customer or asset_owner
+
+
+def _proposal_service_type_short(proposal) -> str:
+    full = str(getattr(proposal, "proposal_project_name", "") or "").strip()
+    suffix = str(getattr(proposal, "asset_owner", "") or "").strip()
+    if not full:
+        return ""
+    if suffix and full == suffix:
+        return ""
+    if suffix and full.endswith(" " + suffix):
+        return full[: len(full) - len(suffix)].strip()
+    return full
+
+
 def _proposal_asset_owner_identifier(proposal) -> str:
     return proposal.asset_owner_identifier or ""
 
@@ -263,6 +285,8 @@ COMPUTED_MAP = {
     "{{day}}": _computed_day,
     "{{month}}": _computed_month,
     "{{client_country_full_name}}": _proposal_country_full_name,
+    "{{client_owner_name}}": _proposal_client_owner_name,
+    "{{service_type_short}}": _proposal_service_type_short,
     "{{owner_country_full_name}}": _proposal_asset_owner_country_full_name,
     "{{country_full_name}}": _proposal_country_full_name,
 }
