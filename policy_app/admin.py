@@ -150,16 +150,34 @@ class SectionStructureAdmin(TimestampedAdmin):
 
 @admin.register(ServiceGoalReport)
 class ServiceGoalReportAdmin(TimestampedAdmin):
-    list_display = ("position", "product", "service_goal", "report_title", "updated_at")
+    list_display = (
+        "position",
+        "product",
+        "service_goal",
+        "service_goal_genitive",
+        "report_title",
+        "updated_at",
+    )
     list_editable = ("position",)
     list_display_links = ("product",)
     list_select_related = ("product",)
     list_filter = ("product",)
-    search_fields = ("product__short_name", "service_goal", "report_title")
+    search_fields = (
+        "product__short_name",
+        "service_goal",
+        "service_goal_genitive",
+        "report_title",
+    )
     ordering = ("product__short_name", "position", "id")
     fieldsets = (
         (None, {
-            "fields": ("position", "product", "service_goal", "report_title"),
+            "fields": (
+                "position",
+                "product",
+                "service_goal",
+                "service_goal_genitive",
+                "report_title",
+            ),
         }),
         ("Служебные поля", {
             "fields": ("created_at", "updated_at"),

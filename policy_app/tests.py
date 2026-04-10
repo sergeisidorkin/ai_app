@@ -190,6 +190,7 @@ class ServiceGoalReportViewsTests(TestCase):
         ServiceGoalReport.objects.create(
             product=self.product,
             service_goal="Подготовка заключения",
+            service_goal_genitive="Подготовки заключения",
             report_title="Итоговый отчет",
             position=1,
         )
@@ -199,6 +200,7 @@ class ServiceGoalReportViewsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Цели услуг и названия отчетов")
         self.assertContains(response, "Подготовка заключения")
+        self.assertContains(response, "Подготовки заключения")
         self.assertContains(response, 'id="service-goal-reports-actions"', html=False)
 
     def test_create_service_goal_report_saves_row(self):
@@ -207,6 +209,7 @@ class ServiceGoalReportViewsTests(TestCase):
             {
                 "product": self.product.pk,
                 "service_goal": "Подготовка документов",
+                "service_goal_genitive": "Подготовки документов",
                 "report_title": "Отчет по документам",
             },
         )
@@ -215,6 +218,7 @@ class ServiceGoalReportViewsTests(TestCase):
         item = ServiceGoalReport.objects.get()
         self.assertEqual(item.product, self.product)
         self.assertEqual(item.service_goal, "Подготовка документов")
+        self.assertEqual(item.service_goal_genitive, "Подготовки документов")
         self.assertEqual(item.report_title, "Отчет по документам")
         self.assertEqual(item.position, 1)
 
@@ -230,12 +234,14 @@ class ServiceGoalReportViewsTests(TestCase):
         first = ServiceGoalReport.objects.create(
             product=self.product,
             service_goal="Первая цель",
+            service_goal_genitive="Первой цели",
             report_title="Первый отчет",
             position=1,
         )
         second = ServiceGoalReport.objects.create(
             product=other_product,
             service_goal="Вторая цель",
+            service_goal_genitive="Второй цели",
             report_title="Второй отчет",
             position=2,
         )
@@ -252,12 +258,14 @@ class ServiceGoalReportViewsTests(TestCase):
         first = ServiceGoalReport.objects.create(
             product=self.product,
             service_goal="Первая цель",
+            service_goal_genitive="Первой цели",
             report_title="Первый отчет",
             position=1,
         )
         second = ServiceGoalReport.objects.create(
             product=self.product,
             service_goal="Вторая цель",
+            service_goal_genitive="Второй цели",
             report_title="Второй отчет",
             position=2,
         )

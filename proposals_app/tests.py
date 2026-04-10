@@ -118,6 +118,13 @@ class ProposalDocumentGenerationTests(TestCase):
             registration_number="1174910001683",
             proposal_workspace_disk_path="/Corporate Root/ТКП/2026/33330RU DD Приморское",
         )
+        ServiceGoalReport.objects.create(
+            product=self.product,
+            service_goal="Проведение due diligence",
+            service_goal_genitive="Проведения due diligence",
+            report_title='Due Diligence ООО "Приморское"',
+            position=1,
+        )
 
         template_doc = Document()
         template_doc.add_paragraph("Заказчик: {{name}}")
@@ -125,6 +132,7 @@ class ProposalDocumentGenerationTests(TestCase):
         template_doc.add_paragraph("Страна legacy: {{country_full_name}}")
         template_doc.add_paragraph("Титул: {{client_owner_name}}")
         template_doc.add_paragraph("Краткое название: {{service_type_short}}")
+        template_doc.add_paragraph("Цель в родительном: {{service_goal_genitive}}")
         buffer = BytesIO()
         template_doc.save(buffer)
         buffer.seek(0)
@@ -168,6 +176,12 @@ class ProposalDocumentGenerationTests(TestCase):
             is_computed=True,
             position=4,
         )
+        ProposalVariable.objects.create(
+            key="{{service_goal_genitive}}",
+            description="Цель оказания услуг в родительном падеже",
+            is_computed=True,
+            position=5,
+        )
 
     @patch("ai_app.proposals_app.document_generation._get_cloud_upload_user")
     @patch("ai_app.proposals_app.document_generation.cloud_upload_file", return_value=True)
@@ -208,6 +222,7 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertIn("Страна legacy: Российская Федерация", full_text)
         self.assertIn('Титул: ООО "Приморское"', full_text)
         self.assertIn("Краткое название: Due Diligence", full_text)
+        self.assertIn("Цель в родительном: Проведения due diligence", full_text)
 
     @patch("ai_app.proposals_app.document_generation._get_cloud_upload_user")
     @patch("ai_app.proposals_app.document_generation.cloud_upload_file", return_value=True)
@@ -1349,6 +1364,14 @@ class ProposalRegistrationFormTests(TestCase):
             _proposal_variable_column_choices("proposals", "registry"),
         )
         self.assertIn(
+            ("registration_region", "Заказчик: регион"),
+            _proposal_variable_column_choices("proposals", "registry"),
+        )
+        self.assertIn(
+            ("asset_owner_region", "Владелец: регион"),
+            _proposal_variable_column_choices("proposals", "registry"),
+        )
+        self.assertIn(
             ("country_full_name", "Наименование страны (полное)"),
             _proposal_variable_column_choices("proposals", "registry"),
         )
@@ -1582,6 +1605,8 @@ class ProposalRegistrationFormTests(TestCase):
             asset_owner_matches_customer=True,
             country=country,
             asset_owner_country=country,
+            registration_region="Тюменская область",
+            asset_owner_region="Тюменская область",
             purpose="Проверка актива",
             service_composition="Этап 1\nЭтап 2",
             evaluation_date="2026-04-01",
@@ -1597,6 +1622,13 @@ class ProposalRegistrationFormTests(TestCase):
             preliminary_report_term_days=10,
             final_report_percent="30",
             final_report_term_days=15,
+        )
+        ServiceGoalReport.objects.create(
+            product=product,
+            service_goal="Проверка актива",
+            service_goal_genitive="Подготовки коммерческого предложения",
+            report_title="ТКП по проекту DD",
+            position=1,
         )
         variables = [
             ProposalVariable(
@@ -1643,6 +1675,18 @@ class ProposalRegistrationFormTests(TestCase):
                 source_column="country",
             ),
             ProposalVariable(
+                key="{{registration_region}}",
+                source_section="proposals",
+                source_table="registry",
+                source_column="registration_region",
+            ),
+            ProposalVariable(
+                key="{{asset_owner_region}}",
+                source_section="proposals",
+                source_table="registry",
+                source_column="asset_owner_region",
+            ),
+            ProposalVariable(
                 key="{{client_country_full_name}}",
                 is_computed=True,
             ),
@@ -1652,6 +1696,10 @@ class ProposalRegistrationFormTests(TestCase):
             ),
             ProposalVariable(
                 key="{{service_type_short}}",
+                is_computed=True,
+            ),
+            ProposalVariable(
+                key="{{service_goal_genitive}}",
                 is_computed=True,
             ),
             ProposalVariable(
@@ -1674,10 +1722,13 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(replacements["{{advance_percent}}"], "50")
         self.assertEqual(replacements["{{currency}}"], "RUB")
         self.assertEqual(replacements["{{country}}"], "Россия")
+        self.assertEqual(replacements["{{registration_region}}"], "Тюменская область")
+        self.assertEqual(replacements["{{asset_owner_region}}"], "Тюменская область")
         self.assertEqual(replacements["{{client_country_full_name}}"], "Российская Федерация")
         self.assertEqual(replacements["{{country_full_name}}"], "Российская Федерация")
         self.assertEqual(replacements["{{client_owner_name}}"], 'АО «Полиметалл УК»')
         self.assertEqual(replacements["{{service_type_short}}"], "Due Diligence")
+        self.assertEqual(replacements["{{service_goal_genitive}}"], "Подготовки коммерческого предложения")
         self.assertEqual(replacements["{{owner_country_full_name}}"], "Российская Федерация")
         self.assertEqual(replacements["{{year}}"], "2026")
         self.assertEqual(replacements["{{day}}"], "09")
@@ -2515,12 +2566,14 @@ class ProposalFormContextTests(TestCase):
         ServiceGoalReport.objects.create(
             product=product,
             service_goal="Подготовка коммерческого предложения",
+            service_goal_genitive="Подготовки коммерческого предложения",
             report_title="ТКП по проекту COM",
             position=2,
         )
         ServiceGoalReport.objects.create(
             product=product,
             service_goal="Не должно попасть в автозаполнение",
+            service_goal_genitive="Не должно попасть в автозаполнение в родительном падеже",
             report_title="Не использовать",
             position=3,
         )
@@ -2533,6 +2586,7 @@ class ProposalFormContextTests(TestCase):
             {
                 "report_title": "ТКП по проекту COM",
                 "service_goal": "Подготовка коммерческого предложения",
+                "service_goal_genitive": "Подготовки коммерческого предложения",
             },
         )
 

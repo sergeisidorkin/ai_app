@@ -1,0 +1,86 @@
+<div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
+  <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
+    <i class="bi bi-table"></i> Количество часов работы
+  </h5>
+</div>
+
+<div style="overflow-x:auto">
+  <table class="table table-sm align-middle worktime-table mb-0">
+    <colgroup>
+      <col style="width:36px">
+      <col>
+      <col>
+      <col>
+      <col style="width:180px">
+    </colgroup>
+    <thead>
+      <tr>
+        <th>
+          {% if request.user.is_authenticated and request.user.is_staff %}
+            <div class="form-check m-0">
+              <input class="form-check-input"
+                     type="checkbox"
+                     id="worktime-master"
+                     data-target-name="worktime-row-select"
+                     data-actions-id="worktime-actions"
+                     aria-label="Выделить все строки табеля">
+            </div>
+          {% endif %}
+        </th>
+        <th class="text-nowrap">Проект</th>
+        <th class="text-nowrap">Тип</th>
+        <th class="text-nowrap">Название</th>
+        <th class="text-nowrap">Количество часов</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in items %}
+        <tr data-edit-url="{% url 'worktime_edit' p.pk %}">
+          <td class="text-nowrap">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+              <div class="form-check m-0">
+                <input class="form-check-input"
+                       type="checkbox"
+                       id="worktime-sel-{{ p.id }}"
+                       name="worktime-row-select"
+                       value="{{ p.id }}"
+                       aria-label="Выделить строку табеля">
+              </div>
+            {% endif %}
+          </td>
+          <td class="text-nowrap">{% if p.registration %}{{ p.registration.short_uid }}{% endif %}</td>
+          <td class="text-nowrap">
+            {% if p.registration.type %}{{ p.registration.type.short_name|default:p.registration.type }}{% endif %}
+          </td>
+          <td class="text-truncate" style="max-width:200px;">{{ p.registration.name }}</td>
+          <td class="text-nowrap">{% if p.work_hours != None %}{{ p.work_hours }}{% else %}—{% endif %}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="5" class="text-muted">Пока нет данных.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if request.user.is_authenticated and request.user.is_staff %}
+  <div class="d-flex align-items-stretch gap-2 products-actions-row mt-2">
+    <button
+      type="button"
+      id="worktime-edit-btn"
+      class="btn btn-primary btn-sm d-flex align-items-center"
+      disabled>
+      <i class="bi bi-pencil-square me-2"></i>Редактировать
+    </button>
+    <div id="worktime-actions" class="d-none">
+      <div class="btn-group">
+        <button type="button"
+                data-panel-action="edit"
+                class="btn btn-outline-primary btn-sm h-100 py-0"
+                title="Изменить"
+                aria-label="Изменить">
+          <i class="bi bi-pencil-square"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+{% endif %}

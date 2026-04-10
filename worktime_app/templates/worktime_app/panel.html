@@ -1,0 +1,12 @@
+<div class="card shadow-sm mt-3">
+  <div class="card-body">
+    <div id="worktime-pane"
+         hx-get="{% url 'worktime_partial' %}"
+         hx-trigger="load, worktime-updated from:body"
+         hx-target="#worktime-pane"
+         hx-swap="innerHTML"
+         hx-indicator="#worktime-loading">
+      <div id="worktime-loading" class="text-muted htmx-indicator">Загрузка табеля учета времени…</div>
+    </div>
+  </div>
+</div>

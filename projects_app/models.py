@@ -771,6 +771,7 @@ class Performer(models.Model):
     actual_costs = models.DecimalField("Фактические затраты", max_digits=12, decimal_places=2, null=True, blank=True)
     estimated_costs = models.DecimalField("Расчетные затраты", max_digits=12, decimal_places=2, null=True, blank=True)
     agreed_amount = models.DecimalField("Согласованная сумма", max_digits=12, decimal_places=2, null=True, blank=True)
+    work_hours = models.PositiveIntegerField("Количество часов работы", null=True, blank=True)
     prepayment = models.DecimalField("Аванс", max_digits=12, decimal_places=2, null=True, blank=True)
     final_payment = models.DecimalField("Окон. платеж", max_digits=12, decimal_places=2, null=True, blank=True)
 
