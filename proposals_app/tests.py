@@ -110,7 +110,10 @@ class ProposalDocumentGenerationTests(TestCase):
             name="Приморское",
             year=2026,
             customer='ООО "Приморское"',
+            asset_owner='ООО "Приморское"',
+            asset_owner_matches_customer=True,
             country=self.country,
+            proposal_project_name='Due Diligence ООО "Приморское"',
             identifier="ОГРН",
             registration_number="1174910001683",
             proposal_workspace_disk_path="/Corporate Root/ТКП/2026/33330RU DD Приморское",
@@ -120,6 +123,8 @@ class ProposalDocumentGenerationTests(TestCase):
         template_doc.add_paragraph("Заказчик: {{name}}")
         template_doc.add_paragraph("Страна: {{client_country_full_name}}")
         template_doc.add_paragraph("Страна legacy: {{country_full_name}}")
+        template_doc.add_paragraph("Титул: {{client_owner_name}}")
+        template_doc.add_paragraph("Краткое название: {{service_type_short}}")
         buffer = BytesIO()
         template_doc.save(buffer)
         buffer.seek(0)
@@ -150,6 +155,18 @@ class ProposalDocumentGenerationTests(TestCase):
             description="Наименование страны Заказчика (полное)",
             is_computed=True,
             position=2,
+        )
+        ProposalVariable.objects.create(
+            key="{{client_owner_name}}",
+            description="Наименование заказчика и владельца активов на титуле",
+            is_computed=True,
+            position=3,
+        )
+        ProposalVariable.objects.create(
+            key="{{service_type_short}}",
+            description="Наименование ТКП (проекта) (краткое)",
+            is_computed=True,
+            position=4,
         )
 
     @patch("ai_app.proposals_app.document_generation._get_cloud_upload_user")
@@ -189,6 +206,8 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertIn('Заказчик: ООО "Приморское"', full_text)
         self.assertIn("Страна: Российская Федерация", full_text)
         self.assertIn("Страна legacy: Российская Федерация", full_text)
+        self.assertIn('Титул: ООО "Приморское"', full_text)
+        self.assertIn("Краткое название: Due Diligence", full_text)
 
     @patch("ai_app.proposals_app.document_generation._get_cloud_upload_user")
     @patch("ai_app.proposals_app.document_generation.cloud_upload_file", return_value=True)
@@ -1557,7 +1576,10 @@ class ProposalRegistrationFormTests(TestCase):
             type=product,
             name="Приморское",
             status=ProposalRegistration.ProposalStatus.PRELIMINARY,
-            proposal_project_name="Проект Приморское",
+            proposal_project_name="Due Diligence АО «Полиметалл УК»",
+            customer='АО «Полиметалл УК»',
+            asset_owner='АО «Полиметалл УК»',
+            asset_owner_matches_customer=True,
             country=country,
             asset_owner_country=country,
             purpose="Проверка актива",
@@ -1625,6 +1647,14 @@ class ProposalRegistrationFormTests(TestCase):
                 is_computed=True,
             ),
             ProposalVariable(
+                key="{{client_owner_name}}",
+                is_computed=True,
+            ),
+            ProposalVariable(
+                key="{{service_type_short}}",
+                is_computed=True,
+            ),
+            ProposalVariable(
                 key="{{owner_country_full_name}}",
                 is_computed=True,
             ),
@@ -1636,7 +1666,7 @@ class ProposalRegistrationFormTests(TestCase):
         with patch("proposals_app.variable_resolver._today", return_value=date(2026, 4, 9)):
             replacements, _ = resolve_variables(proposal, variables)
 
-        self.assertEqual(replacements["{{proposal_project_name}}"], "Проект Приморское")
+        self.assertEqual(replacements["{{proposal_project_name}}"], "Due Diligence АО «Полиметалл УК»")
         self.assertEqual(replacements["{{purpose}}"], "Проверка актива")
         self.assertEqual(replacements["{{service_cost}}"], "1\u00a0250\u00a0000,50")
         self.assertEqual(replacements["{{evaluation_date}}"], "01.04.2026")
@@ -1646,6 +1676,8 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(replacements["{{country}}"], "Россия")
         self.assertEqual(replacements["{{client_country_full_name}}"], "Российская Федерация")
         self.assertEqual(replacements["{{country_full_name}}"], "Российская Федерация")
+        self.assertEqual(replacements["{{client_owner_name}}"], 'АО «Полиметалл УК»')
+        self.assertEqual(replacements["{{service_type_short}}"], "Due Diligence")
         self.assertEqual(replacements["{{owner_country_full_name}}"], "Российская Федерация")
         self.assertEqual(replacements["{{year}}"], "2026")
         self.assertEqual(replacements["{{day}}"], "09")
@@ -1655,6 +1687,25 @@ class ProposalRegistrationFormTests(TestCase):
             ProposalVariable(key="{{year}}", is_computed=True).binding_display,
             "Расчётное поле",
         )
+
+    def test_resolve_client_owner_name_depends_on_asset_owner_checkbox(self):
+        proposal = ProposalRegistration(customer='АО «Полиметалл УК»')
+        variables = [ProposalVariable(key="{{client_owner_name}}", is_computed=True)]
+
+        replacements, _ = resolve_variables(proposal, variables)
+        self.assertEqual(replacements["{{client_owner_name}}"], 'АО «Полиметалл УК»')
+
+        proposal.asset_owner_matches_customer = False
+        proposal.asset_owner = 'ООО «КАП»'
+        replacements, _ = resolve_variables(proposal, variables)
+        self.assertEqual(replacements["{{client_owner_name}}"], 'АО «Полиметалл УК» / ООО «КАП»')
+
+        proposal.proposal_project_name = 'Due Diligence ООО «КАП»'
+        replacements, _ = resolve_variables(
+            proposal,
+            [ProposalVariable(key="{{service_type_short}}", is_computed=True)],
+        )
+        self.assertEqual(replacements["{{service_type_short}}"], "Due Diligence")
 
     def test_form_saves_assets_from_payload(self):
         country = OKSMCountry.objects.create(
