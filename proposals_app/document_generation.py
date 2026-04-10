@@ -259,7 +259,8 @@ def convert_docx_source_to_pdf(*, source_url: str, source_name: str = "proposal.
     headers = {"Accept": "application/json"}
     jwt_secret = _onlyoffice_jwt_secret()
     if jwt_secret:
-        request_payload = {"token": jwt.encode(payload, jwt_secret, algorithm="HS256")}
+        request_payload = dict(payload)
+        request_payload["token"] = jwt.encode(payload, jwt_secret, algorithm="HS256")
     else:
         request_payload = payload
 
