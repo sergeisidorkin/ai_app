@@ -34,6 +34,7 @@ from policy_app.models import (
     TypicalSection,
     TypicalSectionSpecialty,
     TypicalServiceComposition,
+    TypicalServiceTerm,
 )
 from projects_app.models import ProjectRegistration
 from users_app.models import Employee
@@ -133,6 +134,8 @@ class ProposalDocumentGenerationTests(TestCase):
         template_doc.add_paragraph("Титул: {{client_owner_name}}")
         template_doc.add_paragraph("Краткое название: {{service_type_short}}")
         template_doc.add_paragraph("Цель в родительном: {{service_goal_genitive}}")
+        template_doc.add_paragraph("Активы:")
+        template_doc.add_paragraph("[[actives_name]]")
         buffer = BytesIO()
         template_doc.save(buffer)
         buffer.seek(0)
@@ -182,6 +185,27 @@ class ProposalDocumentGenerationTests(TestCase):
             is_computed=True,
             position=5,
         )
+        ProposalVariable.objects.create(
+            key="[[actives_name]]",
+            description="Список наименований активов",
+            is_computed=True,
+            position=6,
+        )
+        ProposalAsset.objects.create(
+            proposal=self.proposal,
+            short_name="Месторождение Приморское",
+            position=1,
+        )
+        ProposalAsset.objects.create(
+            proposal=self.proposal,
+            short_name="Фабрика Приморская",
+            position=2,
+        )
+        ProposalAsset.objects.create(
+            proposal=self.proposal,
+            short_name="Месторождение Приморское",
+            position=3,
+        )
 
     @patch("ai_app.proposals_app.document_generation._get_cloud_upload_user")
     @patch("ai_app.proposals_app.document_generation.cloud_upload_file", return_value=True)
@@ -223,6 +247,17 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertIn('Титул: ООО "Приморское"', full_text)
         self.assertIn("Краткое название: Due Diligence", full_text)
         self.assertIn("Цель в родительном: Проведения due diligence", full_text)
+        self.assertIn("Месторождение Приморское", full_text)
+        self.assertIn("Фабрика Приморская", full_text)
+        asset_paragraphs = [
+            paragraph
+            for paragraph in generated_doc.paragraphs
+            if paragraph.text in {"Месторождение Приморское", "Фабрика Приморская"}
+        ]
+        self.assertEqual(len(asset_paragraphs), 2)
+        for paragraph in asset_paragraphs:
+            self.assertNotIn("w:numPr", paragraph._element.xml)
+            self.assertNotIn("w:pStyle", paragraph._element.xml)
 
     @patch("ai_app.proposals_app.document_generation._get_cloud_upload_user")
     @patch("ai_app.proposals_app.document_generation.cloud_upload_file", return_value=True)
@@ -1302,6 +1337,23 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(form.fields["advance_percent"].widget.attrs["step"], "1")
         self.assertEqual(form.fields["preliminary_report_percent"].widget.attrs["step"], "1")
 
+    def test_form_includes_final_report_term_weeks_decimal_field(self):
+        form = ProposalRegistrationForm()
+
+        self.assertEqual(form.fields["service_term_months"].label, "Срок подготовки Предварительного отчёта, мес.")
+        self.assertEqual(form.fields["preliminary_report_date"].label, "Дата Предварительного отчёта")
+        self.assertEqual(form.fields["final_report_date"].label, "Дата Итогового отчёта")
+        self.assertEqual(form.fields["final_report_term_weeks"].label, "Срок подготовки Итогового отчёта, нед.")
+        self.assertEqual(form.fields["final_report_term_weeks"].widget.attrs["step"], "0.1")
+
+    def test_form_accepts_comma_in_final_report_term_weeks(self):
+        form = ProposalRegistrationForm(
+            data=self._base_form_payload(final_report_term_weeks="2,5")
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.cleaned_data["final_report_term_weeks"], Decimal("2.5"))
+
     def test_invalid_bound_percent_does_not_raise_during_init(self):
         form = ProposalRegistrationForm(
             data={
@@ -1612,6 +1664,7 @@ class ProposalRegistrationFormTests(TestCase):
             evaluation_date="2026-04-01",
             service_term_months="4.5",
             preliminary_report_date="2026-04-15",
+            final_report_term_weeks="2.0",
             final_report_date="2026-05-20",
             report_languages="RU, EN",
             service_cost="1250000.50",
@@ -1649,6 +1702,12 @@ class ProposalRegistrationFormTests(TestCase):
                 source_section="proposals",
                 source_table="registry",
                 source_column="evaluation_date",
+            ),
+            ProposalVariable(
+                key="{{final_report_term_weeks}}",
+                source_section="proposals",
+                source_table="registry",
+                source_column="final_report_term_weeks",
             ),
             ProposalVariable(
                 key="{{status}}",
@@ -1703,6 +1762,10 @@ class ProposalRegistrationFormTests(TestCase):
                 is_computed=True,
             ),
             ProposalVariable(
+                key="[[actives_name]]",
+                is_computed=True,
+            ),
+            ProposalVariable(
                 key="{{owner_country_full_name}}",
                 is_computed=True,
             ),
@@ -1712,12 +1775,13 @@ class ProposalRegistrationFormTests(TestCase):
         ]
 
         with patch("proposals_app.variable_resolver._today", return_value=date(2026, 4, 9)):
-            replacements, _ = resolve_variables(proposal, variables)
+            replacements, lists = resolve_variables(proposal, variables)
 
         self.assertEqual(replacements["{{proposal_project_name}}"], "Due Diligence АО «Полиметалл УК»")
         self.assertEqual(replacements["{{purpose}}"], "Проверка актива")
         self.assertEqual(replacements["{{service_cost}}"], "1\u00a0250\u00a0000,50")
         self.assertEqual(replacements["{{evaluation_date}}"], "01.04.2026")
+        self.assertEqual(replacements["{{final_report_term_weeks}}"], "2,0")
         self.assertEqual(replacements["{{status}}"], "Предварительное")
         self.assertEqual(replacements["{{advance_percent}}"], "50")
         self.assertEqual(replacements["{{currency}}"], "RUB")
@@ -1733,11 +1797,47 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(replacements["{{year}}"], "2026")
         self.assertEqual(replacements["{{day}}"], "09")
         self.assertEqual(replacements["{{month}}"], "апреля")
+        self.assertEqual(lists["[[actives_name]]"], [])
 
         self.assertEqual(
             ProposalVariable(key="{{year}}", is_computed=True).binding_display,
             "Расчётное поле",
         )
+
+    def test_resolve_actives_name_list_uses_proposal_assets_short_names(self):
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            service_type="service",
+            position=1,
+        )
+        proposal = ProposalRegistration.objects.create(
+            number=1111,
+            group_member=group_member,
+            type=product,
+            name="Активы",
+            year=2026,
+            customer='ООО "Заказчик"',
+        )
+        ProposalAsset.objects.create(proposal=proposal, short_name="Актив 1", position=1)
+        ProposalAsset.objects.create(proposal=proposal, short_name="Актив 2", position=2)
+        ProposalAsset.objects.create(proposal=proposal, short_name="Актив 1", position=3)
+
+        replacements, lists = resolve_variables(
+            proposal,
+            [ProposalVariable(key="[[actives_name]]", is_computed=True)],
+        )
+
+        self.assertEqual(replacements, {})
+        self.assertEqual(lists["[[actives_name]]"], ["Актив 1", "Актив 2"])
 
     def test_resolve_client_owner_name_depends_on_asset_owner_checkbox(self):
         proposal = ProposalRegistration(customer='АО «Полиметалл УК»')
@@ -2628,6 +2728,39 @@ class ProposalFormContextTests(TestCase):
                 }
             ],
         )
+
+    def test_typical_service_terms_json_exposes_first_product_default(self):
+        product = Product.objects.create(
+            short_name="TERM",
+            name_en="Terms",
+            name_ru="Сроки",
+            service_type="service",
+            position=5,
+        )
+        TypicalServiceTerm.objects.create(
+            product=product,
+            preliminary_report_months=Decimal("1.5"),
+            final_report_weeks=2,
+            position=2,
+        )
+        TypicalServiceTerm.objects.create(
+            product=product,
+            preliminary_report_months=Decimal("3.0"),
+            final_report_weeks=4,
+            position=3,
+        )
+
+        response = self.client.get(reverse("proposal_form_create"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context["typical_service_terms_json"][str(product.pk)],
+            {
+                "preliminary_report_months": "1.5",
+                "final_report_weeks": "2.0",
+            },
+        )
+        self.assertContains(response, 'id="proposal-typical-service-terms-data"', html=False)
 
     def test_proposal_form_renders_composite_project_name_inputs(self):
         with patch("proposals_app.forms.get_cbr_eur_rate_for_today", return_value=Decimal("95.1111")):

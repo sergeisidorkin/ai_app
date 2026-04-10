@@ -18,6 +18,7 @@ from .models import (
     TypicalSection,
     TypicalSectionSpecialty,
     TypicalServiceComposition,
+    TypicalServiceTerm,
 )
 from users_app.models import Employee
 
@@ -197,6 +198,36 @@ class TypicalServiceCompositionAdmin(TimestampedAdmin):
     fieldsets = (
         (None, {
             "fields": ("position", "product", "section", "service_composition"),
+        }),
+        ("Служебные поля", {
+            "fields": ("created_at", "updated_at"),
+        }),
+    )
+
+
+@admin.register(TypicalServiceTerm)
+class TypicalServiceTermAdmin(TimestampedAdmin):
+    list_display = (
+        "position",
+        "product",
+        "preliminary_report_months",
+        "final_report_weeks",
+        "updated_at",
+    )
+    list_editable = ("position",)
+    list_display_links = ("product",)
+    list_select_related = ("product",)
+    list_filter = ("product",)
+    search_fields = ("product__short_name",)
+    ordering = ("product__short_name", "position", "id")
+    fieldsets = (
+        (None, {
+            "fields": (
+                "position",
+                "product",
+                "preliminary_report_months",
+                "final_report_weeks",
+            ),
         }),
         ("Служебные поля", {
             "fields": ("created_at", "updated_at"),

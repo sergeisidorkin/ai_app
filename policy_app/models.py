@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.core.validators import MinValueValidator
 from django.db import models
 
 DEPARTMENT_HEAD_GROUP = "Руководитель направления"
@@ -207,6 +208,42 @@ class TypicalServiceComposition(models.Model):
 
     def __str__(self):
         return f"{self.product.short_name} / {self.section.name_ru}"
+
+
+class TypicalServiceTerm(models.Model):
+    product = models.ForeignKey(
+        Product,
+        verbose_name="Продукт",
+        on_delete=models.CASCADE,
+        related_name="typical_service_terms",
+    )
+    preliminary_report_months = models.DecimalField(
+        "Срок подготовки Предварительного отчёта, мес.",
+        max_digits=6,
+        decimal_places=1,
+        default=0,
+        validators=[MinValueValidator(0)],
+    )
+    final_report_weeks = models.PositiveIntegerField(
+        "Срок подготовки Итогового отчёта, нед.",
+        default=0,
+    )
+    position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Типовой срок оказания услуг"
+        verbose_name_plural = "Типовые сроки оказания услуг"
+        ordering = ["position", "id"]
+
+    def __str__(self):
+        return f"{self.product.short_name} / {self.preliminary_report_months} мес. / {self.final_report_weeks} нед."
+
+    @property
+    def preliminary_report_months_display(self):
+        return format(self.preliminary_report_months, ".1f").replace(".", ",")
 
 
 class ExpertiseDirection(models.Model):

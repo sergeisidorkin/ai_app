@@ -211,6 +211,13 @@ PROPOSAL_REGISTRY_UI_COLUMNS = [
         "variable_available": True,
     },
     {
+        "picker_value": "final-report-weeks",
+        "data_col": "final-report-weeks",
+        "source_column": "final_report_term_weeks",
+        "label": "Срок итог. отчёта",
+        "variable_available": True,
+    },
+    {
         "picker_value": "final-report-date",
         "data_col": "final-report-date",
         "source_column": "final_report_date",

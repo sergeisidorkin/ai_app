@@ -8,6 +8,9 @@
   <table class="table table-sm align-middle worktime-table mb-0">
     <colgroup>
       <col style="width:36px">
+      {% if show_executor_column %}
+        <col>
+      {% endif %}
       <col>
       <col>
       <col>
@@ -20,13 +23,16 @@
             <div class="form-check m-0">
               <input class="form-check-input"
                      type="checkbox"
-                     id="worktime-master"
+                     data-worktime-master
                      data-target-name="worktime-row-select"
                      data-actions-id="worktime-actions"
                      aria-label="Выделить все строки табеля">
             </div>
           {% endif %}
         </th>
+        {% if show_executor_column %}
+          <th class="text-nowrap">Сотрудник</th>
+        {% endif %}
         <th class="text-nowrap">Проект</th>
         <th class="text-nowrap">Тип</th>
         <th class="text-nowrap">Название</th>
@@ -48,6 +54,9 @@
               </div>
             {% endif %}
           </td>
+          {% if show_executor_column %}
+            <td class="text-nowrap">{{ p.executor|default:"—" }}</td>
+          {% endif %}
           <td class="text-nowrap">{% if p.registration %}{{ p.registration.short_uid }}{% endif %}</td>
           <td class="text-nowrap">
             {% if p.registration.type %}{{ p.registration.type.short_name|default:p.registration.type }}{% endif %}
@@ -56,7 +65,7 @@
           <td class="text-nowrap">{% if p.work_hours != None %}{{ p.work_hours }}{% else %}—{% endif %}</td>
         </tr>
       {% empty %}
-        <tr><td colspan="5" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="{% if show_executor_column %}6{% else %}5{% endif %}" class="text-muted">Пока нет данных.</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -66,12 +75,12 @@
   <div class="d-flex align-items-stretch gap-2 products-actions-row mt-2">
     <button
       type="button"
-      id="worktime-edit-btn"
+      data-worktime-edit-btn
       class="btn btn-primary btn-sm d-flex align-items-center"
       disabled>
       <i class="bi bi-pencil-square me-2"></i>Редактировать
     </button>
-    <div id="worktime-actions" class="d-none">
+    <div data-worktime-actions class="d-none">
       <div class="btn-group">
         <button type="button"
                 data-panel-action="edit"

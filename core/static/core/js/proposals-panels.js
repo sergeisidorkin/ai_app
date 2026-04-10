@@ -1786,6 +1786,17 @@
     }
   }
 
+  function getProposalTypicalServiceTermsMap(form) {
+    const root = form?.closest('#proposals-pane') || pane() || document;
+    const script = root.querySelector('#proposal-typical-service-terms-data');
+    if (!script) return {};
+    try {
+      return JSON.parse(script.textContent || '{}') || {};
+    } catch (error) {
+      return {};
+    }
+  }
+
   function getProposalTypeId(form) {
     return (form?.querySelector('select[name="type"]')?.value || '').trim();
   }
@@ -1827,6 +1838,16 @@
 
   function getProposalTypicalServiceCompositionText(form, section) {
     return String(getProposalTypicalServiceCompositionEntry(form, section)?.service_composition || '').trim();
+  }
+
+  function getProposalTypicalServiceTermEntry(form) {
+    const entriesMap = getProposalTypicalServiceTermsMap(form);
+    const entry = entriesMap[getProposalTypeId(form)] || null;
+    if (!entry || typeof entry !== 'object') return null;
+    return {
+      preliminary_report_months: String(entry.preliminary_report_months || '').trim(),
+      final_report_weeks: String(entry.final_report_weeks || '').trim(),
+    };
   }
 
   function normalizeProposalProjectNamePart(value) {
@@ -4961,6 +4982,23 @@
       }
     }
 
+    function syncProposalServiceTermMonths(force) {
+      const serviceTermInput = form.querySelector('[name="service_term_months"]');
+      const finalReportWeeksInput = form.querySelector('[name="final_report_term_weeks"]');
+      const entry = getProposalTypicalServiceTermEntry(form);
+      if (!entry) return;
+      if (force || !String(serviceTermInput?.value || '').trim()) {
+        if (serviceTermInput) {
+          serviceTermInput.value = entry.preliminary_report_months;
+        }
+      }
+      if (force || !String(finalReportWeeksInput?.value || '').trim()) {
+        if (finalReportWeeksInput) {
+          finalReportWeeksInput.value = entry.final_report_weeks;
+        }
+      }
+    }
+
     function initCompositeProposalField(options) {
       const hiddenInput = form.querySelector(options.hiddenSelector);
       const prefixInput = form.querySelector(options.prefixSelector);
@@ -5087,6 +5125,9 @@
     attachProposalLegalEntitiesToObjectsSync(form, legalEntitiesApi, objectsApi);
     form.querySelector('[name="advance_percent"]')?.addEventListener('input', syncFinalReportPercent);
     form.querySelector('[name="preliminary_report_percent"]')?.addEventListener('input', syncFinalReportPercent);
+    form.querySelector('select[name="type"]')?.addEventListener('change', function () {
+      syncProposalServiceTermMonths(true);
+    });
     form.querySelector('[name="asset_owner_matches_customer"]')?.addEventListener('change', function () {
       syncAssetOwnerFromCustomer('customer-sync');
     });
@@ -5113,6 +5154,7 @@
         assetsApi?.fillEmptyRowsFromDefaults();
       }
     });
+    syncProposalServiceTermMonths(false);
     ['asset_owner', 'asset_owner_registration_number', 'asset_owner_registration_date'].forEach(function (fieldName) {
       form.querySelector('[name="' + fieldName + '"]')?.addEventListener('change', function () {
         form.dispatchEvent(new CustomEvent('proposal-asset-owner-changed', { detail: { reason: 'owner-change' } }));

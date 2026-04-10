@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.contrib.auth import get_user_model
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
@@ -16,6 +18,7 @@ from policy_app.models import (
     Tariff,
     TypicalSection,
     TypicalServiceComposition,
+    TypicalServiceTerm,
 )
 from users_app.models import Employee
 
@@ -404,6 +407,124 @@ class TypicalServiceCompositionViewsTests(TestCase):
         client.force_login(non_staff)
 
         response = client.post(reverse("typical_service_composition_move_down", args=[first.pk]))
+
+        self.assertEqual(response.status_code, 302)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.position, 1)
+        self.assertEqual(second.position, 2)
+
+
+class TypicalServiceTermViewsTests(TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            username="policy-admin-terms",
+            password="secret123",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.product = Product.objects.create(
+            short_name="TERM",
+            name_en="Terms",
+            display_name="Terms",
+            name_ru="Сроки",
+            service_type="Консалтинг",
+            position=1,
+        )
+        self.other_product = Product.objects.create(
+            short_name="TERM2",
+            name_en="Terms 2",
+            display_name="Terms 2",
+            name_ru="Сроки 2",
+            service_type="Аудит",
+            position=2,
+        )
+
+    def test_policy_partial_renders_typical_service_terms_table(self):
+        TypicalServiceTerm.objects.create(
+            product=self.product,
+            preliminary_report_months=Decimal("1.5"),
+            final_report_weeks=3,
+            position=1,
+        )
+
+        response = self.client.get(reverse("policy_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Типовые сроки оказания услуг")
+        self.assertContains(response, "Срок подготовки Предварительного отчёта, мес.")
+        self.assertContains(response, "Срок подготовки Итогового отчёта, нед.")
+        self.assertContains(response, ">1,5<", html=False)
+        self.assertContains(response, ">3<", html=False)
+        self.assertContains(response, 'id="typical-service-terms-actions"', html=False)
+
+    def test_create_typical_service_term_saves_row(self):
+        response = self.client.post(
+            reverse("typical_service_term_form_create"),
+            {
+                "product": self.product.pk,
+                "preliminary_report_months": "2.5",
+                "final_report_weeks": "4",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        item = TypicalServiceTerm.objects.get()
+        self.assertEqual(item.product, self.product)
+        self.assertEqual(item.preliminary_report_months, Decimal("2.5"))
+        self.assertEqual(item.final_report_weeks, 4)
+        self.assertEqual(item.position, 1)
+
+    def test_create_typical_service_term_accepts_comma_decimal(self):
+        response = self.client.post(
+            reverse("typical_service_term_form_create"),
+            {
+                "product": self.product.pk,
+                "preliminary_report_months": "1,5",
+                "final_report_weeks": "2",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        item = TypicalServiceTerm.objects.get()
+        self.assertEqual(item.preliminary_report_months, Decimal("1.5"))
+
+    def test_edit_form_renders_comma_decimal_value(self):
+        item = TypicalServiceTerm.objects.create(
+            product=self.product,
+            preliminary_report_months=Decimal("1.5"),
+            final_report_weeks=3,
+            position=1,
+        )
+
+        response = self.client.get(reverse("typical_service_term_form_edit", args=[item.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'value="1,5"', html=False)
+
+    def test_non_staff_user_cannot_reorder_typical_service_terms(self):
+        first = TypicalServiceTerm.objects.create(
+            product=self.product,
+            preliminary_report_months=Decimal("1.0"),
+            final_report_weeks=2,
+            position=1,
+        )
+        second = TypicalServiceTerm.objects.create(
+            product=self.other_product,
+            preliminary_report_months=Decimal("2.0"),
+            final_report_weeks=4,
+            position=2,
+        )
+        non_staff = get_user_model().objects.create_user(
+            username="policy-user-terms",
+            password="secret123",
+            is_staff=False,
+        )
+        client = self.client_class()
+        client.force_login(non_staff)
+
+        response = client.post(reverse("typical_service_term_move_down", args=[first.pk]))
 
         self.assertEqual(response.status_code, 302)
         first.refresh_from_db()

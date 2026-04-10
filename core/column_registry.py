@@ -105,6 +105,14 @@ COLUMN_REGISTRY = {
                     "service_composition": "Состав услуг",
                 },
             },
+            "typical_service_terms": {
+                "label": "Типовые сроки оказания услуг",
+                "columns": {
+                    "product": "Продукт",
+                    "preliminary_report_months": "Срок подготовки Предварительного отчёта, мес.",
+                    "final_report_weeks": "Срок подготовки Итогового отчёта, нед.",
+                },
+            },
             "grades": {
                 "label": "Грейды",
                 "columns": {
