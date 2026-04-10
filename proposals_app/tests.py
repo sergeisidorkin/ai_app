@@ -1578,6 +1578,8 @@ class ProposalRegistrationFormTests(TestCase):
             status=ProposalRegistration.ProposalStatus.PRELIMINARY,
             proposal_project_name="Due Diligence АО «Полиметалл УК»",
             customer='АО «Полиметалл УК»',
+            asset_owner='АО «Полиметалл УК»',
+            asset_owner_matches_customer=True,
             country=country,
             asset_owner_country=country,
             purpose="Проверка актива",
@@ -1664,7 +1666,7 @@ class ProposalRegistrationFormTests(TestCase):
         with patch("proposals_app.variable_resolver._today", return_value=date(2026, 4, 9)):
             replacements, _ = resolve_variables(proposal, variables)
 
-        self.assertEqual(replacements["{{proposal_project_name}}"], "Проект Приморское")
+        self.assertEqual(replacements["{{proposal_project_name}}"], "Due Diligence АО «Полиметалл УК»")
         self.assertEqual(replacements["{{purpose}}"], "Проверка актива")
         self.assertEqual(replacements["{{service_cost}}"], "1\u00a0250\u00a0000,50")
         self.assertEqual(replacements["{{evaluation_date}}"], "01.04.2026")
