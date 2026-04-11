@@ -283,6 +283,212 @@ def _proposal_scope_of_work(proposal) -> list[dict[str, str] | str]:
     return fallback if isinstance(fallback, list) else [fallback]
 
 
+PROPOSAL_TRAVEL_EXPENSES_LABEL = "Командировочные расходы"
+PROPOSAL_SUMMARY_TOTAL_LABEL = "ИТОГО, по расчёту"
+PROPOSAL_RUB_TOTAL_LABEL = "ИТОГО, рубли без НДС"
+PROPOSAL_RUB_DISCOUNTED_LABEL = "ИТОГО, рубли без НДС с учетом скидки"
+PROPOSAL_CONTRACT_TOTAL_LABEL = "ИТОГО в договор, рубли без НДС с учётом дополнительной скидки"
+
+
+def _parse_decimal(value) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+
+def _sum_day_counts(values) -> int:
+    total = 0
+    for value in values:
+        try:
+            total += int(str(value or "").strip() or "0")
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+def _round_to_hundred_thousand(value: Decimal | None) -> Decimal | None:
+    if value is None:
+        return None
+    return (value // Decimal("100000")) * Decimal("100000")
+
+
+def _proposal_budget_table(proposal) -> dict:
+    offers = list(proposal.commercial_offers.order_by("position", "id"))
+    travel_offer = next(
+        (
+            item
+            for item in offers
+            if str(getattr(item, "service_name", "") or "").strip() == PROPOSAL_TRAVEL_EXPENSES_LABEL
+        ),
+        None,
+    )
+    regular_offers = [
+        item
+        for item in offers
+        if str(getattr(item, "service_name", "") or "").strip() != PROPOSAL_TRAVEL_EXPENSES_LABEL
+    ]
+
+    asset_labels = [
+        str(getattr(asset, "short_name", "") or "").strip()
+        for asset in proposal.assets.order_by("position", "id")
+    ]
+    max_asset_count = max(
+        [len(getattr(item, "asset_day_counts", []) or []) for item in offers],
+        default=0,
+    )
+    asset_count = max(len(asset_labels), max_asset_count, 1)
+    while len(asset_labels) < asset_count:
+        asset_labels.append(f"Актив {len(asset_labels) + 1}")
+    asset_labels = [label or f"Актив {index + 1}" for index, label in enumerate(asset_labels)]
+
+    rows: list[list[dict[str, object]]] = [
+        [
+            {"text": "Специалист", "rowspan": 2, "bold": True, "align": "center"},
+            {"text": "Должность/направление", "rowspan": 2, "bold": True, "align": "center"},
+            {"text": "Ставка, евро / день", "rowspan": 2, "bold": True, "align": "center"},
+            {
+                "text": "Количество дней",
+                "colspan": max(asset_count, 1),
+                "bold": True,
+                "align": "center",
+            },
+            {"text": "Количество дней", "rowspan": 2, "bold": True, "align": "center"},
+            {"text": "Итого, евро без НДС", "rowspan": 2, "bold": True, "align": "center"},
+        ],
+        [
+            *[
+                {"text": label, "bold": True, "align": "center"}
+                for label in (asset_labels or ["Количество дней"])
+            ]
+        ],
+    ]
+
+    def build_day_values(raw_values) -> list[str]:
+        normalized = [str(value or "").strip() for value in list(raw_values or [])[:asset_count]]
+        while len(normalized) < asset_count:
+            normalized.append("")
+        return normalized
+
+    for item in regular_offers:
+        day_values = build_day_values(getattr(item, "asset_day_counts", []) or [])
+        direction = ", ".join(
+            [
+                value
+                for value in [
+                    str(getattr(item, "job_title", "") or "").strip(),
+                    str(getattr(item, "professional_status", "") or "").strip(),
+                ]
+                if value
+            ]
+        )
+        rows.append(
+            [
+                {"text": str(getattr(item, "specialist", "") or "").strip()},
+                {"text": direction},
+                {"text": _format_money(getattr(item, "rate_eur_per_day", None)), "align": "right"},
+                *[
+                    {"text": value, "align": "right"}
+                    for value in day_values
+                ],
+                {"text": str(_sum_day_counts(day_values)) if _sum_day_counts(day_values) else "", "align": "right"},
+                {"text": _format_money(getattr(item, "total_eur_without_vat", None)), "align": "right"},
+            ]
+        )
+
+    summary_day_values = [
+        str(value) if value else ""
+        for value in (
+            [
+                sum(
+                    int(str((getattr(item, "asset_day_counts", []) or [""])[index] or "").strip() or "0")
+                    for item in regular_offers
+                    if index < len(getattr(item, "asset_day_counts", []) or [])
+                )
+                for index in range(asset_count)
+            ]
+            if asset_count
+            else []
+        )
+    ]
+    summary_total = sum(
+        (_parse_decimal(getattr(item, "total_eur_without_vat", None)) or Decimal("0"))
+        for item in regular_offers
+    )
+    totals_state = getattr(proposal, "commercial_totals_json", {}) or {}
+    exchange_rate = _parse_decimal(totals_state.get("exchange_rate"))
+    discount_percent = _parse_decimal(totals_state.get("discount_percent"))
+    rub_total = (summary_total * exchange_rate) if exchange_rate is not None else None
+    discounted_total = (
+        rub_total - (rub_total * (discount_percent / Decimal("100")))
+        if rub_total is not None and discount_percent is not None
+        else rub_total
+    )
+    contract_total = _parse_decimal(totals_state.get("contract_total"))
+    contract_total_auto = _parse_decimal(totals_state.get("contract_total_auto"))
+    if contract_total in (None, Decimal("0")):
+        contract_total = contract_total_auto or _round_to_hundred_thousand(discounted_total)
+
+    def append_fixed_row(label, *, rate="", day_values=None, total="", label_colspan=2):
+        current_day_values = list(day_values or [])
+        while len(current_day_values) < asset_count:
+            current_day_values.append("")
+        rows.append(
+            [
+                {"text": label, "colspan": label_colspan, "bold": True},
+                {"text": str(rate or ""), "align": "right"},
+                *[
+                    {"text": str(value or ""), "align": "right"}
+                    for value in current_day_values
+                ],
+                {"text": str(_sum_day_counts(current_day_values)) if _sum_day_counts(current_day_values) else "", "align": "right"},
+                {"text": str(total or ""), "align": "right"},
+            ]
+        )
+
+    if travel_offer is not None:
+        travel_day_values = build_day_values(getattr(travel_offer, "asset_day_counts", []) or [])
+        append_fixed_row(
+            PROPOSAL_TRAVEL_EXPENSES_LABEL,
+            rate="по факту",
+            day_values=travel_day_values,
+            total=_format_money(getattr(travel_offer, "total_eur_without_vat", None)),
+        )
+
+    append_fixed_row(
+        PROPOSAL_SUMMARY_TOTAL_LABEL,
+        rate="",
+        day_values=summary_day_values,
+        total=_format_money(summary_total),
+    )
+    append_fixed_row(
+        PROPOSAL_RUB_TOTAL_LABEL,
+        rate=_format_decimal(exchange_rate, precision=4, strip_trailing_zeros=True),
+        day_values=[],
+        total=_format_money(rub_total),
+    )
+    append_fixed_row(
+        PROPOSAL_RUB_DISCOUNTED_LABEL,
+        rate=_format_percent(discount_percent, strip_trailing_zeros=True),
+        day_values=[],
+        total=_format_money(discounted_total),
+    )
+    append_fixed_row(
+        PROPOSAL_CONTRACT_TOTAL_LABEL,
+        rate="",
+        day_values=[],
+        total=_format_money(contract_total),
+    )
+
+    return {
+        "rows": rows,
+        "font_size_pt": 8,
+        "style": "Table Grid",
+    }
+
+
 def _proposal_evaluation_date(proposal) -> str:
     return _format_date(proposal.evaluation_date)
 
@@ -445,17 +651,26 @@ COMPUTED_LIST_MAP = {
     "[[scope_of_work]]": _proposal_scope_of_work,
 }
 
+COMPUTED_TABLE_MAP = {
+    "[[budget_table]]": _proposal_budget_table,
+}
+
 VARIABLE_ALIASES = {
     "{{client_country_full_name}}": ["{{country_full_name}}"],
     "{{country_full_name}}": ["{{client_country_full_name}}"],
 }
 
 
-def resolve_variables(proposal, variables) -> tuple[dict[str, str], dict]:
+def resolve_variables(proposal, variables) -> tuple[dict[str, str], dict, dict]:
     replacements: dict[str, str] = {}
     list_replacements: dict[str, list[str]] = {}
+    table_replacements: dict[str, dict] = {}
     for variable in variables:
         if getattr(variable, "is_computed", False):
+            computed_table_resolver = COMPUTED_TABLE_MAP.get(variable.key)
+            if computed_table_resolver:
+                table_replacements[variable.key] = computed_table_resolver(proposal) or {}
+                continue
             computed_list_resolver = COMPUTED_LIST_MAP.get(variable.key)
             if computed_list_resolver:
                 list_replacements[variable.key] = list(computed_list_resolver(proposal) or [])
@@ -479,4 +694,4 @@ def resolve_variables(proposal, variables) -> tuple[dict[str, str], dict]:
         replacements[variable.key] = value
         for alias in VARIABLE_ALIASES.get(variable.key, []):
             replacements[alias] = value
-    return replacements, list_replacements
+    return replacements, list_replacements, table_replacements

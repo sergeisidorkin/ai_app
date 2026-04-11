@@ -1,3 +1,4 @@
+{% load static %}
 <div id="proposals-pane"
      class="proposal-form-page"
      data-header-root-label="ТКП"
@@ -260,24 +261,24 @@
                 </div>
                 <div class="proposal-service-text-toolbar__group">
                   <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-list="ordered" aria-label="Нумерованный список">
-                    <i class="bi bi-list-ol"></i>
+                    <img src="{% static 'core/icons/list-1-2.svg' %}" alt="" class="proposal-service-text-toolbar__icon">
                   </button>
                   <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-list="bullet" aria-label="Маркированный список">
-                    <i class="bi bi-list-ul"></i>
+                    <img src="{% static 'core/icons/list-ul.svg' %}" alt="" class="proposal-service-text-toolbar__icon">
                   </button>
                 </div>
                 <div class="proposal-service-text-toolbar__group">
                   <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-align="justify" aria-label="По ширине">
-                    <i class="bi bi-justify"></i>
+                    <img src="{% static 'core/icons/text-align-justify.svg' %}" alt="" class="proposal-service-text-toolbar__icon">
                   </button>
                   <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-align="left" aria-label="По левому краю">
-                    <i class="bi bi-text-left"></i>
+                    <img src="{% static 'core/icons/text-align-left.svg' %}" alt="" class="proposal-service-text-toolbar__icon">
                   </button>
                   <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-align="center" aria-label="По центру">
-                    <i class="bi bi-text-center"></i>
+                    <img src="{% static 'core/icons/text-align-center.svg' %}" alt="" class="proposal-service-text-toolbar__icon">
                   </button>
                   <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-align="right" aria-label="По правому краю">
-                    <i class="bi bi-text-right"></i>
+                    <img src="{% static 'core/icons/text-align-right.svg' %}" alt="" class="proposal-service-text-toolbar__icon">
                   </button>
                 </div>
                 <div class="proposal-service-text-toolbar__group">

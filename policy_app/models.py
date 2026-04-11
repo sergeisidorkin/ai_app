@@ -196,6 +196,11 @@ class TypicalServiceComposition(models.Model):
         related_name="typical_service_compositions",
     )
     service_composition = models.TextField("Состав услуг", blank=True, default="")
+    service_composition_editor_state = models.JSONField(
+        "Состав услуг: состояние редактора",
+        default=dict,
+        blank=True,
+    )
     position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
 
     created_at = models.DateTimeField(auto_now_add=True)

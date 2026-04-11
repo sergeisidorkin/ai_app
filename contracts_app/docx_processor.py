@@ -17,7 +17,10 @@ from copy import deepcopy
 from io import BytesIO
 
 from docx import Document
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
+from docx.shared import Pt
 
 
 _PLACEHOLDER_RE = re.compile(r"\{\{[a-zA-Z][a-zA-Z0-9_]*\}\}")
@@ -280,6 +283,20 @@ def _set_font_property(r_pr, font_name: str | None) -> None:
         r_pr.remove(existing)
 
 
+def _set_language_property(r_pr, language_code: str | None) -> None:
+    existing = r_pr.find(qn("w:lang"))
+    if language_code:
+        if existing is None:
+            from docx.oxml import OxmlElement
+
+            existing = OxmlElement("w:lang")
+            r_pr.append(existing)
+        for attr_name in ("val", "bidi", "eastAsia"):
+            existing.set(qn(f"w:{attr_name}"), language_code)
+    elif existing is not None:
+        r_pr.remove(existing)
+
+
 def _append_text_segments(run_element, text: str) -> None:
     from docx.oxml import OxmlElement
 
@@ -293,7 +310,13 @@ def _append_text_segments(run_element, text: str) -> None:
         run_element.append(text_element)
 
 
-def _append_formatted_run(paragraph_element, run_data: dict[str, object], source_rPr) -> None:
+def _append_formatted_run(
+    paragraph_element,
+    run_data: dict[str, object],
+    source_rPr,
+    *,
+    language_code: str | None = None,
+) -> None:
     from docx.oxml import OxmlElement
 
     run_element = OxmlElement("w:r")
@@ -305,6 +328,7 @@ def _append_formatted_run(paragraph_element, run_data: dict[str, object], source
     _set_color_property(r_pr, str(run_data.get("color") or "").strip() or None)
     _set_shading_property(r_pr, str(run_data.get("background") or "").strip() or None)
     _set_font_property(r_pr, str(run_data.get("font") or "").strip() or None)
+    _set_language_property(r_pr, language_code)
     if len(r_pr):
         run_element.append(r_pr)
     _append_text_segments(run_element, str(run_data.get("text") or ""))
@@ -321,15 +345,26 @@ def _apply_paragraph_alignment(p_pr, alignment: str | None) -> None:
     p_pr.append(jc)
 
 
-def _insert_rich_paragraphs(anchor, parent, rich_items, *, bullet_num_id: str, multilevel_num_id: str, bullet_style_id: str, source_rPr):
+def _insert_rich_paragraphs(
+    anchor,
+    parent,
+    rich_items,
+    *,
+    bullet_num_id: str,
+    multilevel_num_id: str,
+    bullet_style_id: str,
+    source_rPr,
+    render_plain: bool = False,
+    language_code: str | None = None,
+):
     from docx.oxml import OxmlElement
 
     current_anchor = anchor
     for item in rich_items:
         new_p = OxmlElement("w:p")
         p_pr = OxmlElement("w:pPr")
-        list_type = str(item.get("list_type") or "").strip()
-        list_level = int(item.get("list_level") or 0)
+        list_type = "" if render_plain else str(item.get("list_type") or "").strip()
+        list_level = 0 if render_plain else int(item.get("list_level") or 0)
         if list_type == "bullet":
             if bullet_style_id:
                 p_style = OxmlElement("w:pStyle")
@@ -360,17 +395,22 @@ def _insert_rich_paragraphs(anchor, parent, rich_items, *, bullet_num_id: str, m
         if runs:
             for run_data in runs:
                 if not isinstance(run_data, dict):
-                    _append_formatted_run(new_p, {"text": str(run_data)}, source_rPr)
+                    _append_formatted_run(new_p, {"text": str(run_data)}, source_rPr, language_code=language_code)
                     continue
-                _append_formatted_run(new_p, run_data, source_rPr)
+                _append_formatted_run(new_p, run_data, source_rPr, language_code=language_code)
         else:
-            _append_formatted_run(new_p, {"text": ""}, source_rPr)
+            _append_formatted_run(new_p, {"text": ""}, source_rPr, language_code=language_code)
         current_anchor.addnext(new_p)
         current_anchor = new_p
     parent.remove(anchor)
 
 
-def _replace_in_paragraph(paragraph, replacements: dict[str, str]) -> None:
+def _replace_in_paragraph(
+    paragraph,
+    replacements: dict[str, str],
+    *,
+    language_code: str | None = None,
+) -> None:
     """Replace placeholders in a single paragraph, preserving run formatting.
 
     The algorithm:
@@ -433,6 +473,16 @@ def _replace_in_paragraph(paragraph, replacements: dict[str, str]) -> None:
             for mid in range(first_run_idx + 1, last_run_idx):
                 run_texts[mid] = ""
 
+        target_run = runs[first_run_idx]
+        r_pr = target_run._element.find(qn("w:rPr"))
+        if r_pr is None and language_code:
+            from docx.oxml import OxmlElement
+
+            r_pr = OxmlElement("w:rPr")
+            target_run._element.insert(0, r_pr)
+        if r_pr is not None:
+            _set_language_property(r_pr, language_code)
+
     for i, run in enumerate(runs):
         run.text = run_texts[i]
 
@@ -444,6 +494,7 @@ def _replace_list_in_paragraph(
     multilevel_num_id: str,
     bullet_style_id: str,
     plain_list_keys: set[str] | None = None,
+    default_language_code: str | None = None,
 ) -> bool:
     """If the paragraph contains a ``[[list_var]]`` placeholder, replace the
     entire paragraph with a list of items.  Returns True if replaced.
@@ -468,6 +519,7 @@ def _replace_list_in_paragraph(
     items = list_replacements.get(key)
     if items is None:
         return False
+    language_code = default_language_code
 
     rich_items = []
     is_rich = False
@@ -524,6 +576,8 @@ def _replace_list_in_paragraph(
             multilevel_num_id=multilevel_num_id,
             bullet_style_id=bullet_style_id,
             source_rPr=source_rPr,
+            render_plain=is_plain_list,
+            language_code=language_code,
         )
         return True
 
@@ -560,7 +614,12 @@ def _replace_list_in_paragraph(
 
         new_r = OxmlElement("w:r")
         if source_rPr is not None:
-            new_r.append(deepcopy(source_rPr))
+            r_pr = deepcopy(source_rPr)
+        else:
+            r_pr = OxmlElement("w:rPr")
+        _set_language_property(r_pr, language_code)
+        if len(r_pr):
+            new_r.append(r_pr)
         new_t = OxmlElement("w:t")
         new_t.set(qn("xml:space"), "preserve")
         new_t.text = str(item_text)
@@ -572,6 +631,196 @@ def _replace_list_in_paragraph(
 
     parent.remove(paragraph._element)
     return True
+
+
+def _normalize_table_cell_spec(value) -> dict[str, object]:
+    if isinstance(value, dict):
+        return {
+            "text": str(value.get("text") or ""),
+            "colspan": max(1, int(value.get("colspan") or 1)),
+            "rowspan": max(1, int(value.get("rowspan") or 1)),
+            "bold": bool(value.get("bold")),
+            "align": str(value.get("align") or "").strip().lower() or "left",
+        }
+    return {
+        "text": str(value or ""),
+        "colspan": 1,
+        "rowspan": 1,
+        "bold": False,
+        "align": "left",
+    }
+
+
+def _table_alignment(value: str) -> WD_ALIGN_PARAGRAPH:
+    mapping = {
+        "center": WD_ALIGN_PARAGRAPH.CENTER,
+        "right": WD_ALIGN_PARAGRAPH.RIGHT,
+        "justify": WD_ALIGN_PARAGRAPH.JUSTIFY,
+    }
+    return mapping.get(str(value or "").strip().lower(), WD_ALIGN_PARAGRAPH.LEFT)
+
+
+def _measure_table_columns(rows: list[list[dict[str, object]]]) -> int:
+    occupancy: list[list[bool]] = []
+    max_cols = 0
+    for row_idx, row in enumerate(rows):
+        while len(occupancy) <= row_idx:
+            occupancy.append([])
+        col_idx = 0
+        for raw_cell in row:
+            cell = _normalize_table_cell_spec(raw_cell)
+            while col_idx < len(occupancy[row_idx]) and occupancy[row_idx][col_idx]:
+                col_idx += 1
+            colspan = int(cell["colspan"])
+            rowspan = int(cell["rowspan"])
+            for rr in range(row_idx, row_idx + rowspan):
+                while len(occupancy) <= rr:
+                    occupancy.append([])
+                while len(occupancy[rr]) < col_idx + colspan:
+                    occupancy[rr].append(False)
+                for cc in range(col_idx, col_idx + colspan):
+                    occupancy[rr][cc] = True
+            max_cols = max(max_cols, col_idx + colspan)
+            col_idx += colspan
+    return max_cols
+
+
+def _apply_cell_text(cell, spec: dict[str, object], font_size_pt: int | float | None, language_code: str | None) -> None:
+    cell.text = ""
+    paragraph = cell.paragraphs[0]
+    paragraph.alignment = _table_alignment(str(spec.get("align") or "left"))
+    run = paragraph.add_run(str(spec.get("text") or ""))
+    if spec.get("bold"):
+        run.bold = True
+    if font_size_pt:
+        run.font.size = Pt(font_size_pt)
+    if language_code:
+        r_pr = run._element.find(qn("w:rPr"))
+        if r_pr is None:
+            from docx.oxml import OxmlElement
+
+            r_pr = OxmlElement("w:rPr")
+            run._element.insert(0, r_pr)
+        _set_language_property(r_pr, language_code)
+    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+
+
+def _set_table_autofit(table) -> None:
+    try:
+        table.autofit = True
+    except Exception:
+        pass
+    try:
+        table.allow_autofit = True
+    except Exception:
+        pass
+
+    tbl_pr = table._tbl.tblPr
+    if tbl_pr is None:
+        return
+
+    tbl_layout = tbl_pr.find(qn("w:tblLayout"))
+    if tbl_layout is None:
+        from docx.oxml import OxmlElement
+
+        tbl_layout = OxmlElement("w:tblLayout")
+        tbl_pr.append(tbl_layout)
+    tbl_layout.set(qn("w:type"), "autofit")
+
+    tbl_w = tbl_pr.find(qn("w:tblW"))
+    if tbl_w is None:
+        from docx.oxml import OxmlElement
+
+        tbl_w = OxmlElement("w:tblW")
+        tbl_pr.insert(0, tbl_w)
+    tbl_w.set(qn("w:type"), "auto")
+    tbl_w.set(qn("w:w"), "0")
+
+
+def _insert_table_after_paragraph(paragraph, table_spec: dict, language_code: str | None = None) -> bool:
+    rows = table_spec.get("rows") if isinstance(table_spec, dict) else None
+    if not isinstance(rows, list) or not rows:
+        return False
+    column_count = _measure_table_columns(rows)
+    if column_count <= 0:
+        return False
+
+    container = getattr(paragraph, "_parent", None)
+    add_table = getattr(container, "add_table", None)
+    if add_table is None:
+        return False
+
+    try:
+        table = add_table(rows=len(rows), cols=column_count)
+    except TypeError:
+        block_width = getattr(getattr(paragraph.part, "document", None), "_block_width", None)
+        if block_width is None:
+            return False
+        table = add_table(len(rows), column_count, block_width)
+    try:
+        if table_spec.get("style"):
+            table.style = str(table_spec.get("style"))
+    except Exception:
+        pass
+    _set_table_autofit(table)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+    font_size_pt = table_spec.get("font_size_pt") if isinstance(table_spec, dict) else None
+    occupied = [[False] * column_count for _ in range(len(rows))]
+    for row_idx, row in enumerate(rows):
+        col_idx = 0
+        for raw_cell in row:
+            spec = _normalize_table_cell_spec(raw_cell)
+            while col_idx < column_count and occupied[row_idx][col_idx]:
+                col_idx += 1
+            colspan = min(int(spec["colspan"]), column_count - col_idx)
+            rowspan = min(int(spec["rowspan"]), len(rows) - row_idx)
+            start_cell = table.cell(row_idx, col_idx)
+            for rr in range(row_idx, row_idx + rowspan):
+                for cc in range(col_idx, col_idx + colspan):
+                    occupied[rr][cc] = True
+            if rowspan > 1 or colspan > 1:
+                start_cell = start_cell.merge(table.cell(row_idx + rowspan - 1, col_idx + colspan - 1))
+            _apply_cell_text(start_cell, spec, font_size_pt, language_code)
+            col_idx += colspan
+
+    anchor = paragraph._element
+    anchor.addnext(table._tbl)
+    anchor.getparent().remove(anchor)
+    return True
+
+
+def _replace_table_in_paragraph(
+    paragraph,
+    table_replacements: dict | None,
+    *,
+    default_language_code: str | None = None,
+) -> bool:
+    if not table_replacements:
+        return False
+    full_text = "".join(run.text for run in paragraph.runs)
+    key = full_text.strip()
+    if key not in table_replacements:
+        return False
+    return _insert_table_after_paragraph(
+        paragraph,
+        table_replacements.get(key) or {},
+        language_code=default_language_code,
+    )
+
+
+def _process_table_placeholders(
+    paragraphs,
+    table_replacements: dict | None = None,
+    *,
+    default_language_code: str | None = None,
+) -> None:
+    for para in list(paragraphs):
+        _replace_table_in_paragraph(
+            para,
+            table_replacements,
+            default_language_code=default_language_code,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -766,9 +1015,14 @@ def _find_bullet_style_id(doc) -> str:
 
 # ---------------------------------------------------------------------------
 
-def _process_paragraphs(paragraphs, replacements: dict[str, str]) -> None:
+def _process_paragraphs(
+    paragraphs,
+    replacements: dict[str, str],
+    *,
+    language_code: str | None = None,
+) -> None:
     for para in paragraphs:
-        _replace_in_paragraph(para, replacements)
+        _replace_in_paragraph(para, replacements, language_code=language_code)
 
 
 def _process_list_paragraphs(
@@ -778,46 +1032,57 @@ def _process_list_paragraphs(
     multilevel_num_id: str,
     bullet_style_id: str,
     plain_list_keys: set[str] | None = None,
+    default_language_code: str | None = None,
 ) -> None:
     for para in list(paragraphs):
         _replace_list_in_paragraph(
             para, list_replacements,
             bullet_num_id, multilevel_num_id, bullet_style_id,
-            plain_list_keys,
+            plain_list_keys, default_language_code,
         )
 
 
 def _process_tables(
     tables,
     replacements: dict[str, str],
+    table_replacements: dict | None = None,
     list_replacements: dict | None = None,
     bullet_num_id: str = "",
     multilevel_num_id: str = "",
     bullet_style_id: str = "",
     plain_list_keys: set[str] | None = None,
+    default_language_code: str | None = None,
 ) -> None:
     for table in tables:
         for row in table.rows:
             for cell in row.cells:
+                if table_replacements:
+                    _process_table_placeholders(
+                        cell.paragraphs,
+                        table_replacements,
+                        default_language_code=default_language_code,
+                    )
                 if list_replacements:
                     _process_list_paragraphs(
                         cell.paragraphs, list_replacements,
                         bullet_num_id, multilevel_num_id, bullet_style_id,
-                        plain_list_keys,
+                        plain_list_keys, default_language_code,
                     )
-                _process_paragraphs(cell.paragraphs, replacements)
+                _process_paragraphs(cell.paragraphs, replacements, language_code=default_language_code)
                 _process_tables(
-                    cell.tables, replacements, list_replacements,
+                    cell.tables, replacements, table_replacements, list_replacements,
                     bullet_num_id, multilevel_num_id, bullet_style_id,
-                    plain_list_keys,
+                    plain_list_keys, default_language_code,
                 )
 
 
 def process_template(
     file_bytes: bytes,
     replacements: dict[str, str],
+    table_replacements: dict | None = None,
     list_replacements: dict | None = None,
     plain_list_keys: set[str] | None = None,
+    default_language_code: str | None = None,
 ) -> bytes:
     """Return modified .docx bytes with all placeholders substituted.
 
@@ -826,8 +1091,10 @@ def process_template(
     *list_replacements*: mapping ``{"[[key]]": ["item1", ...], ...}``.
     *plain_list_keys*: list placeholders that should be inserted as plain
     paragraphs without bullet formatting.
+    *default_language_code*: language tag to apply to inserted/replaced text
+    (for example ``ru-RU``).
     """
-    if not replacements and not list_replacements:
+    if not replacements and not list_replacements and not table_replacements:
         return file_bytes
 
     doc = Document(BytesIO(file_bytes))
@@ -835,6 +1102,13 @@ def process_template(
     bullet_num_id = ""
     multilevel_num_id = ""
     bullet_style_id = ""
+
+    if table_replacements:
+        _process_table_placeholders(
+            doc.paragraphs,
+            table_replacements,
+            default_language_code=default_language_code,
+        )
 
     if list_replacements:
         try:
@@ -849,13 +1123,13 @@ def process_template(
         _process_list_paragraphs(
             doc.paragraphs, list_replacements,
             bullet_num_id, multilevel_num_id, bullet_style_id,
-            plain_list_keys,
+            plain_list_keys, default_language_code,
         )
 
-    _process_paragraphs(doc.paragraphs, replacements)
+    _process_paragraphs(doc.paragraphs, replacements, language_code=default_language_code)
     _process_tables(
-        doc.tables, replacements, list_replacements,
-        bullet_num_id, multilevel_num_id, bullet_style_id, plain_list_keys,
+        doc.tables, replacements, table_replacements, list_replacements,
+        bullet_num_id, multilevel_num_id, bullet_style_id, plain_list_keys, default_language_code,
     )
 
     for section in doc.sections:
@@ -865,17 +1139,27 @@ def process_template(
             if header_footer and header_footer.is_linked_to_previous:
                 continue
             if header_footer:
+                if table_replacements:
+                    _process_table_placeholders(
+                        header_footer.paragraphs,
+                        table_replacements,
+                        default_language_code=default_language_code,
+                    )
                 if list_replacements:
                     _process_list_paragraphs(
                         header_footer.paragraphs, list_replacements,
                         bullet_num_id, multilevel_num_id, bullet_style_id,
-                        plain_list_keys,
+                        plain_list_keys, default_language_code,
                     )
-                _process_paragraphs(header_footer.paragraphs, replacements)
+                _process_paragraphs(
+                    header_footer.paragraphs,
+                    replacements,
+                    language_code=default_language_code,
+                )
                 _process_tables(
-                    header_footer.tables, replacements, list_replacements,
+                    header_footer.tables, replacements, table_replacements, list_replacements,
                     bullet_num_id, multilevel_num_id, bullet_style_id,
-                    plain_list_keys,
+                    plain_list_keys, default_language_code,
                 )
 
     out = BytesIO()
