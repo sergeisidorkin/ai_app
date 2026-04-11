@@ -2598,6 +2598,32 @@ html.proposal-progress-cursor * {
   color: #6c757d;
 }
 
+#proposals-pane .proposal-inline-percent {
+  position: relative;
+}
+
+#proposals-pane .proposal-inline-percent input {
+  appearance: textfield;
+  -moz-appearance: textfield;
+  padding-right: 2rem;
+}
+
+#proposals-pane .proposal-inline-percent input::-webkit-outer-spin-button,
+#proposals-pane .proposal-inline-percent input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+#proposals-pane .proposal-inline-percent__suffix {
+  position: absolute;
+  top: 50%;
+  right: 0.75rem;
+  transform: translateY(-50%);
+  color: #6c757d;
+  pointer-events: none;
+  z-index: 2;
+}
+
 #proposals-pane .proposal-customer-meta-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));

@@ -180,6 +180,11 @@ def _format_decimal(value, precision=2, *, strip_trailing_zeros=False) -> str:
     return text
 
 
+def _format_percent(value, precision=2, *, strip_trailing_zeros=False) -> str:
+    text = _format_decimal(value, precision=precision, strip_trailing_zeros=strip_trailing_zeros)
+    return f"{text}%" if text else ""
+
+
 def _format_money(value) -> str:
     if value in (None, ""):
         return ""
@@ -264,7 +269,7 @@ def _proposal_currency(proposal) -> str:
 
 
 def _proposal_advance_percent(proposal) -> str:
-    return _format_decimal(proposal.advance_percent, strip_trailing_zeros=True)
+    return _format_percent(proposal.advance_percent, strip_trailing_zeros=True)
 
 
 def _proposal_advance_term_days(proposal) -> str:
@@ -272,7 +277,19 @@ def _proposal_advance_term_days(proposal) -> str:
 
 
 def _proposal_preliminary_report_percent(proposal) -> str:
-    return _format_decimal(proposal.preliminary_report_percent, strip_trailing_zeros=True)
+    return _format_percent(proposal.preliminary_report_percent, strip_trailing_zeros=True)
+
+
+def _proposal_preliminary_payment_percentage_full(proposal) -> str:
+    try:
+        advance = Decimal(str(getattr(proposal, "advance_percent", "") or "0"))
+    except (InvalidOperation, TypeError, ValueError):
+        advance = Decimal("0")
+    try:
+        preliminary = Decimal(str(getattr(proposal, "preliminary_report_percent", "") or "0"))
+    except (InvalidOperation, TypeError, ValueError):
+        preliminary = Decimal("0")
+    return _format_decimal(advance + preliminary, strip_trailing_zeros=True)
 
 
 def _proposal_preliminary_report_term_days(proposal) -> str:
@@ -280,7 +297,7 @@ def _proposal_preliminary_report_term_days(proposal) -> str:
 
 
 def _proposal_final_report_percent(proposal) -> str:
-    return _format_decimal(proposal.final_report_percent, strip_trailing_zeros=True)
+    return _format_percent(proposal.final_report_percent, strip_trailing_zeros=True)
 
 
 def _proposal_final_report_term_days(proposal) -> str:
@@ -352,6 +369,7 @@ COMPUTED_MAP = {
     "{{service_type_short}}": _proposal_service_type_short,
     "{{service_goal_genitive}}": _proposal_service_goal_genitive,
     "{{tkp_preliminary}}": _proposal_tkp_preliminary,
+    "{{preliminary_payment_percentage_full}}": _proposal_preliminary_payment_percentage_full,
     "{{owner_country_full_name}}": _proposal_asset_owner_country_full_name,
     "{{country_full_name}}": _proposal_country_full_name,
 }

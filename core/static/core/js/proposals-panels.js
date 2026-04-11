@@ -1470,15 +1470,6 @@
         if (input.value) input.value = formatMoneyWithPrecision(input.value, precision);
       });
     });
-
-    var form = root.closest('form[data-proposal-form]') || root;
-    if (form.dataset.moneySubmitBound === '1') return;
-    form.dataset.moneySubmitBound = '1';
-    form.addEventListener('submit', function () {
-      form.querySelectorAll('.js-money-input').forEach(function (input) {
-        input.value = rawMoney(input.value);
-      });
-    });
   }
 
   function initProposalDateInput(input) {
@@ -5079,8 +5070,19 @@
       const finalWeeks = parseProposalDecimal(finalReportWeeksInput.value);
       if (preliminaryMonths === null || finalWeeks === null) return;
 
-      if (!force && String(preliminaryDateInput.value || '').trim() && String(finalDateInput.value || '').trim()) {
-        return;
+      const preliminaryDateValue = String(preliminaryDateInput.value || '').trim();
+      const finalDateValue = String(finalDateInput.value || '').trim();
+      if (!force) {
+        if (preliminaryDateValue && finalDateValue) {
+          return;
+        }
+        if (preliminaryDateValue && !finalDateValue) {
+          syncProposalFinalDateFromPreliminary();
+          return;
+        }
+        if (!preliminaryDateValue && finalDateValue) {
+          return;
+        }
       }
 
       const baseStartDate = getNearestMonday(addDays(new Date(), 14));

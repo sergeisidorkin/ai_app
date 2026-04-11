@@ -17,6 +17,8 @@ class WorktimeViewsTests(TestCase):
             username="worktime-user",
             password="secret",
             is_staff=True,
+            first_name="Иван",
+            last_name="Иванов",
         )
         self.client.force_login(self.user)
         self.employee = Employee.objects.create(user=self.user, patronymic="Иванович")
@@ -74,6 +76,33 @@ class WorktimeViewsTests(TestCase):
         self.assertNotContains(response, "Сотрудник")
         self.assertContains(response, ">8<", html=False)
         self.assertNotContains(response, ">5<", html=False)
+
+    def test_personal_partial_name_fallback_ignores_rows_linked_to_homonym(self):
+        Performer.objects.create(
+            registration=self.registration,
+            executor="Иванов Иван Иванович",
+            work_hours=3,
+        )
+        homonym_user = get_user_model().objects.create_user(
+            username="worktime-homonym-user",
+            password="secret",
+            first_name="Иван",
+            last_name="Иванов",
+        )
+        homonym_employee = Employee.objects.create(user=homonym_user, patronymic="Иванович")
+        homonym_performer = Performer.objects.create(
+            registration=self.registration,
+            executor="Иванов Иван Иванович",
+            work_hours=13,
+        )
+        Performer.objects.filter(pk=homonym_performer.pk).update(employee=homonym_employee)
+
+        response = self.client.get(reverse("personal_worktime_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, ">8<", html=False)
+        self.assertContains(response, ">3<", html=False)
+        self.assertNotContains(response, ">13<", html=False)
 
     def test_edit_updates_work_hours_and_triggers_refresh(self):
         response = self.client.post(

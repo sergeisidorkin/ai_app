@@ -27,7 +27,7 @@ def _worktime_queryset(user, personal_only=False):
         employee = getattr(user, "employee_profile", None)
         employee_name = Performer.employee_full_name(employee)
         if employee_name:
-            filters |= Q(executor=employee_name)
+            filters |= Q(employee__isnull=True, executor=employee_name)
         items = items.filter(filters)
     return items
 
