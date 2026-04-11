@@ -1,3 +1,4 @@
+import json
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
@@ -355,12 +356,17 @@ class TypicalServiceCompositionViewsTests(TestCase):
         self.assertContains(response, 'class="policy-service-composition-content"', html=False)
 
     def test_create_typical_service_composition_saves_row(self):
+        editor_state = {
+            "html": "<p><strong>Этап 1</strong></p><p>Этап 2</p>",
+            "plain_text": "Этап 1\nЭтап 2",
+        }
         response = self.client.post(
             reverse("typical_service_composition_form_create"),
             {
                 "product": self.product.pk,
                 "section": self.section.pk,
-                "service_composition": "Этап 1\nЭтап 2",
+                "service_composition": "",
+                "service_composition_editor_state": json.dumps(editor_state, ensure_ascii=False),
             },
         )
 
@@ -369,6 +375,7 @@ class TypicalServiceCompositionViewsTests(TestCase):
         self.assertEqual(item.product, self.product)
         self.assertEqual(item.section, self.section)
         self.assertEqual(item.service_composition, "Этап 1\nЭтап 2")
+        self.assertEqual(item.service_composition_editor_state, editor_state)
         self.assertEqual(item.position, 1)
 
     def test_create_typical_service_composition_rejects_section_from_other_product(self):

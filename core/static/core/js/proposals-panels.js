@@ -1831,6 +1831,12 @@
     return String(getProposalTypicalServiceCompositionEntry(form, section)?.service_composition || '').trim();
   }
 
+  function getProposalTypicalServiceCompositionEditorState(form, section) {
+    const entry = getProposalTypicalServiceCompositionEntry(form, section);
+    const value = entry?.service_composition_editor_state;
+    return value && typeof value === 'object' ? value : {};
+  }
+
   function getProposalTypicalServiceTermEntry(form) {
     const entriesMap = getProposalTypicalServiceTermsMap(form);
     const entry = entriesMap[getProposalTypeId(form)] || null;
@@ -4572,10 +4578,17 @@
             plain_text: plainText,
           };
         }
-        const defaultPlainText = getProposalTypicalServiceCompositionText(form, sections[index] || item);
+        const defaultEditorState = getProposalTypicalServiceCompositionEditorState(form, sections[index] || item);
+        const defaultHtml = String(defaultEditorState.html || '').trim();
+        const defaultPlainText = String(
+          defaultEditorState.plain_text
+          || extractPlainTextFromHtml(defaultHtml)
+          || getProposalTypicalServiceCompositionText(form, sections[index] || item)
+          || ''
+        ).trim();
         return {
           ...item,
-          html: defaultPlainText ? normalizeTextToHtml(defaultPlainText) : '',
+          html: defaultHtml || (defaultPlainText ? normalizeTextToHtml(defaultPlainText) : ''),
           plain_text: defaultPlainText,
         };
       });
@@ -4646,6 +4659,7 @@
       if (activeCard) activeCard.classList.remove('is-active');
       activeCard = card || null;
       if (activeCard) activeCard.classList.add('is-active');
+      syncToolbarState();
     }
 
     function restoreSelection() {
@@ -4666,6 +4680,57 @@
       });
     }
 
+    function normalizeToolbarColor(value, fallback) {
+      const source = String(value || '').trim();
+      if (!source) return fallback;
+      if (/^#([0-9a-f]{3}){1,2}$/i.test(source)) {
+        if (source.length === 4) {
+          return '#' + source.slice(1).split('').map(function (part) { return part + part; }).join('');
+        }
+        return source;
+      }
+      const rgbMatch = source.match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/i);
+      if (!rgbMatch) return fallback;
+      return '#' + rgbMatch.slice(1, 4).map(function (part) {
+        return Math.max(0, Math.min(255, Number(part) || 0)).toString(16).padStart(2, '0');
+      }).join('');
+    }
+
+    function setToolbarButtonActive(button, isActive) {
+      if (!button) return;
+      button.classList.toggle('is-active', !!isActive);
+      button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    }
+
+    function syncToolbarState() {
+      const format = activeQuill ? activeQuill.getFormat(lastRange || activeQuill.getSelection() || undefined) : {};
+      const fontSelect = toolbar.querySelector('select[data-format="font"]');
+      const currentFont = String(format.font || 'calibri').trim() || 'calibri';
+      if (fontSelect) {
+        const hasOption = Array.from(fontSelect.options).some(function (option) {
+          return option.value === currentFont;
+        });
+        fontSelect.value = hasOption ? currentFont : 'calibri';
+      }
+
+      toolbar.querySelectorAll('button[data-format]').forEach(function (button) {
+        setToolbarButtonActive(button, !!format[button.dataset.format]);
+      });
+      toolbar.querySelectorAll('button[data-list]').forEach(function (button) {
+        setToolbarButtonActive(button, (format.list || '') === button.dataset.list);
+      });
+      toolbar.querySelectorAll('button[data-align]').forEach(function (button) {
+        const align = format.align || 'left';
+        setToolbarButtonActive(button, align === button.dataset.align);
+      });
+
+      const colorInput = toolbar.querySelector('[data-color-source="color"]');
+      const backgroundInput = toolbar.querySelector('[data-color-source="background"]');
+      if (colorInput) colorInput.value = normalizeToolbarColor(format.color, '#000000');
+      if (backgroundInput) backgroundInput.value = normalizeToolbarColor(format.background, '#ffffff');
+      updateColorPreviews();
+    }
+
     function applyToolbarAction(event) {
       if (!activeQuill) return;
       const button = event.target.closest('button[data-format], button[data-list], button[data-action], button[data-align], button[data-apply-color]');
@@ -4676,23 +4741,27 @@
           const formatName = button.dataset.format;
           const current = activeQuill.getFormat().hasOwnProperty(formatName) ? activeQuill.getFormat()[formatName] : false;
           activeQuill.format(formatName, current ? false : true);
+          syncToolbarState();
           return;
         }
         if (button.dataset.list) {
           const listType = button.dataset.list;
           const currentList = activeQuill.getFormat().list || false;
           activeQuill.format('list', currentList === listType ? false : listType);
+          syncToolbarState();
           return;
         }
         if (button.dataset.align) {
           const align = button.dataset.align;
           activeQuill.format('align', align === 'left' ? false : align);
+          syncToolbarState();
           return;
         }
         if (button.dataset.applyColor) {
           const formatName = button.dataset.applyColor;
           const input = toolbar.querySelector('[data-color-source="' + formatName + '"]');
           activeQuill.format(formatName, input?.value || false);
+          syncToolbarState();
           return;
         }
         if (button.dataset.action === 'clean') {
@@ -4708,6 +4777,7 @@
             activeQuill.format('list', false);
             activeQuill.format('align', false);
           }
+          syncToolbarState();
         }
       }
     }
@@ -4719,6 +4789,7 @@
       const value = input.value || false;
       restoreSelection();
       activeQuill.format(input.dataset.format, value);
+      syncToolbarState();
     }
 
     function handleColorInput(event) {
@@ -4768,6 +4839,8 @@
           if (range) {
             lastRange = range;
             setActiveEditor(quill, fieldset);
+          } else if (activeQuill === quill) {
+            syncToolbarState();
           }
         });
         quill.on('text-change', function () {
@@ -4775,6 +4848,7 @@
           const currentText = quill.getText().replace(/\s+$/, '').trim();
           draftState[index].html = currentHtml;
           draftState[index].plain_text = currentText;
+          if (activeQuill === quill) syncToolbarState();
         });
         editorEl.addEventListener('click', function () {
           setActiveEditor(quill, fieldset);

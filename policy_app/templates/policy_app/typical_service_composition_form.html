@@ -1,3 +1,4 @@
+{% load static %}
 <div class="modal-header">
   <h5 class="modal-title">
     {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
@@ -36,10 +37,96 @@
     </div>
     <div class="mb-3">
       <label class="form-label">Состав услуг</label>
-      {{ form.service_composition }}
+      <div class="d-none">
+        {{ form.service_composition }}
+      </div>
+      {{ form.service_composition_editor_state }}
+      <div class="proposal-service-text-modal__toolbar border rounded-top">
+        <div class="proposal-service-text-toolbar" id="typical-service-composition-toolbar">
+          <div class="proposal-service-text-toolbar__group">
+            <select class="form-select form-select-sm proposal-service-text-toolbar__select" data-format="font" aria-label="Шрифт">
+              <option value="calibri" selected>Calibri</option>
+              <option value="cambria">Cambria</option>
+              <option value="sans">Sans Serif</option>
+              <option value="serif">Serif</option>
+              <option value="monospace">Monospace</option>
+              <option value="georgia">Georgia</option>
+              <option value="times-new-roman">Times New Roman</option>
+            </select>
+          </div>
+          <div class="proposal-service-text-toolbar__group">
+            <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-format="bold" aria-label="Жирный">
+              <i class="bi bi-type-bold"></i>
+            </button>
+            <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-format="italic" aria-label="Курсив">
+              <i class="bi bi-type-italic"></i>
+            </button>
+            <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-format="underline" aria-label="Подчеркнутый">
+              <i class="bi bi-type-underline"></i>
+            </button>
+          </div>
+          <div class="proposal-service-text-toolbar__group">
+            <div class="proposal-service-text-toolbar__color-combo">
+              <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn proposal-service-text-toolbar__btn--combo" data-apply-color="color" aria-label="Применить цвет текста" title="Применить цвет текста">
+                <i class="bi bi-palette"></i>
+              </button>
+              <label class="proposal-service-text-toolbar__color" title="Выбрать цвет текста" aria-label="Выбрать цвет текста">
+                <input type="color" value="#000000" data-color-source="color">
+                <span class="proposal-service-text-toolbar__color-swatch" data-color-preview="color" style="background:#000000;"></span>
+              </label>
+            </div>
+            <div class="proposal-service-text-toolbar__color-combo">
+              <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn proposal-service-text-toolbar__btn--combo" data-apply-color="background" aria-label="Применить цвет фона" title="Применить цвет фона">
+                <i class="bi bi-paint-bucket"></i>
+              </button>
+              <label class="proposal-service-text-toolbar__color" title="Выбрать цвет фона" aria-label="Выбрать цвет фона">
+                <input type="color" value="#ffffff" data-color-source="background">
+                <span class="proposal-service-text-toolbar__color-swatch" data-color-preview="background" style="background:#ffffff;"></span>
+              </label>
+            </div>
+          </div>
+          <div class="proposal-service-text-toolbar__group">
+            <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-list="ordered" aria-label="Нумерованный список">
+              <img src="{% static 'core/icons/list-1-2.svg' %}" alt="" class="proposal-service-text-toolbar__icon">
+            </button>
+            <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-list="bullet" aria-label="Маркированный список">
+              <img src="{% static 'core/icons/list-ul.svg' %}" alt="" class="proposal-service-text-toolbar__icon">
+            </button>
+          </div>
+          <div class="proposal-service-text-toolbar__group">
+            <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-align="justify" aria-label="По ширине">
+              <img src="{% static 'core/icons/text-align-justify.svg' %}" alt="" class="proposal-service-text-toolbar__icon">
+            </button>
+            <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-align="left" aria-label="По левому краю">
+              <img src="{% static 'core/icons/text-align-left.svg' %}" alt="" class="proposal-service-text-toolbar__icon">
+            </button>
+            <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-align="center" aria-label="По центру">
+              <img src="{% static 'core/icons/text-align-center.svg' %}" alt="" class="proposal-service-text-toolbar__icon">
+            </button>
+            <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-align="right" aria-label="По правому краю">
+              <img src="{% static 'core/icons/text-align-right.svg' %}" alt="" class="proposal-service-text-toolbar__icon">
+            </button>
+          </div>
+          <div class="proposal-service-text-toolbar__group">
+            <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-action="clean" aria-label="Очистить форматирование">
+              <i class="bi bi-eraser"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="border border-top-0 rounded-bottom p-3 bg-white">
+        <div class="proposal-service-text-card proposal-service-text-card--single">
+          <div class="proposal-service-text-card__editor" id="typical-service-composition-editor"></div>
+        </div>
+      </div>
       {% if form.service_composition.errors %}
         <div class="invalid-feedback d-block">
           {{ form.service_composition.errors|join:", " }}
+        </div>
+      {% endif %}
+      {% if form.service_composition_editor_state.errors %}
+        <div class="invalid-feedback d-block">
+          {{ form.service_composition_editor_state.errors|join:", " }}
         </div>
       {% endif %}
     </div>
@@ -58,11 +145,186 @@
 
 <script>
 (function () {
+  var QUILL_JS = '/static/letters_app/vendor/quill/quill.min.js';
+  var QUILL_CSS = '/static/letters_app/vendor/quill/quill.snow.css';
+  var modalContent = document.currentScript.closest('.modal-content') || document;
+  var formEl = modalContent.querySelector('form') || document.currentScript.closest('form');
+  var submitBtn = modalContent.querySelector('button[type="submit"]');
   var productSelect = document.getElementById('id_product');
   var sectionSelect = document.getElementById('id_section');
   var sectionsByProduct = {{ sections_by_product_json|safe }};
+  var textarea = document.getElementById('id_service_composition');
+  var stateInput = document.getElementById('id_service_composition_editor_state');
+  var toolbar = modalContent.querySelector('#typical-service-composition-toolbar');
+  var editorEl = modalContent.querySelector('#typical-service-composition-editor');
+  var activeQuill = null;
+  var lastRange = null;
 
-  if (!productSelect || !sectionSelect) return;
+  if (!productSelect || !sectionSelect || !textarea || !stateInput || !toolbar || !editorEl) return;
+
+  function loadCss(href) {
+    if (document.querySelector('link[data-policy-quill-css="' + href + '"]')) return;
+    var link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = href;
+    link.dataset.policyQuillCss = href;
+    document.head.appendChild(link);
+  }
+
+  function loadQuill(callback) {
+    if (window.Quill) {
+      callback();
+      return;
+    }
+    window.__policyQuillReadyCallbacks = window.__policyQuillReadyCallbacks || [];
+    window.__policyQuillReadyCallbacks.push(callback);
+    if (window.__policyQuillLoading) return;
+    window.__policyQuillLoading = true;
+    loadCss(QUILL_CSS);
+    var script = document.createElement('script');
+    script.src = QUILL_JS;
+    script.async = true;
+    script.onload = function () {
+      window.__policyQuillLoading = false;
+      var callbacks = window.__policyQuillReadyCallbacks || [];
+      window.__policyQuillReadyCallbacks = [];
+      callbacks.forEach(function (cb) { cb(); });
+    };
+    script.onerror = function () {
+      window.__policyQuillLoading = false;
+      window.__policyQuillReadyCallbacks = [];
+    };
+    document.head.appendChild(script);
+  }
+
+  function registerFonts() {
+    if (!window.Quill || window.__policyTypicalServiceCompositionFontsRegistered) return;
+    var Font = window.Quill.import('formats/font');
+    Font.whitelist = ['calibri', 'cambria', 'sans', 'serif', 'monospace', 'georgia', 'times-new-roman'];
+    window.Quill.register(Font, true);
+    window.__policyTypicalServiceCompositionFontsRegistered = true;
+  }
+
+  function escapeHtml(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function normalizeTextToHtml(text) {
+    var value = String(text || '').trim();
+    if (!value) return '';
+    return value.split(/\n{2,}/).map(function (chunk) {
+      return '<p>' + escapeHtml(chunk).replace(/\n/g, '<br>') + '</p>';
+    }).join('');
+  }
+
+  function parseEditorState() {
+    var raw = String(stateInput.value || '').trim();
+    if (!raw) return {};
+    try {
+      var parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (error) {
+      return {};
+    }
+  }
+
+  function updateColorPreviews() {
+    toolbar.querySelectorAll('[data-color-preview]').forEach(function (preview) {
+      var kind = preview.dataset.colorPreview;
+      var input = toolbar.querySelector('[data-color-source="' + kind + '"]');
+      if (input) preview.style.backgroundColor = input.value || '#000000';
+    });
+  }
+
+  function normalizeToolbarColor(value, fallback) {
+    var source = String(value || '').trim();
+    if (!source) return fallback;
+    if (/^#([0-9a-f]{3}){1,2}$/i.test(source)) {
+      if (source.length === 4) {
+        return '#' + source.slice(1).split('').map(function (part) { return part + part; }).join('');
+      }
+      return source;
+    }
+    var rgbMatch = source.match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/i);
+    if (!rgbMatch) return fallback;
+    return '#' + rgbMatch.slice(1, 4).map(function (part) {
+      return Math.max(0, Math.min(255, Number(part) || 0)).toString(16).padStart(2, '0');
+    }).join('');
+  }
+
+  function setToolbarButtonActive(button, isActive) {
+    if (!button) return;
+    button.classList.toggle('is-active', !!isActive);
+    button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  }
+
+  function syncToolbarState() {
+    var format = activeQuill ? activeQuill.getFormat(lastRange || activeQuill.getSelection() || undefined) : {};
+    var fontSelect = toolbar.querySelector('select[data-format="font"]');
+    var currentFont = String(format.font || 'calibri').trim() || 'calibri';
+    if (fontSelect) {
+      var hasOption = Array.from(fontSelect.options).some(function (option) {
+        return option.value === currentFont;
+      });
+      fontSelect.value = hasOption ? currentFont : 'calibri';
+    }
+
+    toolbar.querySelectorAll('button[data-format]').forEach(function (button) {
+      setToolbarButtonActive(button, !!format[button.dataset.format]);
+    });
+    toolbar.querySelectorAll('button[data-list]').forEach(function (button) {
+      setToolbarButtonActive(button, (format.list || '') === button.dataset.list);
+    });
+    toolbar.querySelectorAll('button[data-align]').forEach(function (button) {
+      var align = format.align || 'left';
+      setToolbarButtonActive(button, align === button.dataset.align);
+    });
+
+    var colorInput = toolbar.querySelector('[data-color-source="color"]');
+    var backgroundInput = toolbar.querySelector('[data-color-source="background"]');
+    if (colorInput) colorInput.value = normalizeToolbarColor(format.color, '#000000');
+    if (backgroundInput) backgroundInput.value = normalizeToolbarColor(format.background, '#ffffff');
+    updateColorPreviews();
+  }
+
+  function restoreSelection() {
+    if (!activeQuill) return;
+    activeQuill.focus();
+    if (lastRange) {
+      activeQuill.setSelection(lastRange.index, lastRange.length, 'silent');
+    } else {
+      activeQuill.getSelection(true);
+    }
+  }
+
+  function syncState() {
+    if (!activeQuill) {
+      return {
+        html: '',
+        plain_text: String(textarea.value || '').trim()
+      };
+    }
+    var html = activeQuill.root.innerHTML === '<p><br></p>' ? '' : activeQuill.root.innerHTML;
+    var plainText = activeQuill.getText().replace(/\s+$/, '').trim();
+    textarea.value = plainText;
+    var payload = {
+      html: html,
+      plain_text: plainText
+    };
+    stateInput.value = JSON.stringify(payload);
+    return payload;
+  }
+
+  function queueSyncState() {
+    window.requestAnimationFrame(function () {
+      syncState();
+    });
+  }
 
   function renderSectionOptions(productId, selectedValue) {
     var items = sectionsByProduct[String(productId || '')] || [];
@@ -91,6 +353,129 @@
   renderSectionOptions(productSelect.value, sectionSelect.value);
   productSelect.addEventListener('change', function () {
     renderSectionOptions(productSelect.value, sectionSelect.value);
+  });
+
+  toolbar.addEventListener('click', function (event) {
+    var button = event.target.closest('button[data-format], button[data-list], button[data-action], button[data-align], button[data-apply-color]');
+    if (!button || !activeQuill) return;
+    event.preventDefault();
+    restoreSelection();
+    if (button.dataset.format) {
+      var formatName = button.dataset.format;
+      var currentFormat = activeQuill.getFormat();
+      var current = Object.prototype.hasOwnProperty.call(currentFormat, formatName) ? currentFormat[formatName] : false;
+      activeQuill.format(formatName, current ? false : true);
+      queueSyncState();
+      syncToolbarState();
+      return;
+    }
+    if (button.dataset.list) {
+      var listType = button.dataset.list;
+      var currentList = activeQuill.getFormat().list || false;
+      activeQuill.format('list', currentList === listType ? false : listType);
+      queueSyncState();
+      syncToolbarState();
+      return;
+    }
+    if (button.dataset.align) {
+      var align = button.dataset.align;
+      activeQuill.format('align', align === 'left' ? false : align);
+      queueSyncState();
+      syncToolbarState();
+      return;
+    }
+    if (button.dataset.applyColor) {
+      var colorInput = toolbar.querySelector('[data-color-source="' + button.dataset.applyColor + '"]');
+      activeQuill.format(button.dataset.applyColor, colorInput ? colorInput.value : false);
+      queueSyncState();
+      syncToolbarState();
+      return;
+    }
+    if (button.dataset.action === 'clean') {
+      var safeRange = activeQuill.getSelection(true);
+      if (safeRange && safeRange.length) {
+        activeQuill.removeFormat(safeRange.index, safeRange.length);
+      } else {
+        activeQuill.format('bold', false);
+        activeQuill.format('italic', false);
+        activeQuill.format('underline', false);
+        activeQuill.format('color', false);
+        activeQuill.format('background', false);
+        activeQuill.format('list', false);
+        activeQuill.format('align', false);
+      }
+      queueSyncState();
+      syncToolbarState();
+    }
+  });
+
+  toolbar.addEventListener('change', function (event) {
+    var select = event.target.closest('select[data-format]');
+    if (select && activeQuill) {
+      restoreSelection();
+      activeQuill.format(select.dataset.format, select.value || false);
+      queueSyncState();
+      syncToolbarState();
+      return;
+    }
+    var colorInput = event.target.closest('input[data-color-source]');
+    if (colorInput) {
+      updateColorPreviews();
+      queueSyncState();
+    }
+  });
+
+  if (formEl) {
+    formEl.addEventListener('submit', function () {
+      syncState();
+    });
+    formEl.addEventListener('htmx:configRequest', function (event) {
+      var payload = syncState();
+      if (!event.detail || !event.detail.parameters) return;
+      event.detail.parameters.service_composition = payload.plain_text || '';
+      event.detail.parameters.service_composition_editor_state = JSON.stringify(payload);
+    });
+  }
+  if (submitBtn) {
+    submitBtn.addEventListener('click', function () {
+      syncState();
+    });
+  }
+
+  loadQuill(function () {
+    registerFonts();
+    activeQuill = new window.Quill(editorEl, {
+      theme: 'snow',
+      modules: {
+        toolbar: false
+      }
+    });
+    var stored = parseEditorState();
+    var html = String(stored.html || '').trim();
+    var plainText = String(stored.plain_text || textarea.value || '').trim();
+    var initialHtml = html || normalizeTextToHtml(plainText);
+    if (initialHtml) {
+      var delta = activeQuill.clipboard.convert({ html: initialHtml });
+      activeQuill.setContents(delta, 'silent');
+    }
+    activeQuill.format('font', 'calibri', 'silent');
+    activeQuill.format('align', 'justify', 'silent');
+    activeQuill.on('selection-change', function (range) {
+      if (range) {
+        lastRange = range;
+      }
+      syncToolbarState();
+    });
+    activeQuill.on('text-change', function () {
+      syncState();
+      syncToolbarState();
+    });
+    editorEl.addEventListener('click', function () {
+      activeQuill.focus();
+    });
+    updateColorPreviews();
+    syncState();
+    syncToolbarState();
   });
 })();
 </script>

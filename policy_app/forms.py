@@ -1,3 +1,5 @@
+import json
+
 from django import forms
 from django.contrib.auth.models import User
 from django.db.models import Q
@@ -220,10 +222,14 @@ class TypicalServiceCompositionForm(forms.ModelForm):
         queryset=TypicalSection.objects.none(),
         widget=forms.Select(attrs={"class": "form-select"}),
     )
+    service_composition_editor_state = forms.CharField(
+        required=False,
+        widget=forms.HiddenInput(attrs={"id": "id_service_composition_editor_state"}),
+    )
 
     class Meta:
         model = TypicalServiceComposition
-        fields = ["product", "section", "service_composition"]
+        fields = ["product", "section", "service_composition", "service_composition_editor_state"]
         widgets = {
             "service_composition": forms.Textarea(attrs={
                 "class": "form-control",
@@ -259,6 +265,13 @@ class TypicalServiceCompositionForm(forms.ModelForm):
             self.fields["section"].queryset = section_qs.filter(pk=self.instance.section_id)
         else:
             self.fields["section"].queryset = section_qs.none()
+        if self.instance and self.instance.pk and not self.is_bound:
+            self.initial["service_composition_editor_state"] = json.dumps(
+                self.instance.service_composition_editor_state or {},
+                ensure_ascii=False,
+            )
+        elif not self.is_bound:
+            self.initial["service_composition_editor_state"] = ""
 
     def clean(self):
         cleaned = super().clean()
@@ -267,6 +280,47 @@ class TypicalServiceCompositionForm(forms.ModelForm):
         if product and section and section.product_id != product.id:
             self.add_error("section", "Раздел должен относиться к выбранному продукту.")
         return cleaned
+
+    def clean_service_composition_editor_state(self):
+        raw = str(self.cleaned_data.get("service_composition_editor_state") or "").strip()
+        if not raw:
+            self.cleaned_service_composition_editor_state = {}
+            return ""
+        try:
+            value = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raise forms.ValidationError("Некорректное состояние редактора состава услуг.")
+        if not isinstance(value, dict):
+            raise forms.ValidationError("Некорректный формат состояния редактора состава услуг.")
+        normalized = {
+            "html": str(value.get("html") or "").strip(),
+            "plain_text": str(value.get("plain_text") or "").strip(),
+        }
+        self.cleaned_service_composition_editor_state = normalized
+        return json.dumps(normalized, ensure_ascii=False)
+
+    def clean_service_composition(self):
+        value = str(self.cleaned_data.get("service_composition") or "").strip()
+        editor_state = getattr(self, "cleaned_service_composition_editor_state", None)
+        if editor_state is None:
+            raw = str(self.data.get("service_composition_editor_state") or "").strip()
+            if raw:
+                try:
+                    parsed = json.loads(raw)
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    parsed = {}
+                editor_state = parsed if isinstance(parsed, dict) else {}
+            else:
+                editor_state = {}
+        plain_text = str((editor_state or {}).get("plain_text") or "").strip()
+        return plain_text or value
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        instance.service_composition_editor_state = getattr(self, "cleaned_service_composition_editor_state", {})
+        if commit:
+            instance.save()
+        return instance
 
 
 class TypicalServiceTermForm(forms.ModelForm):

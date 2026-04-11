@@ -3289,7 +3289,9 @@ body.proposal-service-text-modal-open {
 }
 
 #proposals-pane .proposal-service-text-modal__header,
-#proposals-pane .proposal-service-text-modal__footer {
+#proposals-pane .proposal-service-text-modal__footer,
+#policy-modal .proposal-service-text-modal__header,
+#policy-modal .proposal-service-text-modal__footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -3302,19 +3304,25 @@ body.proposal-service-text-modal-open {
 #proposals-pane .proposal-service-text-modal__header,
 #proposals-pane .proposal-service-text-modal__toolbar,
 #proposals-pane .proposal-service-text-modal__body,
-#proposals-pane .proposal-service-text-modal__footer {
+#proposals-pane .proposal-service-text-modal__footer,
+#policy-modal .proposal-service-text-modal__header,
+#policy-modal .proposal-service-text-modal__toolbar,
+#policy-modal .proposal-service-text-modal__body,
+#policy-modal .proposal-service-text-modal__footer {
   position: relative;
   z-index: 1;
   background: #fff;
 }
 
-#proposals-pane .proposal-service-text-modal__header {
+#proposals-pane .proposal-service-text-modal__header,
+#policy-modal .proposal-service-text-modal__header {
   border: 0;
   border-top-left-radius: .5rem;
   border-top-right-radius: .5rem;
 }
 
-#proposals-pane .proposal-service-text-modal__footer {
+#proposals-pane .proposal-service-text-modal__footer,
+#policy-modal .proposal-service-text-modal__footer {
   justify-content: flex-start;
   border-left: 0;
   border-right: 0;
@@ -3324,14 +3332,16 @@ body.proposal-service-text-modal-open {
   border-bottom-right-radius: .5rem;
 }
 
-#proposals-pane .proposal-service-text-modal__toolbar {
-  padding: .35rem 1rem .75rem;
+#proposals-pane .proposal-service-text-modal__toolbar,
+#policy-modal .proposal-service-text-modal__toolbar {
+  padding: .75rem 1rem;
   border-left: 0;
   border-right: 0;
   border-bottom: 1px solid #e9ecef;
 }
 
-#proposals-pane .proposal-service-text-toolbar {
+#proposals-pane .proposal-service-text-toolbar,
+#policy-modal .proposal-service-text-toolbar {
   display: flex;
   flex-wrap: wrap;
   gap: .5rem;
@@ -3343,7 +3353,8 @@ body.proposal-service-text-modal-open {
   box-shadow: none;
 }
 
-#proposals-pane .proposal-service-mode-toggle-wrap {
+#proposals-pane .proposal-service-mode-toggle-wrap,
+#policy-modal .proposal-service-mode-toggle-wrap {
   display: inline-flex;
   align-items: center;
   gap: .5rem;
@@ -3353,27 +3364,32 @@ body.proposal-service-text-modal-open {
   min-height: 2rem;
 }
 
-#proposals-pane .proposal-service-mode-toggle-wrap .form-check-input {
+#proposals-pane .proposal-service-mode-toggle-wrap .form-check-input,
+#policy-modal .proposal-service-mode-toggle-wrap .form-check-input {
   margin: 0;
 }
 
-#proposals-pane .proposal-service-mode-toggle-wrap .form-check-label {
+#proposals-pane .proposal-service-mode-toggle-wrap .form-check-label,
+#policy-modal .proposal-service-mode-toggle-wrap .form-check-label {
   white-space: nowrap;
 }
 
-#proposals-pane .proposal-service-text-toolbar__group {
+#proposals-pane .proposal-service-text-toolbar__group,
+#policy-modal .proposal-service-text-toolbar__group {
   display: flex;
   align-items: center;
   gap: .35rem;
 }
 
-#proposals-pane .proposal-service-text-toolbar__select {
+#proposals-pane .proposal-service-text-toolbar__select,
+#policy-modal .proposal-service-text-toolbar__select {
   min-width: 11rem;
   border-color: #ced4da;
   font-size: .875rem;
 }
 
-#proposals-pane .proposal-service-text-toolbar__btn {
+#proposals-pane .proposal-service-text-toolbar__btn,
+#policy-modal .proposal-service-text-toolbar__btn {
   min-width: 2rem;
   height: 2rem;
   padding: 0;
@@ -3385,7 +3401,23 @@ body.proposal-service-text-modal-open {
   box-shadow: none !important;
 }
 
-#proposals-pane .proposal-service-text-toolbar__color-combo {
+#proposals-pane .proposal-service-text-toolbar__btn.is-active,
+#policy-modal .proposal-service-text-toolbar__btn.is-active {
+  color: #0a58ca;
+  background: #e7f1ff;
+  border-color: #86b7fe;
+}
+
+#proposals-pane .proposal-service-text-toolbar__icon,
+#policy-modal .proposal-service-text-toolbar__icon {
+  width: 1rem;
+  height: 1rem;
+  display: block;
+  object-fit: contain;
+}
+
+#proposals-pane .proposal-service-text-toolbar__color-combo,
+#policy-modal .proposal-service-text-toolbar__color-combo {
   display: inline-flex;
   align-items: center;
   gap: .3rem;
@@ -3396,7 +3428,8 @@ body.proposal-service-text-modal-open {
   background: #fff;
 }
 
-#proposals-pane .proposal-service-text-toolbar__btn--combo {
+#proposals-pane .proposal-service-text-toolbar__btn--combo,
+#policy-modal .proposal-service-text-toolbar__btn--combo {
   min-width: auto;
   width: auto;
   padding: 0;
@@ -3404,7 +3437,8 @@ body.proposal-service-text-modal-open {
   background: transparent;
 }
 
-#proposals-pane .proposal-service-text-toolbar__color {
+#proposals-pane .proposal-service-text-toolbar__color,
+#policy-modal .proposal-service-text-toolbar__color {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3418,7 +3452,8 @@ body.proposal-service-text-modal-open {
   overflow: hidden;
 }
 
-#proposals-pane .proposal-service-text-toolbar__color input[type="color"] {
+#proposals-pane .proposal-service-text-toolbar__color input[type="color"],
+#policy-modal .proposal-service-text-toolbar__color input[type="color"] {
   position: absolute;
   opacity: 0;
   pointer-events: none;
@@ -3430,7 +3465,8 @@ body.proposal-service-text-modal-open {
   cursor: pointer;
 }
 
-#proposals-pane .proposal-service-text-toolbar__color-swatch {
+#proposals-pane .proposal-service-text-toolbar__color-swatch,
+#policy-modal .proposal-service-text-toolbar__color-swatch {
   width: .65rem;
   height: .65rem;
   border-radius: 50%;
@@ -3438,7 +3474,8 @@ body.proposal-service-text-modal-open {
   display: block;
 }
 
-#proposals-pane .proposal-service-text-modal__body {
+#proposals-pane .proposal-service-text-modal__body,
+#policy-modal .proposal-service-text-modal__body {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
@@ -3448,14 +3485,16 @@ body.proposal-service-text-modal-open {
   background: #fff;
 }
 
-#proposals-pane .proposal-service-text-modal__cards {
+#proposals-pane .proposal-service-text-modal__cards,
+#policy-modal .proposal-service-text-modal__cards {
   display: grid;
   gap: 1rem;
   align-content: start;
   padding-top: .7rem;
 }
 
-#proposals-pane .proposal-service-text-card {
+#proposals-pane .proposal-service-text-card,
+#policy-modal .proposal-service-text-card {
   min-width: 0;
   margin: 0;
   padding: .45rem 1rem 1rem;
@@ -3464,12 +3503,14 @@ body.proposal-service-text-modal-open {
   background: #fff;
 }
 
-#proposals-pane .proposal-service-text-card.is-active {
+#proposals-pane .proposal-service-text-card.is-active,
+#policy-modal .proposal-service-text-card.is-active {
   border-color: #9ec5fe;
   box-shadow: 0 0 0 .2rem rgba(13, 110, 253, .08);
 }
 
-#proposals-pane .proposal-service-text-card legend {
+#proposals-pane .proposal-service-text-card legend,
+#policy-modal .proposal-service-text-card legend {
   float: none;
   width: auto;
   margin: 0 0 .12rem;
@@ -3481,14 +3522,19 @@ body.proposal-service-text-modal-open {
   border-radius: .4rem;
 }
 
-#proposals-pane .proposal-service-text-card__editor {
+#proposals-pane .proposal-service-text-card__editor,
+#policy-modal .proposal-service-text-card__editor {
   min-height: 11rem;
 }
 
 #proposals-pane .proposal-service-text-card__editor.ql-container,
 #proposals-pane .proposal-service-text-card__editor.ql-container.ql-snow,
 #proposals-pane .proposal-service-text-card__editor .ql-container,
-#proposals-pane .proposal-service-text-card__editor .ql-container.ql-snow {
+#proposals-pane .proposal-service-text-card__editor .ql-container.ql-snow,
+#policy-modal .proposal-service-text-card__editor.ql-container,
+#policy-modal .proposal-service-text-card__editor.ql-container.ql-snow,
+#policy-modal .proposal-service-text-card__editor .ql-container,
+#policy-modal .proposal-service-text-card__editor .ql-container.ql-snow {
   font-size: inherit;
   border: 0 !important;
   border-radius: 0 !important;
@@ -3496,34 +3542,42 @@ body.proposal-service-text-modal-open {
   box-shadow: none !important;
 }
 
-#proposals-pane .proposal-service-text-card__editor .ql-editor {
+#proposals-pane .proposal-service-text-card__editor .ql-editor,
+#policy-modal .proposal-service-text-card__editor .ql-editor {
   min-height: 10rem;
   padding: 0 0 .25rem;
   line-height: 1.25;
   font-family: "ProposalCalibri", Calibri, "Carlito", Arial, Helvetica, sans-serif;
   font-synthesis: weight style;
-  text-align: justify;
 }
 
-#proposals-pane .proposal-service-text-card__editor .ql-font-calibri {
+#proposals-pane .proposal-service-text-card__editor .ql-font-calibri,
+#policy-modal .proposal-service-text-card__editor .ql-font-calibri {
   font-family: "ProposalCalibri", Calibri, "Carlito", Arial, Helvetica, sans-serif;
   font-synthesis: weight style;
 }
 
-#proposals-pane .proposal-service-text-card__editor .ql-font-cambria {
+#proposals-pane .proposal-service-text-card__editor .ql-font-cambria,
+#policy-modal .proposal-service-text-card__editor .ql-font-cambria {
   font-family: "ProposalCambria", Cambria, Georgia, "Times New Roman", Times, serif;
   font-synthesis: weight style;
 }
 
 #proposals-pane .proposal-service-text-card__editor .ql-editor strong,
-#proposals-pane .proposal-service-text-card__editor .ql-editor b {
+#proposals-pane .proposal-service-text-card__editor .ql-editor b,
+#policy-modal .proposal-service-text-card__editor .ql-editor strong,
+#policy-modal .proposal-service-text-card__editor .ql-editor b {
   font-weight: 700 !important;
 }
 
 #proposals-pane .proposal-service-text-card__editor .ql-font-cambria strong,
 #proposals-pane .proposal-service-text-card__editor .ql-font-cambria b,
 #proposals-pane .proposal-service-text-card__editor strong.ql-font-cambria,
-#proposals-pane .proposal-service-text-card__editor b.ql-font-cambria {
+#proposals-pane .proposal-service-text-card__editor b.ql-font-cambria,
+#policy-modal .proposal-service-text-card__editor .ql-font-cambria strong,
+#policy-modal .proposal-service-text-card__editor .ql-font-cambria b,
+#policy-modal .proposal-service-text-card__editor strong.ql-font-cambria,
+#policy-modal .proposal-service-text-card__editor b.ql-font-cambria {
   font-family: "ProposalCambria", Cambria, Georgia, "Times New Roman", Times, serif;
   font-weight: 700 !important;
   font-synthesis: weight style;
@@ -3532,21 +3586,28 @@ body.proposal-service-text-modal-open {
 #proposals-pane .proposal-service-text-card__editor .ql-font-calibri strong,
 #proposals-pane .proposal-service-text-card__editor .ql-font-calibri b,
 #proposals-pane .proposal-service-text-card__editor strong.ql-font-calibri,
-#proposals-pane .proposal-service-text-card__editor b.ql-font-calibri {
+#proposals-pane .proposal-service-text-card__editor b.ql-font-calibri,
+#policy-modal .proposal-service-text-card__editor .ql-font-calibri strong,
+#policy-modal .proposal-service-text-card__editor .ql-font-calibri b,
+#policy-modal .proposal-service-text-card__editor strong.ql-font-calibri,
+#policy-modal .proposal-service-text-card__editor b.ql-font-calibri {
   font-family: "ProposalCalibri", Calibri, "Carlito", Arial, Helvetica, sans-serif;
   font-weight: 700 !important;
   font-synthesis: weight style;
 }
 
-#proposals-pane .proposal-service-text-card__editor .ql-font-sans {
+#proposals-pane .proposal-service-text-card__editor .ql-font-sans,
+#policy-modal .proposal-service-text-card__editor .ql-font-sans {
   font-family: Arial, Helvetica, sans-serif;
 }
 
-#proposals-pane .proposal-service-text-card__editor .ql-font-serif {
+#proposals-pane .proposal-service-text-card__editor .ql-font-serif,
+#policy-modal .proposal-service-text-card__editor .ql-font-serif {
   font-family: Georgia, "Times New Roman", serif;
 }
 
-#proposals-pane .proposal-service-text-card__editor .ql-font-monospace {
+#proposals-pane .proposal-service-text-card__editor .ql-font-monospace,
+#policy-modal .proposal-service-text-card__editor .ql-font-monospace {
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
 }
 
@@ -3560,18 +3621,22 @@ body.proposal-service-text-modal-open {
   transform: translateY(0px);
 }
 
-#proposals-pane .proposal-service-text-card__editor .ql-font-georgia {
+#proposals-pane .proposal-service-text-card__editor .ql-font-georgia,
+#policy-modal .proposal-service-text-card__editor .ql-font-georgia {
   font-family: Georgia, serif;
 }
 
-#proposals-pane .proposal-service-text-card__editor .ql-font-times-new-roman {
+#proposals-pane .proposal-service-text-card__editor .ql-font-times-new-roman,
+#policy-modal .proposal-service-text-card__editor .ql-font-times-new-roman {
   font-family: "Times New Roman", Times, serif;
 }
 
-#proposals-pane .proposal-service-text-card__editor .ql-editor p {
+#proposals-pane .proposal-service-text-card__editor .ql-editor p,
+#policy-modal .proposal-service-text-card__editor .ql-editor p {
   margin-top: 0;
   margin-bottom: 0;
 }
+
 
 /* Letters: CC badge — серый */
 .letter-cc-badge {

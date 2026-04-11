@@ -40,6 +40,7 @@ from projects_app.models import ProjectRegistration
 from users_app.models import Employee
 from yandexdisk_app.models import YandexDiskAccount
 
+from contracts_app.docx_processor import process_template
 from .document_generation import generate_and_store_proposal_pdf, store_generated_documents
 from .forms import ProposalDispatchForm, ProposalRegistrationForm, _proposal_variable_column_choices
 from .forms import ProposalVariableForm
@@ -158,6 +159,8 @@ class ProposalDocumentGenerationTests(TestCase):
         template_doc.add_paragraph("Срок до Предварительного отчёта: {{preliminary_report_term_month}}")
         template_doc.add_paragraph("Состав услуг:")
         template_doc.add_paragraph("[[scope_of_work]]")
+        template_doc.add_paragraph("Расчёт вознаграждения:")
+        template_doc.add_paragraph("[[budget_table]]")
         template_doc.add_paragraph("Активы:")
         template_doc.add_paragraph("[[actives_name]]")
         buffer = BytesIO()
@@ -239,6 +242,12 @@ class ProposalDocumentGenerationTests(TestCase):
             is_computed=True,
             position=10,
         )
+        ProposalVariable.objects.create(
+            key="[[budget_table]]",
+            description="Расчёт вознаграждения за оказание услуг",
+            is_computed=True,
+            position=11,
+        )
         ProposalAsset.objects.create(
             proposal=self.proposal,
             short_name="Месторождение Приморское",
@@ -254,6 +263,48 @@ class ProposalDocumentGenerationTests(TestCase):
             short_name="Месторождение Приморское",
             position=3,
         )
+        ProposalCommercialOffer.objects.create(
+            proposal=self.proposal,
+            specialist="Иванов И.И.",
+            job_title="Геолог",
+            professional_status="Партнер",
+            service_name="Раздел 1",
+            rate_eur_per_day="1200",
+            asset_day_counts=[2, 3, 1],
+            total_eur_without_vat="7200",
+            position=1,
+        )
+        ProposalCommercialOffer.objects.create(
+            proposal=self.proposal,
+            specialist="Петров П.П.",
+            job_title="Инженер",
+            professional_status="Эксперт",
+            service_name="Раздел 2",
+            rate_eur_per_day="800",
+            asset_day_counts=[1, 1, 2],
+            total_eur_without_vat="3200",
+            position=2,
+        )
+        ProposalCommercialOffer.objects.create(
+            proposal=self.proposal,
+            specialist="",
+            job_title="",
+            professional_status="",
+            service_name="Командировочные расходы",
+            rate_eur_per_day=None,
+            asset_day_counts=["", "", ""],
+            total_eur_without_vat="500",
+            position=3,
+        )
+        self.proposal.commercial_totals_json = {
+            "exchange_rate": "96.5",
+            "discount_percent": "7.5",
+            "contract_total": "900000",
+            "contract_total_auto": "900000",
+            "rub_total_service_text": "Курс евро Банка России на текущую дату:",
+            "discounted_total_service_text": "Размер скидки:",
+        }
+        self.proposal.save(update_fields=["commercial_totals_json"])
 
     @patch("ai_app.proposals_app.document_generation._get_cloud_upload_user")
     @patch("ai_app.proposals_app.document_generation.cloud_upload_file", return_value=True)
@@ -320,6 +371,41 @@ class ProposalDocumentGenerationTests(TestCase):
             self.assertTrue(
                 "w:numPr" in paragraph._element.xml or "w:pStyle" in paragraph._element.xml
             )
+        budget_table = next(
+            table
+            for table in generated_doc.tables
+            if any("Специалист" in cell.text for cell in table.rows[0].cells)
+        )
+        budget_rows = [[cell.text.strip() for cell in row.cells] for row in budget_table.rows]
+        self.assertIn("Месторождение Приморское", budget_rows[1])
+        self.assertIn("Фабрика Приморская", budget_rows[1])
+        self.assertIn("Иванов И.И.", budget_rows[2])
+        self.assertIn("Геолог, Партнер", budget_rows[2])
+        self.assertIn("6", budget_rows[2])
+        self.assertIn("7\u00a0200,00", budget_rows[2])
+        self.assertIn("Командировочные расходы", budget_rows[4][0])
+        self.assertIn("ИТОГО, по расчёту", budget_rows[5][0])
+        self.assertIn("10\u00a0400,00", budget_rows[5][-1])
+        self.assertIn("ИТОГО, рубли без НДС", budget_rows[6][0])
+        self.assertIn("96,5", budget_rows[6][2])
+        self.assertIn("1\u00a0003\u00a0600,00", budget_rows[6][-1])
+        self.assertIn("ИТОГО, рубли без НДС с учетом скидки", budget_rows[7][0])
+        self.assertIn("7,5%", budget_rows[7][2])
+        self.assertIn("928\u00a0330,00", budget_rows[7][-1])
+        self.assertIn("ИТОГО в договор, рубли без НДС с учётом дополнительной скидки", budget_rows[8][0])
+        self.assertIn("900\u00a0000,00", budget_rows[8][-1])
+        self.assertIn('w:tblLayout w:type="autofit"', budget_table._tbl.xml)
+        self.assertIn('w:tblW w:type="auto" w:w="0"', budget_table._tbl.xml)
+        budget_run_sizes = [
+            run.font.size.pt
+            for row in budget_table.rows
+            for cell in row.cells
+            for paragraph in cell.paragraphs
+            for run in paragraph.runs
+            if run.text.strip()
+        ]
+        self.assertTrue(budget_run_sizes)
+        self.assertTrue(all(size == 8 for size in budget_run_sizes))
 
     @patch("ai_app.proposals_app.document_generation._get_cloud_upload_user")
     @patch("ai_app.proposals_app.document_generation.cloud_upload_file", return_value=True)
@@ -339,6 +425,120 @@ class ProposalDocumentGenerationTests(TestCase):
 
         mocked_cloud_upload.assert_called_once()
         self.assertEqual(mocked_cloud_upload.call_args.args[0], connected_user)
+
+    def test_scope_of_work_plain_list_key_strips_rich_list_markers(self):
+        template_doc = Document()
+        template_doc.add_paragraph("[[scope_of_work]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+
+        generated_bytes = process_template(
+            buffer.getvalue(),
+            {},
+            list_replacements={
+                "[[scope_of_work]]": [
+                    {"html": "<ul><li>Первый пункт</li><li>Второй пункт</li></ul>"}
+                ]
+            },
+            plain_list_keys={"[[scope_of_work]]"},
+            default_language_code="ru-RU",
+        )
+
+        generated_doc = Document(BytesIO(generated_bytes))
+        scope_paragraphs = [paragraph for paragraph in generated_doc.paragraphs if paragraph.text in {"Первый пункт", "Второй пункт"}]
+
+        self.assertEqual(len(scope_paragraphs), 2)
+        for paragraph in scope_paragraphs:
+            self.assertNotIn("w:numPr", paragraph._element.xml)
+            self.assertNotIn("w:pStyle", paragraph._element.xml)
+            self.assertIn('w:lang w:val="ru-RU"', paragraph._element.xml)
+
+    def test_process_template_applies_default_language_to_scalar_replacements(self):
+        template_doc = Document()
+        template_doc.add_paragraph("Заказчик: {{name}}")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+
+        generated_bytes = process_template(
+            buffer.getvalue(),
+            {"{{name}}": 'ООО "Приморское"'},
+            default_language_code="ru-RU",
+        )
+
+        generated_doc = Document(BytesIO(generated_bytes))
+        paragraph = next(paragraph for paragraph in generated_doc.paragraphs if 'ООО "Приморское"' in paragraph.text)
+
+        self.assertIn('w:lang w:val="ru-RU"', paragraph._element.xml)
+
+    def test_resolve_budget_table_returns_table_spec(self):
+        _, lists, tables = resolve_variables(
+            self.proposal,
+            [ProposalVariable(key="[[budget_table]]", is_computed=True)],
+        )
+
+        self.assertEqual(lists, {})
+        self.assertIn("[[budget_table]]", tables)
+        table_spec = tables["[[budget_table]]"]
+        self.assertEqual(table_spec["font_size_pt"], 8)
+        self.assertEqual(table_spec["style"], "Table Grid")
+        self.assertEqual(table_spec["rows"][0][0]["text"], "Специалист")
+        self.assertEqual(table_spec["rows"][1][0]["text"], "Месторождение Приморское")
+        self.assertEqual(table_spec["rows"][2][0]["text"], "Иванов И.И.")
+        self.assertEqual(table_spec["rows"][2][1]["text"], "Геолог, Партнер")
+        self.assertEqual(table_spec["rows"][2][-2]["text"], "6")
+        self.assertEqual(table_spec["rows"][5][0]["text"], "ИТОГО, по расчёту")
+
+    def test_process_template_inserts_budget_table(self):
+        template_doc = Document()
+        template_doc.add_paragraph("[[budget_table]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+
+        replacements, lists, tables = resolve_variables(
+            self.proposal,
+            [ProposalVariable(key="[[budget_table]]", is_computed=True)],
+        )
+
+        generated_bytes = process_template(
+            buffer.getvalue(),
+            replacements,
+            table_replacements=tables,
+            list_replacements=lists,
+            default_language_code="ru-RU",
+        )
+
+        generated_doc = Document(BytesIO(generated_bytes))
+        self.assertEqual(len(generated_doc.tables), 1)
+        budget_table = generated_doc.tables[0]
+        budget_rows = [[cell.text.strip() for cell in row.cells] for row in budget_table.rows]
+
+        self.assertIn("Месторождение Приморское", budget_rows[1])
+        self.assertIn("Фабрика Приморская", budget_rows[1])
+        self.assertIn("Иванов И.И.", budget_rows[2])
+        self.assertIn("Геолог, Партнер", budget_rows[2])
+        self.assertIn("6", budget_rows[2])
+        self.assertIn("7\u00a0200,00", budget_rows[2])
+        self.assertIn("Командировочные расходы", budget_rows[4][0])
+        self.assertIn("ИТОГО, по расчёту", budget_rows[5][0])
+        self.assertIn("10\u00a0400,00", budget_rows[5][-1])
+        self.assertIn("ИТОГО, рубли без НДС", budget_rows[6][0])
+        self.assertIn("96,5", budget_rows[6][2])
+        self.assertIn("1\u00a0003\u00a0600,00", budget_rows[6][-1])
+        self.assertIn("ИТОГО, рубли без НДС с учетом скидки", budget_rows[7][0])
+        self.assertIn("7,5%", budget_rows[7][2])
+        self.assertIn("928\u00a0330,00", budget_rows[7][-1])
+        self.assertIn("ИТОГО в договор, рубли без НДС с учётом дополнительной скидки", budget_rows[8][0])
+        self.assertIn("900\u00a0000,00", budget_rows[8][-1])
+        budget_run_sizes = [
+            run.font.size.pt
+            for row in budget_table.rows
+            for cell in row.cells
+            for paragraph in cell.paragraphs
+            for run in paragraph.runs
+            if run.text.strip()
+        ]
+        self.assertTrue(budget_run_sizes)
+        self.assertTrue(all(size == 8 for size in budget_run_sizes))
 
     @patch("ai_app.proposals_app.document_generation.get_any_connected_service_user")
     @patch("ai_app.proposals_app.document_generation.is_nextcloud_primary", return_value=False)
@@ -1967,7 +2167,7 @@ class ProposalRegistrationFormTests(TestCase):
         ]
 
         with patch("proposals_app.variable_resolver._today", return_value=date(2026, 4, 9)):
-            replacements, lists = resolve_variables(proposal, variables)
+            replacements, lists, tables = resolve_variables(proposal, variables)
 
         self.assertEqual(replacements["{{proposal_project_name}}"], "Due Diligence АО «Полиметалл УК»")
         self.assertEqual(replacements["{{purpose}}"], "Проверка актива")
@@ -1996,6 +2196,7 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(replacements["{{month}}"], "апреля")
         self.assertEqual(lists["[[scope_of_work]]"], [{"html": "<p><strong>Этап 1</strong></p>"}, {"html": "<p><u>Этап 2</u></p>"}])
         self.assertEqual(lists["[[actives_name]]"], [])
+        self.assertEqual(tables, {})
 
         self.assertEqual(
             ProposalVariable(key="{{year}}", is_computed=True).binding_display,
@@ -2029,28 +2230,29 @@ class ProposalRegistrationFormTests(TestCase):
         ProposalAsset.objects.create(proposal=proposal, short_name="Актив 2", position=2)
         ProposalAsset.objects.create(proposal=proposal, short_name="Актив 1", position=3)
 
-        replacements, lists = resolve_variables(
+        replacements, lists, tables = resolve_variables(
             proposal,
             [ProposalVariable(key="[[actives_name]]", is_computed=True)],
         )
 
         self.assertEqual(replacements, {})
         self.assertEqual(lists["[[actives_name]]"], ["Актив 1", "Актив 2"])
+        self.assertEqual(tables, {})
 
     def test_resolve_client_owner_name_depends_on_asset_owner_checkbox(self):
         proposal = ProposalRegistration(customer='АО «Полиметалл УК»')
         variables = [ProposalVariable(key="{{client_owner_name}}", is_computed=True)]
 
-        replacements, _ = resolve_variables(proposal, variables)
+        replacements, _, _ = resolve_variables(proposal, variables)
         self.assertEqual(replacements["{{client_owner_name}}"], 'АО «Полиметалл УК»')
 
         proposal.asset_owner_matches_customer = False
         proposal.asset_owner = 'ООО «КАП»'
-        replacements, _ = resolve_variables(proposal, variables)
+        replacements, _, _ = resolve_variables(proposal, variables)
         self.assertEqual(replacements["{{client_owner_name}}"], 'АО «Полиметалл УК» / ООО «КАП»')
 
         proposal.proposal_project_name = 'Due Diligence ООО «КАП»'
-        replacements, _ = resolve_variables(
+        replacements, _, _ = resolve_variables(
             proposal,
             [ProposalVariable(key="{{service_type_short}}", is_computed=True)],
         )
@@ -2059,14 +2261,14 @@ class ProposalRegistrationFormTests(TestCase):
     def test_resolve_tkp_preliminary_depends_on_status(self):
         proposal = ProposalRegistration(status=ProposalRegistration.ProposalStatus.PRELIMINARY)
 
-        replacements, _ = resolve_variables(
+        replacements, _, _ = resolve_variables(
             proposal,
             [ProposalVariable(key="{{tkp_preliminary}}", is_computed=True)],
         )
         self.assertEqual(replacements["{{tkp_preliminary}}"], "(предварительное)")
 
         proposal.status = ProposalRegistration.ProposalStatus.FINAL
-        replacements, _ = resolve_variables(
+        replacements, _, _ = resolve_variables(
             proposal,
             [ProposalVariable(key="{{tkp_preliminary}}", is_computed=True)],
         )
@@ -2075,7 +2277,7 @@ class ProposalRegistrationFormTests(TestCase):
     def test_resolve_preliminary_payment_percentage_full_sums_existing_percent_fields(self):
         proposal = ProposalRegistration(advance_percent="50", preliminary_report_percent="20")
 
-        replacements, _ = resolve_variables(
+        replacements, _, _ = resolve_variables(
             proposal,
             [ProposalVariable(key="{{preliminary_payment_percentage_full}}", is_computed=True)],
         )
@@ -2092,7 +2294,7 @@ class ProposalRegistrationFormTests(TestCase):
         for source_value, expected in cases:
             with self.subTest(service_term_months=source_value):
                 proposal = ProposalRegistration(service_term_months=source_value)
-                replacements, _ = resolve_variables(
+                replacements, _, _ = resolve_variables(
                     proposal,
                     [ProposalVariable(key="{{preliminary_report_term_month}}", is_computed=True)],
                 )
@@ -2109,7 +2311,7 @@ class ProposalRegistrationFormTests(TestCase):
             },
         )
 
-        _, lists = resolve_variables(
+        _, lists, _ = resolve_variables(
             proposal,
             [ProposalVariable(key="[[scope_of_work]]", is_computed=True)],
         )
@@ -3032,6 +3234,10 @@ class ProposalFormContextTests(TestCase):
             product=product,
             section=section,
             service_composition="Этап 1\nЭтап 2",
+            service_composition_editor_state={
+                "html": "<p><strong>Этап 1</strong></p><p>Этап 2</p>",
+                "plain_text": "Этап 1\nЭтап 2",
+            },
             position=1,
         )
 
@@ -3045,6 +3251,10 @@ class ProposalFormContextTests(TestCase):
                     "code": "S-101",
                     "service_name": "Раздел 1",
                     "service_composition": "Этап 1\nЭтап 2",
+                    "service_composition_editor_state": {
+                        "html": "<p><strong>Этап 1</strong></p><p>Этап 2</p>",
+                        "plain_text": "Этап 1\nЭтап 2",
+                    },
                 }
             ],
         )
