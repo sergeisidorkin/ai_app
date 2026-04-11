@@ -857,9 +857,19 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             )
         elif not self.instance.pk and "service_sections_payload" not in self.data:
             self.fields["service_sections_payload"].initial = "[]"
-        if "service_sections_editor_state" not in self.data:
+        if self.instance and self.instance.pk and "service_sections_editor_state" not in self.data:
+            self.fields["service_sections_editor_state"].initial = json.dumps(
+                self.instance.service_sections_editor_state or [],
+                ensure_ascii=False,
+            )
+        elif "service_sections_editor_state" not in self.data:
             self.fields["service_sections_editor_state"].initial = "[]"
-        if "service_customer_tz_editor_state" not in self.data:
+        if self.instance and self.instance.pk and "service_customer_tz_editor_state" not in self.data:
+            self.fields["service_customer_tz_editor_state"].initial = json.dumps(
+                self.instance.service_customer_tz_editor_state or {},
+                ensure_ascii=False,
+            )
+        elif "service_customer_tz_editor_state" not in self.data:
             self.fields["service_customer_tz_editor_state"].initial = ""
         if self.instance and self.instance.pk and "service_composition_mode" not in self.data:
             self.fields["service_composition_mode"].initial = self.instance.service_composition_mode or "sections"
@@ -991,10 +1001,56 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             }
             for item in getattr(self, "cleaned_service_sections", [])
         ]
+        instance.service_sections_editor_state = getattr(self, "cleaned_service_sections_editor_state", [])
+        instance.service_customer_tz_editor_state = getattr(self, "cleaned_service_customer_tz_editor_state", {})
         instance.commercial_totals_json = getattr(self, "cleaned_commercial_totals", {})
         if commit:
             instance.save()
         return instance
+
+    def clean_service_sections_editor_state(self):
+        raw = (self.cleaned_data.get("service_sections_editor_state") or "").strip()
+        if not raw:
+            self.cleaned_service_sections_editor_state = []
+            return "[]"
+        try:
+            value = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raise forms.ValidationError("Некорректное состояние редактора состава услуг.")
+        if not isinstance(value, list):
+            raise forms.ValidationError("Некорректный формат состояния редактора состава услуг.")
+        normalized = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            normalized.append(
+                {
+                    "code": str(item.get("code") or "").strip(),
+                    "service_name": str(item.get("service_name") or "").strip(),
+                    "html": str(item.get("html") or "").strip(),
+                    "plain_text": str(item.get("plain_text") or "").strip(),
+                }
+            )
+        self.cleaned_service_sections_editor_state = normalized
+        return json.dumps(normalized, ensure_ascii=False)
+
+    def clean_service_customer_tz_editor_state(self):
+        raw = (self.cleaned_data.get("service_customer_tz_editor_state") or "").strip()
+        if not raw:
+            self.cleaned_service_customer_tz_editor_state = {}
+            return ""
+        try:
+            value = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raise forms.ValidationError("Некорректное состояние редактора ТЗ Заказчика.")
+        if not isinstance(value, dict):
+            raise forms.ValidationError("Некорректный формат состояния редактора ТЗ Заказчика.")
+        normalized = {
+            "html": str(value.get("html") or "").strip(),
+            "plain_text": str(value.get("plain_text") or "").strip(),
+        }
+        self.cleaned_service_customer_tz_editor_state = normalized
+        return json.dumps(normalized, ensure_ascii=False)
 
     def clean_assets_payload(self):
         cleaned_assets = self._clean_related_payload(
@@ -1098,6 +1154,12 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             registration_date_raw = str(row.get("registration_date") or "").strip()
 
             if not any([legal_entity_short_name, short_name, region, object_type, license_value, registration_date_raw]):
+                continue
+
+            # The objects editor is currently hidden in the UI, but row syncing from
+            # legal entities can still create placeholder rows that only carry the
+            # linked legal entity name. Those hidden placeholders must not block save.
+            if legal_entity_short_name and not short_name and not any([region, object_type, license_value, registration_date_raw]):
                 continue
 
             if not legal_entity_short_name:

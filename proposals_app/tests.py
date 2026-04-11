@@ -116,6 +116,21 @@ class ProposalDocumentGenerationTests(TestCase):
             asset_owner_matches_customer=True,
             country=self.country,
             proposal_project_name='Due Diligence ООО "Приморское"',
+            service_composition_mode="sections",
+            service_sections_editor_state=[
+                {
+                    "code": "S-101",
+                    "service_name": "Раздел 1",
+                    "html": "<p><strong>Этап 1</strong> и описание</p><p><span style=\"color:#ff0000\">Красный текст</span></p>",
+                    "plain_text": "Этап 1 и описание\n\nКрасный текст",
+                },
+                {
+                    "code": "S-102",
+                    "service_name": "Раздел 2",
+                    "html": "<p class=\"ql-align-center\"><u>Этап 2</u></p>",
+                    "plain_text": "Этап 2",
+                },
+            ],
             service_term_months="4.5",
             advance_percent="50",
             preliminary_report_percent="20",
@@ -141,6 +156,8 @@ class ProposalDocumentGenerationTests(TestCase):
         template_doc.add_paragraph("Титул ТКП: {{tkp_preliminary}}")
         template_doc.add_paragraph("Предварительная оплата всего: {{preliminary_payment_percentage_full}}")
         template_doc.add_paragraph("Срок до Предварительного отчёта: {{preliminary_report_term_month}}")
+        template_doc.add_paragraph("Состав услуг:")
+        template_doc.add_paragraph("[[scope_of_work]]")
         template_doc.add_paragraph("Активы:")
         template_doc.add_paragraph("[[actives_name]]")
         buffer = BytesIO()
@@ -216,6 +233,12 @@ class ProposalDocumentGenerationTests(TestCase):
             is_computed=True,
             position=9,
         )
+        ProposalVariable.objects.create(
+            key="[[scope_of_work]]",
+            description="Состав оказываемых услуг",
+            is_computed=True,
+            position=10,
+        )
         ProposalAsset.objects.create(
             proposal=self.proposal,
             short_name="Месторождение Приморское",
@@ -275,8 +298,18 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertIn("Титул ТКП: (предварительное)", full_text)
         self.assertIn("Предварительная оплата всего: 70%", full_text)
         self.assertIn("Срок до Предварительного отчёта: 4,5 месяца", full_text)
+        self.assertIn("Состав услуг:", full_text)
+        self.assertIn("Этап 1 и описание", full_text)
+        self.assertIn("Красный текст", full_text)
+        self.assertIn("Этап 2", full_text)
         self.assertIn("Месторождение Приморское", full_text)
         self.assertIn("Фабрика Приморская", full_text)
+        scope_paragraph = next(paragraph for paragraph in generated_doc.paragraphs if paragraph.text == "Этап 1 и описание")
+        self.assertTrue(any(run.bold for run in scope_paragraph.runs if "Этап 1" in run.text))
+        red_paragraph = next(paragraph for paragraph in generated_doc.paragraphs if paragraph.text == "Красный текст")
+        self.assertTrue(any((run.font.color.rgb and str(run.font.color.rgb) == "FF0000") for run in red_paragraph.runs))
+        centered_paragraph = next(paragraph for paragraph in generated_doc.paragraphs if paragraph.text == "Этап 2")
+        self.assertTrue(any(run.underline for run in centered_paragraph.runs))
         asset_paragraphs = [
             paragraph
             for paragraph in generated_doc.paragraphs
@@ -1618,6 +1651,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "registration_date": "01.04.2026",
                 "service_composition": "Старый текст разделов",
                 "service_composition_customer_tz": "Новый текст ТЗ заказчика",
+                "service_customer_tz_editor_state": '{"html":"<p><strong>Новый</strong> текст ТЗ заказчика</p>","plain_text":"Новый текст ТЗ заказчика"}',
                 "service_composition_mode": "customer_tz",
             }
         )
@@ -1628,6 +1662,60 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(proposal.service_composition_mode, "customer_tz")
         self.assertEqual(proposal.service_composition_customer_tz, "Новый текст ТЗ заказчика")
         self.assertEqual(proposal.service_composition, "Новый текст ТЗ заказчика")
+        self.assertEqual(
+            proposal.service_customer_tz_editor_state,
+            {
+                "html": "<p><strong>Новый</strong> текст ТЗ заказчика</p>",
+                "plain_text": "Новый текст ТЗ заказчика",
+            },
+        )
+
+    def test_service_sections_editor_state_is_saved_to_model(self):
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            service_type="service",
+            position=1,
+        )
+
+        form = ProposalRegistrationForm(
+            data={
+                "number": 3333,
+                "group_member": group_member.pk,
+                "type": product.pk,
+                "name": "Тестовое ТКП",
+                "kind": ProposalRegistration.ProposalKind.REGULAR,
+                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "year": 2026,
+                "service_sections_editor_state": (
+                    '[{"code":"S-101","service_name":"Раздел 1","html":"<p><u>Этап 1</u></p>",'
+                    '"plain_text":"Этап 1"}]'
+                ),
+            }
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        proposal = form.save()
+
+        self.assertEqual(
+            proposal.service_sections_editor_state,
+            [
+                {
+                    "code": "S-101",
+                    "service_name": "Раздел 1",
+                    "html": "<p><u>Этап 1</u></p>",
+                    "plain_text": "Этап 1",
+                }
+            ],
+        )
 
     def test_service_sections_payload_saves_code_by_selected_service(self):
         group_member = GroupMember.objects.create(
@@ -1721,7 +1809,22 @@ class ProposalRegistrationFormTests(TestCase):
             registration_region="Тюменская область",
             asset_owner_region="Тюменская область",
             purpose="Проверка актива",
+            service_composition_mode="sections",
             service_composition="Этап 1\nЭтап 2",
+            service_sections_editor_state=[
+                {
+                    "code": "S-101",
+                    "service_name": "Раздел 1",
+                    "html": "<p><strong>Этап 1</strong></p>",
+                    "plain_text": "Этап 1",
+                },
+                {
+                    "code": "S-102",
+                    "service_name": "Раздел 2",
+                    "html": "<p><u>Этап 2</u></p>",
+                    "plain_text": "Этап 2",
+                },
+            ],
             evaluation_date="2026-04-01",
             service_term_months="4.5",
             preliminary_report_date="2026-04-15",
@@ -1847,6 +1950,10 @@ class ProposalRegistrationFormTests(TestCase):
                 is_computed=True,
             ),
             ProposalVariable(
+                key="[[scope_of_work]]",
+                is_computed=True,
+            ),
+            ProposalVariable(
                 key="[[actives_name]]",
                 is_computed=True,
             ),
@@ -1887,6 +1994,7 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(replacements["{{year}}"], "2026")
         self.assertEqual(replacements["{{day}}"], "09")
         self.assertEqual(replacements["{{month}}"], "апреля")
+        self.assertEqual(lists["[[scope_of_work]]"], [{"html": "<p><strong>Этап 1</strong></p>"}, {"html": "<p><u>Этап 2</u></p>"}])
         self.assertEqual(lists["[[actives_name]]"], [])
 
         self.assertEqual(
@@ -1989,6 +2097,24 @@ class ProposalRegistrationFormTests(TestCase):
                     [ProposalVariable(key="{{preliminary_report_term_month}}", is_computed=True)],
                 )
                 self.assertEqual(replacements["{{preliminary_report_term_month}}"], expected)
+
+    def test_resolve_scope_of_work_prefers_customer_tz_editor_state(self):
+        proposal = ProposalRegistration(
+            service_composition_mode="customer_tz",
+            service_composition="Текст из разделов",
+            service_composition_customer_tz="Текст ТЗ заказчика",
+            service_customer_tz_editor_state={
+                "html": "<p><strong>Текст ТЗ заказчика</strong></p>",
+                "plain_text": "Текст ТЗ заказчика",
+            },
+        )
+
+        _, lists = resolve_variables(
+            proposal,
+            [ProposalVariable(key="[[scope_of_work]]", is_computed=True)],
+        )
+
+        self.assertEqual(lists["[[scope_of_work]]"], [{"html": "<p><strong>Текст ТЗ заказчика</strong></p>"}])
 
     def test_form_saves_assets_from_payload(self):
         country = OKSMCountry.objects.create(
@@ -2208,6 +2334,68 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(proposal_object.object_type, "ОГРН")
         self.assertEqual(proposal_object.license, "Лицензия 123")
         self.assertEqual(proposal_object.registration_date.isoformat(), "2026-04-04")
+
+    def test_form_ignores_hidden_placeholder_object_rows_without_short_name(self):
+        country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            service_type="service",
+            position=1,
+        )
+
+        form = ProposalRegistrationForm(
+            data={
+                "number": 3333,
+                "group_member": group_member.pk,
+                "type": product.pk,
+                "name": "Тестовое ТКП",
+                "kind": ProposalRegistration.ProposalKind.REGULAR,
+                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "year": 2026,
+                "customer": 'ООО "Приморское"',
+                "country": country.pk,
+                "identifier": "ОГРН",
+                "registration_number": "1174910001683",
+                "registration_date": "01.04.2026",
+                "assets_payload": '[{"short_name":"ООО \\"Актив 1\\""},{"short_name":"ООО \\"Актив 2\\""}]',
+                "legal_entities_payload": (
+                    '[{"asset_short_name":"ООО \\"Актив 1\\"","short_name":"ООО \\"Юрлицо 1\\""},'
+                    '{"asset_short_name":"ООО \\"Актив 2\\"","short_name":"ООО \\"Юрлицо 2\\""}]'
+                ),
+                "objects_payload": (
+                    '[{"legal_entity_short_name":"ООО \\"Юрлицо 1\\"","short_name":"Объект 1"},'
+                    '{"legal_entity_short_name":"ООО \\"Юрлицо 2\\"","short_name":""}]'
+                ),
+            }
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        proposal = form.save()
+        form.save_assets(proposal)
+        form.save_legal_entities(proposal)
+        form.save_objects(proposal)
+
+        objects = list(ProposalObject.objects.filter(proposal=proposal).order_by("position"))
+        self.assertEqual(len(objects), 1)
+        self.assertEqual(objects[0].legal_entity_short_name, 'ООО "Юрлицо 1"')
+        self.assertEqual(objects[0].short_name, "Объект 1")
 
     def test_form_saves_commercial_offer_from_payload(self):
         country = OKSMCountry.objects.create(

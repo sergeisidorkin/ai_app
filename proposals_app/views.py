@@ -1779,6 +1779,7 @@ def proposal_dispatch_create_documents(request):
                 template_bytes,
                 replacements,
                 list_replacements=list_replacements or None,
+                plain_list_keys={"[[scope_of_work]]"},
             )
             stored = store_generated_documents(request.user, proposal, docx_bytes, None)
         except Exception as exc:
