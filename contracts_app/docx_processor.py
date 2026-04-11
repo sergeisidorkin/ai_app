@@ -643,6 +643,7 @@ def _normalize_table_cell_spec(value) -> dict[str, object]:
             "header": bool(value.get("header")),
             "vertical_align": str(value.get("vertical_align") or "").strip().lower() or "top",
             "margins_cm": value.get("margins_cm") or {},
+            "no_wrap": bool(value.get("no_wrap")),
         }
     return {
         "text": str(value or ""),
@@ -653,6 +654,7 @@ def _normalize_table_cell_spec(value) -> dict[str, object]:
         "header": False,
         "vertical_align": "top",
         "margins_cm": {},
+        "no_wrap": False,
     }
 
 
@@ -697,22 +699,29 @@ def _apply_cell_text(cell, spec: dict[str, object], font_size_pt: int | float | 
     paragraph.paragraph_format.space_before = Pt(0)
     paragraph.paragraph_format.space_after = Pt(0)
     text_parts = str(spec.get("text") or "").split("\n")
-    run = paragraph.add_run(text_parts[0] if text_parts else "")
+    runs = list(paragraph.runs)
+    if runs:
+        run = runs[0]
+        run.text = text_parts[0] if text_parts else ""
+        for extra_run in runs[1:]:
+            extra_run.text = ""
+    else:
+        run = paragraph.add_run(text_parts[0] if text_parts else "")
     for text_part in text_parts[1:]:
         run.add_break()
         run.add_text(text_part)
-    if spec.get("bold"):
-        run.bold = True
-    if font_size_pt:
-        run.font.size = Pt(font_size_pt)
-    if language_code:
-        r_pr = run._element.find(qn("w:rPr"))
-        if r_pr is None:
-            from docx.oxml import OxmlElement
+    for paragraph_run in paragraph.runs:
+        paragraph_run.bold = bool(spec.get("bold"))
+        if font_size_pt:
+            paragraph_run.font.size = Pt(font_size_pt)
+        if language_code:
+            r_pr = paragraph_run._element.find(qn("w:rPr"))
+            if r_pr is None:
+                from docx.oxml import OxmlElement
 
-            r_pr = OxmlElement("w:rPr")
-            run._element.insert(0, r_pr)
-        _set_language_property(r_pr, language_code)
+                r_pr = OxmlElement("w:rPr")
+                paragraph_run._element.insert(0, r_pr)
+            _set_language_property(r_pr, language_code)
     vertical_align = str(spec.get("vertical_align") or "top").strip().lower()
     cell.vertical_alignment = (
         WD_CELL_VERTICAL_ALIGNMENT.CENTER
@@ -741,6 +750,20 @@ def _set_cell_margins(cell, *, top_cm=0, right_cm=0.1, bottom_cm=0, left_cm=0.1)
             tc_mar.append(node)
         node.set(qn("w:w"), str(int(round(Cm(value_cm).twips))))
         node.set(qn("w:type"), "dxa")
+
+
+def _set_cell_no_wrap(cell, enabled: bool) -> None:
+    from docx.oxml import OxmlElement
+
+    tc_pr = cell._tc.get_or_add_tcPr()
+    existing = tc_pr.find(qn("w:noWrap"))
+    if enabled:
+        if existing is None:
+            existing = OxmlElement("w:noWrap")
+            tc_pr.append(existing)
+        existing.set(qn("w:val"), "1")
+    elif existing is not None:
+        tc_pr.remove(existing)
 
 
 def _set_table_autofit(table) -> None:
@@ -827,6 +850,7 @@ def _insert_table_after_paragraph(paragraph, table_spec: dict, language_code: st
                 bottom_cm=float((margins or {}).get("bottom", 0)),
                 left_cm=float((margins or {}).get("left", 0.1)),
             )
+            _set_cell_no_wrap(start_cell, bool(spec.get("no_wrap")))
             _apply_cell_text(start_cell, spec, font_size_pt, language_code)
             col_idx += colspan
 

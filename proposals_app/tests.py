@@ -401,6 +401,10 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertIn("900\u00a0000,00", budget_rows[7][-1])
         self.assertIn('w:tblLayout w:type="autofit"', budget_table._tbl.xml)
         self.assertIn('w:tblW w:type="auto" w:w="0"', budget_table._tbl.xml)
+        empty_fixed_cell = budget_table.rows[5].cells[3]
+        self.assertTrue(empty_fixed_cell.paragraphs)
+        self.assertTrue(empty_fixed_cell.paragraphs[0].runs)
+        self.assertEqual(empty_fixed_cell.paragraphs[0].runs[0].font.size.pt, 7)
         budget_run_sizes = [
             run.font.size.pt
             for row in budget_table.rows
@@ -456,6 +460,41 @@ class ProposalDocumentGenerationTests(TestCase):
             self.assertTrue(
                 "w:numPr" in paragraph._element.xml or "w:pStyle" in paragraph._element.xml
             )
+            self.assertIn('w:lang w:val="ru-RU"', paragraph._element.xml)
+
+    def test_scope_of_work_plain_text_fallback_remains_plain_paragraphs(self):
+        proposal = ProposalRegistration(
+            service_composition_mode="sections",
+            service_composition="Первый абзац\n\nВторой абзац",
+        )
+        template_doc = Document()
+        template_doc.add_paragraph("[[scope_of_work]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+
+        replacements, lists, _ = resolve_variables(
+            proposal,
+            [ProposalVariable(key="[[scope_of_work]]", is_computed=True)],
+        )
+
+        generated_bytes = process_template(
+            buffer.getvalue(),
+            replacements,
+            list_replacements=lists,
+            default_language_code="ru-RU",
+        )
+
+        generated_doc = Document(BytesIO(generated_bytes))
+        scope_paragraphs = [
+            paragraph
+            for paragraph in generated_doc.paragraphs
+            if paragraph.text in {"Первый абзац", "Второй абзац"}
+        ]
+
+        self.assertEqual(len(scope_paragraphs), 2)
+        for paragraph in scope_paragraphs:
+            self.assertNotIn("w:numPr", paragraph._element.xml)
+            self.assertNotIn("w:pStyle", paragraph._element.xml)
             self.assertIn('w:lang w:val="ru-RU"', paragraph._element.xml)
 
     def test_process_template_applies_default_language_to_scalar_replacements(self):
@@ -520,10 +559,60 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertEqual(table_spec["rows"][0][-2]["text"], "Кол-во\nдней")
         self.assertEqual(table_spec["rows"][0][-1]["text"], "Итого,\n€ без НДС")
         self.assertEqual(table_spec["rows"][0][3]["text"], "Месторождение Приморское")
+        self.assertTrue(table_spec["rows"][0][1]["no_wrap"])
         self.assertEqual(table_spec["rows"][1][0]["text"], "Иванов И.И.")
         self.assertEqual(table_spec["rows"][1][1]["text"], "Геолог, Партнер")
+        self.assertTrue(table_spec["rows"][1][1]["no_wrap"])
         self.assertEqual(table_spec["rows"][1][-2]["text"], "6")
         self.assertEqual(table_spec["rows"][7][0]["text"], "ИТОГО в договор, рубли без НДС с учётом доп. скидки")
+
+    def test_resolve_budget_table_omits_total_days_column_for_single_asset(self):
+        proposal = ProposalRegistration.objects.create(
+            number=4444,
+            group_member=self.group_member,
+            type=self.product,
+            name="Один актив",
+            year=2026,
+            status=ProposalRegistration.ProposalStatus.PRELIMINARY,
+            customer='ООО "Приморское"',
+        )
+        ProposalAsset.objects.create(
+            proposal=proposal,
+            short_name="Единственный актив",
+            position=1,
+        )
+        ProposalCommercialOffer.objects.create(
+            proposal=proposal,
+            specialist="Иванов И.И.",
+            job_title="Геолог",
+            professional_status="Партнер",
+            service_name="Раздел 1",
+            rate_eur_per_day="1200",
+            asset_day_counts=[2],
+            total_eur_without_vat="2400",
+            position=1,
+        )
+
+        _, _, tables = resolve_variables(
+            proposal,
+            [ProposalVariable(key="[[budget_table]]", is_computed=True)],
+        )
+
+        header_row = tables["[[budget_table]]"]["rows"][0]
+        header_texts = [cell["text"] for cell in header_row]
+        self.assertEqual(
+            header_texts,
+            [
+                "Специалист",
+                "Должность/направление",
+                "Ставка,\n€/дн",
+                "Единственный актив",
+                "Итого,\n€ без НДС",
+            ],
+        )
+        data_row = tables["[[budget_table]]"]["rows"][1]
+        self.assertEqual(len(data_row), 5)
+        self.assertEqual(data_row[3]["text"], "2")
 
     def test_process_template_inserts_budget_table(self):
         template_doc = Document()
