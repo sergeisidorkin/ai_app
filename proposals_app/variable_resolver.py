@@ -242,6 +242,22 @@ def _proposal_service_term_months(proposal) -> str:
     return _format_decimal(proposal.service_term_months, precision=1)
 
 
+def _proposal_preliminary_report_term_month(proposal) -> str:
+    if getattr(proposal, "service_term_months", None) in (None, ""):
+        return ""
+    try:
+        months = Decimal(str(proposal.service_term_months))
+    except (InvalidOperation, TypeError, ValueError):
+        return ""
+    if months == Decimal("1"):
+        suffix = "месяц"
+    elif months < Decimal("5"):
+        suffix = "месяца"
+    else:
+        suffix = "месяцев"
+    return f"{_format_decimal(months, precision=1, strip_trailing_zeros=True)} {suffix}"
+
+
 def _proposal_preliminary_report_date(proposal) -> str:
     return _format_date(proposal.preliminary_report_date)
 
@@ -289,7 +305,7 @@ def _proposal_preliminary_payment_percentage_full(proposal) -> str:
         preliminary = Decimal(str(getattr(proposal, "preliminary_report_percent", "") or "0"))
     except (InvalidOperation, TypeError, ValueError):
         preliminary = Decimal("0")
-    return _format_decimal(advance + preliminary, strip_trailing_zeros=True)
+    return _format_percent(advance + preliminary, strip_trailing_zeros=True)
 
 
 def _proposal_preliminary_report_term_days(proposal) -> str:
@@ -370,6 +386,7 @@ COMPUTED_MAP = {
     "{{service_goal_genitive}}": _proposal_service_goal_genitive,
     "{{tkp_preliminary}}": _proposal_tkp_preliminary,
     "{{preliminary_payment_percentage_full}}": _proposal_preliminary_payment_percentage_full,
+    "{{preliminary_report_term_month}}": _proposal_preliminary_report_term_month,
     "{{owner_country_full_name}}": _proposal_asset_owner_country_full_name,
     "{{country_full_name}}": _proposal_country_full_name,
 }
