@@ -20,7 +20,7 @@ from docx import Document
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
-from docx.shared import Pt
+from docx.shared import Cm, Pt
 
 
 _PLACEHOLDER_RE = re.compile(r"\{\{[a-zA-Z][a-zA-Z0-9_]*\}\}")
@@ -284,17 +284,16 @@ def _set_font_property(r_pr, font_name: str | None) -> None:
 
 
 def _set_language_property(r_pr, language_code: str | None) -> None:
+    if not language_code:
+        return
     existing = r_pr.find(qn("w:lang"))
-    if language_code:
-        if existing is None:
-            from docx.oxml import OxmlElement
+    if existing is None:
+        from docx.oxml import OxmlElement
 
-            existing = OxmlElement("w:lang")
-            r_pr.append(existing)
-        for attr_name in ("val", "bidi", "eastAsia"):
-            existing.set(qn(f"w:{attr_name}"), language_code)
-    elif existing is not None:
-        r_pr.remove(existing)
+        existing = OxmlElement("w:lang")
+        r_pr.append(existing)
+    for attr_name in ("val", "bidi", "eastAsia"):
+        existing.set(qn(f"w:{attr_name}"), language_code)
 
 
 def _append_text_segments(run_element, text: str) -> None:
@@ -641,6 +640,9 @@ def _normalize_table_cell_spec(value) -> dict[str, object]:
             "rowspan": max(1, int(value.get("rowspan") or 1)),
             "bold": bool(value.get("bold")),
             "align": str(value.get("align") or "").strip().lower() or "left",
+            "header": bool(value.get("header")),
+            "vertical_align": str(value.get("vertical_align") or "").strip().lower() or "top",
+            "margins_cm": value.get("margins_cm") or {},
         }
     return {
         "text": str(value or ""),
@@ -648,6 +650,9 @@ def _normalize_table_cell_spec(value) -> dict[str, object]:
         "rowspan": 1,
         "bold": False,
         "align": "left",
+        "header": False,
+        "vertical_align": "top",
+        "margins_cm": {},
     }
 
 
@@ -689,7 +694,13 @@ def _apply_cell_text(cell, spec: dict[str, object], font_size_pt: int | float | 
     cell.text = ""
     paragraph = cell.paragraphs[0]
     paragraph.alignment = _table_alignment(str(spec.get("align") or "left"))
-    run = paragraph.add_run(str(spec.get("text") or ""))
+    paragraph.paragraph_format.space_before = Pt(0)
+    paragraph.paragraph_format.space_after = Pt(0)
+    text_parts = str(spec.get("text") or "").split("\n")
+    run = paragraph.add_run(text_parts[0] if text_parts else "")
+    for text_part in text_parts[1:]:
+        run.add_break()
+        run.add_text(text_part)
     if spec.get("bold"):
         run.bold = True
     if font_size_pt:
@@ -702,7 +713,34 @@ def _apply_cell_text(cell, spec: dict[str, object], font_size_pt: int | float | 
             r_pr = OxmlElement("w:rPr")
             run._element.insert(0, r_pr)
         _set_language_property(r_pr, language_code)
-    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+    vertical_align = str(spec.get("vertical_align") or "top").strip().lower()
+    cell.vertical_alignment = (
+        WD_CELL_VERTICAL_ALIGNMENT.CENTER
+        if vertical_align == "center"
+        else WD_CELL_VERTICAL_ALIGNMENT.TOP
+    )
+
+
+def _set_cell_margins(cell, *, top_cm=0, right_cm=0.1, bottom_cm=0, left_cm=0.1) -> None:
+    from docx.oxml import OxmlElement
+
+    tc_pr = cell._tc.get_or_add_tcPr()
+    tc_mar = tc_pr.find(qn("w:tcMar"))
+    if tc_mar is None:
+        tc_mar = OxmlElement("w:tcMar")
+        tc_pr.append(tc_mar)
+    for side, value_cm in (
+        ("top", top_cm),
+        ("right", right_cm),
+        ("bottom", bottom_cm),
+        ("left", left_cm),
+    ):
+        node = tc_mar.find(qn(f"w:{side}"))
+        if node is None:
+            node = OxmlElement(f"w:{side}")
+            tc_mar.append(node)
+        node.set(qn("w:w"), str(int(round(Cm(value_cm).twips))))
+        node.set(qn("w:type"), "dxa")
 
 
 def _set_table_autofit(table) -> None:
@@ -781,6 +819,14 @@ def _insert_table_after_paragraph(paragraph, table_spec: dict, language_code: st
                     occupied[rr][cc] = True
             if rowspan > 1 or colspan > 1:
                 start_cell = start_cell.merge(table.cell(row_idx + rowspan - 1, col_idx + colspan - 1))
+            margins = spec.get("margins_cm") if isinstance(spec, dict) else {}
+            _set_cell_margins(
+                start_cell,
+                top_cm=float((margins or {}).get("top", 0)),
+                right_cm=float((margins or {}).get("right", 0.1)),
+                bottom_cm=float((margins or {}).get("bottom", 0)),
+                left_cm=float((margins or {}).get("left", 0.1)),
+            )
             _apply_cell_text(start_cell, spec, font_size_pt, language_code)
             col_idx += colspan
 

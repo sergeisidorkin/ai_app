@@ -1781,7 +1781,6 @@ def proposal_dispatch_create_documents(request):
                 replacements,
                 table_replacements=table_replacements or None,
                 list_replacements=list_replacements or None,
-                plain_list_keys={"[[scope_of_work]]"},
                 default_language_code="ru-RU",
             )
             stored = store_generated_documents(request.user, proposal, docx_bytes, None)
