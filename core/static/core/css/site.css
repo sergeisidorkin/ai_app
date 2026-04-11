@@ -3183,6 +3183,38 @@ body.proposal-service-text-modal-open {
 }
 
 @font-face {
+  font-family: "ProposalCalibri";
+  src: url("../fonts/calibri/Calibri.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "ProposalCalibri";
+  src: url("../fonts/calibri/Calibrib.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "ProposalCalibri";
+  src: url("../fonts/calibri/Calibrii.ttf") format("truetype");
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "ProposalCalibri";
+  src: url("../fonts/calibri/Calibriz.ttf") format("truetype");
+  font-style: italic;
+  font-weight: 700;
+  font-display: swap;
+}
+
+@font-face {
   font-family: "ProposalCambria";
   src: url("../fonts/cambria/Cambria.woff2") format("woff2"),
        url("../fonts/cambria/Cambria.woff") format("woff"),
@@ -3468,9 +3500,14 @@ body.proposal-service-text-modal-open {
   min-height: 10rem;
   padding: 0 0 .25rem;
   line-height: 1.25;
-  font-family: "ProposalCambria", Cambria, Georgia, "Times New Roman", Times, serif;
+  font-family: "ProposalCalibri", Calibri, "Carlito", Arial, Helvetica, sans-serif;
   font-synthesis: weight style;
   text-align: justify;
+}
+
+#proposals-pane .proposal-service-text-card__editor .ql-font-calibri {
+  font-family: "ProposalCalibri", Calibri, "Carlito", Arial, Helvetica, sans-serif;
+  font-synthesis: weight style;
 }
 
 #proposals-pane .proposal-service-text-card__editor .ql-font-cambria {
@@ -3488,6 +3525,15 @@ body.proposal-service-text-modal-open {
 #proposals-pane .proposal-service-text-card__editor strong.ql-font-cambria,
 #proposals-pane .proposal-service-text-card__editor b.ql-font-cambria {
   font-family: "ProposalCambria", Cambria, Georgia, "Times New Roman", Times, serif;
+  font-weight: 700 !important;
+  font-synthesis: weight style;
+}
+
+#proposals-pane .proposal-service-text-card__editor .ql-font-calibri strong,
+#proposals-pane .proposal-service-text-card__editor .ql-font-calibri b,
+#proposals-pane .proposal-service-text-card__editor strong.ql-font-calibri,
+#proposals-pane .proposal-service-text-card__editor b.ql-font-calibri {
+  font-family: "ProposalCalibri", Calibri, "Carlito", Arial, Helvetica, sans-serif;
   font-weight: 700 !important;
   font-synthesis: weight style;
 }

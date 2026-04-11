@@ -234,6 +234,55 @@ def _proposal_service_composition(proposal) -> str:
     return proposal.service_composition or ""
 
 
+def _proposal_scope_of_work(proposal) -> list[dict[str, str] | str]:
+    def build_item(html_value, plain_text_value):
+        html = str(html_value or "").strip()
+        plain_text = str(plain_text_value or "").strip()
+        if html:
+            return {"html": html}
+        if not plain_text:
+            return None
+        chunks = [chunk.strip() for chunk in plain_text.split("\n\n") if chunk.strip()]
+        if len(chunks) <= 1:
+            return plain_text
+        return chunks
+
+    mode = str(getattr(proposal, "service_composition_mode", "") or "sections").strip()
+    if mode == "customer_tz":
+        stored = getattr(proposal, "service_customer_tz_editor_state", {}) or {}
+        item = build_item(
+            stored.get("html") if isinstance(stored, dict) else "",
+            stored.get("plain_text") if isinstance(stored, dict) else getattr(proposal, "service_composition_customer_tz", ""),
+        )
+        if item is None:
+            fallback = build_item("", getattr(proposal, "service_composition_customer_tz", ""))
+            if fallback is None:
+                return []
+            return fallback if isinstance(fallback, list) else [fallback]
+        return item if isinstance(item, list) else [item]
+
+    result: list[dict[str, str] | str] = []
+    stored_sections = getattr(proposal, "service_sections_editor_state", []) or []
+    if isinstance(stored_sections, list):
+        for section in stored_sections:
+            if not isinstance(section, dict):
+                continue
+            item = build_item(section.get("html"), section.get("plain_text"))
+            if item is None:
+                continue
+            if isinstance(item, list):
+                result.extend(item)
+            else:
+                result.append(item)
+    if result:
+        return result
+
+    fallback = build_item("", getattr(proposal, "service_composition", ""))
+    if fallback is None:
+        return []
+    return fallback if isinstance(fallback, list) else [fallback]
+
+
 def _proposal_evaluation_date(proposal) -> str:
     return _format_date(proposal.evaluation_date)
 
@@ -393,6 +442,7 @@ COMPUTED_MAP = {
 
 COMPUTED_LIST_MAP = {
     "[[actives_name]]": _proposal_actives_name_list,
+    "[[scope_of_work]]": _proposal_scope_of_work,
 }
 
 VARIABLE_ALIASES = {

@@ -46,7 +46,7 @@
   function ensureProposalQuillFormats() {
     if (!window.Quill || window.__proposalQuillFormatsReady) return;
     const Font = window.Quill.import('formats/font');
-    Font.whitelist = ['cambria', 'sans', 'serif', 'monospace', 'georgia', 'times-new-roman'];
+    Font.whitelist = ['calibri', 'cambria', 'sans', 'serif', 'monospace', 'georgia', 'times-new-roman'];
     window.Quill.register(Font, true);
     window.__proposalQuillFormatsReady = true;
   }
@@ -4762,6 +4762,7 @@
           const delta = quill.clipboard.convert({ html: html });
           quill.setContents(delta, 'silent');
         }
+        quill.format('font', 'calibri', 'silent');
         quill.format('align', 'justify');
         quill.on('selection-change', function (range) {
           if (range) {

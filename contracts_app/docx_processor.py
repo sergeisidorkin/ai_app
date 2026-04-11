@@ -22,6 +22,352 @@ from docx.oxml.ns import qn
 
 _PLACEHOLDER_RE = re.compile(r"\{\{[a-zA-Z][a-zA-Z0-9_]*\}\}")
 _LIST_PLACEHOLDER_RE = re.compile(r"\[\[[a-zA-Z][a-zA-Z0-9_]*\]\]")
+_CSS_COLOR_RE = re.compile(r"rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)", re.I)
+_FONT_NAME_MAP = {
+    "calibri": "Calibri",
+    "cambria": "Cambria",
+    "sans": "Arial",
+    "serif": "Times New Roman",
+    "monospace": "Courier New",
+    "georgia": "Georgia",
+    "times-new-roman": "Times New Roman",
+}
+
+
+def _parse_style_attr(value: str) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for chunk in str(value or "").split(";"):
+        if ":" not in chunk:
+            continue
+        key, item_value = chunk.split(":", 1)
+        key = key.strip().lower()
+        item_value = item_value.strip()
+        if key:
+            result[key] = item_value
+    return result
+
+
+def _normalize_css_color(value: str | None) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    if raw.startswith("#"):
+        hex_value = raw[1:]
+        if len(hex_value) == 3:
+            hex_value = "".join(ch * 2 for ch in hex_value)
+        if len(hex_value) == 6:
+            return hex_value.upper()
+        return None
+    match = _CSS_COLOR_RE.fullmatch(raw)
+    if match:
+        rgb = [max(0, min(255, int(item))) for item in match.groups()]
+        return "".join(f"{item:02X}" for item in rgb)
+    named_colors = {
+        "black": "000000",
+        "white": "FFFFFF",
+        "red": "FF0000",
+        "green": "008000",
+        "blue": "0000FF",
+        "yellow": "FFFF00",
+    }
+    return named_colors.get(raw.lower())
+
+
+def _merge_run_format(base: dict[str, object], **overrides) -> dict[str, object]:
+    result = dict(base)
+    result.update({key: value for key, value in overrides.items() if value is not None})
+    return result
+
+
+def _append_rich_run(runs: list[dict[str, object]], text: str, run_format: dict[str, object]) -> None:
+    if text is None:
+        return
+    value = str(text)
+    if not value:
+        return
+    if runs:
+        style_keys = (set(runs[-1].keys()) | set(run_format.keys())) - {"text"}
+    else:
+        style_keys = set()
+    if runs and all(runs[-1].get(key) == run_format.get(key) for key in style_keys):
+        runs[-1]["text"] = str(runs[-1].get("text") or "") + value
+        return
+    payload = dict(run_format)
+    payload["text"] = value
+    runs.append(payload)
+
+
+def _parse_quill_font(classes: set[str], styles: dict[str, str]) -> str | None:
+    for class_name in classes:
+        if class_name.startswith("ql-font-"):
+            return _FONT_NAME_MAP.get(class_name.removeprefix("ql-font-"), class_name.removeprefix("ql-font-"))
+    font_family = styles.get("font-family", "").split(",")[0].strip().strip("'\"")
+    if not font_family:
+        return None
+    normalized = font_family.lower().replace(" ", "-")
+    return _FONT_NAME_MAP.get(normalized, font_family)
+
+
+def _collect_rich_runs(node, inherited: dict[str, object], runs: list[dict[str, object]]) -> None:
+    tag = getattr(node, "tag", "")
+    if not isinstance(tag, str):
+        return
+    classes = set(filter(None, str(node.get("class") or "").split()))
+    styles = _parse_style_attr(node.get("style") or "")
+    current = dict(inherited)
+    if tag in {"strong", "b"}:
+        current["bold"] = True
+    if tag in {"em", "i"}:
+        current["italic"] = True
+    if tag == "u":
+        current["underline"] = True
+    if tag in {"s", "strike"}:
+        current["strike"] = True
+    font_name = _parse_quill_font(classes, styles)
+    if font_name:
+        current["font"] = font_name
+    color = _normalize_css_color(styles.get("color"))
+    if color:
+        current["color"] = color
+    background = _normalize_css_color(styles.get("background-color"))
+    if background and background != "FFFFFF":
+        current["background"] = background
+    if node.text:
+        _append_rich_run(runs, node.text, current)
+    for child in node:
+        child_tag = getattr(child, "tag", "")
+        if child_tag == "br":
+            _append_rich_run(runs, "\n", current)
+        else:
+            _collect_rich_runs(child, current, runs)
+        if child.tail:
+            _append_rich_run(runs, child.tail, current)
+
+
+def _paragraph_alignment(node) -> str | None:
+    styles = _parse_style_attr(node.get("style") or "")
+    classes = set(filter(None, str(node.get("class") or "").split()))
+    align = styles.get("text-align", "").strip().lower()
+    if align in {"left", "center", "right", "justify"}:
+        return align
+    for class_name in classes:
+        if class_name == "ql-align-center":
+            return "center"
+        if class_name == "ql-align-right":
+            return "right"
+        if class_name == "ql-align-justify":
+            return "justify"
+    return None
+
+
+def _list_level(node) -> int:
+    classes = set(filter(None, str(node.get("class") or "").split()))
+    for class_name in classes:
+        if class_name.startswith("ql-indent-"):
+            suffix = class_name.removeprefix("ql-indent-")
+            if suffix.isdigit():
+                return int(suffix)
+    return 0
+
+
+def _build_rich_paragraph(node, *, list_type: str | None = None, list_level: int = 0) -> dict[str, object]:
+    runs: list[dict[str, object]] = []
+    _collect_rich_runs(node, {}, runs)
+    return {
+        "runs": runs,
+        "alignment": _paragraph_alignment(node),
+        "list_type": list_type or "",
+        "list_level": list_level,
+    }
+
+
+def _rich_paragraphs_from_html(html: str) -> list[dict[str, object]]:
+    from lxml import html as lxml_html
+
+    wrapper = lxml_html.fragment_fromstring(str(html or ""), create_parent="div")
+    paragraphs: list[dict[str, object]] = []
+    if wrapper.text and wrapper.text.strip():
+        paragraphs.append({"runs": [{"text": wrapper.text}], "alignment": None, "list_type": "", "list_level": 0})
+    for child in wrapper:
+        tag = getattr(child, "tag", "")
+        if tag in {"p", "div"}:
+            paragraphs.append(_build_rich_paragraph(child))
+        elif tag in {"ul", "ol"}:
+            for li in child.findall("./li"):
+                item_list_type = str(li.get("data-list") or "").strip().lower()
+                if item_list_type not in {"ordered", "bullet"}:
+                    item_list_type = "ordered" if tag == "ol" else "bullet"
+                paragraphs.append(
+                    _build_rich_paragraph(
+                        li,
+                        list_type=item_list_type,
+                        list_level=_list_level(li),
+                    )
+                )
+        else:
+            paragraphs.append(_build_rich_paragraph(child))
+        if child.tail and child.tail.strip():
+            paragraphs.append({"runs": [{"text": child.tail}], "alignment": None, "list_type": "", "list_level": 0})
+    return paragraphs
+
+
+def _rich_paragraphs_from_item(item) -> list[dict[str, object]] | None:
+    if isinstance(item, dict):
+        html = str(item.get("html") or "").strip()
+        if html:
+            return _rich_paragraphs_from_html(html)
+        runs = item.get("runs")
+        if isinstance(runs, list):
+            return [item]
+        return None
+    return None
+
+
+def _set_on_off_property(r_pr, tag_name: str, enabled: bool | None) -> None:
+    if enabled is None:
+        return
+    existing = r_pr.find(qn(f"w:{tag_name}"))
+    if enabled:
+        if existing is None:
+            from docx.oxml import OxmlElement
+
+            existing = OxmlElement(f"w:{tag_name}")
+            r_pr.append(existing)
+        existing.set(qn("w:val"), "single" if tag_name == "u" else "1")
+    elif existing is not None:
+        r_pr.remove(existing)
+
+
+def _set_color_property(r_pr, color_value: str | None) -> None:
+    existing = r_pr.find(qn("w:color"))
+    if color_value:
+        if existing is None:
+            from docx.oxml import OxmlElement
+
+            existing = OxmlElement("w:color")
+            r_pr.append(existing)
+        existing.set(qn("w:val"), color_value)
+    elif existing is not None:
+        r_pr.remove(existing)
+
+
+def _set_shading_property(r_pr, color_value: str | None) -> None:
+    existing = r_pr.find(qn("w:shd"))
+    if color_value:
+        if existing is None:
+            from docx.oxml import OxmlElement
+
+            existing = OxmlElement("w:shd")
+            r_pr.append(existing)
+        existing.set(qn("w:val"), "clear")
+        existing.set(qn("w:color"), "auto")
+        existing.set(qn("w:fill"), color_value)
+    elif existing is not None:
+        r_pr.remove(existing)
+
+
+def _set_font_property(r_pr, font_name: str | None) -> None:
+    existing = r_pr.find(qn("w:rFonts"))
+    if font_name:
+        if existing is None:
+            from docx.oxml import OxmlElement
+
+            existing = OxmlElement("w:rFonts")
+            r_pr.append(existing)
+        for attr_name in ("ascii", "hAnsi", "cs"):
+            existing.set(qn(f"w:{attr_name}"), font_name)
+    elif existing is not None:
+        r_pr.remove(existing)
+
+
+def _append_text_segments(run_element, text: str) -> None:
+    from docx.oxml import OxmlElement
+
+    parts = str(text or "").split("\n")
+    for index, part in enumerate(parts):
+        if index:
+            run_element.append(OxmlElement("w:br"))
+        text_element = OxmlElement("w:t")
+        text_element.set(qn("xml:space"), "preserve")
+        text_element.text = part
+        run_element.append(text_element)
+
+
+def _append_formatted_run(paragraph_element, run_data: dict[str, object], source_rPr) -> None:
+    from docx.oxml import OxmlElement
+
+    run_element = OxmlElement("w:r")
+    r_pr = deepcopy(source_rPr) if source_rPr is not None else OxmlElement("w:rPr")
+    _set_on_off_property(r_pr, "b", run_data.get("bold"))
+    _set_on_off_property(r_pr, "i", run_data.get("italic"))
+    _set_on_off_property(r_pr, "u", run_data.get("underline"))
+    _set_on_off_property(r_pr, "strike", run_data.get("strike"))
+    _set_color_property(r_pr, str(run_data.get("color") or "").strip() or None)
+    _set_shading_property(r_pr, str(run_data.get("background") or "").strip() or None)
+    _set_font_property(r_pr, str(run_data.get("font") or "").strip() or None)
+    if len(r_pr):
+        run_element.append(r_pr)
+    _append_text_segments(run_element, str(run_data.get("text") or ""))
+    paragraph_element.append(run_element)
+
+
+def _apply_paragraph_alignment(p_pr, alignment: str | None) -> None:
+    if alignment not in {"left", "center", "right", "justify"}:
+        return
+    from docx.oxml import OxmlElement
+
+    jc = OxmlElement("w:jc")
+    jc.set(qn("w:val"), "both" if alignment == "justify" else alignment)
+    p_pr.append(jc)
+
+
+def _insert_rich_paragraphs(anchor, parent, rich_items, *, bullet_num_id: str, multilevel_num_id: str, bullet_style_id: str, source_rPr):
+    from docx.oxml import OxmlElement
+
+    current_anchor = anchor
+    for item in rich_items:
+        new_p = OxmlElement("w:p")
+        p_pr = OxmlElement("w:pPr")
+        list_type = str(item.get("list_type") or "").strip()
+        list_level = int(item.get("list_level") or 0)
+        if list_type == "bullet":
+            if bullet_style_id:
+                p_style = OxmlElement("w:pStyle")
+                p_style.set(qn("w:val"), bullet_style_id)
+                p_pr.append(p_style)
+            elif bullet_num_id:
+                num_pr = OxmlElement("w:numPr")
+                ilvl = OxmlElement("w:ilvl")
+                ilvl.set(qn("w:val"), str(max(0, list_level)))
+                num_id = OxmlElement("w:numId")
+                num_id.set(qn("w:val"), bullet_num_id)
+                num_pr.append(ilvl)
+                num_pr.append(num_id)
+                p_pr.append(num_pr)
+        elif list_type == "ordered" and multilevel_num_id:
+            num_pr = OxmlElement("w:numPr")
+            ilvl = OxmlElement("w:ilvl")
+            ilvl.set(qn("w:val"), str(max(0, min(list_level, 2))))
+            num_id = OxmlElement("w:numId")
+            num_id.set(qn("w:val"), multilevel_num_id)
+            num_pr.append(ilvl)
+            num_pr.append(num_id)
+            p_pr.append(num_pr)
+        _apply_paragraph_alignment(p_pr, item.get("alignment"))
+        if len(p_pr):
+            new_p.append(p_pr)
+        runs = item.get("runs") if isinstance(item.get("runs"), list) else []
+        if runs:
+            for run_data in runs:
+                if not isinstance(run_data, dict):
+                    _append_formatted_run(new_p, {"text": str(run_data)}, source_rPr)
+                    continue
+                _append_formatted_run(new_p, run_data, source_rPr)
+        else:
+            _append_formatted_run(new_p, {"text": ""}, source_rPr)
+        current_anchor.addnext(new_p)
+        current_anchor = new_p
+    parent.remove(anchor)
 
 
 def _replace_in_paragraph(paragraph, replacements: dict[str, str]) -> None:
@@ -123,12 +469,31 @@ def _replace_list_in_paragraph(
     if items is None:
         return False
 
-    is_multilevel = items and isinstance(items[0], (tuple, list))
-    is_plain_list = not is_multilevel and key in (plain_list_keys or set())
+    rich_items = []
+    is_rich = False
+    for item in items:
+        rich_paragraphs = _rich_paragraphs_from_item(item)
+        if rich_paragraphs is None:
+            if isinstance(item, dict):
+                continue
+            rich_items.append(
+                {
+                    "runs": [{"text": str(item)}],
+                    "alignment": None,
+                    "list_type": "",
+                    "list_level": 0,
+                }
+            )
+        else:
+            is_rich = True
+            rich_items.extend(rich_paragraphs)
+
+    is_multilevel = not is_rich and items and isinstance(items[0], (tuple, list))
+    is_plain_list = (is_rich or not is_multilevel) and key in (plain_list_keys or set())
 
     if is_multilevel and not multilevel_num_id:
         return False
-    if not is_multilevel and not is_plain_list and not bullet_num_id:
+    if not is_rich and not is_multilevel and not is_plain_list and not bullet_num_id:
         return False
 
     run_texts = [r.text for r in runs]
@@ -149,6 +514,18 @@ def _replace_list_in_paragraph(
 
     parent = paragraph._element.getparent()
     anchor = paragraph._element
+
+    if is_rich:
+        _insert_rich_paragraphs(
+            anchor,
+            parent,
+            rich_items,
+            bullet_num_id=bullet_num_id,
+            multilevel_num_id=multilevel_num_id,
+            bullet_style_id=bullet_style_id,
+            source_rPr=source_rPr,
+        )
+        return True
 
     from docx.oxml import OxmlElement
 
@@ -460,19 +837,14 @@ def process_template(
     bullet_style_id = ""
 
     if list_replacements:
-        has_multilevel = any(
-            items and isinstance(items[0], (tuple, list))
-            for items in list_replacements.values()
-        )
         try:
             bullet_num_id = _ensure_bullet_numbering(doc)
         except Exception:
             pass
-        if has_multilevel:
-            try:
-                multilevel_num_id = _ensure_multilevel_numbering(doc)
-            except Exception:
-                pass
+        try:
+            multilevel_num_id = _ensure_multilevel_numbering(doc)
+        except Exception:
+            pass
         bullet_style_id = _find_bullet_style_id(doc)
         _process_list_paragraphs(
             doc.paragraphs, list_replacements,
