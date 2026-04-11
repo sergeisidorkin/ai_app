@@ -116,6 +116,7 @@ class ProposalDocumentGenerationTests(TestCase):
             asset_owner_matches_customer=True,
             country=self.country,
             proposal_project_name='Due Diligence ООО "Приморское"',
+            service_term_months="4.5",
             advance_percent="50",
             preliminary_report_percent="20",
             identifier="ОГРН",
@@ -139,6 +140,7 @@ class ProposalDocumentGenerationTests(TestCase):
         template_doc.add_paragraph("Цель в родительном: {{service_goal_genitive}}")
         template_doc.add_paragraph("Титул ТКП: {{tkp_preliminary}}")
         template_doc.add_paragraph("Предварительная оплата всего: {{preliminary_payment_percentage_full}}")
+        template_doc.add_paragraph("Срок до Предварительного отчёта: {{preliminary_report_term_month}}")
         template_doc.add_paragraph("Активы:")
         template_doc.add_paragraph("[[actives_name]]")
         buffer = BytesIO()
@@ -203,10 +205,16 @@ class ProposalDocumentGenerationTests(TestCase):
             position=7,
         )
         ProposalVariable.objects.create(
+            key="{{preliminary_report_term_month}}",
+            description="Срок оказания услуг от получения исходных данных до сдачи Предварительного отчёта в месяцах",
+            is_computed=True,
+            position=8,
+        )
+        ProposalVariable.objects.create(
             key="[[actives_name]]",
             description="Список наименований активов",
             is_computed=True,
-            position=8,
+            position=9,
         )
         ProposalAsset.objects.create(
             proposal=self.proposal,
@@ -265,7 +273,8 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertIn("Краткое название: Due Diligence", full_text)
         self.assertIn("Цель в родительном: Проведения due diligence", full_text)
         self.assertIn("Титул ТКП: (предварительное)", full_text)
-        self.assertIn("Предварительная оплата всего: 70", full_text)
+        self.assertIn("Предварительная оплата всего: 70%", full_text)
+        self.assertIn("Срок до Предварительного отчёта: 4,5 месяца", full_text)
         self.assertIn("Месторождение Приморское", full_text)
         self.assertIn("Фабрика Приморская", full_text)
         asset_paragraphs = [
@@ -1834,6 +1843,10 @@ class ProposalRegistrationFormTests(TestCase):
                 is_computed=True,
             ),
             ProposalVariable(
+                key="{{preliminary_report_term_month}}",
+                is_computed=True,
+            ),
+            ProposalVariable(
                 key="[[actives_name]]",
                 is_computed=True,
             ),
@@ -1868,7 +1881,8 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(replacements["{{service_type_short}}"], "Due Diligence")
         self.assertEqual(replacements["{{service_goal_genitive}}"], "Подготовки коммерческого предложения")
         self.assertEqual(replacements["{{tkp_preliminary}}"], "(предварительное)")
-        self.assertEqual(replacements["{{preliminary_payment_percentage_full}}"], "70")
+        self.assertEqual(replacements["{{preliminary_payment_percentage_full}}"], "70%")
+        self.assertEqual(replacements["{{preliminary_report_term_month}}"], "4,5 месяца")
         self.assertEqual(replacements["{{owner_country_full_name}}"], "Российская Федерация")
         self.assertEqual(replacements["{{year}}"], "2026")
         self.assertEqual(replacements["{{day}}"], "09")
@@ -1957,7 +1971,24 @@ class ProposalRegistrationFormTests(TestCase):
             proposal,
             [ProposalVariable(key="{{preliminary_payment_percentage_full}}", is_computed=True)],
         )
-        self.assertEqual(replacements["{{preliminary_payment_percentage_full}}"], "70")
+        self.assertEqual(replacements["{{preliminary_payment_percentage_full}}"], "70%")
+
+    def test_resolve_preliminary_report_term_month_uses_month_declension(self):
+        cases = [
+            ("1", "1 месяц"),
+            ("4.5", "4,5 месяца"),
+            ("5", "5 месяцев"),
+            ("6", "6 месяцев"),
+        ]
+
+        for source_value, expected in cases:
+            with self.subTest(service_term_months=source_value):
+                proposal = ProposalRegistration(service_term_months=source_value)
+                replacements, _ = resolve_variables(
+                    proposal,
+                    [ProposalVariable(key="{{preliminary_report_term_month}}", is_computed=True)],
+                )
+                self.assertEqual(replacements["{{preliminary_report_term_month}}"], expected)
 
     def test_form_saves_assets_from_payload(self):
         country = OKSMCountry.objects.create(
