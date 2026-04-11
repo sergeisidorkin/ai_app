@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from html import escape
 
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -235,6 +236,18 @@ def _proposal_service_composition(proposal) -> str:
 
 
 def _proposal_scope_of_work(proposal) -> list[dict[str, str] | str]:
+    def plain_text_to_html(value):
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        paragraphs = []
+        for chunk in text.split("\n\n"):
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            paragraphs.append("<p>" + escape(chunk).replace("\n", "<br>") + "</p>")
+        return "".join(paragraphs)
+
     def build_item(html_value, plain_text_value):
         html = str(html_value or "").strip()
         plain_text = str(plain_text_value or "").strip()
@@ -242,10 +255,7 @@ def _proposal_scope_of_work(proposal) -> list[dict[str, str] | str]:
             return {"html": html}
         if not plain_text:
             return None
-        chunks = [chunk.strip() for chunk in plain_text.split("\n\n") if chunk.strip()]
-        if len(chunks) <= 1:
-            return plain_text
-        return chunks
+        return {"html": plain_text_to_html(plain_text)}
 
     mode = str(getattr(proposal, "service_composition_mode", "") or "sections").strip()
     if mode == "customer_tz":
@@ -340,6 +350,7 @@ def _proposal_budget_table(proposal) -> dict:
         default=0,
     )
     asset_count = max(len(asset_labels), max_asset_count, 1)
+    show_total_days_column = asset_count > 1
     while len(asset_labels) < asset_count:
         asset_labels.append(f"Актив {len(asset_labels) + 1}")
     asset_labels = [label or f"Актив {index + 1}" for index, label in enumerate(asset_labels)]
@@ -347,7 +358,7 @@ def _proposal_budget_table(proposal) -> dict:
     rows: list[list[dict[str, object]]] = [
         [
             {"text": "Специалист", "bold": True, "align": "left", "header": True, "vertical_align": "center"},
-            {"text": "Должность/направление", "bold": True, "align": "left", "header": True, "vertical_align": "center"},
+            {"text": "Должность/направление", "bold": True, "align": "left", "header": True, "vertical_align": "center", "no_wrap": True},
             {"text": "Ставка,\n€/дн", "bold": True, "align": "right", "header": True, "vertical_align": "center"},
             *[
                 {
@@ -365,7 +376,11 @@ def _proposal_budget_table(proposal) -> dict:
                 }
                 for label in asset_labels
             ],
-            {"text": "Кол-во\nдней", "bold": True, "align": "right", "header": True, "vertical_align": "center"},
+            *(
+                [{"text": "Кол-во\nдней", "bold": True, "align": "right", "header": True, "vertical_align": "center"}]
+                if show_total_days_column
+                else []
+            ),
             {"text": "Итого,\n€ без НДС", "bold": True, "align": "right", "header": True, "vertical_align": "center"},
         ],
     ]
@@ -391,13 +406,17 @@ def _proposal_budget_table(proposal) -> dict:
         rows.append(
             [
                 {"text": str(getattr(item, "specialist", "") or "").strip()},
-                {"text": direction},
+                {"text": direction, "no_wrap": True},
                 {"text": _format_money(getattr(item, "rate_eur_per_day", None)), "align": "right"},
                 *[
                     {"text": value, "align": "right"}
                     for value in day_values
                 ],
-                {"text": str(_sum_day_counts(day_values)) if _sum_day_counts(day_values) else "", "align": "right"},
+                *(
+                    [{"text": str(_sum_day_counts(day_values)) if _sum_day_counts(day_values) else "", "align": "right"}]
+                    if show_total_days_column
+                    else []
+                ),
                 {"text": _format_money(getattr(item, "total_eur_without_vat", None)), "align": "right"},
             ]
         )
@@ -447,7 +466,11 @@ def _proposal_budget_table(proposal) -> dict:
                     {"text": str(value or ""), "align": "right"}
                     for value in current_day_values
                 ],
-                {"text": str(_sum_day_counts(current_day_values)) if _sum_day_counts(current_day_values) else "", "align": "right"},
+                *(
+                    [{"text": str(_sum_day_counts(current_day_values)) if _sum_day_counts(current_day_values) else "", "align": "right"}]
+                    if show_total_days_column
+                    else []
+                ),
                 {"text": str(total or ""), "align": "right"},
             ]
         )
