@@ -20,8 +20,9 @@ def seed_tkp_preliminary_variable(apps, schema_editor):
 
 
 def remove_tkp_preliminary_variable(apps, schema_editor):
-    ProposalVariable = apps.get_model("proposals_app", "ProposalVariable")
-    ProposalVariable.objects.filter(key="{{tkp_preliminary}}").delete()
+    # Keep rollback safe: this migration may have been applied on a database
+    # where the variable already existed, so we must not delete pre-existing data.
+    return
 
 
 class Migration(migrations.Migration):
