@@ -15,6 +15,8 @@ from django.urls import reverse
 from django.utils import timezone
 
 from docx import Document
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 
 from classifiers_app.models import BusinessEntityRecord, BusinessEntityIdentifierRecord, LegalEntityRecord, OKSMCountry, OKVCurrency
 from contacts_app.models import PersonRecord
@@ -377,23 +379,26 @@ class ProposalDocumentGenerationTests(TestCase):
             if any("Специалист" in cell.text for cell in table.rows[0].cells)
         )
         budget_rows = [[cell.text.strip() for cell in row.cells] for row in budget_table.rows]
-        self.assertIn("Месторождение Приморское", budget_rows[1])
-        self.assertIn("Фабрика Приморская", budget_rows[1])
-        self.assertIn("Иванов И.И.", budget_rows[2])
-        self.assertIn("Геолог, Партнер", budget_rows[2])
-        self.assertIn("6", budget_rows[2])
-        self.assertIn("7\u00a0200,00", budget_rows[2])
-        self.assertIn("Командировочные расходы", budget_rows[4][0])
-        self.assertIn("ИТОГО, по расчёту", budget_rows[5][0])
-        self.assertIn("10\u00a0400,00", budget_rows[5][-1])
-        self.assertIn("ИТОГО, рубли без НДС", budget_rows[6][0])
-        self.assertIn("96,5", budget_rows[6][2])
-        self.assertIn("1\u00a0003\u00a0600,00", budget_rows[6][-1])
-        self.assertIn("ИТОГО, рубли без НДС с учетом скидки", budget_rows[7][0])
-        self.assertIn("7,5%", budget_rows[7][2])
-        self.assertIn("928\u00a0330,00", budget_rows[7][-1])
-        self.assertIn("ИТОГО в договор, рубли без НДС с учётом дополнительной скидки", budget_rows[8][0])
-        self.assertIn("900\u00a0000,00", budget_rows[8][-1])
+        self.assertIn("Месторождение Приморское", budget_rows[0])
+        self.assertIn("Фабрика Приморская", budget_rows[0])
+        self.assertIn("Ставка,\n€/дн", budget_rows[0])
+        self.assertIn("Кол-во\nдней", budget_rows[0])
+        self.assertIn("Итого,\n€ без НДС", budget_rows[0])
+        self.assertIn("Иванов И.И.", budget_rows[1])
+        self.assertIn("Геолог, Партнер", budget_rows[1])
+        self.assertIn("6", budget_rows[1])
+        self.assertIn("7\u00a0200,00", budget_rows[1])
+        self.assertIn("Командировочные расходы", budget_rows[3][0])
+        self.assertIn("ИТОГО, по расчёту", budget_rows[4][0])
+        self.assertIn("10\u00a0400,00", budget_rows[4][-1])
+        self.assertIn("ИТОГО, рубли без НДС", budget_rows[5][0])
+        self.assertIn("96,5", budget_rows[5][2])
+        self.assertIn("1\u00a0003\u00a0600,00", budget_rows[5][-1])
+        self.assertIn("ИТОГО, рубли без НДС с учетом скидки", budget_rows[6][0])
+        self.assertIn("7,5%", budget_rows[6][2])
+        self.assertIn("928\u00a0330,00", budget_rows[6][-1])
+        self.assertIn("ИТОГО в договор, рубли без НДС с учётом доп. скидки", budget_rows[7][0])
+        self.assertIn("900\u00a0000,00", budget_rows[7][-1])
         self.assertIn('w:tblLayout w:type="autofit"', budget_table._tbl.xml)
         self.assertIn('w:tblW w:type="auto" w:w="0"', budget_table._tbl.xml)
         budget_run_sizes = [
@@ -405,7 +410,7 @@ class ProposalDocumentGenerationTests(TestCase):
             if run.text.strip()
         ]
         self.assertTrue(budget_run_sizes)
-        self.assertTrue(all(size == 8 for size in budget_run_sizes))
+        self.assertTrue(all(size == 7 for size in budget_run_sizes))
 
     @patch("ai_app.proposals_app.document_generation._get_cloud_upload_user")
     @patch("ai_app.proposals_app.document_generation.cloud_upload_file", return_value=True)
@@ -426,7 +431,7 @@ class ProposalDocumentGenerationTests(TestCase):
         mocked_cloud_upload.assert_called_once()
         self.assertEqual(mocked_cloud_upload.call_args.args[0], connected_user)
 
-    def test_scope_of_work_plain_list_key_strips_rich_list_markers(self):
+    def test_scope_of_work_preserves_rich_list_markers(self):
         template_doc = Document()
         template_doc.add_paragraph("[[scope_of_work]]")
         buffer = BytesIO()
@@ -440,7 +445,6 @@ class ProposalDocumentGenerationTests(TestCase):
                     {"html": "<ul><li>Первый пункт</li><li>Второй пункт</li></ul>"}
                 ]
             },
-            plain_list_keys={"[[scope_of_work]]"},
             default_language_code="ru-RU",
         )
 
@@ -449,8 +453,9 @@ class ProposalDocumentGenerationTests(TestCase):
 
         self.assertEqual(len(scope_paragraphs), 2)
         for paragraph in scope_paragraphs:
-            self.assertNotIn("w:numPr", paragraph._element.xml)
-            self.assertNotIn("w:pStyle", paragraph._element.xml)
+            self.assertTrue(
+                "w:numPr" in paragraph._element.xml or "w:pStyle" in paragraph._element.xml
+            )
             self.assertIn('w:lang w:val="ru-RU"', paragraph._element.xml)
 
     def test_process_template_applies_default_language_to_scalar_replacements(self):
@@ -470,6 +475,35 @@ class ProposalDocumentGenerationTests(TestCase):
 
         self.assertIn('w:lang w:val="ru-RU"', paragraph._element.xml)
 
+    def test_process_template_preserves_existing_language_when_default_not_provided(self):
+        template_doc = Document()
+        paragraph = template_doc.add_paragraph()
+        run = paragraph.add_run("Заказчик: {{name}}")
+        r_pr = run._element.find(qn("w:rPr"))
+        if r_pr is None:
+            r_pr = OxmlElement("w:rPr")
+            run._element.insert(0, r_pr)
+        lang = OxmlElement("w:lang")
+        lang.set(qn("w:val"), "en-US")
+        lang.set(qn("w:bidi"), "en-US")
+        lang.set(qn("w:eastAsia"), "en-US")
+        r_pr.append(lang)
+
+        buffer = BytesIO()
+        template_doc.save(buffer)
+
+        generated_bytes = process_template(
+            buffer.getvalue(),
+            {"{{name}}": 'ООО "Приморское"'},
+        )
+
+        generated_doc = Document(BytesIO(generated_bytes))
+        generated_paragraph = next(
+            item for item in generated_doc.paragraphs if 'ООО "Приморское"' in item.text
+        )
+
+        self.assertIn('w:lang w:val="en-US"', generated_paragraph._element.xml)
+
     def test_resolve_budget_table_returns_table_spec(self):
         _, lists, tables = resolve_variables(
             self.proposal,
@@ -479,14 +513,17 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertEqual(lists, {})
         self.assertIn("[[budget_table]]", tables)
         table_spec = tables["[[budget_table]]"]
-        self.assertEqual(table_spec["font_size_pt"], 8)
+        self.assertEqual(table_spec["font_size_pt"], 7)
         self.assertEqual(table_spec["style"], "Table Grid")
         self.assertEqual(table_spec["rows"][0][0]["text"], "Специалист")
-        self.assertEqual(table_spec["rows"][1][0]["text"], "Месторождение Приморское")
-        self.assertEqual(table_spec["rows"][2][0]["text"], "Иванов И.И.")
-        self.assertEqual(table_spec["rows"][2][1]["text"], "Геолог, Партнер")
-        self.assertEqual(table_spec["rows"][2][-2]["text"], "6")
-        self.assertEqual(table_spec["rows"][5][0]["text"], "ИТОГО, по расчёту")
+        self.assertEqual(table_spec["rows"][0][2]["text"], "Ставка,\n€/дн")
+        self.assertEqual(table_spec["rows"][0][-2]["text"], "Кол-во\nдней")
+        self.assertEqual(table_spec["rows"][0][-1]["text"], "Итого,\n€ без НДС")
+        self.assertEqual(table_spec["rows"][0][3]["text"], "Месторождение Приморское")
+        self.assertEqual(table_spec["rows"][1][0]["text"], "Иванов И.И.")
+        self.assertEqual(table_spec["rows"][1][1]["text"], "Геолог, Партнер")
+        self.assertEqual(table_spec["rows"][1][-2]["text"], "6")
+        self.assertEqual(table_spec["rows"][7][0]["text"], "ИТОГО в договор, рубли без НДС с учётом доп. скидки")
 
     def test_process_template_inserts_budget_table(self):
         template_doc = Document()
@@ -512,23 +549,28 @@ class ProposalDocumentGenerationTests(TestCase):
         budget_table = generated_doc.tables[0]
         budget_rows = [[cell.text.strip() for cell in row.cells] for row in budget_table.rows]
 
-        self.assertIn("Месторождение Приморское", budget_rows[1])
-        self.assertIn("Фабрика Приморская", budget_rows[1])
-        self.assertIn("Иванов И.И.", budget_rows[2])
-        self.assertIn("Геолог, Партнер", budget_rows[2])
-        self.assertIn("6", budget_rows[2])
-        self.assertIn("7\u00a0200,00", budget_rows[2])
-        self.assertIn("Командировочные расходы", budget_rows[4][0])
-        self.assertIn("ИТОГО, по расчёту", budget_rows[5][0])
-        self.assertIn("10\u00a0400,00", budget_rows[5][-1])
-        self.assertIn("ИТОГО, рубли без НДС", budget_rows[6][0])
-        self.assertIn("96,5", budget_rows[6][2])
-        self.assertIn("1\u00a0003\u00a0600,00", budget_rows[6][-1])
-        self.assertIn("ИТОГО, рубли без НДС с учетом скидки", budget_rows[7][0])
-        self.assertIn("7,5%", budget_rows[7][2])
-        self.assertIn("928\u00a0330,00", budget_rows[7][-1])
-        self.assertIn("ИТОГО в договор, рубли без НДС с учётом дополнительной скидки", budget_rows[8][0])
-        self.assertIn("900\u00a0000,00", budget_rows[8][-1])
+        self.assertIn("Месторождение Приморское", budget_rows[0])
+        self.assertIn("Фабрика Приморская", budget_rows[0])
+        self.assertIn("Ставка,\n€/дн", budget_rows[0])
+        self.assertIn("Кол-во\nдней", budget_rows[0])
+        self.assertIn("Итого,\n€ без НДС", budget_rows[0])
+        self.assertIn("Иванов И.И.", budget_rows[1])
+        self.assertIn("Геолог, Партнер", budget_rows[1])
+        self.assertIn("6", budget_rows[1])
+        self.assertIn("7\u00a0200,00", budget_rows[1])
+        self.assertIn("Командировочные расходы", budget_rows[3][0])
+        self.assertIn("ИТОГО, по расчёту", budget_rows[4][0])
+        self.assertIn("10\u00a0400,00", budget_rows[4][-1])
+        self.assertIn("ИТОГО, рубли без НДС", budget_rows[5][0])
+        self.assertIn("96,5", budget_rows[5][2])
+        self.assertIn("1\u00a0003\u00a0600,00", budget_rows[5][-1])
+        self.assertIn("ИТОГО, рубли без НДС с учетом скидки", budget_rows[6][0])
+        self.assertIn("7,5%", budget_rows[6][2])
+        self.assertIn("928\u00a0330,00", budget_rows[6][-1])
+        self.assertIn("ИТОГО в договор, рубли без НДС с учётом доп. скидки", budget_rows[7][0])
+        self.assertIn("900\u00a0000,00", budget_rows[7][-1])
+        self.assertIn('w:tblLayout w:type="autofit"', budget_table._tbl.xml)
+        self.assertIn('w:tblW w:type="auto" w:w="0"', budget_table._tbl.xml)
         budget_run_sizes = [
             run.font.size.pt
             for row in budget_table.rows
@@ -538,7 +580,7 @@ class ProposalDocumentGenerationTests(TestCase):
             if run.text.strip()
         ]
         self.assertTrue(budget_run_sizes)
-        self.assertTrue(all(size == 8 for size in budget_run_sizes))
+        self.assertTrue(all(size == 7 for size in budget_run_sizes))
 
     @patch("ai_app.proposals_app.document_generation.get_any_connected_service_user")
     @patch("ai_app.proposals_app.document_generation.is_nextcloud_primary", return_value=False)

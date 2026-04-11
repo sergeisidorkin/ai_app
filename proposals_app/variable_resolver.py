@@ -287,7 +287,7 @@ PROPOSAL_TRAVEL_EXPENSES_LABEL = "Командировочные расходы"
 PROPOSAL_SUMMARY_TOTAL_LABEL = "ИТОГО, по расчёту"
 PROPOSAL_RUB_TOTAL_LABEL = "ИТОГО, рубли без НДС"
 PROPOSAL_RUB_DISCOUNTED_LABEL = "ИТОГО, рубли без НДС с учетом скидки"
-PROPOSAL_CONTRACT_TOTAL_LABEL = "ИТОГО в договор, рубли без НДС с учётом дополнительной скидки"
+PROPOSAL_CONTRACT_TOTAL_LABEL = "ИТОГО в договор, рубли без НДС с учётом доп. скидки"
 
 
 def _parse_decimal(value) -> Decimal | None:
@@ -346,23 +346,27 @@ def _proposal_budget_table(proposal) -> dict:
 
     rows: list[list[dict[str, object]]] = [
         [
-            {"text": "Специалист", "rowspan": 2, "bold": True, "align": "center"},
-            {"text": "Должность/направление", "rowspan": 2, "bold": True, "align": "center"},
-            {"text": "Ставка, евро / день", "rowspan": 2, "bold": True, "align": "center"},
-            {
-                "text": "Количество дней",
-                "colspan": max(asset_count, 1),
-                "bold": True,
-                "align": "center",
-            },
-            {"text": "Количество дней", "rowspan": 2, "bold": True, "align": "center"},
-            {"text": "Итого, евро без НДС", "rowspan": 2, "bold": True, "align": "center"},
-        ],
-        [
+            {"text": "Специалист", "bold": True, "align": "left", "header": True, "vertical_align": "center"},
+            {"text": "Должность/направление", "bold": True, "align": "left", "header": True, "vertical_align": "center"},
+            {"text": "Ставка,\n€/дн", "bold": True, "align": "right", "header": True, "vertical_align": "center"},
             *[
-                {"text": label, "bold": True, "align": "center"}
-                for label in (asset_labels or ["Количество дней"])
-            ]
+                {
+                    "text": label,
+                    "bold": True,
+                    "align": "center",
+                    "header": True,
+                    "vertical_align": "center",
+                    "margins_cm": {
+                        "top": 0,
+                        "right": 0,
+                        "bottom": 0,
+                        "left": 0,
+                    },
+                }
+                for label in asset_labels
+            ],
+            {"text": "Кол-во\nдней", "bold": True, "align": "right", "header": True, "vertical_align": "center"},
+            {"text": "Итого,\n€ без НДС", "bold": True, "align": "right", "header": True, "vertical_align": "center"},
         ],
     ]
 
@@ -484,7 +488,7 @@ def _proposal_budget_table(proposal) -> dict:
 
     return {
         "rows": rows,
-        "font_size_pt": 8,
+        "font_size_pt": 7,
         "style": "Table Grid",
     }
 
