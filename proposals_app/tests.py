@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import tempfile
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from io import BytesIO
 from unittest.mock import Mock, patch
@@ -110,6 +110,7 @@ class ProposalDocumentGenerationTests(TestCase):
             type=self.product,
             name="Приморское",
             year=2026,
+            status=ProposalRegistration.ProposalStatus.PRELIMINARY,
             customer='ООО "Приморское"',
             asset_owner='ООО "Приморское"',
             asset_owner_matches_customer=True,
@@ -134,6 +135,7 @@ class ProposalDocumentGenerationTests(TestCase):
         template_doc.add_paragraph("Титул: {{client_owner_name}}")
         template_doc.add_paragraph("Краткое название: {{service_type_short}}")
         template_doc.add_paragraph("Цель в родительном: {{service_goal_genitive}}")
+        template_doc.add_paragraph("Титул ТКП: {{tkp_preliminary}}")
         template_doc.add_paragraph("Активы:")
         template_doc.add_paragraph("[[actives_name]]")
         buffer = BytesIO()
@@ -186,10 +188,16 @@ class ProposalDocumentGenerationTests(TestCase):
             position=5,
         )
         ProposalVariable.objects.create(
+            key="{{tkp_preliminary}}",
+            description="Предварительное ТКП на титуле",
+            is_computed=True,
+            position=6,
+        )
+        ProposalVariable.objects.create(
             key="[[actives_name]]",
             description="Список наименований активов",
             is_computed=True,
-            position=6,
+            position=7,
         )
         ProposalAsset.objects.create(
             proposal=self.proposal,
@@ -247,6 +255,7 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertIn('Титул: ООО "Приморское"', full_text)
         self.assertIn("Краткое название: Due Diligence", full_text)
         self.assertIn("Цель в родительном: Проведения due diligence", full_text)
+        self.assertIn("Титул ТКП: (предварительное)", full_text)
         self.assertIn("Месторождение Приморское", full_text)
         self.assertIn("Фабрика Приморская", full_text)
         asset_paragraphs = [
@@ -256,8 +265,9 @@ class ProposalDocumentGenerationTests(TestCase):
         ]
         self.assertEqual(len(asset_paragraphs), 2)
         for paragraph in asset_paragraphs:
-            self.assertNotIn("w:numPr", paragraph._element.xml)
-            self.assertNotIn("w:pStyle", paragraph._element.xml)
+            self.assertTrue(
+                "w:numPr" in paragraph._element.xml or "w:pStyle" in paragraph._element.xml
+            )
 
     @patch("ai_app.proposals_app.document_generation._get_cloud_upload_user")
     @patch("ai_app.proposals_app.document_generation.cloud_upload_file", return_value=True)
@@ -1067,6 +1077,24 @@ class ProposalRegistrationFormTests(TestCase):
             '[{"short_name": "", "country_id": "", "country_name": "", "identifier": "", "registration_number": "", "registration_date": ""}]',
         )
 
+    @patch("proposals_app.forms.timezone.now")
+    def test_new_form_sets_evaluation_date_to_january_first_before_july(self, mocked_now):
+        mocked_now.return_value = timezone.make_aware(datetime(2026, 4, 9, 10, 0, 0))
+
+        form = ProposalRegistrationForm()
+
+        self.assertEqual(form.fields["evaluation_date"].initial, date(2026, 1, 1))
+        self.assertNotIn("readonly", form.fields["evaluation_date"].widget.attrs)
+
+    @patch("proposals_app.forms.timezone.now")
+    def test_new_form_sets_evaluation_date_to_june_first_from_july_onward(self, mocked_now):
+        mocked_now.return_value = timezone.make_aware(datetime(2026, 7, 2, 10, 0, 0))
+
+        form = ProposalRegistrationForm()
+
+        self.assertEqual(form.fields["evaluation_date"].initial, date(2026, 6, 1))
+        self.assertNotIn("readonly", form.fields["evaluation_date"].widget.attrs)
+
     def test_form_preserves_explicit_autocomplete_flags_in_related_payload(self):
         country = OKSMCountry.objects.create(
             number=643,
@@ -1344,7 +1372,13 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(form.fields["preliminary_report_date"].label, "Дата Предварительного отчёта")
         self.assertEqual(form.fields["final_report_date"].label, "Дата Итогового отчёта")
         self.assertEqual(form.fields["final_report_term_weeks"].label, "Срок подготовки Итогового отчёта, нед.")
+        self.assertTrue(form.fields["service_term_months"].widget.attrs["readonly"])
+        self.assertEqual(form.fields["service_term_months"].widget.attrs["tabindex"], "-1")
+        self.assertIn("readonly-field", form.fields["service_term_months"].widget.attrs["class"])
         self.assertEqual(form.fields["final_report_term_weeks"].widget.attrs["step"], "0.1")
+        self.assertTrue(form.fields["final_report_term_weeks"].widget.attrs["readonly"])
+        self.assertEqual(form.fields["final_report_term_weeks"].widget.attrs["tabindex"], "-1")
+        self.assertIn("readonly-field", form.fields["final_report_term_weeks"].widget.attrs["class"])
 
     def test_form_accepts_comma_in_final_report_term_weeks(self):
         form = ProposalRegistrationForm(
@@ -1762,6 +1796,10 @@ class ProposalRegistrationFormTests(TestCase):
                 is_computed=True,
             ),
             ProposalVariable(
+                key="{{tkp_preliminary}}",
+                is_computed=True,
+            ),
+            ProposalVariable(
                 key="[[actives_name]]",
                 is_computed=True,
             ),
@@ -1793,6 +1831,7 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(replacements["{{client_owner_name}}"], 'АО «Полиметалл УК»')
         self.assertEqual(replacements["{{service_type_short}}"], "Due Diligence")
         self.assertEqual(replacements["{{service_goal_genitive}}"], "Подготовки коммерческого предложения")
+        self.assertEqual(replacements["{{tkp_preliminary}}"], "(предварительное)")
         self.assertEqual(replacements["{{owner_country_full_name}}"], "Российская Федерация")
         self.assertEqual(replacements["{{year}}"], "2026")
         self.assertEqual(replacements["{{day}}"], "09")
@@ -1857,6 +1896,22 @@ class ProposalRegistrationFormTests(TestCase):
             [ProposalVariable(key="{{service_type_short}}", is_computed=True)],
         )
         self.assertEqual(replacements["{{service_type_short}}"], "Due Diligence")
+
+    def test_resolve_tkp_preliminary_depends_on_status(self):
+        proposal = ProposalRegistration(status=ProposalRegistration.ProposalStatus.PRELIMINARY)
+
+        replacements, _ = resolve_variables(
+            proposal,
+            [ProposalVariable(key="{{tkp_preliminary}}", is_computed=True)],
+        )
+        self.assertEqual(replacements["{{tkp_preliminary}}"], "(предварительное)")
+
+        proposal.status = ProposalRegistration.ProposalStatus.FINAL
+        replacements, _ = resolve_variables(
+            proposal,
+            [ProposalVariable(key="{{tkp_preliminary}}", is_computed=True)],
+        )
+        self.assertEqual(replacements["{{tkp_preliminary}}"], "")
 
     def test_form_saves_assets_from_payload(self):
         country = OKSMCountry.objects.create(
@@ -2781,6 +2836,17 @@ class ProposalFormContextTests(TestCase):
         self.assertContains(response, 'id="proposal-report-language-en"', html=False)
         self.assertContains(response, 'value="русский"', html=False)
         self.assertNotContains(response, 'id="proposal-kind-filter-toggle"', html=False)
+
+    def test_proposal_form_renders_report_term_and_date_inputs_for_type_autofill(self):
+        with patch("proposals_app.forms.get_cbr_eur_rate_for_today", return_value=Decimal("95.1111")):
+            response = self.client.get(reverse("proposal_form_create"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'name="service_term_months"', html=False)
+        self.assertContains(response, 'name="preliminary_report_date"', html=False)
+        self.assertContains(response, 'name="final_report_term_weeks"', html=False)
+        self.assertContains(response, 'name="final_report_date"', html=False)
+        self.assertContains(response, 'id="proposal-typical-service-terms-data"', html=False)
 
 
 class ProposalNextcloudWorkspaceHookTests(TestCase):

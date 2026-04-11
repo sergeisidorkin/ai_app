@@ -4999,6 +4999,109 @@
       }
     }
 
+    function parseProposalDecimal(value) {
+      const raw = String(value || '').trim().replace(/\s+/g, '').replace(',', '.');
+      if (!raw) return null;
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function parseProposalDate(value) {
+      const raw = String(value || '').trim();
+      if (!raw) return null;
+      const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (isoMatch) {
+        return new Date(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]));
+      }
+      const displayMatch = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+      if (displayMatch) {
+        return new Date(Number(displayMatch[3]), Number(displayMatch[2]) - 1, Number(displayMatch[1]));
+      }
+      return null;
+    }
+
+    function startOfDay(date) {
+      return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    }
+
+    function addDays(date, days) {
+      const next = new Date(date.getTime());
+      next.setDate(next.getDate() + days);
+      return startOfDay(next);
+    }
+
+    function getNearestMonday(date) {
+      const current = startOfDay(date);
+      const day = current.getDay();
+      const daysSinceMonday = (day + 6) % 7;
+      const previousMonday = addDays(current, -daysSinceMonday);
+      const nextMonday = addDays(previousMonday, 7);
+      const diffToPrevious = Math.abs(current.getTime() - previousMonday.getTime());
+      const diffToNext = Math.abs(nextMonday.getTime() - current.getTime());
+      return diffToPrevious <= diffToNext ? previousMonday : nextMonday;
+    }
+
+    function addDecimalMonths(date, months) {
+      const safeMonths = Number.isFinite(months) ? Math.max(months, 0) : 0;
+      const wholeMonths = Math.trunc(safeMonths);
+      const fractionalMonths = safeMonths - wholeMonths;
+      const baseDate = startOfDay(date);
+      const targetYear = baseDate.getFullYear();
+      const targetMonthIndex = baseDate.getMonth() + wholeMonths;
+      const targetMonthStart = new Date(targetYear, targetMonthIndex, 1);
+      const targetMonthEndDay = new Date(targetMonthStart.getFullYear(), targetMonthStart.getMonth() + 1, 0).getDate();
+      const day = Math.min(baseDate.getDate(), targetMonthEndDay);
+      const wholeDate = new Date(targetMonthStart.getFullYear(), targetMonthStart.getMonth(), day);
+      const fractionalDays = Math.round(fractionalMonths * 30);
+      return addDays(wholeDate, fractionalDays);
+    }
+
+    function addDecimalWeeks(date, weeks) {
+      const safeWeeks = Number.isFinite(weeks) ? Math.max(weeks, 0) : 0;
+      return addDays(date, Math.round(safeWeeks * 7));
+    }
+
+    function formatProposalDateIso(date) {
+      const year = String(date.getFullYear()).padStart(4, '0');
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return year + '-' + month + '-' + day;
+    }
+
+    function syncProposalReportDates(force) {
+      const preliminaryDateInput = form.querySelector('input[name="preliminary_report_date"]');
+      const finalDateInput = form.querySelector('input[name="final_report_date"]');
+      const serviceTermInput = form.querySelector('[name="service_term_months"]');
+      const finalReportWeeksInput = form.querySelector('[name="final_report_term_weeks"]');
+      if (!preliminaryDateInput || !finalDateInput || !serviceTermInput || !finalReportWeeksInput) return;
+
+      const preliminaryMonths = parseProposalDecimal(serviceTermInput.value);
+      const finalWeeks = parseProposalDecimal(finalReportWeeksInput.value);
+      if (preliminaryMonths === null || finalWeeks === null) return;
+
+      if (!force && String(preliminaryDateInput.value || '').trim() && String(finalDateInput.value || '').trim()) {
+        return;
+      }
+
+      const baseStartDate = getNearestMonday(addDays(new Date(), 14));
+      const preliminaryDate = addDecimalMonths(baseStartDate, preliminaryMonths);
+      const finalDate = addDecimalWeeks(preliminaryDate, finalWeeks);
+      setDateFieldValue(preliminaryDateInput, formatProposalDateIso(preliminaryDate));
+      setDateFieldValue(finalDateInput, formatProposalDateIso(finalDate));
+    }
+
+    function syncProposalFinalDateFromPreliminary() {
+      const preliminaryDateInput = form.querySelector('input[name="preliminary_report_date"]');
+      const finalDateInput = form.querySelector('input[name="final_report_date"]');
+      const finalReportWeeksInput = form.querySelector('[name="final_report_term_weeks"]');
+      if (!preliminaryDateInput || !finalDateInput || !finalReportWeeksInput) return;
+
+      const preliminaryDate = parseProposalDate(preliminaryDateInput.value);
+      const finalWeeks = parseProposalDecimal(finalReportWeeksInput.value);
+      if (!preliminaryDate || finalWeeks === null) return;
+      setDateFieldValue(finalDateInput, formatProposalDateIso(addDecimalWeeks(preliminaryDate, finalWeeks)));
+    }
+
     function initCompositeProposalField(options) {
       const hiddenInput = form.querySelector(options.hiddenSelector);
       const prefixInput = form.querySelector(options.prefixSelector);
@@ -5127,6 +5230,25 @@
     form.querySelector('[name="preliminary_report_percent"]')?.addEventListener('input', syncFinalReportPercent);
     form.querySelector('select[name="type"]')?.addEventListener('change', function () {
       syncProposalServiceTermMonths(true);
+      syncProposalReportDates(true);
+    });
+    form.querySelector('[name="service_term_months"]')?.addEventListener('input', function () {
+      syncProposalReportDates(true);
+    });
+    form.querySelector('[name="service_term_months"]')?.addEventListener('change', function () {
+      syncProposalReportDates(true);
+    });
+    form.querySelector('[name="final_report_term_weeks"]')?.addEventListener('input', function () {
+      syncProposalReportDates(true);
+    });
+    form.querySelector('[name="final_report_term_weeks"]')?.addEventListener('change', function () {
+      syncProposalReportDates(true);
+    });
+    form.querySelector('input[name="preliminary_report_date"]')?.addEventListener('input', function () {
+      syncProposalFinalDateFromPreliminary();
+    });
+    form.querySelector('input[name="preliminary_report_date"]')?.addEventListener('change', function () {
+      syncProposalFinalDateFromPreliminary();
     });
     form.querySelector('[name="asset_owner_matches_customer"]')?.addEventListener('change', function () {
       syncAssetOwnerFromCustomer('customer-sync');
@@ -5155,6 +5277,7 @@
       }
     });
     syncProposalServiceTermMonths(false);
+    syncProposalReportDates(false);
     ['asset_owner', 'asset_owner_registration_number', 'asset_owner_registration_date'].forEach(function (fieldName) {
       form.querySelector('[name="' + fieldName + '"]')?.addEventListener('change', function () {
         form.dispatchEvent(new CustomEvent('proposal-asset-owner-changed', { detail: { reason: 'owner-change' } }));

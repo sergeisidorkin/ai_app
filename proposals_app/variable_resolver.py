@@ -213,6 +213,18 @@ def _proposal_service_goal_genitive(proposal) -> str:
     return item.service_goal_genitive or ""
 
 
+def _proposal_tkp_preliminary(proposal) -> str:
+    try:
+        from proposals_app.models import ProposalRegistration
+
+        if getattr(proposal, "status", "") == ProposalRegistration.ProposalStatus.PRELIMINARY:
+            return "(предварительное)"
+    except Exception:
+        if getattr(proposal, "status", "") == "preliminary":
+            return "(предварительное)"
+    return ""
+
+
 def _proposal_service_composition(proposal) -> str:
     return proposal.service_composition or ""
 
@@ -339,6 +351,7 @@ COMPUTED_MAP = {
     "{{client_owner_name}}": _proposal_client_owner_name,
     "{{service_type_short}}": _proposal_service_type_short,
     "{{service_goal_genitive}}": _proposal_service_goal_genitive,
+    "{{tkp_preliminary}}": _proposal_tkp_preliminary,
     "{{owner_country_full_name}}": _proposal_asset_owner_country_full_name,
     "{{country_full_name}}": _proposal_country_full_name,
 }

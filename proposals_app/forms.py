@@ -1,6 +1,6 @@
 import json
 import sys
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
 from django import forms
@@ -267,6 +267,13 @@ def _proposal_region_choices_for_country(country_id, current_value="", as_of=Non
     return choices
 
 
+def _default_proposal_evaluation_date(today=None):
+    today = today or timezone.now().date()
+    if today < date(today.year, 7, 1):
+        return date(today.year, 1, 1)
+    return date(today.year, 6, 1)
+
+
 class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
     number = forms.IntegerField(
         label="Номер",
@@ -393,7 +400,15 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         min_value=0,
         max_digits=5,
         decimal_places=1,
-        widget=forms.NumberInput(attrs={"min": 0, "step": "0.1"}),
+        widget=forms.NumberInput(
+            attrs={
+                "min": 0,
+                "step": "0.1",
+                "readonly": True,
+                "tabindex": "-1",
+                "class": "readonly-field",
+            }
+        ),
     )
     preliminary_report_date = forms.DateField(
         label="Дата Предварительного отчёта",
@@ -407,7 +422,15 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         min_value=0,
         max_digits=5,
         decimal_places=1,
-        widget=forms.NumberInput(attrs={"min": 0, "step": "0.1"}),
+        widget=forms.NumberInput(
+            attrs={
+                "min": 0,
+                "step": "0.1",
+                "readonly": True,
+                "tabindex": "-1",
+                "class": "readonly-field",
+            }
+        ),
     )
     final_report_date = forms.DateField(
         label="Дата Итогового отчёта",
@@ -615,6 +638,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         self.fields["status"].widget.disabled_values = {str(value) for value in NON_EDITABLE_PROPOSAL_STATUSES}
         if not (self.instance and self.instance.pk) and not self.is_bound:
             self.fields["status"].initial = ProposalRegistration.ProposalStatus.FINAL
+            self.fields["evaluation_date"].initial = _default_proposal_evaluation_date()
         self.fields["type"].queryset = Product.objects.order_by("position", "id")
         self.fields["type"].label_from_instance = lambda obj: obj.short_name
         self.fields["type"].required = True
