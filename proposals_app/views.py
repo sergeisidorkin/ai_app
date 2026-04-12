@@ -56,8 +56,8 @@ from .document_generation import (
     build_proposal_docx_source_url,
     generate_and_store_proposal_pdf,
     get_generated_docx_path,
+    get_proposal_docx_source_token_payload,
     is_onlyoffice_conversion_configured,
-    is_valid_proposal_docx_source_token,
     load_existing_proposal_docx_bytes,
     store_generated_documents,
 )
@@ -76,12 +76,56 @@ HX_TRIGGER_HEADER = "HX-Trigger"
 HX_PROPOSALS_UPDATED_EVENT = "proposals-updated"
 PROPOSAL_NEXTCLOUD_TARGETS_SESSION_KEY = "proposal_nextcloud_target_paths"
 logger = logging.getLogger(__name__)
+PROPOSAL_FACSIMILE_PLACEHOLDER = "[[facsimile]]"
+PROPOSAL_FACSIMILE_ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff"}
 
 # CI can import this module through either `proposals_app.views` or
 # `ai_app.proposals_app.views`. Keep both names bound to the same module object
 # so patch() targets stay stable.
 sys.modules.setdefault("proposals_app.views", sys.modules[__name__])
 sys.modules.setdefault("ai_app.proposals_app.views", sys.modules[__name__])
+
+
+def _get_proposal_signer_expert_profile(user_id: int | None) -> ExpertProfile:
+    try:
+        clean_user_id = int(user_id or 0)
+    except (TypeError, ValueError):
+        clean_user_id = 0
+    if clean_user_id <= 0:
+        raise RuntimeError("Не удалось определить пользователя, подписывающего ТКП.")
+    try:
+        return ExpertProfile.objects.select_related("employee", "employee__user").get(employee__user_id=clean_user_id)
+    except ExpertProfile.DoesNotExist as exc:
+        raise RuntimeError(
+            "Для текущего пользователя не заполнена строка в разделе «Эксперты -> Реквизиты для договора»."
+        ) from exc
+
+
+def _load_proposal_signer_facsimile_bytes(user_id: int | None) -> bytes:
+    profile = _get_proposal_signer_expert_profile(user_id)
+    facsimile = getattr(profile, "facsimile_file", None)
+    facsimile_name = str(getattr(facsimile, "name", "") or "").strip()
+    if not facsimile_name:
+        raise RuntimeError(
+            "Для текущего пользователя не заполнено поле «Факсимиле» в разделе «Эксперты -> Реквизиты для договора»."
+        )
+
+    file_extension = os.path.splitext(facsimile_name)[1].lower()
+    if file_extension and file_extension not in PROPOSAL_FACSIMILE_ALLOWED_EXTENSIONS:
+        raise RuntimeError("Факсимиле должно быть изображением в формате PNG, JPG, GIF, BMP или TIFF.")
+
+    try:
+        facsimile.open("rb")
+        try:
+            facsimile_bytes = facsimile.read()
+        finally:
+            facsimile.close()
+    except Exception as exc:
+        raise RuntimeError("Не удалось прочитать файл факсимиле текущего пользователя.") from exc
+
+    if not facsimile_bytes:
+        raise RuntimeError("Файл факсимиле текущего пользователя пустой.")
+    return facsimile_bytes
 
 
 def _normalize_nextcloud_path(path: str) -> str:
@@ -1643,12 +1687,6 @@ def proposal_dispatch_transfer_to_contract(request):
 @user_passes_test(staff_required)
 @require_POST
 def proposal_dispatch_sign_documents(request):
-    if not is_onlyoffice_conversion_configured():
-        return JsonResponse(
-            {"ok": False, "error": "Не настроен ONLYOFFICE Document Server для генерации PDF."},
-            status=400,
-        )
-
     raw_ids = request.POST.getlist("proposal_ids[]") or request.POST.getlist("proposal_ids")
     if not raw_ids:
         return JsonResponse({"ok": False, "error": "Не выбраны строки для подписи ТКП."}, status=400)
@@ -1667,6 +1705,25 @@ def proposal_dispatch_sign_documents(request):
     if len(proposals) != len(proposal_ids):
         return JsonResponse({"ok": False, "error": "Часть выбранных строк не найдена."}, status=400)
 
+    try:
+        _load_proposal_signer_facsimile_bytes(getattr(request.user, "pk", None))
+    except RuntimeError as exc:
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": str(exc),
+                "generated": 0,
+                "warnings": [],
+            },
+            status=400,
+        )
+
+    if not is_onlyoffice_conversion_configured():
+        return JsonResponse(
+            {"ok": False, "error": "Не настроен ONLYOFFICE Document Server для генерации PDF."},
+            status=400,
+        )
+
     pdf_updates = []
     errors = []
 
@@ -1678,7 +1735,11 @@ def proposal_dispatch_sign_documents(request):
             stored_pdf = generate_and_store_proposal_pdf(
                 request.user,
                 proposal,
-                source_url=build_proposal_docx_source_url(request, proposal),
+                source_url=build_proposal_docx_source_url(
+                    request,
+                    proposal,
+                    signer_user_id=getattr(request.user, "pk", None),
+                ),
             )
         except Exception as exc:
             errors.append(f"{proposal.short_uid}: {exc}")
@@ -1842,7 +1903,8 @@ def proposal_dispatch_create_documents(request):
 def proposal_onlyoffice_docx_source(request, pk: int):
     proposal = get_object_or_404(ProposalRegistration, pk=pk)
     token = str(request.GET.get("token") or "").strip()
-    if not is_valid_proposal_docx_source_token(proposal, token):
+    token_payload = get_proposal_docx_source_token_payload(proposal, token)
+    if token_payload is None:
         return HttpResponseForbidden("Недействительная ссылка на DOCX-файл ТКП.")
 
     try:
@@ -1852,6 +1914,20 @@ def proposal_onlyoffice_docx_source(request, pk: int):
         )
     except RuntimeError as exc:
         raise Http404(str(exc))
+
+    signer_user_id = token_payload.get("signer_user_id") if isinstance(token_payload, dict) else None
+    if signer_user_id:
+        try:
+            facsimile_bytes = _load_proposal_signer_facsimile_bytes(signer_user_id)
+            from contracts_app.docx_processor import insert_floating_image_at_placeholder
+
+            docx_bytes = insert_floating_image_at_placeholder(
+                docx_bytes,
+                facsimile_bytes,
+                placeholder=PROPOSAL_FACSIMILE_PLACEHOLDER,
+            )
+        except RuntimeError as exc:
+            return HttpResponse(str(exc), status=400)
 
     file_name = str(getattr(proposal, "docx_file_name", "") or "").strip() or "proposal.docx"
     response = HttpResponse(docx_bytes, content_type=DOCX_CONTENT_TYPE)
