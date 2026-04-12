@@ -2924,6 +2924,65 @@ class ProposalRegistrationFormTests(TestCase):
             },
         )
 
+    def test_form_preserves_legacy_travel_total_in_actual_mode(self):
+        country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            service_type="service",
+            position=1,
+        )
+
+        form = ProposalRegistrationForm(
+            data={
+                "number": 3333,
+                "group_member": group_member.pk,
+                "type": product.pk,
+                "name": "Тестовое ТКП",
+                "kind": ProposalRegistration.ProposalKind.REGULAR,
+                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "year": 2026,
+                "customer": 'ООО "Приморское"',
+                "country": country.pk,
+                "identifier": "ОГРН",
+                "registration_number": "1174910001683",
+                "registration_date": "01.04.2026",
+                "commercial_offer_payload": (
+                    '[{"specialist":"","job_title":"","professional_status":"",'
+                    '"service_name":"Командировочные расходы, евро","rate_eur_per_day":"",'
+                    '"asset_day_counts":["",""],"total_eur_without_vat":"500.00"}]'
+                ),
+                "commercial_totals_payload": (
+                    '{"discount_percent":"5","travel_expenses_mode":"actual"}'
+                ),
+            }
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        proposal = form.save()
+        form.save_commercial_offers(proposal)
+
+        offer = ProposalCommercialOffer.objects.get(proposal=proposal)
+        self.assertEqual(offer.service_name, "Командировочные расходы, евро")
+        self.assertEqual(offer.asset_day_counts, ["", ""])
+        self.assertEqual(str(offer.total_eur_without_vat), "500.00")
+
     def test_form_preserves_zero_values_in_commercial_totals_payload(self):
         country = OKSMCountry.objects.create(
             number=643,

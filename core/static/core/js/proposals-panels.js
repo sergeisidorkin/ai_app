@@ -2073,9 +2073,8 @@
     const explicitMode = normalizeProposalTravelExpensesMode(fallbackValue);
     if (explicitMode) return explicitMode;
     const assetValues = Array.isArray(row?.asset_day_counts) ? row.asset_day_counts : [];
-    const hasSavedValues = assetValues.some(function (value) { return String(value ?? '').trim(); })
-      || String(row?.total_eur_without_vat || '').trim();
-    return hasSavedValues ? PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION : PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL;
+    const hasSavedAssetValues = assetValues.some(function (value) { return String(value ?? '').trim(); });
+    return hasSavedAssetValues ? PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION : PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL;
   }
 
   function parseProposalPercent(value) {
@@ -3430,6 +3429,11 @@
       if (!row || !isTravelRow(row)) return;
       const totalInput = row.querySelector('.proposal-commercial-total');
       if (!totalInput) return;
+      if (getTravelExpensesMode(row) !== PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION) {
+        const preservedRaw = rawMoney(row.dataset.preservedActualTotalRaw || '');
+        totalInput.value = preservedRaw ? fmtMoney(preservedRaw) : '';
+        return;
+      }
       const total = getDayInputs(row).reduce(function (sum, input) {
         const value = parseFloat(rawMoney(input.value || ''));
         return sum + (Number.isFinite(value) ? value : 0);
@@ -3935,6 +3939,7 @@
       const row = document.createElement('tr');
       row.dataset.travelExpensesRow = '1';
       row.dataset.travelExpensesMode = normalizeProposalTravelExpensesMode(mode) || PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL;
+      row.dataset.preservedActualTotalRaw = rawMoney(data?.total_eur_without_vat || '');
       row.className = 'proposal-commercial-travel-row';
 
       const labelTd = createProposalTableCell('proposal-commercial-travel-label-cell');
@@ -3972,6 +3977,9 @@
 
       rateSelect.addEventListener('change', function () {
         row.dataset.travelExpensesMode = normalizeProposalTravelExpensesMode(rateSelect.value) || PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL;
+        if (getTravelExpensesMode(row) === PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL) {
+          row.dataset.preservedActualTotalRaw = '';
+        }
         const nextValues = getTravelExpensesMode(row) === PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION
           ? getDayInputs(row).map(function (input) { return input.value || ''; })
           : [];

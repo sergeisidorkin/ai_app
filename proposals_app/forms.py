@@ -1333,7 +1333,6 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     )
                 else:
                     asset_day_counts = ["" for _ in asset_day_counts]
-                    total_value = None
 
             cleaned_rows.append(
                 {
