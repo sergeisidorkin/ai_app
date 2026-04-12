@@ -59,6 +59,7 @@ from .document_generation import (
     get_proposal_docx_source_token_payload,
     is_onlyoffice_conversion_configured,
     load_existing_proposal_docx_bytes,
+    store_existing_proposal_docx_bytes,
     store_generated_documents,
 )
 from .models import ProposalRegistration, ProposalTemplate, ProposalVariable
@@ -1706,7 +1707,7 @@ def proposal_dispatch_sign_documents(request):
         return JsonResponse({"ok": False, "error": "Часть выбранных строк не найдена."}, status=400)
 
     try:
-        _load_proposal_signer_facsimile_bytes(getattr(request.user, "pk", None))
+        facsimile_bytes = _load_proposal_signer_facsimile_bytes(getattr(request.user, "pk", None))
     except RuntimeError as exc:
         return JsonResponse(
             {
@@ -1724,7 +1725,7 @@ def proposal_dispatch_sign_documents(request):
             status=400,
         )
 
-    pdf_updates = []
+    document_updates = []
     errors = []
 
     for proposal in proposals:
@@ -1732,6 +1733,28 @@ def proposal_dispatch_sign_documents(request):
             errors.append(f"Для {proposal.short_uid} сначала сформируйте DOCX-файл ТКП.")
             continue
         try:
+            original_docx_name = str(getattr(proposal, "docx_file_name", "") or "").strip()
+            original_docx_link = str(getattr(proposal, "docx_file_link", "") or "").strip()
+            docx_bytes = load_existing_proposal_docx_bytes(request.user, proposal)
+            from contracts_app.docx_processor import insert_floating_image_at_placeholder
+
+            signed_docx_bytes = insert_floating_image_at_placeholder(
+                docx_bytes,
+                facsimile_bytes,
+                placeholder=PROPOSAL_FACSIMILE_PLACEHOLDER,
+            )
+            stored_docx = store_existing_proposal_docx_bytes(request.user, proposal, signed_docx_bytes)
+            proposal.docx_file_name = stored_docx["docx_name"]
+            proposal.docx_file_link = stored_docx["docx_path"]
+            if (
+                proposal.docx_file_name != original_docx_name
+                or proposal.docx_file_link != original_docx_link
+            ):
+                ProposalRegistration.objects.filter(pk=proposal.pk).update(
+                    docx_file_name=proposal.docx_file_name,
+                    docx_file_link=proposal.docx_file_link,
+                )
+
             stored_pdf = generate_and_store_proposal_pdf(
                 request.user,
                 proposal,
@@ -1744,11 +1767,13 @@ def proposal_dispatch_sign_documents(request):
         except Exception as exc:
             errors.append(f"{proposal.short_uid}: {exc}")
             continue
+        proposal.docx_file_name = stored_docx["docx_name"]
+        proposal.docx_file_link = stored_docx["docx_path"]
         proposal.pdf_file_name = stored_pdf["pdf_name"]
         proposal.pdf_file_link = stored_pdf["pdf_path"]
-        pdf_updates.append(proposal)
+        document_updates.append(proposal)
 
-    if errors and not pdf_updates:
+    if errors and not document_updates:
         return JsonResponse(
             {
                 "ok": False,
@@ -1759,23 +1784,28 @@ def proposal_dispatch_sign_documents(request):
             status=400,
         )
 
-    if pdf_updates:
-        ProposalRegistration.objects.bulk_update(pdf_updates, ["pdf_file_name", "pdf_file_link"])
-        _attach_proposal_folder_urls(pdf_updates, request.user, request=request)
+    if document_updates:
+        ProposalRegistration.objects.bulk_update(
+            document_updates,
+            ["docx_file_name", "docx_file_link", "pdf_file_name", "pdf_file_link"],
+        )
+        _attach_proposal_folder_urls(document_updates, request.user, request=request)
 
     return JsonResponse(
         {
             "ok": True,
             "message": "PDF для ТКП успешно сформирован.",
-            "generated": len(pdf_updates),
+            "generated": len(document_updates),
             "warnings": errors,
             "updates": [
                 {
                     "id": proposal.pk,
+                    "docx_file_name": proposal.docx_file_name,
+                    "proposal_docx_file_url": getattr(proposal, "proposal_docx_file_url", "") or "",
                     "pdf_file_name": proposal.pdf_file_name,
                     "proposal_pdf_file_url": getattr(proposal, "proposal_pdf_file_url", "") or "",
                 }
-                for proposal in pdf_updates
+                for proposal in document_updates
             ],
         }
     )
