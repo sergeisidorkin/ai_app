@@ -614,7 +614,7 @@ class ProposalDocumentGenerationTests(TestCase):
             ],
         )
         self.assertEqual(tables["[[budget_table]]"]["font_size_pt"], 8)
-        self.assertEqual(tables["[[budget_table]]"]["column_widths_pct"], [20, 50, 10, 10, 10])
+        self.assertEqual(tables["[[budget_table]]"]["column_widths_pct"], [18, 46, 12, 12, 12])
         data_row = tables["[[budget_table]]"]["rows"][1]
         self.assertEqual(len(data_row), 5)
         self.assertEqual(data_row[3]["text"], "2")
@@ -727,8 +727,9 @@ class ProposalDocumentGenerationTests(TestCase):
         budget_table = generated_doc.tables[0]
         self.assertIn('w:tblLayout w:type="fixed"', budget_table._tbl.xml)
         self.assertIn('w:tblW w:type="pct" w:w="5000"', budget_table._tbl.xml)
-        self.assertIn('w:tcW w:type="pct" w:w="1000"', budget_table._tbl.xml)
-        self.assertIn('w:tcW w:type="pct" w:w="2500"', budget_table._tbl.xml)
+        self.assertIn('w:tcW w:type="pct" w:w="900"', budget_table._tbl.xml)
+        self.assertIn('w:tcW w:type="pct" w:w="2300"', budget_table._tbl.xml)
+        self.assertIn('w:tcW w:type="pct" w:w="600"', budget_table._tbl.xml)
         budget_run_sizes = [
             run.font.size.pt
             for row in budget_table.rows
