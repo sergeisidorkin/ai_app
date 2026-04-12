@@ -180,16 +180,17 @@ def _proposal_docx_source_token_ttl() -> int:
     return int(getattr(settings, "ONLYOFFICE_DOCX_SOURCE_TOKEN_TTL", 300) or 300)
 
 
-def build_proposal_docx_source_token(proposal) -> str:
+def build_proposal_docx_source_token(proposal, *, signer_user_id: int | None = None) -> str:
     payload = {
         "proposal_id": int(proposal.pk),
         "docx_file_name": str(getattr(proposal, "docx_file_name", "") or "").strip(),
         "docx_file_link": str(getattr(proposal, "docx_file_link", "") or "").strip(),
+        "signer_user_id": int(signer_user_id) if signer_user_id else None,
     }
     return signing.dumps(payload, salt=PROPOSAL_DOCX_SOURCE_TOKEN_SALT, compress=True)
 
 
-def is_valid_proposal_docx_source_token(proposal, token: str) -> bool:
+def get_proposal_docx_source_token_payload(proposal, token: str) -> dict[str, object] | None:
     try:
         payload = signing.loads(
             str(token or "").strip(),
@@ -197,17 +198,23 @@ def is_valid_proposal_docx_source_token(proposal, token: str) -> bool:
             max_age=_proposal_docx_source_token_ttl(),
         )
     except signing.BadSignature:
-        return False
+        return None
 
-    return (
+    if not (
         payload.get("proposal_id") == proposal.pk
         and payload.get("docx_file_name") == str(getattr(proposal, "docx_file_name", "") or "").strip()
         and payload.get("docx_file_link") == str(getattr(proposal, "docx_file_link", "") or "").strip()
-    )
+    ):
+        return None
+    return payload
 
 
-def build_proposal_docx_source_url(request, proposal) -> str:
-    token = build_proposal_docx_source_token(proposal)
+def is_valid_proposal_docx_source_token(proposal, token: str) -> bool:
+    return get_proposal_docx_source_token_payload(proposal, token) is not None
+
+
+def build_proposal_docx_source_url(request, proposal, *, signer_user_id: int | None = None) -> str:
+    token = build_proposal_docx_source_token(proposal, signer_user_id=signer_user_id)
     path = reverse("proposal_onlyoffice_docx_source", args=[proposal.pk])
     query = urlencode({"token": token})
     if request is not None:

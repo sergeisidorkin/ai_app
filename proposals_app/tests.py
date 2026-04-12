@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import base64
 import json
 import tempfile
 from datetime import date, datetime
 from decimal import Decimal
 from io import BytesIO
 from unittest.mock import Mock, patch
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, urlparse
 
 from django.contrib.auth import get_user_model
+from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
@@ -42,8 +44,13 @@ from projects_app.models import ProjectRegistration
 from users_app.models import Employee
 from yandexdisk_app.models import YandexDiskAccount
 
-from contracts_app.docx_processor import process_template
-from .document_generation import generate_and_store_proposal_pdf, store_generated_documents
+from contracts_app.docx_processor import insert_floating_image_at_placeholder, process_template
+from .document_generation import (
+    build_proposal_docx_source_token,
+    generate_and_store_proposal_pdf,
+    get_proposal_docx_source_token_payload,
+    store_generated_documents,
+)
 from .forms import ProposalDispatchForm, ProposalRegistrationForm, _proposal_variable_column_choices
 from .forms import ProposalVariableForm
 from .models import (
@@ -57,6 +64,10 @@ from .models import (
 )
 from .views import PROPOSAL_NEXTCLOUD_TARGETS_SESSION_KEY
 from .variable_resolver import resolve_variables
+
+TEST_FACSIMILE_PNG_BYTES = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMBAAZ/qh8AAAAASUVORK5CYII="
+)
 
 
 @override_settings(MEDIA_URL="/media/")
@@ -557,6 +568,10 @@ class ProposalDocumentGenerationTests(TestCase):
         table_spec = tables["[[budget_table]]"]
         self.assertEqual(table_spec["font_size_pt"], 7)
         self.assertEqual(table_spec["style"], "Table Grid")
+        self.assertEqual(len(table_spec["column_widths_pct"]), 8)
+        self.assertEqual(table_spec["column_widths_pct"][:3], [15.5, 40.0, 7.0])
+        self.assertEqual(table_spec["column_widths_pct"][-2:], [6.0, 15.5])
+        self.assertTrue(all(width == table_spec["column_widths_pct"][3] for width in table_spec["column_widths_pct"][3:6]))
         self.assertEqual(table_spec["rows"][0][0]["text"], "Специалист")
         self.assertEqual(table_spec["rows"][0][2]["text"], "Ставка,\n€/дн")
         self.assertEqual(table_spec["rows"][0][-2]["text"], "Кол-во\nдней")
@@ -665,8 +680,13 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertIn("972\u00a0961,25", budget_rows[7][-1])
         self.assertIn("ИТОГО в договор, рубли без НДС с учётом доп. скидки", budget_rows[8][0])
         self.assertIn("900\u00a0000,00", budget_rows[8][-1])
-        self.assertIn('w:tblLayout w:type="autofit"', budget_table._tbl.xml)
-        self.assertIn('w:tblW w:type="auto" w:w="0"', budget_table._tbl.xml)
+        self.assertIn('w:tblLayout w:type="fixed"', budget_table._tbl.xml)
+        self.assertIn('w:tblW w:type="pct" w:w="5000"', budget_table._tbl.xml)
+        self.assertIn('w:tcW w:type="pct" w:w="775"', budget_table._tbl.xml)
+        self.assertIn('w:tcW w:type="pct" w:w="2000"', budget_table._tbl.xml)
+        self.assertIn('w:tcW w:type="pct" w:w="350"', budget_table._tbl.xml)
+        self.assertIn('w:tcW w:type="pct" w:w="267"', budget_table._tbl.xml)
+        self.assertIn('w:tcW w:type="pct" w:w="300"', budget_table._tbl.xml)
         budget_run_sizes = [
             run.font.size.pt
             for row in budget_table.rows
@@ -740,6 +760,24 @@ class ProposalDocumentGenerationTests(TestCase):
         ]
         self.assertTrue(budget_run_sizes)
         self.assertTrue(all(size == 8 for size in budget_run_sizes))
+
+    def test_insert_floating_image_at_placeholder_replaces_marker_with_anchor(self):
+        template_doc = Document()
+        template_doc.add_paragraph("Подпись [[facsimile]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+
+        generated_bytes = insert_floating_image_at_placeholder(
+            buffer.getvalue(),
+            TEST_FACSIMILE_PNG_BYTES,
+        )
+
+        generated_doc = Document(BytesIO(generated_bytes))
+        paragraph = generated_doc.paragraphs[0]
+        self.assertEqual(paragraph.text, "Подпись ")
+        self.assertIn("wp:anchor", paragraph._p.xml)
+        self.assertIn('behindDoc="1"', paragraph._p.xml)
+        self.assertNotIn("[[facsimile]]", paragraph._p.xml)
 
     @patch("ai_app.proposals_app.document_generation.get_any_connected_service_user")
     @patch("ai_app.proposals_app.document_generation.is_nextcloud_primary", return_value=False)
@@ -1218,6 +1256,12 @@ class ProposalDispatchSendTests(TestCase):
 @override_settings(ROOT_URLCONF="proposals_app.urls")
 class ProposalDispatchSignTests(TestCase):
     def setUp(self):
+        self.temp_media = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_media.cleanup)
+        self.media_override = override_settings(MEDIA_ROOT=self.temp_media.name)
+        self.media_override.enable()
+        self.addCleanup(self.media_override.disable)
+
         self.user = get_user_model().objects.create_user(
             username="proposal-dispatch-pdf-staff",
             email="staff@example.com",
@@ -1225,6 +1269,13 @@ class ProposalDispatchSignTests(TestCase):
             is_staff=True,
         )
         self.client.force_login(self.user)
+        self.employee = Employee.objects.create(user=self.user, patronymic="Иванович")
+        self.expert_profile = ExpertProfile.objects.create(employee=self.employee, position=1)
+        self.expert_profile.facsimile_file.save(
+            "facsimile.png",
+            ContentFile(TEST_FACSIMILE_PNG_BYTES),
+            save=True,
+        )
 
         self.group_member = GroupMember.objects.create(
             short_name="IMC Montan",
@@ -1295,11 +1346,62 @@ class ProposalDispatchSignTests(TestCase):
         mocked_generate_and_store_proposal_pdf.assert_called_once()
         self.assertEqual(mocked_generate_and_store_proposal_pdf.call_args.args[0], self.user)
         self.assertEqual(mocked_generate_and_store_proposal_pdf.call_args.args[1], self.proposal)
+        source_url = mocked_generate_and_store_proposal_pdf.call_args.kwargs["source_url"]
         self.assertTrue(
-            mocked_generate_and_store_proposal_pdf.call_args.kwargs["source_url"].startswith(
+            source_url.startswith(
                 f"http://testserver{reverse('proposal_onlyoffice_docx_source', args=[self.proposal.pk])}?token="
             )
         )
+        token = parse_qs(urlparse(source_url).query)["token"][0]
+        token_payload = get_proposal_docx_source_token_payload(self.proposal, token)
+        self.assertIsNotNone(token_payload)
+        self.assertEqual(token_payload["signer_user_id"], self.user.pk)
+
+    @patch("proposals_app.views.generate_and_store_proposal_pdf")
+    def test_dispatch_sign_returns_error_without_current_user_facsimile(
+        self,
+        mocked_generate_and_store_proposal_pdf,
+    ):
+        self.expert_profile.facsimile_file.delete(save=True)
+
+        response = self.client.post(
+            reverse("proposal_dispatch_sign_documents"),
+            {
+                "proposal_ids[]": [self.proposal.pk],
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertIn("Факсимиле", payload["error"])
+        mocked_generate_and_store_proposal_pdf.assert_not_called()
+
+    @patch("proposals_app.views.load_existing_proposal_docx_bytes")
+    def test_onlyoffice_docx_source_inserts_facsimile_behind_text(
+        self,
+        mocked_load_existing_proposal_docx_bytes,
+    ):
+        template_doc = Document()
+        template_doc.add_paragraph("[[facsimile]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+        mocked_load_existing_proposal_docx_bytes.return_value = buffer.getvalue()
+
+        response = self.client.get(
+            reverse("proposal_onlyoffice_docx_source", args=[self.proposal.pk]),
+            {
+                "token": build_proposal_docx_source_token(self.proposal, signer_user_id=self.user.pk),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        generated_doc = Document(BytesIO(response.content))
+        paragraph = generated_doc.paragraphs[0]
+        self.assertEqual(paragraph.text, "")
+        self.assertIn("wp:anchor", paragraph._p.xml)
+        self.assertIn('behindDoc="1"', paragraph._p.xml)
+        self.assertNotIn("[[facsimile]]", paragraph._p.xml)
 
 
 @override_settings(ROOT_URLCONF="proposals_app.urls")

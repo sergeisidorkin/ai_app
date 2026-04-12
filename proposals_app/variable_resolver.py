@@ -337,6 +337,17 @@ def _sum_decimal_values(values) -> Decimal:
     return total
 
 
+def _proposal_multi_asset_column_widths_pct(asset_count: int) -> list[float]:
+    if asset_count <= 0:
+        return []
+    fixed_total = Decimal("84.0")
+    fixed_columns = [Decimal("15.5"), Decimal("40"), Decimal("7")]
+    trailing_columns = [Decimal("6"), Decimal("15.5")]
+    asset_width = (Decimal("100.0") - fixed_total) / Decimal(str(asset_count))
+    widths = fixed_columns + [asset_width] * asset_count + trailing_columns
+    return [float(width) for width in widths]
+
+
 def _normalize_proposal_travel_expenses_mode(value) -> str:
     mode = str(value or "").strip()
     if mode in {PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL, PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION}:
@@ -558,7 +569,7 @@ def _proposal_budget_table(proposal) -> dict:
         "rows": rows,
         "font_size_pt": 8 if not show_asset_columns else 7,
         "style": "Table Grid",
-        "column_widths_pct": [18, 46, 12, 12, 12] if not show_asset_columns else [],
+        "column_widths_pct": [18, 46, 12, 12, 12] if not show_asset_columns else _proposal_multi_asset_column_widths_pct(asset_count),
     }
 
 

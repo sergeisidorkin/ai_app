@@ -1212,6 +1212,229 @@ def _process_tables(
                 )
 
 
+def _iter_table_paragraphs(tables):
+    for table in tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    yield paragraph
+                yield from _iter_table_paragraphs(cell.tables)
+
+
+def _iter_document_paragraphs(doc):
+    for paragraph in doc.paragraphs:
+        yield paragraph
+    yield from _iter_table_paragraphs(doc.tables)
+    for section in doc.sections:
+        for header_footer in (
+            section.header,
+            section.footer,
+            section.first_page_header,
+            section.first_page_footer,
+            section.even_page_header,
+            section.even_page_footer,
+        ):
+            if header_footer and header_footer.is_linked_to_previous:
+                continue
+            if header_footer:
+                for paragraph in header_footer.paragraphs:
+                    yield paragraph
+                yield from _iter_table_paragraphs(header_footer.tables)
+
+
+def _replace_literal_in_paragraph(paragraph, literal: str, replacement: str = "") -> int:
+    runs = paragraph.runs
+    if not runs:
+        return 0
+
+    full_text = "".join(run.text for run in runs)
+    matches = list(re.finditer(re.escape(str(literal or "")), full_text))
+    if not matches:
+        return 0
+
+    run_texts = [run.text for run in runs]
+    run_starts: list[int] = []
+    offset = 0
+    for text in run_texts:
+        run_starts.append(offset)
+        offset += len(text)
+
+    def _run_at(char_pos: int) -> int:
+        for index in range(len(run_starts) - 1, -1, -1):
+            if char_pos >= run_starts[index]:
+                return index
+        return 0
+
+    for match in reversed(matches):
+        start, end = match.start(), match.end()
+        first_run_idx = _run_at(start)
+        last_run_idx = _run_at(end - 1)
+
+        if first_run_idx == last_run_idx:
+            local_start = start - run_starts[first_run_idx]
+            local_end = end - run_starts[first_run_idx]
+            current = run_texts[first_run_idx]
+            run_texts[first_run_idx] = current[:local_start] + replacement + current[local_end:]
+            continue
+
+        first_text = run_texts[first_run_idx]
+        local_start = start - run_starts[first_run_idx]
+        run_texts[first_run_idx] = first_text[:local_start] + replacement
+
+        last_text = run_texts[last_run_idx]
+        local_end = end - run_starts[last_run_idx]
+        run_texts[last_run_idx] = last_text[local_end:]
+
+        for middle_idx in range(first_run_idx + 1, last_run_idx):
+            run_texts[middle_idx] = ""
+
+    for index, run in enumerate(runs):
+        run.text = run_texts[index]
+    return len(matches)
+
+
+def _build_anchor_from_inline(inline, *, x_offset_emu: int = 0, y_offset_emu: int = 0):
+    from docx.oxml import OxmlElement
+
+    anchor = OxmlElement("wp:anchor")
+    anchor.set("behindDoc", "1")
+    anchor.set("distT", "0")
+    anchor.set("distB", "0")
+    anchor.set("distL", "0")
+    anchor.set("distR", "0")
+    anchor.set("simplePos", "0")
+    anchor.set("relativeHeight", "0")
+    anchor.set("locked", "0")
+    anchor.set("layoutInCell", "1")
+    anchor.set("allowOverlap", "1")
+
+    simple_pos = OxmlElement("wp:simplePos")
+    simple_pos.set("x", "0")
+    simple_pos.set("y", "0")
+    anchor.append(simple_pos)
+
+    position_h = OxmlElement("wp:positionH")
+    position_h.set("relativeFrom", "column")
+    pos_offset_h = OxmlElement("wp:posOffset")
+    pos_offset_h.text = str(int(x_offset_emu))
+    position_h.append(pos_offset_h)
+    anchor.append(position_h)
+
+    position_v = OxmlElement("wp:positionV")
+    position_v.set("relativeFrom", "paragraph")
+    pos_offset_v = OxmlElement("wp:posOffset")
+    pos_offset_v.text = str(int(y_offset_emu))
+    position_v.append(pos_offset_v)
+    anchor.append(position_v)
+
+    extent = inline.find(qn("wp:extent"))
+    if extent is not None:
+        anchor.append(deepcopy(extent))
+    effect_extent = inline.find(qn("wp:effectExtent"))
+    if effect_extent is not None:
+        anchor.append(deepcopy(effect_extent))
+    else:
+        effect_extent = OxmlElement("wp:effectExtent")
+        effect_extent.set("l", "0")
+        effect_extent.set("t", "0")
+        effect_extent.set("r", "0")
+        effect_extent.set("b", "0")
+        anchor.append(effect_extent)
+
+    anchor.append(OxmlElement("wp:wrapNone"))
+
+    doc_pr = inline.find(qn("wp:docPr"))
+    if doc_pr is not None:
+        anchor.append(deepcopy(doc_pr))
+    else:
+        generated_doc_pr = OxmlElement("wp:docPr")
+        generated_doc_pr.set("id", str(uuid.uuid4().int % 100000))
+        generated_doc_pr.set("name", "FloatingImage")
+        anchor.append(generated_doc_pr)
+
+    c_nv_graphic_frame_pr = inline.find(qn("wp:cNvGraphicFramePr"))
+    if c_nv_graphic_frame_pr is not None:
+        anchor.append(deepcopy(c_nv_graphic_frame_pr))
+    else:
+        anchor.append(OxmlElement("wp:cNvGraphicFramePr"))
+
+    graphic = inline.find(qn("a:graphic"))
+    if graphic is not None:
+        anchor.append(deepcopy(graphic))
+    return anchor
+
+
+def _append_floating_image_run(
+    paragraph,
+    image_bytes: bytes,
+    *,
+    width_cm: float | None = 4.0,
+    x_offset_cm: float = 0,
+    y_offset_cm: float = 0,
+) -> None:
+    from docx.image.exceptions import UnrecognizedImageError
+
+    run = paragraph.add_run()
+    try:
+        if width_cm is None:
+            run.add_picture(BytesIO(image_bytes))
+        else:
+            run.add_picture(BytesIO(image_bytes), width=Cm(width_cm))
+    except UnrecognizedImageError as exc:
+        raise RuntimeError(
+            "Факсимиле должно быть изображением в поддерживаемом формате Word (например PNG или JPEG)."
+        ) from exc
+
+    drawing = run._r.find(qn("w:drawing"))
+    inline = drawing.find(qn("wp:inline")) if drawing is not None else None
+    if drawing is None or inline is None:
+        raise RuntimeError("Не удалось вставить факсимиле в DOCX-документ.")
+
+    anchor = _build_anchor_from_inline(
+        inline,
+        x_offset_emu=int(Cm(x_offset_cm).emu),
+        y_offset_emu=int(Cm(y_offset_cm).emu),
+    )
+    drawing.remove(inline)
+    drawing.append(anchor)
+
+
+def insert_floating_image_at_placeholder(
+    file_bytes: bytes,
+    image_bytes: bytes,
+    *,
+    placeholder: str = "[[facsimile]]",
+    width_cm: float | None = 4.0,
+    x_offset_cm: float = 0,
+    y_offset_cm: float = 0,
+) -> bytes:
+    if not file_bytes or not image_bytes or not str(placeholder or "").strip():
+        return file_bytes
+
+    doc = Document(BytesIO(file_bytes))
+    inserted = False
+    for paragraph in _iter_document_paragraphs(doc):
+        occurrences = _replace_literal_in_paragraph(paragraph, placeholder, "")
+        if not occurrences:
+            continue
+        for _ in range(occurrences):
+            _append_floating_image_run(
+                paragraph,
+                image_bytes,
+                width_cm=width_cm,
+                x_offset_cm=x_offset_cm,
+                y_offset_cm=y_offset_cm,
+            )
+        inserted = True
+
+    if not inserted:
+        return file_bytes
+
+    out = BytesIO()
+    doc.save(out)
+    return out.getvalue()
+
+
 def process_template(
     file_bytes: bytes,
     replacements: dict[str, str],
