@@ -558,7 +558,7 @@ def _proposal_budget_table(proposal) -> dict:
         "rows": rows,
         "font_size_pt": 8 if not show_asset_columns else 7,
         "style": "Table Grid",
-        "column_widths_pct": [20, 50, 10, 10, 10] if not show_asset_columns else [],
+        "column_widths_pct": [18, 46, 12, 12, 12] if not show_asset_columns else [],
     }
 
 
