@@ -614,7 +614,7 @@ class ProposalDocumentGenerationTests(TestCase):
             ],
         )
         self.assertEqual(tables["[[budget_table]]"]["font_size_pt"], 8)
-        self.assertEqual(tables["[[budget_table]]"]["column_widths_pct"], [20, 50, 10, 10, 10])
+        self.assertEqual(tables["[[budget_table]]"]["column_widths_pct"], [18, 46, 12, 12, 12])
         data_row = tables["[[budget_table]]"]["rows"][1]
         self.assertEqual(len(data_row), 5)
         self.assertEqual(data_row[3]["text"], "2")
