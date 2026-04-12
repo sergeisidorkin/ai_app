@@ -388,23 +388,26 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertIn("Геолог, Партнер", budget_rows[1])
         self.assertIn("6", budget_rows[1])
         self.assertIn("7\u00a0200,00", budget_rows[1])
-        self.assertIn("Командировочные расходы", budget_rows[3][0])
-        self.assertIn("ИТОГО, по расчёту", budget_rows[4][0])
-        self.assertIn("10\u00a0400,00", budget_rows[4][-1])
-        self.assertIn("ИТОГО, рубли без НДС", budget_rows[5][0])
-        self.assertIn("96,5", budget_rows[5][2])
-        self.assertIn("1\u00a0003\u00a0600,00", budget_rows[5][-1])
-        self.assertIn("ИТОГО, рубли без НДС с учетом скидки", budget_rows[6][0])
-        self.assertIn("7,5%", budget_rows[6][2])
-        self.assertIn("928\u00a0330,00", budget_rows[6][-1])
-        self.assertIn("ИТОГО в договор, рубли без НДС с учётом доп. скидки", budget_rows[7][0])
-        self.assertIn("900\u00a0000,00", budget_rows[7][-1])
+        self.assertIn("ИТОГО, по расчёту", budget_rows[3][0])
+        self.assertIn("10\u00a0400,00", budget_rows[3][-1])
+        self.assertIn("Командировочные расходы, евро", budget_rows[4][0])
+        self.assertIn("ИТОГО, евро с командировочными по расчёту", budget_rows[5][0])
+        self.assertIn("10\u00a0900,00", budget_rows[5][-1])
+        self.assertIn("ИТОГО, рубли без НДС", budget_rows[6][0])
+        self.assertIn("96,5", budget_rows[6][2])
+        self.assertIn("1\u00a0051\u00a0850,00", budget_rows[6][-1])
+        self.assertIn("ИТОГО, рубли без НДС с учетом скидки", budget_rows[7][0])
+        self.assertIn("7,5%", budget_rows[7][2])
+        self.assertIn("972\u00a0961,25", budget_rows[7][-1])
+        self.assertIn("ИТОГО в договор, рубли без НДС с учётом доп. скидки", budget_rows[8][0])
+        self.assertIn("900\u00a0000,00", budget_rows[8][-1])
         self.assertIn('w:tblLayout w:type="autofit"', budget_table._tbl.xml)
         self.assertIn('w:tblW w:type="auto" w:w="0"', budget_table._tbl.xml)
-        empty_fixed_cell = budget_table.rows[5].cells[3]
+        empty_fixed_cell = budget_table.rows[6].cells[3]
         self.assertTrue(empty_fixed_cell.paragraphs)
         self.assertTrue(empty_fixed_cell.paragraphs[0].runs)
         self.assertEqual(empty_fixed_cell.paragraphs[0].runs[0].font.size.pt, 7)
+        self.assertIn('w:sz w:val="14"', empty_fixed_cell.paragraphs[0]._element.xml)
         budget_run_sizes = [
             run.font.size.pt
             for row in budget_table.rows
@@ -566,7 +569,7 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertEqual(table_spec["rows"][1][-2]["text"], "6")
         self.assertEqual(table_spec["rows"][7][0]["text"], "ИТОГО в договор, рубли без НДС с учётом доп. скидки")
 
-    def test_resolve_budget_table_omits_total_days_column_for_single_asset(self):
+    def test_resolve_budget_table_omits_asset_column_for_single_asset(self):
         proposal = ProposalRegistration.objects.create(
             number=4444,
             group_member=self.group_member,
@@ -606,10 +609,12 @@ class ProposalDocumentGenerationTests(TestCase):
                 "Специалист",
                 "Должность/направление",
                 "Ставка,\n€/дн",
-                "Единственный актив",
+                "Кол-во\nдней",
                 "Итого,\n€ без НДС",
             ],
         )
+        self.assertEqual(tables["[[budget_table]]"]["font_size_pt"], 8)
+        self.assertEqual(tables["[[budget_table]]"]["column_widths_pct"], [20, 50, 10, 10, 10])
         data_row = tables["[[budget_table]]"]["rows"][1]
         self.assertEqual(len(data_row), 5)
         self.assertEqual(data_row[3]["text"], "2")
@@ -647,17 +652,19 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertIn("Геолог, Партнер", budget_rows[1])
         self.assertIn("6", budget_rows[1])
         self.assertIn("7\u00a0200,00", budget_rows[1])
-        self.assertIn("Командировочные расходы", budget_rows[3][0])
-        self.assertIn("ИТОГО, по расчёту", budget_rows[4][0])
-        self.assertIn("10\u00a0400,00", budget_rows[4][-1])
-        self.assertIn("ИТОГО, рубли без НДС", budget_rows[5][0])
-        self.assertIn("96,5", budget_rows[5][2])
-        self.assertIn("1\u00a0003\u00a0600,00", budget_rows[5][-1])
-        self.assertIn("ИТОГО, рубли без НДС с учетом скидки", budget_rows[6][0])
-        self.assertIn("7,5%", budget_rows[6][2])
-        self.assertIn("928\u00a0330,00", budget_rows[6][-1])
-        self.assertIn("ИТОГО в договор, рубли без НДС с учётом доп. скидки", budget_rows[7][0])
-        self.assertIn("900\u00a0000,00", budget_rows[7][-1])
+        self.assertIn("ИТОГО, по расчёту", budget_rows[3][0])
+        self.assertIn("10\u00a0400,00", budget_rows[3][-1])
+        self.assertIn("Командировочные расходы, евро", budget_rows[4][0])
+        self.assertIn("ИТОГО, евро с командировочными по расчёту", budget_rows[5][0])
+        self.assertIn("10\u00a0900,00", budget_rows[5][-1])
+        self.assertIn("ИТОГО, рубли без НДС", budget_rows[6][0])
+        self.assertIn("96,5", budget_rows[6][2])
+        self.assertIn("1\u00a0051\u00a0850,00", budget_rows[6][-1])
+        self.assertIn("ИТОГО, рубли без НДС с учетом скидки", budget_rows[7][0])
+        self.assertIn("7,5%", budget_rows[7][2])
+        self.assertIn("972\u00a0961,25", budget_rows[7][-1])
+        self.assertIn("ИТОГО в договор, рубли без НДС с учётом доп. скидки", budget_rows[8][0])
+        self.assertIn("900\u00a0000,00", budget_rows[8][-1])
         self.assertIn('w:tblLayout w:type="autofit"', budget_table._tbl.xml)
         self.assertIn('w:tblW w:type="auto" w:w="0"', budget_table._tbl.xml)
         budget_run_sizes = [
@@ -670,6 +677,68 @@ class ProposalDocumentGenerationTests(TestCase):
         ]
         self.assertTrue(budget_run_sizes)
         self.assertTrue(all(size == 7 for size in budget_run_sizes))
+
+    def test_process_template_inserts_single_asset_budget_table_with_pct_widths(self):
+        proposal = ProposalRegistration.objects.create(
+            number=5555,
+            group_member=self.group_member,
+            type=self.product,
+            name="Один актив",
+            year=2026,
+            status=ProposalRegistration.ProposalStatus.PRELIMINARY,
+            customer='ООО "Приморское"',
+        )
+        ProposalAsset.objects.create(
+            proposal=proposal,
+            short_name="Единственный актив",
+            position=1,
+        )
+        ProposalCommercialOffer.objects.create(
+            proposal=proposal,
+            specialist="Иванов И.И.",
+            job_title="Геолог",
+            professional_status="Партнер",
+            service_name="Раздел 1",
+            rate_eur_per_day="1200",
+            asset_day_counts=[2],
+            total_eur_without_vat="2400",
+            position=1,
+        )
+
+        template_doc = Document()
+        template_doc.add_paragraph("[[budget_table]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+
+        replacements, lists, tables = resolve_variables(
+            proposal,
+            [ProposalVariable(key="[[budget_table]]", is_computed=True)],
+        )
+
+        generated_bytes = process_template(
+            buffer.getvalue(),
+            replacements,
+            table_replacements=tables,
+            list_replacements=lists,
+            default_language_code="ru-RU",
+        )
+
+        generated_doc = Document(BytesIO(generated_bytes))
+        budget_table = generated_doc.tables[0]
+        self.assertIn('w:tblLayout w:type="fixed"', budget_table._tbl.xml)
+        self.assertIn('w:tblW w:type="pct" w:w="5000"', budget_table._tbl.xml)
+        self.assertIn('w:tcW w:type="pct" w:w="1000"', budget_table._tbl.xml)
+        self.assertIn('w:tcW w:type="pct" w:w="2500"', budget_table._tbl.xml)
+        budget_run_sizes = [
+            run.font.size.pt
+            for row in budget_table.rows
+            for cell in row.cells
+            for paragraph in cell.paragraphs
+            for run in paragraph.runs
+            if run.text.strip()
+        ]
+        self.assertTrue(budget_run_sizes)
+        self.assertTrue(all(size == 8 for size in budget_run_sizes))
 
     @patch("ai_app.proposals_app.document_generation.get_any_connected_service_user")
     @patch("ai_app.proposals_app.document_generation.is_nextcloud_primary", return_value=False)
@@ -1525,6 +1594,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "rub_total_service_text": f"Курс евро Банка России на {timezone.localdate().strftime('%d.%m.%Y')}:",
                 "discounted_total_service_text": "Размер скидки:",
                 "exchange_rate": "96.5432",
+                "travel_expenses_mode": "actual",
             },
         )
 
@@ -2832,7 +2902,8 @@ class ProposalRegistrationFormTests(TestCase):
                 "commercial_totals_payload": (
                     '{"exchange_rate":"96.50","discount_percent":"7.50",'
                     '"contract_total":"1200000","contract_total_auto":"1300000",'
-                    '"rub_total_service_text":"Курс ЦБ","discounted_total_service_text":"Скидка проекта"}'
+                    '"rub_total_service_text":"Курс ЦБ","discounted_total_service_text":"Скидка проекта",'
+                    '"travel_expenses_mode":"calculation"}'
                 ),
             }
         )
@@ -2849,6 +2920,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "contract_total_auto": "1300000",
                 "rub_total_service_text": "Курс ЦБ",
                 "discounted_total_service_text": "Скидка проекта",
+                "travel_expenses_mode": "calculation",
             },
         )
 
@@ -2894,7 +2966,8 @@ class ProposalRegistrationFormTests(TestCase):
                 "commercial_totals_payload": (
                     '{"exchange_rate":"0","discount_percent":"0",'
                     '"contract_total":"0","contract_total_auto":"0",'
-                    '"rub_total_service_text":"Курс ЦБ","discounted_total_service_text":"Скидка проекта"}'
+                    '"rub_total_service_text":"Курс ЦБ","discounted_total_service_text":"Скидка проекта",'
+                    '"travel_expenses_mode":"actual"}'
                 ),
             }
         )
@@ -2911,6 +2984,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "contract_total_auto": "0",
                 "rub_total_service_text": "Курс ЦБ",
                 "discounted_total_service_text": "Скидка проекта",
+                "travel_expenses_mode": "actual",
             },
         )
 
@@ -3453,6 +3527,7 @@ class ProposalFormContextTests(TestCase):
         self.assertContains(response, 'name="final_report_term_weeks"', html=False)
         self.assertContains(response, 'name="final_report_date"', html=False)
         self.assertContains(response, 'id="proposal-typical-service-terms-data"', html=False)
+        self.assertContains(response, 'js-proposal-report-terms-lock', count=2, html=False)
 
 
 class ProposalNextcloudWorkspaceHookTests(TestCase):

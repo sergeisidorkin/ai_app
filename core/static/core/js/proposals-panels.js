@@ -1555,6 +1555,13 @@
     return td;
   }
 
+  function createProposalEllipsisLabel(text, className) {
+    const span = document.createElement('span');
+    span.className = className || 'proposal-commercial-row-label';
+    span.textContent = text || '';
+    return span;
+  }
+
   function bindProposalEntityAutocomplete(input, list, row, updatePayload, searchUrl, selectors, getRowIndex) {
     let debounce = null;
     let results = [];
@@ -2022,15 +2029,20 @@
     return syncOptionsSelect(select, getProposalTypicalSectionNames(form), selectedValue);
   }
 
-  const PROPOSAL_TRAVEL_EXPENSES_LABEL = 'Командировочные расходы';
+  const PROPOSAL_TRAVEL_EXPENSES_LABEL = 'Командировочные расходы, евро';
+  const PROPOSAL_TRAVEL_EXPENSES_LABEL_LEGACY = 'Командировочные расходы';
+  const PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL = 'actual';
+  const PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION = 'calculation';
   const PROPOSAL_SUMMARY_TOTAL_LABEL = 'ИТОГО, по расчёту';
+  const PROPOSAL_SUMMARY_WITH_TRAVEL_TOTAL_LABEL = 'ИТОГО, евро с командировочными по расчёту';
   const PROPOSAL_RUB_TOTAL_LABEL = 'ИТОГО, рубли без НДС';
   const PROPOSAL_RUB_DISCOUNTED_LABEL = 'ИТОГО, рубли без НДС с учетом скидки';
   const PROPOSAL_CONTRACT_TOTAL_LABEL = 'ИТОГО в договор, рубли без НДС с учётом дополнительной скидки';
   const PROPOSAL_CBR_EUR_DAILY_URL = 'https://www.cbr.ru/currency_base/daily/';
 
   function isProposalTravelExpensesRow(row) {
-    return String(row?.service_name || '').trim() === PROPOSAL_TRAVEL_EXPENSES_LABEL;
+    const serviceName = String(row?.service_name || '').trim();
+    return serviceName === PROPOSAL_TRAVEL_EXPENSES_LABEL || serviceName === PROPOSAL_TRAVEL_EXPENSES_LABEL_LEGACY;
   }
 
   function normalizeProposalTravelExpensesRow(row) {
@@ -2047,6 +2059,23 @@
       asset_day_counts: dayCounts,
       total_eur_without_vat: String(row?.total_eur_without_vat || '').trim(),
     };
+  }
+
+  function normalizeProposalTravelExpensesMode(value) {
+    const mode = String(value || '').trim();
+    if (mode === PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL || mode === PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION) {
+      return mode;
+    }
+    return '';
+  }
+
+  function inferProposalTravelExpensesMode(row, fallbackValue) {
+    const explicitMode = normalizeProposalTravelExpensesMode(fallbackValue);
+    if (explicitMode) return explicitMode;
+    const assetValues = Array.isArray(row?.asset_day_counts) ? row.asset_day_counts : [];
+    const hasSavedValues = assetValues.some(function (value) { return String(value ?? '').trim(); })
+      || String(row?.total_eur_without_vat || '').trim();
+    return hasSavedValues ? PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION : PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL;
   }
 
   function parseProposalPercent(value) {
@@ -2070,6 +2099,7 @@
       contract_total_auto: String(source.contract_total_auto || '').trim(),
       rub_total_service_text: String(source.rub_total_service_text || 'Курс евро Банка России на текущую дату:').trim(),
       discounted_total_service_text: String(source.discounted_total_service_text || 'Размер скидки:').trim(),
+      travel_expenses_mode: normalizeProposalTravelExpensesMode(source.travel_expenses_mode),
     };
   }
 
@@ -2244,8 +2274,9 @@
       setDateFieldValue(regDateInput, data.registration_date || '');
     }
 
-    function createRow(data) {
+    function createRow(data, options) {
       const sourceData = data && typeof data === 'object' ? data : {};
+      const skipDefaultPrefill = options?.skipDefaultPrefill === true;
       const hasExplicitSourceData = Boolean(
         (sourceData.short_name || '').trim()
         || (sourceData.country_id || '').trim()
@@ -2256,7 +2287,7 @@
         || (sourceData.region || '').trim()
         || (sourceData.selected_identifier_record_id || '').trim()
       );
-      data = mergeWithDefaultRowData(sourceData);
+      data = skipDefaultPrefill ? { ...sourceData } : mergeWithDefaultRowData(sourceData);
       const row = document.createElement('tr');
       row.dataset.countryId = data.country_id || '';
       row.dataset.countryName = data.country_name || '';
@@ -2434,7 +2465,7 @@
     }
 
     addBtn.addEventListener('click', function () {
-      const row = createRow({});
+      const row = createRow({}, { skipDefaultPrefill: config.skipDefaultPrefillOnManualAdd === true });
       tbody.appendChild(row);
       activateRow(row);
       updatePayload({ reason: 'row-add', rowIndex: getRows().length - 1 });
@@ -2594,6 +2625,7 @@
         };
       },
       rowsChangedEvent: 'proposal-assets-changed',
+      skipDefaultPrefillOnManualAdd: true,
       withAssetSelect: false,
       apiKey: '__proposalAssetsTableApi',
     });
@@ -3182,6 +3214,10 @@
       return row?.dataset?.summaryRow === '1';
     }
 
+    function isSummaryWithTravelRow(row) {
+      return row?.dataset?.summaryWithTravelRow === '1';
+    }
+
     function isRubTotalRow(row) {
       return row?.dataset?.rubTotalRow === '1';
     }
@@ -3199,7 +3235,11 @@
     }
 
     function isFixedRow(row) {
-      return isTravelRow(row) || isSummaryRow(row) || isRubTotalRow(row) || isDiscountedTotalRow(row) || isContractTotalRow(row);
+      return isTravelRow(row) || isSummaryRow(row) || isSummaryWithTravelRow(row) || isRubTotalRow(row) || isDiscountedTotalRow(row) || isContractTotalRow(row);
+    }
+
+    function getTravelExpensesMode(row) {
+      return normalizeProposalTravelExpensesMode(row?.dataset?.travelExpensesMode) || PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL;
     }
 
     function parseTotalsPayload() {
@@ -3322,8 +3362,8 @@
           + '<tr>'
           + '<th class="proposal-assets-check-col"></th>'
           + '<th>Специалист</th>'
-          + '<th>Профессиональный статус</th>'
           + '<th>Специальность</th>'
+          + '<th>Профессиональный статус</th>'
           + '<th>Услуги</th>'
           + '<th class="proposal-commercial-rate-header">Ставка, евро / день</th>'
           + '<th class="proposal-commercial-days-group proposal-commercial-days-header proposal-commercial-days-header-single">Количество дней</th>'
@@ -3336,8 +3376,8 @@
         + '<tr>'
         + '<th class="proposal-assets-check-col" rowspan="2"></th>'
         + '<th rowspan="2">Специалист</th>'
-        + '<th rowspan="2">Профессиональный статус</th>'
         + '<th rowspan="2">Специальность</th>'
+        + '<th rowspan="2">Профессиональный статус</th>'
         + '<th rowspan="2">Услуги</th>'
         + '<th class="proposal-commercial-rate-header" rowspan="2">Ставка, евро / день</th>'
         + '<th class="proposal-commercial-days-group proposal-commercial-days-group-subheaders proposal-commercial-days-header proposal-commercial-days-header-multi" colspan="' + labels.length + '">Количество дней</th>'
@@ -3386,9 +3426,30 @@
       totalInput.value = fmtMoney((rate * totalDays).toFixed(2));
     }
 
+    function recalcTravelRowTotal(row) {
+      if (!row || !isTravelRow(row)) return;
+      const totalInput = row.querySelector('.proposal-commercial-total');
+      if (!totalInput) return;
+      const total = getDayInputs(row).reduce(function (sum, input) {
+        const value = parseFloat(rawMoney(input.value || ''));
+        return sum + (Number.isFinite(value) ? value : 0);
+      }, 0);
+      totalInput.value = total > 0 ? fmtMoney(total.toFixed(2)) : '';
+    }
+
+    function syncCalculatedRowTotal(row) {
+      if (isTravelRow(row)) {
+        recalcTravelRowTotal(row);
+        return;
+      }
+      recalcRowTotal(row);
+    }
+
     function syncDayCells(row, assetRows, values, options) {
-      const isReadOnly = options?.readOnly === true;
-      const sourceValues = Array.isArray(values) ? values : getDayInputs(row).map(function (input) { return input.value || ''; });
+      const isTravelExpenses = isTravelRow(row);
+      const isReadOnly = options?.readOnly === true
+        || (isTravelExpenses && getTravelExpensesMode(row) !== PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION);
+      let sourceValues = Array.isArray(values) ? values : getDayInputs(row).map(function (input) { return input.value || ''; });
       const dayColumnWidths = getCommercialDayColumnWidths(assetRows);
       row.querySelectorAll('.proposal-commercial-day-cell, .proposal-commercial-day-placeholder-cell').forEach(function (cell) {
         cell.remove();
@@ -3401,8 +3462,12 @@
         const placeholderCell = createProposalTableCell('proposal-commercial-day-placeholder-cell');
         placeholderCell.textContent = '—';
         row.insertBefore(placeholderCell, totalCell);
-        recalcRowTotal(row);
+        syncCalculatedRowTotal(row);
         return;
+      }
+
+      if (isTravelExpenses && isReadOnly) {
+        sourceValues = Array.from({ length: assetRows.length }, function () { return ''; });
       }
 
       assetRows.forEach(function (_assetRow, index) {
@@ -3411,10 +3476,17 @@
         );
         applyCommercialDayColumnWidth(dayCell, dayColumnWidths[index]);
         const input = document.createElement('input');
-        input.type = 'number';
-        input.min = '0';
-        input.step = '1';
-        input.className = 'form-control proposal-commercial-day-count';
+        if (isTravelExpenses) {
+          input.type = 'text';
+          input.inputMode = 'decimal';
+          input.dataset.moneyPrecision = '2';
+          input.className = 'form-control js-money-input proposal-commercial-day-count proposal-commercial-travel-amount';
+        } else {
+          input.type = 'number';
+          input.min = '0';
+          input.step = '1';
+          input.className = 'form-control proposal-commercial-day-count';
+        }
         input.value = sourceValues[index] ?? '';
         if (isReadOnly) {
           input.readOnly = true;
@@ -3434,11 +3506,11 @@
         }
         if (!isReadOnly) {
           input.addEventListener('change', function () {
-            recalcRowTotal(row);
+            syncCalculatedRowTotal(row);
             updatePayload();
           });
           input.addEventListener('input', function () {
-            recalcRowTotal(row);
+            syncCalculatedRowTotal(row);
             updatePayload();
           });
         }
@@ -3446,11 +3518,12 @@
         row.insertBefore(dayCell, totalCell);
       });
 
-      if (!isReadOnly) recalcRowTotal(row);
+      if (isTravelExpenses) attachMoneyInputs(row);
+      if (!isReadOnly) syncCalculatedRowTotal(row);
     }
 
     function serializeRow(row) {
-      if (isSummaryRow(row) || isRubTotalRow(row) || isDiscountedTotalRow(row) || isContractTotalRow(row)) {
+      if (isSummaryRow(row) || isSummaryWithTravelRow(row) || isRubTotalRow(row) || isDiscountedTotalRow(row) || isContractTotalRow(row)) {
         return null;
       }
       if (isTravelRow(row)) {
@@ -3496,6 +3569,15 @@
       };
     }
 
+    function computeTravelRowTotalValue() {
+      const travelRow = tbody.querySelector('tr[data-travel-expenses-row="1"]');
+      if (!travelRow) return 0;
+      return getDayInputs(travelRow).reduce(function (sum, input) {
+        const value = parseFloat(rawMoney(input.value || ''));
+        return sum + (Number.isFinite(value) ? value : 0);
+      }, 0);
+    }
+
     function findFixedRow(selector) {
       return tbody.querySelector(selector);
     }
@@ -3504,8 +3586,42 @@
       return Array.from({ length: Math.max(getAssetRows().length, 1) }, function () { return ''; });
     }
 
+    function syncFinancialServiceCellExpansion(row) {
+      const labelCell = row?.querySelector('.proposal-commercial-financial-label-cell');
+      const serviceCell = row?.querySelector('.proposal-commercial-financial-service-cell');
+      const serviceInput = row?.querySelector('.proposal-commercial-service-text');
+      if (!labelCell || !serviceCell || !serviceInput) return;
+
+      const spanVariants = [
+        { labelColSpan: 4, serviceColSpan: 1 },
+        { labelColSpan: 3, serviceColSpan: 2 },
+        { labelColSpan: 2, serviceColSpan: 3 },
+      ];
+
+      for (let index = 0; index < spanVariants.length; index += 1) {
+        const variant = spanVariants[index];
+        labelCell.colSpan = variant.labelColSpan;
+        serviceCell.colSpan = variant.serviceColSpan;
+        row.dataset.financialServiceExpansionLevel = String(index);
+        const hasOverflow = (serviceInput.scrollWidth - serviceInput.clientWidth) > 1;
+        if (!hasOverflow || index === spanVariants.length - 1) {
+          break;
+        }
+      }
+    }
+
+    function syncAllFinancialServiceCellExpansions() {
+      tbody.querySelectorAll('tr.proposal-commercial-financial-row').forEach(function (row) {
+        syncFinancialServiceCellExpansion(row);
+      });
+    }
+
     function computeCommercialFinancialTotals() {
-      const summaryTotal = parseFloat(rawMoney(findFixedRow('tr[data-summary-row="1"]')?.querySelector('.proposal-commercial-total')?.value || ''));
+      const summaryTotal = parseFloat(rawMoney(
+        findFixedRow('tr[data-summary-with-travel-row="1"]')?.querySelector('.proposal-commercial-total')?.value
+        || findFixedRow('tr[data-summary-row="1"]')?.querySelector('.proposal-commercial-total')?.value
+        || ''
+      ));
       const totalsState = parseTotalsPayload();
       const exchangeRate = parseFloat(rawMoney(findFixedRow('tr[data-rub-total-row="1"]')?.querySelector('.proposal-commercial-rate')?.value || totalsState.exchange_rate || ''));
       const discountPercent = parseProposalPercent(findFixedRow('tr[data-discounted-total-row="1"]')?.querySelector('.proposal-commercial-rate')?.value || totalsState.discount_percent || '');
@@ -3535,6 +3651,17 @@
       syncDayCells(summaryRow, getAssetRows(), summary.asset_day_counts, { readOnly: true });
       const totalInput = summaryRow.querySelector('.proposal-commercial-total');
       if (totalInput) totalInput.value = summary.total_eur_without_vat;
+    }
+
+    function syncSummaryWithTravelRowValues() {
+      const summaryWithTravelRow = tbody.querySelector('tr[data-summary-with-travel-row="1"]');
+      if (!summaryWithTravelRow) return;
+      const summaryTotal = parseFloat(rawMoney(computeSummaryValues().total_eur_without_vat || ''));
+      const travelTotal = computeTravelRowTotalValue();
+      const total = (Number.isFinite(summaryTotal) ? summaryTotal : 0) + travelTotal;
+      syncDayCells(summaryWithTravelRow, getAssetRows(), createReadOnlyDayValues(), { readOnly: true });
+      const totalInput = summaryWithTravelRow.querySelector('.proposal-commercial-total');
+      if (totalInput) totalInput.value = total > 0 ? fmtMoney(total.toFixed(2)) : '';
     }
 
     function syncServiceCostValue(valueRaw) {
@@ -3591,12 +3718,16 @@
         contract_total_auto: nextAutoRaw,
         rub_total_service_text: totals.rub_total_service_text,
         discounted_total_service_text: totals.discounted_total_service_text,
+        travel_expenses_mode: getTravelExpensesMode(findFixedRow('tr[data-travel-expenses-row="1"]')),
       });
+      syncAllFinancialServiceCellExpansions();
     }
 
     function updatePayload(meta) {
+      recalcTravelRowTotal(tbody.querySelector('tr[data-travel-expenses-row="1"]'));
       const rows = getRows().map(serializeRow).filter(Boolean);
       syncSummaryRowValues();
+      syncSummaryWithTravelRowValues();
       syncCommercialFinancialRows();
       syncActions();
       if (servicesStore) {
@@ -3661,6 +3792,16 @@
       specialistTd.appendChild(specialistSelect);
       row.appendChild(specialistTd);
 
+      const titleTd = createProposalTableCell();
+      const titleInput = document.createElement('input');
+      titleInput.type = 'text';
+      titleInput.className = 'form-control proposal-commercial-job-title readonly-field';
+      titleInput.readOnly = true;
+      titleInput.tabIndex = -1;
+      titleInput.value = data.job_title || autofill.jobTitle || '';
+      titleTd.appendChild(titleInput);
+      row.appendChild(titleTd);
+
       const statusTd = createProposalTableCell();
       const statusInput = document.createElement('input');
       statusInput.type = 'text';
@@ -3675,16 +3816,6 @@
         || '';
       statusTd.appendChild(statusInput);
       row.appendChild(statusTd);
-
-      const titleTd = createProposalTableCell();
-      const titleInput = document.createElement('input');
-      titleInput.type = 'text';
-      titleInput.className = 'form-control proposal-commercial-job-title readonly-field';
-      titleInput.readOnly = true;
-      titleInput.tabIndex = -1;
-      titleInput.value = data.job_title || autofill.jobTitle || '';
-      titleTd.appendChild(titleInput);
-      row.appendChild(titleTd);
 
       const serviceTd = createProposalTableCell();
       const serviceSelect = document.createElement('select');
@@ -3800,45 +3931,57 @@
       return row;
     }
 
-    function createTravelExpensesRow(data) {
+    function createTravelExpensesRow(data, mode) {
       const row = document.createElement('tr');
       row.dataset.travelExpensesRow = '1';
+      row.dataset.travelExpensesMode = normalizeProposalTravelExpensesMode(mode) || PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL;
       row.className = 'proposal-commercial-travel-row';
 
       const labelTd = createProposalTableCell('proposal-commercial-travel-label-cell');
       labelTd.colSpan = 5;
-      labelTd.textContent = PROPOSAL_TRAVEL_EXPENSES_LABEL;
+      labelTd.appendChild(createProposalEllipsisLabel(PROPOSAL_TRAVEL_EXPENSES_LABEL));
       row.appendChild(labelTd);
 
       const rateTd = createProposalTableCell('proposal-commercial-rate-cell proposal-commercial-travel-rate-cell');
-      const rateInput = document.createElement('input');
-      rateInput.type = 'text';
-      rateInput.className = 'form-control proposal-commercial-rate proposal-commercial-travel-rate readonly-field';
-      rateInput.value = 'по факту';
-      rateInput.readOnly = true;
-      rateInput.tabIndex = -1;
-      rateTd.appendChild(rateInput);
+      const rateSelect = document.createElement('select');
+      rateSelect.className = 'form-select proposal-commercial-rate proposal-commercial-travel-mode';
+      [
+        { value: PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL, label: 'по факту' },
+        { value: PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION, label: 'расчёт' },
+      ].forEach(function (optionConfig) {
+        const option = document.createElement('option');
+        option.value = optionConfig.value;
+        option.textContent = optionConfig.label;
+        rateSelect.appendChild(option);
+      });
+      rateSelect.value = getTravelExpensesMode(row);
+      rateTd.appendChild(rateSelect);
       row.appendChild(rateTd);
 
       const totalTd = createProposalTableCell('proposal-commercial-total-cell proposal-commercial-total-value-cell');
       const totalInput = document.createElement('input');
       totalInput.type = 'text';
-      totalInput.className = 'form-control js-money-input proposal-commercial-total';
+      totalInput.className = 'form-control proposal-commercial-total readonly-field';
       totalInput.inputMode = 'decimal';
-      totalInput.value = data.total_eur_without_vat ? fmtMoney(data.total_eur_without_vat) : '';
+      totalInput.readOnly = true;
+      totalInput.tabIndex = -1;
       totalTd.appendChild(totalInput);
       row.appendChild(totalTd);
 
       syncDayCells(row, getAssetRows(), data.asset_day_counts || []);
 
-      totalInput.addEventListener('change', function () {
-        updatePayload({ reason: 'travel-expenses-edit' });
-      });
-      totalInput.addEventListener('input', function () {
-        updatePayload({ reason: 'travel-expenses-edit' });
+      rateSelect.addEventListener('change', function () {
+        row.dataset.travelExpensesMode = normalizeProposalTravelExpensesMode(rateSelect.value) || PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL;
+        const nextValues = getTravelExpensesMode(row) === PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION
+          ? getDayInputs(row).map(function (input) { return input.value || ''; })
+          : [];
+        syncDayCells(row, getAssetRows(), nextValues);
+        recalcTravelRowTotal(row);
+        updatePayload({ reason: 'travel-expenses-mode-change' });
       });
 
       attachMoneyInputs(row);
+      recalcTravelRowTotal(row);
       return row;
     }
 
@@ -3849,7 +3992,7 @@
 
       const labelTd = createProposalTableCell('proposal-commercial-summary-label-cell');
       labelTd.colSpan = 5;
-      labelTd.textContent = PROPOSAL_SUMMARY_TOTAL_LABEL;
+      labelTd.appendChild(createProposalEllipsisLabel(PROPOSAL_SUMMARY_TOTAL_LABEL));
       row.appendChild(labelTd);
 
       const rateTd = createProposalTableCell('proposal-commercial-rate-cell proposal-commercial-summary-rate-cell');
@@ -3875,6 +4018,39 @@
       return row;
     }
 
+    function createSummaryWithTravelRow() {
+      const row = document.createElement('tr');
+      row.dataset.summaryWithTravelRow = '1';
+      row.className = 'proposal-commercial-travel-row proposal-commercial-summary-with-travel-row';
+
+      const labelTd = createProposalTableCell('proposal-commercial-travel-label-cell');
+      labelTd.colSpan = 5;
+      labelTd.appendChild(createProposalEllipsisLabel(PROPOSAL_SUMMARY_WITH_TRAVEL_TOTAL_LABEL));
+      row.appendChild(labelTd);
+
+      const rateTd = createProposalTableCell('proposal-commercial-rate-cell proposal-commercial-travel-rate-cell');
+      const rateInput = document.createElement('input');
+      rateInput.type = 'text';
+      rateInput.className = 'form-control proposal-commercial-rate readonly-field';
+      rateInput.value = '';
+      rateInput.readOnly = true;
+      rateInput.tabIndex = -1;
+      rateTd.appendChild(rateInput);
+      row.appendChild(rateTd);
+
+      const totalTd = createProposalTableCell('proposal-commercial-total-cell proposal-commercial-total-value-cell');
+      const totalInput = document.createElement('input');
+      totalInput.type = 'text';
+      totalInput.className = 'form-control proposal-commercial-total readonly-field';
+      totalInput.readOnly = true;
+      totalInput.tabIndex = -1;
+      totalTd.appendChild(totalInput);
+      row.appendChild(totalTd);
+
+      syncDayCells(row, getAssetRows(), createReadOnlyDayValues(), { readOnly: true });
+      return row;
+    }
+
     function createFinancialTotalRow(config, state) {
       const row = document.createElement('tr');
       row.className = config.rowClass;
@@ -3882,11 +4058,12 @@
 
       const labelTd = createProposalTableCell('proposal-commercial-financial-label-cell');
       labelTd.colSpan = config.serviceEditable ? 4 : 5;
-      labelTd.textContent = config.label;
+      labelTd.appendChild(createProposalEllipsisLabel(config.label));
       row.appendChild(labelTd);
 
       if (config.serviceEditable) {
         const serviceTd = createProposalTableCell('proposal-commercial-financial-service-cell');
+        serviceTd.colSpan = 1;
         const serviceWrap = document.createElement('div');
         serviceWrap.className = 'proposal-commercial-financial-service-wrap';
         if (config.showCbrLink) {
@@ -4030,6 +4207,7 @@
 
       syncDayCells(row, getAssetRows(), createReadOnlyDayValues(), { readOnly: true });
       attachMoneyInputs(row);
+      if (config.serviceEditable) syncFinancialServiceCellExpansion(row);
       return row;
     }
 
@@ -4043,11 +4221,13 @@
         rowsList.find(isProposalTravelExpensesRow) || {}
       );
       const totalsState = parseTotalsPayload();
+      const travelExpensesMode = inferProposalTravelExpensesMode(travelRow, totalsState.travel_expenses_mode);
       regularRows.forEach(function (item) {
         tbody.appendChild(createRow(item || {}));
       });
-      tbody.appendChild(createTravelExpensesRow(travelRow));
       tbody.appendChild(createSummaryRow());
+      tbody.appendChild(createTravelExpensesRow(travelRow, travelExpensesMode));
+      tbody.appendChild(createSummaryWithTravelRow());
       tbody.appendChild(createFinancialTotalRow({
         label: PROPOSAL_RUB_TOTAL_LABEL,
         rowClass: 'proposal-commercial-financial-row proposal-commercial-financial-row--first',
@@ -4076,6 +4256,7 @@
         serviceEditable: false,
       }, totalsState));
       syncSummaryRowValues();
+      syncSummaryWithTravelRowValues();
       syncCommercialFinancialRows();
       syncActions();
     }
@@ -4143,6 +4324,10 @@
           syncSummaryRowValues();
           return;
         }
+        if (isSummaryWithTravelRow(row)) {
+          syncSummaryWithTravelRowValues();
+          return;
+        }
         syncDayCells(row, rows, undefined, { readOnly: isFixedRow(row) && !isTravelRow(row) });
       });
       updatePayload({ reason: 'sync-asset-columns' });
@@ -4155,6 +4340,7 @@
 
     renderHeader(getAssetRows());
     renderRows(parsePayload());
+    window.addEventListener('resize', syncAllFinancialServiceCellExpansions);
 
     const api = {
       getSerializedRows: function () {
@@ -5127,6 +5313,65 @@
       return addDays(date, Math.round(safeWeeks * 7));
     }
 
+    function subtractDecimalWeeks(date, weeks) {
+      const safeWeeks = Number.isFinite(weeks) ? Math.max(weeks, 0) : 0;
+      return addDays(date, -Math.round(safeWeeks * 7));
+    }
+
+    function diffProposalDays(start, end) {
+      const safeStart = startOfDay(start);
+      const safeEnd = startOfDay(end);
+      return Math.round((safeEnd.getTime() - safeStart.getTime()) / 86400000);
+    }
+
+    function roundProposalDecimal(value) {
+      return Math.round(value * 10) / 10;
+    }
+
+    function formatProposalDecimal(value) {
+      return Number.isFinite(value) ? roundProposalDecimal(value).toFixed(1) : '';
+    }
+
+    function getProposalBaseStartDate() {
+      return getNearestMonday(addDays(new Date(), 14));
+    }
+
+    function decimalMonthsBetween(start, end) {
+      const safeStart = startOfDay(start);
+      const safeEnd = startOfDay(end);
+      if (safeEnd.getTime() <= safeStart.getTime()) return 0;
+
+      let wholeMonths = (safeEnd.getFullYear() - safeStart.getFullYear()) * 12
+        + (safeEnd.getMonth() - safeStart.getMonth());
+      let wholeDate = addDecimalMonths(safeStart, wholeMonths);
+      while (wholeMonths > 0 && wholeDate.getTime() > safeEnd.getTime()) {
+        wholeMonths -= 1;
+        wholeDate = addDecimalMonths(safeStart, wholeMonths);
+      }
+
+      const remainderDays = Math.max(0, diffProposalDays(wholeDate, safeEnd));
+      return wholeMonths + (remainderDays / 30);
+    }
+
+    function setProposalReadonly(input, locked, options) {
+      if (!input) return;
+      input.readOnly = locked;
+      input.classList.toggle('readonly-field', locked);
+      if (locked) {
+        input.setAttribute('readonly', '');
+        input.tabIndex = -1;
+      } else {
+        input.removeAttribute('readonly');
+        input.removeAttribute('tabindex');
+      }
+      if (options?.lockPicker) {
+        if (input._flatpickr) {
+          input._flatpickr.set('clickOpens', !locked);
+        }
+        input.style.pointerEvents = locked ? 'none' : '';
+      }
+    }
+
     function formatProposalDateIso(date) {
       const year = String(date.getFullYear()).padStart(4, '0');
       const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -5156,6 +5401,7 @@
           return;
         }
         if (!preliminaryDateValue && finalDateValue) {
+          syncProposalPreliminaryDateFromFinal();
           return;
         }
       }
@@ -5177,6 +5423,70 @@
       const finalWeeks = parseProposalDecimal(finalReportWeeksInput.value);
       if (!preliminaryDate || finalWeeks === null) return;
       setDateFieldValue(finalDateInput, formatProposalDateIso(addDecimalWeeks(preliminaryDate, finalWeeks)));
+    }
+
+    function syncProposalPreliminaryDateFromFinal() {
+      const preliminaryDateInput = form.querySelector('input[name="preliminary_report_date"]');
+      const finalDateInput = form.querySelector('input[name="final_report_date"]');
+      const finalReportWeeksInput = form.querySelector('[name="final_report_term_weeks"]');
+      if (!preliminaryDateInput || !finalDateInput || !finalReportWeeksInput) return;
+
+      const finalDate = parseProposalDate(finalDateInput.value);
+      const finalWeeks = parseProposalDecimal(finalReportWeeksInput.value);
+      if (!finalDate || finalWeeks === null) return;
+      setDateFieldValue(preliminaryDateInput, formatProposalDateIso(subtractDecimalWeeks(finalDate, finalWeeks)));
+    }
+
+    function syncProposalTermsFromDates() {
+      const preliminaryDateInput = form.querySelector('input[name="preliminary_report_date"]');
+      const finalDateInput = form.querySelector('input[name="final_report_date"]');
+      const serviceTermInput = form.querySelector('[name="service_term_months"]');
+      const finalReportWeeksInput = form.querySelector('[name="final_report_term_weeks"]');
+      if (!preliminaryDateInput || !finalDateInput || !serviceTermInput || !finalReportWeeksInput) return;
+
+      const preliminaryDate = parseProposalDate(preliminaryDateInput.value);
+      const finalDate = parseProposalDate(finalDateInput.value);
+      if (preliminaryDate) {
+        const months = decimalMonthsBetween(getProposalBaseStartDate(), preliminaryDate);
+        serviceTermInput.value = formatProposalDecimal(months);
+      } else {
+        serviceTermInput.value = '';
+      }
+
+      if (preliminaryDate && finalDate) {
+        const weeks = Math.max(0, diffProposalDays(preliminaryDate, finalDate) / 7);
+        finalReportWeeksInput.value = formatProposalDecimal(weeks);
+      } else {
+        finalReportWeeksInput.value = '';
+      }
+    }
+
+    let proposalReportTermsEditMode = false;
+
+    function applyProposalReportTermsLockState() {
+      const preliminaryDateInput = form.querySelector('input[name="preliminary_report_date"]');
+      const finalDateInput = form.querySelector('input[name="final_report_date"]');
+      const serviceTermInput = form.querySelector('[name="service_term_months"]');
+      const finalReportWeeksInput = form.querySelector('[name="final_report_term_weeks"]');
+      const lockIcons = qa('.js-proposal-report-terms-lock', form);
+      if (!preliminaryDateInput || !finalDateInput || !serviceTermInput || !finalReportWeeksInput) return;
+
+      if (proposalReportTermsEditMode) {
+        syncProposalTermsFromDates();
+      }
+
+      setProposalReadonly(preliminaryDateInput, proposalReportTermsEditMode, { lockPicker: true });
+      setProposalReadonly(finalDateInput, proposalReportTermsEditMode, { lockPicker: true });
+      setProposalReadonly(serviceTermInput, !proposalReportTermsEditMode);
+      setProposalReadonly(finalReportWeeksInput, !proposalReportTermsEditMode);
+
+      lockIcons.forEach(function (icon) {
+        icon.classList.toggle('bi-lock-fill', !proposalReportTermsEditMode);
+        icon.classList.toggle('bi-unlock-fill', proposalReportTermsEditMode);
+        icon.title = proposalReportTermsEditMode
+          ? 'Заблокировать ввод сроков'
+          : 'Разблокировать ввод сроков';
+      });
     }
 
     function initCompositeProposalField(options) {
@@ -5305,6 +5615,12 @@
     attachProposalLegalEntitiesToObjectsSync(form, legalEntitiesApi, objectsApi);
     form.querySelector('[name="advance_percent"]')?.addEventListener('input', syncFinalReportPercent);
     form.querySelector('[name="preliminary_report_percent"]')?.addEventListener('input', syncFinalReportPercent);
+    qa('.js-proposal-report-terms-lock', form).forEach(function (icon) {
+      icon.addEventListener('click', function () {
+        proposalReportTermsEditMode = !proposalReportTermsEditMode;
+        applyProposalReportTermsLockState();
+      });
+    });
     form.querySelector('select[name="type"]')?.addEventListener('change', function () {
       syncProposalServiceTermMonths(true);
       syncProposalReportDates(true);
@@ -5322,10 +5638,16 @@
       syncProposalReportDates(true);
     });
     form.querySelector('input[name="preliminary_report_date"]')?.addEventListener('input', function () {
-      syncProposalFinalDateFromPreliminary();
+      if (!proposalReportTermsEditMode) syncProposalFinalDateFromPreliminary();
     });
     form.querySelector('input[name="preliminary_report_date"]')?.addEventListener('change', function () {
-      syncProposalFinalDateFromPreliminary();
+      if (!proposalReportTermsEditMode) syncProposalFinalDateFromPreliminary();
+    });
+    form.querySelector('input[name="final_report_date"]')?.addEventListener('input', function () {
+      if (!proposalReportTermsEditMode) syncProposalPreliminaryDateFromFinal();
+    });
+    form.querySelector('input[name="final_report_date"]')?.addEventListener('change', function () {
+      if (!proposalReportTermsEditMode) syncProposalPreliminaryDateFromFinal();
     });
     form.querySelector('[name="asset_owner_matches_customer"]')?.addEventListener('change', function () {
       syncAssetOwnerFromCustomer('customer-sync');
@@ -5354,6 +5676,7 @@
       }
     });
     syncProposalServiceTermMonths(false);
+    applyProposalReportTermsLockState();
     syncProposalReportDates(false);
     ['asset_owner', 'asset_owner_registration_number', 'asset_owner_registration_date'].forEach(function (fieldName) {
       form.querySelector('[name="' + fieldName + '"]')?.addEventListener('change', function () {

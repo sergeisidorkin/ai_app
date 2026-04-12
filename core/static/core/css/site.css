@@ -1791,6 +1791,8 @@ section#templates .alert.alert-info .text-muted {
 #proposals-pane .proposal-assets-table th {
   white-space: nowrap;
   font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 #proposals-pane .proposal-assets-table td {
@@ -1848,6 +1850,9 @@ section#templates .alert.alert-info .text-muted {
 #proposals-pane .proposal-commercial-table th[rowspan="2"] {
   vertical-align: bottom;
   padding-bottom: var(--bs-table-cell-padding-y, .5rem);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 #proposals-pane .proposal-commercial-table .proposal-commercial-days-group,
@@ -1858,8 +1863,10 @@ section#templates .alert.alert-info .text-muted {
 #proposals-pane .proposal-commercial-table .proposal-commercial-rate-header,
 #proposals-pane .proposal-commercial-table .proposal-commercial-total-header,
 #proposals-pane .proposal-commercial-table .proposal-commercial-days-header {
-  white-space: normal;
+  white-space: nowrap;
   line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 #proposals-pane .proposal-commercial-table .proposal-commercial-days-group {
@@ -1935,6 +1942,8 @@ section#templates .alert.alert-info .text-muted {
   max-width: none;
   white-space: nowrap;
   word-break: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 #proposals-pane .proposal-commercial-table .proposal-commercial-day-cell-single {
@@ -2043,6 +2052,15 @@ section#templates .alert.alert-info .text-muted {
   white-space: nowrap;
 }
 
+#proposals-pane .proposal-commercial-table .proposal-commercial-row-label {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 #proposals-pane .proposal-commercial-table > tbody > tr.proposal-commercial-travel-row > td,
 #proposals-pane .proposal-commercial-table > tbody > tr.proposal-commercial-summary-row > td,
 #proposals-pane .proposal-commercial-table > tbody > tr.proposal-commercial-financial-row > td {
@@ -2059,9 +2077,9 @@ section#templates .alert.alert-info .text-muted {
 }
 
 #proposals-pane .proposal-commercial-table .proposal-commercial-financial-service-cell {
-  width: 13rem !important;
+  width: auto !important;
   min-width: 13rem !important;
-  max-width: 13rem !important;
+  max-width: none !important;
 }
 
 #proposals-pane .proposal-commercial-table .proposal-commercial-financial-rate-cell,
@@ -2596,6 +2614,25 @@ html.proposal-progress-cursor * {
 #proposals-pane .readonly-field {
   background-color: #f8f9fa;
   color: #6c757d;
+}
+
+#proposals-pane .form-label {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#proposals-pane .js-proposal-report-terms-lock {
+  cursor: pointer;
+  font-size: .85em;
+  vertical-align: baseline;
+  color: #6c757d;
+  transition: color .15s;
+}
+
+#proposals-pane .js-proposal-report-terms-lock:hover {
+  color: #0d6efd;
 }
 
 #proposals-pane .proposal-inline-percent {

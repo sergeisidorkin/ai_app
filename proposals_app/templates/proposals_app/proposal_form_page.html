@@ -434,7 +434,12 @@
         {{ form.evaluation_date }}
       </div>
       <div class="col">
-        <label class="form-label">{{ form.service_term_months.label }}</label>
+        <label class="form-label">
+          {{ form.service_term_months.label }}
+          <i class="bi bi-lock-fill ms-1 js-proposal-report-terms-lock"
+             role="button"
+             title="Разблокировать ввод сроков"></i>
+        </label>
         {{ form.service_term_months }}
       </div>
       <div class="col">
@@ -442,7 +447,12 @@
         {{ form.preliminary_report_date }}
       </div>
       <div class="col">
-        <label class="form-label">{{ form.final_report_term_weeks.label }}</label>
+        <label class="form-label">
+          {{ form.final_report_term_weeks.label }}
+          <i class="bi bi-lock-fill ms-1 js-proposal-report-terms-lock"
+             role="button"
+             title="Разблокировать ввод сроков"></i>
+        </label>
         {{ form.final_report_term_weeks }}
       </div>
       <div class="col">
