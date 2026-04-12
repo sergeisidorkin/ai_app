@@ -30,6 +30,10 @@ from .cbr import get_cbr_eur_rate_for_today, get_cbr_eur_rate_text
 
 DATE_INPUT_ATTRS = {"class": "js-date", "autocomplete": "off"}
 DATE_INPUT_FORMATS = ["%Y-%m-%d", "%d.%m.%Y", "%d.%m.%y"]
+PROPOSAL_TRAVEL_EXPENSES_LABEL = "Командировочные расходы, евро"
+PROPOSAL_TRAVEL_EXPENSES_LABEL_LEGACY = "Командировочные расходы"
+PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL = "actual"
+PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION = "calculation"
 PROPOSAL_REPORT_LANGUAGE_LABELS = ("русский", "английский", "казахский", "китайский")
 PROPOSAL_REPORT_LANGUAGE_ALIASES = {
     "ru": "русский",
@@ -52,6 +56,11 @@ NON_EDITABLE_PROPOSAL_STATUSES = {
     ProposalRegistration.ProposalStatus.SENT,
     ProposalRegistration.ProposalStatus.COMPLETED,
 }
+
+
+def is_proposal_travel_expenses_name(value) -> bool:
+    name = str(value or "").strip()
+    return name in {PROPOSAL_TRAVEL_EXPENSES_LABEL, PROPOSAL_TRAVEL_EXPENSES_LABEL_LEGACY}
 
 
 class DisabledOptionsSelect(forms.Select):
@@ -836,6 +845,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 "discount_percent": "5",
                 "rub_total_service_text": get_cbr_eur_rate_text(),
                 "discounted_total_service_text": "Размер скидки:",
+                "travel_expenses_mode": PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL,
             }
             eur_rate = get_cbr_eur_rate_for_today()
             if eur_rate is not None:
@@ -1205,6 +1215,21 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             ensure_ascii=False,
         )
 
+    def _extract_travel_expenses_mode_from_payload(self):
+        raw = str(self.data.get("commercial_totals_payload") or "").strip()
+        if not raw:
+            return ""
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return ""
+        if not isinstance(payload, dict):
+            return ""
+        mode = str(payload.get("travel_expenses_mode") or "").strip()
+        if mode in {PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL, PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION}:
+            return mode
+        return ""
+
     def clean_commercial_offer_payload(self):
         raw = (self.cleaned_data.get("commercial_offer_payload") or "").strip()
         if not raw:
@@ -1219,6 +1244,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         if not isinstance(rows, list):
             raise forms.ValidationError("Некорректный формат данных по коммерческому предложению.")
 
+        travel_expenses_mode = self._extract_travel_expenses_mode_from_payload()
         cleaned_rows = []
         for idx, row in enumerate(rows, start=1):
             if not isinstance(row, dict):
@@ -1237,23 +1263,40 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     f"Строка коммерческого предложения #{idx}: поле «Количество дней» передано некорректно."
                 )
 
+            is_travel_expenses_row = is_proposal_travel_expenses_name(service_name)
             asset_day_counts = []
-            for day_idx, raw_value in enumerate(asset_day_counts_raw, start=1):
-                value = str(raw_value or "").strip()
-                if not value:
-                    asset_day_counts.append("")
-                    continue
-                try:
-                    parsed_int = int(value)
-                except (TypeError, ValueError):
-                    raise forms.ValidationError(
-                        f"Строка коммерческого предложения #{idx}: значение дня #{day_idx} заполнено некорректно."
+            if is_travel_expenses_row and travel_expenses_mode == PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION:
+                for day_idx, raw_value in enumerate(asset_day_counts_raw, start=1):
+                    value = str(raw_value or "").strip()
+                    if not value:
+                        asset_day_counts.append("")
+                        continue
+                    parsed_amount = self._parse_payload_decimal(
+                        value,
+                        f"Строка коммерческого предложения #{idx}: значение по активу #{day_idx} заполнено некорректно.",
                     )
-                if parsed_int < 0:
-                    raise forms.ValidationError(
-                        f"Строка коммерческого предложения #{idx}: значение дня #{day_idx} не может быть отрицательным."
-                    )
-                asset_day_counts.append(parsed_int)
+                    if parsed_amount is not None and parsed_amount < 0:
+                        raise forms.ValidationError(
+                            f"Строка коммерческого предложения #{idx}: значение по активу #{day_idx} не может быть отрицательным."
+                        )
+                    asset_day_counts.append(self._serialize_payload_decimal(parsed_amount))
+            else:
+                for day_idx, raw_value in enumerate(asset_day_counts_raw, start=1):
+                    value = str(raw_value or "").strip()
+                    if not value:
+                        asset_day_counts.append("")
+                        continue
+                    try:
+                        parsed_int = int(value)
+                    except (TypeError, ValueError):
+                        raise forms.ValidationError(
+                            f"Строка коммерческого предложения #{idx}: значение дня #{day_idx} заполнено некорректно."
+                        )
+                    if parsed_int < 0:
+                        raise forms.ValidationError(
+                            f"Строка коммерческого предложения #{idx}: значение дня #{day_idx} не может быть отрицательным."
+                        )
+                    asset_day_counts.append(parsed_int)
 
             row_has_data = any(
                 [
@@ -1277,6 +1320,19 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 total_raw,
                 f"Строка коммерческого предложения #{idx}: поле «Итого, евро без НДС» заполнено некорректно.",
             )
+            if is_travel_expenses_row:
+                rate_value = None
+                if travel_expenses_mode == PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION:
+                    total_value = sum(
+                        (
+                            Decimal(str(value))
+                            for value in asset_day_counts
+                            if value not in (None, "")
+                        ),
+                        Decimal("0"),
+                    )
+                else:
+                    asset_day_counts = ["" for _ in asset_day_counts]
 
             cleaned_rows.append(
                 {
@@ -1338,9 +1394,15 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             str(payload.get("contract_total_auto") or "").strip(),
             "Расчётное значение итога по договору заполнено некорректно.",
         )
+        travel_expenses_mode = str(payload.get("travel_expenses_mode") or "").strip() or PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL
 
         if discount_percent is not None and (discount_percent < 0 or discount_percent > 100):
             raise forms.ValidationError("Скидка должна быть в диапазоне от 0% до 100%.")
+        if travel_expenses_mode not in {
+            PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL,
+            PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION,
+        }:
+            raise forms.ValidationError("Режим строки командировочных расходов заполнен некорректно.")
 
         self.cleaned_commercial_totals = {
             "exchange_rate": self._serialize_payload_decimal(exchange_rate),
@@ -1349,6 +1411,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             "contract_total_auto": self._serialize_payload_decimal(contract_total_auto),
             "rub_total_service_text": str(payload.get("rub_total_service_text") or "").strip(),
             "discounted_total_service_text": str(payload.get("discounted_total_service_text") or "").strip(),
+            "travel_expenses_mode": travel_expenses_mode,
         }
         return json.dumps(self.cleaned_commercial_totals, ensure_ascii=False)
 

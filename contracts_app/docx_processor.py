@@ -693,11 +693,31 @@ def _measure_table_columns(rows: list[list[dict[str, object]]]) -> int:
 
 
 def _apply_cell_text(cell, spec: dict[str, object], font_size_pt: int | float | None, language_code: str | None) -> None:
+    from docx.oxml import OxmlElement
+
     cell.text = ""
     paragraph = cell.paragraphs[0]
     paragraph.alignment = _table_alignment(str(spec.get("align") or "left"))
     paragraph.paragraph_format.space_before = Pt(0)
     paragraph.paragraph_format.space_after = Pt(0)
+    p_pr = paragraph._element.find(qn("w:pPr"))
+    if p_pr is None:
+        p_pr = OxmlElement("w:pPr")
+        paragraph._element.insert(0, p_pr)
+    paragraph_r_pr = p_pr.find(qn("w:rPr"))
+    if paragraph_r_pr is None:
+        paragraph_r_pr = OxmlElement("w:rPr")
+        p_pr.append(paragraph_r_pr)
+    if font_size_pt:
+        half_points = str(int(round(float(font_size_pt) * 2)))
+        for tag_name in ("w:sz", "w:szCs"):
+            existing = paragraph_r_pr.find(qn(tag_name))
+            if existing is None:
+                existing = OxmlElement(tag_name)
+                paragraph_r_pr.append(existing)
+            existing.set(qn("w:val"), half_points)
+    if language_code:
+        _set_language_property(paragraph_r_pr, language_code)
     text_parts = str(spec.get("text") or "").split("\n")
     runs = list(paragraph.runs)
     if runs:
@@ -717,8 +737,6 @@ def _apply_cell_text(cell, spec: dict[str, object], font_size_pt: int | float | 
         if language_code:
             r_pr = paragraph_run._element.find(qn("w:rPr"))
             if r_pr is None:
-                from docx.oxml import OxmlElement
-
                 r_pr = OxmlElement("w:rPr")
                 paragraph_run._element.insert(0, r_pr)
             _set_language_property(r_pr, language_code)
@@ -798,6 +816,48 @@ def _set_table_autofit(table) -> None:
     tbl_w.set(qn("w:w"), "0")
 
 
+def _set_table_fixed_pct_widths(table, column_widths_pct: list[float]) -> None:
+    from docx.oxml import OxmlElement
+
+    tbl_pr = table._tbl.tblPr
+    if tbl_pr is None:
+        return
+
+    try:
+        table.autofit = False
+    except Exception:
+        pass
+    try:
+        table.allow_autofit = False
+    except Exception:
+        pass
+
+    tbl_layout = tbl_pr.find(qn("w:tblLayout"))
+    if tbl_layout is None:
+        tbl_layout = OxmlElement("w:tblLayout")
+        tbl_pr.append(tbl_layout)
+    tbl_layout.set(qn("w:type"), "fixed")
+
+    tbl_w = tbl_pr.find(qn("w:tblW"))
+    if tbl_w is None:
+        tbl_w = OxmlElement("w:tblW")
+        tbl_pr.insert(0, tbl_w)
+    tbl_w.set(qn("w:type"), "pct")
+    tbl_w.set(qn("w:w"), "5000")
+
+
+def _set_cell_width_pct(cell, width_pct: float) -> None:
+    from docx.oxml import OxmlElement
+
+    tc_pr = cell._tc.get_or_add_tcPr()
+    tc_w = tc_pr.find(qn("w:tcW"))
+    if tc_w is None:
+        tc_w = OxmlElement("w:tcW")
+        tc_pr.append(tc_w)
+    tc_w.set(qn("w:type"), "pct")
+    tc_w.set(qn("w:w"), str(int(round(float(width_pct) * 50))))
+
+
 def _insert_table_after_paragraph(paragraph, table_spec: dict, language_code: str | None = None) -> bool:
     rows = table_spec.get("rows") if isinstance(table_spec, dict) else None
     if not isinstance(rows, list) or not rows:
@@ -823,7 +883,11 @@ def _insert_table_after_paragraph(paragraph, table_spec: dict, language_code: st
             table.style = str(table_spec.get("style"))
     except Exception:
         pass
-    _set_table_autofit(table)
+    column_widths_pct = list(table_spec.get("column_widths_pct") or []) if isinstance(table_spec, dict) else []
+    if column_widths_pct and len(column_widths_pct) == column_count:
+        _set_table_fixed_pct_widths(table, column_widths_pct)
+    else:
+        _set_table_autofit(table)
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
 
     font_size_pt = table_spec.get("font_size_pt") if isinstance(table_spec, dict) else None
@@ -850,6 +914,8 @@ def _insert_table_after_paragraph(paragraph, table_spec: dict, language_code: st
                 bottom_cm=float((margins or {}).get("bottom", 0)),
                 left_cm=float((margins or {}).get("left", 0.1)),
             )
+            if column_widths_pct and len(column_widths_pct) == column_count:
+                _set_cell_width_pct(start_cell, sum(column_widths_pct[col_idx:col_idx + colspan]))
             _set_cell_no_wrap(start_cell, bool(spec.get("no_wrap")))
             _apply_cell_text(start_cell, spec, font_size_pt, language_code)
             col_idx += colspan

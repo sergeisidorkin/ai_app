@@ -293,11 +293,20 @@ def _proposal_scope_of_work(proposal) -> list[dict[str, str] | str]:
     return fallback if isinstance(fallback, list) else [fallback]
 
 
-PROPOSAL_TRAVEL_EXPENSES_LABEL = "Командировочные расходы"
+PROPOSAL_TRAVEL_EXPENSES_LABEL = "Командировочные расходы, евро"
+PROPOSAL_TRAVEL_EXPENSES_LABEL_LEGACY = "Командировочные расходы"
+PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL = "actual"
+PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION = "calculation"
 PROPOSAL_SUMMARY_TOTAL_LABEL = "ИТОГО, по расчёту"
+PROPOSAL_SUMMARY_WITH_TRAVEL_TOTAL_LABEL = "ИТОГО, евро с командировочными по расчёту"
 PROPOSAL_RUB_TOTAL_LABEL = "ИТОГО, рубли без НДС"
 PROPOSAL_RUB_DISCOUNTED_LABEL = "ИТОГО, рубли без НДС с учетом скидки"
 PROPOSAL_CONTRACT_TOTAL_LABEL = "ИТОГО в договор, рубли без НДС с учётом доп. скидки"
+
+
+def _is_proposal_travel_expenses_name(value) -> bool:
+    name = str(value or "").strip()
+    return name in {PROPOSAL_TRAVEL_EXPENSES_LABEL, PROPOSAL_TRAVEL_EXPENSES_LABEL_LEGACY}
 
 
 def _parse_decimal(value) -> Decimal | None:
@@ -319,6 +328,22 @@ def _sum_day_counts(values) -> int:
     return total
 
 
+def _sum_decimal_values(values) -> Decimal:
+    total = Decimal("0")
+    for value in values:
+        parsed = _parse_decimal(str(value or "").strip().replace(",", "."))
+        if parsed is not None:
+            total += parsed
+    return total
+
+
+def _normalize_proposal_travel_expenses_mode(value) -> str:
+    mode = str(value or "").strip()
+    if mode in {PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL, PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION}:
+        return mode
+    return ""
+
+
 def _round_to_hundred_thousand(value: Decimal | None) -> Decimal | None:
     if value is None:
         return None
@@ -331,14 +356,14 @@ def _proposal_budget_table(proposal) -> dict:
         (
             item
             for item in offers
-            if str(getattr(item, "service_name", "") or "").strip() == PROPOSAL_TRAVEL_EXPENSES_LABEL
+            if _is_proposal_travel_expenses_name(getattr(item, "service_name", ""))
         ),
         None,
     )
     regular_offers = [
         item
         for item in offers
-        if str(getattr(item, "service_name", "") or "").strip() != PROPOSAL_TRAVEL_EXPENSES_LABEL
+        if not _is_proposal_travel_expenses_name(getattr(item, "service_name", ""))
     ]
 
     asset_labels = [
@@ -350,7 +375,8 @@ def _proposal_budget_table(proposal) -> dict:
         default=0,
     )
     asset_count = max(len(asset_labels), max_asset_count, 1)
-    show_total_days_column = asset_count > 1
+    show_asset_columns = asset_count > 1
+    show_total_days_column = True
     while len(asset_labels) < asset_count:
         asset_labels.append(f"Актив {len(asset_labels) + 1}")
     asset_labels = [label or f"Актив {index + 1}" for index, label in enumerate(asset_labels)]
@@ -360,27 +386,27 @@ def _proposal_budget_table(proposal) -> dict:
             {"text": "Специалист", "bold": True, "align": "left", "header": True, "vertical_align": "center"},
             {"text": "Должность/направление", "bold": True, "align": "left", "header": True, "vertical_align": "center", "no_wrap": True},
             {"text": "Ставка,\n€/дн", "bold": True, "align": "right", "header": True, "vertical_align": "center"},
-            *[
-                {
-                    "text": label,
-                    "bold": True,
-                    "align": "center",
-                    "header": True,
-                    "vertical_align": "center",
-                    "margins_cm": {
-                        "top": 0,
-                        "right": 0,
-                        "bottom": 0,
-                        "left": 0,
-                    },
-                }
-                for label in asset_labels
-            ],
             *(
-                [{"text": "Кол-во\nдней", "bold": True, "align": "right", "header": True, "vertical_align": "center"}]
-                if show_total_days_column
+                [
+                    {
+                        "text": label,
+                        "bold": True,
+                        "align": "center",
+                        "header": True,
+                        "vertical_align": "center",
+                        "margins_cm": {
+                            "top": 0,
+                            "right": 0,
+                            "bottom": 0,
+                            "left": 0,
+                        },
+                    }
+                    for label in asset_labels
+                ]
+                if show_asset_columns
                 else []
             ),
+            {"text": "Кол-во\nдней", "bold": True, "align": "right", "header": True, "vertical_align": "center"},
             {"text": "Итого,\n€ без НДС", "bold": True, "align": "right", "header": True, "vertical_align": "center"},
         ],
     ]
@@ -408,15 +434,15 @@ def _proposal_budget_table(proposal) -> dict:
                 {"text": str(getattr(item, "specialist", "") or "").strip()},
                 {"text": direction, "no_wrap": True},
                 {"text": _format_money(getattr(item, "rate_eur_per_day", None)), "align": "right"},
-                *[
-                    {"text": value, "align": "right"}
-                    for value in day_values
-                ],
                 *(
-                    [{"text": str(_sum_day_counts(day_values)) if _sum_day_counts(day_values) else "", "align": "right"}]
-                    if show_total_days_column
+                    [
+                        {"text": value, "align": "right"}
+                        for value in day_values
+                    ]
+                    if show_asset_columns
                     else []
                 ),
+                {"text": str(_sum_day_counts(day_values)) if _sum_day_counts(day_values) else "", "align": "right"},
                 {"text": _format_money(getattr(item, "total_eur_without_vat", None)), "align": "right"},
             ]
         )
@@ -440,10 +466,25 @@ def _proposal_budget_table(proposal) -> dict:
         (_parse_decimal(getattr(item, "total_eur_without_vat", None)) or Decimal("0"))
         for item in regular_offers
     )
+    travel_total = Decimal("0")
+    travel_day_values = []
+    if travel_offer is not None:
+        travel_day_values = build_day_values(getattr(travel_offer, "asset_day_counts", []) or [])
+        travel_total = _sum_decimal_values(travel_day_values)
+        if travel_total == Decimal("0"):
+            travel_total = _parse_decimal(getattr(travel_offer, "total_eur_without_vat", None)) or Decimal("0")
+    summary_with_travel_total = summary_total + travel_total
     totals_state = getattr(proposal, "commercial_totals_json", {}) or {}
+    travel_expenses_mode = _normalize_proposal_travel_expenses_mode(totals_state.get("travel_expenses_mode"))
+    if not travel_expenses_mode:
+        travel_expenses_mode = (
+            PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION
+            if travel_total or any(str(value or "").strip() for value in travel_day_values)
+            else PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL
+        )
     exchange_rate = _parse_decimal(totals_state.get("exchange_rate"))
     discount_percent = _parse_decimal(totals_state.get("discount_percent"))
-    rub_total = (summary_total * exchange_rate) if exchange_rate is not None else None
+    rub_total = (summary_with_travel_total * exchange_rate) if exchange_rate is not None else None
     discounted_total = (
         rub_total - (rub_total * (discount_percent / Decimal("100")))
         if rub_total is not None and discount_percent is not None
@@ -462,26 +503,17 @@ def _proposal_budget_table(proposal) -> dict:
             [
                 {"text": label, "colspan": label_colspan, "bold": True},
                 {"text": str(rate or ""), "align": "right"},
-                *[
-                    {"text": str(value or ""), "align": "right"}
-                    for value in current_day_values
-                ],
                 *(
-                    [{"text": str(_sum_day_counts(current_day_values)) if _sum_day_counts(current_day_values) else "", "align": "right"}]
-                    if show_total_days_column
+                    [
+                        {"text": str(value or ""), "align": "right"}
+                        for value in current_day_values
+                    ]
+                    if show_asset_columns
                     else []
                 ),
+                {"text": str(_sum_day_counts(current_day_values)) if _sum_day_counts(current_day_values) else "", "align": "right"},
                 {"text": str(total or ""), "align": "right"},
             ]
-        )
-
-    if travel_offer is not None:
-        travel_day_values = build_day_values(getattr(travel_offer, "asset_day_counts", []) or [])
-        append_fixed_row(
-            PROPOSAL_TRAVEL_EXPENSES_LABEL,
-            rate="по факту",
-            day_values=travel_day_values,
-            total=_format_money(getattr(travel_offer, "total_eur_without_vat", None)),
         )
 
     append_fixed_row(
@@ -489,6 +521,19 @@ def _proposal_budget_table(proposal) -> dict:
         rate="",
         day_values=summary_day_values,
         total=_format_money(summary_total),
+    )
+    if travel_offer is not None:
+        append_fixed_row(
+            PROPOSAL_TRAVEL_EXPENSES_LABEL,
+            rate="расчёт" if travel_expenses_mode == PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION else "по факту",
+            day_values=travel_day_values,
+            total=_format_money(travel_total),
+        )
+    append_fixed_row(
+        PROPOSAL_SUMMARY_WITH_TRAVEL_TOTAL_LABEL,
+        rate="",
+        day_values=[],
+        total=_format_money(summary_with_travel_total),
     )
     append_fixed_row(
         PROPOSAL_RUB_TOTAL_LABEL,
@@ -511,8 +556,9 @@ def _proposal_budget_table(proposal) -> dict:
 
     return {
         "rows": rows,
-        "font_size_pt": 7,
+        "font_size_pt": 8 if not show_asset_columns else 7,
         "style": "Table Grid",
+        "column_widths_pct": [20, 50, 10, 10, 10] if not show_asset_columns else [],
     }
 
 
