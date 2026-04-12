@@ -1687,12 +1687,6 @@ def proposal_dispatch_transfer_to_contract(request):
 @user_passes_test(staff_required)
 @require_POST
 def proposal_dispatch_sign_documents(request):
-    if not is_onlyoffice_conversion_configured():
-        return JsonResponse(
-            {"ok": False, "error": "Не настроен ONLYOFFICE Document Server для генерации PDF."},
-            status=400,
-        )
-
     raw_ids = request.POST.getlist("proposal_ids[]") or request.POST.getlist("proposal_ids")
     if not raw_ids:
         return JsonResponse({"ok": False, "error": "Не выбраны строки для подписи ТКП."}, status=400)
@@ -1721,6 +1715,12 @@ def proposal_dispatch_sign_documents(request):
                 "generated": 0,
                 "warnings": [],
             },
+            status=400,
+        )
+
+    if not is_onlyoffice_conversion_configured():
+        return JsonResponse(
+            {"ok": False, "error": "Не настроен ONLYOFFICE Document Server для генерации PDF."},
             status=400,
         )
 

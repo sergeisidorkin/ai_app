@@ -1372,7 +1372,7 @@ def _append_floating_image_run(
     x_offset_cm: float = 0,
     y_offset_cm: float = 0,
 ) -> None:
-    from docx.image.exceptions import UnrecognizedImageError
+    from docx.image.exceptions import UnexpectedEndOfFileError, UnrecognizedImageError
 
     run = paragraph.add_run()
     try:
@@ -1380,7 +1380,7 @@ def _append_floating_image_run(
             run.add_picture(BytesIO(image_bytes))
         else:
             run.add_picture(BytesIO(image_bytes), width=Cm(width_cm))
-    except UnrecognizedImageError as exc:
+    except (UnrecognizedImageError, UnexpectedEndOfFileError) as exc:
         raise RuntimeError(
             "Факсимиле должно быть изображением в поддерживаемом формате Word (например PNG или JPEG)."
         ) from exc

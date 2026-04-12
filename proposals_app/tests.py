@@ -412,8 +412,13 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertIn("972\u00a0961,25", budget_rows[7][-1])
         self.assertIn("ИТОГО в договор, рубли без НДС с учётом доп. скидки", budget_rows[8][0])
         self.assertIn("900\u00a0000,00", budget_rows[8][-1])
-        self.assertIn('w:tblLayout w:type="autofit"', budget_table._tbl.xml)
-        self.assertIn('w:tblW w:type="auto" w:w="0"', budget_table._tbl.xml)
+        self.assertIn('w:tblLayout w:type="fixed"', budget_table._tbl.xml)
+        self.assertIn('w:tblW w:type="pct" w:w="5000"', budget_table._tbl.xml)
+        self.assertIn('w:tcW w:type="pct" w:w="775"', budget_table._tbl.xml)
+        self.assertIn('w:tcW w:type="pct" w:w="2000"', budget_table._tbl.xml)
+        self.assertIn('w:tcW w:type="pct" w:w="350"', budget_table._tbl.xml)
+        self.assertIn('w:tcW w:type="pct" w:w="267"', budget_table._tbl.xml)
+        self.assertIn('w:tcW w:type="pct" w:w="300"', budget_table._tbl.xml)
         empty_fixed_cell = budget_table.rows[6].cells[3]
         self.assertTrue(empty_fixed_cell.paragraphs)
         self.assertTrue(empty_fixed_cell.paragraphs[0].runs)
@@ -778,6 +783,21 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertIn("wp:anchor", paragraph._p.xml)
         self.assertIn('behindDoc="1"', paragraph._p.xml)
         self.assertNotIn("[[facsimile]]", paragraph._p.xml)
+
+    def test_insert_floating_image_at_placeholder_rejects_truncated_image(self):
+        template_doc = Document()
+        template_doc.add_paragraph("[[facsimile]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+
+        with self.assertRaisesMessage(
+            RuntimeError,
+            "Факсимиле должно быть изображением в поддерживаемом формате Word",
+        ):
+            insert_floating_image_at_placeholder(
+                buffer.getvalue(),
+                TEST_FACSIMILE_PNG_BYTES[:16],
+            )
 
     @patch("ai_app.proposals_app.document_generation.get_any_connected_service_user")
     @patch("ai_app.proposals_app.document_generation.is_nextcloud_primary", return_value=False)
