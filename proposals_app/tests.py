@@ -727,8 +727,9 @@ class ProposalDocumentGenerationTests(TestCase):
         budget_table = generated_doc.tables[0]
         self.assertIn('w:tblLayout w:type="fixed"', budget_table._tbl.xml)
         self.assertIn('w:tblW w:type="pct" w:w="5000"', budget_table._tbl.xml)
-        self.assertIn('w:tcW w:type="pct" w:w="1000"', budget_table._tbl.xml)
-        self.assertIn('w:tcW w:type="pct" w:w="2500"', budget_table._tbl.xml)
+        self.assertIn('w:tcW w:type="pct" w:w="900"', budget_table._tbl.xml)
+        self.assertIn('w:tcW w:type="pct" w:w="2300"', budget_table._tbl.xml)
+        self.assertIn('w:tcW w:type="pct" w:w="600"', budget_table._tbl.xml)
         budget_run_sizes = [
             run.font.size.pt
             for row in budget_table.rows
