@@ -417,8 +417,9 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertIn('w:tcW w:type="pct" w:w="775"', budget_table._tbl.xml)
         self.assertIn('w:tcW w:type="pct" w:w="2000"', budget_table._tbl.xml)
         self.assertIn('w:tcW w:type="pct" w:w="350"', budget_table._tbl.xml)
-        self.assertIn('w:tcW w:type="pct" w:w="267"', budget_table._tbl.xml)
+        self.assertIn('w:tcW w:type="pct" w:w="358"', budget_table._tbl.xml)
         self.assertIn('w:tcW w:type="pct" w:w="300"', budget_table._tbl.xml)
+        self.assertIn('w:tcW w:type="pct" w:w="500"', budget_table._tbl.xml)
         empty_fixed_cell = budget_table.rows[6].cells[3]
         self.assertTrue(empty_fixed_cell.paragraphs)
         self.assertTrue(empty_fixed_cell.paragraphs[0].runs)
@@ -575,7 +576,7 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertEqual(table_spec["style"], "Table Grid")
         self.assertEqual(len(table_spec["column_widths_pct"]), 8)
         self.assertEqual(table_spec["column_widths_pct"][:3], [15.5, 40.0, 7.0])
-        self.assertEqual(table_spec["column_widths_pct"][-2:], [6.0, 15.5])
+        self.assertEqual(table_spec["column_widths_pct"][-2:], [6.0, 10.0])
         self.assertTrue(all(width == table_spec["column_widths_pct"][3] for width in table_spec["column_widths_pct"][3:6]))
         self.assertEqual(table_spec["rows"][0][0]["text"], "Специалист")
         self.assertEqual(table_spec["rows"][0][2]["text"], "Ставка,\n€/дн")
@@ -690,8 +691,9 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertIn('w:tcW w:type="pct" w:w="775"', budget_table._tbl.xml)
         self.assertIn('w:tcW w:type="pct" w:w="2000"', budget_table._tbl.xml)
         self.assertIn('w:tcW w:type="pct" w:w="350"', budget_table._tbl.xml)
-        self.assertIn('w:tcW w:type="pct" w:w="267"', budget_table._tbl.xml)
+        self.assertIn('w:tcW w:type="pct" w:w="358"', budget_table._tbl.xml)
         self.assertIn('w:tcW w:type="pct" w:w="300"', budget_table._tbl.xml)
+        self.assertIn('w:tcW w:type="pct" w:w="500"', budget_table._tbl.xml)
         budget_run_sizes = [
             run.font.size.pt
             for row in budget_table.rows
@@ -782,6 +784,8 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertEqual(paragraph.text, "Подпись ")
         self.assertIn("wp:anchor", paragraph._p.xml)
         self.assertIn('behindDoc="1"', paragraph._p.xml)
+        self.assertIn('wp:positionH relativeFrom="page"', paragraph._p.xml)
+        self.assertIn("<wp:align>center</wp:align>", paragraph._p.xml)
         self.assertNotIn("[[facsimile]]", paragraph._p.xml)
 
     def test_insert_floating_image_at_placeholder_rejects_truncated_image(self):
@@ -1333,11 +1337,25 @@ class ProposalDispatchSignTests(TestCase):
         )
 
     @override_settings(ONLYOFFICE_DOCUMENT_SERVER_URL="https://docs.example.com")
+    @patch("proposals_app.views.store_existing_proposal_docx_bytes")
+    @patch("proposals_app.views.load_existing_proposal_docx_bytes")
     @patch("proposals_app.views.generate_and_store_proposal_pdf")
     def test_dispatch_sign_generates_pdf_via_dedicated_endpoint(
         self,
         mocked_generate_and_store_proposal_pdf,
+        mocked_load_existing_proposal_docx_bytes,
+        mocked_store_existing_proposal_docx_bytes,
     ):
+        template_doc = Document()
+        template_doc.add_paragraph("[[facsimile]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+        mocked_load_existing_proposal_docx_bytes.return_value = buffer.getvalue()
+        mocked_store_existing_proposal_docx_bytes.return_value = {
+            "docx_name": "existing-offer.docx",
+            "docx_path": "/Corporate Root/ТКП/2026/333300RU DD Приморское/existing-offer.docx",
+            "output_dir": "/Corporate Root/ТКП/2026/333300RU DD Приморское",
+        }
         mocked_generate_and_store_proposal_pdf.return_value = {
             "pdf_name": "existing-offer.pdf",
             "pdf_path": "/Corporate Root/ТКП/2026/333300RU DD Приморское/existing-offer.pdf",
@@ -1363,6 +1381,8 @@ class ProposalDispatchSignTests(TestCase):
             self.proposal.pdf_file_link,
             "/Corporate Root/ТКП/2026/333300RU DD Приморское/existing-offer.pdf",
         )
+        mocked_load_existing_proposal_docx_bytes.assert_called_once_with(self.user, self.proposal)
+        mocked_store_existing_proposal_docx_bytes.assert_called_once()
         mocked_generate_and_store_proposal_pdf.assert_called_once()
         self.assertEqual(mocked_generate_and_store_proposal_pdf.call_args.args[0], self.user)
         self.assertEqual(mocked_generate_and_store_proposal_pdf.call_args.args[1], self.proposal)
@@ -1376,6 +1396,47 @@ class ProposalDispatchSignTests(TestCase):
         token_payload = get_proposal_docx_source_token_payload(self.proposal, token)
         self.assertIsNotNone(token_payload)
         self.assertEqual(token_payload["signer_user_id"], self.user.pk)
+
+    @override_settings(ONLYOFFICE_DOCUMENT_SERVER_URL="https://docs.example.com")
+    @patch("proposals_app.views.store_existing_proposal_docx_bytes")
+    @patch("proposals_app.views.load_existing_proposal_docx_bytes")
+    @patch("proposals_app.views.generate_and_store_proposal_pdf")
+    def test_dispatch_sign_inserts_facsimile_into_saved_docx(
+        self,
+        mocked_generate_and_store_proposal_pdf,
+        mocked_load_existing_proposal_docx_bytes,
+        mocked_store_existing_proposal_docx_bytes,
+    ):
+        template_doc = Document()
+        template_doc.add_paragraph("Подпись [[facsimile]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+        mocked_load_existing_proposal_docx_bytes.return_value = buffer.getvalue()
+        mocked_store_existing_proposal_docx_bytes.return_value = {
+            "docx_name": "existing-offer.docx",
+            "docx_path": "/Corporate Root/ТКП/2026/333300RU DD Приморское/existing-offer.docx",
+            "output_dir": "/Corporate Root/ТКП/2026/333300RU DD Приморское",
+        }
+        mocked_generate_and_store_proposal_pdf.return_value = {
+            "pdf_name": "existing-offer.pdf",
+            "pdf_path": "/Corporate Root/ТКП/2026/333300RU DD Приморское/existing-offer.pdf",
+        }
+
+        response = self.client.post(
+            reverse("proposal_dispatch_sign_documents"),
+            {
+                "proposal_ids[]": [self.proposal.pk],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        saved_docx_bytes = mocked_store_existing_proposal_docx_bytes.call_args.args[2]
+        saved_doc = Document(BytesIO(saved_docx_bytes))
+        paragraph = saved_doc.paragraphs[0]
+        self.assertEqual(paragraph.text, "Подпись ")
+        self.assertIn("wp:anchor", paragraph._p.xml)
+        self.assertIn('behindDoc="1"', paragraph._p.xml)
+        self.assertNotIn("[[facsimile]]", paragraph._p.xml)
 
     @patch("proposals_app.views.generate_and_store_proposal_pdf")
     def test_dispatch_sign_returns_error_without_current_user_facsimile(
@@ -1421,6 +1482,8 @@ class ProposalDispatchSignTests(TestCase):
         self.assertEqual(paragraph.text, "")
         self.assertIn("wp:anchor", paragraph._p.xml)
         self.assertIn('behindDoc="1"', paragraph._p.xml)
+        self.assertIn('wp:positionH relativeFrom="page"', paragraph._p.xml)
+        self.assertIn("<wp:align>center</wp:align>", paragraph._p.xml)
         self.assertNotIn("[[facsimile]]", paragraph._p.xml)
 
 

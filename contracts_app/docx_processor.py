@@ -1293,7 +1293,14 @@ def _replace_literal_in_paragraph(paragraph, literal: str, replacement: str = ""
     return len(matches)
 
 
-def _build_anchor_from_inline(inline, *, x_offset_emu: int = 0, y_offset_emu: int = 0):
+def _build_anchor_from_inline(
+    inline,
+    *,
+    x_offset_emu: int = 0,
+    y_offset_emu: int = 0,
+    x_relative_from: str = "column",
+    x_align: str | None = None,
+):
     from docx.oxml import OxmlElement
 
     anchor = OxmlElement("wp:anchor")
@@ -1314,10 +1321,15 @@ def _build_anchor_from_inline(inline, *, x_offset_emu: int = 0, y_offset_emu: in
     anchor.append(simple_pos)
 
     position_h = OxmlElement("wp:positionH")
-    position_h.set("relativeFrom", "column")
-    pos_offset_h = OxmlElement("wp:posOffset")
-    pos_offset_h.text = str(int(x_offset_emu))
-    position_h.append(pos_offset_h)
+    position_h.set("relativeFrom", x_relative_from)
+    if x_align:
+        align_h = OxmlElement("wp:align")
+        align_h.text = str(x_align)
+        position_h.append(align_h)
+    else:
+        pos_offset_h = OxmlElement("wp:posOffset")
+        pos_offset_h.text = str(int(x_offset_emu))
+        position_h.append(pos_offset_h)
     anchor.append(position_h)
 
     position_v = OxmlElement("wp:positionV")
@@ -1368,9 +1380,11 @@ def _append_floating_image_run(
     paragraph,
     image_bytes: bytes,
     *,
-    width_cm: float | None = 4.0,
+    width_cm: float | None = None,
     x_offset_cm: float = 0,
     y_offset_cm: float = 0,
+    x_relative_from: str = "page",
+    x_align: str | None = "center",
 ) -> None:
     from docx.image.exceptions import UnexpectedEndOfFileError, UnrecognizedImageError
 
@@ -1394,6 +1408,8 @@ def _append_floating_image_run(
         inline,
         x_offset_emu=int(Cm(x_offset_cm).emu),
         y_offset_emu=int(Cm(y_offset_cm).emu),
+        x_relative_from=x_relative_from,
+        x_align=x_align,
     )
     drawing.remove(inline)
     drawing.append(anchor)
@@ -1404,9 +1420,11 @@ def insert_floating_image_at_placeholder(
     image_bytes: bytes,
     *,
     placeholder: str = "[[facsimile]]",
-    width_cm: float | None = 4.0,
+    width_cm: float | None = None,
     x_offset_cm: float = 0,
     y_offset_cm: float = 0,
+    x_relative_from: str = "page",
+    x_align: str | None = "center",
 ) -> bytes:
     if not file_bytes or not image_bytes or not str(placeholder or "").strip():
         return file_bytes
@@ -1424,6 +1442,8 @@ def insert_floating_image_at_placeholder(
                 width_cm=width_cm,
                 x_offset_cm=x_offset_cm,
                 y_offset_cm=y_offset_cm,
+                x_relative_from=x_relative_from,
+                x_align=x_align,
             )
         inserted = True
 

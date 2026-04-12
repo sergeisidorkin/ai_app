@@ -340,9 +340,9 @@ def _sum_decimal_values(values) -> Decimal:
 def _proposal_multi_asset_column_widths_pct(asset_count: int) -> list[float]:
     if asset_count <= 0:
         return []
-    fixed_total = Decimal("84.0")
     fixed_columns = [Decimal("15.5"), Decimal("40"), Decimal("7")]
-    trailing_columns = [Decimal("6"), Decimal("15.5")]
+    trailing_columns = [Decimal("6"), Decimal("10")]
+    fixed_total = sum(fixed_columns + trailing_columns, Decimal("0"))
     asset_width = (Decimal("100.0") - fixed_total) / Decimal(str(asset_count))
     widths = fixed_columns + [asset_width] * asset_count + trailing_columns
     return [float(width) for width in widths]

@@ -362,6 +362,37 @@ def generate_and_store_proposal_pdf(user, proposal, *, source_url: str) -> dict[
     return store_generated_pdf_document(user, proposal, pdf_bytes)
 
 
+def store_existing_proposal_docx_bytes(user, proposal, docx_bytes: bytes) -> dict[str, str]:
+    docx_name = str(getattr(proposal, "docx_file_name", "") or "").strip()
+    raw_link = str(getattr(proposal, "docx_file_link", "") or "").strip()
+    media_url = str(getattr(settings, "MEDIA_URL", "") or "").strip()
+
+    if raw_link:
+        if media_url and raw_link.startswith(media_url):
+            relative_path = raw_link[len(media_url):].lstrip("/")
+            local_media_path = Path(settings.MEDIA_ROOT) / relative_path
+            local_media_path.parent.mkdir(parents=True, exist_ok=True)
+            local_media_path.write_bytes(docx_bytes)
+            return {
+                "docx_name": docx_name or local_media_path.name,
+                "docx_path": raw_link,
+                "output_dir": str(local_media_path.parent),
+            }
+
+        cloud_user = _get_cloud_upload_user(user)
+        if not cloud_user:
+            raise RuntimeError("Не найден пользователь с подключенным облачным хранилищем для загрузки DOCX.")
+        if not cloud_upload_file(cloud_user, raw_link, docx_bytes):
+            raise RuntimeError("Не удалось обновить DOCX в рабочей папке ТКП.")
+        return {
+            "docx_name": docx_name or posixpath.basename(raw_link),
+            "docx_path": raw_link,
+            "output_dir": posixpath.dirname(raw_link) or "/",
+        }
+
+    return store_generated_documents(user, proposal, docx_bytes, None)
+
+
 def store_generated_documents(user, proposal, docx_bytes: bytes, pdf_bytes: bytes | None = None) -> dict[str, str]:
     paths = build_proposal_workspace_document_paths(proposal)
     cloud_user = _get_cloud_upload_user(user)
