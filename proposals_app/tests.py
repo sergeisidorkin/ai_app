@@ -567,7 +567,7 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertEqual(table_spec["rows"][1][1]["text"], "Геолог, Партнер")
         self.assertTrue(table_spec["rows"][1][1]["no_wrap"])
         self.assertEqual(table_spec["rows"][1][-2]["text"], "6")
-        self.assertEqual(table_spec["rows"][7][0]["text"], "ИТОГО в договор, рубли без НДС с учётом доп. скидки")
+        self.assertEqual(table_spec["rows"][8][0]["text"], "ИТОГО в договор, рубли без НДС с учётом доп. скидки")
 
     def test_resolve_budget_table_omits_asset_column_for_single_asset(self):
         proposal = ProposalRegistration.objects.create(
