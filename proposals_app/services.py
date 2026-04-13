@@ -1,9 +1,17 @@
 import logging
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
+import requests
 from django.conf import settings
 
+from core.cloud_storage import (
+    CloudStorageNotReadyError,
+    download_file as cloud_download_file,
+    get_any_connected_service_user,
+    is_nextcloud_primary,
+)
 from letters_app.services import get_effective_template, render_subject, render_template
 from notifications_app.email_delivery import EmailDeliveryError, send_notification_email
 from notifications_app.services import (
@@ -103,6 +111,51 @@ def _build_proposal_email(proposal, *, sender):
     }
 
 
+def _get_proposal_attachment_cloud_user(user):
+    if is_nextcloud_primary():
+        return user or SimpleNamespace(username="nextcloud-system")
+
+    from yandexdisk_app.models import YandexDiskAccount
+
+    if user is not None and YandexDiskAccount.objects.filter(user=user, access_token__gt="").exists():
+        return user
+    try:
+        return get_any_connected_service_user()
+    except CloudStorageNotReadyError as exc:
+        raise EmailDeliveryError(str(exc)) from exc
+
+
+def _load_proposal_pdf_attachment(proposal, *, sender):
+    pdf_name = str(getattr(proposal, "pdf_file_name", "") or "").strip()
+    raw_link = str(getattr(proposal, "pdf_file_link", "") or "").strip()
+    if not pdf_name or not raw_link:
+        raise EmailDeliveryError("Для ТКП не указан PDF-файл для вложения.")
+
+    media_url = str(getattr(settings, "MEDIA_URL", "") or "").strip()
+    if media_url and raw_link.startswith(media_url):
+        relative_path = raw_link[len(media_url):].lstrip("/")
+        local_media_path = Path(settings.MEDIA_ROOT) / relative_path
+        if not local_media_path.exists():
+            raise EmailDeliveryError("Локальная копия PDF-файла ТКП для вложения не найдена.")
+        pdf_bytes = local_media_path.read_bytes()
+    elif raw_link.startswith(("http://", "https://")):
+        try:
+            response = requests.get(raw_link, timeout=30)
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise EmailDeliveryError(f"Не удалось скачать PDF-файл ТКП для вложения: {exc}") from exc
+        pdf_bytes = response.content or b""
+    else:
+        cloud_user = _get_proposal_attachment_cloud_user(sender)
+        if not cloud_user:
+            raise EmailDeliveryError("Не найден пользователь с подключенным облачным хранилищем для чтения PDF.")
+        _mime_type, pdf_bytes = cloud_download_file(cloud_user, raw_link)
+
+    if not pdf_bytes:
+        raise EmailDeliveryError("PDF-файл ТКП для вложения пустой или недоступен.")
+    return (pdf_name, pdf_bytes, "application/pdf")
+
+
 def _append_error(aggregate, *, channel, recipient_label, error_message):
     error_payload = {
         "recipient": recipient_label,
@@ -163,6 +216,20 @@ def send_proposal_dispatch_emails(*, proposals, sender, delivery_channels):
         recipient_label = f"{message_payload['tkp_id']} -> {recipient_email or 'без email'}"
         recipient = SimpleNamespace(email=recipient_email)
         proposal_sent = False
+        try:
+            attachments = [_load_proposal_pdf_attachment(proposal, sender=sender)]
+        except EmailDeliveryError as exc:
+            for channel in delivery_channels:
+                email_delivery["attempted"] += 1
+                channel_summary = email_delivery["channels"][channel]
+                channel_summary["attempted"] += 1
+                _append_error(
+                    email_delivery,
+                    channel=channel,
+                    recipient_label=recipient_label,
+                    error_message=str(exc),
+                )
+            continue
 
         for channel in delivery_channels:
             email_delivery["attempted"] += 1
@@ -189,6 +256,7 @@ def send_proposal_dispatch_emails(*, proposals, sender, delivery_channels):
                     from_email=delivery_options.get("from_email"),
                     connection=delivery_options.get("connection"),
                     reply_to=delivery_options.get("reply_to"),
+                    attachments=attachments,
                 )
                 email_delivery["sent"] += 1
                 channel_summary["sent"] += 1

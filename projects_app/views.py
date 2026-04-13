@@ -1299,6 +1299,9 @@ def participation_request(request):
                 participation_response="",
                 participation_response_at=None,
             )
+            from worktime_app.services import ensure_direction_head_request_assignments
+
+            ensure_direction_head_request_assignments(selected_performers)
     except ValueError as exc:
         return JsonResponse({"ok": False, "error": str(exc)}, status=400)
 

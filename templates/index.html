@@ -1784,6 +1784,13 @@
           var sidebar = document.getElementById('worktime-second-sidebar-list');
           var titleEl = document.getElementById('worktime-section-title');
 
+          function flushWorktimeAutosaveBeforeNavigation() {
+            if (!window.__worktimeAutosave || typeof window.__worktimeAutosave.flushVisible !== 'function') {
+              return Promise.resolve(true);
+            }
+            return window.__worktimeAutosave.flushVisible();
+          }
+
           function activateSidebarLink(key) {
             if (!sidebar) return;
             sidebar.querySelectorAll('.list-group-item').forEach(function(a) { a.classList.remove('active'); });
@@ -1803,12 +1810,57 @@
             }
           }
 
+          function refreshWorktimeSectionIfVisible(key) {
+            var worktimeTab = document.getElementById('worktime');
+            var section = document.getElementById('worktime-content-' + key);
+            var panel = section && section.querySelector ? section.querySelector('[data-worktime-panel]') : null;
+            if (!worktimeTab || !section || !panel) return;
+            var worktimeVisible = worktimeTab.classList.contains('show') && worktimeTab.classList.contains('active');
+            var sectionVisible = !section.classList.contains('d-none');
+            if (!worktimeVisible || !sectionVisible) return;
+            if (!window.htmx) {
+              requestWorktimeSectionLoadIfVisible(key);
+              return;
+            }
+            window.htmx.ajax('GET', panel.getAttribute('hx-get'), {
+              target: panel,
+              swap: panel.getAttribute('hx-swap') || 'innerHTML'
+            });
+          }
+
+          function requestActiveWorktimeSectionLoad() {
+            var activeLink = sidebar && sidebar.querySelector('.list-group-item.active');
+            var activeKey = activeLink ? activeLink.dataset.worktimeSection : 'personal-timesheet';
+            var eventName = WORKTIME_LOAD_EVENTS[activeKey];
+            if (eventName) {
+              document.body.dispatchEvent(new Event(eventName));
+            }
+          }
+
+          function requestWorktimeLayoutRefresh() {
+            [0, 120, 300, 600].forEach(function (delay) {
+              window.setTimeout(function () {
+                document.body.dispatchEvent(new Event('worktime-layout-visible'));
+              }, delay);
+            });
+          }
+
+          function scheduleVisibleWorktimeSectionLoad(key) {
+            [0, 120, 300, 600].forEach(function (delay) {
+              window.setTimeout(function () {
+                refreshWorktimeSectionIfVisible(key);
+                requestWorktimeLayoutRefresh();
+              }, delay);
+            });
+          }
+
           function switchWorktimeSection(key) {
             document.querySelectorAll('.worktime-section-content').forEach(function(el) { el.classList.add('d-none'); });
             var target = document.getElementById('worktime-content-' + key);
             if (target) target.classList.remove('d-none');
             if (titleEl) titleEl.textContent = WORKTIME_TITLES[key] || '';
-            requestWorktimeSectionLoadIfVisible(key);
+            refreshWorktimeSectionIfVisible(key);
+            requestWorktimeLayoutRefresh();
           }
 
           if (sidebar) {
@@ -1816,9 +1868,12 @@
               var link = e.target.closest('.list-group-item');
               if (!link) return;
               e.preventDefault();
-              activateSidebarLink(link.dataset.worktimeSection);
-              switchWorktimeSection(link.dataset.worktimeSection);
-              if (window.UIPref) UIPref.set('worktime:section', link.dataset.worktimeSection);
+              var nextSection = link.dataset.worktimeSection;
+              flushWorktimeAutosaveBeforeNavigation().finally(function () {
+                activateSidebarLink(nextSection);
+                switchWorktimeSection(nextSection);
+                if (window.UIPref) UIPref.set('worktime:section', nextSection);
+              });
             });
           }
 
@@ -1827,11 +1882,22 @@
             if (saved && WORKTIME_TITLES[saved] && document.getElementById('worktime-content-' + saved)) {
               activateSidebarLink(saved);
               switchWorktimeSection(saved);
+            } else {
+              activateSidebarLink('personal-timesheet');
+              switchWorktimeSection('personal-timesheet');
             }
             document.querySelectorAll('[href="#worktime"][data-bs-toggle="tab"]').forEach(function (link) {
-              link.addEventListener('shown.bs.tab', function () {
+              link.addEventListener('click', function () {
                 var activeLink = sidebar && sidebar.querySelector('.list-group-item.active');
-                requestWorktimeSectionLoadIfVisible(activeLink ? activeLink.dataset.worktimeSection : 'personal-timesheet');
+                var activeKey = activeLink ? activeLink.dataset.worktimeSection : 'personal-timesheet';
+                scheduleVisibleWorktimeSectionLoad(activeKey);
+              });
+              link.addEventListener('shown.bs.tab', function () {
+                flushWorktimeAutosaveBeforeNavigation().finally(function () {
+                  var activeLink = sidebar && sidebar.querySelector('.list-group-item.active');
+                  var activeKey = activeLink ? activeLink.dataset.worktimeSection : 'personal-timesheet';
+                  scheduleVisibleWorktimeSectionLoad(activeKey);
+                });
               });
             });
             requestWorktimeSectionLoadIfVisible('personal-timesheet');

@@ -50,6 +50,7 @@ def send_notification_email(
     from_email: str | None = None,
     connection=None,
     reply_to: list[str] | None = None,
+    attachments: list[tuple[str, bytes] | tuple[str, bytes, str]] | None = None,
 ) -> dict:
     recipient_email = (getattr(recipient, "email", "") or "").strip()
     if not recipient_email:
@@ -78,6 +79,13 @@ def send_notification_email(
     )
     if looks_like_html(clean_content):
         message.attach_alternative(clean_content, "text/html")
+    for attachment in attachments or []:
+        if len(attachment) == 2:
+            filename, file_content = attachment
+            mimetype = None
+        else:
+            filename, file_content, mimetype = attachment
+        message.attach(filename, file_content, mimetype)
 
     try:
         sent_count = message.send(fail_silently=False)
