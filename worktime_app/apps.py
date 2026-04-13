@@ -6,3 +6,6 @@ class WorktimeAppConfig(AppConfig):
     name = "worktime_app"
     verbose_name = "Рабочее время"
 
+    def ready(self):
+        from . import signals  # noqa: F401
+
