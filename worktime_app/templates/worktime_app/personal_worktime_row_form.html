@@ -1,0 +1,105 @@
+<div class="modal-header">
+  <h5 class="modal-title">Добавить строку</h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+</div>
+
+<form method="post"
+      action="{% url 'personal_worktime_row_form' %}"
+      hx-post="{% url 'personal_worktime_row_form' %}"
+      hx-target="#worktime-modal .modal-content"
+      hx-swap="innerHTML"
+      data-worktime-add-row-form>
+  <div class="modal-body">
+    {% csrf_token %}
+    {{ form.week }}
+
+    <div class="mb-3">
+      <label class="form-label">{{ form.record_type.label }}</label>
+      {{ form.record_type }}
+    </div>
+
+    <div class="mb-3" data-worktime-registration-field>
+      <label class="form-label">{{ form.registration.label }}</label>
+      {{ form.registration }}
+      {% if week_label %}
+        <div class="form-text mt-2">Неделя: {{ week_label }}</div>
+      {% endif %}
+    </div>
+
+    <div class="mb-3 d-none" data-worktime-proposal-field>
+      <label class="form-label">{{ form.proposal_registration.label }}</label>
+      {{ form.proposal_registration }}
+      {% if week_label %}
+        <div class="form-text mt-2">Неделя: {{ week_label }}</div>
+      {% endif %}
+    </div>
+
+    {% if week_error %}
+      <div class="alert alert-danger py-2">
+        {{ week_error }}
+      </div>
+    {% endif %}
+
+    {% if not has_available_registrations %}
+      <div class="alert alert-secondary py-2 mb-0" data-worktime-registration-empty>
+        Для выбранной недели нет доступных проектов для добавления.
+      </div>
+    {% endif %}
+
+    {% if not has_available_proposals %}
+      <div class="alert alert-secondary py-2 mb-0 d-none" data-worktime-proposal-empty>
+        Для выбранной недели нет доступных ТКП для добавления.
+      </div>
+    {% endif %}
+
+    {% if form.errors %}
+      <div class="alert alert-danger py-2 mt-3 mb-0">
+        <div class="fw-semibold mb-1">Проверьте введенные данные:</div>
+        <ul class="mb-0">
+          {% for field, errors in form.errors.items %}
+            {% for err in errors %}
+              <li>{{ field }}: {{ err }}</li>
+            {% endfor %}
+          {% endfor %}
+          {% for err in form.non_field_errors %}
+            <li>{{ err }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary" {% if week_error %}disabled{% endif %}>Сохранить</button>
+  </div>
+</form>
+
+<script>
+  (function () {
+    var form = document.querySelector('[data-worktime-add-row-form]');
+    if (!form) return;
+
+    var recordTypeSelect = form.querySelector('[data-worktime-record-type-select]');
+    var registrationField = form.querySelector('[data-worktime-registration-field]');
+    var proposalField = form.querySelector('[data-worktime-proposal-field]');
+    var emptyProjectsAlert = form.querySelector('[data-worktime-registration-empty]');
+    var emptyProposalsAlert = form.querySelector('[data-worktime-proposal-empty]');
+    if (!recordTypeSelect || !registrationField || !proposalField) return;
+
+    function syncRegistrationVisibility() {
+      var isProject = recordTypeSelect.value === 'project';
+      var isTkp = recordTypeSelect.value === 'tkp';
+      registrationField.classList.toggle('d-none', !isProject);
+      proposalField.classList.toggle('d-none', !isTkp);
+      if (emptyProjectsAlert) {
+        emptyProjectsAlert.classList.toggle('d-none', !isProject);
+      }
+      if (emptyProposalsAlert) {
+        emptyProposalsAlert.classList.toggle('d-none', !isTkp);
+      }
+    }
+
+    recordTypeSelect.addEventListener('change', syncRegistrationVisibility);
+    syncRegistrationVisibility();
+  })();
+</script>

@@ -6,6 +6,7 @@ import tempfile
 from datetime import date, datetime
 from decimal import Decimal
 from io import BytesIO
+from pathlib import Path
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, quote, urlparse
 
@@ -912,6 +913,12 @@ class ProposalDocumentGenerationTests(TestCase):
 @override_settings(ROOT_URLCONF="proposals_app.urls")
 class ProposalDispatchSendTests(TestCase):
     def setUp(self):
+        self.temp_media = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_media.cleanup)
+        self.media_override = override_settings(MEDIA_ROOT=self.temp_media.name, MEDIA_URL="/media/")
+        self.media_override.enable()
+        self.addCleanup(self.media_override.disable)
+
         self.user = get_user_model().objects.create_user(
             username="proposal-dispatch-staff",
             email="staff@example.com",
@@ -951,6 +958,20 @@ class ProposalDispatchSendTests(TestCase):
                 "is_default": True,
             },
         )
+        self.successful_pdf_name = "ТКП_333300RU_DD_Приморское.pdf"
+        self.successful_pdf_link = f"/media/proposal_documents/2026/333300RU DD Приморское/{self.successful_pdf_name}"
+        self.successful_pdf_bytes = b"%PDF-1.4 successful proposal pdf"
+        successful_pdf_path = Path(self.temp_media.name) / self.successful_pdf_link.removeprefix("/media/")
+        successful_pdf_path.parent.mkdir(parents=True, exist_ok=True)
+        successful_pdf_path.write_bytes(self.successful_pdf_bytes)
+
+        self.failed_pdf_name = "ТКП_333400RU_DD_Балтика.pdf"
+        self.failed_pdf_link = f"/media/proposal_documents/2026/333400RU DD Балтика/{self.failed_pdf_name}"
+        self.failed_pdf_bytes = b"%PDF-1.4 failed proposal pdf"
+        failed_pdf_path = Path(self.temp_media.name) / self.failed_pdf_link.removeprefix("/media/")
+        failed_pdf_path.parent.mkdir(parents=True, exist_ok=True)
+        failed_pdf_path.write_bytes(self.failed_pdf_bytes)
+
         self.successful_proposal = ProposalRegistration.objects.create(
             number=3333,
             group_member=self.group_member,
@@ -960,6 +981,8 @@ class ProposalDispatchSendTests(TestCase):
             contact_email="recipient@example.com",
             docx_file_name="ТКП_333300RU_DD_Приморское.docx",
             docx_file_link="/Corporate Root/ТКП/2026/333300RU DD Приморское/ТКП_333300RU_DD_Приморское.docx",
+            pdf_file_name=self.successful_pdf_name,
+            pdf_file_link=self.successful_pdf_link,
             proposal_workspace_disk_path="/Corporate Root/ТКП/2026/333300RU DD Приморское",
         )
         self.failed_proposal = ProposalRegistration.objects.create(
@@ -971,6 +994,8 @@ class ProposalDispatchSendTests(TestCase):
             contact_email="",
             docx_file_name="ТКП_333400RU_DD_Балтика.docx",
             docx_file_link="/Corporate Root/ТКП/2026/333400RU DD Балтика/ТКП_333400RU_DD_Балтика.docx",
+            pdf_file_name=self.failed_pdf_name,
+            pdf_file_link=self.failed_pdf_link,
             proposal_workspace_disk_path="/Corporate Root/ТКП/2026/333400RU DD Балтика",
         )
 
@@ -1104,6 +1129,10 @@ class ProposalDispatchSendTests(TestCase):
             f"<p>Направляем проект ТКП {expected_tkp_id}</p>",
         )
         self.assertEqual(call_kwargs["from_email"], "ai@imcmontanai.ru")
+        self.assertEqual(
+            call_kwargs["attachments"],
+            [(self.successful_pdf_name, self.successful_pdf_bytes, "application/pdf")],
+        )
 
         self.successful_proposal.refresh_from_db()
         self.failed_proposal.refresh_from_db()
@@ -1111,8 +1140,8 @@ class ProposalDispatchSendTests(TestCase):
         self.assertEqual(self.successful_proposal.status, ProposalRegistration.ProposalStatus.SENT)
         self.assertEqual(self.failed_proposal.sent_date, "")
         self.assertNotEqual(self.failed_proposal.status, ProposalRegistration.ProposalStatus.SENT)
-        self.assertEqual(self.successful_proposal.pdf_file_name, "")
-        self.assertEqual(self.successful_proposal.pdf_file_link, "")
+        self.assertEqual(self.successful_proposal.pdf_file_name, self.successful_pdf_name)
+        self.assertEqual(self.successful_proposal.pdf_file_link, self.successful_pdf_link)
 
     @override_settings(PROPOSAL_SYSTEM_FROM_EMAIL="ai@imcmontanai.ru")
     @patch("proposals_app.services.send_notification_email")
@@ -1164,8 +1193,8 @@ class ProposalDispatchSendTests(TestCase):
         self.assertEqual(response.status_code, 200)
         mocked_generate_pdf.assert_not_called()
         self.successful_proposal.refresh_from_db()
-        self.assertEqual(self.successful_proposal.pdf_file_name, "")
-        self.assertEqual(self.successful_proposal.pdf_file_link, "")
+        self.assertEqual(self.successful_proposal.pdf_file_name, self.successful_pdf_name)
+        self.assertEqual(self.successful_proposal.pdf_file_link, self.successful_pdf_link)
 
 
     @patch("proposals_app.services.send_notification_email")
@@ -1275,6 +1304,32 @@ class ProposalDispatchSendTests(TestCase):
         mocked_send_notification_email.assert_not_called()
         self.successful_proposal.refresh_from_db()
         self.assertEqual(self.successful_proposal.sent_date, "")
+
+    @patch("proposals_app.services.send_notification_email")
+    def test_dispatch_send_returns_error_when_pdf_attachment_missing(self, mocked_send_notification_email):
+        self.successful_proposal.pdf_file_name = ""
+        self.successful_proposal.pdf_file_link = ""
+        self.successful_proposal.save(update_fields=["pdf_file_name", "pdf_file_link"])
+
+        response = self.client.post(
+            reverse("proposal_dispatch_send"),
+            {
+                "proposal_ids[]": [self.successful_proposal.pk],
+                "delivery_channels[]": ["system_email"],
+                "sent_at": "2026-04-04T12:30",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"], "Не удалось отправить ни одного письма.")
+        self.assertEqual(payload["email_delivery"]["failed"], 1)
+        self.assertEqual(
+            payload["email_delivery"]["channels"]["system_email"]["errors"][0]["error"],
+            "Для ТКП не указан PDF-файл для вложения.",
+        )
+        mocked_send_notification_email.assert_not_called()
 
 
 @override_settings(ROOT_URLCONF="proposals_app.urls")

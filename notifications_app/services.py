@@ -519,6 +519,9 @@ def process_participation_notification(notification, actor, action_choice):
                 participation_response=Performer.ParticipationResponse.CONFIRMED,
                 participation_response_at=now,
             )
+            from worktime_app.services import ensure_confirmed_assignments_for_performers
+
+            ensure_confirmed_assignments_for_performers(self_performer_ids)
         all_confirmed = not Performer.objects.filter(
             pk__in=all_performer_ids,
         ).exclude(
@@ -533,6 +536,10 @@ def process_participation_notification(notification, actor, action_choice):
             participation_response=response_value,
             participation_response_at=now,
         )
+        if action_choice == Notification.ActionChoice.CONFIRMED:
+            from worktime_app.services import ensure_confirmed_assignments_for_performers
+
+            ensure_confirmed_assignments_for_performers(all_performer_ids)
         is_fully_processed = True
 
     if not notification.is_read:

@@ -1,95 +1,2508 @@
-<div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
-  <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
-    <i class="bi bi-table"></i> Количество часов работы
-  </h5>
-</div>
-
-<div style="overflow-x:auto">
-  <table class="table table-sm align-middle worktime-table mb-0">
-    <colgroup>
-      <col style="width:36px">
-      {% if show_executor_column %}
-        <col>
-      {% endif %}
-      <col>
-      <col>
-      <col>
-      <col style="width:180px">
-    </colgroup>
-    <thead>
-      <tr>
-        <th>
-          {% if request.user.is_authenticated and request.user.is_staff %}
-            <div class="form-check m-0">
-              <input class="form-check-input"
-                     type="checkbox"
-                     data-worktime-master
-                     data-target-name="worktime-row-select"
-                     data-actions-id="worktime-actions"
-                     aria-label="Выделить все строки табеля">
-            </div>
-          {% endif %}
-        </th>
-        {% if show_executor_column %}
-          <th class="text-nowrap">Сотрудник</th>
-        {% endif %}
-        <th class="text-nowrap">Проект</th>
-        <th class="text-nowrap">Тип</th>
-        <th class="text-nowrap">Название</th>
-        <th class="text-nowrap">Количество часов</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for p in items %}
-        <tr data-edit-url="{% url 'worktime_edit' p.pk %}">
-          <td class="text-nowrap">
-            {% if request.user.is_authenticated and request.user.is_staff %}
-              <div class="form-check m-0">
-                <input class="form-check-input"
-                       type="checkbox"
-                       id="worktime-sel-{{ p.id }}"
-                       name="worktime-row-select"
-                       value="{{ p.id }}"
-                       aria-label="Выделить строку табеля">
-              </div>
-            {% endif %}
-          </td>
-          {% if show_executor_column %}
-            <td class="text-nowrap">{{ p.executor|default:"—" }}</td>
-          {% endif %}
-          <td class="text-nowrap">{% if p.registration %}{{ p.registration.short_uid }}{% endif %}</td>
-          <td class="text-nowrap">
-            {% if p.registration.type %}{{ p.registration.type.short_name|default:p.registration.type }}{% endif %}
-          </td>
-          <td class="text-truncate" style="max-width:200px;">{{ p.registration.name }}</td>
-          <td class="text-nowrap">{% if p.work_hours != None %}{{ p.work_hours }}{% else %}—{% endif %}</td>
-        </tr>
-      {% empty %}
-        <tr><td colspan="{% if show_executor_column %}6{% else %}5{% endif %}" class="text-muted">Пока нет данных.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
-
-{% if request.user.is_authenticated and request.user.is_staff %}
-  <div class="d-flex align-items-stretch gap-2 products-actions-row mt-2">
-    <button
-      type="button"
-      data-worktime-edit-btn
-      class="btn btn-primary btn-sm d-flex align-items-center"
-      disabled>
-      <i class="bi bi-pencil-square me-2"></i>Редактировать
-    </button>
-    <div data-worktime-actions class="d-none">
-      <div class="btn-group">
-        <button type="button"
-                data-panel-action="edit"
-                class="btn btn-outline-primary btn-sm h-100 py-0"
-                title="Изменить"
-                aria-label="Изменить">
-          <i class="bi bi-pencil-square"></i>
+{% load l10n %}
+{% if is_personal_week_view %}
+  <div class="d-flex align-items-center gap-2 mb-3 table-section-header flex-wrap">
+    <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
+      <i class="bi bi-table"></i> Фонд рабочего времени
+    </h5>
+    <form method="get"
+          class="d-flex align-items-center gap-2 flex-wrap mb-0 ms-3"
+          hx-get="{{ partial_path }}"
+          hx-target="closest [data-worktime-panel]"
+          hx-swap="innerHTML"
+          data-worktime-week-form
+          data-worktime-week-max="{{ week_max_value }}">
+      <span class="worktime-week-filter-anchor">
+        <button class="worktime-week-filter-btn text-nowrap"
+                type="button"
+                data-worktime-week-toggle>
+          <span class="worktime-week-filter-text">
+            <span class="worktime-week-filter-prefix">Неделя:</span>
+            <span data-worktime-week-label>{{ week_label }}</span>
+          </span>
+          <i class="bi bi-calendar3 worktime-week-filter-icon" aria-hidden="true"></i>
         </button>
+        <input type="hidden" name="week" value="{{ week_value }}" data-worktime-week-value>
+        <input type="text"
+               value="{{ week_value }}"
+               class="worktime-week-picker-input"
+               data-worktime-week-input
+               autocomplete="off"
+               tabindex="-1"
+               aria-hidden="true">
+      </span>
+    </form>
+  </div>
+{% else %}
+  <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
+    <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
+      <i class="bi bi-table"></i> Фонд рабочего времени
+    </h5>
+    <form method="get"
+          class="d-flex align-items-center gap-2 flex-wrap"
+          hx-get="{{ partial_path }}"
+          hx-target="closest [data-worktime-panel]"
+          hx-swap="innerHTML"
+          data-worktime-period-form
+          data-worktime-period-scale="{{ scale_value }}">
+      <input type="hidden" name="scale" value="{{ scale_value }}" data-worktime-scale-value>
+      <input type="hidden" name="period" value="{{ period_value }}" data-worktime-period-value>
+      <input type="hidden" name="hist_sort" value="{{ histogram_sort_value }}" data-worktime-hist-sort-value>
+      <input type="hidden" name="breakdown" value="{{ breakdown_value }}" data-worktime-breakdown-value>
+
+      <div class="dropdown worktime-scale-filter-wrap">
+        <button class="btn btn-outline-secondary btn-sm dropdown-toggle worktime-scale-filter-btn"
+                type="button"
+                data-bs-toggle="dropdown"
+                aria-expanded="false">
+          Масштаб:&nbsp;<span data-worktime-scale-label>{{ scale_label }}</span>
+        </button>
+        <div class="dropdown-menu p-3 project-filter-menu">
+          <div class="form-check mb-2">
+            <input class="form-check-input"
+                   type="radio"
+                   value="month"
+                   id="worktime-scale-month"
+                   name="worktime-scale-choice"
+                   data-worktime-scale-option
+                   {% if scale_value == 'month' %}checked{% endif %}>
+            <label class="form-check-label" for="worktime-scale-month">месяц</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input"
+                   type="radio"
+                   value="year"
+                   id="worktime-scale-year"
+                   name="worktime-scale-choice"
+                   data-worktime-scale-option
+                   {% if scale_value == 'year' %}checked{% endif %}>
+            <label class="form-check-label" for="worktime-scale-year">год</label>
+          </div>
+        </div>
       </div>
+
+      <div class="dropdown worktime-scale-filter-wrap">
+        <button class="btn btn-outline-secondary btn-sm dropdown-toggle worktime-scale-filter-btn"
+                type="button"
+                data-bs-toggle="dropdown"
+                aria-expanded="false">
+          Разбивка:&nbsp;<span data-worktime-breakdown-label>{{ breakdown_label }}</span>
+        </button>
+        <div class="dropdown-menu p-3 project-filter-menu">
+          <div class="form-check mb-2">
+            <input class="form-check-input"
+                   type="radio"
+                   value="employees"
+                   id="worktime-breakdown-employees"
+                   name="worktime-breakdown-choice"
+                   data-worktime-breakdown-option
+                   {% if breakdown_value == 'employees' %}checked{% endif %}>
+            <label class="form-check-label" for="worktime-breakdown-employees">по сотрудникам</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input"
+                   type="radio"
+                   value="activities"
+                   id="worktime-breakdown-activities"
+                   name="worktime-breakdown-choice"
+                   data-worktime-breakdown-option
+                   {% if breakdown_value == 'activities' %}checked{% endif %}>
+            <label class="form-check-label" for="worktime-breakdown-activities">по активностям</label>
+          </div>
+        </div>
+      </div>
+
+      <span class="worktime-week-filter-anchor worktime-period-filter-anchor">
+        <button class="worktime-week-filter-btn text-nowrap"
+                type="button"
+                data-worktime-period-toggle>
+          <span class="worktime-week-filter-text">
+            <span data-worktime-period-label>{{ period_label }}</span>
+          </span>
+          <i class="bi bi-calendar3 worktime-week-filter-icon" aria-hidden="true"></i>
+        </button>
+        <div class="worktime-period-picker-panel d-none" data-worktime-period-panel>
+          <div class="worktime-period-picker-header">
+            <button type="button" class="worktime-period-picker-nav-btn" data-worktime-period-prev aria-label="Предыдущий период">
+              <i class="bi bi-chevron-up" aria-hidden="true"></i>
+            </button>
+            <div class="worktime-period-picker-title" data-worktime-period-title>{{ period_label }}</div>
+            <button type="button" class="worktime-period-picker-nav-btn" data-worktime-period-next aria-label="Следующий период">
+              <i class="bi bi-chevron-down" aria-hidden="true"></i>
+            </button>
+          </div>
+          <div class="worktime-flatpickr-month-grid" data-worktime-period-month-grid{% if scale_value == 'year' %} hidden{% endif %}>
+            <button type="button" class="worktime-flatpickr-month-option" data-worktime-period-month="1">янв</button>
+            <button type="button" class="worktime-flatpickr-month-option" data-worktime-period-month="2">фев</button>
+            <button type="button" class="worktime-flatpickr-month-option" data-worktime-period-month="3">мар</button>
+            <button type="button" class="worktime-flatpickr-month-option" data-worktime-period-month="4">апр</button>
+            <button type="button" class="worktime-flatpickr-month-option" data-worktime-period-month="5">май</button>
+            <button type="button" class="worktime-flatpickr-month-option" data-worktime-period-month="6">июн</button>
+            <button type="button" class="worktime-flatpickr-month-option" data-worktime-period-month="7">июл</button>
+            <button type="button" class="worktime-flatpickr-month-option" data-worktime-period-month="8">авг</button>
+            <button type="button" class="worktime-flatpickr-month-option" data-worktime-period-month="9">сен</button>
+            <button type="button" class="worktime-flatpickr-month-option" data-worktime-period-month="10">окт</button>
+            <button type="button" class="worktime-flatpickr-month-option" data-worktime-period-month="11">ноя</button>
+            <button type="button" class="worktime-flatpickr-month-option" data-worktime-period-month="12">дек</button>
+          </div>
+          <div class="worktime-period-year-grid" data-worktime-period-year-grid{% if scale_value == 'month' %} hidden{% endif %}></div>
+        </div>
+      </span>
+    </form>
+  </div>
+{% endif %}
+
+{% if error_message %}
+  <div class="alert alert-danger py-2 mb-3">{{ error_message }}</div>
+{% endif %}
+<div class="alert alert-danger py-2 mb-3 d-none" data-worktime-client-error></div>
+{% if success_message %}
+  <div class="alert alert-success py-2 mb-3">{{ success_message }}</div>
+{% endif %}
+
+<form method="post"
+      hx-post="{% url 'worktime_save' %}"
+      hx-target="closest [data-worktime-panel]"
+      hx-swap="innerHTML"
+      data-worktime-save-form>
+  {% csrf_token %}
+  <input type="hidden" name="month" value="{{ month_value }}">
+  <input type="hidden" name="scope" value="{{ scope }}">
+  {% if is_personal_week_view %}
+    <input type="hidden" name="week" value="{{ week_value }}">
+  {% else %}
+    <input type="hidden" name="scale" value="{{ scale_value }}">
+    <input type="hidden" name="period" value="{{ period_value }}">
+    <input type="hidden" name="hist_sort" value="{{ histogram_sort_value }}">
+    <input type="hidden" name="breakdown" value="{{ breakdown_value }}">
+  {% endif %}
+
+  <div class="worktime-calendar-wrap">
+    <table class="table table-sm align-middle worktime-calendar-table mb-0{% if is_personal_week_view %} worktime-calendar-table-personal{% else %} worktime-calendar-table-general{% endif %}"
+           style="--worktime-flex-column-count: {{ days|length }};"
+           data-worktime-flex-column-count="{{ days|length }}">
+      <thead>
+        <tr>
+          <th class="text-nowrap worktime-sticky-col worktime-col-project">Проект</th>
+          <th class="text-nowrap worktime-sticky-col-2 worktime-col-type">Тип</th>
+          <th class="text-nowrap worktime-sticky-col-3 worktime-col-name">
+            {% if is_general_year_view or not is_personal_week_view %}
+              <span class="worktime-header-with-toggle">
+                <span>Название</span>
+                {% if not is_personal_week_view %}
+                  <button type="button"
+                          class="clf-wrap-btn"
+                          data-worktime-general-collapse-toggle
+                          title="Свернуть/развернуть строки"
+                          aria-label="Свернуть или развернуть строки табеля">
+                    <i class="bi bi-arrows-collapse"></i>
+                  </button>
+                {% endif %}
+              </span>
+            {% else %}
+              Название
+            {% endif %}
+          </th>
+          {% for day in days %}
+            <th class="text-center worktime-day-head text-nowrap">
+              {% if day.header_label %}
+                {{ day.header_label }}
+              {% elif not is_personal_week_view %}
+                <span class="worktime-general-day-head-weekday">{{ day.weekday_label }}</span>
+                <span class="worktime-general-day-head-date">{{ day.day_number }}</span>
+              {% else %}
+                {{ day.weekday_label }}, {{ day.day_number }}
+              {% endif %}
+            </th>
+          {% endfor %}
+          <th class="text-nowrap text-end worktime-total-head">Итого</th>
+          {% if not is_personal_week_view %}
+            <th class="worktime-hist-head" aria-label="Гистограмма">
+              <span class="worktime-hist-sort-controls">
+                <button type="button"
+                        class="clf-wrap-btn{% if histogram_sort_value == 'desc' %} active{% endif %}"
+                        data-worktime-hist-sort-btn="desc"
+                        data-worktime-hist-sort-active="{% if histogram_sort_value == 'desc' %}1{% else %}0{% endif %}"
+                        title="Сортировать по убыванию"
+                        aria-label="Сортировать по убыванию">
+                  <i class="bi bi-caret-down-fill"></i>
+                </button>
+                <button type="button"
+                        class="clf-wrap-btn{% if histogram_sort_value == 'asc' %} active{% endif %}"
+                        data-worktime-hist-sort-btn="asc"
+                        data-worktime-hist-sort-active="{% if histogram_sort_value == 'asc' %}1{% else %}0{% endif %}"
+                        title="Сортировать по возрастанию"
+                        aria-label="Сортировать по возрастанию">
+                  <i class="bi bi-caret-up-fill"></i>
+                </button>
+              </span>
+            </th>
+          {% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% if is_personal_week_view %}
+          {% if rows %}
+            {% for row in rows %}
+              <tr{% if row.assignment.record_type != 'project' %} class="worktime-non-project-row"{% endif %}>
+                {% if row.display_mode == 'registry' %}
+                  <td class="text-nowrap worktime-sticky-col{% if row.is_tkp %} worktime-tkp-registry-cell{% endif %}">
+                    <input type="hidden" name="assignment_ids" value="{{ row.assignment.id }}">
+                    {{ row.project_code }}
+                  </td>
+                  <td class="text-nowrap worktime-sticky-col-2{% if row.is_tkp %} worktime-tkp-registry-cell{% endif %}">
+                    {{ row.type_label }}
+                  </td>
+                  <td class="text-nowrap worktime-sticky-col-3 worktime-col-name-cell{% if row.is_tkp %} worktime-tkp-registry-cell{% endif %}">
+                    <span class="worktime-name-cell-content{% if row.is_tkp %} worktime-tkp-registry-cell{% endif %}">{{ row.name_label }}</span>
+                  </td>
+                {% else %}
+                  <td colspan="3" class="text-nowrap worktime-sticky-col-span3 worktime-col-merged">
+                    <input type="hidden" name="assignment_ids" value="{{ row.assignment.id }}">
+                    <span class="worktime-merged-cell-content">{{ row.merged_label }}</span>
+                  </td>
+                {% endif %}
+                {% for cell in row.cells %}
+                  <td class="p-1 worktime-flex-cell">
+                    <input type="number"
+                           name="{{ cell.input_name }}"
+                           value="{{ cell.value|default_if_none:'' }}"
+                           min="0"
+                           max="24"
+                           step="1"
+                           class="form-control form-control-sm worktime-cell-input"
+                           data-worktime-grid-input
+                           aria-label="Часы за {{ cell.date|date:'d.m.Y' }}">
+                  </td>
+                {% endfor %}
+                <td class="text-end fw-semibold worktime-total-cell" data-worktime-row-total>{{ row.total_hours|localize }}</td>
+              </tr>
+            {% endfor %}
+            <tr class="table-light fw-semibold worktime-summary-row">
+              <td colspan="3" class="text-end worktime-sticky-total"></td>
+              {% for total in column_totals %}
+                <td class="text-center worktime-flex-total-cell" data-worktime-column-total>{{ total|localize }}</td>
+              {% endfor %}
+              <td class="text-end worktime-total-cell" data-worktime-grand-total>{{ grand_total|localize }}</td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="{{ days|length|add:'4' }}" class="text-muted">Пока нет строк табеля для выбранной недели.</td>
+            </tr>
+          {% endif %}
+        {% else %}
+          {% if groups %}
+            {% for group in groups %}
+              {% for row in group.rows %}
+                <tr{% if row.assignment.record_type != 'project' %} class="worktime-non-project-row"{% endif %}
+                    data-worktime-detail-row
+                    data-worktime-group-key="{{ group.key }}">
+                  {% if row.display_mode == 'registry' %}
+                    <td class="text-nowrap worktime-sticky-col{% if row.is_tkp %} worktime-tkp-registry-cell{% endif %}">
+                      <input type="hidden" name="assignment_ids" value="{{ row.assignment.id }}">
+                      {{ row.project_code }}
+                    </td>
+                    <td class="text-nowrap worktime-sticky-col-2{% if row.is_tkp %} worktime-tkp-registry-cell{% endif %}">
+                      {{ row.type_label }}
+                    </td>
+                    <td class="text-nowrap worktime-sticky-col-3 worktime-col-name-cell{% if row.is_tkp %} worktime-tkp-registry-cell{% endif %}">
+                      <span class="worktime-name-cell-content{% if row.is_tkp %} worktime-tkp-registry-cell{% endif %}">{{ row.name_label }}</span>
+                    </td>
+                  {% else %}
+                    <td colspan="3" class="text-nowrap worktime-sticky-col-span3 worktime-col-merged">
+                      <input type="hidden" name="assignment_ids" value="{{ row.assignment.id }}">
+                      <span class="worktime-merged-cell-content">{{ row.merged_label }}</span>
+                    </td>
+                  {% endif %}
+                  {% for cell in row.cells %}
+                  <td class="text-center worktime-flex-total-cell">
+                    <span class="worktime-cell-display{% if not cell.value %} worktime-zero-display{% endif %}">{{ cell.value|default:0|localize }}</span>
+                  </td>
+                  {% endfor %}
+                  <td class="text-end fw-semibold worktime-total-cell" data-worktime-row-total>{{ row.total_hours|localize }}</td>
+                <td class="worktime-hist-cell worktime-hist-cell-bar">
+                  <div class="worktime-hist-track worktime-hist-track-secondary">
+                    <div class="worktime-hist-bar worktime-hist-bar-secondary" style="width: {{ row.histogram_width_percent }}%;"></div>
+                  </div>
+                </td>
+                </tr>
+              {% endfor %}
+              <tr class="table-light fw-semibold worktime-summary-row worktime-group-row"
+                  data-worktime-group-row
+                  data-worktime-group-key="{{ group.key }}">
+                <td colspan="3" class="worktime-sticky-total">
+                  <span class="worktime-group-label-wrap">
+                    <span class="worktime-group-label-text">{{ group.label }}</span>
+                    <button type="button"
+                            class="clf-wrap-btn"
+                            data-worktime-group-collapse-toggle
+                            data-worktime-group-key="{{ group.key }}"
+                            title="Свернуть/развернуть строки группы"
+                            aria-label="Свернуть или развернуть строки группы">
+                      <i class="bi bi-arrows-collapse"></i>
+                    </button>
+                  </span>
+                </td>
+                {% for total in group.column_totals %}
+                  <td class="text-center worktime-flex-total-cell">
+                    <span class="worktime-cell-display{% if not total %} worktime-zero-display{% endif %}">{{ total|localize }}</span>
+                  </td>
+                {% endfor %}
+                <td class="text-end worktime-total-cell">{{ group.grand_total|localize }}</td>
+                <td class="worktime-hist-cell worktime-hist-cell-bar">
+                  <div class="worktime-hist-track">
+                    <div class="worktime-hist-bar" style="width: {{ group.histogram_width_percent }}%;"></div>
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+            <tr class="fw-semibold worktime-summary-row worktime-grand-summary-row">
+              <td colspan="3" class="worktime-sticky-total">Итого</td>
+              {% for total in column_totals %}
+                <td class="text-center worktime-flex-total-cell">
+                  <span class="worktime-cell-display{% if not total %} worktime-zero-display{% endif %}">{{ total|localize }}</span>
+                </td>
+              {% endfor %}
+              <td class="text-end worktime-total-cell">{{ grand_total|localize }}</td>
+              <td class="worktime-hist-cell"></td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="{{ days|length|add:'5' }}" class="text-muted">Пока нет строк табеля для выбранного периода.</td>
+            </tr>
+          {% endif %}
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if is_personal_week_view %}
+    <div class="d-flex align-items-stretch gap-2 mt-3">
+      <button type="button"
+              class="btn btn-primary btn-sm d-flex align-items-center"
+              data-worktime-add-row-btn
+              data-worktime-add-row-url="{{ personal_add_row_url }}?week={{ week_value }}">
+        <i class="bi bi-plus-circle me-2"></i>Добавить строку
+      </button>
+    </div>
+  {% endif %}
+</form>
+
+{% if is_personal_week_view %}
+  <div class="modal fade" id="worktime-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-scrollable">
+      <div class="modal-content"></div>
     </div>
   </div>
 {% endif %}
+
+<style>
+  .worktime-week-filter-anchor {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .worktime-week-filter-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .75rem;
+    min-width: 272px;
+    min-height: 38px;
+    padding: .375rem .75rem;
+    border: 1px solid #ced4da;
+    border-radius: .375rem;
+    background: #fff;
+    color: #212529;
+    font-size: .9375rem;
+    line-height: 1.5;
+    box-shadow: none;
+  }
+
+  .worktime-scale-filter-btn {
+    display: inline-flex;
+    align-items: center;
+    min-height: 38px;
+    padding: .375rem .75rem;
+    font-size: .9375rem;
+    line-height: 1.5;
+  }
+
+  .worktime-scale-filter-wrap {
+    margin-left: .5rem;
+  }
+
+  .worktime-scale-filter-btn:hover {
+    background: #adb5bd;
+    border-color: #adb5bd;
+    color: #fff;
+  }
+
+  .worktime-scale-filter-btn.show,
+  .worktime-scale-filter-btn:active,
+  .worktime-scale-filter-btn.show:hover,
+  .worktime-scale-filter-btn:active:hover {
+    background: #adb5bd;
+    border-color: #adb5bd;
+    color: #fff;
+    box-shadow: none;
+  }
+
+  .worktime-week-filter-text {
+    display: inline-flex;
+    align-items: center;
+    gap: .35rem;
+    min-width: 0;
+  }
+
+  .worktime-week-filter-prefix {
+    color: #495057;
+    font-weight: 400;
+  }
+
+  .worktime-week-filter-btn:hover {
+    background: #fff;
+    border-color: #adb5bd;
+  }
+
+  .worktime-week-filter-btn:focus-visible {
+    outline: 0;
+    border-color: #86b7fe;
+    box-shadow: 0 0 0 .25rem rgba(13, 110, 253, .25);
+  }
+
+  .worktime-week-filter-icon {
+    flex: 0 0 auto;
+    font-size: .95rem;
+    color: #212529;
+  }
+
+  .worktime-week-picker-input {
+    position: absolute;
+    top: calc(100% + 2px);
+    left: 0;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+    border: 0;
+    padding: 0;
+  }
+
+  .worktime-period-filter-anchor {
+    position: relative;
+  }
+
+  .worktime-period-picker-panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 1080;
+    width: 320px;
+    padding: .625rem;
+    border: 1px solid #dee2e6;
+    border-radius: .5rem;
+    background: #fff;
+    box-shadow: 0 .35rem .85rem rgba(33, 37, 41, .10);
+  }
+
+  .worktime-period-picker-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .5rem;
+    padding: 0 8px .45rem;
+  }
+
+  .worktime-period-picker-title {
+    font-size: .875rem;
+    font-weight: 500;
+    color: #212529;
+  }
+
+  .worktime-period-picker-nav-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #495057;
+  }
+
+  .worktime-period-picker-nav-btn:hover {
+    color: #212529;
+  }
+
+  .worktime-period-year-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: .3rem;
+  }
+
+  .worktime-calendar-wrap {
+    overflow-x: auto;
+    max-width: 100%;
+  }
+
+  .worktime-calendar-table {
+    --worktime-grid-color: #dee2e6;
+    --worktime-active-cell-color: var(--bs-primary, #075D94);
+    --worktime-project-width: 90px;
+    --worktime-type-width: 50px;
+    --worktime-name-width: 160px;
+    --worktime-flex-width: 36px;
+    --worktime-total-width: 72px;
+    --worktime-hist-width: 72px;
+    --worktime-type-sticky-left: 90px;
+    --worktime-name-sticky-left: 140px;
+    white-space: nowrap;
+    border-collapse: separate;
+    border-spacing: 0;
+    width: 100%;
+    table-layout: fixed;
+  }
+
+  .worktime-calendar-table th,
+  .worktime-calendar-table td {
+    vertical-align: middle;
+  }
+
+  .worktime-day-head {
+    min-width: 56px;
+  }
+
+  .worktime-general-day-head-weekday,
+  .worktime-general-day-head-date {
+    display: block;
+    line-height: 1.15;
+  }
+
+  .worktime-general-day-head-weekday {
+    color: #6c757d;
+    font-size: .72rem;
+    font-weight: 400;
+    margin-bottom: .1rem;
+  }
+
+  .worktime-general-day-head-date {
+    color: #212529;
+    font-size: .85rem;
+    font-weight: 500;
+  }
+
+  .worktime-zero-display {
+    color: #d3d8dd !important;
+  }
+
+  .worktime-cell-display {
+    display: block;
+  }
+
+  .worktime-cell-input {
+    min-width: 56px;
+    text-align: center;
+    padding-left: .25rem;
+    padding-right: .25rem;
+  }
+
+  .worktime-calendar-table .worktime-col-project,
+  .worktime-calendar-table td.worktime-sticky-col {
+    width: var(--worktime-project-width);
+    min-width: 90px;
+  }
+
+  .worktime-calendar-table .worktime-col-type,
+  .worktime-calendar-table td.worktime-sticky-col-2 {
+    width: var(--worktime-type-width);
+    min-width: 50px;
+  }
+
+  .worktime-calendar-table .worktime-col-name,
+  .worktime-calendar-table td.worktime-sticky-col-3 {
+    width: var(--worktime-name-width);
+    min-width: 160px;
+  }
+
+  .worktime-calendar-table .worktime-col-name-cell {
+    overflow: hidden;
+    padding-right: .5rem;
+    position: sticky;
+    box-shadow: inset -1px 0 0 #dee2e6;
+  }
+
+  .worktime-calendar-table .worktime-col-merged {
+    width: calc(var(--worktime-project-width) + var(--worktime-type-width) + var(--worktime-name-width));
+    min-width: calc(var(--worktime-project-width) + var(--worktime-type-width) + var(--worktime-name-width));
+    overflow: hidden;
+    padding-right: .5rem;
+    box-shadow: inset -1px 0 0 #dee2e6;
+  }
+
+  .worktime-calendar-table .worktime-name-cell-content {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .worktime-header-with-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .5rem;
+    width: 100%;
+  }
+
+  .worktime-header-with-toggle [data-worktime-general-collapse-toggle] {
+    position: relative;
+    display: inline-flex;
+    vertical-align: text-top;
+    top: 1px;
+    right: auto;
+    bottom: auto;
+    width: 16px;
+    height: 16px;
+    font-size: .65rem;
+    border-radius: 3px;
+    margin-left: 8px;
+    margin-right: 4px;
+    flex: 0 0 auto;
+  }
+
+  .worktime-hist-sort-controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+  }
+
+  .worktime-hist-sort-controls [data-worktime-hist-sort-btn] {
+    position: relative;
+    display: inline-flex;
+    vertical-align: text-top;
+    top: 0;
+    right: auto;
+    bottom: auto;
+    width: 16px;
+    height: 16px;
+    font-size: .65rem;
+    border-radius: 3px;
+    flex: 0 0 auto;
+  }
+
+  .worktime-group-label-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .5rem;
+    width: 100%;
+  }
+
+  .worktime-group-label-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .worktime-group-label-wrap [data-worktime-group-collapse-toggle] {
+    position: relative;
+    display: inline-flex;
+    vertical-align: text-top;
+    top: -1px;
+    right: auto;
+    bottom: auto;
+    width: 16px;
+    height: 16px;
+    font-size: .65rem;
+    border-radius: 3px;
+    margin-left: 8px;
+    margin-right: 4px;
+    flex: 0 0 auto;
+  }
+
+  .worktime-calendar-table .worktime-tkp-registry-cell {
+    color: #adb5bd;
+  }
+
+  .worktime-calendar-table .worktime-merged-cell-content {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .worktime-calendar-table .worktime-day-head {
+    width: var(--worktime-flex-width);
+    min-width: var(--worktime-flex-width);
+  }
+
+  .worktime-calendar-table .worktime-flex-cell,
+  .worktime-calendar-table .worktime-flex-total-cell {
+    width: var(--worktime-flex-width);
+    min-width: var(--worktime-flex-width);
+    box-sizing: border-box;
+  }
+
+  .worktime-calendar-table .worktime-total-head,
+  .worktime-calendar-table .worktime-total-cell {
+    width: var(--worktime-total-width);
+    min-width: var(--worktime-total-width);
+  }
+
+  .worktime-calendar-table .worktime-hist-head,
+  .worktime-calendar-table .worktime-hist-cell {
+    width: var(--worktime-hist-width);
+    min-width: var(--worktime-hist-width);
+  }
+
+  .worktime-calendar-table-general {
+    min-width: 0;
+  }
+
+  .worktime-calendar-table-general .worktime-day-head,
+  .worktime-calendar-table-general .worktime-flex-total-cell {
+    padding-left: .2rem;
+    padding-right: .2rem;
+  }
+
+  .worktime-calendar-table-general .worktime-col-project,
+  .worktime-calendar-table-general .worktime-col-type,
+  .worktime-calendar-table-general .worktime-col-name,
+  .worktime-calendar-table-general td.worktime-sticky-col,
+  .worktime-calendar-table-general td.worktime-sticky-col-2,
+  .worktime-calendar-table-general td.worktime-sticky-col-3,
+  .worktime-calendar-table-general .worktime-day-head,
+  .worktime-calendar-table-general .worktime-flex-total-cell,
+  .worktime-calendar-table-general .worktime-total-head,
+  .worktime-calendar-table-general .worktime-total-cell {
+    box-sizing: border-box;
+  }
+
+  .worktime-calendar-table-general .worktime-total-cell {
+    padding-right: .2rem;
+  }
+
+  .worktime-calendar-table-general .worktime-hist-head,
+  .worktime-calendar-table-general .worktime-hist-cell {
+    box-sizing: border-box;
+    padding-left: .35rem;
+    padding-right: .35rem;
+  }
+
+  .worktime-calendar-table-personal {
+    --worktime-flex-width: 56px;
+    --worktime-total-width: 80px;
+    min-width: calc(90px + 50px + 160px + 80px + (56px * var(--worktime-flex-column-count, 1)));
+  }
+
+  .worktime-calendar-table .worktime-flex-cell {
+    position: relative;
+    padding: 0 !important;
+    background: #fff;
+  }
+
+  .worktime-calendar-table tbody tr:hover > td:not(.worktime-sticky-total),
+  .worktime-calendar-table tbody tr:focus-within > td:not(.worktime-sticky-total) {
+    background: #f8f9fb;
+  }
+
+  .worktime-calendar-table tbody tr.worktime-non-project-row:not(:hover):not(:focus-within) > td:not(.worktime-sticky-total) {
+    background: #fff;
+  }
+
+  .worktime-calendar-table .worktime-summary-row:hover > td,
+  .worktime-calendar-table .worktime-summary-row:focus-within > td {
+    background: rgb(246, 250, 254) !important;
+  }
+
+  .worktime-calendar-table .worktime-grand-summary-row:hover > td,
+  .worktime-calendar-table .worktime-grand-summary-row:focus-within > td {
+    background: #e3e9f0 !important;
+  }
+
+  .worktime-calendar-table .worktime-flex-cell:focus-within::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border: 2px solid var(--worktime-active-cell-color);
+    pointer-events: none;
+    z-index: 3;
+  }
+
+  .worktime-calendar-table .worktime-day-head,
+  .worktime-calendar-table .worktime-flex-cell,
+  .worktime-calendar-table .worktime-flex-total-cell,
+  .worktime-calendar-table .worktime-total-head,
+  .worktime-calendar-table .worktime-total-cell,
+  .worktime-calendar-table .worktime-hist-head,
+  .worktime-calendar-table .worktime-hist-cell {
+    border-right: 1px solid var(--worktime-grid-color);
+    border-bottom: 1px solid var(--worktime-grid-color);
+  }
+
+  .worktime-calendar-table .worktime-day-head,
+  .worktime-calendar-table .worktime-total-head,
+  .worktime-calendar-table .worktime-hist-head {
+    border-top: 1px solid var(--worktime-grid-color);
+  }
+
+  .worktime-calendar-table .worktime-day-head {
+    border-top: 0;
+    border-left: 0;
+    border-right: 0;
+  }
+
+  .worktime-calendar-table .worktime-flex-cell:first-of-type,
+  .worktime-calendar-table .worktime-flex-total-cell:first-of-type {
+    border-left: 1px solid var(--worktime-grid-color);
+  }
+
+  .worktime-calendar-table .worktime-total-head {
+    border-top: 0;
+    border-left: 0;
+    border-right: 0;
+    background: #fff;
+    text-align: center !important;
+  }
+
+  .worktime-calendar-table .worktime-hist-head {
+    border-top: 0;
+    border-left: 0;
+    border-right: 0;
+    background: #fff;
+  }
+
+  .worktime-calendar-table .worktime-total-cell {
+    border-left: 0;
+    background: #fff;
+    padding-right: .75rem;
+    text-align: center !important;
+  }
+
+  .worktime-calendar-table .worktime-hist-cell {
+    border-left: 0;
+    background: #fff;
+  }
+
+  .worktime-calendar-table .worktime-summary-row .worktime-sticky-total,
+  .worktime-calendar-table .worktime-summary-row .worktime-flex-total-cell,
+  .worktime-calendar-table .worktime-summary-row .worktime-total-cell,
+  .worktime-calendar-table .worktime-summary-row .worktime-hist-cell {
+    background: rgb(246, 250, 254);
+    border-bottom: 1px solid var(--worktime-grid-color);
+  }
+
+  .worktime-calendar-table .worktime-summary-row .worktime-sticky-total {
+    box-shadow: inset -1px 0 0 var(--worktime-grid-color);
+  }
+
+  .worktime-calendar-table .worktime-cell-input {
+    width: 100%;
+    min-width: 0;
+    min-height: 32px;
+    padding: .25rem;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    box-sizing: border-box;
+    text-align: center;
+    font: inherit;
+    font-weight: 400;
+    color: inherit;
+  }
+
+  .worktime-calendar-table .worktime-cell-input.worktime-zero-value {
+    color: #d3d8dd !important;
+    -webkit-text-fill-color: #d3d8dd;
+  }
+
+  .worktime-calendar-table .worktime-cell-input:focus {
+    outline: 0;
+    border-color: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .worktime-calendar-table .worktime-cell-input::-webkit-outer-spin-button,
+  .worktime-calendar-table .worktime-cell-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  .worktime-calendar-table .worktime-cell-input[type="number"] {
+    -moz-appearance: textfield;
+  }
+
+  .worktime-calendar-table .worktime-sticky-col {
+    left: 0;
+  }
+
+  .worktime-calendar-table .worktime-sticky-col-2 {
+    left: var(--worktime-type-sticky-left);
+  }
+
+  .worktime-calendar-table .worktime-sticky-col-3 {
+    left: var(--worktime-name-sticky-left);
+  }
+
+  .worktime-calendar-table .worktime-sticky-col-span3 {
+    position: sticky;
+    left: 0;
+    background: inherit;
+    z-index: 2;
+  }
+
+  .worktime-sticky-col,
+  .worktime-sticky-col-2,
+  .worktime-sticky-col-3 {
+    position: sticky;
+    background: inherit;
+    z-index: 2;
+  }
+
+  .worktime-group-row .worktime-sticky-total {
+    position: sticky;
+    left: 0;
+    z-index: 7;
+  }
+
+  .worktime-calendar-table-general .worktime-group-row > .worktime-sticky-total {
+    border-bottom: 0 !important;
+  }
+
+  .worktime-calendar-table-general .worktime-group-row > td:not(.worktime-sticky-total),
+  .worktime-calendar-table-general .worktime-group-row > .worktime-flex-total-cell,
+  .worktime-calendar-table-general .worktime-group-row > .worktime-total-cell {
+    position: relative;
+    border-bottom: 0 !important;
+  }
+
+  .worktime-calendar-table-general .worktime-group-row > td:not(.worktime-sticky-total)::after,
+  .worktime-calendar-table-general .worktime-group-row > .worktime-flex-total-cell::after,
+  .worktime-calendar-table-general .worktime-group-row > .worktime-total-cell::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: -1px;
+    bottom: 0;
+    height: 1px;
+    background: #495057;
+    z-index: 1;
+    pointer-events: none;
+  }
+
+  .worktime-calendar-table-general .worktime-group-row > .worktime-sticky-total::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 1px;
+    background: #495057;
+    z-index: 2;
+    pointer-events: none;
+  }
+
+  .worktime-calendar-table .worktime-grand-summary-row .worktime-sticky-total,
+  .worktime-calendar-table .worktime-grand-summary-row .worktime-flex-total-cell,
+  .worktime-calendar-table .worktime-grand-summary-row .worktime-total-cell,
+  .worktime-calendar-table .worktime-grand-summary-row .worktime-hist-cell {
+    background: #e3e9f0;
+    border-bottom: 1px solid var(--worktime-grid-color);
+  }
+
+  .worktime-hist-track {
+    width: 100%;
+    height: 10px;
+    border-radius: 999px;
+    background: rgba(7, 93, 148, .10);
+    overflow: hidden;
+  }
+
+  .worktime-hist-bar {
+    height: 100%;
+    border-radius: 999px 0 0 999px;
+    background: #075D94;
+  }
+
+  .worktime-hist-track-secondary {
+    background: rgba(108, 117, 125, .12);
+  }
+
+  .worktime-hist-bar-secondary {
+    background: #c3cbd3;
+  }
+
+  .worktime-calendar-table-general.worktime-general-collapsed tr[data-worktime-detail-row] {
+    display: none;
+  }
+
+  .worktime-sticky-total {
+    position: sticky;
+    left: 0;
+    background: var(--bs-table-bg, #fff);
+    z-index: 3;
+  }
+
+  .flatpickr-calendar .flatpickr-day.worktime-week-selected,
+  .flatpickr-calendar .flatpickr-day.worktime-week-selected:hover {
+    --worktime-week-fill: rgba(13, 110, 253, .10);
+    --worktime-week-border: rgba(13, 110, 253, .18);
+    background: transparent !important;
+    border-color: transparent !important;
+    color: inherit;
+  }
+
+  .flatpickr-calendar .flatpickr-day.worktime-week-hover,
+  .flatpickr-calendar .flatpickr-day.worktime-week-hover:hover {
+    --worktime-week-fill: #f1f3f5;
+    --worktime-week-border: #adb5bd;
+    background: transparent !important;
+    border-color: transparent !important;
+    color: inherit;
+  }
+
+  .flatpickr-calendar .flatpickr-day.worktime-week-selected::before,
+  .flatpickr-calendar .flatpickr-day.worktime-week-hover::before {
+    content: "";
+    position: absolute;
+    top: 1px;
+    bottom: 1px;
+    left: -1px;
+    right: -1px;
+    background: var(--worktime-week-fill);
+    border-top: 1px solid var(--worktime-week-border);
+    border-bottom: 1px solid var(--worktime-week-border);
+    border-radius: 0;
+    z-index: -1;
+    pointer-events: none;
+  }
+
+  .flatpickr-calendar .dayContainer .flatpickr-day.worktime-week-selected:nth-child(7n+1)::before,
+  .flatpickr-calendar .dayContainer .flatpickr-day.worktime-week-hover:nth-child(7n+1)::before {
+    left: 0;
+    border-left: 1px solid var(--worktime-week-border);
+    border-top-left-radius: .35rem;
+    border-bottom-left-radius: .35rem;
+  }
+
+  .flatpickr-calendar .dayContainer .flatpickr-day.worktime-week-selected:nth-child(7n)::before,
+  .flatpickr-calendar .dayContainer .flatpickr-day.worktime-week-hover:nth-child(7n)::before {
+    right: 0;
+    border-right: 1px solid var(--worktime-week-border);
+    border-top-right-radius: .35rem;
+    border-bottom-right-radius: .35rem;
+  }
+
+  .flatpickr-calendar {
+    width: 320px;
+    box-sizing: border-box;
+    padding: .625rem !important;
+    border: 1px solid #dee2e6;
+    border-radius: .5rem;
+    background: #fff;
+    box-shadow: 0 .35rem .85rem rgba(33, 37, 41, .10);
+    font-family: inherit;
+    font-size: .875rem;
+  }
+
+  .flatpickr-calendar.arrowTop:before,
+  .flatpickr-calendar.arrowTop:after,
+  .flatpickr-calendar.arrowBottom:before,
+  .flatpickr-calendar.arrowBottom:after {
+    display: none;
+  }
+
+  .flatpickr-months {
+    display: block;
+    height: auto !important;
+    min-height: 0;
+    margin: 0 0 .35rem;
+    padding-top: 0;
+  }
+
+  .flatpickr-calendar .flatpickr-months > .flatpickr-month {
+    display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+  }
+
+  .flatpickr-innerContainer,
+  .flatpickr-rContainer,
+  .flatpickr-weekdays,
+  .dayContainer,
+  .flatpickr-days {
+    box-sizing: border-box;
+    margin-top: 0 !important;
+    padding-top: 0 !important;
+  }
+
+  .flatpickr-innerContainer,
+  .flatpickr-rContainer,
+  .flatpickr-days {
+    width: 100%;
+  }
+
+  .flatpickr-weekdays {
+    margin-bottom: .15rem;
+    display: flex;
+    width: 100%;
+  }
+
+  .flatpickr-current-month {
+    display: none !important;
+  }
+
+  .worktime-flatpickr-header-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: .5rem;
+    padding: 0 8px;
+    margin-top: 0;
+  }
+
+  .worktime-flatpickr-header-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: .35rem;
+    padding: .25rem .375rem .25rem 0;
+    border: 1px solid transparent;
+    border-radius: .375rem;
+    background: transparent;
+    color: #212529;
+    font-size: .875rem;
+    font-weight: 500;
+  }
+
+  .worktime-flatpickr-header-btn:hover {
+    background: transparent;
+    border-color: transparent;
+  }
+
+  .worktime-flatpickr-header-btn:focus-visible {
+    outline: 0;
+    border-color: #86b7fe;
+    box-shadow: 0 0 0 .2rem rgba(13, 110, 253, .15);
+  }
+
+  .worktime-flatpickr-header-caret {
+    font-size: .65rem;
+    color: #6c757d;
+  }
+
+  .worktime-flatpickr-nav-stack {
+    display: inline-flex;
+    align-items: center;
+    gap: .35rem;
+    padding: 0;
+    margin-top: 6px;
+  }
+
+  .flatpickr-months .flatpickr-prev-month.worktime-flatpickr-nav-btn,
+  .flatpickr-months .flatpickr-next-month.worktime-flatpickr-nav-btn {
+    position: static;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: auto;
+    height: auto;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: #495057;
+  }
+
+  .flatpickr-months .flatpickr-prev-month.worktime-flatpickr-nav-btn:hover,
+  .flatpickr-months .flatpickr-next-month.worktime-flatpickr-nav-btn:hover {
+    background: transparent;
+    color: #212529;
+  }
+
+  .flatpickr-months .flatpickr-prev-month.worktime-flatpickr-nav-btn i,
+  .flatpickr-months .flatpickr-next-month.worktime-flatpickr-nav-btn i {
+    font-size: 1.05rem;
+    line-height: 1;
+    transform: none;
+  }
+
+  .worktime-flatpickr-month-panel {
+    margin: 0 0 .35rem;
+    border: 1px solid #dee2e6;
+    border-radius: .5rem;
+    background: #fff;
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .flatpickr-calendar.worktime-month-panel-open {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .flatpickr-calendar.worktime-month-panel-open .flatpickr-months {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .flatpickr-calendar.worktime-month-panel-open .flatpickr-rContainer,
+  .flatpickr-calendar.worktime-month-panel-open .worktime-flatpickr-footer {
+    display: none !important;
+  }
+
+  .flatpickr-calendar.worktime-month-panel-open .worktime-flatpickr-month-panel {
+    margin-bottom: 0;
+  }
+
+  .worktime-flatpickr-month-panel.d-none {
+    display: none !important;
+  }
+
+  .worktime-flatpickr-month-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: .3rem;
+    max-height: 140px;
+    padding: .45rem .6rem .55rem;
+    border-top: 1px solid #f1f3f5;
+    border-bottom: 1px solid #f1f3f5;
+    overflow: hidden;
+    opacity: 1;
+    transform: translateY(0) scaleY(1);
+    transform-origin: top center;
+    transition:
+      max-height 420ms cubic-bezier(0.22, 1, 0.36, 1),
+      padding-top 420ms cubic-bezier(0.22, 1, 0.36, 1),
+      padding-bottom 420ms cubic-bezier(0.22, 1, 0.36, 1),
+      border-top-width 420ms cubic-bezier(0.22, 1, 0.36, 1),
+      border-bottom-width 420ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 280ms ease,
+      transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .worktime-flatpickr-month-grid.worktime-flatpickr-month-grid-collapsed {
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    border-top-width: 0;
+    border-bottom-width: 0;
+    opacity: 0;
+    transform: translateY(-8px) scaleY(.92);
+    pointer-events: none;
+  }
+
+  .worktime-flatpickr-month-option {
+    min-height: 30px;
+    padding: .3rem .2rem;
+    border: 1px solid #dee2e6;
+    border-radius: .375rem;
+    background: #fff;
+    color: #212529;
+    font-size: .76rem;
+    line-height: 1.2;
+    text-align: center;
+  }
+
+  .worktime-flatpickr-month-option:hover {
+    background: #f8f9fa;
+    border-color: #ced4da;
+  }
+
+  .worktime-flatpickr-month-option.is-active {
+    background: rgba(13, 110, 253, .10);
+    border-color: rgba(13, 110, 253, .18);
+    color: #212529;
+    font-weight: 400;
+  }
+
+  .worktime-flatpickr-year-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    background: #fff;
+  }
+
+  .worktime-flatpickr-year-option {
+    display: block;
+    width: 100%;
+    padding: .28rem .65rem;
+    border: 0;
+    border-top: 1px solid #f1f3f5;
+    background: #f8f9fa;
+    color: #495057;
+    font-size: .78rem;
+    text-align: left;
+  }
+
+  .worktime-flatpickr-year-option:hover {
+    background: #e9ecef;
+  }
+
+  .worktime-period-picker-panel .worktime-flatpickr-current-year-option {
+    background: rgba(13, 110, 253, .10);
+    border-color: rgba(13, 110, 253, .18);
+    color: #212529;
+    font-weight: 400;
+  }
+
+  .flatpickr-calendar .worktime-flatpickr-current-year-option {
+    background: #f8f9fa;
+    border-color: transparent;
+    color: #495057;
+    font-weight: 400;
+  }
+
+  span.flatpickr-weekday {
+    flex: 0 0 calc(100% / 7);
+    width: calc(100% / 7);
+    max-width: calc(100% / 7);
+    color: #6c757d;
+    font-size: .62rem;
+    font-weight: 500;
+    line-height: 1.1;
+    padding: 0;
+    text-transform: none;
+  }
+
+  .flatpickr-days {
+    border: 0;
+    width: 100%;
+  }
+
+  .dayContainer {
+    display: flex;
+    flex-wrap: wrap;
+    width: 100%;
+    min-width: 100%;
+    max-width: 100%;
+  }
+
+  .flatpickr-day {
+    position: relative;
+    flex: 0 0 calc(100% / 7);
+    width: calc(100% / 7);
+    max-width: calc(100% / 7);
+    border-radius: .35rem;
+    border: 1px solid transparent;
+    color: #212529;
+    font-weight: 400;
+    height: 26px;
+    line-height: 24px;
+    font-size: .74rem;
+    margin: 0;
+    padding: 0;
+    z-index: 0;
+  }
+
+  .flatpickr-day:hover {
+    background: #f8f9fa;
+    border-color: #dee2e6;
+  }
+
+  .flatpickr-day.today {
+    border-color: transparent;
+  }
+
+  .flatpickr-day.today:hover {
+    background: #f8f9fa;
+    border-color: transparent;
+  }
+
+  .flatpickr-day.today::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    right: 1px;
+    bottom: 2px;
+    left: 1px;
+    border: 1px solid #adb5bd;
+    border-radius: .28rem;
+    pointer-events: none;
+  }
+
+  .flatpickr-day.today.worktime-week-selected::after,
+  .flatpickr-day.today.worktime-week-hover::after {
+    display: none;
+  }
+
+  .flatpickr-day.prevMonthDay,
+  .flatpickr-day.nextMonthDay {
+    color: #adb5bd;
+  }
+
+  .flatpickr-day.flatpickr-disabled,
+  .flatpickr-day.flatpickr-disabled:hover {
+    color: #ced4da;
+    background: transparent;
+    border-color: transparent;
+  }
+
+  .worktime-flatpickr-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: .25rem 8px 0;
+  }
+
+  .worktime-flatpickr-footer-btn {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #0d6efd;
+    font-size: .8rem;
+    font-weight: 500;
+  }
+
+  .worktime-flatpickr-footer-btn:hover {
+    color: #0a58ca;
+    text-decoration: none;
+  }
+
+  .worktime-error-bump {
+    animation: worktimeErrorBump 420ms ease;
+  }
+
+  @keyframes worktimeErrorBump {
+    0% {
+      transform: translateY(-4px);
+      opacity: .4;
+    }
+
+    100% {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+</style>
+
+<script>
+  (function () {
+    if (window.__worktimeWeekHoverInlineBound) return;
+    window.__worktimeWeekHoverInlineBound = true;
+    var WORKTIME_GENERAL_COLLAPSE_STORAGE_KEY = 'worktime.general.rows.collapsed';
+    var WORKTIME_GENERAL_GROUP_COLLAPSE_STORAGE_KEY = 'worktime.general.rows.collapsedGroups';
+    var WORKTIME_GENERAL_SCALE_STORAGE_KEY = 'worktime.general.scale';
+    var WORKTIME_GENERAL_BREAKDOWN_STORAGE_KEY = 'worktime.general.breakdown';
+    var WORKTIME_GENERAL_MONTH_PERIOD_STORAGE_KEY = 'worktime.general.period.month';
+    var WORKTIME_GENERAL_YEAR_PERIOD_STORAGE_KEY = 'worktime.general.period.year';
+    var WORKTIME_GENERAL_HIST_SORT_STORAGE_KEY = 'worktime.general.histSort';
+    var worktimeTableResizeObserver = window.__worktimeTableResizeObserver || null;
+    var worktimeAutosaveStates = window.__worktimeAutosaveStates || new WeakMap();
+    window.__worktimeAutosaveStates = worktimeAutosaveStates;
+
+    function getStoredWorktimeGeneralCollapseState() {
+      try {
+        return window.localStorage && window.localStorage.getItem(WORKTIME_GENERAL_COLLAPSE_STORAGE_KEY) === '1';
+      } catch (error) {
+        return false;
+      }
+    }
+
+    function setStoredWorktimeGeneralCollapseState(collapsed) {
+      try {
+        if (!window.localStorage) return;
+        window.localStorage.setItem(WORKTIME_GENERAL_COLLAPSE_STORAGE_KEY, collapsed ? '1' : '0');
+      } catch (error) {
+        // Ignore localStorage access failures.
+      }
+    }
+
+    function getStoredWorktimeGeneralGroupCollapseState() {
+      try {
+        if (!window.localStorage) return {};
+        var rawValue = window.localStorage.getItem(WORKTIME_GENERAL_GROUP_COLLAPSE_STORAGE_KEY);
+        if (!rawValue) return {};
+        var parsed = JSON.parse(rawValue);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+      } catch (error) {
+        return {};
+      }
+    }
+
+    function setStoredWorktimeGeneralGroupCollapseState(state) {
+      try {
+        if (!window.localStorage) return;
+        window.localStorage.setItem(WORKTIME_GENERAL_GROUP_COLLAPSE_STORAGE_KEY, JSON.stringify(state || {}));
+      } catch (error) {
+        // Ignore localStorage access failures.
+      }
+    }
+
+    function getStoredWorktimeGeneralScaleState() {
+      try {
+        if (!window.localStorage) return '';
+        var rawValue = (window.localStorage.getItem(WORKTIME_GENERAL_SCALE_STORAGE_KEY) || '').toLowerCase();
+        return rawValue === 'year' ? 'year' : (rawValue === 'month' ? 'month' : '');
+      } catch (error) {
+        return '';
+      }
+    }
+
+    function setStoredWorktimeGeneralScaleState(value) {
+      try {
+        if (!window.localStorage) return;
+        var normalized = (value || '').toLowerCase();
+        if (normalized === 'month' || normalized === 'year') {
+          window.localStorage.setItem(WORKTIME_GENERAL_SCALE_STORAGE_KEY, normalized);
+        } else {
+          window.localStorage.removeItem(WORKTIME_GENERAL_SCALE_STORAGE_KEY);
+        }
+      } catch (error) {
+        // Ignore localStorage access failures.
+      }
+    }
+
+    function getStoredWorktimeGeneralBreakdownState() {
+      try {
+        if (!window.localStorage) return '';
+        var rawValue = (window.localStorage.getItem(WORKTIME_GENERAL_BREAKDOWN_STORAGE_KEY) || '').toLowerCase();
+        return rawValue === 'activities' ? 'activities' : (rawValue === 'employees' ? 'employees' : '');
+      } catch (error) {
+        return '';
+      }
+    }
+
+    function setStoredWorktimeGeneralBreakdownState(value) {
+      try {
+        if (!window.localStorage) return;
+        var normalized = (value || '').toLowerCase();
+        if (normalized === 'employees' || normalized === 'activities') {
+          window.localStorage.setItem(WORKTIME_GENERAL_BREAKDOWN_STORAGE_KEY, normalized);
+        } else {
+          window.localStorage.removeItem(WORKTIME_GENERAL_BREAKDOWN_STORAGE_KEY);
+        }
+      } catch (error) {
+        // Ignore localStorage access failures.
+      }
+    }
+
+    function getStoredWorktimeGeneralPeriodState(scale) {
+      try {
+        if (!window.localStorage) return '';
+        if (scale === 'year') {
+          return normalizeWorktimeGeneralPeriod(window.localStorage.getItem(WORKTIME_GENERAL_YEAR_PERIOD_STORAGE_KEY) || '', 'year');
+        }
+        return normalizeWorktimeGeneralPeriod(window.localStorage.getItem(WORKTIME_GENERAL_MONTH_PERIOD_STORAGE_KEY) || '', 'month');
+      } catch (error) {
+        return '';
+      }
+    }
+
+    function setStoredWorktimeGeneralPeriodState(value, scale) {
+      try {
+        if (!window.localStorage) return;
+        var normalizedScale = normalizeWorktimeGeneralScale(scale);
+        var normalizedValue = normalizeWorktimeGeneralPeriod(value, normalizedScale);
+        if (normalizedScale === 'year') {
+          if (normalizedValue) {
+            window.localStorage.setItem(WORKTIME_GENERAL_YEAR_PERIOD_STORAGE_KEY, normalizedValue);
+          } else {
+            window.localStorage.removeItem(WORKTIME_GENERAL_YEAR_PERIOD_STORAGE_KEY);
+          }
+          return;
+        }
+        if (normalizedValue) {
+          window.localStorage.setItem(WORKTIME_GENERAL_MONTH_PERIOD_STORAGE_KEY, normalizedValue);
+        } else {
+          window.localStorage.removeItem(WORKTIME_GENERAL_MONTH_PERIOD_STORAGE_KEY);
+        }
+      } catch (error) {
+        // Ignore localStorage access failures.
+      }
+    }
+
+    function getStoredWorktimeGeneralHistSortState() {
+      try {
+        if (!window.localStorage) return '';
+        var rawValue = (window.localStorage.getItem(WORKTIME_GENERAL_HIST_SORT_STORAGE_KEY) || '').toLowerCase();
+        return rawValue === 'asc' || rawValue === 'desc' ? rawValue : '';
+      } catch (error) {
+        return '';
+      }
+    }
+
+    function setStoredWorktimeGeneralHistSortState(value) {
+      try {
+        if (!window.localStorage) return;
+        var normalized = (value || '').toLowerCase();
+        if (normalized === 'asc' || normalized === 'desc') {
+          window.localStorage.setItem(WORKTIME_GENERAL_HIST_SORT_STORAGE_KEY, normalized);
+        } else {
+          window.localStorage.removeItem(WORKTIME_GENERAL_HIST_SORT_STORAGE_KEY);
+        }
+      } catch (error) {
+        // Ignore localStorage access failures.
+      }
+    }
+
+    function normalizeWorktimeGeneralScale(value) {
+      var normalized = (value || '').toLowerCase();
+      return normalized === 'year' ? 'year' : 'month';
+    }
+
+    function normalizeWorktimeGeneralBreakdown(value) {
+      var normalized = (value || '').toLowerCase();
+      return normalized === 'activities' ? 'activities' : 'employees';
+    }
+
+    function normalizeWorktimeGeneralPeriod(value, scale) {
+      var rawValue = String(value || '').trim();
+      if (scale === 'year') {
+        var yearMatch = rawValue.match(/^(\d{4})(?:-\d{2})?$/);
+        return yearMatch ? yearMatch[1] : '';
+      }
+      var monthMatch = rawValue.match(/^(\d{4})-(\d{2})$/);
+      if (!monthMatch) return '';
+      var monthNumber = parseInt(monthMatch[2], 10);
+      if (monthNumber < 1 || monthNumber > 12) return '';
+      return monthMatch[1] + '-' + monthMatch[2];
+    }
+
+    function deriveFallbackWorktimeGeneralPeriod(value, scale) {
+      var normalizedScale = normalizeWorktimeGeneralScale(scale);
+      var normalizedValue = normalizeWorktimeGeneralPeriod(value, normalizedScale);
+      if (normalizedValue) return normalizedValue;
+      var rawValue = String(value || '').trim();
+      var yearMatch = rawValue.match(/^(\d{4})/);
+      if (normalizedScale === 'year') {
+        return yearMatch ? yearMatch[1] : '';
+      }
+      return yearMatch ? (yearMatch[1] + '-01') : '';
+    }
+
+    function normalizeWorktimeGeneralHistSort(value) {
+      var normalized = (value || '').toLowerCase();
+      return normalized === 'asc' || normalized === 'desc' ? normalized : '';
+    }
+
+    function syncStoredWorktimeGeneralPreferences(periodForm) {
+      if (!periodForm) return false;
+      var scaleField = periodForm.querySelector('[data-worktime-scale-value]');
+      var breakdownField = periodForm.querySelector('[data-worktime-breakdown-value]');
+      var sortField = periodForm.querySelector('[data-worktime-hist-sort-value]');
+      var periodField = periodForm.querySelector('[data-worktime-period-value]');
+      if (!scaleField || !breakdownField || !sortField || !periodField) return false;
+
+      scaleField.value = normalizeWorktimeGeneralScale(scaleField.value);
+      breakdownField.value = normalizeWorktimeGeneralBreakdown(breakdownField.value);
+      sortField.value = normalizeWorktimeGeneralHistSort(sortField.value);
+      periodField.value = normalizeWorktimeGeneralPeriod(periodField.value, scaleField.value)
+        || deriveFallbackWorktimeGeneralPeriod(periodField.value, scaleField.value);
+      setStoredWorktimeGeneralScaleState(scaleField.value);
+      setStoredWorktimeGeneralBreakdownState(breakdownField.value);
+      setStoredWorktimeGeneralPeriodState(periodField.value, scaleField.value);
+      setStoredWorktimeGeneralHistSortState(sortField.value);
+      periodForm.dataset.worktimePreferencesRestored = '1';
+      return false;
+    }
+
+    function getWorktimeGeneralGroups(root) {
+      var scope = root && root.querySelectorAll ? root : document;
+      var groups = [];
+      scope.querySelectorAll('.worktime-calendar-table-general').forEach(function (table) {
+        var detailRows = Array.from(table.querySelectorAll('tr[data-worktime-detail-row]'));
+        table.querySelectorAll('tr[data-worktime-group-row]').forEach(function (summaryRow) {
+          var groupKey = summaryRow.dataset.worktimeGroupKey || '';
+          groups.push({
+            key: groupKey,
+            summaryRow: summaryRow,
+            detailRows: detailRows.filter(function (row) {
+              return (row.dataset.worktimeGroupKey || '') === groupKey;
+            })
+          });
+        });
+      });
+      return groups;
+    }
+
+    function syncWorktimeGroupCollapseButtons(root, collapsedGroups) {
+      var scope = root && root.querySelectorAll ? root : document;
+      scope.querySelectorAll('[data-worktime-group-collapse-toggle]').forEach(function (button) {
+        var groupKey = button.dataset.worktimeGroupKey || '';
+        var collapsed = !!collapsedGroups[groupKey];
+        button.classList.toggle('active', collapsed);
+        button.setAttribute('aria-pressed', collapsed ? 'true' : 'false');
+        button.setAttribute('title', collapsed ? 'Развернуть строки группы' : 'Свернуть строки группы');
+        button.setAttribute('aria-label', collapsed ? 'Развернуть строки группы' : 'Свернуть строки группы');
+        var icon = button.querySelector('i');
+        if (icon) {
+          icon.className = collapsed ? 'bi bi-arrows-expand' : 'bi bi-arrows-collapse';
+        }
+      });
+    }
+
+    function syncWorktimeGeneralCollapseButtons(root, collapsedGroups) {
+      var scope = root && root.querySelectorAll ? root : document;
+      var groups = getWorktimeGeneralGroups(scope);
+      var allCollapsed = !!groups.length && groups.every(function (group) {
+        return !!collapsedGroups[group.key];
+      });
+      scope.querySelectorAll('[data-worktime-general-collapse-toggle]').forEach(function (button) {
+        button.classList.toggle('active', allCollapsed);
+        button.setAttribute('aria-pressed', allCollapsed ? 'true' : 'false');
+        button.setAttribute('title', allCollapsed ? 'Развернуть строки' : 'Свернуть строки');
+        button.setAttribute('aria-label', allCollapsed ? 'Развернуть строки табеля' : 'Свернуть строки табеля');
+        var icon = button.querySelector('i');
+        if (icon) {
+          icon.className = allCollapsed ? 'bi bi-arrows-expand' : 'bi bi-arrows-collapse';
+        }
+      });
+    }
+
+    function applyWorktimeGeneralCollapse(root) {
+      var scope = root && root.querySelectorAll ? root : document;
+      var collapsedGroups = getStoredWorktimeGeneralGroupCollapseState();
+      var legacyCollapsed = getStoredWorktimeGeneralCollapseState();
+      var groups = getWorktimeGeneralGroups(scope);
+      var effectiveCollapsedGroups = {};
+      groups.forEach(function (group) {
+        var collapsed = Object.prototype.hasOwnProperty.call(collapsedGroups, group.key)
+          ? !!collapsedGroups[group.key]
+          : legacyCollapsed;
+        effectiveCollapsedGroups[group.key] = collapsed;
+        group.detailRows.forEach(function (row) {
+          row.classList.toggle('d-none', collapsed);
+        });
+      });
+      syncWorktimeGroupCollapseButtons(scope, effectiveCollapsedGroups);
+      syncWorktimeGeneralCollapseButtons(scope, effectiveCollapsedGroups);
+    }
+
+    function bindWorktimeGeneralCollapse(root) {
+      var scope = root && root.querySelectorAll ? root : document;
+      scope.querySelectorAll('[data-worktime-general-collapse-toggle]').forEach(function (button) {
+        if (button.dataset.worktimeGeneralCollapseBound === '1') return;
+        button.dataset.worktimeGeneralCollapseBound = '1';
+        button.addEventListener('click', function () {
+          var groups = getWorktimeGeneralGroups(document);
+          var collapsedGroups = getStoredWorktimeGeneralGroupCollapseState();
+          var allCollapsed = !!groups.length && groups.every(function (group) {
+            return !!collapsedGroups[group.key];
+          });
+          var nextCollapsed = !allCollapsed;
+          var nextState = {};
+          groups.forEach(function (group) {
+            nextState[group.key] = nextCollapsed;
+          });
+          setStoredWorktimeGeneralCollapseState(nextCollapsed);
+          setStoredWorktimeGeneralGroupCollapseState(nextState);
+          applyWorktimeGeneralCollapse(document);
+          syncWorktimeTablesSoon(document);
+        });
+      });
+      scope.querySelectorAll('[data-worktime-group-collapse-toggle]').forEach(function (button) {
+        if (button.dataset.worktimeGroupCollapseBound === '1') return;
+        button.dataset.worktimeGroupCollapseBound = '1';
+        button.addEventListener('click', function () {
+          var groupKey = button.dataset.worktimeGroupKey || '';
+          var collapsedGroups = getStoredWorktimeGeneralGroupCollapseState();
+          var nextState = Object.assign({}, collapsedGroups);
+          nextState[groupKey] = !nextState[groupKey];
+          setStoredWorktimeGeneralCollapseState(false);
+          setStoredWorktimeGeneralGroupCollapseState(nextState);
+          applyWorktimeGeneralCollapse(document);
+          syncWorktimeTablesSoon(document);
+        });
+      });
+      applyWorktimeGeneralCollapse(scope);
+    }
+
+    function bindWorktimeHistogramSort(root) {
+      var scope = root && root.querySelectorAll ? root : document;
+      scope.querySelectorAll('[data-worktime-period-form]').forEach(function (periodForm) {
+        syncStoredWorktimeGeneralPreferences(periodForm);
+      });
+      scope.querySelectorAll('[data-worktime-hist-sort-btn]').forEach(function (button) {
+        if (button.dataset.worktimeHistSortBound === '1') return;
+        button.dataset.worktimeHistSortBound = '1';
+        button.addEventListener('click', function (event) {
+          event.preventDefault();
+          var panel = button.closest('[data-worktime-panel]') || document.querySelector('#worktime-content-timesheet [data-worktime-panel]');
+          var periodForm = panel && panel.querySelector ? panel.querySelector('[data-worktime-period-form]') : null;
+          var sortField = periodForm && periodForm.querySelector ? periodForm.querySelector('[data-worktime-hist-sort-value]') : null;
+          if (!periodForm || !sortField) return;
+          var nextValue = button.dataset.worktimeHistSortBtn || '';
+          if (button.dataset.worktimeHistSortActive === '1') {
+            nextValue = '';
+          }
+          sortField.value = nextValue;
+          setStoredWorktimeGeneralHistSortState(sortField.value);
+          if (!reloadWorktimePanel(panel)) {
+            if (typeof periodForm.requestSubmit === 'function') {
+              periodForm.requestSubmit();
+            } else {
+              periodForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+            }
+          }
+        });
+      });
+    }
+
+    function getWorktimeTableObserver() {
+      if (!window.ResizeObserver) return null;
+      if (worktimeTableResizeObserver) return worktimeTableResizeObserver;
+      worktimeTableResizeObserver = new ResizeObserver(function (entries) {
+        entries.forEach(function (entry) {
+          var target = entry.target;
+          var table = target && target.querySelector ? target.querySelector('.worktime-calendar-table[data-worktime-flex-column-count]') : null;
+          if (!table) return;
+          syncWorktimeTableLayout(target);
+        });
+      });
+      window.__worktimeTableResizeObserver = worktimeTableResizeObserver;
+      return worktimeTableResizeObserver;
+    }
+
+    function bindWorktimeTableObservers(root) {
+      var scope = root && root.querySelectorAll ? root : document;
+      var observer = getWorktimeTableObserver();
+      scope.querySelectorAll('.worktime-calendar-wrap').forEach(function (wrap) {
+        if (!wrap.querySelector('.worktime-calendar-table[data-worktime-flex-column-count]')) return;
+        if (!observer || wrap.dataset.worktimeResizeObserved === '1') return;
+        observer.observe(wrap);
+        wrap.dataset.worktimeResizeObserved = '1';
+      });
+    }
+
+    function resolveWorktimeTableContainerWidth(table, wrap) {
+      var candidates = [];
+      var panel = table.closest('[data-worktime-panel]');
+      var cardBody = table.closest('.card-body');
+      var section = table.closest('.worktime-section-content');
+      var worktimePane = document.getElementById('worktime');
+
+      [wrap, panel, cardBody, section, worktimePane].forEach(function (el) {
+        if (!el || !el.getBoundingClientRect) return;
+        var width = Math.floor(el.getBoundingClientRect().width || 0);
+        if (width > 0) candidates.push(width);
+      });
+
+      var viewportWidth = Math.floor(document.documentElement.clientWidth || window.innerWidth || 0);
+      if (viewportWidth > 0) candidates.push(viewportWidth);
+      if (!candidates.length) return 0;
+      return Math.min.apply(Math, candidates);
+    }
+
+    function syncWorktimeTableLayout(root) {
+      var scope = root && root.querySelectorAll ? root : document;
+      scope.querySelectorAll('.worktime-calendar-table[data-worktime-flex-column-count]').forEach(function (table) {
+        var wrap = table.closest('.worktime-calendar-wrap');
+        var flexCount = parseInt(table.dataset.worktimeFlexColumnCount || '0', 10);
+        if (!wrap || !flexCount) return;
+
+        var containerWidth = resolveWorktimeTableContainerWidth(table, wrap);
+        if (!containerWidth) return;
+
+        var minProjectWidth = 90;
+        var minTypeWidth = 50;
+        var minNameWidth = 160;
+        var minFlexWidth = table.classList.contains('worktime-calendar-table-personal') ? 56 : 36;
+        var minTotalWidth = table.classList.contains('worktime-calendar-table-personal') ? 80 : 72;
+        var minHistWidth = table.classList.contains('worktime-calendar-table-general') ? 72 : 0;
+        var minTableWidth = minProjectWidth + minTypeWidth + minNameWidth + minTotalWidth + minHistWidth + (minFlexWidth * flexCount);
+
+        if (containerWidth <= minTableWidth) {
+          table.style.setProperty('--worktime-project-width', minProjectWidth + 'px');
+          table.style.setProperty('--worktime-type-width', minTypeWidth + 'px');
+          table.style.setProperty('--worktime-name-width', minNameWidth + 'px');
+          table.style.setProperty('--worktime-flex-width', minFlexWidth + 'px');
+          table.style.setProperty('--worktime-total-width', minTotalWidth + 'px');
+          table.style.setProperty('--worktime-hist-width', minHistWidth + 'px');
+          table.style.setProperty('--worktime-type-sticky-left', minProjectWidth + 'px');
+          table.style.setProperty('--worktime-name-sticky-left', (minProjectWidth + minTypeWidth) + 'px');
+          return;
+        }
+
+        var extraWidth = containerWidth - minTableWidth;
+        var projectWidth = minProjectWidth + (extraWidth * 0.03);
+        var typeWidth = minTypeWidth + (extraWidth * 0.018);
+        var nameWidth = minNameWidth + (extraWidth * 0.07);
+        var flexWidth = minFlexWidth + ((extraWidth * 0.882) / flexCount);
+
+        table.style.setProperty('--worktime-project-width', projectWidth + 'px');
+        table.style.setProperty('--worktime-type-width', typeWidth + 'px');
+        table.style.setProperty('--worktime-name-width', nameWidth + 'px');
+        table.style.setProperty('--worktime-flex-width', flexWidth + 'px');
+        table.style.setProperty('--worktime-total-width', minTotalWidth + 'px');
+        table.style.setProperty('--worktime-hist-width', minHistWidth + 'px');
+        table.style.setProperty('--worktime-type-sticky-left', projectWidth + 'px');
+        table.style.setProperty('--worktime-name-sticky-left', (projectWidth + typeWidth) + 'px');
+      });
+    }
+
+    function syncWorktimeTablesSoon(root) {
+      window.requestAnimationFrame(function () {
+        syncWorktimeTableLayout(root);
+      });
+      window.setTimeout(function () {
+        syncWorktimeTableLayout(root);
+      }, 0);
+      window.setTimeout(function () {
+        syncWorktimeTableLayout(root);
+      }, 120);
+      window.setTimeout(function () {
+        syncWorktimeTableLayout(root);
+      }, 300);
+      bindWorktimeTableObservers(root);
+    }
+
+    function buildWorktimePanelRequestUrl(panel) {
+      if (!panel) return '';
+      var form = panel.querySelector('[data-worktime-week-form], [data-worktime-period-form]');
+      var baseUrl = (
+        form && (form.getAttribute('hx-get') || form.getAttribute('action'))
+      ) || panel.getAttribute('hx-get') || '';
+      if (!baseUrl) return '';
+      if (!form) return baseUrl;
+      var params = new URLSearchParams(new FormData(form)).toString();
+      return params ? (baseUrl + (baseUrl.indexOf('?') === -1 ? '?' : '&') + params) : baseUrl;
+    }
+
+    function renderWorktimePanelLoadingState(panel) {
+      if (!panel) return;
+      panel.innerHTML = (
+        '<div class="text-muted htmx-indicator d-inline-flex align-items-center gap-2">' +
+          '<div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>' +
+          '<span>Загрузка фонда рабочего времени...</span>' +
+        '</div>'
+      );
+    }
+
+    function reloadWorktimePanel(panel) {
+      if (!panel || !window.htmx) return false;
+      var requestUrl = buildWorktimePanelRequestUrl(panel);
+      if (!requestUrl) return false;
+      renderWorktimePanelLoadingState(panel);
+      window.htmx.ajax('GET', requestUrl, {
+        target: panel,
+        swap: panel.getAttribute('hx-swap') || 'innerHTML'
+      });
+      return true;
+    }
+
+    function reloadGeneralWorktimePanel() {
+      return reloadWorktimePanel(document.querySelector('#worktime-content-timesheet [data-worktime-panel]'));
+    }
+
+    function getWorktimeAutosaveState(form) {
+      if (!form) return null;
+      var state = worktimeAutosaveStates.get(form);
+      if (state) return state;
+      state = {
+        dirty: false,
+        saving: false,
+        timerId: null,
+        promise: Promise.resolve(true),
+        queued: false
+      };
+      worktimeAutosaveStates.set(form, state);
+      return state;
+    }
+
+    function clearWorktimeAutosaveTimer(form) {
+      var state = getWorktimeAutosaveState(form);
+      if (!state || !state.timerId) return;
+      window.clearTimeout(state.timerId);
+      state.timerId = null;
+    }
+
+    function setWorktimeAutosaveDirty(form, isDirty) {
+      var state = getWorktimeAutosaveState(form);
+      if (!state) return;
+      state.dirty = isDirty;
+      form.dataset.worktimeDirty = isDirty ? '1' : '0';
+    }
+
+    function parseAutosaveErrorMessage(response, fallbackMessage) {
+      var contentType = response.headers.get('content-type') || '';
+      if (contentType.indexOf('application/json') === -1) {
+        return response.text().then(function (text) {
+          return text || fallbackMessage;
+        }).catch(function () {
+          return fallbackMessage;
+        });
+      }
+      return response.json().then(function (data) {
+        return (data && data.error) || fallbackMessage;
+      }).catch(function () {
+        return fallbackMessage;
+      });
+    }
+
+    function requestWorktimeAutosave(form, options) {
+      if (!form) return Promise.resolve(true);
+      var state = getWorktimeAutosaveState(form);
+      var force = !!(options && options.force);
+      clearWorktimeAutosaveTimer(form);
+
+      if (!force && !state.dirty) return Promise.resolve(true);
+      if (state.saving) {
+        state.queued = true;
+        return state.promise;
+      }
+
+      state.saving = true;
+      state.queued = false;
+      var formData = new FormData(form);
+      formData.set('autosave', '1');
+      var requestUrl = form.getAttribute('hx-post') || form.getAttribute('action') || window.location.pathname;
+
+      state.promise = window.fetch(requestUrl, {
+        method: 'POST',
+        body: formData,
+        credentials: 'same-origin',
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest',
+          'HX-Request': 'true'
+        }
+      }).then(function (response) {
+        if (response.ok) {
+          setWorktimeAutosaveDirty(form, false);
+          var scopeField = form.querySelector('input[name="scope"]');
+          if (scopeField && scopeField.value === 'personal') {
+            reloadGeneralWorktimePanel();
+          }
+          return true;
+        }
+        return parseAutosaveErrorMessage(response, 'Не удалось автоматически сохранить табель.').then(function (message) {
+          console.warn(message);
+          return false;
+        });
+      }).catch(function (error) {
+        console.warn(error);
+        return false;
+      }).finally(function () {
+        state.saving = false;
+      }).then(function (result) {
+        if (state.queued) {
+          state.queued = false;
+          return requestWorktimeAutosave(form, { force: true });
+        }
+        return result;
+      });
+
+      return state.promise;
+    }
+
+    function scheduleWorktimeAutosave(form) {
+      if (!form) return;
+      var state = getWorktimeAutosaveState(form);
+      clearWorktimeAutosaveTimer(form);
+      state.timerId = window.setTimeout(function () {
+        requestWorktimeAutosave(form, { force: true });
+      }, 1500);
+    }
+
+    function flushWorktimeAutosaveForms(root, options) {
+      var scope = root && root.querySelectorAll ? root : document;
+      var forms = Array.from(scope.querySelectorAll('[data-worktime-save-form]')).filter(function (form) {
+        var state = getWorktimeAutosaveState(form);
+        return state && (state.dirty || state.saving);
+      });
+      if (!forms.length) return Promise.resolve(true);
+      return Promise.all(forms.map(function (form) {
+        return requestWorktimeAutosave(form, { force: true });
+      })).then(function (results) {
+        return results.every(Boolean);
+      });
+    }
+
+    function bindWorktimeAutosave(root) {
+      var scope = root && root.querySelectorAll ? root : document;
+      scope.querySelectorAll('[data-worktime-save-form]').forEach(function (form) {
+        if (form.dataset.worktimeAutosaveBound === '1') return;
+        form.dataset.worktimeAutosaveBound = '1';
+        form.dataset.worktimeDirty = '0';
+
+        form.addEventListener('input', function (event) {
+          if (!event.target || !event.target.matches('[data-worktime-grid-input]')) return;
+          setWorktimeAutosaveDirty(form, true);
+          scheduleWorktimeAutosave(form);
+        });
+
+        form.addEventListener('change', function (event) {
+          if (!event.target || !event.target.matches('[data-worktime-grid-input]')) return;
+          setWorktimeAutosaveDirty(form, true);
+          scheduleWorktimeAutosave(form);
+        });
+
+        form.addEventListener('submit', function () {
+          clearWorktimeAutosaveTimer(form);
+          setWorktimeAutosaveDirty(form, false);
+        });
+      });
+    }
+
+    window.__worktimeAutosave = {
+      flushVisible: function () {
+        return flushWorktimeAutosaveForms(document, { force: true });
+      },
+      flushRoot: function (root) {
+        return flushWorktimeAutosaveForms(root, { force: true });
+      }
+    };
+
+    function parseWorktimeHoursValue(input) {
+      if (!input) return 0;
+      var rawValue = String(input.value || '').trim().replace(',', '.');
+      if (!rawValue) return 0;
+      var numericValue = Number(rawValue);
+      if (!Number.isFinite(numericValue)) return 0;
+      return numericValue;
+    }
+
+    function syncWorktimeZeroInputState(input) {
+      if (!input) return;
+      var rawValue = String(input.value || '').trim().replace(',', '.');
+      var hasZeroValue = rawValue !== '' && Number(rawValue) === 0;
+      input.classList.toggle('worktime-zero-value', hasZeroValue);
+    }
+
+    function formatWorktimeTotalValue(value) {
+      if (!Number.isFinite(value)) return '0';
+      return new Intl.NumberFormat('ru-RU', {
+        useGrouping: false,
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2
+      }).format(value);
+    }
+
+    function updateWorktimeTableTotals(table) {
+      if (!table) return;
+      var dataRows = Array.from(table.querySelectorAll('tbody tr')).filter(function (row) {
+        return row.querySelector('[data-worktime-grid-input]');
+      });
+      if (!dataRows.length) return;
+
+      var columnTotals = [];
+      var grandTotal = 0;
+
+      dataRows.forEach(function (row) {
+        var rowInputs = Array.from(row.querySelectorAll('[data-worktime-grid-input]'));
+        var rowTotal = 0;
+        rowInputs.forEach(function (input, columnIndex) {
+          var value = parseWorktimeHoursValue(input);
+          rowTotal += value;
+          columnTotals[columnIndex] = (columnTotals[columnIndex] || 0) + value;
+        });
+        grandTotal += rowTotal;
+
+        var rowTotalCell = row.querySelector('[data-worktime-row-total]');
+        if (rowTotalCell) {
+          rowTotalCell.textContent = formatWorktimeTotalValue(rowTotal);
+        }
+      });
+
+      var summaryRow = table.querySelector('.worktime-summary-row');
+      if (!summaryRow) return;
+
+      Array.from(summaryRow.querySelectorAll('[data-worktime-column-total]')).forEach(function (cell, columnIndex) {
+        cell.textContent = formatWorktimeTotalValue(columnTotals[columnIndex] || 0);
+      });
+
+      var grandTotalCell = summaryRow.querySelector('[data-worktime-grand-total]');
+      if (grandTotalCell) {
+        grandTotalCell.textContent = formatWorktimeTotalValue(grandTotal);
+      }
+    }
+
+    function bindWorktimeRealtimeTotals(root) {
+      var scope = root && root.querySelectorAll ? root : document;
+      var tablesToRefresh = new Set();
+
+      scope.querySelectorAll('[data-worktime-grid-input]').forEach(function (input) {
+        var table = input.closest('.worktime-calendar-table');
+        if (table) tablesToRefresh.add(table);
+        syncWorktimeZeroInputState(input);
+        if (input.dataset.worktimeTotalsBound === '1') return;
+        input.dataset.worktimeTotalsBound = '1';
+        input.addEventListener('input', function () {
+          syncWorktimeZeroInputState(this);
+          updateWorktimeTableTotals(this.closest('.worktime-calendar-table'));
+        });
+        input.addEventListener('change', function () {
+          syncWorktimeZeroInputState(this);
+        });
+      });
+
+      tablesToRefresh.forEach(function (table) {
+        updateWorktimeTableTotals(table);
+      });
+    }
+
+    function buildEditableGrid(table) {
+      var rows = [];
+      if (!table) return rows;
+      table.querySelectorAll('tbody tr').forEach(function (rowEl) {
+        var inputs = Array.from(rowEl.querySelectorAll('[data-worktime-grid-input]'));
+        if (inputs.length) rows.push(inputs);
+      });
+      return rows;
+    }
+
+    function moveWorktimeCellFocus(input, rowShift, colShift) {
+      var table = input && input.closest ? input.closest('.worktime-calendar-table') : null;
+      if (!table) return;
+      var grid = buildEditableGrid(table);
+      var rowIndex = -1;
+      var colIndex = -1;
+
+      grid.some(function (row, currentRowIndex) {
+        var currentColIndex = row.indexOf(input);
+        if (currentColIndex === -1) return false;
+        rowIndex = currentRowIndex;
+        colIndex = currentColIndex;
+        return true;
+      });
+
+      if (rowIndex === -1 || colIndex === -1) return;
+
+      var nextRowIndex = Math.max(0, Math.min(grid.length - 1, rowIndex + rowShift));
+      var nextColIndex = colIndex + colShift;
+      var nextRow = grid[nextRowIndex] || [];
+      nextColIndex = Math.max(0, Math.min(nextRow.length - 1, nextColIndex));
+      var nextInput = nextRow[nextColIndex];
+      if (!nextInput || nextInput === input) return;
+
+      nextInput.focus();
+      if (typeof nextInput.select === 'function') nextInput.select();
+    }
+
+    function bindWorktimeCellKeyboardNavigation(root) {
+      var scope = root && root.querySelectorAll ? root : document;
+      scope.querySelectorAll('.worktime-calendar-table .worktime-cell-input').forEach(function (input) {
+        if (input.dataset.worktimeKeyboardBound === '1') return;
+        input.dataset.worktimeKeyboardBound = '1';
+        input.addEventListener('keydown', function (event) {
+          if (event.altKey || event.ctrlKey || event.metaKey) return;
+
+          if (event.key === 'ArrowLeft') {
+            event.preventDefault();
+            moveWorktimeCellFocus(this, 0, -1);
+            return;
+          }
+          if (event.key === 'ArrowRight') {
+            event.preventDefault();
+            moveWorktimeCellFocus(this, 0, 1);
+            return;
+          }
+          if (event.key === 'ArrowUp') {
+            event.preventDefault();
+            moveWorktimeCellFocus(this, -1, 0);
+            return;
+          }
+          if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            moveWorktimeCellFocus(this, 1, 0);
+            return;
+          }
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            moveWorktimeCellFocus(this, event.shiftKey ? -1 : 1, 0);
+          }
+        });
+      });
+    }
+
+    function startOfWeek(date) {
+      var value = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+      var weekday = value.getDay();
+      var shift = weekday === 0 ? -6 : 1 - weekday;
+      value.setDate(value.getDate() + shift);
+      return value;
+    }
+
+    function endOfWeek(date) {
+      var value = startOfWeek(date);
+      value.setDate(value.getDate() + 6);
+      return value;
+    }
+
+    function clearHover(calendar) {
+      if (!calendar) return;
+      calendar.querySelectorAll('.flatpickr-day.worktime-week-hover').forEach(function (el) {
+        el.classList.remove('worktime-week-hover');
+      });
+    }
+
+    function highlightWeek(calendar, dateObj) {
+      if (!calendar || !dateObj) return;
+      clearHover(calendar);
+      var weekStart = startOfWeek(dateObj);
+      var weekEnd = endOfWeek(dateObj);
+      calendar.querySelectorAll('.flatpickr-day').forEach(function (el) {
+        if (!el.dateObj) return;
+        if (el.dateObj >= weekStart && el.dateObj <= weekEnd) {
+          el.classList.add('worktime-week-hover');
+        }
+      });
+    }
+
+    document.addEventListener('mouseover', function (event) {
+      var dayEl = event.target && event.target.closest ? event.target.closest('.flatpickr-calendar .flatpickr-day') : null;
+      if (!dayEl || !dayEl.dateObj) return;
+      var calendar = dayEl.closest('.flatpickr-calendar');
+      highlightWeek(calendar, dayEl.dateObj);
+    });
+
+    document.addEventListener('mouseout', function (event) {
+      var dayEl = event.target && event.target.closest ? event.target.closest('.flatpickr-calendar .flatpickr-day') : null;
+      if (!dayEl) return;
+      var related = event.relatedTarget && event.relatedTarget.closest ? event.relatedTarget.closest('.flatpickr-calendar .flatpickr-day') : null;
+      if (related && dayEl.closest('.flatpickr-calendar') === related.closest('.flatpickr-calendar')) return;
+      clearHover(dayEl.closest('.flatpickr-calendar'));
+    });
+
+    document.addEventListener('DOMContentLoaded', function () {
+      syncWorktimeTablesSoon(document);
+      bindWorktimeHistogramSort(document);
+      bindWorktimeGeneralCollapse(document);
+      bindWorktimeAutosave(document);
+      bindWorktimeRealtimeTotals(document);
+      bindWorktimeCellKeyboardNavigation(document);
+    });
+
+    window.addEventListener('load', function () {
+      syncWorktimeTablesSoon(document);
+      bindWorktimeHistogramSort(document);
+      bindWorktimeGeneralCollapse(document);
+      bindWorktimeAutosave(document);
+      bindWorktimeRealtimeTotals(document);
+      bindWorktimeCellKeyboardNavigation(document);
+    });
+
+    document.body.addEventListener('htmx:afterSwap', function (event) {
+      syncWorktimeTablesSoon(event.target || document);
+      bindWorktimeHistogramSort(event.target || document);
+      bindWorktimeGeneralCollapse(event.target || document);
+      bindWorktimeAutosave(event.target || document);
+      bindWorktimeRealtimeTotals(event.target || document);
+      bindWorktimeCellKeyboardNavigation(event.target || document);
+    });
+
+    document.body.addEventListener('worktime-layout-visible', function () {
+      syncWorktimeTablesSoon(document);
+      bindWorktimeHistogramSort(document);
+      bindWorktimeGeneralCollapse(document);
+      bindWorktimeAutosave(document);
+      bindWorktimeRealtimeTotals(document);
+      bindWorktimeCellKeyboardNavigation(document);
+    });
+
+    document.addEventListener('click', function (event) {
+      var target = event.target;
+      if (!target || !target.closest) return;
+      if (target.closest('[data-bs-toggle="tab"]') || target.closest('[data-worktime-section]')) {
+        flushWorktimeAutosaveForms(document, { force: true });
+      }
+    }, true);
+
+    window.addEventListener('resize', function () {
+      syncWorktimeTablesSoon(document);
+    });
+
+    document.addEventListener('click', function (event) {
+      var button = event.target && event.target.closest ? event.target.closest('[data-worktime-add-row-btn]') : null;
+      if (!button) return;
+      event.preventDefault();
+      var requestUrl = button.dataset.worktimeAddRowUrl;
+      var modalEl = document.getElementById('worktime-modal');
+      if (modalEl) {
+        var sourcePanel = button.closest('[data-worktime-panel]');
+        modalEl._worktimeSourcePanel = sourcePanel || null;
+      }
+      if (!requestUrl || !window.htmx) return;
+      var flushPromise = (
+        window.__worktimeAutosave &&
+        typeof window.__worktimeAutosave.flushVisible === 'function'
+      ) ? window.__worktimeAutosave.flushVisible() : Promise.resolve(true);
+      flushPromise.finally(function () {
+        window.htmx.ajax('GET', requestUrl, {
+          target: '#worktime-modal .modal-content',
+          swap: 'innerHTML'
+        });
+      });
+    });
+
+    document.addEventListener('submit', function (event) {
+      var form = event.target && event.target.closest ? event.target.closest('[data-worktime-add-row-form]') : null;
+      if (!form) return;
+      event.preventDefault();
+      if (typeof form.reportValidity === 'function' && !form.reportValidity()) return;
+
+      var requestUrl = form.getAttribute('action') || form.getAttribute('hx-post');
+      var modalContent = document.querySelector('#worktime-modal .modal-content');
+      var submitButton = form.querySelector('button[type="submit"]');
+      if (!requestUrl || !modalContent) return;
+
+      if (submitButton) submitButton.disabled = true;
+
+      fetch(requestUrl, {
+        method: 'POST',
+        body: new FormData(form),
+        credentials: 'same-origin',
+        headers: {
+          'HX-Request': 'true',
+          'X-Requested-With': 'XMLHttpRequest'
+        }
+      })
+        .then(function (response) {
+          return response.text().then(function (html) {
+            return { response: response, html: html };
+          });
+        })
+        .then(function (result) {
+          var response = result.response;
+          var html = result.html;
+          if (response.status === 204) {
+            var modalEl = document.getElementById('worktime-modal');
+            var sourcePanel = modalEl && modalEl._worktimeSourcePanel ? modalEl._worktimeSourcePanel : null;
+            reloadWorktimePanel(sourcePanel);
+            document.body.dispatchEvent(new CustomEvent('worktime-updated', { bubbles: true }));
+            return;
+          }
+          modalContent.innerHTML = html;
+          if (window.htmx) {
+            window.htmx.process(modalContent);
+          }
+        })
+        .catch(function (error) {
+          console.error('Failed to submit add-row form', error);
+        })
+        .finally(function () {
+          if (submitButton) submitButton.disabled = false;
+        });
+    });
+
+    document.body.addEventListener('worktime-updated', function () {
+      var modalEl = document.getElementById('worktime-modal');
+      if (!modalEl || !window.bootstrap) return;
+      modalEl._worktimeSourcePanel = null;
+      var modal = window.bootstrap.Modal.getInstance(modalEl) || window.bootstrap.Modal.getOrCreateInstance(modalEl);
+      modal.hide();
+    });
+
+    document.body.addEventListener('htmx:afterRequest', function (event) {
+      var source = event.detail && event.detail.elt;
+      var form = source && source.closest ? source.closest('[data-worktime-save-form]') : null;
+      if (!form) return;
+      var xhr = event.detail && event.detail.xhr;
+      if (!xhr || xhr.status < 200 || xhr.status >= 300) return;
+      var scopeField = form.querySelector('input[name="scope"]');
+      if (scopeField && scopeField.value === 'personal') {
+        reloadGeneralWorktimePanel();
+      }
+    });
+  })();
+</script>
