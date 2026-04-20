@@ -132,6 +132,7 @@ def _ensure_person_bootstrap_rows(person, *, source="", actor=None):
             phone_type=PhoneRecord.PHONE_TYPE_MOBILE,
             region="",
             phone_number="",
+            is_primary=True,
             extension="",
             valid_from=today,
             valid_to=None,
@@ -142,8 +143,14 @@ def _ensure_person_bootstrap_rows(person, *, source="", actor=None):
         )
     else:
         phone = _bootstrap_phone(person)
-        if phone and phone.source != source:
-            PhoneRecord.objects.filter(pk=phone.pk).update(source=source)
+        if phone:
+            updates = {}
+            if phone.source != source:
+                updates["source"] = source
+            if not person.phones.filter(is_primary=True).exists():
+                updates["is_primary"] = True
+            if updates:
+                PhoneRecord.objects.filter(pk=phone.pk).update(**updates)
 
 
 def _sync_person(employee, *, actor=None):
