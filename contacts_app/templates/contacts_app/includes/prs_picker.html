@@ -1,0 +1,21 @@
+{{ field }}
+<div class="dropdown" id="{{ picker_prefix }}-prs-dropdown">
+  <button class="btn btn-outline-secondary dropdown-toggle w-100 text-start d-flex align-items-center justify-content-between emp-prs-toggle"
+          type="button"
+          id="{{ picker_prefix }}-prs-toggle"
+          data-bs-toggle="dropdown"
+          data-bs-auto-close="outside"
+          aria-expanded="false">
+    <span class="js-emp-prs-label">{{ person_record_label|default:"Выбрать ID-PRS" }}</span>
+  </button>
+  <div class="dropdown-menu p-0 project-filter-menu classifiers-bsn-filter-menu w-100 emp-prs-menu" aria-labelledby="{{ picker_prefix }}-prs-toggle">
+    <div class="ler-ac-wrap emp-prs-wrap">
+      <input type="text"
+             id="{{ picker_prefix }}-prs-search"
+             class="form-control emp-prs-search"
+             placeholder="Искать по ID-PRS и ФИО"
+             autocomplete="off">
+      <div id="{{ picker_prefix }}-prs-search-list" class="ler-ac-list classifiers-bsn-filter-search-list emp-prs-search-list"></div>
+    </div>
+  </div>
+</div>

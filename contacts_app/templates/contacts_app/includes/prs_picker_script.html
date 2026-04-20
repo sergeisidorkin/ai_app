@@ -1,0 +1,217 @@
+<script>
+(function() {
+  var formEl = document.querySelector('#contacts-modal form[data-prs-filter-options-url]') || document.currentScript.closest('form');
+  if (!formEl) return;
+  var prsUrl = formEl.dataset.prsFilterOptionsUrl || '';
+  var prsHiddenEl = formEl.querySelector('input[name="{{ field_name }}"]');
+  var prsDropdownEl = document.getElementById('{{ picker_prefix }}-prs-dropdown');
+  var prsLabelEl = prsDropdownEl ? prsDropdownEl.querySelector('.js-emp-prs-label') : null;
+  var prsSearchEl = document.getElementById('{{ picker_prefix }}-prs-search');
+  var prsSearchListEl = document.getElementById('{{ picker_prefix }}-prs-search-list');
+  var prsSearchDebounce = null;
+  var prsSearchResults = [];
+  var prsPicking = false;
+  var prsLastQuery = '';
+  var prsDefaultLoaded = false;
+
+  function escapeHtml(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function highlight(text, query) {
+    var safe = escapeHtml(text);
+    if (!query) return safe;
+    var escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return safe.replace(new RegExp('(' + escaped + ')', 'gi'), '<mark>$1</mark>');
+  }
+
+  function currentPrsValue() {
+    return prsHiddenEl ? String(prsHiddenEl.value || '').trim() : '';
+  }
+
+  function setPrsValue(id, label, item) {
+    if (prsHiddenEl) prsHiddenEl.value = id ? String(id) : '';
+    if (prsLabelEl) prsLabelEl.textContent = label || 'Выбрать ID-PRS';
+    formEl.dispatchEvent(new CustomEvent('contacts:prs-change', {
+      detail: { id: id ? String(id) : '', label: label || '', item: item || null }
+    }));
+  }
+
+  function hidePrsSearchResults() {
+    if (!prsSearchListEl) return;
+    prsSearchListEl.classList.remove('show');
+  }
+
+  function renderPrsSearchResults(query, totalCount) {
+    if (!prsSearchListEl) return;
+    if (!prsSearchResults.length) {
+      hidePrsSearchResults();
+      return;
+    }
+    var visible = prsSearchResults.slice(0, 3);
+    var html = visible.map(function(item, index) {
+      var main = highlight(item.label || '', query);
+      var sub = highlight(item.summary_label || '', query);
+      return '<div class="ler-ac-item js-emp-prs-search-item" data-idx="' + index + '">'
+        + '<div class="ler-ac-main">' + main + '</div>'
+        + (sub ? '<div class="ler-ac-sub">' + sub + '</div>' : '')
+        + '</div>';
+    }).join('');
+    var remaining = Math.max(0, Number(totalCount || prsSearchResults.length) - visible.length);
+    if (remaining > 0) {
+      html += '<div class="ler-ac-item ler-ac-more">Найдено еще ' + remaining + ' физлиц</div>';
+    }
+    prsSearchListEl.innerHTML = html;
+    prsSearchListEl.classList.add('show');
+  }
+
+  function loadPrsSuggestions(query) {
+    if (!prsUrl) return;
+    prsLastQuery = String(query || '').trim();
+    var url = prsUrl;
+    if (prsLastQuery) {
+      url += '?q=' + encodeURIComponent(prsLastQuery);
+    }
+    fetch(url, { headers: { 'X-Requested-With': 'fetch' } })
+      .then(function(response) { return response.json(); })
+      .then(function(data) {
+        prsSearchResults = data.results || [];
+        prsDefaultLoaded = !prsLastQuery;
+        renderPrsSearchResults(prsLastQuery, data.total_count || prsSearchResults.length);
+      })
+      .catch(function() {
+        prsSearchResults = [];
+        hidePrsSearchResults();
+      });
+  }
+
+  function pickPrsItem(item) {
+    var label = item && item.label ? item.label : '';
+    setPrsValue(item && item.id ? item.id : '', label, item);
+    if (prsSearchEl) prsSearchEl.value = '';
+    hidePrsSearchResults();
+    if (prsDropdownEl) {
+      var toggle = prsDropdownEl.querySelector('[data-bs-toggle="dropdown"]');
+      var dropdown = window.bootstrap && window.bootstrap.Dropdown && toggle
+        ? window.bootstrap.Dropdown.getOrCreateInstance(toggle)
+        : null;
+      if (dropdown) dropdown.hide();
+    }
+  }
+
+  if (!(prsUrl && prsHiddenEl && prsSearchEl && prsSearchListEl && prsDropdownEl)) return;
+
+  setPrsValue(currentPrsValue(), '{{ person_record_label|escapejs }}', null);
+
+  prsSearchEl.addEventListener('input', function() {
+    var query = String(prsSearchEl.value || '').trim();
+    clearTimeout(prsSearchDebounce);
+    prsSearchDebounce = setTimeout(function() {
+      loadPrsSuggestions(query);
+    }, 200);
+  });
+
+  prsSearchListEl.addEventListener('mousedown', function(event) {
+    event.preventDefault();
+    prsPicking = true;
+    var itemNode = event.target.closest('.js-emp-prs-search-item');
+    if (!itemNode) return;
+    var idx = parseInt(itemNode.dataset.idx, 10);
+    if (prsSearchResults[idx]) pickPrsItem(prsSearchResults[idx]);
+  });
+
+  prsSearchListEl.addEventListener('click', function(event) {
+    var itemNode = event.target.closest('.js-emp-prs-search-item');
+    if (!itemNode) return;
+    var idx = parseInt(itemNode.dataset.idx, 10);
+    if (prsSearchResults[idx]) pickPrsItem(prsSearchResults[idx]);
+    prsPicking = false;
+  });
+
+  prsSearchEl.addEventListener('blur', function() {
+    if (prsPicking) {
+      prsPicking = false;
+      return;
+    }
+    window.setTimeout(hidePrsSearchResults, 200);
+  });
+
+  prsSearchEl.addEventListener('focus', function() {
+    if (prsSearchResults.length) {
+      prsSearchListEl.classList.add('show');
+    } else if (!prsDefaultLoaded) {
+      loadPrsSuggestions('');
+    }
+  });
+
+  prsDropdownEl.addEventListener('shown.bs.dropdown', function() {
+    if (prsSearchEl) prsSearchEl.focus();
+    loadPrsSuggestions(String(prsSearchEl.value || '').trim());
+  });
+})();
+</script>
+<style>
+#contacts-modal .emp-prs-toggle,
+#contacts-modal .emp-prs-toggle:hover,
+#contacts-modal .emp-prs-toggle:focus,
+#contacts-modal .emp-prs-toggle:active,
+#contacts-modal .show > .emp-prs-toggle.dropdown-toggle {
+  background-color: #fff;
+  border-color: var(--bs-border-color, #dee2e6);
+  color: #212529;
+  box-shadow: none;
+}
+
+#contacts-modal .emp-prs-toggle[aria-expanded="true"],
+#contacts-modal .emp-prs-toggle:hover[aria-expanded="true"],
+#contacts-modal .show > .emp-prs-toggle.dropdown-toggle {
+  background-color: #f8f9fa;
+  border-color: var(--bs-border-color, #dee2e6);
+  color: #6c757d;
+}
+
+#contacts-modal .emp-prs-menu {
+  width: 100%;
+  min-width: 100%;
+  padding: 0;
+  overflow: hidden;
+  box-shadow: 0 .5rem 1rem rgba(0,0,0,.15);
+}
+
+#contacts-modal .emp-prs-wrap {
+  position: static;
+}
+
+#contacts-modal .emp-prs-search {
+  border: 0;
+  border-bottom: 1px solid rgba(0, 0, 0, .125);
+  border-radius: 0;
+  padding: .75rem;
+}
+
+#contacts-modal .emp-prs-search:focus {
+  box-shadow: none;
+}
+
+#contacts-modal .emp-prs-search-list.ler-ac-list {
+  position: static;
+  display: block;
+  width: 100%;
+  min-width: 100%;
+  max-height: 240px;
+  margin-top: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: .25rem 0;
+}
+
+#contacts-modal .emp-prs-search-list.ler-ac-list:not(.show) {
+  display: none;
+}
+</style>

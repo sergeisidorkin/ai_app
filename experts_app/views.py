@@ -11,7 +11,7 @@ from django.views.decorators.http import require_http_methods, require_POST
 from classifiers_app.models import TerritorialDivision
 from policy_app.models import Grade
 from .forms import ExpertSpecialtyForm, ExpertProfileForm, ExpertContractDetailsForm, _active_regions_qs
-from .models import ExpertSpecialty, ExpertProfile, ExpertProfileSpecialty
+from .models import ExpertContractDetails, ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
 
 PARTIAL_TEMPLATE = "experts_app/experts_partial.html"
 FORM_TEMPLATE = "experts_app/specialty_form.html"
@@ -48,25 +48,191 @@ def _ensure_profiles():
         ExpertProfile.objects.bulk_create(to_create)
 
 
+def _sync_profile_contact_fields(profiles):
+    updates = []
+    for profile in profiles:
+        expected_extra_email = profile.resolved_extra_email()
+        expected_extra_phone = profile.resolved_extra_phone()
+        expected_country = profile.resolved_country()
+        expected_region = profile.resolved_region()
+        if (
+            profile.extra_email == expected_extra_email
+            and profile.extra_phone == expected_extra_phone
+            and profile.country_id == getattr(expected_country, "pk", None)
+            and profile.region_id == getattr(expected_region, "pk", None)
+        ):
+            continue
+        profile.extra_email = expected_extra_email
+        profile.extra_phone = expected_extra_phone
+        profile.country = expected_country
+        profile.region = expected_region
+        updates.append(profile)
+    if updates:
+        ExpertProfile.objects.bulk_update(updates, ["extra_email", "extra_phone", "country", "region"])
+
+
+def _sync_contract_detail_records(profiles):
+    from contacts_app.models import CitizenshipRecord
+
+    person_to_profile = {}
+    profile_ids = []
+    for profile in profiles:
+        employee = getattr(profile, "employee", None)
+        person_id = getattr(employee, "person_record_id", None) if employee else None
+        if not person_id:
+            continue
+        person_to_profile[person_id] = profile
+        profile_ids.append(profile.pk)
+
+    if not person_to_profile:
+        if profile_ids:
+            ExpertContractDetails.objects.filter(expert_profile_id__in=profile_ids).delete()
+        return
+
+    def _person_birth_date(profile):
+        employee = getattr(profile, "employee", None)
+        person = getattr(employee, "person_record", None) if employee else None
+        return getattr(person, "birth_date", None)
+
+    def _person_full_name_genitive(profile):
+        employee = getattr(profile, "employee", None)
+        person = getattr(employee, "person_record", None) if employee else None
+        return getattr(person, "full_name_genitive", "") or ""
+
+    def _person_gender(profile):
+        employee = getattr(profile, "employee", None)
+        person = getattr(employee, "person_record", None) if employee else None
+        return getattr(person, "gender", "") or ""
+
+    def _calculated_citizenship(gender_value, citizenship):
+        if (getattr(citizenship, "status", "") or "").strip() != "Гражданство":
+            return ""
+        country = getattr(citizenship, "country", None)
+        country_name = (
+            getattr(country, "short_name_genitive", "")
+            or getattr(country, "short_name", "")
+            or ""
+        ).strip()
+        prefix = ExpertContractDetails.CITIZENSHIP_PREFIXES.get(gender_value or "")
+        if not prefix or not country_name:
+            return ""
+        return f"{prefix} {country_name}"
+
+    citizenships = list(
+        CitizenshipRecord.objects.select_related("country").filter(
+            person_id__in=person_to_profile.keys()
+        ).order_by("position", "id")
+    )
+    current_citizenship_ids = {item.pk for item in citizenships}
+    existing_items = {
+        item.citizenship_record_id: item
+        for item in ExpertContractDetails.objects.select_related("citizenship_record").filter(
+            citizenship_record_id__in=current_citizenship_ids
+        )
+    }
+
+    to_create = []
+    to_update = []
+    for citizenship in citizenships:
+        profile = person_to_profile.get(citizenship.person_id)
+        if not profile:
+            continue
+        existing = existing_items.get(citizenship.pk)
+        if existing is None:
+            to_create.append(
+                ExpertContractDetails(
+                    expert_profile=profile,
+                    citizenship_record=citizenship,
+                    full_name_genitive=_person_full_name_genitive(profile),
+                    gender=_person_gender(profile),
+                    citizenship=_calculated_citizenship(_person_gender(profile), citizenship),
+                    birth_date=_person_birth_date(profile),
+                )
+            )
+            continue
+        changed = False
+        if existing.expert_profile_id != profile.pk:
+            existing.expert_profile = profile
+            changed = True
+        expected_full_name_genitive = _person_full_name_genitive(profile)
+        if existing.full_name_genitive != expected_full_name_genitive:
+            existing.full_name_genitive = expected_full_name_genitive
+            changed = True
+        expected_gender = _person_gender(profile)
+        if existing.gender != expected_gender:
+            existing.gender = expected_gender
+            changed = True
+        expected_citizenship = _calculated_citizenship(expected_gender, citizenship)
+        if existing.citizenship != expected_citizenship:
+            existing.citizenship = expected_citizenship
+            changed = True
+        expected_birth_date = _person_birth_date(profile)
+        if existing.birth_date != expected_birth_date:
+            existing.birth_date = expected_birth_date
+            changed = True
+        if changed:
+            to_update.append(existing)
+
+    if to_create:
+        ExpertContractDetails.objects.bulk_create(to_create)
+    if to_update:
+        ExpertContractDetails.objects.bulk_update(
+            to_update,
+            ["expert_profile", "full_name_genitive", "gender", "citizenship", "birth_date"],
+        )
+
+    ExpertContractDetails.objects.filter(expert_profile_id__in=profile_ids).exclude(
+        citizenship_record_id__in=current_citizenship_ids
+    ).delete()
+
+
 def _experts_context():
     _ensure_profiles()
-    return {
-        "specialties": ExpertSpecialty.objects.select_related(
-            "expertise_direction", "expertise_dir",
-            "head_of_direction", "head_of_direction__user",
-        ).prefetch_related("owners").all(),
-        "profiles": ExpertProfile.objects.select_related(
-            "employee", "employee__user",
+    profiles = list(
+        ExpertProfile.objects.select_related(
+            "employee", "employee__user", "employee__person_record", "employee__managed_email_record",
             "expertise_direction",
             "grade", "country", "region",
         ).filter(
             employee__user__is_staff=True,
         ).prefetch_related(
+            "employee__person_record__emails",
+            "employee__person_record__phones",
+            "employee__person_record__residence_addresses",
             models.Prefetch(
                 "ranked_specialties",
                 queryset=ExpertProfileSpecialty.objects.select_related("specialty").order_by("rank"),
-            )
-        ).all(),
+            ),
+        ).all()
+    )
+    _sync_profile_contact_fields(profiles)
+    _sync_contract_detail_records(profiles)
+    contract_details = list(
+        ExpertContractDetails.objects.select_related(
+            "expert_profile",
+            "expert_profile__employee",
+            "expert_profile__employee__person_record",
+            "expert_profile__employee__user",
+            "citizenship_record",
+            "citizenship_record__country",
+            "citizenship_record__person",
+        ).filter(
+            expert_profile__employee__user__is_staff=True,
+            citizenship_record__is_active=True,
+        ).order_by(
+            "expert_profile__position",
+            "citizenship_record__position",
+            "citizenship_record_id",
+            "id",
+        )
+    )
+    return {
+        "specialties": ExpertSpecialty.objects.select_related(
+            "expertise_direction", "expertise_dir",
+            "head_of_direction", "head_of_direction__user",
+        ).prefetch_related("owners").all(),
+        "profiles": profiles,
+        "contract_details": contract_details,
     }
 
 
@@ -264,24 +430,39 @@ def profile_move_down(request, pk: int):
 @user_passes_test(staff_required)
 @require_http_methods(["GET", "POST"])
 def contract_details_form_edit(request, pk: int):
-    profile = get_object_or_404(ExpertProfile, pk=pk)
+    contract_detail = get_object_or_404(
+        ExpertContractDetails.objects.select_related(
+            "expert_profile",
+            "expert_profile__employee",
+            "expert_profile__employee__person_record",
+            "expert_profile__employee__user",
+            "citizenship_record",
+            "citizenship_record__country",
+        ),
+        pk=pk,
+    )
     if request.method == "GET":
-        form = ExpertContractDetailsForm(instance=profile)
+        form = ExpertContractDetailsForm(instance=contract_detail)
         return render(request, CONTRACT_DETAILS_FORM_TEMPLATE, {
-            "form": form, "profile": profile,
+            "form": form,
+            "contract_detail": contract_detail,
         })
-    old_facsimile_name = profile.facsimile_file.name if profile.facsimile_file else ""
+    old_facsimile_name = contract_detail.facsimile_file.name if contract_detail.facsimile_file else ""
     has_new_facsimile = "facsimile_file" in request.FILES
     clear_facsimile = bool(request.POST.get("facsimile_file-clear")) and not has_new_facsimile
-    form = ExpertContractDetailsForm(request.POST, request.FILES, instance=profile)
+    form = ExpertContractDetailsForm(request.POST, request.FILES, instance=contract_detail)
     if not form.is_valid():
         return render(request, CONTRACT_DETAILS_FORM_TEMPLATE, {
-            "form": form, "profile": profile,
+            "form": form,
+            "contract_detail": contract_detail,
         })
-    saved_profile = form.save()
-    new_facsimile_name = saved_profile.facsimile_file.name if saved_profile.facsimile_file else ""
+    saved_contract_detail = form.save()
+    new_facsimile_name = (
+        saved_contract_detail.facsimile_file.name
+        if saved_contract_detail.facsimile_file else ""
+    )
     if old_facsimile_name and (clear_facsimile or (has_new_facsimile and old_facsimile_name != new_facsimile_name)):
-        storage = saved_profile._meta.get_field("facsimile_file").storage
+        storage = saved_contract_detail._meta.get_field("facsimile_file").storage
         if storage.exists(old_facsimile_name):
             storage.delete(old_facsimile_name)
     return _render_updated(request)
@@ -291,10 +472,10 @@ def contract_details_form_edit(request, pk: int):
 @user_passes_test(staff_required)
 @require_http_methods(["GET"])
 def contract_facsimile_download(request, pk: int):
-    profile = get_object_or_404(ExpertProfile, pk=pk)
-    if not profile.facsimile_file:
+    contract_detail = get_object_or_404(ExpertContractDetails, pk=pk)
+    if not contract_detail.facsimile_file:
         raise Http404("Файл не найден")
-    file_path = profile.facsimile_file.path
+    file_path = contract_detail.facsimile_file.path
     if not os.path.isfile(file_path):
         raise Http404("Файл не найден на диске")
     from urllib.parse import quote

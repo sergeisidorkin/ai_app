@@ -134,17 +134,17 @@ def _load_proposal_pdf_attachment(proposal, *, sender):
     media_url = str(getattr(settings, "MEDIA_URL", "") or "").strip()
     if media_url and raw_link.startswith(media_url):
         relative_path = raw_link[len(media_url):].lstrip("/")
-        local_media_path = Path(settings.MEDIA_ROOT) / relative_path
+        media_root_path = Path(settings.MEDIA_ROOT).resolve()
+        local_media_path = (media_root_path / relative_path).resolve()
+        try:
+            local_media_path.relative_to(media_root_path)
+        except ValueError as exc:
+            raise EmailDeliveryError("Некорректный путь к локальному PDF-файлу ТКП для вложения.") from exc
         if not local_media_path.exists():
             raise EmailDeliveryError("Локальная копия PDF-файла ТКП для вложения не найдена.")
         pdf_bytes = local_media_path.read_bytes()
     elif raw_link.startswith(("http://", "https://")):
-        try:
-            response = requests.get(raw_link, timeout=30)
-            response.raise_for_status()
-        except requests.RequestException as exc:
-            raise EmailDeliveryError(f"Не удалось скачать PDF-файл ТКП для вложения: {exc}") from exc
-        pdf_bytes = response.content or b""
+        raise EmailDeliveryError("Прямые внешние ссылки на PDF-файл ТКП для вложения не поддерживаются.")
     else:
         cloud_user = _get_proposal_attachment_cloud_user(sender)
         if not cloud_user:

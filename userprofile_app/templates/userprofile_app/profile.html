@@ -151,7 +151,7 @@
             <div class="row mb-2 align-items-center">
               <div class="col-auto text-muted small" style="width:150px;">Телефон</div>
               <div class="col">
-                <input type="text" class="form-control form-control-sm" value="{% if employee %}{{ employee.phone }}{% endif %}" readonly tabindex="-1">
+                <input type="text" class="form-control form-control-sm" value="{% if employee %}{{ employee.primary_phone_display }}{% endif %}" readonly tabindex="-1">
               </div>
             </div>
             <div class="row mb-2 align-items-center">
@@ -247,11 +247,6 @@
             <label for="edit-password" class="form-label">Новый пароль</label>
             <input type="password" class="form-control" id="edit-password" name="password"
                    placeholder="Оставьте пустым, чтобы не менять">
-          </div>
-          <div class="mb-3">
-            <label for="edit-phone" class="form-label">Телефон</label>
-            <input type="text" class="form-control" id="edit-phone" name="phone"
-                   value="{% if employee %}{{ employee.phone }}{% endif %}">
           </div>
           <div class="mb-3">
             <label for="edit-organization" class="form-label">Организация</label>

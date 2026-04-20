@@ -22,13 +22,14 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
 from classifiers_app.models import BusinessEntityRecord, BusinessEntityIdentifierRecord, LegalEntityRecord, OKSMCountry, OKVCurrency
-from contacts_app.models import PersonRecord
+from contacts_app.models import CitizenshipRecord, PersonRecord
 from core.models import CloudStorageSettings
-from experts_app.models import ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
+from experts_app.models import ExpertContractDetails, ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
 from group_app.models import GroupMember, OrgUnit
 from letters_app.models import LetterTemplate
 from nextcloud_app.api import NextcloudShare
 from nextcloud_app.models import NextcloudUserLink
+from notifications_app.email_delivery import EmailDeliveryError
 from policy_app.models import (
     ExpertiseDirection,
     Grade,
@@ -63,6 +64,7 @@ from .models import (
     ProposalTemplate,
     ProposalVariable,
 )
+from .services import _load_proposal_pdf_attachment
 from .views import PROPOSAL_NEXTCLOUD_TARGETS_SESSION_KEY
 from .variable_resolver import resolve_variables
 
@@ -1331,6 +1333,31 @@ class ProposalDispatchSendTests(TestCase):
         )
         mocked_send_notification_email.assert_not_called()
 
+    def test_load_proposal_pdf_attachment_rejects_media_path_traversal(self):
+        escaped_file = Path(self.temp_media.name).parent / "outside-secret.pdf"
+        escaped_file.write_bytes(b"secret")
+        self.successful_proposal.pdf_file_link = "/media/../outside-secret.pdf"
+        self.successful_proposal.save(update_fields=["pdf_file_link"])
+
+        with self.assertRaisesMessage(
+            EmailDeliveryError,
+            "Некорректный путь к локальному PDF-файлу ТКП для вложения.",
+        ):
+            _load_proposal_pdf_attachment(self.successful_proposal, sender=self.user)
+
+    @patch("proposals_app.services.requests.get")
+    def test_load_proposal_pdf_attachment_rejects_external_http_link(self, mocked_requests_get):
+        self.successful_proposal.pdf_file_link = "https://internal.example.local/secret.pdf"
+        self.successful_proposal.save(update_fields=["pdf_file_link"])
+
+        with self.assertRaisesMessage(
+            EmailDeliveryError,
+            "Прямые внешние ссылки на PDF-файл ТКП для вложения не поддерживаются.",
+        ):
+            _load_proposal_pdf_attachment(self.successful_proposal, sender=self.user)
+
+        mocked_requests_get.assert_not_called()
+
 
 @override_settings(ROOT_URLCONF="proposals_app.urls")
 class ProposalDispatchSignTests(TestCase):
@@ -1349,8 +1376,26 @@ class ProposalDispatchSignTests(TestCase):
         )
         self.client.force_login(self.user)
         self.employee = Employee.objects.create(user=self.user, patronymic="Иванович")
+        self.person = PersonRecord.objects.create(
+            last_name="Иванов",
+            first_name="Иван",
+            middle_name="Иванович",
+            position=1,
+        )
+        self.employee.person_record = self.person
+        self.employee.save(update_fields=["person_record"])
         self.expert_profile = ExpertProfile.objects.create(employee=self.employee, position=1)
-        self.expert_profile.facsimile_file.save(
+        self.contract_citizenship = CitizenshipRecord.objects.create(
+            person=self.person,
+            identifier="Паспорт",
+            number="123456",
+            position=1,
+        )
+        self.contract_detail = ExpertContractDetails.objects.create(
+            expert_profile=self.expert_profile,
+            citizenship_record=self.contract_citizenship,
+        )
+        self.contract_detail.facsimile_file.save(
             "facsimile.png",
             ContentFile(TEST_FACSIMILE_PNG_BYTES),
             save=True,
@@ -1498,7 +1543,7 @@ class ProposalDispatchSignTests(TestCase):
         self,
         mocked_generate_and_store_proposal_pdf,
     ):
-        self.expert_profile.facsimile_file.delete(save=True)
+        self.contract_detail.facsimile_file.delete(save=True)
 
         response = self.client.post(
             reverse("proposal_dispatch_sign_documents"),
@@ -4532,29 +4577,32 @@ class ProposalDispatchDiskColumnTests(TestCase):
 
     @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
-    def test_proposals_partial_falls_back_to_root_stripped_shared_path_when_share_target_is_missing_for_viewer_with_nextcloud(
+    def test_proposals_partial_uses_stored_target_path_when_share_api_is_silent(
         self,
         _mocked_list_user_shares,
         _mocked_get_user_share,
     ):
+        self.proposal.proposal_workspace_target_path = "/Shared/333300RU DD Тестовое ТКП"
+        self.proposal.save(update_fields=["proposal_workspace_target_path"])
+
         response = self.client.get(reverse("proposals_partial"))
 
         self.assertEqual(response.status_code, 200)
-        owner_url = f"https://cloud.example.com/apps/files/files?dir={quote(self.proposal.proposal_workspace_disk_path, safe='/')}"
-        stripped_url = (
+        expected_url = (
+            "https://cloud.example.com/apps/files/files?dir="
+            f"{quote('/Shared/333300RU DD Тестовое ТКП', safe='/')}"
+        )
+        guessed_url = (
             "https://cloud.example.com/apps/files/files?dir="
             f"{quote('/ТКП/2026/333300RU DD Тестовое ТКП', safe='/')}"
         )
-        self.assertNotContains(
-            response,
-            f'href="{owner_url}"',
-            html=False,
+        owner_url = (
+            "https://cloud.example.com/apps/files/files?dir="
+            f"{quote(self.proposal.proposal_workspace_disk_path, safe='/')}"
         )
-        self.assertContains(
-            response,
-            f'href="{stripped_url}"',
-            html=False,
-        )
+        self.assertContains(response, f'href="{expected_url}"', html=False)
+        self.assertNotContains(response, f'href="{guessed_url}"', html=False)
+        self.assertNotContains(response, f'href="{owner_url}"', html=False)
 
     @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
@@ -4593,29 +4641,25 @@ class ProposalDispatchDiskColumnTests(TestCase):
 
     @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
-    def test_proposals_partial_keeps_gray_icon_when_root_stripped_fallback_is_unavailable(
+    def test_proposals_partial_keeps_gray_icon_when_viewer_target_cannot_be_resolved(
         self,
         _mocked_list_user_shares,
         _mocked_get_user_share,
     ):
-        settings_obj = CloudStorageSettings.get_solo()
-        settings_obj.nextcloud_root_path = "/Another Root"
-        settings_obj.save(update_fields=["nextcloud_root_path"])
-
         response = self.client.get(reverse("proposals_partial"))
 
         self.assertEqual(response.status_code, 200)
-        owner_url = f"https://cloud.example.com/apps/files/files?dir={quote(self.proposal.proposal_workspace_disk_path, safe='/')}"
-        self.assertNotContains(
-            response,
-            f'href="{owner_url}"',
-            html=False,
+        owner_url = (
+            "https://cloud.example.com/apps/files/files?dir="
+            f"{quote(self.proposal.proposal_workspace_disk_path, safe='/')}"
         )
-        self.assertContains(
-            response,
-            'style="color: #ccc;"',
-            html=False,
+        guessed_url = (
+            "https://cloud.example.com/apps/files/files?dir="
+            f"{quote('/ТКП/2026/333300RU DD Тестовое ТКП', safe='/')}"
         )
+        self.assertNotContains(response, f'href="{owner_url}"', html=False)
+        self.assertNotContains(response, f'href="{guessed_url}"', html=False)
+        self.assertContains(response, 'style="color: #ccc;"', html=False)
 
     @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
@@ -4708,6 +4752,120 @@ class ProposalDispatchDiskColumnTests(TestCase):
             response,
             'href="https://cloud.example.com/s/legacy-proposal-folder"',
             html=False,
+        )
+
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_resources")
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_proposals_partial_uses_stored_file_id_editor_url_when_share_api_silent(
+        self,
+        _mocked_list_user_shares,
+        mocked_list_resources,
+        _mocked_get_user_share,
+    ):
+        self.proposal.proposal_workspace_target_path = "/Shared/333300RU DD Тестовое ТКП"
+        self.proposal.docx_file_name = "ТКП_333300RU_DD_Тестовое_ТКП.docx"
+        self.proposal.docx_file_link = (
+            f"{self.proposal.proposal_workspace_disk_path}/{self.proposal.docx_file_name}"
+        )
+        self.proposal.docx_file_id = "2068"
+        self.proposal.save(
+            update_fields=[
+                "proposal_workspace_target_path",
+                "docx_file_name",
+                "docx_file_link",
+                "docx_file_id",
+            ]
+        )
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        # No extra PROPFIND when the file id is already persisted in the DB.
+        mocked_list_resources.assert_not_called()
+        expected_url = (
+            "https://cloud.example.com/apps/files/files/2068?dir="
+            f"{quote('/Shared/333300RU DD Тестовое ТКП', safe='/')}"
+            "&amp;openfile=true"
+        )
+        self.assertContains(response, f'href="{expected_url}"', html=False)
+
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_resources")
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_proposals_partial_falls_back_to_file_redirect_url_when_target_unknown(
+        self,
+        _mocked_list_user_shares,
+        mocked_list_resources,
+        _mocked_get_user_share,
+    ):
+        # Target path is unknown (API silent, no DB value) but we still have a
+        # stable file id; Nextcloud's /f/<id> redirect works regardless of the
+        # viewer's mountpoint.
+        self.proposal.docx_file_name = "ТКП_333300RU_DD_Тестовое_ТКП.docx"
+        self.proposal.docx_file_link = (
+            f"{self.proposal.proposal_workspace_disk_path}/{self.proposal.docx_file_name}"
+        )
+        self.proposal.docx_file_id = "2068"
+        self.proposal.save(
+            update_fields=["docx_file_name", "docx_file_link", "docx_file_id"]
+        )
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        mocked_list_resources.assert_not_called()
+        self.assertContains(response, 'href="https://cloud.example.com/f/2068"', html=False)
+
+    @patch("proposals_app.views.create_proposal_workspace")
+    @patch("proposals_app.views.is_nextcloud_primary", return_value=True)
+    def test_maybe_create_workspace_persists_viewer_target_path(
+        self,
+        _mocked_is_nextcloud,
+        mocked_workspace,
+    ):
+        from types import SimpleNamespace
+
+        from proposals_app.views import _maybe_create_nextcloud_proposal_workspace
+
+        class _FakeSession(dict):
+            """dict with attribute support so `session.modified = True` works."""
+
+            modified = False
+
+        mocked_workspace.return_value = (
+            "/Corporate Root/ТКП/2026/333500RU DD Новое ТКП",
+            "/Shared/333500RU DD Новое ТКП",
+        )
+        request = SimpleNamespace(user=self.user, session=_FakeSession())
+
+        self.proposal.proposal_workspace_disk_path = ""
+        self.proposal.proposal_workspace_target_path = ""
+        self.proposal.proposal_workspace_public_url = "https://stale.example.com/s/readonly"
+        self.proposal.save(
+            update_fields=[
+                "proposal_workspace_disk_path",
+                "proposal_workspace_target_path",
+                "proposal_workspace_public_url",
+            ]
+        )
+
+        _maybe_create_nextcloud_proposal_workspace(request, self.proposal)
+
+        self.proposal.refresh_from_db()
+        self.assertEqual(
+            self.proposal.proposal_workspace_disk_path,
+            "/Corporate Root/ТКП/2026/333500RU DD Новое ТКП",
+        )
+        self.assertEqual(
+            self.proposal.proposal_workspace_target_path,
+            "/Shared/333500RU DD Новое ТКП",
+        )
+        self.assertEqual(self.proposal.proposal_workspace_public_url, "")
+        self.assertTrue(request.session.modified)
+        self.assertEqual(
+            request.session[PROPOSAL_NEXTCLOUD_TARGETS_SESSION_KEY],
+            {"/Corporate Root/ТКП/2026/333500RU DD Новое ТКП": "/Shared/333500RU DD Новое ТКП"},
         )
 
 

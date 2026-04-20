@@ -2,6 +2,7 @@ from django import forms
 from django.contrib.auth.models import User, Group
 from django.contrib.auth.password_validation import validate_password
 
+from contacts_app.models import PersonRecord
 from group_app.models import GroupMember, OrgUnit
 from policy_app.models import SUPERUSER_GROUPS
 from .models import Employee, PendingRegistration
@@ -34,20 +35,35 @@ class EmployeeForm(forms.Form):
         required=False,
         widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Отчество"}),
     )
+    person_record = forms.ModelChoiceField(
+        label="ID-PRS",
+        queryset=PersonRecord.objects.none(),
+        required=False,
+        widget=forms.HiddenInput(),
+    )
     email = forms.EmailField(
         label="Эл. почта (логин)",
-        widget=forms.EmailInput(attrs={"class": "form-control", "placeholder": "email@example.com"}),
+        widget=forms.EmailInput(
+            attrs={
+                "class": "form-control",
+                "placeholder": "email@example.com",
+                "autocomplete": "off",
+                "autocapitalize": "off",
+                "autocorrect": "off",
+                "spellcheck": "false",
+            }
+        ),
     )
     password = forms.CharField(
         label="Пароль",
         required=False,
-        widget=forms.PasswordInput(attrs={"class": "form-control", "placeholder": "Пароль"}),
-    )
-    phone = forms.CharField(
-        label="Телефон",
-        max_length=50,
-        required=False,
-        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "+7 000 000-00-00"}),
+        widget=forms.PasswordInput(
+            attrs={
+                "class": "form-control",
+                "placeholder": "Пароль",
+                "autocomplete": "new-password",
+            }
+        ),
     )
     employment = forms.ChoiceField(
         label="Трудоустройство",
@@ -78,6 +94,7 @@ class EmployeeForm(forms.Form):
     def __init__(self, *args, instance=None, **kwargs):
         self.instance = instance
         super().__init__(*args, **kwargs)
+        self.fields["person_record"].queryset = PersonRecord.objects.order_by("position", "id")
         self.fields["employment"].choices = _employment_choices()
         self.fields["department"].queryset = OrgUnit.objects.select_related("company").all()
         self.fields["department"].label_from_instance = lambda obj: obj.department_name
@@ -89,13 +106,51 @@ class EmployeeForm(forms.Form):
                 "last_name": user.last_name,
                 "first_name": user.first_name,
                 "patronymic": instance.patronymic,
+                "person_record": instance.person_record_id,
                 "email": user.email,
-                "phone": instance.phone,
                 "employment": instance.employment,
                 "department": instance.department_id,
                 "job_title": instance.job_title,
                 "role": current_group.pk if current_group else None,
             })
+        selected_person = self._selected_person_record()
+        should_sync_from_person_record = (
+            selected_person is not None
+            and (
+                self.instance is None
+                or (
+                    self.is_bound
+                    and selected_person.pk != getattr(self.instance, "person_record_id", None)
+                )
+            )
+        )
+        if should_sync_from_person_record:
+            self.initial["last_name"] = selected_person.last_name or ""
+            self.initial["first_name"] = selected_person.first_name or ""
+            self.initial["patronymic"] = selected_person.middle_name or ""
+            self._lock_name_fields()
+
+    def _selected_person_record(self):
+        raw_person_id = None
+        if self.is_bound:
+            raw_person_id = self.data.get("person_record")
+        elif self.instance and self.instance.person_record_id:
+            raw_person_id = self.instance.person_record_id
+        elif self.initial.get("person_record"):
+            raw_person_id = self.initial.get("person_record")
+        try:
+            person_id = int(raw_person_id)
+        except (TypeError, ValueError):
+            return None
+        return PersonRecord.objects.filter(pk=person_id).first()
+
+    def _lock_name_fields(self):
+        for field_name in ("last_name", "first_name", "patronymic"):
+            field = self.fields[field_name]
+            field.disabled = True
+            field.widget.attrs["readonly"] = True
+            field.widget.attrs["tabindex"] = "-1"
+            field.widget.attrs["class"] = field.widget.attrs.get("class", "") + " readonly-field"
 
     def clean_email(self):
         email = self.cleaned_data["email"]
@@ -116,6 +171,28 @@ class EmployeeForm(forms.Form):
             validate_password(pwd)
         return pwd
 
+    def clean_person_record(self):
+        person_record = self.cleaned_data.get("person_record")
+        if person_record is None and self.instance is not None:
+            return self.instance.person_record
+        return person_record
+
+    def clean(self):
+        cleaned_data = super().clean()
+        person_record = cleaned_data.get("person_record")
+        should_sync_from_person_record = (
+            person_record is not None
+            and (
+                self.instance is None
+                or person_record.pk != getattr(self.instance, "person_record_id", None)
+            )
+        )
+        if should_sync_from_person_record:
+            cleaned_data["last_name"] = person_record.last_name or ""
+            cleaned_data["first_name"] = person_record.first_name or ""
+            cleaned_data["patronymic"] = person_record.middle_name or ""
+        return cleaned_data
+
     def save(self):
         data = self.cleaned_data
         if self.instance:
@@ -124,6 +201,7 @@ class EmployeeForm(forms.Form):
         else:
             user = User(is_staff=True)
             employee = Employee(user=user)
+        previous_person_record_id = employee.person_record_id
 
         user.last_name = data["last_name"]
         user.first_name = data["first_name"]
@@ -135,10 +213,11 @@ class EmployeeForm(forms.Form):
 
         employee.user = user
         employee.patronymic = data.get("patronymic", "")
-        employee.phone = data.get("phone", "")
+        employee.person_record = data.get("person_record")
         employee.employment = data.get("employment", "")
         employee.department = data.get("department")
         employee.job_title = data.get("job_title", "")
+        employee._previous_person_record_id = previous_person_record_id
 
         group = data.get("role")
         user.groups.clear()
@@ -182,12 +261,6 @@ class ExternalEmployeeForm(forms.Form):
         required=False,
         widget=forms.PasswordInput(attrs={"class": "form-control", "placeholder": "Пароль"}),
     )
-    phone = forms.CharField(
-        label="Телефон",
-        max_length=50,
-        required=False,
-        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "+7 000 000-00-00"}),
-    )
     organization = forms.CharField(
         label="Организация",
         max_length=255,
@@ -212,7 +285,6 @@ class ExternalEmployeeForm(forms.Form):
                 "first_name": user.first_name,
                 "patronymic": instance.patronymic,
                 "email": user.email,
-                "phone": instance.phone,
                 "organization": instance.organization,
                 "job_title": instance.job_title,
             })
@@ -244,6 +316,7 @@ class ExternalEmployeeForm(forms.Form):
         else:
             user = User(is_staff=False)
             employee = Employee(user=user)
+        previous_person_record_id = employee.person_record_id
 
         user.last_name = data["last_name"]
         user.first_name = data["first_name"]
@@ -255,9 +328,9 @@ class ExternalEmployeeForm(forms.Form):
 
         employee.user = user
         employee.patronymic = data.get("patronymic", "")
-        employee.phone = data.get("phone", "")
         employee.organization = data.get("organization", "")
         employee.job_title = data.get("job_title", "")
+        employee._previous_person_record_id = previous_person_record_id
         employee.save()
 
         return employee
@@ -309,11 +382,6 @@ class ExternalRegistrationForm(forms.Form):
         error_messages=_REQ,
         widget=forms.TextInput(attrs={**_REG_INPUT, "placeholder": "Должность"}),
     )
-    phone = forms.CharField(
-        label="Телефон", max_length=50, required=False,
-        widget=forms.TextInput(attrs={**_REG_INPUT, "placeholder": "+7 000 000-00-00"}),
-    )
-
     def clean_email(self):
         email = self.cleaned_data["email"].lower().strip()
         if len(email) > 150:
@@ -354,7 +422,6 @@ class ExternalRegistrationForm(forms.Form):
             patronymic=data.get("patronymic", ""),
             organization=data.get("organization", ""),
             job_title=data.get("job_title", ""),
-            phone=data.get("phone", ""),
         )
 
         pending = PendingRegistration.objects.create(

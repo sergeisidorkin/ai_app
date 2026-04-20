@@ -6,7 +6,9 @@
 <form
     method="post"
     enctype="multipart/form-data"
-    hx-post="{% url 'epr_contract_details_edit' profile.pk %}"
+    data-ecd-regions-url="{% url 'ler_regions_for_country' %}"
+    data-ecd-regions-date="{% now 'Y-m-d' %}"
+    hx-post="{% url 'epr_contract_details_edit' contract_detail.pk %}"
     hx-encoding="multipart/form-data"
     hx-target="#experts-pane"
     hx-swap="outerHTML"
@@ -19,7 +21,7 @@
         <label class="form-label">ФИО</label>
         <input type="text" class="form-control" readonly tabindex="-1"
                style="background-color:#f8f9fa; color:#6c757d;"
-               value="{{ profile.full_name }}">
+               value="{{ contract_detail.full_name }}">
       </div>
       <div class="col-6">
         <label class="form-label">{{ form.full_name_genitive.label }}</label>
@@ -29,35 +31,50 @@
 
     <div class="row mb-3">
       <div class="col-6">
+        <label class="form-label">{{ form.citizenship_country.label }}</label>
+        {{ form.citizenship_country }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">{{ form.citizenship_status.label }}</label>
+        {{ form.citizenship_status }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">{{ form.birth_date.label }}</label>
+        {{ form.birth_date }}
+      </div>
+    </div>
+
+    <div class="row mb-3">
+      <div class="col-3">
+        <label class="form-label">{{ form.gender.label }}</label>
+        {{ form.gender }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">{{ form.citizenship.label }}</label>
+        {{ form.citizenship }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">{{ form.citizenship_identifier.label }}</label>
+        {{ form.citizenship_identifier }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">{{ form.citizenship_number.label }}</label>
+        {{ form.citizenship_number }}
+      </div>
+    </div>
+
+    <div class="row mb-3">
+      <div class="col-3">
+        <label class="form-label">{{ form.snils.label }}</label>
+        {{ form.snils }}
+      </div>
+      <div class="col-6">
         <label class="form-label">{{ form.self_employed.label }}</label>
         {{ form.self_employed }}
       </div>
       <div class="col-3">
         <label class="form-label">{{ form.tax_rate.label }}</label>
         {{ form.tax_rate }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">{{ form.gender.label }}</label>
-        {{ form.gender }}
-      </div>
-    </div>
-
-    <div class="row mb-3">
-      <div class="col-3">
-        <label class="form-label">{{ form.citizenship.label }}</label>
-        {{ form.citizenship }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">{{ form.inn.label }}</label>
-        {{ form.inn }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">{{ form.snils.label }}</label>
-        {{ form.snils }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">{{ form.birth_date.label }}</label>
-        {{ form.birth_date }}
       </div>
     </div>
 
@@ -99,6 +116,47 @@
       <div class="col">
         <label class="form-label">Адрес регистрации</label>
         {{ form.registration_address }}
+      </div>
+    </div>
+
+    <div class="row mb-3">
+      <div class="col-3">
+        <label class="form-label">Индекс</label>
+        {{ form.registration_postal_code }}
+      </div>
+      <div class="col-9">
+        <label class="form-label">Регион</label>
+        {{ form.registration_region }}
+      </div>
+    </div>
+
+    <div class="row mb-3">
+      <div class="col-6">
+        <label class="form-label">Населенный пункт</label>
+        {{ form.registration_locality }}
+      </div>
+      <div class="col-6">
+        <label class="form-label">Улица</label>
+        {{ form.registration_street }}
+      </div>
+    </div>
+
+    <div class="row mb-3">
+      <div class="col-3">
+        <label class="form-label">Здание</label>
+        {{ form.registration_building }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Помещение</label>
+        {{ form.registration_premise }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Часть помещения</label>
+        {{ form.registration_premise_part }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Дата регистрации</label>
+        {{ form.registration_date }}
       </div>
     </div>
 
@@ -198,6 +256,47 @@
 (function() {
   var form = document.querySelector('#experts-contract-details-modal form');
   if (!form) return;
+  var countryField = form.querySelector('[name="citizenship_country"]');
+  var regionSelect = form.querySelector('#ecd-registration-region-select');
+  var regionsUrl = form.dataset.ecdRegionsUrl || '';
+  var regionsAsOf = form.dataset.ecdRegionsDate || '';
+
+  function refillRegions(preselectValue) {
+    if (!countryField || !regionSelect || !regionsUrl) return;
+    var countryId = countryField.dataset.countryId || '';
+    if (!countryId) {
+      regionSelect.innerHTML = '<option value="">---------</option>';
+      regionSelect.value = '';
+      return;
+    }
+    var requestUrl = regionsUrl + '?country_id=' + encodeURIComponent(countryId) + '&date=' + encodeURIComponent(regionsAsOf);
+    fetch(requestUrl)
+      .then(function(response) { return response.json(); })
+      .then(function(data) {
+        var currentValue = preselectValue !== undefined ? String(preselectValue || '') : String(regionSelect.value || '');
+        var regions = Array.isArray(data.regions) ? data.regions.slice() : [];
+        if (currentValue && regions.indexOf(currentValue) === -1) {
+          regions.push(currentValue);
+        }
+        var html = '<option value="">---------</option>';
+        regions.forEach(function(regionName) {
+          var selected = currentValue && currentValue === String(regionName) ? ' selected' : '';
+          html += '<option value="' + String(regionName).replace(/"/g, '&quot;') + '"' + selected + '>'
+               + String(regionName)
+               + '</option>';
+        });
+        regionSelect.innerHTML = html;
+      })
+      .catch(function() {
+        regionSelect.innerHTML = '<option value="">---------</option>';
+      });
+  }
+
+  if (regionSelect && regionSelect.dataset.regionsBound !== '1') {
+    regionSelect.dataset.regionsBound = '1';
+    refillRegions(regionSelect.value || '');
+  }
+
   var fileInput = form.querySelector('input[type="file"][name="facsimile_file"]');
   var clearCb = form.querySelector('input[type="checkbox"][name="facsimile_file-clear"]');
   if (fileInput && clearCb) {

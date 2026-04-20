@@ -1905,7 +1905,12 @@ def create_contract_project(request):
     expert_cache = {}
     employee_ids = {p.employee_id for p in performers if p.employee_id}
     if employee_ids:
-        for ep in ExpertProfile.objects.select_related("country").filter(employee_id__in=employee_ids):
+        for ep in (
+            ExpertProfile.objects
+            .select_related("country")
+            .prefetch_related("contract_details_records__citizenship_record")
+            .filter(employee_id__in=employee_ids)
+        ):
             expert_cache[ep.employee_id] = ep
 
     def _executor_short(executor_full_name):
@@ -1934,14 +1939,19 @@ def create_contract_project(request):
         group_member_ids = {project.group_member_id} if project.group_member_id else set()
 
         expert = expert_cache.get(perf.employee_id) if perf.employee_id else None
+        contract_details = expert.default_contract_details() if expert else None
 
-        is_self_employed = bool(expert and expert.self_employed)
+        is_self_employed = bool(contract_details and contract_details.self_employed)
         expected_contract_type = "smz" if is_self_employed else "gph"
 
         expected_party = "individual"
 
         expert_country_name = ""
-        if expert and expert.country:
+        if contract_details and contract_details.citizenship_country:
+            expert_country_name = contract_details.citizenship_country
+        elif contract_details and contract_details.citizenship:
+            expert_country_name = contract_details.citizenship
+        elif expert and expert.country:
             expert_country_name = expert.country.short_name
 
         section_code = ""

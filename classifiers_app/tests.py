@@ -4,6 +4,7 @@ import json
 from django.contrib.auth import get_user_model
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, TransactionTestCase
 from django.urls import reverse
 
@@ -15,7 +16,9 @@ from classifiers_app.models import (
     BusinessEntityRecord,
     LegalEntityIdentifier,
     LegalEntityRecord,
+    NumcapRecord,
     OKSMCountry,
+    PhysicalEntityIdentifier,
     RussianFederationSubjectCode,
     TerritorialDivision,
 )
@@ -25,6 +28,250 @@ from classifiers_app.forms import (
     BusinessEntityRecordForm,
 )
 from classifiers_app.views import sync_autocomplete_registry_entry
+
+
+class OKSMCountryTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="oksm-user",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+
+    def test_table_partial_shows_genitive_short_name_column(self):
+        OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            short_name_genitive="России",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+
+        response = self.client.get(reverse("oksm_table_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Наименование (краткое) в род. пад.")
+        self.assertContains(response, "России")
+
+    def test_create_saves_genitive_short_name(self):
+        response = self.client.post(
+            reverse("oksm_form_create"),
+            {
+                "number": "643",
+                "code": "643",
+                "short_name": "Россия",
+                "short_name_genitive": "России",
+                "full_name": "Российская Федерация",
+                "alpha2": "ru",
+                "alpha3": "rus",
+                "approval_date": "",
+                "expiry_date": "",
+                "source": "",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        country = OKSMCountry.objects.get()
+        self.assertEqual(country.short_name_genitive, "России")
+        self.assertEqual(country.alpha2, "RU")
+        self.assertEqual(country.alpha3, "RUS")
+
+
+class PhysicalEntityIdentifierTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="pei-user",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+
+    def test_table_partial_shows_actions_block(self):
+        PhysicalEntityIdentifier.objects.create(
+            identifier="СНИЛС",
+            full_name="Страховой номер индивидуального лицевого счета",
+            country=self.country,
+            code=self.country.code,
+            position=1,
+        )
+
+        response = self.client.get(reverse("pei_table_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Код")
+        self.assertContains(response, 'data-target-name="pei-select"')
+        self.assertContains(response, 'id="pei-actions"')
+        self.assertContains(response, "Добавить строку")
+
+    def test_create_sets_code_from_country(self):
+        response = self.client.post(
+            reverse("pei_form_create"),
+            {
+                "identifier": "Паспорт",
+                "full_name": "Паспорт гражданина Российской Федерации",
+                "country": str(self.country.pk),
+                "code": "",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        item = PhysicalEntityIdentifier.objects.get()
+        self.assertEqual(item.code, "643")
+        self.assertContains(response, "Классификатор идентификаторов физлиц")
+
+
+class NumcapRecordTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="numcap-user",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+
+    def test_table_partial_shows_actions_and_pagination(self):
+        for idx in range(1, 53):
+            NumcapRecord.objects.create(
+                code="495",
+                begin=f"{1000000 + idx}",
+                end=f"{1000000 + idx}",
+                capacity="1",
+                operator="Тестовый оператор",
+                region=f"Регион {idx}",
+                position=idx,
+            )
+
+        response = self.client.get(reverse("numcap_table_partial"), {"numcap_page": 2})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-target-name="numcap-select"')
+        self.assertContains(response, 'id="numcap-actions"')
+        self.assertContains(response, 'id="numcap-page-input"')
+        self.assertContains(response, "Регион 51")
+        self.assertContains(response, "Регион 52")
+        self.assertNotContains(response, "Регион 50")
+
+    def test_create_normalizes_capacity_from_range(self):
+        response = self.client.post(
+            reverse("numcap_form_create"),
+            {
+                "code": "495",
+                "begin": "1234500",
+                "end": "1234599",
+                "capacity": "",
+                "operator": "Оператор",
+                "region": "Москва",
+                "gar_territory": "г. Москва",
+                "inn": "7701234567",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        item = NumcapRecord.objects.get()
+        self.assertEqual(item.capacity, "100")
+        self.assertEqual(item.gar_territory, "г. Москва")
+        self.assertEqual(item.inn, "7701234567")
+        self.assertContains(response, "Реестр российской системы и плана нумерации")
+        self.assertContains(response, 'id="numcap-table-wrap"')
+
+    def test_table_partial_filters_by_code_region_and_search(self):
+        NumcapRecord.objects.create(
+            code="495",
+            begin="1234500",
+            end="1234599",
+            capacity="100",
+            operator="Ростелеком",
+            region="Москва",
+            position=1,
+        )
+        NumcapRecord.objects.create(
+            code="812",
+            begin="7654300",
+            end="7654399",
+            capacity="100",
+            operator="Мегафон Северо-Запад",
+            region="Санкт-Петербург",
+            position=2,
+        )
+
+        response = self.client.get(
+            reverse("numcap_table_partial"),
+            {
+                "numcap_q": "Ростелеком",
+                "numcap_code": "49",
+                "numcap_region": "Моск",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Москва")
+        self.assertContains(response, "Ростелеком")
+        self.assertNotContains(response, "Санкт-Петербург")
+
+    def test_table_partial_pagination_preserves_filters(self):
+        for idx in range(1, 53):
+            NumcapRecord.objects.create(
+                code="495",
+                begin=f"{1000000 + idx}",
+                end=f"{1000000 + idx}",
+                capacity="1",
+                operator="Оператор Москва",
+                region="Москва",
+                position=idx,
+            )
+
+        response = self.client.get(
+            reverse("numcap_table_partial"),
+            {
+                "numcap_page": 2,
+                "numcap_region": "Москва",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "numcap_region=%D0%9C%D0%BE%D1%81%D0%BA%D0%B2%D0%B0")
+
+    def test_numcap_csv_upload_replaces_records_from_official_format(self):
+        NumcapRecord.objects.create(
+            code="495",
+            begin="0000000",
+            end="0000001",
+            capacity="2",
+            operator='ООО "Старый оператор"',
+            region="Старый регион",
+            position=1,
+        )
+        csv_content = (
+            "АВС/ DEF;От;До;Емкость;Оператор;Регион;Территория ГАР;ИНН\n"
+            '495;1234500;1234599;100;ООО "Новый оператор";Москва;г. Москва;7701234567\n'
+        ).encode("utf-8")
+        upload = SimpleUploadedFile("ABC-3xx.csv", csv_content, content_type="text/csv")
+
+        response = self.client.post(reverse("numcap_csv_upload"), {"csv_files": [upload]})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["created"], 1)
+        self.assertEqual(NumcapRecord.objects.count(), 1)
+        item = NumcapRecord.objects.get()
+        self.assertEqual(item.operator, "ООО «Новый оператор»")
+        self.assertEqual(item.region, "Москва")
+        self.assertEqual(item.gar_territory, "г. Москва")
+        self.assertEqual(item.inn, "7701234567")
 
 
 class LegalEntityAutocompleteTests(TestCase):

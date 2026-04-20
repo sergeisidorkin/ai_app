@@ -31,17 +31,25 @@
         <label class="form-label">Отчество</label>
         {{ form.middle_name }}
       </div>
-      <div class="col-md-6">
-        <label class="form-label">Гражданство</label>
-        {{ form.citizenship }}
+      <div class="col-md-8">
+        <label class="form-label">ФИО (полное) в родительном падеже</label>
+        {{ form.full_name_genitive }}
       </div>
-      <div class="col-md-6">
-        <label class="form-label">Идентификатор</label>
-        {{ form.identifier }}
+      <div class="col-md-4">
+        <label class="form-label">Пол</label>
+        {{ form.gender }}
       </div>
-      <div class="col-md-6">
-        <label class="form-label">Номер</label>
-        {{ form.number }}
+      <div class="col-md-4">
+        <label class="form-label">Дата рождения</label>
+        {{ form.birth_date }}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Пользователь</label>
+        <input type="text"
+               class="form-control readonly-field"
+               value="{{ item.get_user_kind_display|default:'' }}"
+               readonly
+               tabindex="-1">
       </div>
     </div>
 

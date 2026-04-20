@@ -16,8 +16,8 @@
         <th>Фамилия</th>
         <th>Имя</th>
         <th>Отчество</th>
+        <th>ID-PRS</th>
         <th>Эл. почта (логин)</th>
-        <th>Телефон</th>
         <th>Трудоустройство</th>
         <th>Подразделение</th>
         <th>Должность</th>
@@ -46,8 +46,8 @@
             <td class="text-nowrap">{{ e.user.last_name }}</td>
             <td class="text-nowrap">{{ e.user.first_name }}</td>
             <td class="text-nowrap">{{ e.patronymic }}</td>
+            <td class="text-nowrap">{% if e.formatted_prs_id %}<span class="clf-id-mono">{{ e.formatted_prs_id }}</span>{% else %}—{% endif %}</td>
             <td class="text-nowrap">{{ e.user.email }}</td>
-            <td class="text-nowrap">{{ e.phone }}</td>
             <td class="text-nowrap">{{ e.employment }}</td>
             <td class="text-nowrap">{% if e.department %}{{ e.department.department_name }}{% endif %}</td>
             <td class="text-nowrap">{{ e.job_title }}</td>

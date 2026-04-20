@@ -16,6 +16,58 @@
     return m ? m.pop() : '';
   }
   const csrftoken = getCookie('csrftoken');
+  var P = window.UIPref;
+  window.__policyTypicalServiceCompositionWrapActive =
+    typeof window.__policyTypicalServiceCompositionWrapActive === 'boolean'
+      ? window.__policyTypicalServiceCompositionWrapActive
+      : (P ? P.get('policy:typicalServiceCompositionWrapActive', true) : true);
+  window.__policySpecialtyTariffsSpecialtiesCollapsed =
+    typeof window.__policySpecialtyTariffsSpecialtiesCollapsed === 'boolean'
+      ? window.__policySpecialtyTariffsSpecialtiesCollapsed
+      : (P ? P.get('policy:specialtyTariffsSpecialtiesCollapsed', false) : false);
+
+  function initTypicalServiceCompositionWrapToggle() {
+    const toggle = document.getElementById('typical-service-compositions-wrap-toggle');
+    const table = document.getElementById('typical-service-compositions-table');
+    if (!toggle || !table) return;
+    const active = !!window.__policyTypicalServiceCompositionWrapActive;
+    toggle.classList.toggle('active', active);
+    table.classList.toggle('clf-truncated', active);
+  }
+
+  function specialtyCountLabel(count) {
+    var n = Number(count) || 0;
+    var mod10 = Math.abs(n % 10);
+    if (mod10 === 1) return n + ' специальность';
+    if (mod10 >= 2 && mod10 <= 4) return n + ' специальности';
+    return n + ' специальностей';
+  }
+
+  function collapseSpecialtyTariffsSpecialties() {
+    const root = pane();
+    if (!root) return;
+    const toggle = root.querySelector('#specialty-tariffs-specialties-toggle');
+    const cells = qa('.specialty-tariffs-specialties-cell', root);
+    const collapsed = !!window.__policySpecialtyTariffsSpecialtiesCollapsed;
+
+    cells.forEach(function (cell) {
+      const count = Number(cell.dataset.specialtyCount || '0');
+      if (cell.dataset.originalSpecialtiesHtml === undefined) {
+        cell.dataset.originalSpecialtiesHtml = cell.innerHTML;
+      }
+      if (collapsed && count > 1) {
+        cell.textContent = specialtyCountLabel(count);
+      } else {
+        cell.innerHTML = cell.dataset.originalSpecialtiesHtml;
+      }
+    });
+
+    if (toggle) {
+      toggle.classList.toggle('active', collapsed);
+      const icon = toggle.querySelector('i');
+      if (icon) icon.className = collapsed ? 'bi bi-arrows-expand' : 'bi bi-arrows-collapse';
+    }
+  }
 
   function getMasterForPanel(panel) {
     const id = panel?.id;
@@ -65,13 +117,36 @@
     panel.classList.toggle('d-none', !anyChecked);
   }
 
+  function rememberPolicyScrollPosition() {
+    window.__policyScrollRestoreY = window.scrollY || window.pageYOffset || 0;
+  }
+
   // Делегирование: клики по кнопкам панелей
   document.addEventListener('click', async (e) => {
     const root = pane();
     if (!root) return;
+    const wrapToggle = e.target.closest('#typical-service-compositions-wrap-toggle');
+    if (wrapToggle && root.contains(wrapToggle)) {
+      const table = document.getElementById('typical-service-compositions-table');
+      if (!table) return;
+      table.classList.toggle('clf-truncated');
+      const active = table.classList.contains('clf-truncated');
+      wrapToggle.classList.toggle('active', active);
+      window.__policyTypicalServiceCompositionWrapActive = active;
+      if (P) P.set('policy:typicalServiceCompositionWrapActive', active);
+      return;
+    }
+    const specialtyToggle = e.target.closest('#specialty-tariffs-specialties-toggle');
+    if (specialtyToggle && root.contains(specialtyToggle)) {
+      window.__policySpecialtyTariffsSpecialtiesCollapsed = !window.__policySpecialtyTariffsSpecialtiesCollapsed;
+      collapseSpecialtyTariffsSpecialties();
+      if (P) P.set('policy:specialtyTariffsSpecialtiesCollapsed', !!window.__policySpecialtyTariffsSpecialtiesCollapsed);
+      return;
+    }
     const btn = e.target.closest('button[data-panel-action]');
     if (!btn || !root.contains(btn)) return;
-    const panel = btn.closest('#products-actions, #expdir-actions, #sections-actions, #structures-actions, #grades-actions, #tariffs-actions');
+    e.preventDefault();
+    const panel = btn.closest('div[id$="-actions"]');
     if (!panel) return;
     const action = btn.dataset.panelAction; // "up" | "down" | "edit" | "delete"
     const name = getNameForPanel(panel);
@@ -97,6 +172,8 @@
 
     if (action === 'delete') {
       if (!confirm(`Удалить ${checked.length} строк(у/и)?`)) return;
+      btn.blur();
+      rememberPolicyScrollPosition();
       const urls = checked.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
       for (let i = 0; i < urls.length; i++) {
         const isLast = i === urls.length - 1;
@@ -110,6 +187,8 @@
     }
 
     if (action === 'up' || action === 'down') {
+      btn.blur();
+      rememberPolicyScrollPosition();
       let urls = checked
         .map(ch => ch.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'])
         .filter(Boolean);
@@ -224,6 +303,15 @@
   // Восстановление выбора только для таблицы, где было действие
   document.body.addEventListener('htmx:afterSettle', function (e) {
     if (!(e.target && e.target.id === 'policy-pane')) return;
+    const restoreY = window.__policyScrollRestoreY;
+    if (typeof restoreY === 'number') {
+      requestAnimationFrame(function () {
+        window.scrollTo(0, restoreY);
+      });
+      window.__policyScrollRestoreY = null;
+    }
+    initTypicalServiceCompositionWrapToggle();
+    collapseSpecialtyTariffsSpecialties();
     const last = window.__tableSelLast;
     if (!last) return;
     const ids = (window.__tableSel && window.__tableSel[last]) || [];
@@ -235,4 +323,7 @@
     try { delete window.__tableSel[last]; } catch(e) { window.__tableSel[last] = []; }
     window.__tableSelLast = null;
   });
+
+  initTypicalServiceCompositionWrapToggle();
+  collapseSpecialtyTariffsSpecialties();
 })();

@@ -1,0 +1,267 @@
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    data-prs-filter-options-url="{{ prs_filter_options_url }}"
+    data-adr-regions-url="{% url 'ler_regions_for_country' %}"
+    data-adr-regions-date="{{ regions_as_of_iso }}"
+    data-adr-registration-autofill-url="{% url 'adr_registration_autofill' %}"
+    style="display:flex; flex-direction:column; overflow:hidden; flex:1 1 auto; min-height:0;"
+    {% if action == "create" %}
+      hx-post="{% url 'adr_form_create' %}"
+    {% else %}
+      hx-post="{% url 'adr_form_edit' item.pk %}"
+    {% endif %}
+    hx-target="#contacts-addresses-table-wrap"
+    hx-swap="innerHTML"
+    hx-on::after-request="if(event.detail.successful && !event.detail.xhr.getResponseHeader('HX-Retarget')) window.bootstrap?.Modal.getOrCreateInstance(document.getElementById('contacts-modal'))?.hide()">
+  <div class="modal-body" style="overflow-y:auto; flex:1 1 auto; min-height:0;">
+    {% csrf_token %}
+    <div class="row g-3">
+      <div class="col-12">
+        <label class="form-label">ID-PRS</label>
+        {% include "contacts_app/includes/prs_picker.html" with field=form.person picker_prefix="adr" person_record_label=person_record_label %}
+        {% if form.person.errors %}
+        <div class="text-danger small mt-1">{{ form.person.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-12">
+        <label class="form-label">Страна</label>
+        {{ form.country }}
+        {% if form.country.errors %}
+        <div class="text-danger small mt-1">{{ form.country.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-12 py-2">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" value="1" id="adr-same-as-registration">
+          <label class="form-check-label" for="adr-same-as-registration">
+            Адрес проживания совпадает с адресом регистрации
+          </label>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Индекс</label>
+        {{ form.postal_code }}
+        {% if form.postal_code.errors %}
+        <div class="text-danger small mt-1">{{ form.postal_code.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-8">
+        <label class="form-label">Регион</label>
+        {{ form.region }}
+        {% if form.region.errors %}
+        <div class="text-danger small mt-1">{{ form.region.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Населенный пункт</label>
+        {{ form.locality }}
+        {% if form.locality.errors %}
+        <div class="text-danger small mt-1">{{ form.locality.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Улица</label>
+        {{ form.street }}
+        {% if form.street.errors %}
+        <div class="text-danger small mt-1">{{ form.street.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Здание</label>
+        {{ form.building }}
+        {% if form.building.errors %}
+        <div class="text-danger small mt-1">{{ form.building.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Помещение</label>
+        {{ form.premise }}
+        {% if form.premise.errors %}
+        <div class="text-danger small mt-1">{{ form.premise.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Часть помещения</label>
+        {{ form.premise_part }}
+        {% if form.premise_part.errors %}
+        <div class="text-danger small mt-1">{{ form.premise_part.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Действ. от</label>
+        {{ form.valid_from }}
+        {% if form.valid_from.errors %}
+        <div class="text-danger small mt-1">{{ form.valid_from.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Действ. до</label>
+        {{ form.valid_to }}
+        {% if form.valid_to.errors %}
+        <div class="text-danger small mt-1">{{ form.valid_to.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Запись</label>
+        <input type="text"
+               class="form-control"
+               readonly
+               tabindex="-1"
+               style="background-color:#f8f9fa; color:#6c757d;"
+               value="{{ record_date_display|default:'' }}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Автор записи</label>
+        <input type="text"
+               class="form-control"
+               readonly
+               tabindex="-1"
+               style="background-color:#f8f9fa; color:#6c757d;"
+               value="{{ record_author_display|default:'' }}">
+      </div>
+      <div class="col-12">
+        <label class="form-label">Источник</label>
+        <input type="text"
+               class="form-control"
+               readonly
+               tabindex="-1"
+               style="background-color:#f8f9fa; color:#6c757d;"
+               value="{{ source_display|default:'' }}">
+      </div>
+    </div>
+
+    {% if form.errors %}
+    <div class="alert alert-danger mt-3 mb-0">
+      Проверьте введённые данные.
+    </div>
+    {% endif %}
+  </div>
+  <div class="modal-footer" style="flex-shrink:0;">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>
+
+<script>
+(function() {
+  var form = document.querySelector('#contacts-modal form[data-adr-regions-url]');
+  if (!form) return;
+  var countrySelect = form.querySelector('#adr-country-select');
+  var regionSelect = form.querySelector('#adr-region-select');
+  var prsInput = form.querySelector('input[name="person"]');
+  var sameAsRegistrationCheckbox = form.querySelector('#adr-same-as-registration');
+  var postalCodeInput = form.querySelector('input[name="postal_code"]');
+  var localityInput = form.querySelector('input[name="locality"]');
+  var streetInput = form.querySelector('input[name="street"]');
+  var buildingInput = form.querySelector('input[name="building"]');
+  var premiseInput = form.querySelector('input[name="premise"]');
+  var premisePartInput = form.querySelector('input[name="premise_part"]');
+  var validFromInput = form.querySelector('input[name="valid_from"]');
+  var url = form.dataset.adrRegionsUrl || '';
+  var asOf = form.dataset.adrRegionsDate || '';
+  var autofillUrl = form.dataset.adrRegistrationAutofillUrl || '';
+  if (!countrySelect || !regionSelect || !url || countrySelect.dataset.regionsBound === '1') return;
+
+  function refillRegions(preselectValue) {
+    var countryId = countrySelect.value || '';
+    if (!countryId) {
+      regionSelect.innerHTML = '<option value="">---------</option>';
+      regionSelect.value = '';
+      return Promise.resolve();
+    }
+    var requestUrl = url + '?country_id=' + encodeURIComponent(countryId) + '&date=' + encodeURIComponent(asOf);
+    return fetch(requestUrl)
+      .then(function(response) { return response.json(); })
+      .then(function(data) {
+        var currentValue = preselectValue !== undefined ? String(preselectValue || '') : String(regionSelect.value || '');
+        var regions = Array.isArray(data.regions) ? data.regions.slice() : [];
+        if (currentValue && regions.indexOf(currentValue) === -1) {
+          regions.push(currentValue);
+        }
+        var html = '<option value="">---------</option>';
+        regions.forEach(function(regionName) {
+          var selected = currentValue && currentValue === String(regionName) ? ' selected' : '';
+          html += '<option value="' + String(regionName).replace(/"/g, '&quot;') + '"' + selected + '>'
+               + String(regionName)
+               + '</option>';
+        });
+        regionSelect.innerHTML = html;
+      })
+      .catch(function() {
+        regionSelect.innerHTML = '<option value="">---------</option>';
+      });
+  }
+
+  function applyRegistrationAutofill() {
+    if (!sameAsRegistrationCheckbox || !sameAsRegistrationCheckbox.checked || !autofillUrl) return;
+    var personId = prsInput ? String(prsInput.value || '').trim() : '';
+    var countryId = String(countrySelect.value || '').trim();
+    if (!personId || !countryId) {
+      if (postalCodeInput) postalCodeInput.value = '';
+      if (regionSelect) {
+        refillRegions('').then(function() {
+          regionSelect.value = '';
+        });
+      }
+      if (localityInput) localityInput.value = '';
+      if (streetInput) streetInput.value = '';
+      if (buildingInput) buildingInput.value = '';
+      if (premiseInput) premiseInput.value = '';
+      if (premisePartInput) premisePartInput.value = '';
+      if (validFromInput) validFromInput.value = '';
+      return;
+    }
+    var requestUrl = autofillUrl + '?person_id=' + encodeURIComponent(personId) + '&country_id=' + encodeURIComponent(countryId);
+    fetch(requestUrl)
+      .then(function(response) { return response.json(); })
+      .then(function(data) {
+        if (postalCodeInput) postalCodeInput.value = data.postal_code || '';
+        if (localityInput) localityInput.value = data.locality || '';
+        if (streetInput) streetInput.value = data.street || '';
+        if (buildingInput) buildingInput.value = data.building || '';
+        if (premiseInput) premiseInput.value = data.premise || '';
+        if (premisePartInput) premisePartInput.value = data.premise_part || '';
+        if (validFromInput) validFromInput.value = data.valid_from || '';
+        refillRegions(data.region || '').then(function() {
+          regionSelect.value = data.region || '';
+        });
+      })
+      .catch(function() {
+        if (postalCodeInput) postalCodeInput.value = '';
+        if (localityInput) localityInput.value = '';
+        if (streetInput) streetInput.value = '';
+        if (buildingInput) buildingInput.value = '';
+        if (premiseInput) premiseInput.value = '';
+        if (premisePartInput) premisePartInput.value = '';
+        if (validFromInput) validFromInput.value = '';
+      });
+  }
+
+  countrySelect.dataset.regionsBound = '1';
+  countrySelect.addEventListener('change', function() {
+    refillRegions('');
+    applyRegistrationAutofill();
+  });
+  if (sameAsRegistrationCheckbox) {
+    sameAsRegistrationCheckbox.addEventListener('change', function() {
+      if (sameAsRegistrationCheckbox.checked) {
+        applyRegistrationAutofill();
+      }
+    });
+  }
+  form.addEventListener('contacts:prs-change', function() {
+    if (sameAsRegistrationCheckbox && sameAsRegistrationCheckbox.checked) {
+      applyRegistrationAutofill();
+    }
+  });
+  refillRegions(regionSelect.value || '');
+})();
+</script>
+{% include "contacts_app/includes/prs_picker_script.html" with field_name="person" picker_prefix="adr" person_record_label=person_record_label %}

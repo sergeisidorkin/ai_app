@@ -6,8 +6,20 @@
       <a href="#cnt-persons" class="list-group-item list-group-item-action active" data-contacts-section="persons">
         База контактов: лицо
       </a>
+      <a href="#cnt-citizenships" class="list-group-item list-group-item-action" data-contacts-section="citizenships">
+        База контактов: гражданство
+      </a>
+      <a href="#cnt-addresses" class="list-group-item list-group-item-action" data-contacts-section="addresses">
+        База контактов: проживание
+      </a>
       <a href="#cnt-positions" class="list-group-item list-group-item-action" data-contacts-section="positions">
         База контактов: должность
+      </a>
+      <a href="#cnt-phones" class="list-group-item list-group-item-action" data-contacts-section="phones">
+        База контактов: телефон
+      </a>
+      <a href="#cnt-emails" class="list-group-item list-group-item-action" data-contacts-section="emails">
+        База контактов: почта
       </a>
     </div>
   </aside>
@@ -15,7 +27,37 @@
   <div class="flex-grow-1 ps-3 pe-0" style="min-width:0;">
     <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
       <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
-        <h5 class="mb-0 ps-3 fs-4 pt-2" id="contacts-section-title">База контактов</h5>
+        <div class="d-flex align-items-center gap-3">
+          <h5 class="mb-0 ps-3 fs-4 pt-2" id="contacts-section-title">База контактов</h5>
+          <div class="dropdown pt-1" id="master-contacts-prs-filter-dropdown" style="transform: translateY(3px);">
+            <button class="btn btn-primary btn-sm dropdown-toggle" type="button"
+                    id="contacts-prs-filter-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+              ID-PRS: <span class="js-contacts-prs-filter-label">Все</span>
+            </button>
+            <div class="dropdown-menu p-3 project-filter-menu classifiers-bsn-filter-menu" aria-labelledby="contacts-prs-filter-toggle">
+              <div id="contacts-prs-filter-selected" class="classifiers-bsn-filter-selected mb-3"></div>
+              <div class="ler-ac-wrap">
+                <input type="text"
+                       id="contacts-prs-filter-search"
+                       class="form-control"
+                       placeholder="Искать по ID-PRS и ФИО"
+                       autocomplete="off">
+                <div id="contacts-prs-filter-search-list" class="ler-ac-list classifiers-bsn-filter-search-list"></div>
+              </div>
+              <div id="contacts-prs-filter-hint" class="small text-muted mt-2">
+                Если ничего не выбрано, фильтр применяется ко всем ID-PRS.
+              </div>
+              <div class="d-flex justify-content-end gap-2 mt-3">
+                <button type="button" id="contacts-prs-filter-clear" class="btn btn-sm classifiers-bsn-filter-clear">
+                  <i class="bi bi-x-square me-2"></i>Очистить
+                </button>
+                <button type="button" id="contacts-prs-filter-apply" class="btn btn-sm classifiers-bsn-filter-apply">
+                  <i class="bi bi-check-square me-2"></i>Применить
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
         <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
            href="#notifications"
            data-bs-toggle="tab"
@@ -55,6 +97,104 @@
                   <i class="bi bi-plus-circle me-2"></i>Добавить строку
                 </button>
                 <div id="prs-actions" class="d-none d-flex">
+                  <div class="btn-group">
+                    <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+                      <i class="bi bi-arrow-up-square"></i>
+                    </button>
+                    <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+                      <i class="bi bi-arrow-down-square"></i>
+                    </button>
+                    <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+                      <i class="bi bi-pencil-square"></i>
+                    </button>
+                    <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+                      <i class="bi bi-x-square"></i>
+                    </button>
+                  </div>
+                </div>
+              </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="cnt-content-citizenships" class="contacts-section-content d-none">
+        <div class="card shadow-sm mt-3">
+          <div class="card-body">
+            <div id="contacts-citizenships-pane">
+              <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 0px;">
+                <h5 class="table-section-title">
+                  <i class="bi bi-table me-2"></i>
+                  Реестр гражданств и идентификаторов
+                </h5>
+              </div>
+              <div class="table-responsive">
+                <div id="contacts-citizenships-table-wrap"
+                     hx-get="{% url 'ctz_table_partial' %}"
+                     hx-trigger="contacts-citizenships:load from:body once"
+                     hx-swap="innerHTML">
+                  <div class="text-muted p-3">Загрузка данных…</div>
+                </div>
+              </div>
+              {% if request.user.is_authenticated and request.user.is_staff %}
+              <div class="d-flex align-items-stretch gap-2 products-actions-row">
+                <button class="btn btn-primary btn-sm d-flex align-items-center"
+                        hx-get="{% url 'ctz_form_create' %}"
+                        hx-target="#contacts-modal .modal-content"
+                        hx-swap="innerHTML">
+                  <i class="bi bi-plus-circle me-2"></i>Добавить строку
+                </button>
+                <div id="ctz-actions" class="d-none d-flex">
+                  <div class="btn-group">
+                    <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+                      <i class="bi bi-arrow-up-square"></i>
+                    </button>
+                    <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+                      <i class="bi bi-arrow-down-square"></i>
+                    </button>
+                    <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+                      <i class="bi bi-pencil-square"></i>
+                    </button>
+                    <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+                      <i class="bi bi-x-square"></i>
+                    </button>
+                  </div>
+                </div>
+              </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="cnt-content-addresses" class="contacts-section-content d-none">
+        <div class="card shadow-sm mt-3">
+          <div class="card-body">
+            <div id="contacts-addresses-pane">
+              <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 0px;">
+                <h5 class="table-section-title">
+                  <i class="bi bi-table me-2"></i>
+                  Реестр адресов проживания
+                </h5>
+              </div>
+              <div class="table-responsive">
+                <div id="contacts-addresses-table-wrap"
+                     hx-get="{% url 'adr_table_partial' %}"
+                     hx-trigger="contacts-addresses:load from:body once"
+                     hx-swap="innerHTML">
+                  <div class="text-muted p-3">Загрузка данных…</div>
+                </div>
+              </div>
+              {% if request.user.is_authenticated and request.user.is_staff %}
+              <div class="d-flex align-items-stretch gap-2 products-actions-row">
+                <button class="btn btn-primary btn-sm d-flex align-items-center"
+                        hx-get="{% url 'adr_form_create' %}"
+                        hx-target="#contacts-modal .modal-content"
+                        hx-swap="innerHTML">
+                  <i class="bi bi-plus-circle me-2"></i>Добавить строку
+                </button>
+                <div id="adr-actions" class="d-none d-flex">
                   <div class="btn-group">
                     <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
                       <i class="bi bi-arrow-up-square"></i>
@@ -125,6 +265,104 @@
           </div>
         </div>
       </div>
+
+      <div id="cnt-content-phones" class="contacts-section-content d-none">
+        <div class="card shadow-sm mt-3">
+          <div class="card-body">
+            <div id="contacts-phones-pane">
+              <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 0px;">
+                <h5 class="table-section-title">
+                  <i class="bi bi-table me-2"></i>
+                  Реестр телефонных номеров
+                </h5>
+              </div>
+              <div class="table-responsive">
+                <div id="contacts-phones-table-wrap"
+                     hx-get="{% url 'tel_table_partial' %}"
+                     hx-trigger="contacts-phones:load from:body once"
+                     hx-swap="innerHTML">
+                  <div class="text-muted p-3">Загрузка данных…</div>
+                </div>
+              </div>
+              {% if request.user.is_authenticated and request.user.is_staff %}
+              <div class="d-flex align-items-stretch gap-2 products-actions-row">
+                <button class="btn btn-primary btn-sm d-flex align-items-center"
+                        hx-get="{% url 'tel_form_create' %}"
+                        hx-target="#contacts-modal .modal-content"
+                        hx-swap="innerHTML">
+                  <i class="bi bi-plus-circle me-2"></i>Добавить строку
+                </button>
+                <div id="tel-actions" class="d-none d-flex">
+                  <div class="btn-group">
+                    <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+                      <i class="bi bi-arrow-up-square"></i>
+                    </button>
+                    <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+                      <i class="bi bi-arrow-down-square"></i>
+                    </button>
+                    <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+                      <i class="bi bi-pencil-square"></i>
+                    </button>
+                    <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+                      <i class="bi bi-x-square"></i>
+                    </button>
+                  </div>
+                </div>
+              </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="cnt-content-emails" class="contacts-section-content d-none">
+        <div class="card shadow-sm mt-3">
+          <div class="card-body">
+            <div id="contacts-emails-pane">
+              <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 0px;">
+                <h5 class="table-section-title">
+                  <i class="bi bi-table me-2"></i>
+                  Реестр адресов электронной почты
+                </h5>
+              </div>
+              <div class="table-responsive">
+                <div id="contacts-emails-table-wrap"
+                     hx-get="{% url 'eml_table_partial' %}"
+                     hx-trigger="contacts-emails:load from:body once"
+                     hx-swap="innerHTML">
+                  <div class="text-muted p-3">Загрузка данных…</div>
+                </div>
+              </div>
+              {% if request.user.is_authenticated and request.user.is_staff %}
+              <div class="d-flex align-items-stretch gap-2 products-actions-row">
+                <button class="btn btn-primary btn-sm d-flex align-items-center"
+                        hx-get="{% url 'eml_form_create' %}"
+                        hx-target="#contacts-modal .modal-content"
+                        hx-swap="innerHTML">
+                  <i class="bi bi-plus-circle me-2"></i>Добавить строку
+                </button>
+                <div id="eml-actions" class="d-none d-flex">
+                  <div class="btn-group">
+                    <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+                      <i class="bi bi-arrow-up-square"></i>
+                    </button>
+                    <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+                      <i class="bi bi-arrow-down-square"></i>
+                    </button>
+                    <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+                      <i class="bi bi-pencil-square"></i>
+                    </button>
+                    <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+                      <i class="bi bi-x-square"></i>
+                    </button>
+                  </div>
+                </div>
+              </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="modal fade" id="contacts-modal" tabindex="-1" aria-hidden="true">
@@ -151,10 +389,34 @@
       url: '/contacts/prs/table/',
       modalTarget: '#contacts-modal .modal-content',
     },
+    'ctz-actions': {
+      name: 'ctz-select',
+      target: '#contacts-citizenships-table-wrap',
+      url: '/contacts/ctz/table/',
+      modalTarget: '#contacts-modal .modal-content',
+    },
+    'adr-actions': {
+      name: 'adr-select',
+      target: '#contacts-addresses-table-wrap',
+      url: '/contacts/adr/table/',
+      modalTarget: '#contacts-modal .modal-content',
+    },
     'psn-actions': {
       name: 'psn-select',
       target: '#contacts-positions-table-wrap',
       url: '/contacts/psn/table/',
+      modalTarget: '#contacts-modal .modal-content',
+    },
+    'tel-actions': {
+      name: 'tel-select',
+      target: '#contacts-phones-table-wrap',
+      url: '/contacts/tel/table/',
+      modalTarget: '#contacts-modal .modal-content',
+    },
+    'eml-actions': {
+      name: 'eml-select',
+      target: '#contacts-emails-table-wrap',
+      url: '/contacts/eml/table/',
       modalTarget: '#contacts-modal .modal-content',
     },
   };
@@ -206,10 +468,49 @@
     restoreSelection(config.name, selectionIds);
   }
 
+  function activateInlineScripts(container) {
+    if (!container) return;
+    var scripts = container.querySelectorAll('script');
+    scripts.forEach(function (script) {
+      var replacement = document.createElement('script');
+      Array.from(script.attributes).forEach(function (attr) {
+        replacement.setAttribute(attr.name, attr.value);
+      });
+      replacement.textContent = script.textContent;
+      script.parentNode.replaceChild(replacement, script);
+    });
+  }
+
+  async function openModalContent(url, targetSelector) {
+    var target = document.querySelector(targetSelector);
+    if (!url || !target) return;
+    var response = await fetch(url, {
+      method: 'GET',
+      credentials: 'same-origin',
+      headers: {
+        'HX-Request': 'true',
+      },
+    });
+    if (!response.ok) {
+      var text = await response.text();
+      window.alert(text || 'Операцию не удалось выполнить.');
+      return;
+    }
+    target.innerHTML = await response.text();
+    if (window.htmx && typeof window.htmx.process === 'function') {
+      window.htmx.process(target);
+    }
+    activateInlineScripts(target);
+    var modalEl = target.closest('.modal');
+    if (modalEl && window.bootstrap) {
+      window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    }
+  }
+
   root.addEventListener('click', function (event) {
     var button = event.target.closest('button[data-panel-action]');
     if (!button) return;
-    var panel = button.closest('#prs-actions, #psn-actions');
+    var panel = button.closest('#prs-actions, #ctz-actions, #adr-actions, #psn-actions, #tel-actions, #eml-actions');
     if (!panel) return;
 
     var config = panelConfig[panel.id];
@@ -227,12 +528,7 @@
     if (action === 'edit') {
       var editRow = checked[0].closest('tr');
       var editUrl = editRow && editRow.dataset ? editRow.dataset.editUrl : '';
-      if (editUrl && window.htmx) {
-        htmx.ajax('GET', editUrl, {
-          target: config.modalTarget,
-          swap: 'innerHTML',
-        });
-      }
+      openModalContent(editUrl, config.modalTarget);
       return;
     }
 
@@ -259,7 +555,11 @@
         }
         await refreshTable(config, []);
         if (config.name === 'prs-select') {
+          await refreshTable(panelConfig['ctz-actions'], []);
+          await refreshTable(panelConfig['adr-actions'], []);
           await refreshTable(panelConfig['psn-actions'], []);
+          await refreshTable(panelConfig['tel-actions'], []);
+          await refreshTable(panelConfig['eml-actions'], []);
         }
       });
       return;

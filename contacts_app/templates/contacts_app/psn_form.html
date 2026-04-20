@@ -7,6 +7,10 @@
 
 <form
     method="post"
+    data-prs-filter-options-url="{{ prs_filter_options_url }}"
+    data-position-form="1"
+    data-ler-search-url="{% url 'ler_search' %}"
+    data-modal-size="xl"
     style="display:flex; flex-direction:column; overflow:hidden; flex:1 1 auto; min-height:0;"
     {% if action == "create" %}
       hx-post="{% url 'psn_form_create' %}"
@@ -19,25 +23,51 @@
   <div class="modal-body" style="overflow-y:auto; flex:1 1 auto; min-height:0;">
     {% csrf_token %}
     <div class="row g-3">
-      <div class="col-md-6">
+      <div class="col-12">
         <label class="form-label">ID-PRS</label>
-        {{ form.person }}
+        {% include "contacts_app/includes/prs_picker.html" with field=form.person picker_prefix="psn" person_record_label=person_record_label %}
+        {% if form.person.errors %}
+        <div class="text-danger small mt-1">{{ form.person.errors|join:", " }}</div>
+        {% endif %}
       </div>
       <div class="col-md-6">
         <label class="form-label">Наименование организации (краткое)</label>
-        {{ form.organization_short_name }}
+        <div class="ler-ac-wrap">
+          {{ form.organization_short_name }}
+          <div class="ler-ac-list" id="psn-organization-ler-ac-list"></div>
+        </div>
+        {% if form.organization_short_name.errors %}
+        <div class="text-danger small mt-1">{{ form.organization_short_name.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Идентификатор</label>
+        {{ form.organization_identifier }}
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Регистр. номер</label>
+        {{ form.organization_registration_number }}
       </div>
       <div class="col-md-12">
         <label class="form-label">Должность</label>
         {{ form.job_title }}
+        {% if form.job_title.errors %}
+        <div class="text-danger small mt-1">{{ form.job_title.errors|join:", " }}</div>
+        {% endif %}
       </div>
       <div class="col-md-6">
         <label class="form-label">Действ. от</label>
         {{ form.valid_from }}
+        {% if form.valid_from.errors %}
+        <div class="text-danger small mt-1">{{ form.valid_from.errors|join:", " }}</div>
+        {% endif %}
       </div>
       <div class="col-md-6">
         <label class="form-label">Действ. до</label>
         {{ form.valid_to }}
+        {% if form.valid_to.errors %}
+        <div class="text-danger small mt-1">{{ form.valid_to.errors|join:", " }}</div>
+        {% endif %}
       </div>
       <div class="col-md-6">
         <label class="form-label">Запись</label>
@@ -79,3 +109,4 @@
     <button type="submit" class="btn btn-primary">Сохранить</button>
   </div>
 </form>
+{% include "contacts_app/includes/prs_picker_script.html" with field_name="person" picker_prefix="psn" person_record_label=person_record_label %}

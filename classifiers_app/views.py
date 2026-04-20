@@ -19,6 +19,8 @@ from .models import (
     OKSMCountry,
     OKVCurrency,
     LegalEntityIdentifier,
+    PhysicalEntityIdentifier,
+    NumcapRecord,
     TerritorialDivision,
     LivingWage,
     LegalEntityRecord,
@@ -35,6 +37,8 @@ from .forms import (
     OKSMCountryForm,
     OKVCurrencyForm,
     LegalEntityIdentifierForm,
+    PhysicalEntityIdentifierForm,
+    NumcapRecordForm,
     TerritorialDivisionForm,
     LivingWageForm,
     LegalEntityRecordForm,
@@ -45,6 +49,7 @@ from .forms import (
     BusinessEntityLegalAddressRecordForm,
     BusinessEntityRelationRecordForm,
 )
+from .numcap_official_csv import process_numcap_official_sources
 
 PARTIAL_TEMPLATE = "classifiers_app/classifiers_partial.html"
 OKSM_TABLE_TEMPLATE = "classifiers_app/oksm_table_partial.html"
@@ -57,6 +62,10 @@ OKV_TABLE_TEMPLATE = "classifiers_app/okv_table_partial.html"
 OKV_FORM_TEMPLATE = "classifiers_app/okv_form.html"
 LEI_TABLE_TEMPLATE = "classifiers_app/lei_table_partial.html"
 LEI_FORM_TEMPLATE = "classifiers_app/lei_form.html"
+PEI_TABLE_TEMPLATE = "classifiers_app/pei_table_partial.html"
+PEI_FORM_TEMPLATE = "classifiers_app/pei_form.html"
+NUMCAP_TABLE_TEMPLATE = "classifiers_app/numcap_table_partial.html"
+NUMCAP_FORM_TEMPLATE = "classifiers_app/numcap_form.html"
 LW_TABLE_TEMPLATE = "classifiers_app/lw_table_partial.html"
 LW_FORM_TEMPLATE = "classifiers_app/lw_form.html"
 LER_TABLE_TEMPLATE = "classifiers_app/ler_table_partial.html"
@@ -73,6 +82,7 @@ BRL_TABLE_TEMPLATE = "classifiers_app/brl_table_partial.html"
 BRL_FORM_TEMPLATE = "classifiers_app/brl_form.html"
 
 BUSINESS_REGISTRY_PAGE_SIZE = 50
+NUMCAP_TABLE_URL = "/classifiers/numcap/table/"
 BER_TABLE_URL = "/classifiers/ber/table/"
 BEI_TABLE_URL = "/classifiers/bei/table/"
 LER_TABLE_URL = "/classifiers/ler/table/"
@@ -87,6 +97,10 @@ PAGINATION_PRESERVED_PARAMS = {
     "okv_date",
     "date",
     "lw_date",
+    "numcap_q",
+    "numcap_code",
+    "numcap_region",
+    "numcap_page",
     "bei_date",
     "bei_duplicates",
     "bea_date",
@@ -326,6 +340,45 @@ def _lei_context(request):
     return {
         "lei_items": LegalEntityIdentifier.objects.select_related("country").order_by("position", "id"),
     }
+
+
+def _pei_context(request):
+    return {
+        "pei_items": PhysicalEntityIdentifier.objects.select_related("country").order_by("position", "id"),
+    }
+
+
+def _numcap_context(request):
+    search_query = (_req_param(request, "numcap_q") or "").strip()
+    code_filter = "".join(ch for ch in (_req_param(request, "numcap_code") or "").strip() if ch.isdigit())
+    region_filter = (_req_param(request, "numcap_region") or "").strip()
+    queryset = NumcapRecord.objects.order_by("position", "id")
+    if search_query:
+        queryset = queryset.filter(
+            Q(code__icontains=search_query)
+            | Q(begin__icontains=search_query)
+            | Q(end__icontains=search_query)
+            | Q(operator__icontains=search_query)
+            | Q(region__icontains=search_query)
+            | Q(gar_territory__icontains=search_query)
+            | Q(inn__icontains=search_query)
+        )
+    if code_filter:
+        queryset = queryset.filter(code__startswith=code_filter)
+    if region_filter:
+        queryset = queryset.filter(region__icontains=region_filter)
+    context = _paginate_queryset(
+        request,
+        queryset,
+        item_key="numcap_items",
+        page_param="numcap_page",
+        partial_url=NUMCAP_TABLE_URL,
+        target="#numcap-table-wrap",
+    )
+    context["numcap_q"] = search_query
+    context["numcap_code"] = code_filter
+    context["numcap_region"] = region_filter
+    return context
 
 
 # ---------------------------------------------------------------------------
@@ -630,6 +683,8 @@ def _classifiers_context(request):
     ctx.update(_oksm_context(request))
     ctx.update(_okv_context(request))
     ctx.update(_lei_context(request))
+    ctx.update(_pei_context(request))
+    ctx.update(_numcap_context(request))
     ctx.update(_katd_context(request))
     ctx.update(_rfs_context(request))
     ctx.update(_lw_context(request))
@@ -666,6 +721,16 @@ def _next_okv_position():
 
 def _next_lei_position():
     last = LegalEntityIdentifier.objects.aggregate(mx=Max("position")).get("mx") or 0
+    return last + 1
+
+
+def _next_pei_position():
+    last = PhysicalEntityIdentifier.objects.aggregate(mx=Max("position")).get("mx") or 0
+    return last + 1
+
+
+def _next_numcap_position():
+    last = NumcapRecord.objects.aggregate(mx=Max("position")).get("mx") or 0
     return last + 1
 
 
@@ -1349,6 +1414,52 @@ def lei_table_partial(request):
 
 
 # ---------------------------------------------------------------------------
+#  PEI (Классификатор идентификаторов физлиц) — partial
+# ---------------------------------------------------------------------------
+
+@login_required
+@require_http_methods(["GET"])
+def pei_table_partial(request):
+    return render(request, PEI_TABLE_TEMPLATE, _pei_context(request))
+
+
+# ---------------------------------------------------------------------------
+#  numcap — partial
+# ---------------------------------------------------------------------------
+
+@login_required
+@require_http_methods(["GET"])
+def numcap_table_partial(request):
+    return render(request, NUMCAP_TABLE_TEMPLATE, _numcap_context(request))
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def numcap_csv_upload(request):
+    files = request.FILES.getlist("csv_files")
+    if not files:
+        single_file = request.FILES.get("csv_file")
+        if single_file is not None:
+            files = [single_file]
+    if not files:
+        return JsonResponse({"ok": False, "error": "Файлы не выбраны."}, status=400)
+    try:
+        stats = process_numcap_official_sources(files, replace=True, progress_every=0)
+    except Exception as exc:
+        logger.exception("numcap CSV import failed")
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+    return JsonResponse(
+        {
+            "ok": True,
+            "created": stats["created"],
+            "skipped": stats["skipped"],
+            "files": stats["files"],
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
 #  ОКСМ CRUD
 # ---------------------------------------------------------------------------
 
@@ -1847,6 +1958,174 @@ def lei_move_down(request, pk: int):
         LegalEntityIdentifier.objects.filter(pk=cur.id).update(position=nxt.position)
         LegalEntityIdentifier.objects.filter(pk=nxt.id).update(position=cur.position)
         _normalize_lei_positions()
+    return _render_updated(request)
+
+
+def _pei_form_context(form, action, pei=None):
+    qs = form.fields["country"].queryset
+    country_codes = {str(c.id): c.code for c in qs}
+    ctx = {"form": form, "action": action, "country_codes_json": json.dumps(country_codes)}
+    if pei is not None:
+        ctx["pei"] = pei
+    return ctx
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def pei_form_create(request):
+    if request.method == "GET":
+        form = PhysicalEntityIdentifierForm()
+        return render(request, PEI_FORM_TEMPLATE, _pei_form_context(form, "create"))
+    form = PhysicalEntityIdentifierForm(request.POST)
+    if not form.is_valid():
+        return render(request, PEI_FORM_TEMPLATE, _pei_form_context(form, "create"))
+    obj = form.save(commit=False)
+    if not getattr(obj, "position", 0):
+        obj.position = _next_pei_position()
+    if obj.country:
+        obj.code = obj.country.code
+    obj.save()
+    return _render_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def pei_form_edit(request, pk: int):
+    pei = get_object_or_404(PhysicalEntityIdentifier, pk=pk)
+    if request.method == "GET":
+        form = PhysicalEntityIdentifierForm(instance=pei)
+        return render(request, PEI_FORM_TEMPLATE, _pei_form_context(form, "edit", pei))
+    form = PhysicalEntityIdentifierForm(request.POST, instance=pei)
+    if not form.is_valid():
+        return render(request, PEI_FORM_TEMPLATE, _pei_form_context(form, "edit", pei))
+    obj = form.save(commit=False)
+    if obj.country:
+        obj.code = obj.country.code
+    obj.save()
+    return _render_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def pei_delete(request, pk: int):
+    get_object_or_404(PhysicalEntityIdentifier, pk=pk).delete()
+    return _render_updated(request)
+
+
+def _normalize_pei_positions():
+    items = PhysicalEntityIdentifier.objects.order_by("position", "id").only("id", "position")
+    for idx, it in enumerate(items, start=1):
+        if it.position != idx:
+            PhysicalEntityIdentifier.objects.filter(pk=it.pk).update(position=idx)
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+def pei_move_up(request, pk: int):
+    _normalize_pei_positions()
+    items = list(PhysicalEntityIdentifier.objects.order_by("position", "id").only("id", "position"))
+    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+    if idx is not None and idx > 0:
+        cur, prev = items[idx], items[idx - 1]
+        PhysicalEntityIdentifier.objects.filter(pk=cur.id).update(position=prev.position)
+        PhysicalEntityIdentifier.objects.filter(pk=prev.id).update(position=cur.position)
+        _normalize_pei_positions()
+    return _render_updated(request)
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+def pei_move_down(request, pk: int):
+    _normalize_pei_positions()
+    items = list(PhysicalEntityIdentifier.objects.order_by("position", "id").only("id", "position"))
+    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+    if idx is not None and idx < len(items) - 1:
+        cur, nxt = items[idx], items[idx + 1]
+        PhysicalEntityIdentifier.objects.filter(pk=cur.id).update(position=nxt.position)
+        PhysicalEntityIdentifier.objects.filter(pk=nxt.id).update(position=cur.position)
+        _normalize_pei_positions()
+    return _render_updated(request)
+
+
+# ---------------------------------------------------------------------------
+#  numcap CRUD
+# ---------------------------------------------------------------------------
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def numcap_form_create(request):
+    if request.method == "GET":
+        form = NumcapRecordForm()
+        return render(request, NUMCAP_FORM_TEMPLATE, {"form": form, "action": "create"})
+    form = NumcapRecordForm(request.POST)
+    if not form.is_valid():
+        return render(request, NUMCAP_FORM_TEMPLATE, {"form": form, "action": "create"})
+    obj = form.save(commit=False)
+    if not getattr(obj, "position", 0):
+        obj.position = _next_numcap_position()
+    obj.save()
+    return _render_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def numcap_form_edit(request, pk: int):
+    item = get_object_or_404(NumcapRecord, pk=pk)
+    if request.method == "GET":
+        form = NumcapRecordForm(instance=item)
+        return render(request, NUMCAP_FORM_TEMPLATE, {"form": form, "action": "edit", "item": item})
+    form = NumcapRecordForm(request.POST, instance=item)
+    if not form.is_valid():
+        return render(request, NUMCAP_FORM_TEMPLATE, {"form": form, "action": "edit", "item": item})
+    form.save()
+    return _render_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def numcap_delete(request, pk: int):
+    get_object_or_404(NumcapRecord, pk=pk).delete()
+    return _render_updated(request)
+
+
+def _normalize_numcap_positions():
+    items = NumcapRecord.objects.order_by("position", "id").only("id", "position")
+    for idx, item in enumerate(items, start=1):
+        if item.position != idx:
+            NumcapRecord.objects.filter(pk=item.pk).update(position=idx)
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+def numcap_move_up(request, pk: int):
+    _normalize_numcap_positions()
+    items = list(NumcapRecord.objects.order_by("position", "id").only("id", "position"))
+    idx = next((i for i, item in enumerate(items) if item.id == pk), None)
+    if idx is not None and idx > 0:
+        current, previous = items[idx], items[idx - 1]
+        NumcapRecord.objects.filter(pk=current.id).update(position=previous.position)
+        NumcapRecord.objects.filter(pk=previous.id).update(position=current.position)
+        _normalize_numcap_positions()
+    return _render_updated(request)
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+def numcap_move_down(request, pk: int):
+    _normalize_numcap_positions()
+    items = list(NumcapRecord.objects.order_by("position", "id").only("id", "position"))
+    idx = next((i for i, item in enumerate(items) if item.id == pk), None)
+    if idx is not None and idx < len(items) - 1:
+        current, next_item = items[idx], items[idx + 1]
+        NumcapRecord.objects.filter(pk=current.id).update(position=next_item.position)
+        NumcapRecord.objects.filter(pk=next_item.id).update(position=current.position)
+        _normalize_numcap_positions()
     return _render_updated(request)
 
 

@@ -1,0 +1,100 @@
+<table class="table table-sm align-middle clf-truncated">
+    <thead>
+    <tr>
+        <th style="width:1%">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+                <div class="form-check m-0">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           id="numcap-master"
+                           data-target-name="numcap-select"
+                           data-actions-id="numcap-actions"
+                           aria-label="Выделить все строки">
+                </div>
+            {% endif %}
+        </th>
+        <th>Код зоны</th>
+        <th>Начало диапазона</th>
+        <th>Конец диапазона</th>
+        <th>Емкость</th>
+        <th>Оператор</th>
+        <th>Регион</th>
+        <th class="numcap-gar-header" style="position:relative">
+            <span>Территория ГАР</span>
+            <button type="button" class="clf-wrap-btn active" id="numcap-wrap-toggle"
+                    title="Свернуть/развернуть строки">
+              <i class="bi bi-text-wrap"></i>
+            </button>
+        </th>
+        <th>ИНН</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for item in numcap_items %}
+        <tr data-edit-url="{% url 'numcap_form_edit' item.pk %}"
+            data-delete-url="{% url 'numcap_delete' item.pk %}"
+            data-move-up-url="{% url 'numcap_move_up' item.pk %}"
+            data-move-down-url="{% url 'numcap_move_down' item.pk %}">
+            <td class="text-nowrap">
+                {% if request.user.is_authenticated and request.user.is_staff %}
+                    <div class="form-check">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="numcap-sel-{{ item.id }}"
+                               name="numcap-select"
+                               value="{{ item.id }}"
+                               aria-label="Выделить строку">
+                    </div>
+                {% endif %}
+            </td>
+            <td class="text-nowrap">{{ item.code }}</td>
+            <td class="text-nowrap">{{ item.begin }}</td>
+            <td class="text-nowrap">{{ item.end }}</td>
+            <td class="text-nowrap">{{ item.capacity|default:"—" }}</td>
+            <td>{{ item.operator|default:"—" }}</td>
+            <td>{{ item.region|default:"—" }}</td>
+            <td class="numcap-gar-cell" title="{{ item.gar_territory }}">{{ item.gar_territory|default:"—" }}</td>
+            <td class="text-nowrap">{{ item.inn|default:"—" }}</td>
+        </tr>
+    {% empty %}
+        <tr><td colspan="9" class="text-muted">Пока нет данных.</td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+
+{% include "classifiers_app/_registry_pagination.html" %}
+
+{% if request.user.is_authenticated and request.user.is_staff %}
+<div class="d-flex align-items-stretch gap-2 products-actions-row">
+  <button
+          class="btn btn-primary btn-sm d-flex align-items-center"
+          hx-get="{% url 'numcap_form_create' %}"
+          hx-target="#classifiers-modal .modal-content"
+          hx-swap="innerHTML">
+    <i class="bi bi-plus-circle me-2"></i>Добавить строку
+  </button>
+  <div id="numcap-actions" class="d-none d-flex">
+    <div class="btn-group">
+      <button type="button" id="numcap-actions-up" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+        <i class="bi bi-arrow-up-square"></i>
+      </button>
+      <button type="button" id="numcap-actions-down" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+        <i class="bi bi-arrow-down-square"></i>
+      </button>
+      <button type="button" id="numcap-actions-edit" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+        <i class="bi bi-pencil-square"></i>
+      </button>
+      <button type="button" id="numcap-actions-delete" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+        <i class="bi bi-x-square"></i>
+      </button>
+    </div>
+  </div>
+  <button type="button"
+          id="numcap-csv-upload-btn"
+          class="btn btn-primary btn-sm d-flex align-items-center"
+          title="Обновить из официальных CSV">
+    <i class="bi bi-cloud-arrow-up me-2"></i>Обновить из CSV
+  </button>
+  <input type="file" id="numcap-csv-file-input" accept=".csv" multiple style="display:none;">
+</div>
+{% endif %}

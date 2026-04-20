@@ -66,6 +66,21 @@ urlpatterns = [
     path("lei/<int:pk>/delete/", views.lei_delete, name="lei_delete"),
     path("lei/<int:pk>/move-up/", views.lei_move_up, name="lei_move_up"),
     path("lei/<int:pk>/move-down/", views.lei_move_down, name="lei_move_down"),
+    # Классификатор идентификаторов физлиц (PEI)
+    path("pei/table/", views.pei_table_partial, name="pei_table_partial"),
+    path("pei/create/", views.pei_form_create, name="pei_form_create"),
+    path("pei/<int:pk>/edit/", views.pei_form_edit, name="pei_form_edit"),
+    path("pei/<int:pk>/delete/", views.pei_delete, name="pei_delete"),
+    path("pei/<int:pk>/move-up/", views.pei_move_up, name="pei_move_up"),
+    path("pei/<int:pk>/move-down/", views.pei_move_down, name="pei_move_down"),
+    # Классификатор numcap
+    path("numcap/table/", views.numcap_table_partial, name="numcap_table_partial"),
+    path("numcap/create/", views.numcap_form_create, name="numcap_form_create"),
+    path("numcap/<int:pk>/edit/", views.numcap_form_edit, name="numcap_form_edit"),
+    path("numcap/<int:pk>/delete/", views.numcap_delete, name="numcap_delete"),
+    path("numcap/<int:pk>/move-up/", views.numcap_move_up, name="numcap_move_up"),
+    path("numcap/<int:pk>/move-down/", views.numcap_move_down, name="numcap_move_down"),
+    path("numcap/csv-upload/", views.numcap_csv_upload, name="numcap_csv_upload"),
     # КАТД
     path("katd/countries-for-date/", views.katd_countries_for_date, name="katd_countries_for_date"),
     path("katd/table/", views.katd_table_partial, name="katd_table_partial"),

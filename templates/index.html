@@ -49,7 +49,7 @@
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#experts" data-bs-toggle="tab">
             <i class="bi bi-person-vcard me-2"></i>
-            <span class="link-text">Эксперты</span>
+            <span class="link-text">Исполнители</span>
           </a>
         </li>
         <li class="nav-item">
@@ -231,14 +231,6 @@
           <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
             <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
               <h5 class="mb-0 ps-3 fs-4 pt-2">Группа</h5>
-              <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
-                 href="#notifications"
-                 data-bs-toggle="tab"
-                 aria-label="Открыть уведомления">
-                <i class="bi bi-bell fs-5"></i>
-                <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
-                      data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
-              </a>
             </div>
           </div>
           <div class="ps-3">
@@ -292,12 +284,12 @@
           </div>
         </div>
       </section>
-      <!-- Эксперты -->
+      <!-- Исполнители -->
       <section id="experts" class="tab-pane fade">
         <div class="templates-bleed">
           <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
             <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
-              <h5 class="mb-0 ps-3 fs-4 pt-2">Эксперты</h5>
+              <h5 class="mb-0 ps-3 fs-4 pt-2">Исполнители</h5>
               <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
                  href="#notifications"
                  data-bs-toggle="tab"
@@ -385,14 +377,6 @@
               <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column"
                    style="margin-right:0 !important;">
                 <div class="px-3 d-flex justify-content-end align-items-center flex-grow-1" style="min-height:30px;">
-                  <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
-                     href="#notifications"
-                     data-bs-toggle="tab"
-                     aria-label="Открыть уведомления">
-                    <i class="bi bi-bell fs-5"></i>
-                    <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
-                          data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
-                  </a>
                 </div>
                 <div class="req-tabs-carousel" style="display:flex; align-items:end; overflow:hidden;">
                   <button type="button" class="req-tabs-arrow req-tabs-arrow-left d-none" aria-label="Прокрутить влево">
@@ -1612,27 +1596,11 @@
             if (key === 'normatives') {
               document.body.dispatchEvent(new CustomEvent('normatives:load'));
             }
-            if (key === 'business-entities') {
-              document.body.dispatchEvent(new CustomEvent('business-entities:load'));
+            if (BUSINESS_REGISTRY_SECTIONS.includes(key)) {
+              document.body.dispatchEvent(new CustomEvent('classifiers:section-shown', {
+                detail: { section: key }
+              }));
             }
-            if (key === 'business-entity-identifiers') {
-              document.body.dispatchEvent(new CustomEvent('business-entity-identifiers:load'));
-            }
-            if (key === 'business-entity-attributes') {
-              document.body.dispatchEvent(new CustomEvent('business-entity-attributes:load'));
-            }
-            if (key === 'legal-entities') {
-              document.body.dispatchEvent(new CustomEvent('legal-entities:load'));
-            }
-            if (key === 'business-entity-addresses') {
-              document.body.dispatchEvent(new CustomEvent('business-entity-addresses:load'));
-            }
-            if (key === 'business-entity-relations') {
-              document.body.dispatchEvent(new CustomEvent('business-entity-relations:load'));
-            }
-            document.body.dispatchEvent(new CustomEvent('classifiers:section-shown', {
-              detail: { section: key }
-            }));
           }
 
           if (sidebar) {
@@ -1845,11 +1813,27 @@
             });
           }
 
+          function getWorktimeSectionPanel(key) {
+            var section = document.getElementById('worktime-content-' + key);
+            return section && section.querySelector ? section.querySelector('[data-worktime-panel]') : null;
+          }
+
+          function isWorktimeSectionLoaded(key) {
+            var panel = getWorktimeSectionPanel(key);
+            return !panel || panel.dataset.worktimeLoaded === '1';
+          }
+
           function scheduleVisibleWorktimeSectionLoad(key) {
-            [0, 120, 300, 600].forEach(function (delay) {
+            refreshWorktimeSectionIfVisible(key);
+            requestWorktimeLayoutRefresh();
+          }
+
+          function ensureVisibleWorktimeSectionLoad(key) {
+            scheduleVisibleWorktimeSectionLoad(key);
+            [120, 350].forEach(function (delay) {
               window.setTimeout(function () {
-                refreshWorktimeSectionIfVisible(key);
-                requestWorktimeLayoutRefresh();
+                if (isWorktimeSectionLoaded(key)) return;
+                scheduleVisibleWorktimeSectionLoad(key);
               }, delay);
             });
           }
@@ -1859,8 +1843,7 @@
             var target = document.getElementById('worktime-content-' + key);
             if (target) target.classList.remove('d-none');
             if (titleEl) titleEl.textContent = WORKTIME_TITLES[key] || '';
-            refreshWorktimeSectionIfVisible(key);
-            requestWorktimeLayoutRefresh();
+            ensureVisibleWorktimeSectionLoad(key);
           }
 
           if (sidebar) {
@@ -1890,17 +1873,23 @@
               link.addEventListener('click', function () {
                 var activeLink = sidebar && sidebar.querySelector('.list-group-item.active');
                 var activeKey = activeLink ? activeLink.dataset.worktimeSection : 'personal-timesheet';
-                scheduleVisibleWorktimeSectionLoad(activeKey);
+                ensureVisibleWorktimeSectionLoad(activeKey);
               });
               link.addEventListener('shown.bs.tab', function () {
                 flushWorktimeAutosaveBeforeNavigation().finally(function () {
                   var activeLink = sidebar && sidebar.querySelector('.list-group-item.active');
                   var activeKey = activeLink ? activeLink.dataset.worktimeSection : 'personal-timesheet';
-                  scheduleVisibleWorktimeSectionLoad(activeKey);
+                  ensureVisibleWorktimeSectionLoad(activeKey);
                 });
               });
             });
             requestWorktimeSectionLoadIfVisible('personal-timesheet');
+          });
+
+          document.body.addEventListener('htmx:afterSwap', function (event) {
+            var target = event.target;
+            if (!(target instanceof Element) || !target.matches('[data-worktime-panel]')) return;
+            target.dataset.worktimeLoaded = '1';
           });
         })();
         </script>

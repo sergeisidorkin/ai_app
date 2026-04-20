@@ -16,6 +16,7 @@
         <th>№</th>
         <th>Код</th>
         <th>Наименование страны (краткое)</th>
+        <th>Наименование (краткое) в род. пад.</th>
         <th>Наименование страны (полное)</th>
         <th>Буквенный код (Альфа-2)</th>
         <th>Буквенный код (Альфа-3)</th>
@@ -52,6 +53,7 @@
             <td class="text-nowrap">{{ c.number }}</td>
             <td class="text-nowrap">{{ c.code }}</td>
             <td>{{ c.short_name }}</td>
+            <td>{{ c.short_name_genitive }}</td>
             <td>{{ c.full_name }}</td>
             <td class="text-nowrap">{{ c.alpha2 }}</td>
             <td class="text-nowrap">{{ c.alpha3 }}</td>
@@ -60,7 +62,7 @@
             <td class="oksm-source-cell" title="{{ c.source }}">{{ c.source }}</td>
         </tr>
     {% empty %}
-        <tr><td colspan="10" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="11" class="text-muted">Пока нет данных.</td></tr>
     {% endfor %}
     </tbody>
 </table>

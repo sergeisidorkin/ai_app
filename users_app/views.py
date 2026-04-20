@@ -7,9 +7,11 @@ from django.core.mail import send_mail
 from django.db import models, transaction
 from django.db.models import Max
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods, require_POST
 
+from contacts_app.models import PersonRecord
 from group_app.models import OrgUnit
 from .forms import EmployeeForm, ExternalEmployeeForm, ExternalRegistrationForm
 from .models import Employee, PendingRegistration
@@ -28,7 +30,7 @@ def staff_required(u):
 
 
 def _users_context():
-    all_employees = Employee.objects.select_related("user", "department").all()
+    all_employees = Employee.objects.select_related("user", "department", "person_record").all()
     return {
         "staff_employees": all_employees.filter(user__is_staff=True),
         "external_employees": all_employees.filter(user__is_staff=False),
@@ -37,7 +39,15 @@ def _users_context():
 
 def _render_updated(request):
     response = render(request, PARTIAL_TEMPLATE, _users_context())
-    response[HX_TRIGGER_HEADER] = HX_EVENT
+    response[HX_TRIGGER_HEADER] = json.dumps(
+        {
+            HX_EVENT: True,
+            "contacts-updated": {
+                "affected": ["prs-select", "ctz-select", "psn-select", "tel-select", "eml-select"],
+            },
+        },
+        ensure_ascii=False,
+    )
     return response
 
 
@@ -58,15 +68,57 @@ def users_partial(request):
     return render(request, PARTIAL_TEMPLATE, _users_context())
 
 
+def _person_record_label(person_id):
+    if not person_id:
+        return ""
+    try:
+        person = PersonRecord.objects.only("id", "last_name", "first_name", "middle_name").get(pk=person_id)
+    except PersonRecord.DoesNotExist:
+        return ""
+    return f"{person.formatted_id} {person.display_name}".strip()
+
+
+def _person_record_payload(person_id):
+    if not person_id:
+        return None
+    try:
+        person = PersonRecord.objects.only("id", "last_name", "first_name", "middle_name").get(pk=person_id)
+    except PersonRecord.DoesNotExist:
+        return None
+    return {
+        "id": person.pk,
+        "label": f"{person.formatted_id} {person.display_name}".strip(),
+        "last_name": person.last_name or "",
+        "first_name": person.first_name or "",
+        "middle_name": person.middle_name or "",
+    }
+
+
 def _emp_form_context(form, action, employee=None):
     units = list(
         OrgUnit.objects.select_related("company")
         .values("id", "department_name", company_short=models.F("company__short_name"))
     )
+    selected_person_id = form["person_record"].value() or (employee.person_record_id if employee is not None else "")
     ctx = {
         "form": form,
         "action": action,
         "org_units_json": json.dumps(units, ensure_ascii=False),
+        "person_record_label": _person_record_label(selected_person_id),
+        "selected_person_record_json": json.dumps(_person_record_payload(selected_person_id), ensure_ascii=False),
+        "initial_person_record_id": str(employee.person_record_id) if employee is not None and employee.person_record_id else "",
+        "prs_filter_options_url": reverse("prs_filter_options"),
+    }
+    if employee is not None:
+        ctx["employee"] = employee
+    return ctx
+
+
+def _ext_form_context(form, action, employee=None):
+    ctx = {
+        "form": form,
+        "action": action,
+        "person_record_display": employee.formatted_prs_id if employee is not None else "",
     }
     if employee is not None:
         ctx["employee"] = employee
@@ -161,10 +213,10 @@ def employee_move_down(request, pk: int):
 def ext_form_create(request):
     if request.method == "GET":
         form = ExternalEmployeeForm()
-        return render(request, EXT_FORM_TEMPLATE, {"form": form, "action": "create"})
+        return render(request, EXT_FORM_TEMPLATE, _ext_form_context(form, "create"))
     form = ExternalEmployeeForm(request.POST)
     if not form.is_valid():
-        return render(request, EXT_FORM_TEMPLATE, {"form": form, "action": "create"})
+        return render(request, EXT_FORM_TEMPLATE, _ext_form_context(form, "create"))
     emp = form.save()
     emp.position = _next_position(is_staff=False)
     emp.save(update_fields=["position"])
@@ -178,10 +230,10 @@ def ext_form_edit(request, pk: int):
     employee = get_object_or_404(Employee.objects.select_related("user"), pk=pk, user__is_staff=False)
     if request.method == "GET":
         form = ExternalEmployeeForm(instance=employee)
-        return render(request, EXT_FORM_TEMPLATE, {"form": form, "action": "edit", "employee": employee})
+        return render(request, EXT_FORM_TEMPLATE, _ext_form_context(form, "edit", employee))
     form = ExternalEmployeeForm(request.POST, instance=employee)
     if not form.is_valid():
-        return render(request, EXT_FORM_TEMPLATE, {"form": form, "action": "edit", "employee": employee})
+        return render(request, EXT_FORM_TEMPLATE, _ext_form_context(form, "edit", employee))
     form.save()
     return _render_updated(request)
 

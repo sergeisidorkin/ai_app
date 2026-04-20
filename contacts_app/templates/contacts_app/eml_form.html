@@ -1,0 +1,99 @@
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    data-prs-filter-options-url="{{ prs_filter_options_url }}"
+    style="display:flex; flex-direction:column; overflow:hidden; flex:1 1 auto; min-height:0;"
+    {% if action == "create" %}
+      hx-post="{% url 'eml_form_create' %}"
+    {% else %}
+      hx-post="{% url 'eml_form_edit' item.pk %}"
+    {% endif %}
+    hx-target="#contacts-emails-table-wrap"
+    hx-swap="innerHTML"
+    hx-on::after-request="if(event.detail.successful && !event.detail.xhr.getResponseHeader('HX-Retarget')) window.bootstrap?.Modal.getOrCreateInstance(document.getElementById('contacts-modal'))?.hide()">
+  <div class="modal-body" style="overflow-y:auto; flex:1 1 auto; min-height:0;">
+    {% csrf_token %}
+    <div class="row g-3">
+      <div class="col-12">
+        <label class="form-label">ID-PRS</label>
+        {% include "contacts_app/includes/prs_picker.html" with field=form.person picker_prefix="eml" person_record_label=person_record_label %}
+        {% if form.person.errors %}
+        <div class="text-danger small mt-1">{{ form.person.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Электронная почта</label>
+        {{ form.email }}
+        {% if form.email.errors %}
+        <div class="text-danger small mt-1">{{ form.email.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Пользователь</label>
+        <input type="text"
+               class="form-control readonly-field"
+               value="{{ user_kind_display|default:'' }}"
+               readonly
+               tabindex="-1">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Действ. от</label>
+        {{ form.valid_from }}
+        {% if form.valid_from.errors %}
+        <div class="text-danger small mt-1">{{ form.valid_from.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Действ. до</label>
+        {{ form.valid_to }}
+        {% if form.valid_to.errors %}
+        <div class="text-danger small mt-1">{{ form.valid_to.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Запись</label>
+        <input type="text"
+               class="form-control"
+               readonly
+               tabindex="-1"
+               style="background-color:#f8f9fa; color:#6c757d;"
+               value="{{ record_date_display|default:'' }}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Автор записи</label>
+        <input type="text"
+               class="form-control"
+               readonly
+               tabindex="-1"
+               style="background-color:#f8f9fa; color:#6c757d;"
+               value="{{ record_author_display|default:'' }}">
+      </div>
+      <div class="col-12">
+        <label class="form-label">Источник</label>
+        <input type="text"
+               class="form-control"
+               readonly
+               tabindex="-1"
+               style="background-color:#f8f9fa; color:#6c757d;"
+               value="{{ source_display|default:'' }}">
+      </div>
+    </div>
+
+    {% if form.errors %}
+    <div class="alert alert-danger mt-3 mb-0">
+      Проверьте введённые данные.
+    </div>
+    {% endif %}
+  </div>
+  <div class="modal-footer" style="flex-shrink:0;">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>
+{% include "contacts_app/includes/prs_picker_script.html" with field_name="person" picker_prefix="eml" person_record_label=person_record_label %}

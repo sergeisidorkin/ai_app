@@ -186,10 +186,28 @@ class ProposalRegistration(models.Model):
     )
     docx_file_name = models.CharField("Наименование файла DOCX", max_length=255, blank=True, default="")
     docx_file_link = models.CharField("Ссылка на DOCX", max_length=500, blank=True, default="")
+    docx_file_id = models.CharField(
+        "Идентификатор DOCX в Nextcloud",
+        max_length=64,
+        blank=True,
+        default="",
+    )
     pdf_file_name = models.CharField("Наименование файла PDF", max_length=255, blank=True, default="")
     pdf_file_link = models.CharField("Ссылка на PDF", max_length=500, blank=True, default="")
+    pdf_file_id = models.CharField(
+        "Идентификатор PDF в Nextcloud",
+        max_length=64,
+        blank=True,
+        default="",
+    )
     proposal_workspace_disk_path = models.CharField(
         "Путь к рабочей папке ТКП в облаке",
+        max_length=1024,
+        blank=True,
+        default="",
+    )
+    proposal_workspace_target_path = models.CharField(
+        "Путь к рабочей папке ТКП у пользователя в Nextcloud",
         max_length=1024,
         blank=True,
         default="",

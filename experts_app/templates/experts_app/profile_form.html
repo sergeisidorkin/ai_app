@@ -19,17 +19,13 @@
              value="{{ profile.full_name }}">
     </div>
     <div class="row mb-3">
-      <div class="col-4">
+      <div class="col-6">
         <label class="form-label">Эл. почта (логин)</label>
         <input type="text" class="form-control" readonly tabindex="-1"
                style="background-color:#f8f9fa; color:#6c757d;"
                value="{{ profile.employee.user.email }}">
       </div>
-      <div class="col-4">
-        <label class="form-label">Яндекс Почта</label>
-        {{ form.yandex_mail }}
-      </div>
-      <div class="col-4">
+      <div class="col-6">
         <label class="form-label">Дополнительная эл. почта</label>
         {{ form.extra_email }}
       </div>
@@ -39,7 +35,7 @@
         <label class="form-label">Телефон</label>
         <input type="text" class="form-control" readonly tabindex="-1"
                style="background-color:#f8f9fa; color:#6c757d;"
-               value="{{ profile.employee.phone }}">
+               value="{{ profile.employee.primary_phone_display }}">
       </div>
       <div class="col-6">
         <label class="form-label">Дополнительный телефон</label>
@@ -112,7 +108,7 @@
         {{ form.country }}
       </div>
       <div class="col-6">
-        <label class="form-label">Регион</label>
+        <label class="form-label">Регион проживания</label>
         {{ form.region }}
       </div>
     </div>

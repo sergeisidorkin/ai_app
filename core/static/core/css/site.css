@@ -254,6 +254,14 @@
   color: #6c757d !important;
 }
 
+.iti {
+  width: 100%;
+}
+
+#contacts-modal .iti {
+  width: 100%;
+}
+
 /* Аватар в сайдбаре */
 .sidebar-avatar-img {
   display: block;
@@ -406,6 +414,11 @@
 
 .second-sidebar .second-sidebar-header-spacer {
   height: var(--second-sidebar-header-offset);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 1rem;
+  padding-top: 8px;
 }
 
 .second-sidebar {
@@ -419,12 +432,85 @@
   border-right: 1px solid var(--bs-border-color); /* сплошная серая граница справа */
 }
 
+.second-sidebar .second-sidebar-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid #cfd4da;
+  border-radius: .375rem;
+  background-color: #f0f2f4;
+  color: #b6bec6;
+  transition: background-color .12s ease-in-out, border-color .12s ease-in-out, color .12s ease-in-out;
+}
+
+.second-sidebar .second-sidebar-toggle:hover {
+  background-color: #f8f9fa;
+  border-color: #cfd4da;
+  color: #b6bec6;
+}
+
+.second-sidebar .second-sidebar-toggle i {
+  transform: translateX(-1px);
+}
+
+.second-sidebar .second-sidebar-toggle:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 .2rem rgba(var(--bs-primary-rgb, 7,93,148), .15);
+}
+
+body:not(.second-sidebar-collapsed) #sidebar.is-collapsed + main .second-sidebar .second-sidebar-header-spacer {
+  padding-right: 0;
+  position: relative;
+  z-index: 1031;
+  overflow: visible;
+}
+
+body:not(.second-sidebar-collapsed) #sidebar.is-collapsed + main .second-sidebar {
+  z-index: 1030 !important;
+  overflow: visible !important;
+}
+
+body:not(.second-sidebar-collapsed) #sidebar.is-collapsed + main .second-sidebar .second-sidebar-toggle {
+  width: 18px;
+  min-width: 18px;
+  height: 32px;
+  border-radius: .375rem;
+  background-color: #fff;
+  border-color: var(--bs-border-color);
+  border-width: 1px;
+  border-style: solid;
+  position: relative;
+  right: -9px;
+  top: 1px;
+  z-index: 1031;
+}
+
+body:not(.second-sidebar-collapsed) #sidebar.is-collapsed + main .second-sidebar .second-sidebar-toggle:hover {
+  background-color: #fff;
+  border-color: var(--bs-border-color);
+}
+
+body:not(.second-sidebar-collapsed) #sidebar.is-collapsed + main .second-sidebar .second-sidebar-toggle i {
+  transform: translateX(0);
+}
+
+body.second-sidebar-collapsed .second-sidebar {
+  display: none !important;
+}
+
 /* Второй уровень сайдбара: без внешних отступов, светлее контента, темнее главного сайдбара */
 body .second-sidebar {
   width: 320px !important;                 /* шире на 30px */
   flex: 0 0 320px !important;
+  display: flex !important;
+  flex-direction: column !important;
   background-color: #f0f2f4 !important;    /* светлее, чем фон контента (#f8f9fa), но чуть темнее белого */
   min-height: 100vh !important;            /* во всю высоту окна */
+  height: 100vh !important;
+  align-self: flex-start;
   position: sticky !important;             /* прилипает к верху */
   top: 0 !important;
   z-index: 1029 !important; /* ниже основного сайдбара и кнопки */
@@ -456,6 +542,11 @@ body .second-sidebar + .flex-grow-1 {
   padding-right: 0 !important;
   margin-left: 0 !important;
   margin-right: 0 !important;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: calc(100vh - var(--second-sidebar-header-offset) - 1px);
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .second-sidebar .list-group-item {
@@ -548,29 +639,19 @@ body .second-sidebar + .flex-grow-1 {
   margin-bottom: 18px;              /* отступ снизу от панели */
 }
 
-
-#projects > .templates-bleed > .section-header {
+.templates-bleed > .section-header,
+.templates-bleed > .flex-grow-1 > .section-header {
   position: sticky;
   top: 0;
   z-index: 1020;
 }
 
-#proposals > .templates-bleed > .section-header {
-  position: sticky;
-  top: 0;
+#contacts .templates-bleed > .flex-grow-1 > .section-header {
   z-index: 1020;
-}
-
-#classifiers .templates-bleed > .flex-grow-1 > .section-header {
-  position: sticky;
-  top: 0;
-  z-index: 4000;
+  overflow: visible;
 }
 
 #notifications > .templates-bleed > .section-header {
-  position: sticky;
-  top: 0;
-  z-index: 1020;
   margin-bottom: 16px;
 }
 
@@ -580,6 +661,10 @@ body .second-sidebar + .flex-grow-1 {
 
 #master-classifiers-bsn-filter-dropdown .dropdown-menu {
   z-index: 4010;
+}
+
+#master-contacts-prs-filter-dropdown .dropdown-menu {
+  z-index: 1040;
 }
 
 .section-header .nav.nav-underline {
@@ -624,6 +709,18 @@ body .second-sidebar + .flex-grow-1 {
   padding-left: 5px;                  /* [+] единый увеличенный отступ слева */
   font-weight: 600;                    /* чуть более заметный заголовок */
   font-size: 1.3rem;
+}
+
+.table-section-header .classifiers-section-toggle {
+  line-height: 1;
+  font-size: 1rem;
+  align-self: flex-end;
+  margin-bottom: 2px;
+}
+
+.table-section-header .classifiers-section-controls-hidden {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .project-filter-menu {
@@ -736,6 +833,15 @@ body .second-sidebar + .flex-grow-1 {
   line-height: 1.35;
 }
 
+.classifiers-bsn-filter-menu #contacts-prs-filter-search {
+  height: calc(1.35em + .7rem + 2px);
+  min-height: calc(1.35em + .7rem + 2px);
+  padding-top: .35rem;
+  padding-bottom: .35rem;
+  font-size: .82rem;
+  line-height: 1.35;
+}
+
 .classifiers-bsn-filter-search-list {
   width: 100% !important;
   min-width: 100% !important;
@@ -828,6 +934,14 @@ body .second-sidebar + .flex-grow-1 {
 /* Отступ сверху для панели действий под таблицей "Продукты" */
 .products-actions-row {
   margin-top: 30px !important;
+}
+#contacts-persons-pane > .products-actions-row,
+#contacts-citizenships-pane > .products-actions-row,
+#contacts-addresses-pane > .products-actions-row,
+#contacts-positions-pane > .products-actions-row,
+#contacts-phones-pane > .products-actions-row,
+#contacts-emails-pane > .products-actions-row {
+  margin-top: 0.5rem !important;
 }
 #performers-pane > .products-actions-row {
   margin-top: 0.5rem !important;
@@ -3074,6 +3188,7 @@ html.proposal-progress-cursor * {
 }
 #oksm-table-wrap table.clf-truncated td:not(.text-nowrap),
 #okv-table-wrap table.clf-truncated td:not(.text-nowrap),
+#numcap-table-wrap table.clf-truncated td:not(.text-nowrap),
 #katd-table-wrap table.clf-truncated td:not(.text-nowrap),
 #rfs-table-wrap table.clf-truncated td:not(.text-nowrap),
 #lw-table-wrap table.clf-truncated td:not(.text-nowrap) {
@@ -3087,6 +3202,15 @@ html.proposal-progress-cursor * {
   word-break: break-word;
 }
 #okv-table-wrap table.clf-truncated .okv-countries-cell {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.numcap-gar-cell {
+  max-width: 360px;
+  word-break: break-word;
+}
+#numcap-table-wrap table.clf-truncated .numcap-gar-cell {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
