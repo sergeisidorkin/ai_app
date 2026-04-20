@@ -40,7 +40,9 @@ jobs:
       SECRET_KEY: dummy
       DEBUG: "False"
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/test_ai_app
-      PYTHONPATH: ${{ github.workspace }}
+      # The repo root is also a Python package (`ai_app`), so pytest needs the
+      # parent directory on sys.path to import modules as `ai_app.<app>`.
+      PYTHONPATH: ${{ github.workspace }}/..
 
     steps:
       - uses: actions/checkout@v4
