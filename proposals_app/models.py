@@ -218,6 +218,12 @@ class ProposalRegistration(models.Model):
         blank=True,
         default="",
     )
+    proposal_workspace_file_id = models.CharField(
+        "Идентификатор рабочей папки ТКП в Nextcloud",
+        max_length=64,
+        blank=True,
+        default="",
+    )
     sent_date = models.CharField("Дата отправки", max_length=255, blank=True, default="")
     transfer_to_contract_date = models.CharField("Дата передачи для составления договора", max_length=255, blank=True, default="")
     recipient = models.CharField("Наименование организации (краткое)", max_length=255, blank=True, default="")

@@ -4817,12 +4817,14 @@ class ProposalDispatchDiskColumnTests(TestCase):
         mocked_list_resources.assert_not_called()
         self.assertContains(response, 'href="https://cloud.example.com/f/2068"', html=False)
 
+    @patch("nextcloud_app.api.NextcloudApiClient.list_resources")
     @patch("proposals_app.views.create_proposal_workspace")
     @patch("proposals_app.views.is_nextcloud_primary", return_value=True)
     def test_maybe_create_workspace_persists_viewer_target_path(
         self,
         _mocked_is_nextcloud,
         mocked_workspace,
+        mocked_list_resources,
     ):
         from types import SimpleNamespace
 
@@ -4837,6 +4839,14 @@ class ProposalDispatchDiskColumnTests(TestCase):
             "/Corporate Root/ТКП/2026/333500RU DD Новое ТКП",
             "/Shared/333500RU DD Новое ТКП",
         )
+        mocked_list_resources.return_value = [
+            {
+                "name": "333500RU DD Новое ТКП",
+                "path": "/Corporate Root/ТКП/2026/333500RU DD Новое ТКП",
+                "type": "folder",
+                "file_id": "9100",
+            }
+        ]
         request = SimpleNamespace(user=self.user, session=_FakeSession())
 
         self.proposal.proposal_workspace_disk_path = ""
@@ -4862,10 +4872,48 @@ class ProposalDispatchDiskColumnTests(TestCase):
             "/Shared/333500RU DD Новое ТКП",
         )
         self.assertEqual(self.proposal.proposal_workspace_public_url, "")
+        # Persisted folder id is used by the table to build a robust
+        # ``/f/<file_id>`` URL regardless of how the viewer has the folder
+        # mounted in their file tree.
+        self.assertEqual(self.proposal.proposal_workspace_file_id, "9100")
         self.assertTrue(request.session.modified)
         self.assertEqual(
             request.session[PROPOSAL_NEXTCLOUD_TARGETS_SESSION_KEY],
             {"/Corporate Root/ТКП/2026/333500RU DD Новое ТКП": "/Shared/333500RU DD Новое ТКП"},
+        )
+
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
+    def test_proposals_partial_prefers_file_redirect_url_when_workspace_file_id_persisted(
+        self,
+        mocked_list_user_shares,
+        _mocked_get_user_share,
+    ):
+        # Reproduces the real-world scenario: the direct share returns a
+        # ``target_path`` that collides with a broader parent share already
+        # mounted in the viewer's tree, leaving the ``?dir=`` URL pointing at
+        # a non-existent top-level mount. The file-id redirect URL follows
+        # the viewer's actual mount and always resolves.
+        self.proposal.proposal_workspace_file_id = "9100"
+        self.proposal.save(update_fields=["proposal_workspace_file_id"])
+        mocked_list_user_shares.return_value = {
+            self.proposal.proposal_workspace_disk_path: NextcloudShare(
+                share_id="90-direct",
+                path=self.proposal.proposal_workspace_disk_path,
+                share_with=self.user_link.nextcloud_user_id,
+                permissions=15,
+                target_path="/333300RU DD Тестовое ТКП",
+            ),
+        }
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'href="https://cloud.example.com/f/9100"', html=False)
+        self.assertNotContains(
+            response,
+            "/apps/files/files?dir=/333300RU%20DD%20%D0%A2%D0%B5%D1%81%D1%82%D0%BE%D0%B2%D0%BE%D0%B5%20%D0%A2%D0%9A%D0%9F",
+            html=False,
         )
 
 

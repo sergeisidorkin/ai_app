@@ -158,8 +158,8 @@ def _strip_phone_country_code(phone_number, dial_code):
     if compact_value.startswith(compact_code):
         return value[len(code):].strip(" -()")
     if digits_code and compact_value.startswith(digits_code):
-        prefix_index = value.find(digits_code)
-        if prefix_index == 0:
+        next_char = value[len(digits_code):len(digits_code) + 1]
+        if value.startswith(digits_code) and next_char and not next_char.isdigit():
             return value[len(digits_code):].strip(" -()")
     return value
 

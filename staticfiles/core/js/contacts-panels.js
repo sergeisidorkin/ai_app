@@ -773,7 +773,10 @@
           return value.slice(dialCode.length).trim().replace(/^[\s\-()]+/, '');
         }
         if (digitsCode && compactValue.indexOf(digitsCode) === 0 && value.indexOf(digitsCode) === 0) {
-          return value.slice(digitsCode.length).trim().replace(/^[\s\-()]+/, '');
+          var nextChar = value.charAt(digitsCode.length);
+          if (nextChar && /\D/.test(nextChar)) {
+            return value.slice(digitsCode.length).trim().replace(/^[\s\-()]+/, '');
+          }
         }
         return value;
       }
