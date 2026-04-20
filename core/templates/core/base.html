@@ -20,7 +20,8 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
 
     <!-- ваши глобальные стили -->
-    <link rel="stylesheet" href="{% static 'core/css/site.css' %}">
+    <link rel="stylesheet" href="{% static 'core/css/site.css' %}?v=20260420-11">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/intl-tel-input@26.3.1/dist/css/intlTelInput.css">
 
     {# ---------- FAVICONS (под твои имена файлов) ---------- #}
     <link rel="icon" type="image/svg+xml" href="{% static 'core/icons/favicon.svg' %}">
@@ -55,18 +56,58 @@
 
     <!-- Bootstrap 5 (JS bundle: включает Popper) -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/intl-tel-input@26.3.1/dist/js/intlTelInput.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/libphonenumber-js@1.12.41/bundle/libphonenumber-min.js"></script>
+    <script src="{% static 'vendor/google-libphonenumber/libphonenumber.min.js' %}?v=20260417-3"></script>
     <script>
       if (window.htmx) {
         htmx.config.defaultFocusScroll = false;
       }
     </script>
     <script>
+      function cleanupDanglingModalState() {
+        if (document.querySelector('.modal.show, .modal.showing')) return;
+        document.querySelectorAll('.modal-backdrop').forEach(function (backdrop) {
+          backdrop.remove();
+        });
+        document.body.classList.remove('modal-open');
+        document.body.style.removeProperty('padding-right');
+      }
+
+      function scheduleModalCleanup() {
+        window.setTimeout(cleanupDanglingModalState, 0);
+      }
+
+      document.body.addEventListener('htmx:beforeSwap', function (e) {
+        var detail = e.detail || {};
+        var target = detail.target;
+        if (!(target instanceof Element)) return;
+        if (target.isConnected && document.body.contains(target)) return;
+        detail.shouldSwap = false;
+        e.preventDefault();
+        cleanupDanglingModalState();
+      });
+
       document.body.addEventListener('htmx:afterSwap', function (e) {
         const target = e.target;
         if (!(target instanceof Element) || !target.classList.contains('modal-content')) return;
         const modalEl = target.closest('.modal');
         if (!modalEl || !window.bootstrap) return;
         window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+      });
+
+      document.body.addEventListener('htmx:afterSwap', function (e) {
+        var target = e.target;
+        if (target instanceof Element && (target.classList.contains('modal-content') || target.closest('.modal'))) {
+          return;
+        }
+        scheduleModalCleanup();
+      });
+      document.body.addEventListener('htmx:responseError', scheduleModalCleanup);
+      document.body.addEventListener('htmx:sendError', scheduleModalCleanup);
+      document.addEventListener('hidden.bs.modal', scheduleModalCleanup);
+      document.addEventListener('shown.bs.tab', function () {
+        scheduleModalCleanup();
       });
     </script>
 
@@ -87,11 +128,11 @@
 
         <!-- Подключение статических модулей -->
         {% load static %}
-        <script defer src="{% static 'core/js/ui-prefs-restore.js' %}"></script>
+        <script defer src="{% static 'core/js/ui-prefs-restore.js' %}?v=20260420-2"></script>
         <script defer src="{% static 'core/js/selectable-tables.js' %}"></script>
         <script defer src="{% static 'core/js/policy-panels.js' %}"></script>
-        <script defer src="{% static 'core/js/classifiers-panels.js' %}"></script>
-        <script defer src="{% static 'core/js/contacts-panels.js' %}"></script>
+        <script defer src="{% static 'core/js/classifiers-panels.js' %}?v=20260418-3"></script>
+        <script defer src="{% static 'core/js/contacts-panels.js' %}?v=20260418-29"></script>
         <script defer src="{% static 'core/js/group-panels.js' %}"></script>
         <script defer src="{% static 'core/js/experts-panels.js' %}"></script>
         <script defer src="{% static 'core/js/users-panels.js' %}"></script>

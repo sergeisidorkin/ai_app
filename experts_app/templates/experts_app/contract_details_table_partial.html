@@ -16,85 +16,92 @@
         </th>
         <th class="text-nowrap" data-col="1" style="min-width:280px">ФИО</th>
         <th class="text-nowrap" data-col="2">ФИО (полное) род. падеж</th>
-        <th class="text-nowrap" data-col="3">Самозан.</th>
-        <th class="text-nowrap" data-col="4">Налог</th>
-        <th class="text-nowrap" data-col="5">Гражданство</th>
+        <th class="text-nowrap" data-col="3">Страна</th>
+        <th class="text-nowrap" data-col="4">Статус</th>
+        <th class="text-nowrap" data-col="5">Дата рожд.</th>
         <th class="text-nowrap" data-col="6">Пол</th>
-        <th class="text-nowrap" data-col="7">ИНН</th>
-        <th class="text-nowrap" data-col="8">СНИЛС</th>
-        <th class="text-nowrap" data-col="9">Дата рожд.</th>
-        <th class="text-nowrap" data-col="10">Паспорт: серия</th>
-        <th class="text-nowrap" data-col="11">номер</th>
-        <th class="text-nowrap" data-col="12">кем выдан</th>
-        <th class="text-nowrap" data-col="13">дата выдачи</th>
-        <th class="text-nowrap" data-col="14">срок действия</th>
-        <th class="text-nowrap" data-col="15">код подразд.</th>
-        <th class="text-nowrap" data-col="16">адрес регистрации</th>
-        <th class="text-nowrap" data-col="17">Наименование банка</th>
-        <th class="text-nowrap" data-col="18">SWIFT</th>
-        <th class="text-nowrap" data-col="19">ИНН банка</th>
-        <th class="text-nowrap" data-col="20">БИК</th>
-        <th class="text-nowrap" data-col="21">Рас. счет</th>
-        <th class="text-nowrap" data-col="22">Кор. счет</th>
-        <th class="text-nowrap" data-col="23">Адрес банка</th>
-        <th class="text-nowrap" data-col="24">Наим. банка-корр.</th>
-        <th class="text-nowrap" data-col="25">Адрес банка-корр.</th>
-        <th class="text-nowrap" data-col="26">БИК банка-корр.</th>
-        <th class="text-nowrap" data-col="27">SWIFT банка-корр.</th>
-        <th class="text-nowrap" data-col="28">Рас. счет банка-корр.</th>
-        <th class="text-nowrap" data-col="29">Кор. счет банка-корр.</th>
-        <th class="text-nowrap text-center" data-col="30">Факсимиле</th>
+        <th class="text-nowrap" data-col="7">Гражданство</th>
+        <th class="text-nowrap" data-col="8">Идент.</th>
+        <th class="text-nowrap" data-col="9">Номер</th>
+        <th class="text-nowrap" data-col="10">СНИЛС</th>
+        <th class="text-nowrap" data-col="11">Самозан.</th>
+        <th class="text-nowrap" data-col="12">Налог</th>
+        <th class="text-nowrap" data-col="13">Паспорт: серия</th>
+        <th class="text-nowrap" data-col="14">номер</th>
+        <th class="text-nowrap" data-col="15">кем выдан</th>
+        <th class="text-nowrap" data-col="16">дата выдачи</th>
+        <th class="text-nowrap" data-col="17">срок действия</th>
+        <th class="text-nowrap" data-col="18">код подразд.</th>
+        <th class="text-nowrap" data-col="19">адрес регистрации</th>
+        <th class="text-nowrap" data-col="20">Наименование банка</th>
+        <th class="text-nowrap" data-col="21">SWIFT</th>
+        <th class="text-nowrap" data-col="22">ИНН банка</th>
+        <th class="text-nowrap" data-col="23">БИК</th>
+        <th class="text-nowrap" data-col="24">Рас. счет</th>
+        <th class="text-nowrap" data-col="25">Кор. счет</th>
+        <th class="text-nowrap" data-col="26">Адрес банка</th>
+        <th class="text-nowrap" data-col="27">Наим. банка-корр.</th>
+        <th class="text-nowrap" data-col="28">Адрес банка-корр.</th>
+        <th class="text-nowrap" data-col="29">БИК банка-корр.</th>
+        <th class="text-nowrap" data-col="30">SWIFT банка-корр.</th>
+        <th class="text-nowrap" data-col="31">Рас. счет банка-корр.</th>
+        <th class="text-nowrap" data-col="32">Кор. счет банка-корр.</th>
+        <th class="text-nowrap text-center" data-col="33">Факсимиле</th>
     </tr>
     </thead>
     <tbody>
-    {% for p in profiles %}
-        <tr data-edit-url="{% url 'epr_contract_details_edit' p.pk %}"
-            data-profile-id="{{ p.pk }}">
+    {% for item in contract_details %}
+        <tr data-edit-url="{% url 'epr_contract_details_edit' item.pk %}"
+            data-profile-id="{{ item.expert_profile_id }}"
+            data-ctz-id="{{ item.citizenship_record_id }}">
 
             <td class="text-nowrap">
                 {% if request.user.is_authenticated and request.user.is_staff %}
                     <div class="form-check">
                         <input class="form-check-input"
                                type="checkbox"
-                               id="ecd-sel-{{ p.id }}"
+                               id="ecd-sel-{{ item.id }}"
                                name="ecd-select"
-                               value="{{ p.id }}"
+                               value="{{ item.id }}"
                                aria-label="Выделить строку">
                     </div>
                 {% endif %}
             </td>
-            <td class="text-nowrap" data-col="1">{{ p.full_name }}</td>
-            <td class="text-nowrap" data-col="2">{{ p.full_name_genitive }}</td>
-            <td class="text-nowrap" data-col="3">{% if p.self_employed %}{{ p.self_employed|date:"d.m.y" }}{% endif %}</td>
-            <td class="text-nowrap" data-col="4">{% if p.tax_rate != None %}{{ p.tax_rate }}%{% endif %}</td>
-            <td class="text-nowrap" data-col="5">{{ p.citizenship }}</td>
-            <td class="text-nowrap" data-col="6">{{ p.get_gender_display }}</td>
-            <td class="text-nowrap" data-col="7">{{ p.inn }}</td>
-            <td class="text-nowrap" data-col="8">{{ p.snils }}</td>
-            <td class="text-nowrap" data-col="9">{% if p.birth_date %}{{ p.birth_date|date:"d.m.Y" }}{% endif %}</td>
-            <td class="text-nowrap text-end" data-col="10">{{ p.passport_series }}</td>
-            <td class="text-nowrap" data-col="11">{{ p.passport_number }}</td>
-            <td class="text-nowrap" data-col="12">{{ p.passport_issued_by }}</td>
-            <td class="text-nowrap" data-col="13">{% if p.passport_issue_date %}{{ p.passport_issue_date|date_ru:"j E Y" }} г.{% endif %}</td>
-            <td class="text-nowrap" data-col="14">{% if p.passport_expiry_date %}{{ p.passport_expiry_date|date:"d.m.Y" }}{% endif %}</td>
-            <td class="text-nowrap" data-col="15">{{ p.passport_division_code }}</td>
-            <td class="text-nowrap" data-col="16">{{ p.registration_address }}</td>
-            <td class="text-nowrap" data-col="17">{{ p.bank_name }}</td>
-            <td class="text-nowrap" data-col="18">{{ p.bank_swift }}</td>
-            <td class="text-nowrap" data-col="19">{{ p.bank_inn }}</td>
-            <td class="text-nowrap" data-col="20">{{ p.bank_bik }}</td>
-            <td class="text-nowrap" data-col="21">{{ p.settlement_account }}</td>
-            <td class="text-nowrap" data-col="22">{{ p.corr_account }}</td>
-            <td class="text-nowrap" data-col="23">{{ p.bank_address }}</td>
-            <td class="text-nowrap" data-col="24">{{ p.corr_bank_name }}</td>
-            <td class="text-nowrap" data-col="25">{{ p.corr_bank_address }}</td>
-            <td class="text-nowrap" data-col="26">{{ p.corr_bank_bik }}</td>
-            <td class="text-nowrap" data-col="27">{{ p.corr_bank_swift }}</td>
-            <td class="text-nowrap" data-col="28">{{ p.corr_bank_settlement_account }}</td>
-            <td class="text-nowrap" data-col="29">{{ p.corr_bank_corr_account }}</td>
-            <td class="text-nowrap text-center" data-col="30">
-                {% if p.facsimile_file %}
-                  <a href="{% url 'epr_contract_facsimile_download' p.pk %}" title="Скачать факсимиле">
+            <td class="text-nowrap" data-col="1">{{ item.full_name }}</td>
+            <td class="text-nowrap" data-col="2">{{ item.full_name_genitive }}</td>
+            <td class="text-nowrap" data-col="3">{{ item.citizenship_country }}</td>
+            <td class="text-nowrap" data-col="4">{{ item.citizenship_status }}</td>
+            <td class="text-nowrap" data-col="5">{% if item.birth_date %}{{ item.birth_date|date:"d.m.Y" }}{% endif %}</td>
+            <td class="text-nowrap" data-col="6">{{ item.get_gender_display }}</td>
+            <td class="text-nowrap" data-col="7">{{ item.citizenship }}</td>
+            <td class="text-nowrap" data-col="8">{{ item.citizenship_identifier }}</td>
+            <td class="text-nowrap" data-col="9">{{ item.citizenship_number }}</td>
+            <td class="text-nowrap" data-col="10">{{ item.snils }}</td>
+            <td class="text-nowrap" data-col="11">{% if item.self_employed %}{{ item.self_employed|date:"d.m.y" }}{% endif %}</td>
+            <td class="text-nowrap" data-col="12">{% if item.tax_rate != None %}{{ item.tax_rate }}%{% endif %}</td>
+            <td class="text-nowrap text-end" data-col="13">{{ item.passport_series }}</td>
+            <td class="text-nowrap" data-col="14">{{ item.passport_number }}</td>
+            <td class="text-nowrap" data-col="15">{{ item.passport_issued_by }}</td>
+            <td class="text-nowrap" data-col="16">{% if item.passport_issue_date %}{{ item.passport_issue_date|date_ru:"j E Y" }} г.{% endif %}</td>
+            <td class="text-nowrap" data-col="17">{% if item.passport_expiry_date %}{{ item.passport_expiry_date|date:"d.m.Y" }}{% endif %}</td>
+            <td class="text-nowrap" data-col="18">{{ item.passport_division_code }}</td>
+            <td class="text-nowrap" data-col="19">{{ item.registration_address }}</td>
+            <td class="text-nowrap" data-col="20">{{ item.bank_name }}</td>
+            <td class="text-nowrap" data-col="21">{{ item.bank_swift }}</td>
+            <td class="text-nowrap" data-col="22">{{ item.bank_inn }}</td>
+            <td class="text-nowrap" data-col="23">{{ item.bank_bik }}</td>
+            <td class="text-nowrap" data-col="24">{{ item.settlement_account }}</td>
+            <td class="text-nowrap" data-col="25">{{ item.corr_account }}</td>
+            <td class="text-nowrap" data-col="26">{{ item.bank_address }}</td>
+            <td class="text-nowrap" data-col="27">{{ item.corr_bank_name }}</td>
+            <td class="text-nowrap" data-col="28">{{ item.corr_bank_address }}</td>
+            <td class="text-nowrap" data-col="29">{{ item.corr_bank_bik }}</td>
+            <td class="text-nowrap" data-col="30">{{ item.corr_bank_swift }}</td>
+            <td class="text-nowrap" data-col="31">{{ item.corr_bank_settlement_account }}</td>
+            <td class="text-nowrap" data-col="32">{{ item.corr_bank_corr_account }}</td>
+            <td class="text-nowrap text-center" data-col="33">
+                {% if item.facsimile_file %}
+                  <a href="{% url 'epr_contract_facsimile_download' item.pk %}" title="Скачать факсимиле">
                     <i class="bi bi-link-45deg file-link-icon" style="color: var(--bs-primary, #075D94);"></i>
                   </a>
                 {% else %}
@@ -103,7 +110,7 @@
             </td>
         </tr>
     {% empty %}
-        <tr><td colspan="31" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="34" class="text-muted">Пока нет данных.</td></tr>
     {% endfor %}
     </tbody>
 </table>

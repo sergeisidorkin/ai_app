@@ -9,9 +9,30 @@ from contracts_app.forms import _ContractFileInput
 from group_app.models import GroupMember, OrgUnit
 from policy_app.models import ExpertiseDirection, Grade
 from users_app.models import Employee
-from .models import ExpertSpecialty, ExpertProfile
+from .models import ExpertContractDetails, ExpertProfile, ExpertSpecialty
 
 OWNER_GROUP_VALUE = "__group__"
+
+
+def _territorial_division_region_choices_for_country(country_id, current_value=""):
+    choices = []
+    seen = set()
+    if country_id:
+        today = date_type.today()
+        qs = TerritorialDivision.objects.filter(
+            country_id=country_id,
+            effective_date__lte=today,
+        ).filter(
+            Q(abolished_date__isnull=True) | Q(abolished_date__gte=today),
+        )
+        for region_name in qs.order_by("region_name", "position", "id").values_list("region_name", flat=True):
+            if not region_name or region_name in seen:
+                continue
+            seen.add(region_name)
+            choices.append((region_name, region_name))
+    if current_value and current_value not in seen:
+        choices.append((current_value, current_value))
+    return choices
 
 
 class ExpertSpecialtyForm(forms.ModelForm):
@@ -141,15 +162,11 @@ class ExpertProfileForm(forms.ModelForm):
     class Meta:
         model = ExpertProfile
         fields = [
-            "yandex_mail", "extra_email", "extra_phone",
+            "extra_email", "extra_phone",
             "expertise_direction", "professional_status", "professional_status_short", "grade",
             "country", "region", "status",
         ]
         widgets = {
-            "yandex_mail": forms.TextInput(attrs={
-                "class": "form-control",
-                "placeholder": "login@yandex.ru",
-            }),
             "extra_email": forms.TextInput(attrs={
                 "class": "form-control",
                 "placeholder": "name@mail.ru",
@@ -211,24 +228,44 @@ class ExpertProfileForm(forms.ModelForm):
         self.fields["grade"].empty_label = "---------"
         self.fields["grade"].required = False
 
+        resolved_country = None
+        resolved_region = None
+        if self.instance and self.instance.pk:
+            resolved_country = self.instance.resolved_country()
+            resolved_region = self.instance.resolved_region()
+
         self.fields["country"].queryset = _active_countries_qs()
         self.fields["country"].label_from_instance = lambda obj: obj.short_name
         self.fields["country"].empty_label = "---------"
         self.fields["country"].required = False
-
-        if not self.instance or not self.instance.pk or not self.instance.country_id:
-            russia = _active_countries_qs().filter(short_name="Россия").first()
-            if russia:
-                self.initial.setdefault("country", russia.pk)
+        if resolved_country is not None:
+            self.initial["country"] = resolved_country.pk
 
         country_pk = self._resolve_fk("country")
         if country_pk:
             self.fields["region"].queryset = _active_regions_qs(country_pk)
         else:
             self.fields["region"].queryset = TerritorialDivision.objects.none()
+        if resolved_region is not None:
+            self.initial["region"] = resolved_region.pk
         self.fields["region"].label_from_instance = lambda obj: obj.region_name
+        self.fields["region"].label = "Регион проживания"
         self.fields["region"].empty_label = "---------"
         self.fields["region"].required = False
+
+        extra_email_value = ""
+        extra_phone_value = ""
+        if self.instance and self.instance.pk:
+            extra_email_value = self.instance.resolved_extra_email()
+            extra_phone_value = self.instance.resolved_extra_phone()
+        self.initial["extra_email"] = extra_email_value
+        self.initial["extra_phone"] = extra_phone_value
+        for field_name in ("extra_email", "extra_phone", "country", "region"):
+            field = self.fields[field_name]
+            field.disabled = True
+            field.widget.attrs["readonly"] = True
+            field.widget.attrs["tabindex"] = "-1"
+            field.widget.attrs["class"] = field.widget.attrs.get("class", "") + " readonly-field"
 
     def _resolve_fk(self, field_name):
         if self.data:
@@ -251,11 +288,99 @@ class ExpertProfileForm(forms.ModelForm):
 
 
 class ExpertContractDetailsForm(forms.ModelForm):
+    citizenship = forms.CharField(
+        label="Гражданство",
+        required=False,
+        disabled=True,
+        widget=forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
+    )
+    citizenship_country = forms.CharField(
+        label="Страна гражданства (налоговая юрисдикция)",
+        required=False,
+        disabled=True,
+        widget=forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
+    )
+    citizenship_status = forms.CharField(
+        label="Статус",
+        required=False,
+        disabled=True,
+        widget=forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
+    )
+    citizenship_identifier = forms.CharField(
+        label="Идентификатор",
+        required=False,
+        disabled=True,
+        widget=forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
+    )
+    citizenship_number = forms.CharField(
+        label="Номер",
+        required=False,
+        disabled=True,
+        widget=forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
+    )
+    registration_region = forms.ChoiceField(
+        label="Регион",
+        choices=[("", "---------")],
+        required=False,
+        widget=forms.Select(attrs={"class": "form-select", "id": "ecd-registration-region-select"}),
+    )
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         instance = self.instance
         if instance is None:
             return
+        country_id = getattr(getattr(instance, "citizenship_record", None), "country_id", None)
+        current_region = ""
+        if self.is_bound:
+            current_region = self.data.get("registration_region") or ""
+        elif getattr(instance, "pk", None):
+            current_region = instance.registration_region or ""
+        self.fields["registration_region"].choices = [("", "---------")] + _territorial_division_region_choices_for_country(
+            country_id,
+            current_value=current_region,
+        )
+        self.fields["citizenship"].initial = instance.calculated_citizenship
+        self.fields["citizenship_country"].initial = instance.citizenship_country
+        self.fields["citizenship_country"].widget.attrs["data-country-id"] = str(country_id or "")
+        self.fields["citizenship_status"].initial = instance.citizenship_status
+        self.fields["citizenship_identifier"].initial = instance.citizenship_identifier
+        self.fields["citizenship_number"].initial = instance.citizenship_number
+        self.fields["registration_address"].initial = instance.calculated_registration_address
+        self.fields["registration_address"].disabled = True
+        self.fields["registration_address"].widget.attrs.update(
+            {
+                "readonly": True,
+                "tabindex": "-1",
+                "class": self.fields["registration_address"].widget.attrs.get("class", "") + " readonly-field",
+            }
+        )
+        self.fields["full_name_genitive"].initial = instance.person_full_name_genitive
+        self.fields["full_name_genitive"].disabled = True
+        self.fields["full_name_genitive"].widget.attrs.update(
+            {
+                "readonly": True,
+                "tabindex": "-1",
+                "class": self.fields["full_name_genitive"].widget.attrs.get("class", "") + " readonly-field",
+            }
+        )
+        self.fields["gender"].initial = instance.person_gender
+        self.fields["gender"].disabled = True
+        self.fields["gender"].widget.attrs.update(
+            {
+                "tabindex": "-1",
+                "class": self.fields["gender"].widget.attrs.get("class", "") + " readonly-field",
+            }
+        )
+        self.fields["birth_date"].initial = instance.person_birth_date
+        self.fields["birth_date"].disabled = True
+        self.fields["birth_date"].widget.attrs.update(
+            {
+                "readonly": True,
+                "tabindex": "-1",
+                "class": self.fields["birth_date"].widget.attrs.get("class", "") + " readonly-field",
+            }
+        )
         self.fields["facsimile_file"].widget.attrs.update(
             {
                 "cloud_current_url": getattr(instance.facsimile_file, "url", "") if getattr(instance, "facsimile_file", None) else "",
@@ -264,13 +389,15 @@ class ExpertContractDetailsForm(forms.ModelForm):
         )
 
     class Meta:
-        model = ExpertProfile
+        model = ExpertContractDetails
         fields = [
-            "full_name_genitive", "self_employed", "tax_rate", "citizenship",
-            "gender", "inn", "snils", "birth_date",
+            "full_name_genitive", "self_employed", "tax_rate",
+            "gender", "snils", "birth_date",
             "passport_series", "passport_number", "passport_issued_by",
             "passport_issue_date", "passport_expiry_date", "passport_division_code",
-            "registration_address",
+            "registration_address", "registration_postal_code", "registration_region",
+            "registration_locality", "registration_street",
+            "registration_building", "registration_premise", "registration_premise_part", "registration_date",
             "bank_name", "bank_swift", "bank_inn", "bank_bik",
             "settlement_account", "corr_account", "bank_address",
             "corr_bank_name", "corr_bank_address", "corr_bank_bik", "corr_bank_swift",
@@ -281,9 +408,7 @@ class ExpertContractDetailsForm(forms.ModelForm):
             "full_name_genitive": forms.TextInput(attrs={"class": "form-control"}),
             "self_employed": forms.DateInput(attrs={"class": "form-control", "type": "date"}, format="%Y-%m-%d"),
             "tax_rate": forms.NumberInput(attrs={"class": "form-control", "min": "0", "max": "100"}),
-            "citizenship": forms.TextInput(attrs={"class": "form-control"}),
             "gender": forms.Select(attrs={"class": "form-select"}),
-            "inn": forms.TextInput(attrs={"class": "form-control"}),
             "snils": forms.TextInput(attrs={"class": "form-control", "placeholder": "000-000-000 00"}),
             "birth_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}, format="%Y-%m-%d"),
             "passport_series": forms.TextInput(attrs={"class": "form-control"}),
@@ -293,6 +418,13 @@ class ExpertContractDetailsForm(forms.ModelForm):
             "passport_expiry_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}, format="%Y-%m-%d"),
             "passport_division_code": forms.TextInput(attrs={"class": "form-control"}),
             "registration_address": forms.TextInput(attrs={"class": "form-control"}),
+            "registration_postal_code": forms.TextInput(attrs={"class": "form-control"}),
+            "registration_locality": forms.TextInput(attrs={"class": "form-control"}),
+            "registration_street": forms.TextInput(attrs={"class": "form-control"}),
+            "registration_building": forms.TextInput(attrs={"class": "form-control"}),
+            "registration_premise": forms.TextInput(attrs={"class": "form-control"}),
+            "registration_premise_part": forms.TextInput(attrs={"class": "form-control"}),
+            "registration_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}, format="%Y-%m-%d"),
             "bank_name": forms.TextInput(attrs={"class": "form-control"}),
             "bank_swift": forms.TextInput(attrs={"class": "form-control"}),
             "bank_inn": forms.TextInput(attrs={"class": "form-control"}),

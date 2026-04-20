@@ -13,13 +13,14 @@
         </div>
         {% endif %}
       </th>
-      <th>ID-PRS</th>
-      <th>Фамилия</th>
-      <th>Имя</th>
-      <th>Отчество</th>
-      <th>Гражданство</th>
-      <th>Идентификатор</th>
-      <th>Номер</th>
+      <th style="width:7%">ID-PRS</th>
+      <th style="width:10%">Фамилия</th>
+      <th style="width:10%">Имя</th>
+      <th style="width:10%">Отчество</th>
+      <th style="width:20%">ФИО (полное) в родительном падеже</th>
+      <th style="width:8%">Пол</th>
+      <th style="width:8%">Дата рождения</th>
+      <th style="width:26%">Пользователь</th>
     </tr>
   </thead>
   <tbody class="align-top">
@@ -44,12 +45,13 @@
       <td>{{ item.last_name|default:"—" }}</td>
       <td>{{ item.first_name|default:"—" }}</td>
       <td>{{ item.middle_name|default:"—" }}</td>
-      <td>{% if item.citizenship %}{{ item.citizenship.short_name }}{% else %}—{% endif %}</td>
-      <td>{{ item.identifier|default:"—" }}</td>
-      <td>{{ item.number|default:"—" }}</td>
+      <td>{{ item.full_name_genitive|default:"—" }}</td>
+      <td>{{ item.get_gender_display|default:"—" }}</td>
+      <td>{% if item.birth_date %}{{ item.birth_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>
+      <td>{{ item.get_user_kind_display|default:"—" }}</td>
     </tr>
     {% empty %}
-    <tr><td colspan="8" class="text-muted">Пока нет данных.</td></tr>
+    <tr><td colspan="9" class="text-muted">Пока нет данных.</td></tr>
     {% endfor %}
   </tbody>
 </table>

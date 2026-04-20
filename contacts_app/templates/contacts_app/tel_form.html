@@ -1,0 +1,141 @@
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    data-prs-filter-options-url="{{ prs_filter_options_url }}"
+    data-tel-phone-form="1"
+    data-country-meta='{{ form.country_meta_json|safe }}'
+    data-ru-landline-lookup-url="{% url 'tel_ru_landline_lookup' %}"
+    style="display:flex; flex-direction:column; overflow:hidden; flex:1 1 auto; min-height:0;"
+    {% if action == "create" %}
+      hx-post="{% url 'tel_form_create' %}"
+    {% else %}
+      hx-post="{% url 'tel_form_edit' item.pk %}"
+    {% endif %}
+    hx-target="#contacts-phones-table-wrap"
+    hx-swap="innerHTML"
+    hx-on::after-request="if(event.detail.successful && !event.detail.xhr.getResponseHeader('HX-Retarget')) window.bootstrap?.Modal.getOrCreateInstance(document.getElementById('contacts-modal'))?.hide()">
+  <div class="modal-body" style="overflow-y:auto; flex:1 1 auto; min-height:0;">
+    {% csrf_token %}
+    <div class="row g-3">
+      <div class="col-12">
+        <label class="form-label">ID-PRS</label>
+        {% include "contacts_app/includes/prs_picker.html" with field=form.person picker_prefix="tel" person_record_label=person_record_label %}
+        {% if form.person.errors %}
+        <div class="text-danger small mt-1">{{ form.person.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Тип связи</label>
+        {{ form.phone_type }}
+        {% if form.phone_type.errors %}
+        <div class="text-danger small mt-1">{{ form.phone_type.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="{% if form.show_region_field %}col-md-2{% else %}col-md-9{% endif %}" id="tel-country-wrap">
+        <label class="form-label">Страна</label>
+        {{ form.country }}
+        {% if form.country.errors %}
+        <div class="text-danger small mt-1">{{ form.country.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-7{% if not form.show_region_field %} d-none{% endif %}" id="tel-region-wrap">
+        <label class="form-label">Регион</label>
+        {{ form.region }}
+        {% if form.region.errors %}
+        <div class="text-danger small mt-1">{{ form.region.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Основной</label>
+        {{ form.is_primary }}
+        {% if form.is_primary.errors %}
+        <div class="text-danger small mt-1">{{ form.is_primary.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Код</label>
+        <div class="input-group">
+          <span class="input-group-text" id="tel-flag-badge" style="min-width: 2.5rem; justify-content: center; padding: 0.2rem 0.35rem; font-size: 1.35rem; line-height: 1;">{{ form.initial_country_flag }}</span>
+          {{ form.code }}
+        </div>
+      </div>
+      <div class="col-md-7" id="tel-phone-wrap">
+        <label class="form-label">Номер телефона</label>
+        {{ form.phone_number }}
+        {% if form.phone_number.errors %}
+        <div class="text-danger small mt-1">{{ form.phone_number.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-3{% if form.phone_type.value != 'landline' %} d-none{% endif %}" id="tel-extension-wrap">
+        <label class="form-label">Добавочный номер</label>
+        {{ form.extension }}
+        {% if form.extension.errors %}
+        <div class="text-danger small mt-1">{{ form.extension.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Действ. от</label>
+        {{ form.valid_from }}
+        {% if form.valid_from.errors %}
+        <div class="text-danger small mt-1">{{ form.valid_from.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Действ. до</label>
+        {{ form.valid_to }}
+        {% if form.valid_to.errors %}
+        <div class="text-danger small mt-1">{{ form.valid_to.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Запись</label>
+        <input type="text"
+               class="form-control"
+               readonly
+               tabindex="-1"
+               style="background-color:#f8f9fa; color:#6c757d;"
+               value="{{ record_date_display|default:'' }}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Автор записи</label>
+        <input type="text"
+               class="form-control"
+               readonly
+               tabindex="-1"
+               style="background-color:#f8f9fa; color:#6c757d;"
+               value="{{ record_author_display|default:'' }}">
+      </div>
+      <div class="col-12">
+        <label class="form-label">Источник</label>
+        <input type="text"
+               class="form-control"
+               readonly
+               tabindex="-1"
+               style="background-color:#f8f9fa; color:#6c757d;"
+               value="{{ source_display|default:'' }}">
+      </div>
+    </div>
+
+    {% if form.errors %}
+    <div class="alert alert-danger mt-3 mb-0">
+      Проверьте введённые данные.
+    </div>
+    {% endif %}
+    {% if form.non_field_errors %}
+    <div class="text-danger small mt-2">
+      {{ form.non_field_errors|join:", " }}
+    </div>
+    {% endif %}
+  </div>
+  <div class="modal-footer" style="flex-shrink:0;">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>
+{% include "contacts_app/includes/prs_picker_script.html" with field_name="person" picker_prefix="tel" person_record_label=person_record_label %}

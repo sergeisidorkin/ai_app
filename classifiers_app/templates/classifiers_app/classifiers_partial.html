@@ -2,9 +2,19 @@
     <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 0px;">
         <h5 class="table-section-title">
             <i class="bi bi-table me-2"></i>
-            Общероссийский классификатор стран мира (ОКСМ)
+            <span>Общероссийский классификатор стран мира (ОКСМ)</span>
+            <button type="button"
+                    id="oksm-section-toggle"
+                    class="btn btn-link btn-sm text-secondary text-decoration-none p-0 ms-2 d-inline-flex align-items-center classifiers-section-toggle"
+                    data-section-controls-id="oksm-header-controls"
+                    data-section-body-id="oksm-section-body"
+                    aria-expanded="true"
+                    aria-label="Свернуть раздел ОКСМ"
+                    title="Свернуть раздел ОКСМ">
+                <i class="bi bi-dash-square"></i>
+            </button>
         </h5>
-        <div class="d-flex align-items-center gap-2">
+        <div class="d-flex align-items-center gap-2" id="oksm-header-controls">
             <label class="form-label mb-0 text-nowrap small" for="oksm-date-filter">Действителен на дату:</label>
             <input type="date"
                    class="form-control form-control-sm"
@@ -20,7 +30,7 @@
         </div>
     </div>
 
-    <div class="table-responsive">
+    <div class="table-responsive" id="oksm-section-body">
         <div id="oksm-table-wrap">
             {% include "classifiers_app/oksm_table_partial.html" %}
         </div>
@@ -29,9 +39,19 @@
     <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 50px;">
         <h5 class="table-section-title">
             <i class="bi bi-table me-2"></i>
-            Общероссийский классификатор валют (ОКВ)
+            <span>Общероссийский классификатор валют (ОКВ)</span>
+            <button type="button"
+                    id="okv-section-toggle"
+                    class="btn btn-link btn-sm text-secondary text-decoration-none p-0 ms-2 d-inline-flex align-items-center classifiers-section-toggle"
+                    data-section-controls-id="okv-header-controls"
+                    data-section-body-id="okv-section-body"
+                    aria-expanded="true"
+                    aria-label="Свернуть раздел ОКВ"
+                    title="Свернуть раздел ОКВ">
+                <i class="bi bi-dash-square"></i>
+            </button>
         </h5>
-        <div class="d-flex align-items-center gap-2">
+        <div class="d-flex align-items-center gap-2" id="okv-header-controls">
             <label class="form-label mb-0 text-nowrap small" for="okv-date-filter">Действителен на дату:</label>
             <input type="date"
                    class="form-control form-control-sm"
@@ -47,7 +67,7 @@
         </div>
     </div>
 
-    <div class="table-responsive">
+    <div class="table-responsive" id="okv-section-body">
         <div id="okv-table-wrap">
             {% include "classifiers_app/okv_table_partial.html" %}
         </div>
@@ -56,11 +76,20 @@
     <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 50px;">
         <h5 class="table-section-title">
             <i class="bi bi-table me-2"></i>
-            Классификатор идентификаторов юрлиц
+            <span>Классификатор идентификаторов юрлиц</span>
+            <button type="button"
+                    id="lei-section-toggle"
+                    class="btn btn-link btn-sm text-secondary text-decoration-none p-0 ms-2 d-inline-flex align-items-center classifiers-section-toggle"
+                    data-section-body-id="lei-section-body"
+                    aria-expanded="true"
+                    aria-label="Свернуть раздел идентификаторов юрлиц"
+                    title="Свернуть раздел идентификаторов юрлиц">
+                <i class="bi bi-dash-square"></i>
+            </button>
         </h5>
     </div>
 
-    <div class="table-responsive">
+    <div class="table-responsive" id="lei-section-body">
         <div id="lei-table-wrap">
             {% include "classifiers_app/lei_table_partial.html" %}
         </div>
@@ -69,9 +98,124 @@
     <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 50px;">
         <h5 class="table-section-title">
             <i class="bi bi-table me-2"></i>
-            Классификатор административно-территориального деления
+            <span>Классификатор идентификаторов физлиц</span>
+            <button type="button"
+                    id="pei-section-toggle"
+                    class="btn btn-link btn-sm text-secondary text-decoration-none p-0 ms-2 d-inline-flex align-items-center classifiers-section-toggle"
+                    data-section-body-id="pei-section-body"
+                    aria-expanded="true"
+                    aria-label="Свернуть раздел идентификаторов физлиц"
+                    title="Свернуть раздел идентификаторов физлиц">
+                <i class="bi bi-dash-square"></i>
+            </button>
         </h5>
-        <div class="d-flex align-items-center gap-2">
+    </div>
+
+    <div class="table-responsive" id="pei-section-body">
+        <div id="pei-table-wrap">
+            {% include "classifiers_app/pei_table_partial.html" %}
+        </div>
+    </div>
+
+    <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 50px;">
+        <h5 class="table-section-title">
+            <i class="bi bi-table me-2"></i>
+            <span>Реестр российской системы и плана нумерации</span>
+            <button type="button"
+                    id="numcap-section-toggle"
+                    class="btn btn-link btn-sm text-secondary text-decoration-none p-0 ms-2 d-inline-flex align-items-center classifiers-section-toggle"
+                    data-section-body-id="numcap-section-body"
+                    aria-expanded="true"
+                    aria-label="Свернуть раздел реестра нумерации"
+                    title="Свернуть раздел реестра нумерации">
+                <i class="bi bi-dash-square"></i>
+            </button>
+        </h5>
+    </div>
+
+    <div id="numcap-section-body">
+        <form id="numcap-filters"
+              class="row g-2 align-items-end mb-3"
+              hx-get="{% url 'numcap_table_partial' %}"
+              hx-target="#numcap-table-wrap"
+              hx-swap="innerHTML">
+            <div class="col-md-5">
+                <label class="form-label mb-1 small" for="numcap-q-filter">Поиск</label>
+                <input type="text"
+                       class="form-control form-control-sm"
+                       id="numcap-q-filter"
+                       name="numcap_q"
+                       value="{{ numcap_q|default:'' }}"
+                       placeholder="Код зоны, диапазон, оператор, регион, ГАР, ИНН"
+                       hx-get="{% url 'numcap_table_partial' %}"
+                       hx-target="#numcap-table-wrap"
+                       hx-swap="innerHTML"
+                       hx-trigger="keyup changed delay:300ms"
+                       hx-include="#numcap-filters">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label mb-1 small" for="numcap-code-filter">Код зоны</label>
+                <input type="text"
+                       class="form-control form-control-sm"
+                       id="numcap-code-filter"
+                       name="numcap_code"
+                       value="{{ numcap_code|default:'' }}"
+                       placeholder="495"
+                       inputmode="numeric"
+                       hx-get="{% url 'numcap_table_partial' %}"
+                       hx-target="#numcap-table-wrap"
+                       hx-swap="innerHTML"
+                       hx-trigger="keyup changed delay:300ms"
+                       hx-include="#numcap-filters">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label mb-1 small" for="numcap-region-filter">Регион</label>
+                <input type="text"
+                       class="form-control form-control-sm"
+                       id="numcap-region-filter"
+                       name="numcap_region"
+                       value="{{ numcap_region|default:'' }}"
+                       placeholder="Москва"
+                       hx-get="{% url 'numcap_table_partial' %}"
+                       hx-target="#numcap-table-wrap"
+                       hx-swap="innerHTML"
+                       hx-trigger="keyup changed delay:300ms"
+                       hx-include="#numcap-filters">
+            </div>
+            <div class="col-md-1 d-grid">
+                <button type="button"
+                        class="btn btn-outline-secondary btn-sm"
+                        hx-get="{% url 'classifiers_partial' %}"
+                        hx-target="#classifiers-pane"
+                        hx-swap="outerHTML">
+                    Сброс
+                </button>
+            </div>
+        </form>
+
+        <div class="table-responsive">
+            <div id="numcap-table-wrap">
+                {% include "classifiers_app/numcap_table_partial.html" %}
+            </div>
+        </div>
+    </div>
+
+    <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 50px;">
+        <h5 class="table-section-title">
+            <i class="bi bi-table me-2"></i>
+            <span>Классификатор административно-территориального деления</span>
+            <button type="button"
+                    id="katd-section-toggle"
+                    class="btn btn-link btn-sm text-secondary text-decoration-none p-0 ms-2 d-inline-flex align-items-center classifiers-section-toggle"
+                    data-section-controls-id="katd-header-controls"
+                    data-section-body-id="katd-section-body"
+                    aria-expanded="true"
+                    aria-label="Свернуть раздел КАТД"
+                    title="Свернуть раздел КАТД">
+                <i class="bi bi-dash-square"></i>
+            </button>
+        </h5>
+        <div class="d-flex align-items-center gap-2" id="katd-header-controls">
             <label class="form-label mb-0 text-nowrap small" for="katd-date-filter">Действителен на дату:</label>
             <input type="date"
                    class="form-control form-control-sm"
@@ -87,7 +231,7 @@
         </div>
     </div>
 
-    <div class="table-responsive">
+    <div class="table-responsive" id="katd-section-body">
         <div id="katd-table-wrap">
             {% include "classifiers_app/katd_table_partial.html" %}
         </div>
@@ -96,11 +240,20 @@
     <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 50px;">
         <h5 class="table-section-title">
             <i class="bi bi-table me-2"></i>
-            Коды ФНС России для субъектов Российской Федерации
+            <span>Коды ФНС России для субъектов Российской Федерации</span>
+            <button type="button"
+                    id="rfs-section-toggle"
+                    class="btn btn-link btn-sm text-secondary text-decoration-none p-0 ms-2 d-inline-flex align-items-center classifiers-section-toggle"
+                    data-section-body-id="rfs-section-body"
+                    aria-expanded="true"
+                    aria-label="Свернуть раздел кодов ФНС"
+                    title="Свернуть раздел кодов ФНС">
+                <i class="bi bi-dash-square"></i>
+            </button>
         </h5>
     </div>
 
-    <div class="table-responsive">
+    <div class="table-responsive" id="rfs-section-body">
         <div id="rfs-table-wrap">
             {% include "classifiers_app/rfs_table_partial.html" %}
         </div>

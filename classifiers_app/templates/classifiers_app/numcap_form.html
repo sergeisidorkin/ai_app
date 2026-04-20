@@ -1,0 +1,93 @@
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    style="display:flex; flex-direction:column; overflow:hidden; flex:1 1 auto; min-height:0;"
+    {% if action == "create" %}
+      hx-post="{% url 'numcap_form_create' %}"
+    {% else %}
+      hx-post="{% url 'numcap_form_edit' item.pk %}"
+    {% endif %}
+    hx-target="#classifiers-pane"
+    hx-swap="outerHTML">
+  <div class="modal-body" style="overflow-y:auto; flex:1 1 auto; min-height:0;">
+    {% csrf_token %}
+
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label">Код зоны</label>
+        {{ form.code }}
+        {% if form.code.errors %}
+        <div class="text-danger small mt-1">{{ form.code.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Начало диапазона</label>
+        {{ form.begin }}
+        {% if form.begin.errors %}
+        <div class="text-danger small mt-1">{{ form.begin.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Конец диапазона</label>
+        {{ form.end }}
+        {% if form.end.errors %}
+        <div class="text-danger small mt-1">{{ form.end.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Емкость</label>
+        {{ form.capacity }}
+        {% if form.capacity.errors %}
+        <div class="text-danger small mt-1">{{ form.capacity.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-8">
+        <label class="form-label">Оператор</label>
+        {{ form.operator }}
+        {% if form.operator.errors %}
+        <div class="text-danger small mt-1">{{ form.operator.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-12">
+        <label class="form-label">Регион</label>
+        {{ form.region }}
+        {% if form.region.errors %}
+        <div class="text-danger small mt-1">{{ form.region.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-12">
+        <label class="form-label">Территория ГАР</label>
+        {{ form.gar_territory }}
+        {% if form.gar_territory.errors %}
+        <div class="text-danger small mt-1">{{ form.gar_territory.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">ИНН</label>
+        {{ form.inn }}
+        {% if form.inn.errors %}
+        <div class="text-danger small mt-1">{{ form.inn.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mt-3 mb-0">
+        Проверьте введённые данные.
+      </div>
+    {% endif %}
+    {% if form.non_field_errors %}
+      <div class="text-danger small mt-2">{{ form.non_field_errors|join:", " }}</div>
+    {% endif %}
+  </div>
+  <div class="modal-footer" style="flex-shrink:0;">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>

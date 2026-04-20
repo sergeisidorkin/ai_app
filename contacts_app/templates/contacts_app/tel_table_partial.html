@@ -1,0 +1,84 @@
+<table class="table table-sm">
+  <thead class="align-bottom">
+    <tr>
+      <th style="width:1%">
+        {% if request.user.is_authenticated and request.user.is_staff %}
+        <div class="form-check m-0">
+          <input class="form-check-input"
+                 type="checkbox"
+                 id="tel-master"
+                 data-target-name="tel-select"
+                 data-actions-id="tel-actions"
+                 aria-label="Выделить все строки">
+        </div>
+        {% endif %}
+      </th>
+      <th>ID-TEL</th>
+      <th>ID-PRS</th>
+      <th>Страна</th>
+      <th>Тип</th>
+      <th>Номер телефона</th>
+      <th class="text-center">Основной</th>
+      <th>Действ. от</th>
+      <th>Действ. до</th>
+      <th>Запись</th>
+      <th>Автор записи</th>
+      <th>Источник</th>
+    </tr>
+  </thead>
+  <tbody class="align-top">
+    {% for item in tel_items %}
+    <tr data-edit-url="{% url 'tel_form_edit' item.pk %}"
+        data-delete-url="{% url 'tel_delete' item.pk %}"
+        data-move-up-url="{% url 'tel_move_up' item.pk %}"
+        data-move-down-url="{% url 'tel_move_down' item.pk %}">
+      <td class="text-nowrap">
+        {% if request.user.is_authenticated and request.user.is_staff %}
+        <div class="form-check">
+          <input class="form-check-input"
+                 type="checkbox"
+                 id="tel-sel-{{ item.id }}"
+                 name="tel-select"
+                 value="{{ item.id }}"
+                 aria-label="Выделить строку">
+        </div>
+        {% endif %}
+      </td>
+      <td class="text-nowrap"><span class="clf-id-mono">{{ item.pk|stringformat:"05d" }}-TEL</span></td>
+      <td class="text-nowrap"><span class="clf-id-mono">{{ item.person.pk|stringformat:"05d" }}-PRS</span></td>
+      <td>{{ item.country.short_name|default:"—" }}</td>
+      <td>
+        {% if item.phone_type == "mobile" %}
+          моб.
+        {% elif item.phone_type == "landline" %}
+          гор.
+        {% else %}
+          —
+        {% endif %}
+      </td>
+      <td>
+        {% if item.phone_number %}
+          {% if item.code %}{{ item.code }} {% endif %}{{ item.phone_number }}{% if item.extension %} доб. {{ item.extension }}{% endif %}
+        {% else %}
+          —
+        {% endif %}
+      </td>
+      <td class="text-nowrap text-center">
+        {% if item.is_primary %}
+          <i class="bi bi-check-square" aria-label="Основной номер"></i>
+        {% else %}
+          <i class="bi bi-square text-body-tertiary" aria-label="Не основной номер"></i>
+        {% endif %}
+      </td>
+      <td class="text-nowrap">{% if item.valid_from %}{{ item.valid_from|date:"d.m.Y" }}{% else %}—{% endif %}</td>
+      <td class="text-nowrap">{% if item.valid_to %}{{ item.valid_to|date:"d.m.Y" }}{% else %}—{% endif %}</td>
+      <td class="text-nowrap">{% if item.record_date %}{{ item.record_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>
+      <td>{{ item.record_author|default:"—" }}</td>
+      <td>{{ item.source|default:"—" }}</td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="12" class="text-muted">Пока нет данных.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% include "classifiers_app/_registry_pagination.html" %}

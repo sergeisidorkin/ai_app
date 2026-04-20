@@ -1,5 +1,6 @@
 {
   "dependencies": {
-    "@microsoft/office-js": "1.1.110"
+    "@microsoft/office-js": "1.1.110",
+    "google-libphonenumber": "^3.2.44"
   }
 }

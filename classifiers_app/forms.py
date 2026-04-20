@@ -9,6 +9,8 @@ from .models import (
     OKSMCountry,
     OKVCurrency,
     LegalEntityIdentifier,
+    PhysicalEntityIdentifier,
+    NumcapRecord,
     TerritorialDivision,
     LivingWage,
     LegalEntityRecord,
@@ -214,11 +216,25 @@ def _format_registry_overlap_message(*, registry_label, item_suffix, overlap, st
 class OKSMCountryForm(forms.ModelForm):
     class Meta:
         model = OKSMCountry
-        fields = ["number", "code", "short_name", "full_name", "alpha2", "alpha3", "approval_date", "expiry_date", "source"]
+        fields = [
+            "number",
+            "code",
+            "short_name",
+            "short_name_genitive",
+            "full_name",
+            "alpha2",
+            "alpha3",
+            "approval_date",
+            "expiry_date",
+            "source",
+        ]
         widgets = {
             "number": forms.NumberInput(attrs={"class": "form-control", "placeholder": "Порядковый номер"}),
             "code": forms.TextInput(attrs={"class": "form-control", "placeholder": "000", "maxlength": "3"}),
             "short_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Краткое наименование страны"}),
+            "short_name_genitive": forms.TextInput(
+                attrs={"class": "form-control", "placeholder": "Краткое наименование страны в родительном падеже"}
+            ),
             "full_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Полное наименование страны"}),
             "alpha2": forms.TextInput(attrs={"class": "form-control", "placeholder": "AA", "maxlength": "2", "style": "text-transform:uppercase"}),
             "alpha3": forms.TextInput(attrs={"class": "form-control", "placeholder": "AAA", "maxlength": "3", "style": "text-transform:uppercase"}),
@@ -322,6 +338,103 @@ class LegalEntityIdentifierForm(forms.ModelForm):
             "identifier": forms.TextInput(attrs={"class": "form-control", "placeholder": "Идентификатор"}),
             "full_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Наименование идентификатора (полное)"}),
         }
+
+
+class PhysicalEntityIdentifierForm(forms.ModelForm):
+    country = forms.ModelChoiceField(
+        label="Страна",
+        queryset=OKSMCountry.objects.none(),
+        widget=forms.Select(attrs={"class": "form-select", "id": "pei-country-select"}),
+        required=False,
+    )
+    code = forms.CharField(
+        label="Код",
+        required=False,
+        widget=forms.TextInput(attrs={
+            "class": "form-control",
+            "readonly": True,
+            "tabindex": "-1",
+            "style": "background-color:#e9ecef; color:#6c757d;",
+            "id": "pei-code-field",
+        }),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        qs = OKSMCountry.objects.all().order_by("short_name")
+        if self.instance and self.instance.pk and self.instance.country_id:
+            qs = (qs | OKSMCountry.objects.filter(pk=self.instance.country_id)).distinct().order_by("short_name")
+        self.fields["country"].queryset = qs
+        self.fields["country"].label_from_instance = lambda obj: obj.short_name
+        self.fields["country"].label = "Страна (наименование краткое)"
+        if self.instance and self.instance.pk and self.instance.country_id:
+            self.fields["code"].initial = self.instance.country.code if self.instance.country else ""
+
+    class Meta:
+        model = PhysicalEntityIdentifier
+        fields = ["identifier", "full_name", "country", "code"]
+        widgets = {
+            "identifier": forms.TextInput(attrs={"class": "form-control", "placeholder": "Идентификатор"}),
+            "full_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Наименование идентификатора (полное)"}),
+        }
+
+
+class NumcapRecordForm(forms.ModelForm):
+    class Meta:
+        model = NumcapRecord
+        fields = ["code", "begin", "end", "capacity", "operator", "region", "gar_territory", "inn"]
+        widgets = {
+            "code": forms.TextInput(attrs={"class": "form-control", "placeholder": "Код зоны", "maxlength": "5"}),
+            "begin": forms.TextInput(attrs={"class": "form-control", "placeholder": "Начало диапазона", "maxlength": "7"}),
+            "end": forms.TextInput(attrs={"class": "form-control", "placeholder": "Конец диапазона", "maxlength": "7"}),
+            "capacity": forms.TextInput(attrs={"class": "form-control", "placeholder": "Емкость"}),
+            "operator": forms.TextInput(attrs={"class": "form-control", "placeholder": "Оператор"}),
+            "region": forms.TextInput(attrs={"class": "form-control", "placeholder": "Регион"}),
+            "gar_territory": forms.Textarea(attrs={"class": "form-control", "placeholder": "Территория ГАР", "rows": 3}),
+            "inn": forms.TextInput(attrs={"class": "form-control", "placeholder": "ИНН", "maxlength": "16"}),
+        }
+
+    def clean_code(self):
+        value = re.sub(r"\D+", "", self.cleaned_data.get("code") or "")
+        if not value:
+            raise forms.ValidationError("Укажите код зоны.")
+        if len(value) not in {3, 4, 5}:
+            raise forms.ValidationError("Код зоны должен содержать 3, 4 или 5 цифр.")
+        return value
+
+    def clean_begin(self):
+        return self._clean_range_value("begin")
+
+    def clean_end(self):
+        return self._clean_range_value("end")
+
+    def clean_operator(self):
+        return _normalize_guillemets((self.cleaned_data.get("operator") or "").strip())
+
+    def clean_inn(self):
+        return re.sub(r"\D+", "", self.cleaned_data.get("inn") or "")
+
+    def _clean_range_value(self, field_name):
+        value = re.sub(r"\D+", "", self.cleaned_data.get(field_name) or "")
+        if not value:
+            raise forms.ValidationError("Укажите значение диапазона.")
+        if len(value) not in {5, 6, 7}:
+            raise forms.ValidationError("Значение диапазона должно содержать от 5 до 7 цифр.")
+        return value
+
+    def clean(self):
+        cleaned_data = super().clean()
+        begin = cleaned_data.get("begin") or ""
+        end = cleaned_data.get("end") or ""
+        if begin and end and len(begin) != len(end):
+            self.add_error("end", "Начало и конец диапазона должны иметь одинаковую длину.")
+        if begin and end and len(begin) == len(end) and begin > end:
+            self.add_error("end", "Конец диапазона не может быть меньше начала диапазона.")
+        capacity = (cleaned_data.get("capacity") or "").strip()
+        if begin and end and len(begin) == len(end):
+            expected_capacity = str(int(end) - int(begin) + 1)
+            cleaned_data["capacity"] = capacity or expected_capacity
+        return cleaned_data
 
 
 class TerritorialDivisionForm(forms.ModelForm):

@@ -7,6 +7,7 @@
 
 <form
     method="post"
+    data-prs-filter-options-url="{{ prs_filter_options_url }}"
     {% if action == "create" %}
       hx-post="{% url 'emp_form_create' %}"
     {% else %}
@@ -16,48 +17,70 @@
     hx-swap="outerHTML">
   <div class="modal-body">
     {% csrf_token %}
-    <div class="mb-3">
-      <label class="form-label">Фамилия</label>
-      {{ form.last_name }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Имя</label>
-      {{ form.first_name }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Отчество</label>
-      {{ form.patronymic }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Эл. почта (логин)</label>
-      {{ form.email }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Пароль</label>
-      {{ form.password }}
-      {% if form.fields.password.help_text %}
-        <div class="form-text">{{ form.fields.password.help_text }}</div>
-      {% endif %}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Телефон</label>
-      {{ form.phone }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Трудоустройство</label>
-      {{ form.employment }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Подразделение</label>
-      {{ form.department }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Должность</label>
-      {{ form.job_title }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Роль</label>
-      {{ form.role }}
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label">Фамилия</label>
+        {{ form.last_name }}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Имя</label>
+        {{ form.first_name }}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Отчество</label>
+        {{ form.patronymic }}
+      </div>
+      <div class="col-12">
+        <label class="form-label">ID-PRS</label>
+        {{ form.person_record }}
+        <div class="dropdown" id="emp-prs-dropdown">
+          <button class="btn btn-outline-secondary dropdown-toggle w-100 text-start d-flex align-items-center justify-content-between emp-prs-toggle"
+                  type="button"
+                  id="emp-prs-toggle"
+                  data-bs-toggle="dropdown"
+                  data-bs-auto-close="outside"
+                  aria-expanded="false">
+            <span class="js-emp-prs-label">{{ person_record_label|default:"Выбрать ID-PRS" }}</span>
+          </button>
+          <div class="dropdown-menu p-0 project-filter-menu classifiers-bsn-filter-menu w-100 emp-prs-menu" aria-labelledby="emp-prs-toggle">
+            <div class="ler-ac-wrap emp-prs-wrap">
+              <input type="text"
+                     id="emp-prs-search"
+                     class="form-control emp-prs-search"
+                     placeholder="Искать по ID-PRS и ФИО"
+                     autocomplete="off">
+              <div id="emp-prs-search-list" class="ler-ac-list classifiers-bsn-filter-search-list"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Эл. почта (логин)</label>
+        {{ form.email }}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Пароль</label>
+        {{ form.password }}
+        {% if form.fields.password.help_text %}
+          <div class="form-text">{{ form.fields.password.help_text }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Трудоустройство</label>
+        {{ form.employment }}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Подразделение</label>
+        {{ form.department }}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Должность</label>
+        {{ form.job_title }}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Роль</label>
+        {{ form.role }}
+      </div>
     </div>
 
     {% if form.errors %}
@@ -78,14 +101,134 @@
 
 <script>
 (function() {
+  var formEl = document.querySelector('#users-modal form') || document.currentScript.closest('form');
   var empEl = document.getElementById('emp-employment-select');
   var deptEl = document.getElementById('emp-department-select');
-  if (!empEl || !deptEl) return;
-
   var allUnits = {{ org_units_json|safe }};
-  var currentDeptValue = deptEl.value || '';
+  var currentDeptValue = deptEl ? (deptEl.value || '') : '';
+  var prsUrl = formEl && formEl.dataset ? (formEl.dataset.prsFilterOptionsUrl || '') : '';
+  var prsHiddenEl = formEl ? formEl.querySelector('input[name="person_record"]') : null;
+  var lastNameEl = formEl ? formEl.querySelector('input[name="last_name"]') : null;
+  var firstNameEl = formEl ? formEl.querySelector('input[name="first_name"]') : null;
+  var patronymicEl = formEl ? formEl.querySelector('input[name="patronymic"]') : null;
+  var prsDropdownEl = document.getElementById('emp-prs-dropdown');
+  var prsLabelEl = prsDropdownEl ? prsDropdownEl.querySelector('.js-emp-prs-label') : null;
+  var prsSearchEl = document.getElementById('emp-prs-search');
+  var prsSearchListEl = document.getElementById('emp-prs-search-list');
+  var selectedPersonRecord = {{ selected_person_record_json|default:"null"|safe }};
+  var initialPersonRecordId = '{{ initial_person_record_id|default:""|escapejs }}';
+  var prsSearchDebounce = null;
+  var prsSearchResults = [];
+  var prsPicking = false;
+  var prsLastQuery = '';
+  var prsDefaultLoaded = false;
+
+  function escapeHtml(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function highlight(text, query) {
+    var safe = escapeHtml(text);
+    if (!query) return safe;
+    var escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return safe.replace(new RegExp('(' + escaped + ')', 'gi'), '<mark>$1</mark>');
+  }
+
+  function currentPrsValue() {
+    return prsHiddenEl ? String(prsHiddenEl.value || '').trim() : '';
+  }
+
+  function setPrsValue(id, label) {
+    if (prsHiddenEl) prsHiddenEl.value = id ? String(id) : '';
+    if (prsLabelEl) prsLabelEl.textContent = label || 'Выбрать ID-PRS';
+  }
+
+  function setNameFieldState(fieldEl, value, locked) {
+    if (!fieldEl) return;
+    if (value !== undefined) fieldEl.value = String(value || '');
+    fieldEl.readOnly = !!locked;
+    fieldEl.tabIndex = locked ? -1 : 0;
+    fieldEl.classList.toggle('readonly-field', !!locked);
+  }
+
+  function syncPersonNameFields(person) {
+    var locked = !!(person && person.id);
+    setNameFieldState(lastNameEl, person ? person.last_name : undefined, locked);
+    setNameFieldState(firstNameEl, person ? person.first_name : undefined, locked);
+    setNameFieldState(patronymicEl, person ? person.middle_name : undefined, locked);
+  }
+
+  function hidePrsSearchResults() {
+    if (!prsSearchListEl) return;
+    prsSearchListEl.classList.remove('show');
+  }
+
+  function renderPrsSearchResults(query, totalCount) {
+    if (!prsSearchListEl) return;
+    if (!prsSearchResults.length) {
+      hidePrsSearchResults();
+      return;
+    }
+    var visible = prsSearchResults.slice(0, 3);
+    var html = visible.map(function(item, index) {
+      var main = highlight(item.label || '', query);
+      var sub = highlight(item.summary_label || '', query);
+      return '<div class="ler-ac-item js-emp-prs-search-item" data-idx="' + index + '">'
+        + '<div class="ler-ac-main">' + main + '</div>'
+        + (sub ? '<div class="ler-ac-sub">' + sub + '</div>' : '')
+        + '</div>';
+    }).join('');
+    var remaining = Math.max(0, Number(totalCount || prsSearchResults.length) - visible.length);
+    if (remaining > 0) {
+      html += '<div class="ler-ac-item ler-ac-more">Найдено еще ' + remaining + ' физлиц</div>';
+    }
+    prsSearchListEl.innerHTML = html;
+    prsSearchListEl.classList.add('show');
+  }
+
+  function loadPrsSuggestions(query) {
+    if (!prsUrl) return;
+    prsLastQuery = String(query || '').trim();
+    var url = prsUrl;
+    if (prsLastQuery) {
+      url += '?q=' + encodeURIComponent(prsLastQuery);
+    }
+    fetch(url, {
+      headers: { 'X-Requested-With': 'fetch' }
+    })
+      .then(function(response) { return response.json(); })
+      .then(function(data) {
+        prsSearchResults = data.results || [];
+        prsDefaultLoaded = !prsLastQuery;
+        renderPrsSearchResults(prsLastQuery, data.total_count || prsSearchResults.length);
+      })
+      .catch(function() {
+        prsSearchResults = [];
+        hidePrsSearchResults();
+      });
+  }
+
+  function pickPrsItem(item) {
+    var label = item && item.label ? item.label : '';
+    setPrsValue(item && item.id ? item.id : '', label);
+    syncPersonNameFields(item && item.id ? item : null);
+    if (prsSearchEl) prsSearchEl.value = '';
+    hidePrsSearchResults();
+    if (prsDropdownEl) {
+      var dropdown = window.bootstrap && window.bootstrap.Dropdown
+        ? window.bootstrap.Dropdown.getOrCreateInstance(prsDropdownEl.querySelector('[data-bs-toggle="dropdown"]'))
+        : null;
+      if (dropdown) dropdown.hide();
+    }
+  }
 
   function rebuildDeptOptions() {
+    if (!empEl || !deptEl) return;
     var employment = empEl.value || '';
     var prevValue = deptEl.value;
 
@@ -115,7 +258,126 @@
     currentDeptValue = '';
   }
 
-  empEl.addEventListener('change', rebuildDeptOptions);
-  rebuildDeptOptions();
+  if (prsUrl && prsHiddenEl && prsSearchEl && prsSearchListEl) {
+    setPrsValue(currentPrsValue(), '{{ person_record_label|escapejs }}');
+    if (currentPrsValue() && (!initialPersonRecordId || currentPrsValue() !== String(initialPersonRecordId))) {
+      syncPersonNameFields(selectedPersonRecord);
+    }
+
+    prsSearchEl.addEventListener('input', function() {
+      var query = String(prsSearchEl.value || '').trim();
+      clearTimeout(prsSearchDebounce);
+      prsSearchDebounce = setTimeout(function() {
+        loadPrsSuggestions(query);
+      }, 200);
+    });
+
+    prsSearchListEl.addEventListener('mousedown', function(event) {
+      event.preventDefault();
+      prsPicking = true;
+      var itemNode = event.target.closest('.js-emp-prs-search-item');
+      if (!itemNode) return;
+      var idx = parseInt(itemNode.dataset.idx, 10);
+      if (prsSearchResults[idx]) pickPrsItem(prsSearchResults[idx]);
+    });
+
+    prsSearchListEl.addEventListener('click', function(event) {
+      var itemNode = event.target.closest('.js-emp-prs-search-item');
+      if (!itemNode) return;
+      var idx = parseInt(itemNode.dataset.idx, 10);
+      if (prsSearchResults[idx]) pickPrsItem(prsSearchResults[idx]);
+      prsPicking = false;
+    });
+
+    prsSearchEl.addEventListener('blur', function() {
+      if (prsPicking) {
+        prsPicking = false;
+        return;
+      }
+      window.setTimeout(hidePrsSearchResults, 200);
+    });
+
+    prsSearchEl.addEventListener('focus', function() {
+      if (prsSearchResults.length) {
+        prsSearchListEl.classList.add('show');
+      } else if (!prsDefaultLoaded) {
+        loadPrsSuggestions('');
+      }
+    });
+
+    prsDropdownEl.addEventListener('shown.bs.dropdown', function() {
+      if (prsSearchEl) prsSearchEl.focus();
+      loadPrsSuggestions(String(prsSearchEl.value || '').trim());
+    });
+  }
+
+  if (!currentPrsValue()) {
+    syncPersonNameFields(null);
+  }
+
+  if (empEl && deptEl) {
+    empEl.addEventListener('change', rebuildDeptOptions);
+    rebuildDeptOptions();
+  }
 })();
 </script>
+<style>
+#users-modal .emp-prs-toggle,
+#users-modal .emp-prs-toggle:hover,
+#users-modal .emp-prs-toggle:focus,
+#users-modal .emp-prs-toggle:active,
+#users-modal .show > .emp-prs-toggle.dropdown-toggle {
+  background-color: #fff;
+  border-color: var(--bs-border-color, #dee2e6);
+  color: #212529;
+  box-shadow: none;
+}
+
+#users-modal .emp-prs-toggle[aria-expanded="true"],
+#users-modal .emp-prs-toggle:hover[aria-expanded="true"],
+#users-modal .show > .emp-prs-toggle.dropdown-toggle {
+  background-color: #f8f9fa;
+  border-color: var(--bs-border-color, #dee2e6);
+  color: #6c757d;
+}
+
+#users-modal .emp-prs-menu {
+  width: 100%;
+  min-width: 100%;
+  padding: 0;
+  overflow: hidden;
+  box-shadow: 0 .5rem 1rem rgba(0,0,0,.15);
+}
+
+#users-modal .emp-prs-wrap {
+  position: static;
+}
+
+#users-modal .emp-prs-search {
+  border: 0;
+  border-bottom: 1px solid rgba(0, 0, 0, .125);
+  border-radius: 0;
+  padding: .75rem;
+}
+
+#users-modal .emp-prs-search:focus {
+  box-shadow: none;
+}
+
+#users-modal #emp-prs-search-list.ler-ac-list {
+  position: static;
+  display: block;
+  width: 100%;
+  min-width: 100%;
+  max-height: 240px;
+  margin-top: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: .25rem 0;
+}
+
+#users-modal #emp-prs-search-list.ler-ac-list:not(.show) {
+  display: none;
+}
+</style>

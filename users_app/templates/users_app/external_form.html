@@ -16,40 +16,46 @@
     hx-swap="outerHTML">
   <div class="modal-body">
     {% csrf_token %}
-    <div class="mb-3">
-      <label class="form-label">Фамилия</label>
-      {{ form.last_name }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Имя</label>
-      {{ form.first_name }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Отчество</label>
-      {{ form.patronymic }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Эл. почта (логин)</label>
-      {{ form.email }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Пароль</label>
-      {{ form.password }}
-      {% if form.fields.password.help_text %}
-        <div class="form-text">{{ form.fields.password.help_text }}</div>
-      {% endif %}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Телефон</label>
-      {{ form.phone }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Организация</label>
-      {{ form.organization }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Должность</label>
-      {{ form.job_title }}
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label">Фамилия</label>
+        {{ form.last_name }}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Имя</label>
+        {{ form.first_name }}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Отчество</label>
+        {{ form.patronymic }}
+      </div>
+      <div class="col-12">
+        <label class="form-label">ID-PRS</label>
+        <input type="text"
+               class="form-control readonly-field"
+               value="{{ person_record_display }}"
+               readonly
+               tabindex="-1">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Эл. почта (логин)</label>
+        {{ form.email }}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Пароль</label>
+        {{ form.password }}
+        {% if form.fields.password.help_text %}
+          <div class="form-text">{{ form.fields.password.help_text }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Организация</label>
+        {{ form.organization }}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Должность</label>
+        {{ form.job_title }}
+      </div>
     </div>
 
     {% if form.errors %}

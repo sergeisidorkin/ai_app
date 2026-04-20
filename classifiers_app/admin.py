@@ -5,6 +5,8 @@ from django.http import HttpResponseRedirect
 from django.urls import path, reverse
 
 from .models import (
+    PhysicalEntityIdentifier,
+    NumcapRecord,
     LegalEntityRecord,
     BusinessEntityRecord,
     BusinessEntityIdentifierRecord,
@@ -41,6 +43,20 @@ class LegalEntityRecordAdmin(admin.ModelAdmin):
         "street",
         "building",
     )
+
+
+@admin.register(PhysicalEntityIdentifier)
+class PhysicalEntityIdentifierAdmin(admin.ModelAdmin):
+    list_display = ("identifier", "full_name", "country", "code", "position")
+    list_filter = ("country",)
+    search_fields = ("identifier", "full_name", "code")
+
+
+@admin.register(NumcapRecord)
+class NumcapRecordAdmin(admin.ModelAdmin):
+    list_display = ("code", "begin", "end", "capacity", "operator", "region", "inn", "position")
+    search_fields = ("code", "begin", "end", "operator", "region", "gar_territory", "inn")
+    list_filter = ("code",)
 
 
 @admin.register(BusinessEntityRecord)

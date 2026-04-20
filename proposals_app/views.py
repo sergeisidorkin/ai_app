@@ -95,16 +95,31 @@ def _get_proposal_signer_expert_profile(user_id: int | None) -> ExpertProfile:
     if clean_user_id <= 0:
         raise RuntimeError("Не удалось определить пользователя, подписывающего ТКП.")
     try:
-        return ExpertProfile.objects.select_related("employee", "employee__user").get(employee__user_id=clean_user_id)
+        return ExpertProfile.objects.select_related(
+            "employee",
+            "employee__user",
+        ).prefetch_related(
+            "contract_details_records__citizenship_record",
+        ).get(employee__user_id=clean_user_id)
     except ExpertProfile.DoesNotExist as exc:
         raise RuntimeError(
             "Для текущего пользователя не заполнена строка в разделе «Эксперты -> Реквизиты для договора»."
         ) from exc
 
 
-def _load_proposal_signer_facsimile_bytes(user_id: int | None) -> bytes:
+def _get_proposal_signer_contract_details(user_id: int | None):
     profile = _get_proposal_signer_expert_profile(user_id)
-    facsimile = getattr(profile, "facsimile_file", None)
+    contract_details = profile.default_contract_details(require_facsimile=True)
+    if contract_details is None:
+        raise RuntimeError(
+            "Для текущего пользователя не заполнена строка в разделе «Эксперты -> Реквизиты для договора»."
+        )
+    return contract_details
+
+
+def _load_proposal_signer_facsimile_bytes(user_id: int | None) -> bytes:
+    contract_details = _get_proposal_signer_contract_details(user_id)
+    facsimile = getattr(contract_details, "facsimile_file", None)
     facsimile_name = str(getattr(facsimile, "name", "") or "").strip()
     if not facsimile_name:
         raise RuntimeError(
@@ -252,20 +267,6 @@ def _resolve_target_path_via_user_share_lookup(
         current_path = current_path.rsplit("/", 1)[0] or "/"
 
     return "", last_share
-
-
-def _build_root_stripped_nextcloud_url(client, path: str, *, root_path: str = "") -> str:
-    normalized_path = _normalize_nextcloud_path(path)
-    if not normalized_path or not root_path or root_path == "/":
-        return ""
-    if normalized_path == root_path:
-        return client.build_files_url("/")
-    if not normalized_path.startswith(f"{root_path}/"):
-        return ""
-    stripped_path = _normalize_nextcloud_path(normalized_path[len(root_path) :])
-    if not stripped_path or stripped_path == normalized_path:
-        return ""
-    return client.build_files_url(stripped_path)
 
 
 def _normalize_viewer_target_path(path: str, *, root_path: str = "") -> str:
@@ -418,7 +419,7 @@ def _sync_dispatch_contact_to_person_registry(*, last_name, first_name="", middl
     if not normalized_last_name:
         return
 
-    from contacts_app.models import PersonRecord, PositionRecord
+    from contacts_app.models import PersonRecord, PhoneRecord, PositionRecord
 
     def refresh_related_position_sources():
         queryset = (
@@ -443,11 +444,27 @@ def _sync_dispatch_contact_to_person_registry(*, last_name, first_name="", middl
     )
     if person is None:
         next_position = (PersonRecord.objects.aggregate(mx=Max("position")).get("mx") or 0) + 1
-        PersonRecord.objects.create(
+        person = PersonRecord.objects.create(
             last_name=normalized_last_name,
             first_name=normalized_first_name,
             middle_name=normalized_middle_name,
             position=next_position,
+        )
+        next_phone_position = (PhoneRecord.objects.aggregate(mx=Max("position")).get("mx") or 0) + 1
+        PhoneRecord.objects.create(
+            person=person,
+            country=None,
+            code="",
+            phone_type=PhoneRecord.PHONE_TYPE_MOBILE,
+            region="",
+            phone_number="",
+            extension="",
+            valid_from=dt_date.today(),
+            valid_to=None,
+            record_date=dt_date.today(),
+            record_author="",
+            source="",
+            position=next_phone_position,
         )
         refresh_related_position_sources()
         return
@@ -520,6 +537,83 @@ def _nextcloud_parent_path(path: str) -> str:
     return parent or "/"
 
 
+def _is_nextcloud_cloud_path(path: str) -> bool:
+    """Return True when ``path`` points at a Nextcloud resource (not MEDIA/URL)."""
+    clean_path = str(path or "").strip()
+    if not clean_path:
+        return False
+    if clean_path.startswith(("http://", "https://")):
+        return False
+    media_url = str(getattr(settings, "MEDIA_URL", "") or "").strip()
+    if media_url and clean_path.startswith(media_url):
+        return False
+    return True
+
+
+def _refresh_proposal_nextcloud_file_ids(proposals) -> list:
+    """Resolve and persist Nextcloud file ids for DOCX/PDF of given proposals.
+
+    Ensures ``docx_file_id`` / ``pdf_file_id`` columns reflect the latest state
+    in Nextcloud so that viewer-side editor URLs stay valid after the session
+    cache expires. Paths not stored in Nextcloud (empty, HTTP(S), MEDIA) are
+    silently ignored.
+    """
+    updated_proposals = []
+    if not proposals or not is_nextcloud_primary():
+        return updated_proposals
+    client = NextcloudApiClient()
+    if not client.is_configured:
+        return updated_proposals
+    owner_user_id = client.username
+    resource_cache: dict[str, dict[str, str]] = {}
+    for proposal in proposals:
+        changed_fields: list[str] = []
+        docx_path = _stored_docx_link(proposal)
+        if _is_nextcloud_cloud_path(docx_path):
+            try:
+                file_id = _resolve_nextcloud_file_id(
+                    client,
+                    owner_user_id,
+                    docx_path,
+                    resource_cache=resource_cache,
+                )
+            except NextcloudApiError as exc:
+                logger.warning(
+                    "Could not resolve Nextcloud DOCX file id for proposal %s: %s",
+                    getattr(proposal, "pk", ""),
+                    exc,
+                )
+                file_id = ""
+            if file_id and getattr(proposal, "docx_file_id", "") != file_id:
+                proposal.docx_file_id = file_id
+                changed_fields.append("docx_file_id")
+        pdf_path = _stored_pdf_link(proposal)
+        if _is_nextcloud_cloud_path(pdf_path):
+            try:
+                file_id = _resolve_nextcloud_file_id(
+                    client,
+                    owner_user_id,
+                    pdf_path,
+                    resource_cache=resource_cache,
+                )
+            except NextcloudApiError as exc:
+                logger.warning(
+                    "Could not resolve Nextcloud PDF file id for proposal %s: %s",
+                    getattr(proposal, "pk", ""),
+                    exc,
+                )
+                file_id = ""
+            if file_id and getattr(proposal, "pdf_file_id", "") != file_id:
+                proposal.pdf_file_id = file_id
+                changed_fields.append("pdf_file_id")
+        if changed_fields:
+            ProposalRegistration.objects.filter(pk=proposal.pk).update(
+                **{name: getattr(proposal, name) for name in changed_fields}
+            )
+            updated_proposals.append(proposal)
+    return updated_proposals
+
+
 def _resolve_nextcloud_file_id(client, owner_user_id: str, path: str, *, resource_cache=None) -> str:
     normalized_path = _normalize_nextcloud_path(path)
     parent_path = _nextcloud_parent_path(normalized_path)
@@ -543,19 +637,38 @@ def _build_nextcloud_editor_url(client, file_id: str, dir_path: str) -> str:
     return client.build_files_open_url(file_id, normalized_dir)
 
 
+def _build_nextcloud_file_redirect_url(client, file_id: str) -> str:
+    """Return Nextcloud's canonical ``/f/<fileid>`` URL.
+
+    This URL works for every user who has access to the file regardless of how
+    the parent folder is mounted, so it is our safest fallback when the viewer
+    mount path is not known.
+    """
+    clean_file_id = str(file_id or "").strip()
+    base_url = str(getattr(client, "base_url", "") or "").strip().rstrip("/")
+    if not clean_file_id or not base_url:
+        return ""
+    return f"{base_url}/f/{quote(clean_file_id, safe='')}"
+
+
+def _stored_proposal_file_id(proposal, attr_name: str) -> str:
+    return str(getattr(proposal, attr_name, "") or "").strip()
+
+
 def _resolve_proposal_file_open_url(
     proposal,
     *,
     file_name_attr: str,
     file_link_attr: str,
+    file_id_attr: str,
     client=None,
     viewer_has_nextcloud_link: bool = False,
     resolved_workspace_target_path: str = "",
-    root_path: str = "",
     owner_file_id: str = "",
 ) -> str:
     raw_link = _stored_proposal_file_link(proposal, file_link_attr)
     file_name = str(getattr(proposal, file_name_attr, "") or "").strip()
+    stored_file_id = _stored_proposal_file_id(proposal, file_id_attr)
     if not raw_link and not file_name:
         return ""
     if raw_link.startswith(("http://", "https://")):
@@ -565,17 +678,33 @@ def _resolve_proposal_file_open_url(
         return raw_link
     if client is None:
         return build_folder_url(raw_link)
-    if owner_file_id:
-        if viewer_has_nextcloud_link and resolved_workspace_target_path:
-            return _build_nextcloud_editor_url(client, owner_file_id, resolved_workspace_target_path)
+
+    # Prefer the DB-persisted Nextcloud file id so the link stays valid even
+    # when the session cache expires or the share API momentarily fails.
+    effective_file_id = stored_file_id or owner_file_id
+
+    if viewer_has_nextcloud_link:
+        stored_target_path = _normalize_viewer_target_path(
+            str(getattr(proposal, "proposal_workspace_target_path", "") or "").strip(),
+        )
+        target_dir = resolved_workspace_target_path or stored_target_path
+        if effective_file_id and target_dir:
+            return _build_nextcloud_editor_url(client, effective_file_id, target_dir)
+        if effective_file_id:
+            # No viewer-side mount known, fall back to Nextcloud's file-id
+            # redirect URL that works regardless of mountpoint.
+            return _build_nextcloud_file_redirect_url(client, effective_file_id)
+        if target_dir and file_name:
+            return _build_nextcloud_child_url(client, target_dir, file_name)
+        stored_public = (getattr(proposal, "proposal_workspace_public_url", "") or "").strip()
+        return stored_public
+
+    # Owner/service-account viewer: the raw owner path is valid, so we can keep
+    # using it to build an editor URL.
+    if effective_file_id:
         parent_path = _nextcloud_parent_path(raw_link)
         if parent_path:
-            return _build_nextcloud_editor_url(client, owner_file_id, parent_path)
-    if viewer_has_nextcloud_link:
-        return (
-            _build_nextcloud_child_url(client, resolved_workspace_target_path, file_name)
-            or _build_root_stripped_nextcloud_url(client, raw_link, root_path=root_path)
-        )
+            return _build_nextcloud_editor_url(client, effective_file_id, parent_path)
     return build_folder_url(raw_link)
 
 
@@ -585,17 +714,16 @@ def _resolve_proposal_docx_open_url(
     client=None,
     viewer_has_nextcloud_link: bool = False,
     resolved_workspace_target_path: str = "",
-    root_path: str = "",
     owner_file_id: str = "",
 ) -> str:
     return _resolve_proposal_file_open_url(
         proposal,
         file_name_attr="docx_file_name",
         file_link_attr="docx_file_link",
+        file_id_attr="docx_file_id",
         client=client,
         viewer_has_nextcloud_link=viewer_has_nextcloud_link,
         resolved_workspace_target_path=resolved_workspace_target_path,
-        root_path=root_path,
         owner_file_id=owner_file_id,
     )
 
@@ -606,17 +734,16 @@ def _resolve_proposal_pdf_open_url(
     client=None,
     viewer_has_nextcloud_link: bool = False,
     resolved_workspace_target_path: str = "",
-    root_path: str = "",
     owner_file_id: str = "",
 ) -> str:
     return _resolve_proposal_file_open_url(
         proposal,
         file_name_attr="pdf_file_name",
         file_link_attr="pdf_file_link",
+        file_id_attr="pdf_file_id",
         client=client,
         viewer_has_nextcloud_link=viewer_has_nextcloud_link,
         resolved_workspace_target_path=resolved_workspace_target_path,
-        root_path=root_path,
         owner_file_id=owner_file_id,
     )
 
@@ -676,6 +803,13 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                 logger.warning("Could not resolve Nextcloud share targets for proposals table: %s", exc)
                 share_map = {}
 
+            stored_target_paths = {
+                (getattr(proposal, "proposal_workspace_disk_path", "") or "").strip(): _normalize_viewer_target_path(
+                    (getattr(proposal, "proposal_workspace_target_path", "") or "").strip(),
+                )
+                for proposal in proposals
+                if (getattr(proposal, "proposal_workspace_disk_path", "") or "").strip()
+            }
             for path in share_resolution_paths:
                 target_path = _resolve_shared_target_path(path, share_map, root_path=normalized_root_path)
                 direct_share = share_map.get(path)
@@ -704,6 +838,11 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                 if not target_path and direct_target_path:
                     target_path = direct_target_path
                 if not target_path:
+                    # Canonical viewer mountpoint captured at workspace creation
+                    # (persisted in ``proposal_workspace_target_path``) is our
+                    # most reliable fallback when the live share API is silent.
+                    target_path = stored_target_paths.get(path, "")
+                if not target_path:
                     target_path = cached_target_paths.get(path, "")
                 if target_path:
                     resolved_target_cache[path] = target_path
@@ -726,36 +865,56 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                     force=debug_nextcloud_links,
                 )
 
+    def _maybe_resolve_owner_file_id(proposal, *, stored_attr: str, cloud_path: str) -> str:
+        # Avoid an extra PROPFIND when the file id is already persisted in DB.
+        stored_file_id = _stored_proposal_file_id(proposal, stored_attr)
+        if stored_file_id:
+            return stored_file_id
+        if not _is_nextcloud_cloud_path(cloud_path):
+            return ""
+        try:
+            return _resolve_nextcloud_file_id(
+                client,
+                client.username,
+                cloud_path,
+                resource_cache=resource_cache,
+            )
+        except NextcloudApiError as exc:
+            logger.warning(
+                "Could not resolve Nextcloud file id for proposal %s path %s: %s",
+                getattr(proposal, "pk", ""),
+                cloud_path,
+                exc,
+            )
+            return ""
+
     for proposal in proposals:
         path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
         if path:
             if viewer_has_nextcloud_link:
+                # Folder link uses only canonical, verifiable sources. If the
+                # viewer mountpoint is unknown we show a saved public link or
+                # nothing — never a guessed owner-path URL that leads to
+                # "folder not found".
                 proposal.proposal_workspace_folder_url = (
                     resolved_cache.get(path)
                     or _stored_public(proposal)
-                    or _build_root_stripped_nextcloud_url(client, path, root_path=normalized_root_path)
                 )
-                owner_docx_path = _stored_docx_link(proposal)
-                owner_pdf_path = _stored_pdf_link(proposal)
-                media_url = str(getattr(settings, "MEDIA_URL", "") or "").strip()
-                owner_file_id = _resolve_nextcloud_file_id(
-                    client,
-                    client.username,
-                    owner_docx_path,
-                    resource_cache=resource_cache,
-                ) if owner_docx_path and not owner_docx_path.startswith(("http://", "https://")) and not (media_url and owner_docx_path.startswith(media_url)) else ""
-                owner_pdf_file_id = _resolve_nextcloud_file_id(
-                    client,
-                    client.username,
-                    owner_pdf_path,
-                    resource_cache=resource_cache,
-                ) if owner_pdf_path and not owner_pdf_path.startswith(("http://", "https://")) and not (media_url and owner_pdf_path.startswith(media_url)) else ""
+                owner_file_id = _maybe_resolve_owner_file_id(
+                    proposal,
+                    stored_attr="docx_file_id",
+                    cloud_path=_stored_docx_link(proposal),
+                )
+                owner_pdf_file_id = _maybe_resolve_owner_file_id(
+                    proposal,
+                    stored_attr="pdf_file_id",
+                    cloud_path=_stored_pdf_link(proposal),
+                )
                 proposal.proposal_docx_file_url = _resolve_proposal_docx_open_url(
                     proposal,
                     client=client,
                     viewer_has_nextcloud_link=True,
                     resolved_workspace_target_path=resolved_target_cache.get(path, ""),
-                    root_path=normalized_root_path,
                     owner_file_id=owner_file_id,
                 )
                 proposal.proposal_pdf_file_url = _resolve_proposal_pdf_open_url(
@@ -763,7 +922,6 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                     client=client,
                     viewer_has_nextcloud_link=True,
                     resolved_workspace_target_path=resolved_target_cache.get(path, ""),
-                    root_path=normalized_root_path,
                     owner_file_id=owner_pdf_file_id,
                 )
                 if not resolved_cache.get(path):
@@ -782,21 +940,16 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                     or _stored_public(proposal)
                     or folder_cache.get(path, "")
                 )
-                owner_docx_path = _stored_docx_link(proposal)
-                owner_pdf_path = _stored_pdf_link(proposal)
-                media_url = str(getattr(settings, "MEDIA_URL", "") or "").strip()
-                owner_file_id = _resolve_nextcloud_file_id(
-                    client,
-                    client.username,
-                    owner_docx_path,
-                    resource_cache=resource_cache,
-                ) if owner_docx_path and not owner_docx_path.startswith(("http://", "https://")) and not (media_url and owner_docx_path.startswith(media_url)) else ""
-                owner_pdf_file_id = _resolve_nextcloud_file_id(
-                    client,
-                    client.username,
-                    owner_pdf_path,
-                    resource_cache=resource_cache,
-                ) if owner_pdf_path and not owner_pdf_path.startswith(("http://", "https://")) and not (media_url and owner_pdf_path.startswith(media_url)) else ""
+                owner_file_id = _maybe_resolve_owner_file_id(
+                    proposal,
+                    stored_attr="docx_file_id",
+                    cloud_path=_stored_docx_link(proposal),
+                )
+                owner_pdf_file_id = _maybe_resolve_owner_file_id(
+                    proposal,
+                    stored_attr="pdf_file_id",
+                    cloud_path=_stored_pdf_link(proposal),
+                )
                 proposal.proposal_docx_file_url = _resolve_proposal_docx_open_url(
                     proposal,
                     client=client,
@@ -882,16 +1035,30 @@ def _maybe_create_nextcloud_proposal_workspace(request, proposal) -> None:
         workspace_path, share_target_path = workspace_result
     else:
         workspace_path, share_target_path = workspace_result, ""
+    normalized_root_path = _get_normalized_nextcloud_root_path()
+    normalized_target_path = _normalize_viewer_target_path(
+        share_target_path,
+        root_path=normalized_root_path,
+    )
     proposal.proposal_workspace_disk_path = workspace_path
+    # Persist the viewer-side mountpoint returned by Nextcloud so the icon link
+    # stays valid after the session cache expires or another user opens the table.
+    proposal.proposal_workspace_target_path = normalized_target_path
     # For Nextcloud we want the table icon to resolve to a user share with editor
     # permissions, not to a public readonly link.
     proposal.proposal_workspace_public_url = ""
-    proposal.save(update_fields=["proposal_workspace_disk_path", "proposal_workspace_public_url"])
+    proposal.save(
+        update_fields=[
+            "proposal_workspace_disk_path",
+            "proposal_workspace_target_path",
+            "proposal_workspace_public_url",
+        ]
+    )
     _cache_proposal_target_path(
         request,
         workspace_path,
         share_target_path,
-        root_path=_get_normalized_nextcloud_root_path(),
+        root_path=normalized_root_path,
     )
 
 
@@ -1789,6 +1956,7 @@ def proposal_dispatch_sign_documents(request):
             document_updates,
             ["docx_file_name", "docx_file_link", "pdf_file_name", "pdf_file_link"],
         )
+        _refresh_proposal_nextcloud_file_ids(document_updates)
         _attach_proposal_folder_urls(document_updates, request.user, request=request)
 
     return JsonResponse(
@@ -1907,6 +2075,7 @@ def proposal_dispatch_create_documents(request):
         warnings.extend(errors)
 
     if generated_updates:
+        _refresh_proposal_nextcloud_file_ids(generated_updates)
         _attach_proposal_folder_urls(generated_updates, request.user, request=request)
 
     return JsonResponse(

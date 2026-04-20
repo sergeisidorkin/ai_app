@@ -65,7 +65,6 @@ def profile_edit(request):
     user.save(update_fields=["first_name", "last_name"])
 
     employee.patronymic = request.POST.get("patronymic", employee.patronymic)
-    employee.phone = request.POST.get("phone", employee.phone)
     if not user.is_staff:
         employee.organization = request.POST.get("organization", employee.organization)
     employee.job_title = request.POST.get("job_title", employee.job_title)

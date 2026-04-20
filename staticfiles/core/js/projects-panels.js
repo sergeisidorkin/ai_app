@@ -28,8 +28,15 @@
     const root = pane();
     return qa(`tbody input.form-check-input[name="${CSS.escape(name)}"]`, root);
   }
+  function isVisibleRowCheckbox(box) {
+    const row = box?.closest('tr');
+    return !!row && !row.classList.contains('d-none');
+  }
+  function getVisibleRowChecksByName(name) {
+    return getRowChecksByName(name).filter(isVisibleRowCheckbox);
+  }
   function getCheckedByName(name) {
-    return getRowChecksByName(name).filter(b => b.checked);
+    return getVisibleRowChecksByName(name).filter(b => b.checked);
   }
   function updateRowHighlightFor(name) {
     getRowChecksByName(name).forEach(b => {
@@ -38,7 +45,7 @@
     });
   }
   function updateMasterStateFor(name) {
-    const boxes = getRowChecksByName(name);
+    const boxes = getVisibleRowChecksByName(name);
     const root = pane();
     const master = root?.querySelector(`input.form-check-input[data-target-name="${CSS.escape(name)}"]`);
     if (!master) return;
@@ -59,10 +66,26 @@
   function ensureActionsVisibility(name) {
     const panel = findActionsByName(name);
     if (!panel) return;
-    const anyChecked = getRowChecksByName(name).some(b => b.checked);
+    const anyChecked = getCheckedByName(name).length > 0;
     panel.classList.toggle('d-none', !anyChecked);
     panel.classList.toggle('d-flex', anyChecked);
   }
+  function clearHiddenSelections(name) {
+    getRowChecksByName(name).forEach((box) => {
+      if (!isVisibleRowCheckbox(box)) box.checked = false;
+    });
+  }
+  function syncSelectionToVisible(name) {
+    clearHiddenSelections(name);
+    updateMasterStateFor(name);
+    updateRowHighlightFor(name);
+    ensureActionsVisibility(name);
+    if (name === 'contract-select') updateContractEditBtn();
+    if (name === 'registration-select') updateRegWorkspaceBtn();
+  }
+  window.__refreshProjectsSelectionState = function() {
+    ['registration-select', 'contract-select', 'work-select', 'legal-select'].forEach(syncSelectionToVisible);
+  };
 
   function getDeleteConfirmationMessage(name, count) {
     if (name === 'work-select') {
@@ -77,6 +100,15 @@
     const btn = root.querySelector('#reg-create-workspace-btn');
     const checkedCount = getCheckedByName('registration-select').length;
     if (btn) btn.disabled = checkedCount !== 1;
+  }
+
+  function clearRegistrationSelection() {
+    const boxes = getRowChecksByName('registration-select');
+    boxes.forEach(b => { b.checked = false; });
+    updateMasterStateFor('registration-select');
+    updateRowHighlightFor('registration-select');
+    ensureActionsVisibility('registration-select');
+    updateRegWorkspaceBtn();
   }
 
   // Кнопка «Редактировать» для таблицы «Условия контракта»
@@ -183,7 +215,7 @@
     const master = e.target.closest('input.form-check-input[data-actions-id][data-target-name]');
     if (!master || !root.contains(master)) return;
     const name = master.dataset.targetName;
-    const boxes = getRowChecksByName(name);
+    const boxes = getVisibleRowChecksByName(name);
     boxes.forEach(b => { b.checked = master.checked; });
     master.indeterminate = false;
     updateMasterStateFor(name);
@@ -247,10 +279,12 @@
     const statusEl = root.querySelector('#reg-create-workspace-status');
     const progressEl = root.querySelector('#reg-ws-progress');
     const fillEl = progressEl?.querySelector('.ws-progress-fill');
+    const createModalEl = document.getElementById('reg-create-workspace-modal');
     wsConfirmBtn.disabled = true;
     if (statusEl) statusEl.textContent = '';
     if (fillEl) fillEl.style.width = '0%';
     if (progressEl) progressEl.classList.remove('d-none');
+    if (createModalEl) createModalEl.dataset.workspaceCreated = '0';
 
     try {
       const formData = new FormData();
@@ -298,6 +332,7 @@
 
       if (fillEl) fillEl.style.width = '100%';
       if (statusEl) statusEl.innerHTML = '<span class="text-success">' + (lastResult.message || 'Готово!') + '</span>';
+      if (createModalEl) createModalEl.dataset.workspaceCreated = '1';
     } catch (err) {
       if (progressEl) progressEl.classList.add('d-none');
       if (statusEl) statusEl.innerHTML = '<span class="text-danger">' + (err.message || 'Ошибка') + '</span>';
@@ -403,6 +438,7 @@
     const root = pane();
     const url = root?.querySelector('[data-workspace-folders-url]')?.dataset?.workspaceFoldersUrl;
     const listEl = document.getElementById('reg-ws-folder-counts');
+    const storageLabelEl = document.getElementById('reg-create-workspace-storage-label');
     if (!listEl) return;
     listEl.innerHTML = '<li class="text-muted">Загрузка…</li>';
 
@@ -412,6 +448,7 @@
         const resp = await fetch(url);
         const data = await resp.json();
         folders = data.folders || [];
+        if (storageLabelEl && data.storage_label) storageLabelEl.textContent = data.storage_label;
       } catch { /* ignore */ }
     }
 
@@ -430,6 +467,14 @@
     if (fillEl) fillEl.style.width = '0%';
     const statusEl = document.getElementById('reg-create-workspace-status');
     if (statusEl) statusEl.textContent = '';
+  });
+
+  document.addEventListener('hidden.bs.modal', (e) => {
+    if (!e.target.matches('#reg-create-workspace-modal')) return;
+    if (e.target.dataset.workspaceCreated === '1') {
+      clearRegistrationSelection();
+    }
+    e.target.dataset.workspaceCreated = '0';
   });
 
   document.addEventListener('change', (e) => {

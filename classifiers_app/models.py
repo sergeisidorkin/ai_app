@@ -17,6 +17,7 @@ class OKSMCountry(models.Model):
     number = models.PositiveIntegerField("№")
     code = models.CharField("Код", max_length=3)
     short_name = models.CharField("Наименование страны (краткое)", max_length=255)
+    short_name_genitive = models.CharField("Наименование (краткое) в род. пад.", max_length=255, blank=True, default="")
     full_name = models.CharField("Наименование страны (полное)", max_length=512, blank=True, default="")
     alpha2 = models.CharField("Буквенный код (Альфа-2)", max_length=2)
     alpha3 = models.CharField("Буквенный код (Альфа-3)", max_length=3)
@@ -96,6 +97,61 @@ class LegalEntityIdentifier(models.Model):
 
     def __str__(self):
         return f"{self.identifier} — {self.full_name}"
+
+
+class PhysicalEntityIdentifier(models.Model):
+    """Классификатор идентификаторов физлиц."""
+
+    identifier = models.CharField("Идентификатор", max_length=64)
+    full_name = models.CharField("Наименование идентификатора (полное)", max_length=512)
+    code = models.CharField("Код", max_length=3, blank=True, default="")
+    country = models.ForeignKey(
+        OKSMCountry,
+        verbose_name="Страна",
+        on_delete=models.CASCADE,
+        related_name="physical_entity_identifiers",
+        null=True,
+        blank=True,
+    )
+    position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["position", "id"]
+        verbose_name = "Идентификатор физлица"
+        verbose_name_plural = "Классификатор идентификаторов физлиц"
+
+    def __str__(self):
+        return f"{self.identifier} — {self.full_name}"
+
+
+class NumcapRecord(models.Model):
+    code = models.CharField("Код зоны", max_length=5, db_index=True)
+    begin = models.CharField("Начало диапазона", max_length=7)
+    end = models.CharField("Конец диапазона", max_length=7)
+    capacity = models.CharField("Емкость", max_length=16, blank=True, default="")
+    operator = models.CharField("Оператор", max_length=255, blank=True, default="")
+    region = models.CharField("Регион", max_length=255, blank=True, default="")
+    gar_territory = models.TextField("Территория ГАР", blank=True, default="")
+    inn = models.CharField("ИНН", max_length=16, blank=True, default="")
+    position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["position", "id"]
+        verbose_name = "Запись numcap"
+        verbose_name_plural = "Классификатор numcap"
+
+    def __str__(self):
+        return f"{self.code} {self.begin}-{self.end} {self.region}".strip()
+
+    @property
+    def subscriber_length(self):
+        return max(len(str(self.begin or "").strip()), len(str(self.end or "").strip()))
 
 
 class TerritorialDivision(models.Model):
