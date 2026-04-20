@@ -1270,7 +1270,7 @@ class ContactsAppTests(TestCase):
         prs_response = self.client.get(reverse("prs_table_partial"))
         eml_response = self.client.get(reverse("eml_table_partial"))
 
-        self.assertContains(prs_response, "<th style=\"width:54%\">Пользователь</th>", html=False)
+        self.assertContains(prs_response, "<th style=\"width:26%\">Пользователь</th>", html=False)
         self.assertContains(prs_response, "Сотрудник")
         self.assertContains(eml_response, "<th>Пользователь</th>", html=False)
         self.assertContains(eml_response, "Сотрудник")

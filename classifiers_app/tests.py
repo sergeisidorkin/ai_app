@@ -184,7 +184,8 @@ class NumcapRecordTests(TestCase):
         self.assertEqual(item.capacity, "100")
         self.assertEqual(item.gar_territory, "г. Москва")
         self.assertEqual(item.inn, "7701234567")
-        self.assertContains(response, "Классификатор numcap")
+        self.assertContains(response, "Реестр российской системы и плана нумерации")
+        self.assertContains(response, 'id="numcap-table-wrap"')
 
     def test_table_partial_filters_by_code_region_and_search(self):
         NumcapRecord.objects.create(
