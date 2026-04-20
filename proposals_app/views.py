@@ -551,12 +551,13 @@ def _is_nextcloud_cloud_path(path: str) -> bool:
 
 
 def _refresh_proposal_nextcloud_file_ids(proposals) -> list:
-    """Resolve and persist Nextcloud file ids for DOCX/PDF of given proposals.
+    """Resolve and persist Nextcloud file ids for proposal resources.
 
-    Ensures ``docx_file_id`` / ``pdf_file_id`` columns reflect the latest state
-    in Nextcloud so that viewer-side editor URLs stay valid after the session
-    cache expires. Paths not stored in Nextcloud (empty, HTTP(S), MEDIA) are
-    silently ignored.
+    Ensures ``docx_file_id`` / ``pdf_file_id`` / ``proposal_workspace_file_id``
+    columns reflect the latest state in Nextcloud so that viewer-side editor
+    URLs and the workspace folder link stay valid after the session cache
+    expires. Paths not stored in Nextcloud (empty, HTTP(S), MEDIA) are silently
+    ignored.
     """
     updated_proposals = []
     if not proposals or not is_nextcloud_primary():
@@ -568,6 +569,25 @@ def _refresh_proposal_nextcloud_file_ids(proposals) -> list:
     resource_cache: dict[str, dict[str, str]] = {}
     for proposal in proposals:
         changed_fields: list[str] = []
+        workspace_path = str(getattr(proposal, "proposal_workspace_disk_path", "") or "").strip()
+        if workspace_path and not getattr(proposal, "proposal_workspace_file_id", "").strip():
+            try:
+                file_id = _resolve_nextcloud_file_id(
+                    client,
+                    owner_user_id,
+                    workspace_path,
+                    resource_cache=resource_cache,
+                )
+            except NextcloudApiError as exc:
+                logger.warning(
+                    "Could not resolve Nextcloud workspace file id for proposal %s: %s",
+                    getattr(proposal, "pk", ""),
+                    exc,
+                )
+                file_id = ""
+            if file_id:
+                proposal.proposal_workspace_file_id = file_id
+                changed_fields.append("proposal_workspace_file_id")
         docx_path = _stored_docx_link(proposal)
         if _is_nextcloud_cloud_path(docx_path):
             try:
@@ -896,8 +916,22 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                 # viewer mountpoint is unknown we show a saved public link or
                 # nothing — never a guessed owner-path URL that leads to
                 # "folder not found".
+                stored_workspace_file_id = _stored_proposal_file_id(
+                    proposal, "proposal_workspace_file_id"
+                )
+                # Prefer Nextcloud's ``/f/<fileid>`` redirect URL over a
+                # ``?dir=`` URL: the file-id URL follows whatever mountpoint
+                # the viewer actually has, so it keeps working even when the
+                # share API reports a viewer target that is shadowed by a
+                # broader parent share already mounted in the viewer's tree.
+                file_id_url = (
+                    _build_nextcloud_file_redirect_url(client, stored_workspace_file_id)
+                    if stored_workspace_file_id
+                    else ""
+                )
                 proposal.proposal_workspace_folder_url = (
-                    resolved_cache.get(path)
+                    file_id_url
+                    or resolved_cache.get(path)
                     or _stored_public(proposal)
                 )
                 owner_file_id = _maybe_resolve_owner_file_id(
@@ -1040,6 +1074,7 @@ def _maybe_create_nextcloud_proposal_workspace(request, proposal) -> None:
         share_target_path,
         root_path=normalized_root_path,
     )
+    workspace_file_id = _resolve_workspace_folder_file_id(workspace_path)
     proposal.proposal_workspace_disk_path = workspace_path
     # Persist the viewer-side mountpoint returned by Nextcloud so the icon link
     # stays valid after the session cache expires or another user opens the table.
@@ -1047,11 +1082,16 @@ def _maybe_create_nextcloud_proposal_workspace(request, proposal) -> None:
     # For Nextcloud we want the table icon to resolve to a user share with editor
     # permissions, not to a public readonly link.
     proposal.proposal_workspace_public_url = ""
+    # Capture the folder id so the table can fall back to Nextcloud's
+    # ``/f/<id>`` redirect URL, which works for every viewer regardless of how
+    # the folder is mounted into their file tree.
+    proposal.proposal_workspace_file_id = workspace_file_id
     proposal.save(
         update_fields=[
             "proposal_workspace_disk_path",
             "proposal_workspace_target_path",
             "proposal_workspace_public_url",
+            "proposal_workspace_file_id",
         ]
     )
     _cache_proposal_target_path(
@@ -1060,6 +1100,34 @@ def _maybe_create_nextcloud_proposal_workspace(request, proposal) -> None:
         share_target_path,
         root_path=normalized_root_path,
     )
+
+
+def _resolve_workspace_folder_file_id(workspace_path: str) -> str:
+    """Resolve Nextcloud folder id for a proposal workspace path.
+
+    Failures are swallowed so that workspace creation itself never breaks when
+    the follow-up PROPFIND cannot locate the folder yet (e.g., eventual
+    consistency right after share creation).
+    """
+    normalized_workspace_path = _normalize_nextcloud_path(workspace_path)
+    if not normalized_workspace_path:
+        return ""
+    client = NextcloudApiClient()
+    if not client.is_configured:
+        return ""
+    try:
+        return _resolve_nextcloud_file_id(
+            client,
+            client.username,
+            normalized_workspace_path,
+        )
+    except NextcloudApiError as exc:
+        logger.warning(
+            "Could not resolve Nextcloud workspace file id for path %s: %s",
+            normalized_workspace_path,
+            exc,
+        )
+        return ""
 
 
 def _render_proposal_form(request, *, form, action, proposal=None):

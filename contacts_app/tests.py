@@ -897,6 +897,24 @@ class ContactsAppTests(TestCase):
         self.assertEqual(form.cleaned_data["phone_number"], "(999) 123-45-67")
         self.assertEqual(form.cleaned_data["region"], "Москва")
 
+    def test_tel_form_keeps_leading_seven_when_it_is_local_number_digit(self):
+        form = PhoneRecordForm(
+            data={
+                "person": self.person.pk,
+                "phone_type": PhoneRecord.PHONE_TYPE_MOBILE,
+                "country": self.country.pk,
+                "code": "+7",
+                "phone_number": "705 186-10-36",
+                "valid_from": "",
+                "valid_to": "",
+            }
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.cleaned_data["code"], "+7")
+        self.assertEqual(form.cleaned_data["phone_number"], "(705) 186-10-36")
+        self.assertEqual(form.cleaned_data["region"], "")
+
     def test_tel_form_keeps_landline_number_unformatted_and_stores_extension(self):
         form = PhoneRecordForm(
             data={
