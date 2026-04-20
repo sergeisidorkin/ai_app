@@ -902,6 +902,7 @@ def ctz_delete(request, pk: int):
 
 
 @login_required
+@user_passes_test(staff_required)
 @require_http_methods(["POST", "GET"])
 def ctz_move_up(request, pk: int):
     _normalize_ctz_positions()
@@ -916,6 +917,7 @@ def ctz_move_up(request, pk: int):
 
 
 @login_required
+@user_passes_test(staff_required)
 @require_http_methods(["POST", "GET"])
 def ctz_move_down(request, pk: int):
     _normalize_ctz_positions()
@@ -1033,6 +1035,7 @@ def adr_delete(request, pk: int):
 
 
 @login_required
+@user_passes_test(staff_required)
 @require_http_methods(["POST", "GET"])
 def adr_move_up(request, pk: int):
     _normalize_adr_positions()
@@ -1047,6 +1050,7 @@ def adr_move_up(request, pk: int):
 
 
 @login_required
+@user_passes_test(staff_required)
 @require_http_methods(["POST", "GET"])
 def adr_move_down(request, pk: int):
     _normalize_adr_positions()
@@ -1289,6 +1293,7 @@ def tel_delete(request, pk: int):
 
 
 @login_required
+@user_passes_test(staff_required)
 @require_http_methods(["POST", "GET"])
 def tel_move_up(request, pk: int):
     _normalize_tel_positions()
@@ -1303,6 +1308,7 @@ def tel_move_up(request, pk: int):
 
 
 @login_required
+@user_passes_test(staff_required)
 @require_http_methods(["POST", "GET"])
 def tel_move_down(request, pk: int):
     _normalize_tel_positions()
@@ -1424,6 +1430,7 @@ def eml_delete(request, pk: int):
 
 
 @login_required
+@user_passes_test(staff_required)
 @require_http_methods(["POST", "GET"])
 def eml_move_up(request, pk: int):
     _normalize_eml_positions()
@@ -1438,6 +1445,7 @@ def eml_move_up(request, pk: int):
 
 
 @login_required
+@user_passes_test(staff_required)
 @require_http_methods(["POST", "GET"])
 def eml_move_down(request, pk: int):
     _normalize_eml_positions()

@@ -1437,6 +1437,8 @@ def numcap_table_partial(request):
 @user_passes_test(staff_required)
 @require_POST
 def numcap_csv_upload(request):
+    replace_raw = (request.POST.get("replace") or "").strip().lower()
+    replace_existing = replace_raw not in {"0", "false", "no"}
     files = request.FILES.getlist("csv_files")
     if not files:
         single_file = request.FILES.get("csv_file")
@@ -1445,7 +1447,7 @@ def numcap_csv_upload(request):
     if not files:
         return JsonResponse({"ok": False, "error": "Файлы не выбраны."}, status=400)
     try:
-        stats = process_numcap_official_sources(files, replace=True, progress_every=0)
+        stats = process_numcap_official_sources(files, replace=replace_existing, progress_every=0)
     except Exception as exc:
         logger.exception("numcap CSV import failed")
         return JsonResponse({"ok": False, "error": str(exc)}, status=400)

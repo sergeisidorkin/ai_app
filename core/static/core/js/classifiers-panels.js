@@ -992,23 +992,85 @@
   // CSV upload helper
   function esc(s) { return (s || '').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
-  async function handleCsvUpload(uploadUrl, files, refreshName) {
-    var formData = new FormData();
-    var selectedFiles = Array.isArray(files) ? files : [files];
-    if (selectedFiles.length > 1) {
-      selectedFiles.forEach(function (file) {
-        formData.append('csv_files', file);
-      });
-    } else if (selectedFiles[0]) {
-      formData.append('csv_file', selectedFiles[0]);
+  function buildNonJsonError(resp, text) {
+    var plain = (text || '')
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    var titleMatch = (text || '').match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    var details = titleMatch && titleMatch[1] ? titleMatch[1].trim() : plain.slice(0, 220);
+    var statusText = [resp.status, resp.statusText].filter(Boolean).join(' ');
+    return new Error(details ? ('Сервер вернул ' + statusText + ': ' + details) : ('Сервер вернул ' + statusText));
+  }
+
+  async function readJsonResponse(resp) {
+    var text = await resp.text();
+    var contentType = resp.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      throw buildNonJsonError(resp, text);
     }
     try {
-      var resp = await fetch(uploadUrl, {
-        method: 'POST',
-        headers: { 'X-CSRFToken': csrftoken },
-        body: formData,
-      });
-      var data = await resp.json();
+      return JSON.parse(text || '{}');
+    } catch (err) {
+      throw buildNonJsonError(resp, text);
+    }
+  }
+
+  async function uploadCsvRequest(uploadUrl, formData) {
+    var resp = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: { 'X-CSRFToken': csrftoken },
+      body: formData,
+    });
+    return readJsonResponse(resp);
+  }
+
+  async function handleCsvUpload(uploadUrl, files, refreshName, options) {
+    var selectedFiles = Array.isArray(files) ? files : [files];
+    var uploadOptions = options || {};
+    try {
+      var data;
+      if (uploadOptions.sequential && selectedFiles.length > 1) {
+        data = { ok: true, created: 0, skipped: 0, files: [] };
+        for (var idx = 0; idx < selectedFiles.length; idx++) {
+          var stepFormData = new FormData();
+          stepFormData.append('csv_file', selectedFiles[idx]);
+          if (uploadOptions.replaceFirstOnly) {
+            stepFormData.append('replace', idx === 0 ? '1' : '0');
+          }
+          var stepData = await uploadCsvRequest(uploadUrl, stepFormData);
+          if (!stepData.ok) {
+            data = stepData;
+            break;
+          }
+          data.created += stepData.created || 0;
+          data.skipped += stepData.skipped || 0;
+          if (stepData.updated) {
+            data.updated = (data.updated || 0) + stepData.updated;
+          }
+          if (stepData.conflicts && stepData.conflicts.length) {
+            data.conflicts = (data.conflicts || []).concat(stepData.conflicts);
+          }
+          if (stepData.warnings && stepData.warnings.length) {
+            data.warnings = (data.warnings || []).concat(stepData.warnings);
+          }
+          if (stepData.files && stepData.files.length) {
+            data.files = data.files.concat(stepData.files);
+          }
+        }
+      } else {
+        var formData = new FormData();
+        if (selectedFiles.length > 1) {
+          selectedFiles.forEach(function (file) {
+            formData.append('csv_files', file);
+          });
+        } else if (selectedFiles[0]) {
+          formData.append('csv_file', selectedFiles[0]);
+        }
+        data = await uploadCsvRequest(uploadUrl, formData);
+      }
       if (data.ok) {
         var html = '<div class="mb-2"><strong>Создано строк: ' + data.created + '</strong></div>';
         if (data.updated) {
@@ -1082,7 +1144,7 @@
     var mapping = {
       'oksm-csv-file-input': { url: '/classifiers/oksm/csv-upload/', refresh: null },
       'okv-csv-file-input':  { url: '/classifiers/okv/csv-upload/',  refresh: null },
-      'numcap-csv-file-input': { url: '/classifiers/numcap/csv-upload/', refresh: 'numcap-select' },
+      'numcap-csv-file-input': { url: '/classifiers/numcap/csv-upload/', refresh: 'numcap-select', sequential: true, replaceFirstOnly: true },
       'katd-csv-file-input': { url: '/classifiers/katd/csv-upload/', refresh: null },
       'rfs-csv-file-input':  { url: '/classifiers/rfs/csv-upload/',  refresh: 'rfs-select' },
       'lw-csv-file-input':   { url: '/classifiers/lw/csv-upload/',   refresh: 'lw-select' },
@@ -1092,7 +1154,7 @@
     if (!cfg) return;
     var files = Array.from(e.target.files || []);
     if (!files.length) return;
-    await handleCsvUpload(cfg.url, files.length > 1 ? files : files[0], cfg.refresh);
+    await handleCsvUpload(cfg.url, files.length > 1 ? files : files[0], cfg.refresh, cfg);
   });
 
   document.body.addEventListener('htmx:afterSettle', function (e) {

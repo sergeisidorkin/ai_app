@@ -73,6 +73,7 @@ class UsersContactsSyncTests(TestCase):
         self.assertTrue(employee.managed_position_record.is_user_managed)
         self.assertEqual(employee.managed_position_record.source, "[Пользователи / Сотрудники]")
         self.assertTrue(employee.person_record.phones.exists())
+        self.assertTrue(PhoneRecord.objects.get(person=employee.person_record).is_primary)
         self.assertEqual(
             CitizenshipRecord.objects.get(person=employee.person_record).source,
             "[Пользователи / Сотрудники]",
@@ -103,6 +104,7 @@ class UsersContactsSyncTests(TestCase):
             PhoneRecord.objects.get(person=employee.person_record).source,
             "[Пользователи / Внешние пользователи]",
         )
+        self.assertTrue(PhoneRecord.objects.get(person=employee.person_record).is_primary)
 
     def test_external_edit_syncs_person_record_name_fields(self):
         self.client.post(reverse("ext_form_create"), self._external_payload())
@@ -181,7 +183,7 @@ class UsersContactsSyncTests(TestCase):
         citizenship = CitizenshipRecord.objects.get(person=employee.person_record)
         phone = PhoneRecord.objects.get(person=employee.person_record)
         CitizenshipRecord.objects.filter(pk=citizenship.pk).update(source="")
-        PhoneRecord.objects.filter(pk=phone.pk).update(source="")
+        PhoneRecord.objects.filter(pk=phone.pk).update(source="", is_primary=False)
 
         response = self.client.post(
             reverse("emp_form_edit", args=[employee.pk]),
@@ -193,6 +195,7 @@ class UsersContactsSyncTests(TestCase):
         phone.refresh_from_db()
         self.assertEqual(citizenship.source, "[Пользователи / Сотрудники]")
         self.assertEqual(phone.source, "[Пользователи / Сотрудники]")
+        self.assertTrue(phone.is_primary)
 
     def test_employee_delete_detaches_contacts_without_deleting_them(self):
         self.client.post(reverse("emp_form_create"), self._employee_payload())

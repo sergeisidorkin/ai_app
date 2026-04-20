@@ -273,6 +273,36 @@ class NumcapRecordTests(TestCase):
         self.assertEqual(item.gar_territory, "г. Москва")
         self.assertEqual(item.inn, "7701234567")
 
+    def test_numcap_csv_upload_can_append_without_replace(self):
+        first_csv = (
+            "АВС/ DEF;От;До;Емкость;Оператор;Регион;Территория ГАР;ИНН\n"
+            '495;1234500;1234599;100;ООО "Первый оператор";Москва;г. Москва;7701234567\n'
+        ).encode("utf-8")
+        second_csv = (
+            "АВС/ DEF;От;До;Емкость;Оператор;Регион;Территория ГАР;ИНН\n"
+            '812;7654300;7654399;100;ООО "Второй оператор";Санкт-Петербург;г. Санкт-Петербург;7801234567\n'
+        ).encode("utf-8")
+
+        first_response = self.client.post(
+            reverse("numcap_csv_upload"),
+            {"csv_file": SimpleUploadedFile("ABC-3xx.csv", first_csv, content_type="text/csv")},
+        )
+        second_response = self.client.post(
+            reverse("numcap_csv_upload"),
+            {
+                "replace": "0",
+                "csv_file": SimpleUploadedFile("ABC-4xx.csv", second_csv, content_type="text/csv"),
+            },
+        )
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        self.assertTrue(first_response.json()["ok"])
+        self.assertTrue(second_response.json()["ok"])
+        self.assertEqual(NumcapRecord.objects.count(), 2)
+        self.assertTrue(NumcapRecord.objects.filter(code="495", region="Москва").exists())
+        self.assertTrue(NumcapRecord.objects.filter(code="812", region="Санкт-Петербург").exists())
+
 
 class LegalEntityAutocompleteTests(TestCase):
     def setUp(self):

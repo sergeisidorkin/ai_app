@@ -1276,6 +1276,65 @@ class ContactsAppTests(TestCase):
         self.assertContains(eml_response, "Сотрудник")
         employee.delete()
 
+    def test_non_staff_cannot_reorder_contact_registry_rows(self):
+        second_citizenship = CitizenshipRecord.objects.create(
+            person=self.person,
+            country=self.country,
+            status="Статус 2",
+            identifier="ID-2",
+            number="NUM-2",
+            position=2,
+        )
+        second_address = ResidenceAddressRecord.objects.create(
+            person=self.person,
+            country=self.country,
+            region="Москва",
+            locality="Москва",
+            street="Тверская",
+            building="2",
+            position=2,
+        )
+        second_phone = PhoneRecord.objects.create(
+            person=self.person,
+            country=self.country,
+            code="+7",
+            phone_type=PhoneRecord.PHONE_TYPE_MOBILE,
+            region="Москва",
+            phone_number="9990000002",
+            is_primary=False,
+            position=2,
+        )
+        second_email = EmailRecord.objects.create(
+            person=self.person,
+            email="second@example.com",
+            position=2,
+        )
+        non_staff_user = get_user_model().objects.create_user(
+            username="contacts-nonstaff",
+            email="contacts-nonstaff@example.com",
+            password="secret",
+            is_staff=False,
+        )
+        self.client.force_login(non_staff_user)
+
+        for url_name, item in (
+            ("ctz_move_up", second_citizenship),
+            ("adr_move_up", second_address),
+            ("tel_move_up", second_phone),
+            ("eml_move_up", second_email),
+        ):
+            response = self.client.post(reverse(url_name, args=[item.pk]))
+            self.assertEqual(response.status_code, 302)
+
+        second_citizenship.refresh_from_db()
+        second_address.refresh_from_db()
+        second_phone.refresh_from_db()
+        second_email.refresh_from_db()
+        self.assertEqual(second_citizenship.position, 2)
+        self.assertEqual(second_address.position, 2)
+        self.assertEqual(second_phone.position, 2)
+        self.assertEqual(second_email.position, 2)
+
     def test_eml_delete_rejects_last_record_for_person(self):
         item = EmailRecord.objects.create(
             person=self.person,
