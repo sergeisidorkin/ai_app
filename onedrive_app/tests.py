@@ -3,6 +3,8 @@ from django.test import TestCase
 from django.urls import reverse
 
 from core.models import CloudStorageSettings
+from policy_app.models import DEPARTMENT_HEAD_GROUP
+from users_app.models import Employee
 
 User = get_user_model()
 
@@ -105,3 +107,23 @@ class PrimaryCloudStorageConnectionsTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
+
+    def test_department_head_sees_only_external_smtp_connection(self):
+        department_head = User.objects.create_user(
+            username="department-head@example.com",
+            email="department-head@example.com",
+            password="Secret123!",
+            is_staff=True,
+        )
+        Employee.objects.create(user=department_head, role=DEPARTMENT_HEAD_GROUP)
+        self.client.force_login(department_head)
+
+        response = self.client.get(reverse("onedrive_connections_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="smtp-panel"', html=False)
+        self.assertNotContains(response, "Основное облачное хранилище")
+        self.assertNotContains(response, "Nextcloud")
+        self.assertNotContains(response, "Google Drive")
+        self.assertNotContains(response, "Яндекс.Диск")
+        self.assertNotContains(response, "Microsoft OneDrive")

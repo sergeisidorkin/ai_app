@@ -41,14 +41,16 @@ def home_entry(request):
     is_expert = request.user.groups.filter(name=EXPERT_GROUP).exists()
     is_lawyer = request.user.groups.filter(name=LAWYER_GROUP).exists()
     employee_role = getattr(employee, "role", "") or ""
+    is_department_head = employee_role == DEPARTMENT_HEAD_GROUP
     can_access_connections = (not is_expert) or (
         employee_role in {PROJECTS_HEAD_GROUP, DEPARTMENT_HEAD_GROUP}
     )
-    smtp_only_connections = is_expert and can_access_connections
+    smtp_only_connections = is_department_head
     context = {
         "employee": employee,
         "is_expert": is_expert,
         "is_lawyer": is_lawyer,
+        "is_department_head": is_department_head,
         "can_access_connections": can_access_connections,
         "smtp_only_connections": smtp_only_connections,
         "ler_date_filter": date.today().isoformat(),
