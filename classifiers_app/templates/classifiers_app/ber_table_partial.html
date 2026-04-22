@@ -39,7 +39,7 @@
                     </div>
                 {% endif %}
             </td>
-            <td class="text-nowrap"><span class="clf-id-mono">{{ item.pk|stringformat:"05d" }}-BSN</span></td>
+            <td class="text-nowrap"><span class="clf-id-droid-mono">{{ item.pk|stringformat:"05d" }}-BSN</span></td>
             <td>{{ item.name }}</td>
             <td>{{ item.comment|default:"—" }}</td>
             <td class="text-nowrap">{% if item.record_date %}{{ item.record_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>

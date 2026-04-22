@@ -973,6 +973,7 @@
                         <div id="business-entities-table-wrap"
                              hx-get="{% url 'ber_table_partial' %}"
                              hx-trigger="business-entities:load from:body once"
+                             hx-target="this"
                              hx-swap="innerHTML">
                           <div class="text-muted p-3">Загрузка данных…</div>
                         </div>
@@ -1075,6 +1076,7 @@
                         <div id="business-entity-identifiers-table-wrap"
                              hx-get="{% url 'bei_table_partial' %}"
                              hx-trigger="business-entity-identifiers:load from:body once"
+                             hx-target="this"
                              hx-swap="innerHTML">
                           <div class="text-muted p-3">Загрузка данных…</div>
                         </div>
@@ -1154,6 +1156,7 @@
                         <div id="business-entity-attributes-table-wrap"
                              hx-get="{% url 'bat_table_partial' %}"
                              hx-trigger="business-entity-attributes:load from:body once"
+                             hx-target="this"
                              hx-swap="innerHTML">
                           <div class="text-muted p-3">Загрузка данных…</div>
                         </div>
@@ -1190,6 +1193,7 @@
                         <div id="ler-table-wrap"
                              hx-get="{% url 'ler_table_partial' %}"
                              hx-trigger="legal-entities:load from:body once"
+                             hx-target="this"
                              hx-swap="innerHTML">
                           <div class="text-muted p-3">Загрузка данных…</div>
                         </div>
@@ -1290,6 +1294,7 @@
                         <div id="business-entity-addresses-table-wrap"
                              hx-get="{% url 'bea_table_partial' %}"
                              hx-trigger="business-entity-addresses:load from:body once"
+                             hx-target="this"
                              hx-swap="innerHTML">
                           <div class="text-muted p-3">Загрузка данных…</div>
                         </div>
@@ -1443,6 +1448,7 @@
                         <div id="business-entity-relations-table-wrap"
                              hx-get="{% url 'brl_table_partial' %}"
                              hx-trigger="business-entity-relations:load from:body once"
+                             hx-target="this"
                              hx-swap="innerHTML">
                           <div class="text-muted p-3">Загрузка данных…</div>
                         </div>

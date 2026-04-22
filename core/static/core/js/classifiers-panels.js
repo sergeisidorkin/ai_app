@@ -763,6 +763,11 @@
   async function refreshTable(name) {
     const cfg = TABLE_CONFIG[name];
     if (!cfg) {
+      const legacyPane = document.getElementById('classifiers-pane');
+      if (!legacyPane) {
+        console.warn('[classifiers] skipped refresh for unknown table:', name);
+        return;
+      }
       await htmx.ajax('GET', '/classifiers/partial/' + filterQueryString(), {
         target: '#classifiers-pane',
         swap: 'outerHTML',

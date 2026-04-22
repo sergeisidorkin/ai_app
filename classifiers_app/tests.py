@@ -1054,6 +1054,18 @@ class BusinessRegistryMasterFilterTests(TestCase):
         self.assertNotContains(response, "Связь 02")
         self.assertContains(response, "Показаны 51-55 из 55")
 
+    def test_home_page_binds_business_registry_partials_to_their_own_wrappers(self):
+        response = self.client.get(reverse("home"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="business-entities-table-wrap"')
+        self.assertContains(response, 'id="business-entity-identifiers-table-wrap"')
+        self.assertContains(response, 'id="business-entity-attributes-table-wrap"')
+        self.assertContains(response, 'id="ler-table-wrap"')
+        self.assertContains(response, 'id="business-entity-addresses-table-wrap"')
+        self.assertContains(response, 'id="business-entity-relations-table-wrap"')
+        self.assertGreaterEqual(response.content.decode().count('hx-target="this"'), 6)
+
 
 class BusinessEntityIdentifierFormTests(TestCase):
     def setUp(self):

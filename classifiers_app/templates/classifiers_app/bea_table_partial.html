@@ -50,8 +50,8 @@
                     </div>
                 {% endif %}
             </td>
-            <td data-col="id-atr" class="text-nowrap"><span class="clf-id-mono">{{ item.pk|stringformat:"05d" }}-ATR</span></td>
-            <td data-col="id-idn" class="text-nowrap"><span class="clf-id-mono">{% if item.identifier_record %}{{ item.identifier_record.pk|stringformat:"05d" }}-IDN{% else %}—{% endif %}</span></td>
+            <td data-col="id-atr" class="text-nowrap"><span class="clf-id-droid-mono">{{ item.pk|stringformat:"05d" }}-ATR</span></td>
+            <td data-col="id-idn" class="text-nowrap"><span class="clf-id-droid-mono">{% if item.identifier_record %}{{ item.identifier_record.pk|stringformat:"05d" }}-IDN{% else %}—{% endif %}</span></td>
             <td data-col="country">{% if item.registration_country %}{{ item.registration_country.short_name }}{% else %}—{% endif %}</td>
             <td data-col="region">{{ item.registration_region|default:"—" }}</td>
             <td data-col="postal-code">{{ item.postal_code|default:"—" }}</td>

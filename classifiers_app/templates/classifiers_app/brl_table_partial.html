@@ -42,8 +42,8 @@
             </td>
             <td class="text-nowrap"><span class="clf-id-mono">{{ item.pk|stringformat:"05d" }}-RLT</span></td>
             <td>{{ item.event.relation_type|default:"—" }}</td>
-            <td class="text-nowrap"><span class="clf-id-mono">{{ item.from_business_entity.pk|stringformat:"05d" }}-BSN</span></td>
-            <td class="text-nowrap"><span class="clf-id-mono">{{ item.to_business_entity.pk|stringformat:"05d" }}-BSN</span></td>
+            <td class="text-nowrap"><span class="clf-id-droid-mono">{{ item.from_business_entity.pk|stringformat:"05d" }}-BSN</span></td>
+            <td class="text-nowrap"><span class="clf-id-droid-mono">{{ item.to_business_entity.pk|stringformat:"05d" }}-BSN</span></td>
             <td class="text-nowrap"><span class="clf-id-mono">{{ item.event.reorganization_event_uid|default:"—" }}</span></td>
             <td class="text-nowrap">{% if item.event.event_date %}{{ item.event.event_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>
             <td>{{ item.event.comment|default:"—" }}</td>
