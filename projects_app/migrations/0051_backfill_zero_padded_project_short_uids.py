@@ -10,6 +10,10 @@ def forward(apps, schema_editor):
         member.pk: int(member.country_order_number or 0)
         for member in GroupMember.objects.only("id", "country_order_number")
     }
+    group_alpha2_map = {
+        member.pk: (member.country_alpha2 or "").strip().upper()
+        for member in GroupMember.objects.only("id", "country_alpha2")
+    }
 
     registrations = list(
         ProjectRegistration.objects
@@ -21,7 +25,7 @@ def forward(apps, schema_editor):
 
     pending = []
     for registration in registrations:
-        alpha2 = (registration.group or "").strip().upper()
+        alpha2 = group_alpha2_map.get(registration.group_member_id) or (registration.group or "").strip().upper()
         group_order_number = group_order_map.get(registration.group_member_id, 0)
         new_uid = f"{int(registration.number or 0):04d}{registration.agreement_sequence}{group_order_number}{alpha2}"
         if registration.short_uid == new_uid:

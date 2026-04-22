@@ -163,20 +163,22 @@
 
         {% if request.user.is_authenticated and request.user.is_staff %}
             <div class="d-flex align-items-stretch gap-2 products-actions-row">
-                {% with consulting_directions|first as first_direction %}
-                    <button
-                            type="button"
-                            class="btn btn-primary btn-sm d-flex align-items-center"
-                            {% if first_direction %}
-                            hx-get="{% url 'consulting_dir_form_edit' first_direction.pk %}"
-                            {% else %}
-                            hx-get="{% url 'consulting_dir_form_create' %}"
-                            {% endif %}
-                            hx-target="#policy-modal .modal-content"
-                            hx-swap="innerHTML">
-                        <i class="bi bi-pencil-square me-2"></i>Редактировать
-                    </button>
-                {% endwith %}
+                <div id="consulting-dir-actions" class="d-flex">
+                    {% with consulting_directions|first as first_direction %}
+                        <button
+                                type="button"
+                                class="btn btn-primary btn-sm d-flex align-items-center"
+                                {% if first_direction %}
+                                hx-get="{% url 'consulting_dir_form_edit' first_direction.pk %}"
+                                {% else %}
+                                hx-get="{% url 'consulting_dir_form_create' %}"
+                                {% endif %}
+                                hx-target="#policy-modal .modal-content"
+                                hx-swap="innerHTML">
+                            <i class="bi bi-pencil-square me-2"></i>Редактировать
+                        </button>
+                    {% endwith %}
+                </div>
             </div>
         {% endif %}
     </div>

@@ -329,7 +329,7 @@ class ProjectRegistration(models.Model):
         links = self._ordered_product_links()
         if links:
             return [link.product for link in links if getattr(link, "product_id", None)]
-        return [self.type] if self.type_id else []
+        return [self.type] if self.type else []
 
     @property
     def ordered_product_ids(self):

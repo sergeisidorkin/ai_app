@@ -5,12 +5,14 @@ from django.contrib.auth import get_user_model
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.http import QueryDict
 from django.test import Client, TestCase, TransactionTestCase
 from django.urls import reverse
 
 from classifiers_app.models import OKVCurrency
 from experts_app.models import ExpertSpecialty
 from group_app.models import GroupMember, OrgUnit
+from policy_app.forms import ProductForm
 from policy_app.models import (
     ConsultingDirection,
     ConsultingDirectionType,
@@ -200,6 +202,46 @@ class ProductCsvUploadTests(TestCase):
         self.assertIsNotNone(product.service_subtype_ref_id)
         self.assertFalse(product.is_group_owner)
         self.assertEqual(list(product.owners.values_list("short_name", flat=True)), ["IMC Montan"])
+
+
+class ProductFormTests(TestCase):
+    def setUp(self):
+        self.consulting_type = ConsultingDirectionType.objects.create(
+            name="Горный ProductForm",
+            position=1,
+            direction=ConsultingDirection.objects.create(position=1),
+        )
+        self.service_type = ConsultingServiceType.objects.create(
+            direction=self.consulting_type.direction,
+            consulting_type=self.consulting_type,
+            name="Аудит ProductForm",
+            code="A",
+            position=1,
+        )
+        self.service_subtype = ConsultingServiceSubtype.objects.create(
+            direction=self.consulting_type.direction,
+            service_type=self.service_type,
+            name="Аудит проектных решений ProductForm",
+            position=1,
+        )
+
+    def test_init_ignores_non_numeric_dependent_catalog_ids(self):
+        data = QueryDict("", mutable=True)
+        data.update(
+            {
+                "short_name": "AUD",
+                "name_en": "Audit",
+                "display_name": "Audit",
+                "name_ru": "Аудит",
+                "consulting_type_ref": "oops",
+                "service_category_ref": "nan",
+                "service_subtype_ref": str(self.service_subtype.pk),
+            }
+        )
+        form = ProductForm(data=data)
+
+        self.assertEqual(list(form.fields["service_category_ref"].queryset), [])
+        self.assertEqual(list(form.fields["service_subtype_ref"].queryset), [])
 
 
 class ConsultingDirectionViewsTests(TestCase):

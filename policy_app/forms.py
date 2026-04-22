@@ -30,6 +30,14 @@ from .models import (
 OWNER_GROUP_VALUE = "__group__"
 
 
+def _coerce_positive_int(value):
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
 class CommaDecimalField(forms.DecimalField):
     def to_python(self, value):
         if isinstance(value, str):
@@ -110,8 +118,8 @@ class ProductForm(forms.ModelForm):
         consulting_type = None
         category = None
         if self.data:
-            consulting_type = self.data.get("consulting_type_ref") or None
-            category = self.data.get("service_category_ref") or None
+            consulting_type = _coerce_positive_int(self.data.get("consulting_type_ref"))
+            category = _coerce_positive_int(self.data.get("service_category_ref"))
         elif self.instance.pk:
             consulting_type = self.instance.consulting_type_ref_id or None
             category = self.instance.service_category_ref_id or None
