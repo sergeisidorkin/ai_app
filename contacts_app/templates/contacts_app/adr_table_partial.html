@@ -23,8 +23,8 @@
       <th>Здание</th>
       <th>Помещение</th>
       <th>Часть помещения</th>
-      <th>Действ. от</th>
-      <th>Действ. до</th>
+      <th class="text-nowrap">Действ. от</th>
+      <th class="text-nowrap">Действ. до</th>
       <th>Запись</th>
       <th>Автор записи</th>
       <th>Источник</th>
@@ -48,8 +48,8 @@
         </div>
         {% endif %}
       </td>
-      <td class="text-nowrap"><span class="clf-id-mono">{{ item.pk|stringformat:"05d" }}-ADR</span></td>
-      <td class="text-nowrap"><span class="clf-id-mono">{{ item.person.pk|stringformat:"05d" }}-PRS</span></td>
+      <td class="text-nowrap"><span class="clf-id-droid-mono">{{ item.pk|stringformat:"05d" }}-ADR</span></td>
+      <td class="text-nowrap"><span class="clf-id-droid-mono">{{ item.person.pk|stringformat:"05d" }}-PRS</span></td>
       <td>{% if item.country %}{{ item.country.short_name }}{% else %}—{% endif %}</td>
       <td>{{ item.region|default:"—" }}</td>
       <td>{{ item.postal_code|default:"—" }}</td>

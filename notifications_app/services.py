@@ -205,8 +205,8 @@ def _build_participation_payload(*, recipient, project, performers, request_sent
     services = [_service_line(performer) for performer in performers]
     agreed_amount = sum((performer.agreed_amount or Decimal("0")) for performer in performers)
     project_label_parts = [project.short_uid]
-    if project.type_id:
-        project_label_parts.append(project.type.short_name or str(project.type))
+    if project.type_short_display:
+        project_label_parts.append(project.type_short_display)
     if project.name:
         project_label_parts.append(project.name)
     project_label = " ".join(part for part in project_label_parts if part)
@@ -571,8 +571,8 @@ def process_participation_notification(notification, actor, action_choice):
 def _build_info_request_payload(*, recipient, project, performers, request_sent_at, deadline_at, duration_hours, sender=None):
     services = [_service_line(performer) for performer in performers]
     project_label_parts = [project.short_uid]
-    if project.type_id:
-        project_label_parts.append(project.type.short_name or str(project.type))
+    if project.type_short_display:
+        project_label_parts.append(project.type_short_display)
     if project.name:
         project_label_parts.append(project.name)
     project_label = " ".join(part for part in project_label_parts if part)
@@ -717,8 +717,8 @@ def _build_contract_payload(*, recipient, project, performers, request_sent_at, 
     agreed_amount = sum((performer.agreed_amount or Decimal("0")) for performer in performers)
 
     project_label_parts = [project.short_uid]
-    if project.type_id:
-        project_label_parts.append(project.type.short_name or str(project.type))
+    if project.type_short_display:
+        project_label_parts.append(project.type_short_display)
     if project.name:
         project_label_parts.append(project.name)
     project_label = " ".join(part for part in project_label_parts if part)
@@ -926,8 +926,8 @@ def _build_scan_payload(*, recipient, project, performers, sender=None):
     agreed_amount = sum((performer.agreed_amount or Decimal("0")) for performer in performers)
 
     project_label_parts = [project.short_uid]
-    if project.type_id:
-        project_label_parts.append(project.type.short_name or str(project.type))
+    if project.type_short_display:
+        project_label_parts.append(project.type_short_display)
     if project.name:
         project_label_parts.append(project.name)
     project_label = " ".join(part for part in project_label_parts if part)

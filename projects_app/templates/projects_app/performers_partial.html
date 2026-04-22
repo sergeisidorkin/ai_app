@@ -20,9 +20,9 @@
           <input class="form-check-input js-perf-filter" type="checkbox"
                  value="{{ proj.id }}" id="perf-filter-{{ proj.id }}"
                  data-summary-label="{{ proj.short_uid }}"
-                 data-full-label="{{ proj.short_uid }}{% if proj.type %} {{ proj.type.short_name|default:proj.type }}{% endif %}{% if proj.name %} {{ proj.name }}{% endif %}">
+                 data-full-label="{{ proj.short_uid }}{% if proj.type_short_display %} {{ proj.type_short_display }}{% endif %}{% if proj.name %} {{ proj.name }}{% endif %}">
           <label class="form-check-label" for="perf-filter-{{ proj.id }}">
-            {{ proj.short_uid }}{% if proj.type %} {{ proj.type.short_name|default:proj.type }}{% endif %}{% if proj.name %} {{ proj.name }}{% endif %}
+            {{ proj.short_uid }}{% if proj.type_short_display %} {{ proj.type_short_display }}{% endif %}{% if proj.name %} {{ proj.name }}{% endif %}
           </label>
         </div>
       {% empty %}
@@ -51,7 +51,7 @@
     <colgroup>
       <col class="col-checkbox">  <!-- чекбокс -->
       <col class="col-number">    <!-- Номер (4444RU) -->
-      <col class="col-type">      <!-- Тип -->
+      <col class="col-type">      <!-- Продукт -->
       <col class="col-name">      <!-- Название -->
       <col class="col-active">    <!-- Актив -->
       <col style="width:28px">   <!-- быстрое редактирование -->
@@ -83,7 +83,7 @@
         {% endif %}
       </th>
       <th class="text-nowrap">Проект</th>
-      <th class="text-nowrap">Тип</th>
+      <th class="text-nowrap">Продукт</th>
       <th class="text-nowrap">Название</th>
       <th>Наименование актива</th>
       <th></th>
@@ -123,9 +123,9 @@
             </div>
           {% endif %}
         </td>
-        <td class="text-nowrap">{% if p.registration %}{{ p.registration.short_uid }}{% endif %}</td>
+        <td class="text-nowrap">{% if p.registration %}<span class="clf-id-droid-mono">{{ p.registration.short_uid }}</span>{% endif %}</td>
         <td class="text-nowrap">
-          {% if p.registration.type %}{{ p.registration.type.short_name|default:p.registration.type }}{% endif %}
+          {{ p.section_product_short_display|default:"—" }}
         </td>
         <td class="text-truncate">{{ p.registration.name }}</td>
         <td class="text-nowrap">{{ p.asset_name }}</td>
@@ -222,9 +222,9 @@
               <input class="form-check-input js-participation-filter" type="checkbox"
                      value="{{ project.id }}" id="participation-filter-{{ project.id }}"
                      data-summary-label="{{ project.short_uid }}"
-                     data-full-label="{{ project.short_uid }}{% if project.type %} {{ project.type.short_name|default:project.type }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}">
+                     data-full-label="{{ project.short_uid }}{% if project.type_short_display %} {{ project.type_short_display }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}">
               <label class="form-check-label" for="participation-filter-{{ project.id }}">
-                {{ project.short_uid }}{% if project.type %} {{ project.type.short_name|default:project.type }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}
+                {{ project.short_uid }}{% if project.type_short_display %} {{ project.type_short_display }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}
               </label>
             </div>
           {% empty %}
@@ -316,9 +316,9 @@
               </div>
             {% endif %}
           </td>
-          <td class="text-nowrap cell-group-val">{% if row.registration %}{{ row.registration.short_uid }}{% endif %}</td>
+          <td class="text-nowrap cell-group-val">{% if row.registration %}<span class="clf-id-droid-mono">{{ row.registration.short_uid }}</span>{% endif %}</td>
           <td class="text-nowrap cell-group-val">
-            {% if row.registration.type %}{{ row.registration.type.short_name|default:row.registration.type }}{% endif %}
+            {{ row.registration.type_short_display }}
           </td>
           <td class="text-truncate cell-group-val">{{ row.registration.name }}</td>
           <td class="text-nowrap cell-group-val">{{ row.executor|short_fio }}</td>
@@ -350,9 +350,9 @@
               </div>
             {% endif %}
           </td>
-          <td class="text-nowrap cell-group-val">{% if row.registration %}{{ row.registration.short_uid }}{% endif %}</td>
+          <td class="text-nowrap cell-group-val">{% if row.registration %}<span class="clf-id-droid-mono">{{ row.registration.short_uid }}</span>{% endif %}</td>
           <td class="text-nowrap cell-group-val">
-            {% if row.registration.type %}{{ row.registration.type.short_name|default:row.registration.type }}{% endif %}
+            {{ row.registration.type_short_display }}
           </td>
           <td class="text-truncate cell-group-val">{{ row.registration.name }}</td>
           <td class="text-nowrap cell-group-val">{{ row.executor|short_fio }}</td>
@@ -481,9 +481,9 @@
               <input class="form-check-input js-contract-filter" type="checkbox"
                      value="{{ project.id }}" id="contract-filter-{{ project.id }}"
                      data-summary-label="{{ project.short_uid }}"
-                     data-full-label="{{ project.short_uid }}{% if project.type %} {{ project.type.short_name|default:project.type }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}">
+                     data-full-label="{{ project.short_uid }}{% if project.type_short_display %} {{ project.type_short_display }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}">
               <label class="form-check-label" for="contract-filter-{{ project.id }}">
-                {{ project.short_uid }}{% if project.type %} {{ project.type.short_name|default:project.type }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}
+                {{ project.short_uid }}{% if project.type_short_display %} {{ project.type_short_display }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}
               </label>
             </div>
           {% empty %}
@@ -587,9 +587,9 @@
               </div>
             {% endif %}
           </td>
-          <td class="text-nowrap cell-group-val">{% if p.registration %}{{ p.registration.short_uid }}{% endif %}</td>
+          <td class="text-nowrap cell-group-val">{% if p.registration %}<span class="clf-id-droid-mono">{{ p.registration.short_uid }}</span>{% endif %}</td>
           <td class="text-nowrap cell-group-val">
-            {% if p.registration.type %}{{ p.registration.type.short_name|default:p.registration.type }}{% endif %}
+            {{ p.registration.type_short_display }}
           </td>
           <td class="text-truncate cell-group-val">{{ p.registration.name }}</td>
           <td class="text-nowrap cell-group-val">{{ p.executor|short_fio }}</td>
@@ -783,9 +783,9 @@
                      name="info-request-project-radio"
                      value="{{ project.id }}" id="info-request-filter-{{ project.id }}"
                      data-summary-label="{{ project.short_uid }}"
-                     data-full-label="{{ project.short_uid }}{% if project.type %} {{ project.type.short_name|default:project.type }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}">
+                     data-full-label="{{ project.short_uid }}{% if project.type_short_display %} {{ project.type_short_display }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}">
               <label class="form-check-label" for="info-request-filter-{{ project.id }}">
-                {{ project.short_uid }}{% if project.type %} {{ project.type.short_name|default:project.type }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}
+                {{ project.short_uid }}{% if project.type_short_display %} {{ project.type_short_display }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}
               </label>
             </div>
           {% empty %}
@@ -884,9 +884,9 @@
               </div>
             {% endif %}
           </td>
-          <td class="text-nowrap cell-group-val">{% if p.registration %}{{ p.registration.short_uid }}{% endif %}</td>
+          <td class="text-nowrap cell-group-val">{% if p.registration %}<span class="clf-id-droid-mono">{{ p.registration.short_uid }}</span>{% endif %}</td>
           <td class="text-nowrap cell-group-val">
-            {% if p.registration.type %}{{ p.registration.type.short_name|default:p.registration.type }}{% endif %}
+            {{ p.registration.type_short_display }}
           </td>
           <td class="text-truncate cell-group-val">{{ p.registration.name }}</td>
           <td class="text-nowrap cell-group-val">{{ p.executor|short_fio }}</td>

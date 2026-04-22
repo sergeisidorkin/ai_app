@@ -11,8 +11,12 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST
 
 from experts_app.models import ExpertSpecialty
-from group_app.models import OrgUnit
+from group_app.models import GroupMember, OrgUnit
 from .models import (
+    ConsultingDirection,
+    ConsultingDirectionType,
+    ConsultingServiceSubtype,
+    ConsultingServiceType,
     Product,
     TypicalSection,
     TypicalSectionSpecialty,
@@ -25,8 +29,10 @@ from .models import (
     SpecialtyTariff,
     Tariff,
     MANAGER_GROUPS,
+    build_consulting_catalog_meta,
 )
 from .forms import (
+    ConsultingDirectionForm,
     ProductForm,
     TypicalSectionForm,
     SectionStructureForm,
@@ -48,6 +54,7 @@ SERVICE_GOAL_REPORT_FORM_TEMPLATE = "policy_app/service_goal_report_form.html"
 TYPICAL_SERVICE_COMPOSITION_FORM_TEMPLATE = "policy_app/typical_service_composition_form.html"
 TYPICAL_SERVICE_TERM_FORM_TEMPLATE = "policy_app/typical_service_term_form.html"
 EXPERTISE_DIR_FORM_TEMPLATE = "policy_app/expertise_direction_form.html"
+CONSULTING_DIR_FORM_TEMPLATE = "policy_app/consulting_direction_form.html"
 GRADE_FORM_TEMPLATE = "policy_app/grade_form.html"
 SPECIALTY_TARIFF_FORM_TEMPLATE = "policy_app/specialty_tariff_form.html"
 TARIFF_FORM_TEMPLATE = "policy_app/tariff_form.html"
@@ -113,7 +120,9 @@ def staff_required(user):
 
 # Вспомогательные функции для устранения дублирования
 def _policy_context(request):
-    products = Product.objects.prefetch_related("owners").all()
+    products = Product.objects.select_related(
+        "consulting_type_ref", "service_category_ref", "service_subtype_ref"
+    ).prefetch_related("owners").all()
     sections = TypicalSection.objects.select_related("product", "expertise_dir", "expertise_direction").prefetch_related(
         "ranked_specialties", "ranked_specialties__specialty"
     ).all()
@@ -121,6 +130,11 @@ def _policy_context(request):
     service_goal_reports = ServiceGoalReport.objects.select_related("product").all()
     typical_service_compositions = TypicalServiceComposition.objects.select_related("product", "section").all()
     typical_service_terms = TypicalServiceTerm.objects.select_related("product").all()
+    consulting_directions = ConsultingDirection.objects.prefetch_related(
+        "consulting_types",
+        "service_types__consulting_type",
+        "service_subtypes__service_type__consulting_type",
+    ).all()
     expertise_directions = ExpertiseDirection.objects.prefetch_related("owners").all()
     grades = _get_grades_for_user(request.user)
     specialty_tariffs = _get_specialty_tariffs_for_user(request.user)
@@ -133,6 +147,7 @@ def _policy_context(request):
         "service_goal_reports": service_goal_reports,
         "typical_service_compositions": typical_service_compositions,
         "typical_service_terms": typical_service_terms,
+        "consulting_directions": consulting_directions,
         "expertise_directions": expertise_directions,
         "grades": grades,
         "specialty_tariffs": specialty_tariffs,
@@ -145,6 +160,52 @@ def _render_policy_updated(request):
     response = render(request, POLICY_PARTIAL_TEMPLATE, _policy_context(request))
     response[HX_TRIGGER_HEADER] = HX_POLICY_UPDATED_EVENT
     return response
+
+
+def _consulting_catalog_lookup():
+    consulting_types = list(ConsultingDirectionType.objects.order_by("position", "id"))
+    service_types = list(
+        ConsultingServiceType.objects.select_related("consulting_type").order_by(
+            "consulting_type__position", "position", "id"
+        )
+    )
+    service_subtypes = list(
+        ConsultingServiceSubtype.objects.select_related("service_type", "service_type__consulting_type").order_by(
+            "service_type__consulting_type__position", "service_type__position", "position", "id"
+        )
+    )
+    return {
+        "consulting_types_by_name": {item.name: item for item in consulting_types},
+        "service_types_by_pair": {
+            (item.consulting_type.name, item.name): item for item in service_types
+        },
+        "service_subtypes_by_triple": {
+            (item.service_type.consulting_type.name, item.service_type.name, item.name): item
+            for item in service_subtypes
+        },
+    }
+
+
+def _consulting_direction_form_context(form, action, direction=None):
+    ctx = {
+        "form": form,
+        "action": action,
+        "consulting_catalog_initial_json": json.dumps(form.initial_catalog, ensure_ascii=False),
+    }
+    if direction:
+        ctx["direction"] = direction
+    return ctx
+
+def _product_form_page_context(extra: dict) -> dict:
+    ctx = {
+        "product_service_meta_json": json.dumps(
+            build_consulting_catalog_meta(),
+            ensure_ascii=False,
+        ),
+    }
+    ctx.update(extra)
+    return ctx
+
 
 def _next_position(model, filters: dict | None = None) -> int:
     """
@@ -168,11 +229,13 @@ def policy_partial(request):
 def product_form_create(request):
     if request.method == "GET":
         form = ProductForm()
-        return render(request, PRODUCT_FORM_TEMPLATE, {"form": form, "action": "create"})
+        return render(request, PRODUCT_FORM_TEMPLATE, _product_form_page_context({"form": form, "action": "create"}))
     # POST
     form = ProductForm(request.POST)
     if not form.is_valid():
-        return _render_form_with_errors(request, PRODUCT_FORM_TEMPLATE, {"form": form, "action": "create"})
+        return _render_form_with_errors(
+            request, PRODUCT_FORM_TEMPLATE, _product_form_page_context({"form": form, "action": "create"})
+        )
     if not form.instance.position:
         form.instance.position = _next_position(Product)
     form.save()
@@ -185,11 +248,19 @@ def product_form_edit(request, pk: int):
     product = get_object_or_404(Product, pk=pk)
     if request.method == "GET":
         form = ProductForm(instance=product)
-        return render(request, PRODUCT_FORM_TEMPLATE, {"form": form, "action": "edit", "product": product})
+        return render(
+            request,
+            PRODUCT_FORM_TEMPLATE,
+            _product_form_page_context({"form": form, "action": "edit", "product": product}),
+        )
     # POST
     form = ProductForm(request.POST, instance=product)
     if not form.is_valid():
-        return _render_form_with_errors(request, PRODUCT_FORM_TEMPLATE, {"form": form, "action": "edit", "product": product})
+        return _render_form_with_errors(
+            request,
+            PRODUCT_FORM_TEMPLATE,
+            _product_form_page_context({"form": form, "action": "edit", "product": product}),
+        )
     form.save()
     return _render_policy_updated(request)
 
@@ -200,6 +271,161 @@ def product_delete(request, pk: int):
     product = get_object_or_404(Product, pk=pk)
     product.delete()
     return _render_policy_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def product_csv_upload(request):
+    csv_file = request.FILES.get("csv_file")
+    if not csv_file:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+    if not csv_file.name.lower().endswith(".csv"):
+        return JsonResponse({"ok": False, "error": "Допустимы только файлы CSV."}, status=400)
+
+    try:
+        raw = csv_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_file.seek(0)
+            raw = csv_file.read().decode("cp1251")
+        except Exception:
+            return JsonResponse(
+                {"ok": False, "error": "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251)."},
+                status=400,
+            )
+
+    try:
+        reader = csv.reader(io.StringIO(raw), delimiter=";")
+        rows = list(reader)
+        if not rows:
+            return JsonResponse({"ok": False, "error": "Файл пуст."}, status=400)
+        if len(rows[0]) <= 1:
+            reader = csv.reader(io.StringIO(raw), delimiter=",")
+            rows = list(reader)
+    except csv.Error as exc:
+        return JsonResponse({"ok": False, "error": f"Ошибка разбора CSV: {exc}. Проверьте формат и кодировку файла."}, status=400)
+
+    if len(rows) < 2:
+        return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
+
+    catalog_lookup = _consulting_catalog_lookup()
+    valid_consulting_types = set(catalog_lookup["consulting_types_by_name"].keys())
+    valid_service_categories = {name for _kind, name in catalog_lookup["service_types_by_pair"].keys()}
+    owners_by_short_name = {
+        member.short_name.strip().lower(): member
+        for member in GroupMember.objects.exclude(short_name="").all()
+    }
+
+    created = 0
+    warnings = []
+
+    for i, row in enumerate(rows[1:], start=2):
+        if not any(cell.strip() for cell in row):
+            continue
+        if len(row) < 8:
+            warnings.append(
+                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 8-9: "
+                "Краткое имя, Наименование EN, Наименование RU, Отображаемое имя, Вид консалтинга, "
+                "Тип услуг, Код, Подтип услуги, [Владелец])."
+            )
+            continue
+
+        short_name = row[0].strip()
+        name_en = row[1].strip()
+        name_ru = row[2].strip()
+        display_name = row[3].strip() if len(row) > 3 else ""
+        consulting_type = row[4].strip() if len(row) > 4 else ""
+        service_category = row[5].strip() if len(row) > 5 else ""
+        csv_code = row[6].strip() if len(row) > 6 else ""
+        service_subtype = row[7].strip() if len(row) > 7 else ""
+        owner_raw = row[8].strip() if len(row) > 8 else ""
+
+        missing = []
+        if not short_name:
+            missing.append("Краткое имя")
+        if not name_en:
+            missing.append("Наименование EN")
+        if not name_ru:
+            missing.append("Наименование RU")
+        if not consulting_type:
+            missing.append("Вид консалтинга")
+        if not service_category:
+            missing.append("Тип услуг")
+        if not service_subtype:
+            missing.append("Подтип услуги")
+        if missing:
+            warnings.append(f"Строка {i}: не заполнены обязательные поля: {', '.join(missing)}.")
+            continue
+
+        if consulting_type not in valid_consulting_types:
+            warnings.append(
+                f"Строка {i}: неизвестный вид консалтинга «{consulting_type}». "
+                f"Допустимые: {', '.join(valid_consulting_types)}."
+            )
+            continue
+
+        if service_category not in valid_service_categories:
+            warnings.append(
+                f"Строка {i}: неизвестный тип услуг «{service_category}». "
+                f"Допустимые: {', '.join(valid_service_categories)}."
+            )
+            continue
+
+        service_type_obj = catalog_lookup["service_types_by_pair"].get((consulting_type, service_category))
+        if service_type_obj is None:
+            warnings.append(
+                f"Строка {i}: тип услуг «{service_category}» недопустим для вида консалтинга "
+                f"«{consulting_type}»."
+            )
+            continue
+
+        service_subtype_obj = catalog_lookup["service_subtypes_by_triple"].get(
+            (consulting_type, service_category, service_subtype)
+        )
+        if service_subtype_obj is None:
+            warnings.append(
+                f"Строка {i}: подтип услуги «{service_subtype}» недопустим для типа услуг "
+                f"«{service_category}»."
+            )
+            continue
+
+        derived_code = service_type_obj.code or ""
+        if csv_code and csv_code != derived_code:
+            warnings.append(
+                f"Строка {i}: код «{csv_code}» не соответствует типу услуг «{service_category}». "
+                f"Использован код «{derived_code}»."
+            )
+
+        is_group_owner = not owner_raw or owner_raw == "Группа"
+        owner_ids = []
+        if not is_group_owner:
+            owner_names = [item.strip() for item in owner_raw.split(",") if item.strip()]
+            missing_owners = [name for name in owner_names if name.lower() not in owners_by_short_name]
+            if missing_owners:
+                warnings.append(f"Строка {i}: владельцы не найдены: {', '.join(missing_owners)}.")
+                continue
+            owner_ids = [owners_by_short_name[name.lower()].pk for name in owner_names]
+
+        try:
+            product = Product.objects.create(
+                short_name=short_name,
+                name_en=name_en,
+                display_name=display_name,
+                name_ru=name_ru,
+                consulting_type_ref=service_type_obj.consulting_type,
+                service_category_ref=service_type_obj,
+                service_subtype_ref=service_subtype_obj,
+                is_group_owner=is_group_owner,
+                position=_next_position(Product),
+            )
+            if owner_ids:
+                product.owners.set(owner_ids)
+            created += 1
+        except Exception as exc:
+            warnings.append(f"Строка {i}: ошибка сохранения — {exc}")
+
+    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
 
 # --- Типовые разделы ---
 
@@ -946,6 +1172,103 @@ def typical_service_term_move_down(request, pk: int):
         TypicalServiceTerm.objects.filter(pk=cur.id).update(position=next_pos)
         TypicalServiceTerm.objects.filter(pk=nxt.id).update(position=cur_pos)
         _normalize_typical_service_term_positions()
+    return _render_policy_updated(request)
+
+
+# --- Направления консалтинга ---
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def consulting_dir_form_create(request):
+    if request.method == "GET":
+        form = ConsultingDirectionForm()
+        return render(
+            request,
+            CONSULTING_DIR_FORM_TEMPLATE,
+            _consulting_direction_form_context(form, "create"),
+        )
+    form = ConsultingDirectionForm(request.POST)
+    if not form.is_valid():
+        return _render_form_with_errors(
+            request,
+            CONSULTING_DIR_FORM_TEMPLATE,
+            _consulting_direction_form_context(form, "create"),
+        )
+    if not form.instance.position:
+        form.instance.position = _next_position(ConsultingDirection)
+    form.save()
+    return _render_policy_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def consulting_dir_form_edit(request, pk: int):
+    direction = get_object_or_404(ConsultingDirection, pk=pk)
+    if request.method == "GET":
+        form = ConsultingDirectionForm(instance=direction)
+        return render(
+            request,
+            CONSULTING_DIR_FORM_TEMPLATE,
+            _consulting_direction_form_context(form, "edit", direction),
+        )
+    form = ConsultingDirectionForm(request.POST, instance=direction)
+    if not form.is_valid():
+        return _render_form_with_errors(
+            request,
+            CONSULTING_DIR_FORM_TEMPLATE,
+            _consulting_direction_form_context(form, "edit", direction),
+        )
+    form.save()
+    return _render_policy_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def consulting_dir_delete(request, pk: int):
+    direction = get_object_or_404(ConsultingDirection, pk=pk)
+    direction.delete()
+    return _render_policy_updated(request)
+
+
+def _normalize_consulting_dir_positions():
+    items = ConsultingDirection.objects.order_by("position", "id").only("id", "position")
+    for idx, it in enumerate(items, start=1):
+        if it.position != idx:
+            ConsultingDirection.objects.filter(pk=it.pk).update(position=idx)
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+def consulting_dir_move_up(request, pk: int):
+    _normalize_consulting_dir_positions()
+    items = list(ConsultingDirection.objects.order_by("position", "id").only("id", "position"))
+    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+    if idx is not None and idx > 0:
+        cur = items[idx]
+        prev = items[idx - 1]
+        cur_pos, prev_pos = cur.position, prev.position
+        ConsultingDirection.objects.filter(pk=cur.id).update(position=prev_pos)
+        ConsultingDirection.objects.filter(pk=prev.id).update(position=cur_pos)
+        _normalize_consulting_dir_positions()
+    return _render_policy_updated(request)
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+def consulting_dir_move_down(request, pk: int):
+    _normalize_consulting_dir_positions()
+    items = list(ConsultingDirection.objects.order_by("position", "id").only("id", "position"))
+    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+    if idx is not None and idx < len(items) - 1:
+        cur = items[idx]
+        nxt = items[idx + 1]
+        cur_pos, next_pos = cur.position, nxt.position
+        ConsultingDirection.objects.filter(pk=cur.id).update(position=next_pos)
+        ConsultingDirection.objects.filter(pk=nxt.id).update(position=cur_pos)
+        _normalize_consulting_dir_positions()
     return _render_policy_updated(request)
 
 

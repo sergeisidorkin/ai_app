@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
 
@@ -18,12 +19,297 @@ SUPERUSER_GROUPS = (
     LAWYER_GROUP,
 )
 
+def _join_catalog_values(items) -> str:
+    values = []
+    seen = set()
+    for item in items:
+        value = str(item).strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        values.append(value)
+    return ", ".join(values)
+
+
+class ConsultingDirection(models.Model):
+    position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["position", "id"]
+        verbose_name = "Направление консалтинга"
+        verbose_name_plural = "Направления консалтинга"
+
+    def __str__(self):
+        return self.consulting_types_display or f"Направление консалтинга #{self.pk}"
+
+    @property
+    def consulting_types_display(self):
+        return _join_catalog_values(self.consulting_types.order_by("position", "id").values_list("name", flat=True))
+
+    @property
+    def service_types_display(self):
+        return _join_catalog_values(self.service_types.order_by("position", "id").values_list("name", flat=True))
+
+    @property
+    def service_codes_display(self):
+        return _join_catalog_values(self.service_types.order_by("position", "id").values_list("code", flat=True))
+
+    @property
+    def service_subtypes_display(self):
+        return _join_catalog_values(self.service_subtypes.order_by("position", "id").values_list("name", flat=True))
+
+    @property
+    def table_rows(self):
+        consulting_types = sorted(
+            list(self.consulting_types.all()),
+            key=lambda item: (item.position, item.id),
+        )
+        service_types = sorted(
+            list(self.service_types.select_related("consulting_type").all()),
+            key=lambda item: (
+                item.consulting_type.position if item.consulting_type_id else 0,
+                item.position,
+                item.id,
+            ),
+        )
+        service_subtypes = sorted(
+            list(self.service_subtypes.select_related("service_type", "service_type__consulting_type").all()),
+            key=lambda item: (
+                item.service_type.consulting_type.position if item.service_type_id and item.service_type.consulting_type_id else 0,
+                item.service_type.position if item.service_type_id else 0,
+                item.position,
+                item.id,
+            ),
+        )
+
+        rows = [
+            {
+                "consulting_type": item.service_type.consulting_type.name,
+                "service_type": item.service_type.name,
+                "code": item.service_type.code,
+                "service_subtype": item.name,
+            }
+            for item in service_subtypes
+        ]
+        if rows:
+            return rows
+
+        rows = [
+            {
+                "consulting_type": item.consulting_type.name,
+                "service_type": item.name,
+                "code": item.code,
+                "service_subtype": "",
+            }
+            for item in service_types
+        ]
+        if rows:
+            return rows
+
+        return [
+            {
+                "consulting_type": item.name,
+                "service_type": "",
+                "code": "",
+                "service_subtype": "",
+            }
+            for item in consulting_types
+        ]
+
+
+class ConsultingDirectionType(models.Model):
+    direction = models.ForeignKey(
+        ConsultingDirection,
+        on_delete=models.CASCADE,
+        related_name="consulting_types",
+        verbose_name="Направление консалтинга",
+    )
+    name = models.CharField("Вид консалтинга", max_length=128, unique=True)
+    position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["direction__position", "position", "id"]
+        verbose_name = "Вид консалтинга"
+        verbose_name_plural = "Виды консалтинга"
+
+    def __str__(self):
+        return self.name
+
+
+class ConsultingServiceType(models.Model):
+    direction = models.ForeignKey(
+        ConsultingDirection,
+        on_delete=models.CASCADE,
+        related_name="service_types",
+        verbose_name="Направление консалтинга",
+    )
+    consulting_type = models.ForeignKey(
+        ConsultingDirectionType,
+        on_delete=models.CASCADE,
+        related_name="service_types",
+        verbose_name="Вид консалтинга",
+    )
+    name = models.CharField("Тип услуг", max_length=128)
+    code = models.CharField("Код", max_length=32)
+    position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["direction__position", "consulting_type__position", "position", "id"]
+        verbose_name = "Тип услуги консалтинга"
+        verbose_name_plural = "Типы услуг консалтинга"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["consulting_type", "name"],
+                name="ux_consulting_service_type_by_kind",
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+
+    def clean(self):
+        super().clean()
+        if self.consulting_type_id and self.direction_id and self.consulting_type.direction_id != self.direction_id:
+            raise ValidationError({"consulting_type": "Вид консалтинга должен относиться к той же строке."})
+
+
+class ConsultingServiceSubtype(models.Model):
+    direction = models.ForeignKey(
+        ConsultingDirection,
+        on_delete=models.CASCADE,
+        related_name="service_subtypes",
+        verbose_name="Направление консалтинга",
+    )
+    service_type = models.ForeignKey(
+        ConsultingServiceType,
+        on_delete=models.CASCADE,
+        related_name="service_subtypes",
+        verbose_name="Тип услуг",
+    )
+    name = models.CharField("Подтип услуги", max_length=255)
+    position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["direction__position", "service_type__position", "position", "id"]
+        verbose_name = "Подтип услуги консалтинга"
+        verbose_name_plural = "Подтипы услуг консалтинга"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["service_type", "name"],
+                name="ux_consulting_service_subtype_by_type",
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+
+    @property
+    def consulting_type(self):
+        return self.service_type.consulting_type
+
+    @property
+    def code(self):
+        return self.service_type.code
+
+    def clean(self):
+        super().clean()
+        if self.service_type_id and self.direction_id and self.service_type.direction_id != self.direction_id:
+            raise ValidationError({"service_type": "Тип услуг должен относиться к той же строке."})
+
+
+def build_consulting_catalog_meta():
+    consulting_types = list(
+        ConsultingDirectionType.objects.select_related("direction").order_by(
+            "direction__position", "position", "id"
+        )
+    )
+    service_types = list(
+        ConsultingServiceType.objects.select_related("direction", "consulting_type").order_by(
+            "direction__position", "consulting_type__position", "position", "id"
+        )
+    )
+    service_subtypes = list(
+        ConsultingServiceSubtype.objects.select_related(
+            "direction", "service_type", "service_type__consulting_type"
+        ).order_by(
+            "direction__position", "service_type__consulting_type__position", "service_type__position", "position", "id"
+        )
+    )
+    return {
+        "consulting_types": [
+            {"id": item.pk, "label": item.name, "direction_id": item.direction_id}
+            for item in consulting_types
+        ],
+        "service_categories": [
+            {
+                "id": item.pk,
+                "label": item.name,
+                "code": item.code,
+                "consulting_type_id": item.consulting_type_id,
+                "consulting_type_label": item.consulting_type.name,
+                "direction_id": item.direction_id,
+            }
+            for item in service_types
+        ],
+        "service_subtypes": [
+            {
+                "id": item.pk,
+                "label": item.name,
+                "service_category_id": item.service_type_id,
+                "consulting_type_id": item.service_type.consulting_type_id,
+                "direction_id": item.direction_id,
+                "code": item.service_type.code,
+            }
+            for item in service_subtypes
+        ],
+    }
+
+
 class Product(models.Model):
     short_name = models.CharField("Краткое имя", max_length=64, unique=True)
     name_en = models.CharField("Наименование на английском языке", max_length=255)
     display_name = models.CharField("Отображаемое в системе имя", max_length=255, blank=True, default="")
     name_ru = models.CharField("Наименование на русском языке", max_length=255)
-    service_type = models.CharField("Тип услуги", max_length=128)
+    consulting_type = models.CharField("Вид консалтинга", max_length=128, blank=True, default="")
+    service_category = models.CharField("Тип услуг", max_length=128, blank=True, default="")
+    service_code = models.CharField("Код", max_length=32, blank=True, default="")
+    service_subtype = models.CharField("Подтип услуги", max_length=255, blank=True, default="")
+    consulting_type_ref = models.ForeignKey(
+        "policy_app.ConsultingDirectionType",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="products",
+        verbose_name="Вид консалтинга",
+    )
+    service_category_ref = models.ForeignKey(
+        "policy_app.ConsultingServiceType",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="products",
+        verbose_name="Тип услуг",
+    )
+    service_subtype_ref = models.ForeignKey(
+        "policy_app.ConsultingServiceSubtype",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="products",
+        verbose_name="Подтип услуги",
+    )
     owners = models.ManyToManyField(
         "group_app.GroupMember",
         blank=True,
@@ -43,6 +329,72 @@ class Product(models.Model):
 
     def __str__(self):
         return self.short_name
+
+    @property
+    def consulting_type_display(self):
+        return (self.consulting_type_ref.name if self.consulting_type_ref_id else self.consulting_type) or ""
+
+    @property
+    def service_category_display(self):
+        return (self.service_category_ref.name if self.service_category_ref_id else self.service_category) or ""
+
+    @property
+    def service_subtype_display(self):
+        return (self.service_subtype_ref.name if self.service_subtype_ref_id else self.service_subtype) or ""
+
+    def clean(self):
+        super().clean()
+        if self.service_subtype_ref_id:
+            self.service_category_ref = self.service_subtype_ref.service_type
+        if self.service_category_ref_id:
+            self.consulting_type_ref = self.service_category_ref.consulting_type
+        if (
+            self.consulting_type_ref_id
+            and self.service_category_ref_id
+            and self.service_category_ref.consulting_type_id != self.consulting_type_ref_id
+        ):
+            raise ValidationError({"service_category_ref": "Тип услуг не соответствует виду консалтинга."})
+        if (
+            self.service_category_ref_id
+            and self.service_subtype_ref_id
+            and self.service_subtype_ref.service_type_id != self.service_category_ref_id
+        ):
+            raise ValidationError({"service_subtype_ref": "Подтип услуги не соответствует типу услуг."})
+
+    def _sync_catalog_refs_from_legacy_values(self):
+        if not self.consulting_type_ref_id and self.consulting_type:
+            self.consulting_type_ref = (
+                ConsultingDirectionType.objects.filter(name=self.consulting_type).order_by("position", "id").first()
+            )
+        if not self.service_category_ref_id and self.service_category:
+            qs = ConsultingServiceType.objects.filter(name=self.service_category)
+            if self.consulting_type_ref_id:
+                qs = qs.filter(consulting_type=self.consulting_type_ref)
+            self.service_category_ref = qs.order_by("position", "id").first()
+        if not self.service_subtype_ref_id and self.service_subtype:
+            qs = ConsultingServiceSubtype.objects.filter(name=self.service_subtype)
+            if self.service_category_ref_id:
+                qs = qs.filter(service_type=self.service_category_ref)
+            self.service_subtype_ref = qs.order_by("position", "id").first()
+
+    def _sync_legacy_values_from_catalog_refs(self):
+        if self.service_subtype_ref_id:
+            self.service_category_ref = self.service_subtype_ref.service_type
+        if self.service_category_ref_id:
+            self.consulting_type_ref = self.service_category_ref.consulting_type
+        if self.consulting_type_ref_id:
+            self.consulting_type = self.consulting_type_ref.name
+        if self.service_category_ref_id:
+            self.service_category = self.service_category_ref.name
+            self.service_code = self.service_category_ref.code or ""
+        if self.service_subtype_ref_id:
+            self.service_subtype = self.service_subtype_ref.name
+
+    def save(self, *args, **kwargs):
+        self._sync_catalog_refs_from_legacy_values()
+        self._sync_legacy_values_from_catalog_refs()
+        self.full_clean()
+        super().save(*args, **kwargs)
 
     @property
     def owner_display(self):

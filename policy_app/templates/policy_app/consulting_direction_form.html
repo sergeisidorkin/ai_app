@@ -1,0 +1,592 @@
+<div class="modal-header" data-modal-size="xxl">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    {% if action == "create" %}
+      hx-post="{% url 'consulting_dir_form_create' %}"
+    {% else %}
+      hx-post="{% url 'consulting_dir_form_edit' direction.pk %}"
+    {% endif %}
+    hx-target="#policy-pane"
+    hx-swap="outerHTML"
+    id="consulting-direction-form">
+  <div class="modal-body modal-body-scroll">
+    {% csrf_token %}
+    {{ form.consulting_types_payload }}
+    {{ form.service_types_payload }}
+    {{ form.service_subtypes_payload }}
+    <script type="application/json" id="consulting-direction-initial-data">{{ consulting_catalog_initial_json|safe }}</script>
+
+    <div class="catalog-editor-section mb-4">
+      <div class="mb-2">
+        <h6 class="mb-0">Вид консалтинга</h6>
+      </div>
+      <div id="consulting-kind-rows" class="catalog-editor-list"></div>
+      <div class="d-flex align-items-stretch gap-2 mt-3">
+        <button type="button" class="btn btn-sm proposal-asset-add-btn d-flex align-items-center" id="consulting-kind-add-btn">
+          <i class="bi bi-plus-circle me-2"></i>Добавить вид
+        </button>
+        <div id="consulting-kind-row-actions" class="d-none">
+          <div class="btn-group">
+            <button type="button" id="consulting-kind-up-btn" class="btn btn-outline-primary btn-sm consulting-catalog-action-btn" title="Переместить вверх" aria-label="Переместить вверх">
+              <i class="bi bi-arrow-up-square"></i>
+            </button>
+            <button type="button" id="consulting-kind-down-btn" class="btn btn-outline-primary btn-sm consulting-catalog-action-btn" title="Переместить вниз" aria-label="Переместить вниз">
+              <i class="bi bi-arrow-down-square"></i>
+            </button>
+            <button type="button" id="consulting-kind-delete-btn" class="btn btn-outline-danger btn-sm consulting-catalog-action-btn" title="Удалить" aria-label="Удалить">
+              <i class="bi bi-x-square"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="catalog-editor-section mb-4">
+      <div class="mb-2">
+        <h6 class="mb-0">Тип услуг</h6>
+      </div>
+      <div id="consulting-service-type-rows" class="catalog-editor-list"></div>
+      <div class="d-flex align-items-stretch gap-2 mt-3">
+        <button type="button" class="btn btn-sm proposal-asset-add-btn d-flex align-items-center" id="consulting-service-type-add-btn">
+          <i class="bi bi-plus-circle me-2"></i>Добавить тип
+        </button>
+        <div id="consulting-service-type-row-actions" class="d-none">
+          <div class="btn-group">
+            <button type="button" id="consulting-service-type-up-btn" class="btn btn-outline-primary btn-sm consulting-catalog-action-btn" title="Переместить вверх" aria-label="Переместить вверх">
+              <i class="bi bi-arrow-up-square"></i>
+            </button>
+            <button type="button" id="consulting-service-type-down-btn" class="btn btn-outline-primary btn-sm consulting-catalog-action-btn" title="Переместить вниз" aria-label="Переместить вниз">
+              <i class="bi bi-arrow-down-square"></i>
+            </button>
+            <button type="button" id="consulting-service-type-delete-btn" class="btn btn-outline-danger btn-sm consulting-catalog-action-btn" title="Удалить" aria-label="Удалить">
+              <i class="bi bi-x-square"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="catalog-editor-section mb-0">
+      <div class="mb-2">
+        <h6 class="mb-0">Подтип услуги</h6>
+      </div>
+      <div id="consulting-service-subtype-rows" class="catalog-editor-list"></div>
+      <div class="d-flex align-items-stretch gap-2 mt-3">
+        <button type="button" class="btn btn-sm proposal-asset-add-btn d-flex align-items-center" id="consulting-service-subtype-add-btn">
+          <i class="bi bi-plus-circle me-2"></i>Добавить подтип
+        </button>
+        <div id="consulting-service-subtype-row-actions" class="d-none">
+          <div class="btn-group">
+            <button type="button" id="consulting-service-subtype-up-btn" class="btn btn-outline-primary btn-sm consulting-catalog-action-btn" title="Переместить вверх" aria-label="Переместить вверх">
+              <i class="bi bi-arrow-up-square"></i>
+            </button>
+            <button type="button" id="consulting-service-subtype-down-btn" class="btn btn-outline-primary btn-sm consulting-catalog-action-btn" title="Переместить вниз" aria-label="Переместить вниз">
+              <i class="bi bi-arrow-down-square"></i>
+            </button>
+            <button type="button" id="consulting-service-subtype-delete-btn" class="btn btn-outline-danger btn-sm consulting-catalog-action-btn" title="Удалить" aria-label="Удалить">
+              <i class="bi bi-x-square"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {% if form.non_field_errors %}
+      <div class="alert alert-danger mt-3 mb-0">
+        {% for error in form.non_field_errors %}
+          <div>{{ error }}</div>
+        {% endfor %}
+      </div>
+    {% elif form.errors %}
+      <div class="alert alert-danger mt-3 mb-0">Проверьте введённые данные.</div>
+    {% endif %}
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>
+
+<style>
+  #policy-modal #consulting-direction-form {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  #policy-modal #consulting-direction-form .modal-body.modal-body-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  #policy-modal .catalog-editor-section {
+    padding: 0;
+  }
+  #policy-modal .catalog-editor-list {
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+    background: #fff;
+    border: 1px solid #dee2e6;
+    border-radius: .5rem;
+    padding: .75rem;
+  }
+  #policy-modal .catalog-editor-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: .5rem;
+    align-items: center;
+    padding: 0;
+  }
+  #policy-modal .catalog-editor-row + .catalog-editor-row {
+    padding-top: .5rem;
+    border-top: 1px solid #e9ecef;
+  }
+  #policy-modal .catalog-editor-row-grid {
+    display: grid;
+    gap: .5rem;
+  }
+  #policy-modal .catalog-editor-check-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    align-self: stretch;
+    padding-top: .125rem;
+  }
+  #policy-modal .catalog-editor-check-wrap .form-check {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
+    padding-left: 0;
+    min-height: auto;
+  }
+  #policy-modal .catalog-editor-check-wrap .form-check-input {
+    position: static;
+    margin: 0;
+    float: none;
+  }
+  #policy-modal .catalog-editor-row-grid.kind-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  #policy-modal .catalog-editor-row-grid.service-grid {
+    grid-template-columns: 1.1fr 1fr .7fr;
+  }
+  #policy-modal .catalog-editor-row-grid.subtype-grid {
+    grid-template-columns: 1fr 1fr .7fr 1.2fr;
+  }
+  #policy-modal .catalog-editor-remove {
+    align-self: start;
+  }
+  #policy-modal .proposal-asset-add-btn {
+    align-items: center;
+    justify-content: flex-start;
+    border: 1px solid #ced4da;
+    background-color: #f8f9fa;
+    color: #495057;
+    font-size: 1rem;
+    padding: .375rem .75rem;
+  }
+  #policy-modal .proposal-asset-add-btn i {
+    line-height: 1;
+  }
+  #policy-modal .proposal-asset-add-btn:hover,
+  #policy-modal .proposal-asset-add-btn:focus {
+    background-color: #eef1f4;
+    color: #343a40;
+  }
+  #policy-modal .consulting-catalog-action-btn {
+    border-color: #ced4da;
+    background-color: #f8f9fa;
+    color: #495057;
+  }
+  #policy-modal .consulting-catalog-action-btn:hover,
+  #policy-modal .consulting-catalog-action-btn:focus {
+    background-color: #eef1f4;
+    color: #343a40;
+  }
+  #policy-modal .consulting-catalog-action-btn.btn-outline-danger {
+    color: #dc3545;
+  }
+</style>
+
+<script>
+(function () {
+  const form = document.getElementById("consulting-direction-form");
+  if (!form) return;
+  const modalDialog = form.closest(".modal-content")?.parentElement;
+  if (modalDialog && modalDialog.classList.contains("modal-dialog")) {
+    modalDialog.classList.remove("modal-lg");
+    modalDialog.classList.add("modal-xl");
+    modalDialog.style.maxWidth = "min(1600px, calc(100vw - 2rem))";
+  }
+
+  const initialDataEl = document.getElementById("consulting-direction-initial-data");
+  const kindsRoot = document.getElementById("consulting-kind-rows");
+  const serviceTypesRoot = document.getElementById("consulting-service-type-rows");
+  const subtypesRoot = document.getElementById("consulting-service-subtype-rows");
+  const kindsPayload = document.getElementById("id_consulting_types_payload");
+  const serviceTypesPayload = document.getElementById("id_service_types_payload");
+  const subtypesPayload = document.getElementById("id_service_subtypes_payload");
+  const actionPanels = {
+    consulting_types: document.getElementById("consulting-kind-row-actions"),
+    service_types: document.getElementById("consulting-service-type-row-actions"),
+    service_subtypes: document.getElementById("consulting-service-subtype-row-actions"),
+  };
+
+  let state = {
+    consulting_types: [],
+    service_types: [],
+    service_subtypes: [],
+  };
+
+  try {
+    const parsed = JSON.parse(initialDataEl?.textContent || "{}");
+    state = {
+      consulting_types: Array.isArray(parsed.consulting_types) ? parsed.consulting_types : [],
+      service_types: Array.isArray(parsed.service_types) ? parsed.service_types : [],
+      service_subtypes: Array.isArray(parsed.service_subtypes) ? parsed.service_subtypes : [],
+    };
+  } catch (error) {}
+
+  function optionHtml(value, label, selectedValue) {
+    const selected = String(value) === String(selectedValue || "") ? " selected" : "";
+    return '<option value="' + String(value).replace(/"/g, "&quot;") + '"' + selected + '>' + label + '</option>';
+  }
+
+  function currentKinds() {
+    return state.consulting_types
+      .map((item) => ({ id: item.id || "", name: String(item.name || "").trim() }))
+      .filter((item) => item.name);
+  }
+
+  function currentServiceTypes() {
+    return state.service_types
+      .map((item) => ({
+        id: item.id || "",
+        consulting_type: String(item.consulting_type || "").trim(),
+        name: String(item.name || "").trim(),
+        code: String(item.code || "").trim(),
+      }))
+      .filter((item) => item.consulting_type && item.name);
+  }
+
+  function buildKindOptions(selectedValue) {
+    let html = optionHtml("", "— выберите вид консалтинга —", selectedValue);
+    currentKinds().forEach((item) => {
+      html += optionHtml(item.name, item.name, selectedValue);
+    });
+    return html;
+  }
+
+  function buildServiceTypeOptions(selectedConsultingType, selectedValue) {
+    let html = optionHtml(
+      "",
+      selectedConsultingType ? "— выберите тип услуг —" : "— выберите вид консалтинга —",
+      selectedValue
+    );
+    currentServiceTypes()
+      .filter((item) => !selectedConsultingType || item.consulting_type === selectedConsultingType)
+      .forEach((item) => {
+        html += optionHtml(item.name, item.name, selectedValue);
+      });
+    return html;
+  }
+
+  function syncPayloads() {
+    kindsPayload.value = JSON.stringify(currentKinds().map((item, index) => ({
+      id: item.id,
+      name: item.name,
+      position: index + 1,
+    })));
+    serviceTypesPayload.value = JSON.stringify(currentServiceTypes().map((item, index) => ({
+      id: item.id,
+      consulting_type: item.consulting_type,
+      name: item.name,
+      code: item.code,
+      position: index + 1,
+    })));
+    subtypesPayload.value = JSON.stringify(
+      state.service_subtypes
+        .map((item) => ({
+          id: item.id || "",
+          consulting_type: String(item.consulting_type || "").trim(),
+          service_type: String(item.service_type || "").trim(),
+          code: String(item.code || "").trim(),
+          name: String(item.name || "").trim(),
+        }))
+        .filter((item) => item.consulting_type && item.service_type && item.name)
+        .map((item, index) => ({
+          id: item.id,
+          consulting_type: item.consulting_type,
+          service_type: item.service_type,
+          code: item.code,
+          name: item.name,
+          position: index + 1,
+        }))
+    );
+    Object.keys(actionPanels).forEach((key) => {
+      const panel = actionPanels[key];
+      if (!panel) return;
+      const hasSelected = (state[key] || []).some((item) => !!item.selected);
+      panel.classList.toggle("d-none", !hasSelected);
+      panel.classList.toggle("d-flex", hasSelected);
+    });
+  }
+
+  function toggleSelected(collectionKey, index, checked) {
+    if (!state[collectionKey] || !state[collectionKey][index]) return;
+    state[collectionKey][index].selected = !!checked;
+    syncPayloads();
+  }
+
+  function moveSelected(collectionKey, direction) {
+    const items = state[collectionKey] || [];
+    if (direction === "up") {
+      for (let i = 1; i < items.length; i += 1) {
+        if (items[i].selected && !items[i - 1].selected) {
+          const current = items[i];
+          items[i] = items[i - 1];
+          items[i - 1] = current;
+        }
+      }
+    } else {
+      for (let i = items.length - 2; i >= 0; i -= 1) {
+        if (items[i].selected && !items[i + 1].selected) {
+          const current = items[i];
+          items[i] = items[i + 1];
+          items[i + 1] = current;
+        }
+      }
+    }
+    renderAll();
+  }
+
+  function deleteSelected(collectionKey, emptyRowFactory) {
+    if (collectionKey === "consulting_types") {
+      const removedKinds = new Set(
+        (state.consulting_types || [])
+          .filter((item) => item.selected)
+          .map((item) => String(item.name || "").trim())
+          .filter(Boolean)
+      );
+      if (removedKinds.size) {
+        state.service_types = (state.service_types || []).filter((item) => !removedKinds.has(String(item.consulting_type || "").trim()));
+        state.service_subtypes = (state.service_subtypes || []).filter((item) => !removedKinds.has(String(item.consulting_type || "").trim()));
+      }
+    }
+    if (collectionKey === "service_types") {
+      const removedServiceTypes = new Set(
+        (state.service_types || [])
+          .filter((item) => item.selected)
+          .map((item) => JSON.stringify([String(item.consulting_type || "").trim(), String(item.name || "").trim()]))
+      );
+      if (removedServiceTypes.size) {
+        state.service_subtypes = (state.service_subtypes || []).filter((item) => (
+          !removedServiceTypes.has(JSON.stringify([String(item.consulting_type || "").trim(), String(item.service_type || "").trim()]))
+        ));
+      }
+    }
+    state[collectionKey] = (state[collectionKey] || []).filter((item) => !item.selected);
+    if (!state[collectionKey].length) {
+      state[collectionKey] = [emptyRowFactory()];
+    }
+    renderAll();
+  }
+
+  function renderKinds() {
+    const items = state.consulting_types.length ? state.consulting_types : [{ id: "", name: "" }];
+    kindsRoot.innerHTML = items.map((item, index) => (
+      '<div class="catalog-editor-row" data-kind-index="' + index + '">'
+      + '<div class="catalog-editor-check-wrap">'
+      + '<div class="form-check"><input type="checkbox" class="form-check-input js-kind-check"' + (item.selected ? ' checked' : '') + '></div>'
+      + '</div>'
+      + '<div class="catalog-editor-row-grid kind-grid">'
+      + '<input type="text" class="form-control js-kind-name" data-prev-name="' + (item.name || '').replace(/"/g, '&quot;') + '" placeholder="Вид консалтинга" value="' + (item.name || '').replace(/"/g, '&quot;') + '">'
+      + '</div>'
+      + '</div>'
+    )).join("");
+  }
+
+  function renderServiceTypes() {
+    const items = state.service_types.length ? state.service_types : [{ id: "", consulting_type: "", name: "", code: "" }];
+    serviceTypesRoot.innerHTML = items.map((item, index) => (
+      '<div class="catalog-editor-row" data-service-type-index="' + index + '">'
+      + '<div class="catalog-editor-check-wrap">'
+      + '<div class="form-check"><input type="checkbox" class="form-check-input js-service-type-check"' + (item.selected ? ' checked' : '') + '></div>'
+      + '</div>'
+      + '<div class="catalog-editor-row-grid service-grid">'
+      + '<select class="form-select js-service-type-kind">' + buildKindOptions(item.consulting_type) + '</select>'
+      + '<input type="text" class="form-control js-service-type-name" data-prev-name="' + (item.name || '').replace(/"/g, '&quot;') + '" placeholder="Тип услуг" value="' + (item.name || '').replace(/"/g, '&quot;') + '">'
+      + '<input type="text" class="form-control js-service-type-code" data-prev-code="' + (item.code || '').replace(/"/g, '&quot;') + '" placeholder="Код" value="' + (item.code || '').replace(/"/g, '&quot;') + '">'
+      + '</div>'
+      + '</div>'
+    )).join("");
+  }
+
+  function deriveCode(consultingType, serviceType) {
+    const item = currentServiceTypes().find((row) => row.consulting_type === consultingType && row.name === serviceType);
+    return item ? item.code : "";
+  }
+
+  function renderServiceSubtypes() {
+    const items = state.service_subtypes.length ? state.service_subtypes : [{ id: "", consulting_type: "", service_type: "", code: "", name: "" }];
+    subtypesRoot.innerHTML = items.map((item, index) => (
+      '<div class="catalog-editor-row" data-subtype-index="' + index + '">'
+      + '<div class="catalog-editor-check-wrap">'
+      + '<div class="form-check"><input type="checkbox" class="form-check-input js-subtype-check"' + (item.selected ? ' checked' : '') + '></div>'
+      + '</div>'
+      + '<div class="catalog-editor-row-grid subtype-grid">'
+      + '<select class="form-select js-subtype-kind">' + buildKindOptions(item.consulting_type) + '</select>'
+      + '<select class="form-select js-subtype-service-type">' + buildServiceTypeOptions(item.consulting_type, item.service_type) + '</select>'
+      + '<input type="text" class="form-control js-subtype-code" placeholder="Код" value="' + (item.code || '').replace(/"/g, '&quot;') + '" readonly>'
+      + '<input type="text" class="form-control js-subtype-name" placeholder="Подтип услуги" value="' + (item.name || '').replace(/"/g, '&quot;') + '">'
+      + '</div>'
+      + '</div>'
+    )).join("");
+  }
+
+  function renderAll() {
+    renderKinds();
+    renderServiceTypes();
+    renderServiceSubtypes();
+    syncPayloads();
+  }
+
+  document.getElementById("consulting-kind-add-btn")?.addEventListener("click", () => {
+    state.consulting_types.push({ id: "", name: "", selected: false });
+    renderAll();
+  });
+  document.getElementById("consulting-service-type-add-btn")?.addEventListener("click", () => {
+    state.service_types.push({ id: "", consulting_type: "", name: "", code: "", selected: false });
+    renderAll();
+  });
+  document.getElementById("consulting-service-subtype-add-btn")?.addEventListener("click", () => {
+    state.service_subtypes.push({ id: "", consulting_type: "", service_type: "", code: "", name: "", selected: false });
+    renderAll();
+  });
+  document.getElementById("consulting-kind-up-btn")?.addEventListener("click", () => moveSelected("consulting_types", "up"));
+  document.getElementById("consulting-kind-down-btn")?.addEventListener("click", () => moveSelected("consulting_types", "down"));
+  document.getElementById("consulting-kind-delete-btn")?.addEventListener("click", () => {
+    deleteSelected("consulting_types", () => ({ id: "", name: "", selected: false }));
+  });
+  document.getElementById("consulting-service-type-up-btn")?.addEventListener("click", () => moveSelected("service_types", "up"));
+  document.getElementById("consulting-service-type-down-btn")?.addEventListener("click", () => moveSelected("service_types", "down"));
+  document.getElementById("consulting-service-type-delete-btn")?.addEventListener("click", () => {
+    deleteSelected("service_types", () => ({ id: "", consulting_type: "", name: "", code: "", selected: false }));
+  });
+  document.getElementById("consulting-service-subtype-up-btn")?.addEventListener("click", () => moveSelected("service_subtypes", "up"));
+  document.getElementById("consulting-service-subtype-down-btn")?.addEventListener("click", () => moveSelected("service_subtypes", "down"));
+  document.getElementById("consulting-service-subtype-delete-btn")?.addEventListener("click", () => {
+    deleteSelected("service_subtypes", () => ({ id: "", consulting_type: "", service_type: "", code: "", name: "", selected: false }));
+  });
+
+  kindsRoot.addEventListener("input", (event) => {
+    const row = event.target.closest("[data-kind-index]");
+    if (!row) return;
+    const index = Number(row.dataset.kindIndex);
+    state.consulting_types[index].name = row.querySelector(".js-kind-name")?.value || "";
+    syncPayloads();
+  });
+  kindsRoot.addEventListener("change", (event) => {
+    const checkbox = event.target.closest(".js-kind-check");
+    if (checkbox) {
+      const row = checkbox.closest("[data-kind-index]");
+      toggleSelected("consulting_types", Number(row.dataset.kindIndex), checkbox.checked);
+      return;
+    }
+    const input = event.target.closest(".js-kind-name");
+    if (!input) return;
+    const row = input.closest("[data-kind-index]");
+    const index = Number(row.dataset.kindIndex);
+    const previousName = input.dataset.prevName || "";
+    const nextName = input.value || "";
+    state.consulting_types[index].name = nextName;
+    if (previousName && previousName !== nextName) {
+      state.service_types.forEach((item) => {
+        if ((item.consulting_type || "") === previousName) {
+          item.consulting_type = nextName;
+        }
+      });
+      state.service_subtypes.forEach((item) => {
+        if ((item.consulting_type || "") === previousName) {
+          item.consulting_type = nextName;
+        }
+      });
+    }
+    renderAll();
+  });
+  serviceTypesRoot.addEventListener("input", (event) => {
+    const row = event.target.closest("[data-service-type-index]");
+    if (!row) return;
+    const index = Number(row.dataset.serviceTypeIndex);
+    state.service_types[index].name = row.querySelector(".js-service-type-name")?.value || "";
+    state.service_types[index].code = row.querySelector(".js-service-type-code")?.value || "";
+    syncPayloads();
+  });
+  serviceTypesRoot.addEventListener("change", (event) => {
+    const checkbox = event.target.closest(".js-service-type-check");
+    if (checkbox) {
+      const row = checkbox.closest("[data-service-type-index]");
+      toggleSelected("service_types", Number(row.dataset.serviceTypeIndex), checkbox.checked);
+      return;
+    }
+    const row = event.target.closest("[data-service-type-index]");
+    if (!row) return;
+    const index = Number(row.dataset.serviceTypeIndex);
+    const previousKind = state.service_types[index].consulting_type || "";
+    const previousName = row.querySelector(".js-service-type-name")?.dataset.prevName || state.service_types[index].name || "";
+    const nextKind = row.querySelector(".js-service-type-kind")?.value || "";
+    const nextName = row.querySelector(".js-service-type-name")?.value || "";
+    const nextCode = row.querySelector(".js-service-type-code")?.value || "";
+    state.service_types[index].consulting_type = nextKind;
+    state.service_types[index].name = nextName;
+    state.service_types[index].code = nextCode;
+    state.service_subtypes.forEach((item) => {
+      if ((item.consulting_type || "") === previousKind && (item.service_type || "") === previousName) {
+        item.consulting_type = nextKind;
+        item.service_type = nextName;
+        item.code = nextCode;
+      }
+    });
+    renderAll();
+  });
+  subtypesRoot.addEventListener("input", (event) => {
+    const row = event.target.closest("[data-subtype-index]");
+    if (!row) return;
+    const index = Number(row.dataset.subtypeIndex);
+    state.service_subtypes[index].name = row.querySelector(".js-subtype-name")?.value || "";
+    syncPayloads();
+  });
+  subtypesRoot.addEventListener("change", (event) => {
+    const checkbox = event.target.closest(".js-subtype-check");
+    if (checkbox) {
+      const row = checkbox.closest("[data-subtype-index]");
+      toggleSelected("service_subtypes", Number(row.dataset.subtypeIndex), checkbox.checked);
+      return;
+    }
+    const row = event.target.closest("[data-subtype-index]");
+    if (!row) return;
+    const index = Number(row.dataset.subtypeIndex);
+    const consultingType = row.querySelector(".js-subtype-kind")?.value || "";
+    const serviceType = row.querySelector(".js-subtype-service-type")?.value || "";
+    if (event.target.classList.contains("js-subtype-kind")) {
+      state.service_subtypes[index].consulting_type = consultingType;
+      state.service_subtypes[index].service_type = "";
+      state.service_subtypes[index].code = "";
+      renderAll();
+      return;
+    }
+    state.service_subtypes[index].consulting_type = consultingType;
+    state.service_subtypes[index].service_type = serviceType;
+    state.service_subtypes[index].code = deriveCode(consultingType, serviceType);
+    renderAll();
+  });
+  form.addEventListener("submit", syncPayloads);
+  renderAll();
+})();
+</script>

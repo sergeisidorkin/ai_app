@@ -275,10 +275,22 @@ def create_source_data_workspace_stream(
     unique_assets = sorted({asset for asset, _ in approved_pairs})
     multi_asset = len(unique_assets) > 1
 
+    product_rank_map = getattr(project, "product_rank_map", {})
+    product_ids = list(product_rank_map.keys())
+    if not product_ids and getattr(project, "type_id", None):
+        product_ids = [project.type_id]
+        product_rank_map = {project.type_id: 1}
     all_sections = list(
         TypicalSection.objects
-        .filter(product=project.type)
+        .filter(product_id__in=product_ids)
         .order_by("position", "id")
+    ) if product_ids else []
+    all_sections.sort(
+        key=lambda section: (
+            product_rank_map.get(section.product_id, 999999),
+            section.position,
+            section.id,
+        )
     )
     section_nn = {sec.id: idx for idx, sec in enumerate(all_sections, start=1)}
 

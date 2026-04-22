@@ -21,7 +21,7 @@
           <input class="form-check-input js-contracts-filter" type="checkbox"
                  value="{{ proj.id }}" id="contracts-filter-{{ proj.id }}">
           <label class="form-check-label text-nowrap" for="contracts-filter-{{ proj.id }}">
-            {{ proj.short_uid }}{% if proj.type %} {{ proj.type.short_name|default:proj.type }}{% endif %}{% if proj.name %} {{ proj.name }}{% endif %}
+            {{ proj.short_uid }}{% if proj.type_short_display %} {{ proj.type_short_display }}{% endif %}{% if proj.name %} {{ proj.name }}{% endif %}
           </label>
         </div>
       {% empty %}
@@ -98,7 +98,7 @@
         </td>
         <td class="text-nowrap">{% if p.registration %}{{ p.registration.short_uid }}{% endif %}</td>
         <td class="text-nowrap">
-          {% if p.registration.type %}{{ p.registration.type.short_name|default:p.registration.type }}{% endif %}
+          {{ p.registration.type_short_display }}
         </td>
         <td class="text-truncate" style="max-width:200px;">{{ p.registration.name }}</td>
         <td class="text-nowrap">{{ p.executor|short_fio }}</td>
@@ -219,7 +219,7 @@
         </td>
         <td class="text-nowrap">{% if p.registration %}{{ p.registration.short_uid }}{% endif %}</td>
         <td class="text-nowrap">
-          {% if p.registration.type %}{{ p.registration.type.short_name|default:p.registration.type }}{% endif %}
+          {{ p.registration.type_short_display }}
         </td>
         <td class="text-truncate" style="max-width:200px;">{{ p.registration.name }}</td>
         <td class="text-nowrap">{{ p.executor|short_fio }}</td>

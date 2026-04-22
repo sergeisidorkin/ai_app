@@ -54,6 +54,15 @@ COLUMN_REGISTRY = {
                     "owner": "Владелец",
                 },
             },
+            "consulting_directions": {
+                "label": "Направления консалтинга",
+                "columns": {
+                    "consulting_type": "Вид консалтинга",
+                    "service_category": "Тип услуг",
+                    "service_code": "Код",
+                    "service_subtype": "Подтип услуги",
+                },
+            },
             "typical_products": {
                 "label": "Типовые продукты",
                 "columns": {
@@ -61,7 +70,10 @@ COLUMN_REGISTRY = {
                     "name_en": "Наименование на английском языке",
                     "name_ru": "Наименование на русском языке",
                     "display_name": "Отображаемое в системе имя",
-                    "service_type": "Тип услуги",
+                    "consulting_type": "Вид консалтинга",
+                    "service_category": "Тип услуг",
+                    "service_code": "Код",
+                    "service_subtype": "Подтип услуги",
                     "owner": "Владелец",
                 },
             },

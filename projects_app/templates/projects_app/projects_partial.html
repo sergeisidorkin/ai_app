@@ -23,9 +23,9 @@
             <input class="form-check-input js-reg-filter" type="checkbox"
                    value="{{ r.id }}" id="reg-filter-{{ r.id }}"
                    data-summary-label="{{ r.short_uid }}"
-                   data-full-label="{{ r.short_uid }}{% if r.type %} {{ r.type.short_name|default:r.type }}{% endif %}{% if r.name %} {{ r.name }}{% endif %}">
+                   data-full-label="{{ r.short_uid }}{% if r.type_short_display %} {{ r.type_short_display }}{% endif %}{% if r.name %} {{ r.name }}{% endif %}">
             <label class="form-check-label" for="reg-filter-{{ r.id }}">
-              {{ r.short_uid }}{% if r.type %} {{ r.type.short_name|default:r.type }}{% endif %}{% if r.name %} {{ r.name }}{% endif %}
+              {{ r.short_uid }}{% if r.type_short_display %} {{ r.type_short_display }}{% endif %}{% if r.name %} {{ r.name }}{% endif %}
             </label>
           </div>
         {% empty %}
@@ -107,11 +107,11 @@
               </div>
             {% endif %}
           </td>
-          <td class="col-project-number">{{ r.number }}</td>
+          <td class="col-project-number">{{ r.number|stringformat:"04d" }}</td>
           <td>{{ r.get_agreement_type_display }}</td>
           <td>{{ r.group_display }}</td>
-          <td class="project-id-cell">{{ r.short_uid }}</td>
-          <td>{{ r.type }}</td>
+          <td class="project-id-cell"><span class="clf-id-droid-mono">{{ r.short_uid }}</span></td>
+          <td>{{ r.type_short_display }}</td>
           <td>{{ r.name }}</td>
           <td>{{ r.status }}</td>
           <td>{{ r.deadline|date:"d.m.y" }}</td>
@@ -363,8 +363,8 @@
               </div>
             {% endif %}
           </td>
-          <td class="project-id-cell">{{ r.short_uid }}</td>
-          <td>{{ r.type }}</td>
+          <td class="project-id-cell"><span class="clf-id-droid-mono">{{ r.short_uid }}</span></td>
+          <td>{{ r.type_short_display }}</td>
           <td>{{ r.name }}</td>
           <td>{{ r.get_agreement_type_display }}</td>
           <td>{{ r.agreement_number }}</td>
@@ -421,9 +421,9 @@
             <input class="form-check-input js-work-filter" type="checkbox"
                    value="{{ project.id }}" id="work-filter-{{ project.id }}"
                    data-summary-label="{{ project.short_uid }}"
-                   data-full-label="{{ project.short_uid }}{% if project.type %} {{ project.type.short_name|default:project.type }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}">
+                   data-full-label="{{ project.short_uid }}{% if project.type_short_display %} {{ project.type_short_display }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}">
             <label class="form-check-label" for="work-filter-{{ project.id }}">
-              {{ project.short_uid }}{% if project.type %} {{ project.type.short_name|default:project.type }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}
+              {{ project.short_uid }}{% if project.type_short_display %} {{ project.type_short_display }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}
             </label>
           </div>
         {% empty %}
@@ -492,8 +492,8 @@
               </div>
             {% endif %}
           </td>
-          <td class="text-nowrap">{{ w.project.short_uid }}</td>
-          <td class="text-nowrap">{{ w.type }}</td>
+          <td class="text-nowrap"><span class="clf-id-droid-mono">{{ w.project.short_uid }}</span></td>
+          <td class="text-nowrap">{{ w.project.type_short_display|default:w.type }}</td>
           <td>{{ w.name }}</td>
           <td class="text-nowrap">{{ w.asset_name }}</td>
           <td class="text-nowrap">{{ w.country.short_name|default:"" }}</td>
@@ -558,9 +558,9 @@
             <input class="form-check-input js-legal-filter" type="checkbox"
                    value="{{ project.id }}" id="legal-filter-{{ project.id }}"
                    data-summary-label="{{ project.short_uid }}"
-                   data-full-label="{{ project.short_uid }}{% if project.type %} {{ project.type.short_name|default:project.type }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}">
+                   data-full-label="{{ project.short_uid }}{% if project.type_short_display %} {{ project.type_short_display }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}">
             <label class="form-check-label" for="legal-filter-{{ project.id }}">
-              {{ project.short_uid }}{% if project.type %} {{ project.type.short_name|default:project.type }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}
+              {{ project.short_uid }}{% if project.type_short_display %} {{ project.type_short_display }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}
             </label>
           </div>
         {% empty %}
@@ -629,8 +629,8 @@
               </div>
             {% endif %}
           </td>
-          <td class="text-nowrap">{{ entity.project.short_uid }}</td>
-          <td class="text-nowrap">{{ entity.work_type }}</td>
+          <td class="text-nowrap"><span class="clf-id-droid-mono">{{ entity.project.short_uid }}</span></td>
+          <td class="text-nowrap">{{ entity.work_item.project.type_short_display|default:entity.work_type }}</td>
           <td>{{ entity.work_name }}</td>
           <td class="text-nowrap">{{ entity.work_item.asset_name|default:entity.work_item.name }}</td>
           <td>{{ entity.legal_name|default:"—" }}</td>

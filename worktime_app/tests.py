@@ -71,7 +71,9 @@ class WorktimeAppTests(TestCase):
             short_name="WT",
             name_en="Work Time",
             name_ru="Рабочее время",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
         )
         self.registration = ProjectRegistration.objects.create(
             number=4444,

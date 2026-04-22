@@ -103,14 +103,6 @@ def _dial_code_for_country(country):
     return f"+{dial_code}" if dial_code else ""
 
 
-def _flag_emoji_for_region(region):
-    normalized = str(region or "").strip().upper()
-    if len(normalized) != 2 or not normalized.isalpha():
-        return ""
-    base = 127397
-    return "".join(chr(base + ord(char)) for char in normalized)
-
-
 def _phone_placeholder_for_country(country):
     return _phone_placeholder_for_country_by_type(country, PhoneRecord.PHONE_TYPE_MOBILE)
 
@@ -157,11 +149,26 @@ def _strip_phone_country_code(phone_number, dial_code):
     digits_code = compact_code.lstrip("+")
     if compact_value.startswith(compact_code):
         return value[len(code):].strip(" -()")
-    if digits_code and compact_value.startswith(digits_code):
-        next_char = value[len(digits_code):len(digits_code) + 1]
-        if value.startswith(digits_code) and next_char and not next_char.isdigit():
-            return value[len(digits_code):].strip(" -()")
-    return value
+    if not digits_code or not compact_value.startswith(digits_code):
+        return value
+    # Leading digits match the dial code, but they might also be the first
+    # digit(s) of a local number (e.g. "705 186-10-36" for +7 RU). Reparse the
+    # compact value as an international number: only treat the prefix as a
+    # country code when the remainder forms a plausible national number for
+    # that country — otherwise we'd truncate a valid local number and leave
+    # digit-only international input (e.g. "14155551234" for +1 US) unstripped.
+    remaining_digits = compact_value[len(digits_code):]
+    if not remaining_digits:
+        return value
+    try:
+        parsed_number = parse(f"+{digits_code}{remaining_digits}", None)
+    except NumberParseException:
+        return value
+    if not is_possible_number(parsed_number):
+        return value
+    if f"+{parsed_number.country_code}" != compact_code:
+        return value
+    return value[len(digits_code):].strip(" -()")
 
 
 def _strip_phone_national_prefix(phone_number, region):
@@ -478,7 +485,6 @@ class PhoneRecordForm(forms.ModelForm):
                 str(obj.pk): {
                     "iso2": str(obj.alpha2 or "").strip().lower(),
                     "dialCode": _dial_code_for_country(obj),
-                    "flag": _flag_emoji_for_region(obj.alpha2),
                     "mobilePlaceholder": _phone_placeholder_for_country_by_type(obj, PhoneRecord.PHONE_TYPE_MOBILE),
                     "landlinePlaceholder": _phone_placeholder_for_country_by_type(obj, PhoneRecord.PHONE_TYPE_LANDLINE),
                 }
@@ -500,7 +506,7 @@ class PhoneRecordForm(forms.ModelForm):
             selected_country = None
         selected_meta = json.loads(self.country_meta_json).get(str(selected_country_id), {})
         self.show_region_field = _country_region(selected_country) == "RU"
-        self.initial_country_flag = selected_meta.get("flag", "") or "--"
+        self.initial_country_iso2 = str(selected_meta.get("iso2", "") or "").strip().lower()
         if (
             not self.is_bound
             and self.instance

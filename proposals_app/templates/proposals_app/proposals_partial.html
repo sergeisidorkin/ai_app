@@ -125,7 +125,7 @@
                    aria-label="Редактировать ТКП"></i>
               {% endif %}
             </td>
-            <td data-col="tkp-id" class="proposal-id-cell">{{ proposal.short_uid }}</td>
+            <td data-col="tkp-id" class="proposal-id-cell"><span class="clf-id-droid-mono">{{ proposal.short_uid }}</span></td>
             <td data-col="type">{{ proposal.type.short_name|default:proposal.type }}</td>
             <td data-col="name">{{ proposal.name }}</td>
             <td data-col="kind">{{ proposal.get_kind_display }}</td>
@@ -287,7 +287,7 @@
                    aria-label="Редактировать отправку ТКП"></i>
               {% endif %}
             </td>
-            <td class="proposal-id-cell">{{ proposal.short_uid }}</td>
+            <td class="proposal-id-cell"><span class="clf-id-droid-mono">{{ proposal.short_uid }}</span></td>
             <td>{{ proposal.type.short_name|default:proposal.type }}</td>
             <td>{{ proposal.name }}</td>
             <td class="text-nowrap">

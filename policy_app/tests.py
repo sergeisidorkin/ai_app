@@ -5,13 +5,19 @@ from django.contrib.auth import get_user_model
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.http import QueryDict
 from django.test import Client, TestCase, TransactionTestCase
 from django.urls import reverse
 
 from classifiers_app.models import OKVCurrency
 from experts_app.models import ExpertSpecialty
 from group_app.models import GroupMember, OrgUnit
+from policy_app.forms import ProductForm
 from policy_app.models import (
+    ConsultingDirection,
+    ConsultingDirectionType,
+    ConsultingServiceSubtype,
+    ConsultingServiceType,
     ExpertiseDirection,
     Product,
     ServiceGoalReport,
@@ -97,6 +103,218 @@ class RemoveTypicalSectionExecutorMigrationTests(TransactionTestCase):
         self.assertEqual([(link.specialty.specialty, link.rank) for link in links], [("Юрист", 1), ("Партнер", 2)])
 
 
+class ConsultingCatalogBackfillMigrationTests(TransactionTestCase):
+    migrate_from = ("policy_app", "0038_product_consulting_service_fields")
+    migrate_to = ("policy_app", "0040_backfill_consulting_catalog_refs")
+
+    def setUp(self):
+        super().setUp()
+        self.executor = MigrationExecutor(connection)
+        self.executor.migrate([self.migrate_from])
+        old_apps = self.executor.loader.project_state([self.migrate_from]).apps
+
+        Product = old_apps.get_model("policy_app", "Product")
+        self.product = Product.objects.create(
+            short_name="MIG-CAT",
+            name_en="Migration catalog",
+            display_name="Migration catalog",
+            name_ru="Миграционный каталог",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_code="A",
+            service_subtype="Аудит проектных решений",
+            position=1,
+        )
+
+    def tearDown(self):
+        executor = MigrationExecutor(connection)
+        executor.migrate(executor.loader.graph.leaf_nodes())
+        super().tearDown()
+
+    def test_migration_seeds_catalog_and_links_products(self):
+        self.executor.loader.build_graph()
+        self.executor.migrate([self.migrate_to])
+        new_apps = self.executor.loader.project_state([self.migrate_to]).apps
+
+        Product = new_apps.get_model("policy_app", "Product")
+        ConsultingDirection = new_apps.get_model("policy_app", "ConsultingDirection")
+        ConsultingDirectionType = new_apps.get_model("policy_app", "ConsultingDirectionType")
+        ConsultingServiceType = new_apps.get_model("policy_app", "ConsultingServiceType")
+        ConsultingServiceSubtype = new_apps.get_model("policy_app", "ConsultingServiceSubtype")
+
+        migrated = Product.objects.get(pk=self.product.pk)
+        self.assertIsNotNone(migrated.consulting_type_ref_id)
+        self.assertIsNotNone(migrated.service_category_ref_id)
+        self.assertIsNotNone(migrated.service_subtype_ref_id)
+        self.assertEqual(ConsultingDirection.objects.count(), 1)
+        self.assertTrue(ConsultingDirectionType.objects.filter(name="Горный").exists())
+        self.assertTrue(
+            ConsultingServiceType.objects.filter(name="Аудит", code="A").exists()
+        )
+        self.assertTrue(
+            ConsultingServiceSubtype.objects.filter(name="Аудит проектных решений").exists()
+        )
+
+
+class ProductCsvUploadTests(TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            username="policy-products-admin",
+            password="secret123",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.owner = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+
+    def test_product_csv_upload_creates_products_and_derives_code(self):
+        csv_file = SimpleUploadedFile(
+            "products.csv",
+            (
+                "Краткое имя;Наименование на английском языке;Наименование на русском языке;"
+                "Отображаемое в системе имя;Вид консалтинга;Тип услуг;Код;Подтип услуги;Владелец\n"
+                "AUD;Audit;Аудит;Аудит продукта;Горный;Аудит;Z;Аудит проектных решений;IMC Montan\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("product_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        self.assertEqual(len(response.json()["warnings"]), 1)
+        product = Product.objects.get(short_name="AUD")
+        self.assertEqual(product.name_en, "Audit")
+        self.assertEqual(product.name_ru, "Аудит")
+        self.assertEqual(product.display_name, "Аудит продукта")
+        self.assertEqual(product.consulting_type, "Горный")
+        self.assertEqual(product.service_category, "Аудит")
+        self.assertEqual(product.service_code, "A")
+        self.assertEqual(product.service_subtype, "Аудит проектных решений")
+        self.assertIsNotNone(product.consulting_type_ref_id)
+        self.assertIsNotNone(product.service_category_ref_id)
+        self.assertIsNotNone(product.service_subtype_ref_id)
+        self.assertFalse(product.is_group_owner)
+        self.assertEqual(list(product.owners.values_list("short_name", flat=True)), ["IMC Montan"])
+
+
+class ProductFormTests(TestCase):
+    def setUp(self):
+        self.consulting_type = ConsultingDirectionType.objects.create(
+            name="Горный ProductForm",
+            position=1,
+            direction=ConsultingDirection.objects.create(position=1),
+        )
+        self.service_type = ConsultingServiceType.objects.create(
+            direction=self.consulting_type.direction,
+            consulting_type=self.consulting_type,
+            name="Аудит ProductForm",
+            code="A",
+            position=1,
+        )
+        self.service_subtype = ConsultingServiceSubtype.objects.create(
+            direction=self.consulting_type.direction,
+            service_type=self.service_type,
+            name="Аудит проектных решений ProductForm",
+            position=1,
+        )
+
+    def test_init_ignores_non_numeric_dependent_catalog_ids(self):
+        data = QueryDict("", mutable=True)
+        data.update(
+            {
+                "short_name": "AUD",
+                "name_en": "Audit",
+                "display_name": "Audit",
+                "name_ru": "Аудит",
+                "consulting_type_ref": "oops",
+                "service_category_ref": "nan",
+                "service_subtype_ref": str(self.service_subtype.pk),
+            }
+        )
+        form = ProductForm(data=data)
+
+        self.assertEqual(list(form.fields["service_category_ref"].queryset), [])
+        self.assertEqual(list(form.fields["service_subtype_ref"].queryset), [])
+
+
+class ConsultingDirectionViewsTests(TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            username="policy-consulting-admin",
+            password="secret123",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        ConsultingDirection.objects.all().delete()
+
+    def test_policy_partial_renders_consulting_direction_table(self):
+        response = self.client.get(reverse("policy_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Направления консалтинга")
+        self.assertContains(response, 'id="consulting-dir-actions"', html=False)
+        self.assertContains(response, 'id="consulting-dir-master"', html=False)
+
+    def test_create_consulting_direction_saves_nested_catalog(self):
+        response = self.client.post(
+            reverse("consulting_dir_form_create"),
+            {
+                "consulting_types_payload": json.dumps(
+                    [{"id": "", "name": "Финансовый"}], ensure_ascii=False
+                ),
+                "service_types_payload": json.dumps(
+                    [
+                        {
+                            "id": "",
+                            "consulting_type": "Финансовый",
+                            "name": "Due diligence",
+                            "code": "D",
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+                "service_subtypes_payload": json.dumps(
+                    [
+                        {
+                            "id": "",
+                            "consulting_type": "Финансовый",
+                            "service_type": "Due diligence",
+                            "name": "Экспресс",
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        direction = ConsultingDirection.objects.get(
+            consulting_types__name="Финансовый"
+        )
+        self.assertEqual(direction.service_types.get().code, "D")
+        self.assertEqual(direction.service_subtypes.get().name, "Экспресс")
+
+    def test_move_up_reorders_consulting_directions(self):
+        first = ConsultingDirection.objects.create(position=1)
+        second = ConsultingDirection.objects.create(position=2)
+
+        response = self.client.post(reverse("consulting_dir_move_up", args=[second.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.position, 2)
+        self.assertEqual(second.position, 1)
+
+
 class TypicalSectionViewsTests(TestCase):
     def setUp(self):
         user_model = get_user_model()
@@ -111,7 +329,9 @@ class TypicalSectionViewsTests(TestCase):
             name_en="Sections",
             display_name="Sections",
             name_ru="Разделы",
-            service_type="Консалтинг",
+            consulting_type="Горный",
+            service_category="Инжиниринг",
+            service_subtype="По международным стандартам",
             position=1,
         )
 
@@ -186,7 +406,9 @@ class ServiceGoalReportViewsTests(TestCase):
             name_en="Tax",
             display_name="Tax",
             name_ru="Налоги",
-            service_type="Консалтинг",
+            consulting_type="Горный",
+            service_category="Инжиниринг",
+            service_subtype="По международным стандартам",
             position=1,
         )
 
@@ -232,7 +454,9 @@ class ServiceGoalReportViewsTests(TestCase):
             name_en="Audit",
             display_name="Audit",
             name_ru="Аудит",
-            service_type="Аудит",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=2,
         )
         first = ServiceGoalReport.objects.create(
@@ -304,7 +528,9 @@ class TypicalServiceCompositionViewsTests(TestCase):
             name_en="Tax 2",
             display_name="Tax 2",
             name_ru="Налоги 2",
-            service_type="Консалтинг",
+            consulting_type="Горный",
+            service_category="Инжиниринг",
+            service_subtype="По международным стандартам",
             position=1,
         )
         self.other_product = Product.objects.create(
@@ -312,7 +538,9 @@ class TypicalServiceCompositionViewsTests(TestCase):
             name_en="Audit 2",
             display_name="Audit 2",
             name_ru="Аудит 2",
-            service_type="Аудит",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=2,
         )
         self.section = TypicalSection.objects.create(
@@ -436,7 +664,9 @@ class TypicalServiceTermViewsTests(TestCase):
             name_en="Terms",
             display_name="Terms",
             name_ru="Сроки",
-            service_type="Консалтинг",
+            consulting_type="Горный",
+            service_category="Инжиниринг",
+            service_subtype="По международным стандартам",
             position=1,
         )
         self.other_product = Product.objects.create(
@@ -444,7 +674,9 @@ class TypicalServiceTermViewsTests(TestCase):
             name_en="Terms 2",
             display_name="Terms 2",
             name_ru="Сроки 2",
-            service_type="Аудит",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=2,
         )
 
@@ -681,7 +913,9 @@ class TariffViewsTests(TestCase):
             name_en="Tariff product",
             display_name="Tariff product",
             name_ru="Тарифный продукт",
-            service_type="Консалтинг",
+            consulting_type="Горный",
+            service_category="Инжиниринг",
+            service_subtype="По международным стандартам",
             position=1,
         )
         self.section = TypicalSection.objects.create(
@@ -836,7 +1070,9 @@ class TariffAdminTests(TestCase):
             name_en="Tariff product admin",
             display_name="Tariff product admin",
             name_ru="Тарифный продукт админ",
-            service_type="Консалтинг",
+            consulting_type="Горный",
+            service_category="Инжиниринг",
+            service_subtype="По международным стандартам",
             position=1,
         )
         self.section = TypicalSection.objects.create(

@@ -3,9 +3,15 @@ from . import views
 
 urlpatterns = [
     path("policy/partial/", views.policy_partial, name="policy_partial"),
+    path("policy/consulting-direction/create/", views.consulting_dir_form_create, name="consulting_dir_form_create"),
+    path("policy/consulting-direction/<int:pk>/edit/", views.consulting_dir_form_edit, name="consulting_dir_form_edit"),
+    path("policy/consulting-direction/<int:pk>/delete/", views.consulting_dir_delete, name="consulting_dir_delete"),
+    path("consulting-directions/<int:pk>/move-up/", views.consulting_dir_move_up, name="consulting_dir_move_up"),
+    path("consulting-directions/<int:pk>/move-down/", views.consulting_dir_move_down, name="consulting_dir_move_down"),
     path("policy/product/create/", views.product_form_create, name="product_form_create"),
     path("policy/product/<int:pk>/edit/", views.product_form_edit, name="product_form_edit"),
     path("policy/product/<int:pk>/delete/", views.product_delete, name="product_delete"),
+    path("policy/product/csv-upload/", views.product_csv_upload, name="product_csv_upload"),
     path("products/<int:pk>/move-up/", views.product_move_up, name="product_move_up"),
     path("products/<int:pk>/move-down/", views.product_move_down, name="product_move_down"),
     path("policy/section/create/", views.section_form_create, name="section_form_create"),

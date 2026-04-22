@@ -61,7 +61,14 @@
       <div class="col-md-2">
         <label class="form-label">Код</label>
         <div class="input-group">
-          <span class="input-group-text" id="tel-flag-badge" style="min-width: 2.5rem; justify-content: center; padding: 0.2rem 0.35rem; font-size: 1.35rem; line-height: 1;">{{ form.initial_country_flag }}</span>
+          <span class="input-group-text tel-flag-badge" id="tel-flag-badge">
+            {% if form.initial_country_iso2 %}
+            <span class="iti__flag iti__{{ form.initial_country_iso2 }}" aria-hidden="true"></span>
+            <span class="iti__a11y-text">{{ form.initial_country_iso2|upper }}</span>
+            {% else %}
+            <span class="tel-flag-badge__fallback">--</span>
+            {% endif %}
+          </span>
           {{ form.code }}
         </div>
       </div>

@@ -10,7 +10,7 @@ from datetime import timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.db.models import Max
-from django.db.models.signals import post_save, pre_save
+from django.db.models.signals import post_delete, post_save, pre_save
 from django.dispatch import receiver
 from django.utils import timezone
 
@@ -25,7 +25,7 @@ class ProjectRegistration(models.Model):
     position = models.PositiveIntegerField(default=0, db_index=True, verbose_name="Позиция")
     number = models.PositiveIntegerField(
         verbose_name="Номер",
-        validators=[MinValueValidator(3333), MaxValueValidator(9999)],
+        validators=[MinValueValidator(0), MaxValueValidator(9999)],
     )
     group = models.CharField("Группа", max_length=2, default="RU", db_index=True)
     group_member = models.ForeignKey(
@@ -53,6 +53,13 @@ class ProjectRegistration(models.Model):
     type = models.ForeignKey(
         Product, on_delete=models.PROTECT, null=True, blank=True,
         related_name="project_registrations", verbose_name="Тип"
+    )
+    products = models.ManyToManyField(
+        Product,
+        through="ProjectRegistrationProduct",
+        related_name="ranked_project_registrations",
+        verbose_name="Тип",
+        blank=True,
     )
     name = models.CharField("Название", max_length=255)
 
@@ -136,17 +143,21 @@ class ProjectRegistration(models.Model):
         ]
 
     def __str__(self):
-        base = f"{self.number}{self.group_alpha2}"
+        base = f"{self.formatted_number}{self.group_alpha2}"
         agreement = self.get_agreement_type_display()
         suffix = f" №{self.agreement_number}" if self.agreement_number else ""
         return f"{base} — {agreement}{suffix} — {self.name}"
 
     @property
     def display_identifier(self):
-        parts = [f"{self.number} {self.group_display} · {self.get_agreement_type_display()}"]
+        parts = [f"{self.formatted_number} {self.group_display} · {self.get_agreement_type_display()}"]
         if self.agreement_number:
             parts.append(f"№ {self.agreement_number}")
         return " ".join(parts)
+
+    @property
+    def formatted_number(self):
+        return f"{int(self.number or 0):04d}"
 
     @property
     def group_alpha2(self):
@@ -302,7 +313,106 @@ class ProjectRegistration(models.Model):
         )
 
     def _build_short_uid(self):
-        return f"{self.number}{self.agreement_sequence}{self.group_order_number}{self.group_alpha2}"
+        return f"{self.formatted_number}{self.agreement_sequence}{self.group_order_number}{self.group_alpha2}"
+
+    def _ordered_product_links(self):
+        prefetched = getattr(self, "_prefetched_objects_cache", {})
+        if "product_links" in prefetched:
+            return list(prefetched["product_links"])
+        if not self.pk:
+            return []
+        return list(
+            self.product_links.select_related("product").order_by("rank", "id")
+        )
+
+    def ordered_products(self):
+        links = self._ordered_product_links()
+        if links:
+            return [link.product for link in links if getattr(link, "product_id", None)]
+        return [self.type] if self.type else []
+
+    @property
+    def ordered_product_ids(self):
+        return [product.pk for product in self.ordered_products() if getattr(product, "pk", None)]
+
+    @property
+    def product_rank_map(self):
+        return {product_id: index for index, product_id in enumerate(self.ordered_product_ids, start=1)}
+
+    @property
+    def has_products(self):
+        return bool(self.ordered_products())
+
+    def has_product(self, product_or_id):
+        if not product_or_id:
+            return False
+        product_id = getattr(product_or_id, "pk", product_or_id)
+        return any(getattr(product, "pk", None) == product_id for product in self.ordered_products())
+
+    @property
+    def type_short_names(self):
+        labels = []
+        seen = set()
+        for product in self.ordered_products():
+            label = (
+                getattr(product, "short_name", "")
+                or str(product or "")
+            ).strip()
+            if label and label not in seen:
+                seen.add(label)
+                labels.append(label)
+        return labels
+
+    @property
+    def type_short_display(self):
+        return "-".join(self.type_short_names)
+
+    @property
+    def type_display(self):
+        labels = []
+        seen = set()
+        for product in self.ordered_products():
+            label = (
+                getattr(product, "display_name", "")
+                or getattr(product, "name_ru", "")
+                or getattr(product, "name_en", "")
+                or getattr(product, "short_name", "")
+                or str(product or "")
+            ).strip()
+            if label and label not in seen:
+                seen.add(label)
+                labels.append(label)
+        return "-".join(labels)
+
+    @property
+    def primary_product(self):
+        products = self.ordered_products()
+        return products[0] if products else None
+
+
+class ProjectRegistrationProduct(models.Model):
+    registration = models.ForeignKey(
+        ProjectRegistration,
+        on_delete=models.CASCADE,
+        related_name="product_links",
+        verbose_name="Регистрация проекта",
+    )
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.PROTECT,
+        related_name="project_registration_links",
+        verbose_name="Продукт",
+    )
+    rank = models.PositiveIntegerField("Ранг", default=1)
+
+    class Meta:
+        ordering = ["rank", "id"]
+        verbose_name = "Продукт проекта"
+        verbose_name_plural = "Продукты проекта"
+        unique_together = [("registration", "product")]
+
+    def __str__(self):
+        return f"{self.registration.short_uid} — {self.product.short_name} (#{self.rank})"
 
 class WorkVolume(models.Model):
     position = models.PositiveIntegerField(default=0, db_index=True, verbose_name="Позиция")
@@ -336,9 +446,39 @@ class WorkVolume(models.Model):
     def __str__(self):
         return f"{self.project.number if self.project_id else '-'} — {self.name}"
 
+    def save(self, *args, **kwargs):
+        if self.project_id:
+            self.type = getattr(self.project, "type_short_display", "") or ""
+            self.name = getattr(self.project, "name", "") or self.name
+        super().save(*args, **kwargs)
+
 
 def _effective_work_asset_name(work_item):
     return (getattr(work_item, "asset_name", "") or getattr(work_item, "name", "") or "").strip()
+
+
+def _ordered_project_sections(project):
+    product_rank_map = getattr(project, "product_rank_map", {})
+    product_ids = list(product_rank_map.keys())
+    if not product_ids and getattr(project, "type_id", None):
+        product_ids = [project.type_id]
+        product_rank_map = {project.type_id: 1}
+    if not product_ids:
+        return []
+    sections = list(
+        TypicalSection.objects
+        .filter(product_id__in=product_ids)
+        .select_related("product", "expertise_dir")
+        .order_by("position", "id")
+    )
+    sections.sort(
+        key=lambda section: (
+            product_rank_map.get(section.product_id, 999999),
+            section.position,
+            section.id,
+        )
+    )
+    return sections
 
 
 def _normalize_text_value(value):
@@ -463,9 +603,59 @@ class LegalEntity(models.Model):
     def save(self, *args, **kwargs):
         if self.work_item_id:
             self.project = self.work_item.project
-            self.work_type = self.work_item.type or ""
+            self.work_type = getattr(self.work_item.project, "type_short_display", "") or self.work_item.type or ""
             self.work_name = self.work_item.name or ""
         super().save(*args, **kwargs)
+
+
+def _sync_project_registration_primary_product(registration_id):
+    registration = (
+        ProjectRegistration.objects
+        .select_related("type")
+        .prefetch_related("product_links__product")
+        .filter(pk=registration_id)
+        .first()
+    )
+    if not registration:
+        return
+    primary_product = registration.primary_product
+    primary_product_id = getattr(primary_product, "pk", None)
+    if registration.type_id != primary_product_id:
+        ProjectRegistration.objects.filter(pk=registration.pk).update(type_id=primary_product_id)
+        registration.type_id = primary_product_id
+        registration.type = primary_product
+    type_short_display = registration.type_short_display
+    WorkVolume.objects.filter(project_id=registration.pk).update(type=type_short_display)
+    LegalEntity.objects.filter(project_id=registration.pk).update(work_type=type_short_display)
+
+
+@receiver(post_save, sender=Product)
+def sync_product_short_name_to_project_related_rows(sender, instance, **kwargs):
+    registration_ids = list(
+        ProjectRegistrationProduct.objects
+        .filter(product_id=instance.pk)
+        .values_list("registration_id", flat=True)
+        .distinct()
+    )
+    if not registration_ids:
+        registration_ids = list(
+            ProjectRegistration.objects
+            .filter(type_id=instance.pk)
+            .values_list("pk", flat=True)
+        )
+    for registration_id in registration_ids:
+        _sync_project_registration_primary_product(registration_id)
+
+
+@receiver(post_save, sender=ProjectRegistrationProduct)
+def sync_project_registration_products_after_save(sender, instance, **kwargs):
+    _sync_project_registration_primary_product(instance.registration_id)
+
+
+@receiver(post_delete, sender=ProjectRegistrationProduct)
+def sync_project_registration_products_after_delete(sender, instance, **kwargs):
+    if instance.registration_id:
+        _sync_project_registration_primary_product(instance.registration_id)
 
 @receiver(post_save, sender=WorkVolume)
 def ensure_primary_legal_entity(sender, instance, created, **kwargs):
@@ -508,25 +698,15 @@ def remember_previous_work_state(sender, instance, **kwargs):
         instance._old_effective_asset_name = previous_asset
 
 
-@receiver(post_save, sender=WorkVolume)
-def ensure_performer_rows(sender, instance, created, **kwargs):
-    if not created or not instance.project_id:
+def _ensure_performer_rows_for_work_item(instance):
+    if not instance.project_id:
         return
 
     unique_project_role_codes = {"PRD", "CRD"}
     project_manager_name = _normalize_text_value(getattr(instance.project, "project_manager", ""))
     manager_name = _normalize_text_value(instance.manager)
 
-    product_id = getattr(instance.project, "type_id", None)
-    if not product_id:
-        return
-
-    sections = list(
-        TypicalSection.objects
-        .filter(product_id=product_id)
-        .select_related("expertise_dir")
-        .order_by("position", "id")
-    )
+    sections = _ordered_project_sections(instance.project)
     if not sections:
         return
 
@@ -565,11 +745,11 @@ def ensure_performer_rows(sender, instance, created, **kwargs):
         for p in ExpertProfile.objects.select_related("grade").filter(employee_id__in=head_employee_ids):
             expert_profile_map[p.employee_id] = p
 
-    # Pre-fetch tariffs for all sections of this product
+    # Pre-fetch tariffs for all sections of the ranked product set
     from policy_app.models import Tariff, Grade
     tariff_map = {}
     tariff_hours_map = {}
-    for t in Tariff.objects.filter(product_id=product_id, section_id__in=[s.id for s in sections]):
+    for t in Tariff.objects.filter(section_id__in=[s.id for s in sections]):
         tariff_map[t.section_id] = float(t.base_rate_vpm)
         tariff_hours_map[t.section_id] = t.service_hours or 0
 
@@ -607,6 +787,15 @@ def ensure_performer_rows(sender, instance, created, **kwargs):
         .get("max_pos") or 0
     )
     asset_name = instance.asset_name or instance.name or ""
+    existing_section_ids_for_asset = set(
+        Performer.objects
+        .filter(
+            registration=instance.project,
+            asset_name=asset_name,
+            typical_section__isnull=False,
+        )
+        .values_list("typical_section_id", flat=True)
+    )
 
     rub = (
         OKVCurrency.objects
@@ -620,6 +809,8 @@ def ensure_performer_rows(sender, instance, created, **kwargs):
 
     performers = []
     for section in sections:
+        if section.id in existing_section_ids_for_asset:
+            continue
         section_code = _normalize_section_code(section)
         if section_code in unique_project_role_codes and section_code in existing_unique_codes:
             continue
@@ -700,7 +891,15 @@ def ensure_performer_rows(sender, instance, created, **kwargs):
             )
         )
 
-    Performer.objects.bulk_create(performers)
+    if performers:
+        Performer.objects.bulk_create(performers)
+
+
+@receiver(post_save, sender=WorkVolume)
+def ensure_performer_rows(sender, instance, created, **kwargs):
+    if not created:
+        return
+    _ensure_performer_rows_for_work_item(instance)
 
 
 @receiver(post_save, sender=WorkVolume)
@@ -895,6 +1094,16 @@ class Performer(models.Model):
         super().save(*args, **kwargs)
         self._original_employee_id = self.employee_id
         self._original_executor = self.executor
+
+    @property
+    def section_product_short_display(self):
+        section = getattr(self, "typical_section", None)
+        if not section:
+            return ""
+        product = getattr(section, "product", None)
+        if not product:
+            return ""
+        return (getattr(product, "short_name", "") or str(product or "")).strip()
 
     @property
     def participation_response_status(self):

@@ -47,7 +47,9 @@ class ContractsCloudLabelTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
         )
         self.group_member = GroupMember.objects.create(
             short_name="Россия",
