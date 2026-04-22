@@ -99,13 +99,15 @@
                   data-notification-counter-section="checklists">{{ NOTIFICATION_SECTION_COUNTS.checklists|default:0 }}</span>
           </a>
         </li>
-        {% if not is_expert %}
+        {% if not is_expert and not is_department_head %}
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="https://mail.imcmontanai.ru/admin" target="_blank" rel="noopener noreferrer">
             <i class="bi bi-mailbox me-2"></i>
             <span class="link-text">Почта</span>
           </a>
         </li>
+        {% endif %}
+        {% if not is_expert %}
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#letters" data-bs-toggle="tab">
             <i class="bi bi-envelope-paper me-2"></i>
@@ -133,13 +135,14 @@
           </a>
         </li>
         {% endif %}
-        {% if not is_expert %}
+        {% if not is_expert and not is_department_head %}
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#templates" data-bs-toggle="tab">
             <i class="bi bi-puzzle me-2"></i>
             <span class="link-text">Шаблоны</span>
           </a>
         </li>
+        {% endif %}
         {% if can_access_connections %}
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#connections" data-bs-toggle="tab">
@@ -148,6 +151,7 @@
           </a>
         </li>
         {% endif %}
+        {% if not is_expert and not is_department_head %}
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#debugger" data-bs-toggle="tab">
             <i class="bi bi-sliders me-2"></i>
@@ -160,6 +164,8 @@
             <span class="link-text">Логи</span>
           </a>
         </li>
+        {% endif %}
+        {% if not is_expert %}
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#classifiers" data-bs-toggle="tab">
             <i class="bi bi-book me-2"></i>
@@ -737,7 +743,7 @@
       </section>
 
       <!-- Шаблоны -->
-      {% if not is_expert %}
+      {% if not is_expert and not is_department_head %}
       <section id="templates" class="tab-pane fade">
         <div class="d-flex templates-bleed">
           <!-- Второй уровень сайдбара для раздела "Шаблоны" -->
@@ -796,6 +802,7 @@
 
         </div>
       </section>
+      {% endif %}
 
       {% if can_access_connections %}
       <!-- Подключения -->
@@ -829,6 +836,7 @@
       {% endif %}
 
       <!-- Отладка -->
+      {% if not is_expert and not is_department_head %}
       <section id="debugger" class="tab-pane fade">
           <div class="templates-bleed">
             <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
@@ -859,6 +867,7 @@
             <!-- /ps-3 -->
           </div>
       </section>
+      {% endif %}
 
       <!-- Справочники -->
       <section id="classifiers" class="tab-pane fade">
@@ -1556,7 +1565,6 @@
           </div>
         </div>
       </section>
-      {% endif %}
 
         <script>
         (function () {

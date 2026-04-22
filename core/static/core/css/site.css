@@ -1204,11 +1204,35 @@ body .second-sidebar + .flex-grow-1 {
   padding-right: 1rem;
 }
 .projects-outer-scroll > .card {
-  min-width: 1980px;  /* самая широкая таблица (1940px) + padding карточки (32px) + запас */
+  min-width: 100%;
 }
 
 
 #projects-pane .registration-table-wrap .products-actions-row {
+  margin-bottom: 14px !important;
+}
+
+#projects-pane .contract-table-wrap .products-actions-row {
+  margin-bottom: 14px !important;
+}
+
+#projects-pane .work-table-wrap .products-actions-row {
+  margin-bottom: 14px !important;
+}
+
+#projects-pane .legal-table-wrap .products-actions-row {
+  margin-bottom: 14px !important;
+}
+
+#participation-confirmation-section .participation-table-wrap .products-actions-row {
+  margin-bottom: 14px !important;
+}
+
+#contract-conclusion-section .contract-conclusion-table-wrap .products-actions-row {
+  margin-bottom: 14px !important;
+}
+
+#info-request-approval-section .info-request-table-wrap .products-actions-row {
   margin-bottom: 14px !important;
 }
 /* Слойность для кнопок панели под таблицей "Продукты" */
@@ -1664,24 +1688,25 @@ section#templates .alert.alert-info .text-muted {
    REG TABLE (Регистрация проекта)
    ========================= */
 
-/* 0) Ширины через <col> */
-#projects-pane table.reg-table col.checkbox       { width: 36px  !important; }  /* 1 */
-#projects-pane table.reg-table col.project-number { width: 70px  !important; }  /* 2 */
-#projects-pane table.reg-table col.group          { width: 70px  !important; }  /* 3: Группа */
-#projects-pane table.reg-table col.agreement-type { width: 170px !important; }  /* 4: Вид соглашения */
-#projects-pane table.reg-table col.project-id     { width: 100px !important; }  /* 5: Проект ID */
-#projects-pane table.reg-table col.reg-type       { width: 1% !important; }  /* 6: Тип */
-#projects-pane table.reg-table col.reg-name       { width: 230px !important; }  /* 7: Название */
-#projects-pane table.reg-table col.reg-status     { width: 120px !important; }  /* 8: Статус */
-#projects-pane table.reg-table col.reg-deadline   { width: 80px  !important; }  /* 9: Дедлайн */
-#projects-pane table.reg-table col.reg-year       { width: 60px  !important; }  /* 10: Год */
-#projects-pane table.reg-table col.reg-country    { width: 110px !important; }  /* 13: Страна */
-#projects-pane table.reg-table col.reg-identifier { width: 70px  !important; }  /* 13: Идент. */
-#projects-pane table.reg-table col.reg-regnumber { width: 150px !important; }  /* 14: Регистр. номер */
-/* reg-regdate — резиновый, без фиксированной ширины */
-#projects-pane table.reg-table col.reg-manager   { width: 200px !important; }  /* 15: Руководитель проекта */
+/* 0) Первые 2 столбца фиксированы, остальные остаются адаптивными */
+#projects-pane table.reg-table col.checkbox       { width: 30px !important; }
+#projects-pane table.reg-table col.project-number { width: 70px !important; }
+#projects-pane table.reg-table col.agreement-type { width: 9%  !important; }
+#projects-pane table.reg-table col.group          { width: 4%  !important; }
+#projects-pane table.reg-table col.project-id     { width: 6%  !important; }
+#projects-pane table.reg-table col.reg-type       { width: 4%  !important; }
+#projects-pane table.reg-table col.reg-name       { width: 13% !important; }
+#projects-pane table.reg-table col.reg-status     { width: 7%  !important; }
+#projects-pane table.reg-table col.reg-deadline   { width: 4%  !important; }
+#projects-pane table.reg-table col.reg-year       { width: 3%  !important; }
+#projects-pane table.reg-table col.reg-manager    { width: 10% !important; }
+#projects-pane table.reg-table col.reg-customer   { width: 13% !important; }
+#projects-pane table.reg-table col.reg-country    { width: 5%  !important; }
+#projects-pane table.reg-table col.reg-identifier { width: 4%  !important; }
+#projects-pane table.reg-table col.reg-regnumber  { width: 7%  !important; }
+#projects-pane table.reg-table col.reg-regdate    { width: 5%  !important; }
 
-/* 1) Таблица: авто-раскладка, чтобы столбец "Тип" брал ширину по содержимому */
+/* 1) Таблица: занимает всю ширину, а при нехватке места расширяется под содержимое */
 #projects-pane .registration-table-wrap {
   overflow-x: auto;
   overflow-y: visible;
@@ -1691,7 +1716,7 @@ section#templates .alert.alert-info .text-muted {
 #projects-pane .registration-table-wrap > table.reg-table{
   table-layout: auto !important;
   width: max-content;
-  min-width: 1900px;
+  min-width: 100%;
   --bs-table-cell-padding-y: .5rem;
   --reg-first-col-pr: .8rem;
 }
@@ -1700,7 +1725,7 @@ section#templates .alert.alert-info .text-muted {
 /* 2) Заголовки: переносы разрешены, прижаты к НИЗУ,
       с небольшим «воздухом» снизу */
 #projects-pane table.reg-table thead th{
-  white-space: normal !important;
+  white-space: nowrap !important;
   overflow: visible !important;
   text-overflow: clip !important;
   vertical-align: bottom !important;
@@ -1721,6 +1746,23 @@ section#templates .alert.alert-info .text-muted {
 #projects-pane table.reg-table tbody th,
 #projects-pane table.reg-table tbody td{
   white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+#projects-pane table.reg-table thead th:nth-child(1),
+#projects-pane table.reg-table tbody td:nth-child(1) {
+  width: 30px !important;
+  min-width: 30px !important;
+  max-width: 30px !important;
+}
+
+#projects-pane table.reg-table thead th:nth-child(2),
+#projects-pane table.reg-table tbody td:nth-child(2) {
+  width: 70px !important;
+  min-width: 70px !important;
+  max-width: 70px !important;
+  white-space: nowrap !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
 }
@@ -1737,8 +1779,6 @@ section#templates .alert.alert-info .text-muted {
 #projects-pane .contract-table tbody td.completion-calc-cell {
   color: #a1a9b1 !important;
 }
-#projects-pane table.reg-table col.reg-customer   { /* резиновый — без фиксированной ширины */ }  /* 12: Заказчик */
-
 /* 6) Единый padding по краям 1-го столбца (и в шапке, и в теле) */
 #projects-pane table.reg-table > thead tr > :first-child,
 #projects-pane table.reg-table > tbody tr > :first-child{
@@ -2942,91 +2982,100 @@ html.proposal-progress-cursor * {
 }
 
 /* ==== Contract Conditions table (Условия контракта) ==== */
-.contract-table { table-layout: auto; width: max-content; min-width: 1940px; }
-.contract-table col.checkbox     { width: 30px  !important; }
-.contract-table col.project-id   { width: 100px !important; }
-.contract-table col.group        { width: 1% !important; }  /* Тип */
-.contract-table col.name         { width: 220px !important; }
-.contract-table col.agreement-type { width: 170px !important; }
+#projects-pane .contract-table-wrap {
+  overflow-x: auto;
+  overflow-y: visible;
+  width: 100%;
+}
 
-.contract-table th:nth-child(5),
-.contract-table td:nth-child(5) { width: 170px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.contract-table { table-layout: auto; width: 100%; min-width: max-content; }
+.contract-table col.checkbox   { width: 30px !important; }
+.contract-table col.project-id { width: 100px !important; }
 
-.contract-table col.agreement-number { width: 160px !important; }
-.contract-table th:nth-child(6),
-.contract-table td:nth-child(6) { width: 190px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.contract-table th,
+.contract-table td {
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+.contract-table th:nth-child(1),
+.contract-table td:nth-child(1) {
+  width: 30px !important;
+  min-width: 30px !important;
+  max-width: 30px !important;
+}
 
 .contract-table th:nth-child(2),
-.contract-table td:nth-child(2) { width: 110px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.contract-table th:nth-child(3),
-.contract-table td:nth-child(3) {
-  width: 1% !important;
-  min-width: max-content;
-  max-width: none;
-  white-space: nowrap;
-  overflow: visible;
-  text-overflow: clip;
-}
-.contract-table th:nth-child(4),
-.contract-table td:nth-child(4) { width: 220px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-/* Столбцы 7–16: даты и числовые (Начало контр. … Срок, недель) */
-.contract-table col.narrow-sm { width: 90px !important; }
-.contract-table col.narrow { width: 110px !important; }
-.contract-table th:nth-child(n+7):nth-child(-n+16) {
-  width: 80px !important;
-  white-space: normal;
-  word-break: break-word;
-}
-.contract-table td:nth-child(n+7):nth-child(-n+16) {
-  width: 80px !important;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.contract-table td:nth-child(2) {
+  width: 100px !important;
+  min-width: 100px !important;
+  max-width: 100px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
 }
 
-/* Столбец 17: Предмет договора — занимает оставшееся пространство */
-.contract-table col.col-subject { /* no explicit width — absorbs remaining space */ }
+.contract-table td:nth-child(2) > .clf-id-droid-mono,
+.work-table td:nth-child(2) > .clf-id-droid-mono,
+.legal-table td:nth-child(2) > .clf-id-droid-mono {
+  display: block !important;
+  width: 100px !important;
+  max-width: 100px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+.contract-table col.col-subject { width: 160px !important; }
+
 .contract-table th:nth-child(17),
 .contract-table td:nth-child(17) {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  width: 160px !important;
+  min-width: 160px !important;
+  max-width: 160px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
 }
 
 
 /* ==== Work Volume table (Объем работ) ==== */
-.work-table { table-layout: auto; width: max-content; min-width: 1530px; }
-.work-table col.col-checkbox { width: 30px  !important; }
-.work-table col.col-project  { width: 100px !important; } /* Номер проекта, 4444RU-0 */
-.work-table col.col-type     { width: 1% !important; } /* Тип */
-.work-table col.col-name     { width: 220px !important; } /* Название */
-.work-table col.col-active   { width: 350px !important; } /* Наименование актива */
-.work-table col.work-country    { width: 110px !important; }
-.work-table col.work-identifier { width: 70px  !important; }
-.work-table col.work-regnumber  { width: 150px !important; }
-.work-table col.work-regdate    { width: 100px !important; }
-
-/* Чтобы текст не рвал ширину, аккуратно подрезаем */
-.work-table td {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+#projects-pane .work-table-wrap {
+  overflow-x: auto;
+  overflow-y: visible;
+  width: 100%;
 }
 
-.work-table th:nth-child(3),
-.work-table td:nth-child(3) {
-  width: 1% !important;
-  min-width: max-content;
-  max-width: none;
+.work-table { table-layout: auto; width: 100%; min-width: max-content; }
+.work-table col.col-checkbox { width: 30px !important; }
+.work-table col.col-project  { width: 100px !important; }
+
+.work-table th,
+.work-table td {
   white-space: nowrap;
   overflow: visible;
   text-overflow: clip;
 }
 
-/* Наименование актива — обрезаем лишний текст троеточием */
-.work-table td:nth-child(5),
-.legal-table td:nth-child(5),
+.work-table th:nth-child(1),
+.work-table td:nth-child(1) {
+  width: 30px !important;
+  min-width: 30px !important;
+  max-width: 30px !important;
+}
+
+.work-table th:nth-child(2),
+.work-table td:nth-child(2) {
+  width: 100px !important;
+  min-width: 100px !important;
+  max-width: 100px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+/* Для таблиц исполнителей оставляем отдельное правило усечения актива */
 .performers-table tbody td:nth-child(5) {
   white-space: nowrap;
   overflow: hidden;
@@ -3037,32 +3086,38 @@ html.proposal-progress-cursor * {
 
 
 /* ==== Legal Entities table (Юридические лица) ==== */
-.legal-table { table-layout: auto; width: max-content; min-width: 1500px; }
-.legal-table col.col-checkbox     { width: 30px  !important; }
-.legal-table col.col-project      { width: 100px !important; }
-.legal-table col.col-type         { width: 1% !important; }
-.legal-table col.col-name         { width: 220px !important; }
-.legal-table col.col-active       { width: 350px !important; }
-.legal-table col.col-legal-name   { width: 300px !important; }
-.legal-table col.legal-country    { width: 110px !important; }
-.legal-table col.legal-identifier { width: 70px  !important; }
-.legal-table col.legal-regnumber  { width: 150px !important; }
-/* legal-regdate — резиновый, без фиксированной ширины */
-
-.legal-table td {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+#projects-pane .legal-table-wrap {
+  overflow-x: auto;
+  overflow-y: visible;
+  width: 100%;
 }
 
-.legal-table th:nth-child(3),
-.legal-table td:nth-child(3) {
-  width: 1% !important;
-  min-width: max-content;
-  max-width: none;
+.legal-table { table-layout: auto; width: 100%; min-width: max-content; }
+.legal-table col.col-checkbox { width: 30px !important; }
+.legal-table col.col-project  { width: 100px !important; }
+
+.legal-table th,
+.legal-table td {
   white-space: nowrap;
   overflow: visible;
   text-overflow: clip;
+}
+
+.legal-table th:nth-child(1),
+.legal-table td:nth-child(1) {
+  width: 30px !important;
+  min-width: 30px !important;
+  max-width: 30px !important;
+}
+
+.legal-table th:nth-child(2),
+.legal-table td:nth-child(2) {
+  width: 100px !important;
+  min-width: 100px !important;
+  max-width: 100px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
 }
 
 
@@ -3150,7 +3205,182 @@ html.proposal-progress-cursor * {
 .performers-table thead th:nth-child(4),
 .performers-table tbody td:nth-child(4) { width: 220px !important; min-width: 220px; max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+#performers-main-section > .performers-table {
+  width: 100%;
+  min-width: max-content;
+}
+
+#performers-main-section .performers-table col.col-type,
+#performers-main-section .performers-table col.col-name {
+  width: auto !important;
+}
+
+#performers-main-section .performers-table col.col-active,
+#performers-main-section .performers-table col.col-typical {
+  width: auto !important;
+}
+
+#performers-main-section .performers-table thead th,
+#performers-main-section .performers-table tbody td {
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+#performers-main-section .performers-table thead th:nth-child(1),
+#performers-main-section .performers-table tbody td:nth-child(1) {
+  width: 30px !important;
+  min-width: 30px !important;
+  max-width: 30px !important;
+}
+
+#performers-main-section .performers-table thead th:nth-child(2),
+#performers-main-section .performers-table tbody td:nth-child(2) {
+  width: 100px !important;
+  min-width: 100px !important;
+  max-width: 100px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#performers-main-section .performers-table thead th:nth-child(3),
+#performers-main-section .performers-table tbody td:nth-child(3),
+#performers-main-section .performers-table thead th:nth-child(4),
+#performers-main-section .performers-table tbody td:nth-child(4) {
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+#performers-main-section .performers-table tbody td:nth-child(5) {
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  max-width: none !important;
+}
+
+#performers-main-section .performers-table .text-truncate {
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
 /* ==== Row grouping in participation / contract / info-request tables ==== */
+
+#participation-confirmation-section .participation-table-wrap {
+  overflow-x: auto;
+  overflow-y: visible;
+  width: 100%;
+}
+
+#participation-confirmation-section .participation-table-wrap > .performers-table {
+  width: 100%;
+  min-width: max-content;
+}
+
+#participation-confirmation-section .performers-table col.col-checkbox {
+  width: 30px !important;
+}
+
+#participation-confirmation-section .performers-table col.col-number {
+  width: 100px !important;
+}
+
+#participation-confirmation-section .performers-table col:not(.col-checkbox):not(.col-number) {
+  width: auto !important;
+}
+
+#participation-confirmation-section .performers-table thead th,
+#participation-confirmation-section .performers-table tbody td {
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+#participation-confirmation-section .performers-table thead th:nth-child(1),
+#participation-confirmation-section .performers-table tbody td:nth-child(1) {
+  width: 30px !important;
+  min-width: 30px !important;
+  max-width: 30px !important;
+}
+
+#participation-confirmation-section .performers-table thead th:nth-child(2),
+#participation-confirmation-section .performers-table tbody td:nth-child(2) {
+  width: 100px !important;
+  min-width: 100px !important;
+  max-width: 100px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#participation-confirmation-section .performers-table thead th:nth-child(n+3),
+#participation-confirmation-section .performers-table tbody td:nth-child(n+3) {
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+#participation-confirmation-section .performers-table .text-truncate {
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+#contract-conclusion-section .contract-conclusion-table-wrap {
+  overflow-x: auto;
+  overflow-y: visible;
+  width: 100%;
+}
+
+#contract-conclusion-section .contract-conclusion-table-wrap > .performers-table {
+  width: max-content;
+  min-width: 100%;
+}
+
+#contract-conclusion-section .performers-table thead th,
+#contract-conclusion-section .performers-table tbody td {
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+#contract-conclusion-section .performers-table .text-truncate {
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+#info-request-approval-section .info-request-table-wrap {
+  overflow-x: auto;
+  overflow-y: visible;
+  width: 100%;
+}
+
+#info-request-approval-section .info-request-table-wrap > .performers-table {
+  width: max-content;
+  min-width: 100%;
+}
+
+#info-request-approval-section .performers-table thead th,
+#info-request-approval-section .performers-table tbody td {
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+#info-request-approval-section .performers-table .text-truncate {
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
 
 #participation-confirmation-section .performers-table > tbody > tr > td,
 #contract-conclusion-section       .performers-table > tbody > tr > td,

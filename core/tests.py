@@ -23,6 +23,8 @@ from core.cloud_storage import (
 from core.oidc import IMCOAuth2Validator
 from core.oidc_settings import oidc_pkce_required
 from core.models import CloudStorageSettings
+from policy_app.models import DEPARTMENT_HEAD_GROUP
+from users_app.models import Employee
 
 User = get_user_model()
 Application = get_application_model()
@@ -186,3 +188,26 @@ class CloudStorageRoutingTests(TestCase):
         response = client.get(reverse("oauth2_provider:authorize"), {"client_id": "nextcloud-client"})
 
         self.assertEqual(response.status_code, 403)
+
+
+class HomePagePermissionsTests(TestCase):
+    def test_department_head_menu_hides_restricted_sections(self):
+        user = User.objects.create_user(
+            username="department-head-home",
+            email="department-head-home@example.com",
+            password="Secret123!",
+            is_staff=True,
+        )
+        Employee.objects.create(user=user, role=DEPARTMENT_HEAD_GROUP)
+        self.client.force_login(user)
+
+        response = self.client.get(reverse("home"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Подключения")
+        self.assertNotContains(response, '<span class="link-text">Почта</span>', html=False)
+        self.assertNotContains(response, '<span class="link-text">Шаблоны</span>', html=False)
+        self.assertNotContains(response, '<span class="link-text">Отладка</span>', html=False)
+        self.assertNotContains(response, '<span class="link-text">Логи</span>', html=False)
+        self.assertNotContains(response, 'section id="templates"', html=False)
+        self.assertNotContains(response, 'section id="debugger"', html=False)

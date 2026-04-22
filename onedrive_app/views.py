@@ -6,7 +6,7 @@ from django.views.decorators.http import require_POST
 from django.urls import reverse
 from django.conf import settings
 
-from policy_app.models import DEPARTMENT_HEAD_GROUP, PROJECTS_HEAD_GROUP
+from policy_app.models import DEPARTMENT_HEAD_GROUP
 from users_app.models import Employee
 from core.cloud_storage import (
     get_cloud_storage_settings,
@@ -71,7 +71,7 @@ def _connections_context(request):
     smtp_form = ExternalSMTPAccountForm(instance=smtp_account, user=request.user)
     employee = Employee.objects.filter(user=request.user).first()
     employee_role = getattr(employee, "role", "") or ""
-    smtp_only_connections = employee_role in {PROJECTS_HEAD_GROUP, DEPARTMENT_HEAD_GROUP}
+    smtp_only_connections = employee_role == DEPARTMENT_HEAD_GROUP
     storage_settings = get_cloud_storage_settings()
     nextcloud_status = get_nextcloud_connection_status()
     nextcloud_overview = build_nextcloud_overview(request.user)

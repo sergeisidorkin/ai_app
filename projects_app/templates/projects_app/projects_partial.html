@@ -58,7 +58,7 @@
         </colgroup>
       <thead>
       <tr>
-        <th class="w-checkbox">
+        <th class="w-checkbox" style="width:30px; min-width:30px; max-width:30px;">
           {% if request.user.is_authenticated and request.user.is_staff %}
             <div class="form-check m-0">
                 <input class="form-check-input"
@@ -330,7 +330,7 @@
             </div>
           {% endif %}
         </th>
-        <th>Проект</th>
+        <th style="width:100px; min-width:100px; max-width:100px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Проект</th>
         <th>Тип</th>
         <th class="nowrap">Название</th>
         <th>Вид соглашения</th>
@@ -351,7 +351,7 @@
       <tbody>
       {% for r in registrations %}
         <tr data-project-id="{{ r.id }}" data-edit-url="{% url 'contract_form_edit' r.pk %}">
-          <td class="text-nowrap">
+          <td class="text-nowrap" style="width:30px; min-width:30px; max-width:30px;">
             {% if request.user.is_authenticated and request.user.is_staff %}
               <div class="form-check">
                     <input class="form-check-input"
@@ -363,7 +363,7 @@
               </div>
             {% endif %}
           </td>
-          <td class="project-id-cell"><span class="clf-id-droid-mono">{{ r.short_uid }}</span></td>
+          <td class="project-id-cell" style="width:100px; min-width:100px; max-width:100px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"><span class="clf-id-droid-mono" style="display:block; width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ r.short_uid }}</span></td>
           <td>{{ r.type_short_display }}</td>
           <td>{{ r.name }}</td>
           <td>{{ r.get_agreement_type_display }}</td>
@@ -433,7 +433,7 @@
     </div>
   </div>
 
-  <div>
+  <div class="work-table-wrap">
     <table class="table table-sm align-middle work-table">
       <colgroup>
           <col class="col-checkbox">    <!-- чекбокс -->
@@ -449,7 +449,7 @@
       </colgroup>
       <thead>
       <tr>
-        <th style="width:30px">
+        <th style="width:30px; min-width:30px; max-width:30px;">
           {% if request.user.is_authenticated and request.user.is_staff %}
             <div class="form-check m-0">
               <input class="form-check-input"
@@ -461,7 +461,7 @@
             </div>
           {% endif %}
         </th>
-        <th>Проект</th>
+        <th style="width:100px; min-width:100px; max-width:100px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Проект</th>
         <th>Тип</th>
         <th>Название</th>
         <th>Наименование актива</th>
@@ -480,7 +480,7 @@
           data-delete-url="{% url 'work_delete' w.pk %}"
           data-move-up-url="{% url 'work_move_up' w.pk %}"
           data-move-down-url="{% url 'work_move_down' w.pk %}">
-          <td class="text-nowrap">
+          <td class="text-nowrap" style="width:30px; min-width:30px; max-width:30px;">
             {% if request.user.is_authenticated and request.user.is_staff %}
               <div class="form-check">
                 <input class="form-check-input"
@@ -492,7 +492,7 @@
               </div>
             {% endif %}
           </td>
-          <td class="text-nowrap"><span class="clf-id-droid-mono">{{ w.project.short_uid }}</span></td>
+          <td class="text-nowrap" style="width:100px; min-width:100px; max-width:100px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"><span class="clf-id-droid-mono" style="display:block; width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ w.project.short_uid }}</span></td>
           <td class="text-nowrap">{{ w.project.type_short_display|default:w.type }}</td>
           <td>{{ w.name }}</td>
           <td class="text-nowrap">{{ w.asset_name }}</td>
@@ -570,7 +570,7 @@
     </div>
   </div>
 
-  <div>
+  <div class="legal-table-wrap">
     <table class="table table-sm align-middle legal-table">
       <colgroup>
         <col class="col-checkbox">       <!-- чекбокс -->
@@ -586,7 +586,7 @@
       </colgroup>
       <thead>
       <tr>
-        <th style="width:30px">
+        <th style="width:30px; min-width:30px; max-width:30px;">
           {% if request.user.is_authenticated and request.user.is_staff %}
             <div class="form-check m-0">
               <input class="form-check-input"
@@ -598,7 +598,7 @@
             </div>
           {% endif %}
         </th>
-        <th>Проект</th>
+        <th style="width:100px; min-width:100px; max-width:100px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Проект</th>
         <th>Тип</th>
         <th>Название</th>
         <th>Наименование актива</th>
@@ -617,7 +617,7 @@
           data-move-up-url="{% url 'legal_entity_move_up' entity.pk %}"
           data-move-down-url="{% url 'legal_entity_move_down' entity.pk %}"
           data-project-id="{{ entity.project_id }}">
-          <td class="text-nowrap">
+          <td class="text-nowrap" style="width:30px; min-width:30px; max-width:30px;">
             {% if request.user.is_authenticated and request.user.is_staff %}
               <div class="form-check">
                 <input class="form-check-input"
@@ -629,7 +629,7 @@
               </div>
             {% endif %}
           </td>
-          <td class="text-nowrap"><span class="clf-id-droid-mono">{{ entity.project.short_uid }}</span></td>
+          <td class="text-nowrap" style="width:100px; min-width:100px; max-width:100px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"><span class="clf-id-droid-mono" style="display:block; width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ entity.project.short_uid }}</span></td>
           <td class="text-nowrap">{{ entity.work_item.project.type_short_display|default:entity.work_type }}</td>
           <td>{{ entity.work_name }}</td>
           <td class="text-nowrap">{{ entity.work_item.asset_name|default:entity.work_item.name }}</td>
