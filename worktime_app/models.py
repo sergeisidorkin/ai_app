@@ -103,8 +103,8 @@ class WorktimeAssignment(models.Model):
     @property
     def display_type_label(self):
         if self.registration_id is not None:
-            if getattr(self.registration, "type", None):
-                return getattr(self.registration.type, "short_name", "") or str(self.registration.type)
+            if getattr(self.registration, "type_short_display", ""):
+                return self.registration.type_short_display
             return "—"
         if self.proposal_registration_id is not None:
             if getattr(self.proposal_registration, "type", None):

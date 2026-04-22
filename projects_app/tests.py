@@ -16,8 +16,10 @@ from notifications_app.models import Notification
 from policy_app.models import LAWYER_GROUP, Product
 from projects_app.models import (
     ContractProjectTargetFolder,
+    LegalEntity,
     Performer,
     ProjectRegistration,
+    ProjectRegistrationProduct,
     RegistrationWorkspaceFolder,
     SourceDataTargetFolder,
     WorkVolume,
@@ -92,16 +94,26 @@ class ProjectRegistrationFormTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        self.second_product = Product.objects.create(
+            short_name="QAQC_FORM",
+            name_en="QAQC Form",
+            name_ru="QAQC Form",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Контроль качества",
+            position=2,
         )
 
-    def test_type_and_deadline_are_required(self):
+    def test_type_ids_and_deadline_are_required(self):
         form = ProjectRegistrationForm(
             data={
                 "number": 4444,
                 "group_member": self.group_member.pk,
                 "agreement_type": "MAIN",
-                "type": "",
                 "name": "Проект Альфа",
                 "status": "Не начат",
                 "deadline": "",
@@ -110,8 +122,154 @@ class ProjectRegistrationFormTests(TestCase):
         )
 
         self.assertFalse(form.is_valid())
-        self.assertIn("type", form.errors)
+        self.assertIn("type_ids", form.errors)
         self.assertIn("deadline", form.errors)
+
+    def test_number_accepts_zero_and_rejects_negative_values(self):
+        valid_form = ProjectRegistrationForm(
+            data={
+                "number": 0,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [self.product.pk],
+                "name": "Проект Ноль",
+                "status": "Не начат",
+                "deadline": "2026-01-10",
+                "year": 2026,
+            }
+        )
+        invalid_form = ProjectRegistrationForm(
+            data={
+                "number": -1,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [self.product.pk],
+                "name": "Проект Минус",
+                "status": "Не начат",
+                "deadline": "2026-01-10",
+                "year": 2026,
+            }
+        )
+
+        self.assertTrue(valid_form.is_valid())
+        self.assertFalse(invalid_form.is_valid())
+        self.assertIn("number", invalid_form.errors)
+
+    def test_number_uses_numeric_widget_and_cleans_to_int(self):
+        form = ProjectRegistrationForm(
+            data={
+                "number": 10,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [self.product.pk],
+                "name": "Проект Десять",
+                "status": "Не начат",
+                "deadline": "2026-01-10",
+                "year": 2026,
+            }
+        )
+
+        self.assertEqual(form.fields["number"].widget.input_type, "number")
+        self.assertEqual(form.fields["number"].widget.attrs["id"], "registration-number-input")
+        self.assertTrue(form.is_valid())
+        self.assertEqual(form.cleaned_data["number"], 10)
+
+    def test_existing_instance_keeps_numeric_number_value(self):
+        registration = ProjectRegistration.objects.create(
+            number=1,
+            group_member=self.group_member,
+            type=self.product,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            name="Проект Один",
+            status="Не начат",
+        )
+
+        form = ProjectRegistrationForm(instance=registration)
+
+        self.assertEqual(form["number"].value(), 1)
+
+    def test_project_short_uid_uses_zero_padded_number(self):
+        registration = ProjectRegistration.objects.create(
+            number=1,
+            group_member=self.group_member,
+            type=self.product,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            name="Проект ID",
+            status="Не начат",
+        )
+
+        self.assertEqual(registration.short_uid, "000100RU")
+        self.assertTrue(registration.display_identifier.startswith("0001 "))
+
+    def test_cleaned_type_ids_keep_ranked_order_without_duplicates(self):
+        form = ProjectRegistrationForm()
+        bound_form = ProjectRegistrationForm(
+            data={
+                "number": 11,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [self.second_product.pk, self.product.pk, self.second_product.pk],
+                "name": "Проект Ранги",
+                "status": "Не начат",
+                "deadline": "2026-01-10",
+                "year": 2026,
+            }
+        )
+
+        self.assertNotIn("type", form.fields)
+        self.assertTrue(bound_form.is_valid())
+        self.assertEqual(bound_form.cleaned_type_ids, [self.second_product.pk, self.product.pk])
+
+
+class ProjectRegistrationFormViewTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="projects-form-user",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.group_member = GroupMember.objects.create(
+            short_name="IMC",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        self.product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        self.extra_product = Product.objects.create(
+            short_name="CTRL",
+            name_en="Control",
+            name_ru="Контроль",
+            consulting_type="Горный",
+            service_category="Контроль",
+            service_subtype="Контроль качества",
+            position=2,
+        )
+
+    def test_registration_form_renders_linked_type_block(self):
+        response = self.client.get(reverse("registration_form_create"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="registration-type-meta"', html=False)
+        self.assertContains(response, 'name="type_consulting"', html=False)
+        self.assertContains(response, 'name="type_service_category"', html=False)
+        self.assertContains(response, 'name="type_service_subtype"', html=False)
+        self.assertContains(response, 'name="type_id"', html=False)
+        self.assertContains(response, "Вид консалтинга")
+        self.assertContains(response, "Тип услуги")
+        self.assertContains(response, "Подтип услуги")
+        self.assertContains(response, "Продукт")
+        self.assertContains(response, "Контроль")
+        self.assertContains(response, "Контроль качества")
 
 
 class ProjectRegistrationRegistrySyncTests(TestCase):
@@ -133,8 +291,19 @@ class ProjectRegistrationRegistrySyncTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
+        )
+        self.second_product = Product.objects.create(
+            short_name="QAQC_SYNC",
+            name_en="QAQC Sync",
+            name_ru="QAQC Sync",
+            consulting_type="Горный",
+            service_category="Контроль",
+            service_subtype="Контроль качества",
+            position=2,
         )
         self.country = OKSMCountry.objects.create(
             number=643,
@@ -151,7 +320,7 @@ class ProjectRegistrationRegistrySyncTests(TestCase):
             "number": 4444,
             "group_member": self.group_member.pk,
             "agreement_type": "MAIN",
-            "type": self.product.pk,
+            "type_id": [self.product.pk],
             "name": "Проект Альфа",
             "status": "Не начат",
             "deadline": "2026-01-10",
@@ -203,8 +372,14 @@ class ProjectRegistrationRegistrySyncTests(TestCase):
             2,
         )
         newest_entity = BusinessEntityRecord.objects.order_by("-id").first()
+        project = ProjectRegistration.objects.get(number=4444)
         self.assertEqual(newest_entity.source, "[Проекты / Заказчик]")
         self.assertEqual(newest_entity.record_author, "projects-registry-user")
+        self.assertEqual(project.type_short_display, "DD")
+        self.assertEqual(
+            list(project.product_links.order_by("rank").values_list("product_id", flat=True)),
+            [self.product.pk],
+        )
 
     def test_selected_autocomplete_registration_save_does_not_create_new_chain(self):
         existing_entity = BusinessEntityRecord.objects.create(name='ООО "Связать"', position=1)
@@ -238,14 +413,47 @@ class ProjectRegistrationRegistrySyncTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(BusinessEntityRecord.objects.count(), 1)
 
+    def test_registration_create_and_work_deps_use_ranked_joined_products(self):
+        response = self._post_registration(type_id=[self.product.pk, self.second_product.pk])
+
+        self.assertEqual(response.status_code, 200)
+        project = ProjectRegistration.objects.get(number=4444)
+        self.assertEqual(project.type_short_display, f"DD-{self.second_product.short_name}")
+        self.assertEqual(
+            list(project.product_links.order_by("rank").values_list("product_id", flat=True)),
+            [self.product.pk, self.second_product.pk],
+        )
+
+        deps_response = self.client.get(reverse("work_deps"), {"project": project.pk})
+
+        self.assertEqual(deps_response.status_code, 200)
+        self.assertEqual(deps_response.json()["type_short"], f"DD-{self.second_product.short_name}")
+
 
 class WorkVolumePerformerCreationTests(TestCase):
     def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="performers-view-user",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
         self.product = Product.objects.create(
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        self.second_product = Product.objects.create(
+            short_name="QAQC_WORK",
+            name_en="QAQC Work",
+            name_ru="QAQC Work",
+            consulting_type="Горный",
+            service_category="Контроль",
+            service_subtype="Контроль качества",
+            position=2,
         )
         self.project_manager_employee = self._create_employee(
             username="project.manager",
@@ -275,6 +483,16 @@ class WorkVolumePerformerCreationTests(TestCase):
             year=2026,
             project_manager=self.project_manager_name,
         )
+        ProjectRegistrationProduct.objects.create(
+            registration=self.project,
+            product=self.product,
+            rank=1,
+        )
+        ProjectRegistrationProduct.objects.create(
+            registration=self.project,
+            product=self.second_product,
+            rank=2,
+        )
         self.product.sections.create(
             code="PRD",
             short_name="Project Director",
@@ -301,6 +519,15 @@ class WorkVolumePerformerCreationTests(TestCase):
             name_ru="Координатор",
             accounting_type="Раздел",
             position=3,
+        )
+        self.second_product.sections.create(
+            code="QA",
+            short_name="QA Section",
+            short_name_ru="QA раздел",
+            name_en="QA Section",
+            name_ru="QA раздел",
+            accounting_type="Раздел",
+            position=1,
         )
 
     def _create_employee(self, *, username, first_name, last_name, patronymic):
@@ -379,6 +606,107 @@ class WorkVolumePerformerCreationTests(TestCase):
         self.assertEqual(prd.executor, self.project_manager_name)
         self.assertEqual(prd.employee, self.project_manager_employee)
 
+    def test_multi_product_work_item_creates_sections_grouped_by_ranked_products(self):
+        work_item = WorkVolume.objects.create(
+            project=self.project,
+            name="Актив 3",
+            asset_name="Актив 3",
+            manager=self.first_manager_name,
+        )
+
+        codes = list(
+            Performer.objects
+            .filter(work_item=work_item)
+            .order_by("position", "id")
+            .values_list("typical_section__code", flat=True)
+        )
+
+        self.assertEqual(codes, ["PRD", "PRJ", "CRD", "QA"])
+
+    def test_performers_partial_shows_section_product_in_main_table(self):
+        WorkVolume.objects.create(
+            project=self.project,
+            name="Актив 3",
+            asset_name="Актив 3",
+            manager=self.first_manager_name,
+        )
+
+        response = self.client.get(reverse("performers_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "<th class=\"text-nowrap\">Продукт</th>", html=False)
+        self.assertContains(response, self.second_product.short_name)
+
+
+class ProjectProductLinkSyncTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="project-link-staff",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        self.second_product = Product.objects.create(
+            short_name="QAQC_LINK",
+            name_en="QAQC Link",
+            name_ru="QAQC Link",
+            consulting_type="Горный",
+            service_category="Контроль",
+            service_subtype="Контроль качества",
+            position=2,
+        )
+        self.project = ProjectRegistration.objects.create(
+            number=6101,
+            type=self.product,
+            name="Связанный проект",
+            year=2026,
+        )
+        ProjectRegistrationProduct.objects.create(
+            registration=self.project,
+            product=self.product,
+            rank=1,
+        )
+        ProjectRegistrationProduct.objects.create(
+            registration=self.project,
+            product=self.second_product,
+            rank=2,
+        )
+        self.work_item = WorkVolume.objects.create(
+            project=self.project,
+            asset_name="Актив 1",
+            manager="Менеджер",
+            position=1,
+        )
+        self.legal_entity = LegalEntity.objects.get(work_item=self.work_item)
+
+    def test_product_short_name_change_updates_joined_work_and_legal_rows(self):
+        self.product.short_name = "CONS"
+        self.product.save()
+
+        self.work_item.refresh_from_db()
+        self.legal_entity.refresh_from_db()
+
+        self.project.refresh_from_db()
+
+        expected_type = f"CONS-{self.second_product.short_name}"
+        self.assertEqual(self.project.type_short_display, expected_type)
+        self.assertEqual(self.work_item.type, expected_type)
+        self.assertEqual(self.legal_entity.work_type, expected_type)
+
+        response = self.client.get(reverse("projects_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, expected_type)
+        self.assertNotContains(response, '<td class="text-nowrap">DD</td>', html=False)
+
 
 class CloudStorageProjectRoutingTests(TestCase):
     def setUp(self):
@@ -392,7 +720,9 @@ class CloudStorageProjectRoutingTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
         )
         self.project = ProjectRegistration.objects.create(
             number=5001,
@@ -487,7 +817,9 @@ class NextcloudSourceDataWorkspaceFlowTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
         )
         self.project = ProjectRegistration.objects.create(
             number=5003,
@@ -594,7 +926,9 @@ class NextcloudContractProjectFlowTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
         )
         self.project = ProjectRegistration.objects.create(
             number=5002,

@@ -621,8 +621,6 @@
       if (!typeSelect || !countrySelect || !codeInput || !phoneInput) return;
 
       form.dataset.telPhoneBound = '1';
-      var codeIti = null;
-      var phoneIti = null;
       var phoneFormattingInProgress = false;
       var landlineLookupToken = 0;
       var ruLandlineShapeHint = null;
@@ -696,6 +694,28 @@
         return isLandline() ? (selectedMeta.landlinePlaceholder || '') : (selectedMeta.mobilePlaceholder || '');
       }
 
+      function renderFlagBadge(meta) {
+        if (!flagBadge) return;
+        var iso2 = meta && meta.iso2 ? String(meta.iso2).trim().toLowerCase() : '';
+        flagBadge.replaceChildren();
+        if (/^[a-z]{2}$/.test(iso2)) {
+          var icon = document.createElement('span');
+          icon.className = 'iti__flag iti__' + iso2;
+          icon.setAttribute('aria-hidden', 'true');
+          flagBadge.appendChild(icon);
+
+          var srText = document.createElement('span');
+          srText.className = 'iti__a11y-text';
+          srText.textContent = iso2.toUpperCase();
+          flagBadge.appendChild(srText);
+          return;
+        }
+        var fallback = document.createElement('span');
+        fallback.className = 'tel-flag-badge__fallback';
+        fallback.textContent = '--';
+        flagBadge.appendChild(fallback);
+      }
+
       function syncPhoneTypeUi() {
         if (countryWrap) {
           countryWrap.classList.toggle('col-md-9', !shouldShowRegionField());
@@ -713,9 +733,7 @@
       function fallbackSyncCodeFromCountry() {
         var currentMeta = selectedMeta();
         codeInput.value = currentMeta && currentMeta.dialCode ? currentMeta.dialCode : '';
-        if (flagBadge) {
-          flagBadge.textContent = currentMeta && currentMeta.flag ? currentMeta.flag : '--';
-        }
+        renderFlagBadge(currentMeta);
         phoneInput.placeholder = currentPlaceholder(currentMeta);
       }
 
@@ -723,19 +741,11 @@
         var selectedMeta = metaForCountryId(countrySelect.value);
         if (!selectedMeta) {
           codeInput.value = '';
-          if (flagBadge) flagBadge.textContent = '--';
+          renderFlagBadge(null);
           return;
         }
-        if (codeIti && selectedMeta.iso2) {
-          codeIti.setCountry(selectedMeta.iso2);
-        }
-        if (phoneIti && selectedMeta.iso2 && !isLandline()) {
-          phoneIti.setCountry(selectedMeta.iso2);
-        }
         codeInput.value = selectedMeta.dialCode || '';
-        if (flagBadge) {
-          flagBadge.textContent = selectedMeta.flag || '--';
-        }
+        renderFlagBadge(selectedMeta);
       }
 
       function formatNumberAsYouType(rawValue) {
@@ -1017,17 +1027,6 @@
           phoneInput.value = formatted;
         }
 
-        if (phoneIti) {
-          try {
-            phoneIti.setNumber(rawValue);
-            var selectedCountry = phoneIti.getSelectedCountryData();
-            if (selectedCountry && selectedCountry.iso2) {
-              syncCountrySelectByIso2(selectedCountry.iso2);
-            }
-          } catch (error) {
-          }
-        }
-
         if (isRussianRegistryPhone()) {
           await syncRuRegistryLookup(rawValue, { applyFormattedNumber: false });
         } else {
@@ -1147,47 +1146,6 @@
         fallbackSyncCodeFromCountry();
       });
 
-      if (window.intlTelInput) {
-        try {
-          var loadUtils = function () {
-            return import('https://cdn.jsdelivr.net/npm/intl-tel-input@26.3.1/dist/js/utils.js');
-          };
-
-          codeIti = window.intlTelInput(codeInput, {
-            allowDropdown: true,
-            autoPlaceholder: 'off',
-            formatAsYouType: false,
-            loadUtils: loadUtils,
-            nationalMode: false,
-            strictMode: false,
-            useFullscreenPopup: false,
-          });
-
-          phoneIti = window.intlTelInput(phoneInput, {
-            allowDropdown: false,
-            autoPlaceholder: 'polite',
-            loadUtils: loadUtils,
-            nationalMode: true,
-            strictMode: false,
-            useFullscreenPopup: false,
-          });
-
-          codeInput.addEventListener('countrychange', function () {
-            var selectedCountry = codeIti.getSelectedCountryData();
-            if (selectedCountry && selectedCountry.iso2) {
-              syncCountrySelectByIso2(selectedCountry.iso2);
-              clearRuLandlineShapeHint();
-              syncPhoneTypeUi();
-              syncWidgetsFromCountry();
-              normalizePhoneValue();
-            }
-          });
-        } catch (error) {
-          codeIti = null;
-          phoneIti = null;
-        }
-      }
-
       syncPhoneTypeUi();
       syncWidgetsFromCountry();
       seedRuLandlineShapeHintFromCurrentValue();
@@ -1217,7 +1175,24 @@
       phoneInput.placeholder = selectedMeta ? (phoneType === 'landline' ? (selectedMeta.landlinePlaceholder || '') : (selectedMeta.mobilePlaceholder || '')) : '';
     }
     if (flagBadge) {
-      flagBadge.textContent = selectedMeta && selectedMeta.flag ? selectedMeta.flag : '--';
+      flagBadge.replaceChildren();
+      if (selectedMeta && /^[a-z]{2}$/.test(String(selectedMeta.iso2 || '').trim().toLowerCase())) {
+        var iso2 = String(selectedMeta.iso2 || '').trim().toLowerCase();
+        var icon = document.createElement('span');
+        icon.className = 'iti__flag iti__' + iso2;
+        icon.setAttribute('aria-hidden', 'true');
+        flagBadge.appendChild(icon);
+
+        var srText = document.createElement('span');
+        srText.className = 'iti__a11y-text';
+        srText.textContent = iso2.toUpperCase();
+        flagBadge.appendChild(srText);
+      } else {
+        var fallback = document.createElement('span');
+        fallback.className = 'tel-flag-badge__fallback';
+        fallback.textContent = '--';
+        flagBadge.appendChild(fallback);
+      }
     }
   });
 

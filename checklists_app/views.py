@@ -241,7 +241,7 @@ def _project_options():
     options = []
     for reg in regs:
         short_uid = (reg.short_uid or "").strip()
-        product_short = _product_short_label(getattr(reg, "type", None))
+        product_short = getattr(reg, "type_short_display", "") or _product_short_label(getattr(reg, "type", None))
         options.append(
             {
                 "id": reg.id,
@@ -249,7 +249,7 @@ def _project_options():
                 "label": " ".join(x for x in (short_uid, product_short, reg.name) if x),
                 "code": short_uid or f"{reg.number}{reg.group_alpha2}".upper(),
                 "product_short": product_short,
-                "product_id": getattr(getattr(reg, "type", None), "id", None),
+                "product_id": getattr(getattr(reg, "primary_product", None), "id", None) or getattr(getattr(reg, "type", None), "id", None),
             }
         )
     return options
@@ -259,10 +259,9 @@ def _resolve_section(project: ProjectRegistration, section_id: Optional[str], as
     if section_id:
         section = TypicalSection.objects.filter(
             pk=section_id,
-            product=project.type,
             accounting_type="Раздел",
         ).first()
-        if section:
+        if section and project.has_product(section.product_id):
             return section
 
     meta = _project_meta(project, asset_name)
@@ -330,10 +329,13 @@ def _ensure_checklist_items(project: ProjectRegistration, section: TypicalSectio
     if ChecklistItem.objects.filter(project=project, section=section).exists():
         return
 
-    if not project.type:
+    if not project.has_products:
         return
 
-    table = RequestTable.objects.filter(product=project.type, section=section).first()
+    if not project.has_product(section.product_id):
+        return
+
+    table = RequestTable.objects.filter(product_id=section.product_id, section=section).first()
     if not table:
         return
 
@@ -878,7 +880,7 @@ def _comment_update_event_payload(note: ChecklistRequestNote, field: str) -> dic
 
 
 def _resolve_grid_scope(project: ProjectRegistration, asset_name: str, section_id: str) -> dict:
-    if not project.type:
+    if not project.has_products:
         return {
             "error": "У проекта не указан тип продукта",
             "all_mode": False,
@@ -1876,7 +1878,7 @@ def table_partial(request):
         ProjectRegistration.objects.select_related("type"),
         short_uid=project_uid,
     )
-    if not project.type:
+    if not project.has_products:
         return render(
             request,
             "checklists_app/status_table.html",
@@ -2164,7 +2166,7 @@ def item_form_create(request):
     section = get_object_or_404(TypicalSection, pk=section_id) if section_id else None
 
     sections_list = []
-    if all_mode and project and project.type:
+    if all_mode and project and project.has_products:
         perf_qs = (
             Performer.objects.filter(registration=project)
             .exclude(asset_name="")
@@ -2885,11 +2887,11 @@ def shared_page(request, token: str):
         "id": project.id,
         "short_uid": project.short_uid or "",
         "label": " ".join(
-            x for x in (project.short_uid or "", _product_short_label(getattr(project, "type", None)), project.name) if x
+            x for x in (project.short_uid or "", project.type_short_display or _product_short_label(getattr(project, "type", None)), project.name) if x
         ),
         "code": (project.short_uid or "").strip() or f"{project.number}{project.group_alpha2}".upper(),
-        "product_short": _product_short_label(getattr(project, "type", None)),
-        "product_id": getattr(getattr(project, "type", None), "id", None),
+        "product_short": project.type_short_display or _product_short_label(getattr(project, "type", None)),
+        "product_id": getattr(getattr(project, "primary_product", None), "id", None) or getattr(getattr(project, "type", None), "id", None),
     }]
 
     try:
@@ -3086,7 +3088,7 @@ def shared_table_partial(request, token: str):
     asset_name = (request.GET.get("asset") or "").strip()
     section_id = (request.GET.get("section") or "").strip()
 
-    if not project.type:
+    if not project.has_products:
         return render(request, "checklists_app/status_table.html", {
             "project": project, "section": None,
             "error": "У проекта не указан тип продукта",

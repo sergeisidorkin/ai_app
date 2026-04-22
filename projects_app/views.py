@@ -8,7 +8,18 @@ from django.db.models.functions import Trim
 from django import forms
 from django.utils import timezone
 from classifiers_app.models import LegalEntityIdentifier, LegalEntityRecord
-from .models import ProjectRegistration, WorkVolume, Performer, WorkVolumeItem, LegalEntity, RegistrationWorkspaceFolder, PerformerParticipationSnapshot
+from .models import (
+    LegalEntity,
+    Performer,
+    PerformerParticipationSnapshot,
+    ProjectRegistration,
+    ProjectRegistrationProduct,
+    RegistrationWorkspaceFolder,
+    WorkVolume,
+    WorkVolumeItem,
+    _ensure_performer_rows_for_work_item,
+    _sync_project_registration_primary_product,
+)
 from .forms import ProjectRegistrationForm, ContractConditionsForm, WorkVolumeForm, PerformerForm, BootstrapMixin, LegalEntityForm
 
 import json
@@ -37,7 +48,12 @@ from core.cloud_storage import (
     sanitize_folder_name,
     upload_file as cloud_upload_file,
 )
-from policy_app.models import LAWYER_GROUP, TypicalSection
+from policy_app.models import (
+    LAWYER_GROUP,
+    Product,
+    TypicalSection,
+    build_consulting_catalog_meta,
+)
 from smtp_app.models import ExternalSMTPAccount
 from users_app.models import Employee
 from users_app.forms import FREELANCER_LABEL
@@ -65,16 +81,54 @@ def staff_required(user):
     return user.is_authenticated and user.is_staff
 
 def _projects_context():
-    registrations = ProjectRegistration.objects.select_related("country", "group_member", "type").all()
-    work_items = WorkVolume.objects.select_related("project", "project__group_member", "country").all()
+    product_prefetch = models.Prefetch(
+        "product_links",
+        queryset=ProjectRegistrationProduct.objects.select_related("product").order_by("rank", "id"),
+    )
+    registrations = (
+        ProjectRegistration.objects
+        .select_related("country", "group_member", "type")
+        .prefetch_related(product_prefetch)
+        .all()
+    )
+    work_items = (
+        WorkVolume.objects
+        .select_related("project", "project__group_member", "project__type", "country")
+        .prefetch_related(
+            models.Prefetch(
+                "project__product_links",
+                queryset=ProjectRegistrationProduct.objects.select_related("product").order_by("rank", "id"),
+            )
+        )
+        .all()
+    )
     legal_entities = (
         LegalEntity.objects
-        .select_related("project", "project__group_member", "work_item", "work_item__project", "country")
+        .select_related(
+            "project",
+            "project__group_member",
+            "project__type",
+            "work_item",
+            "work_item__project",
+            "work_item__project__type",
+            "country",
+        )
+        .prefetch_related(
+            models.Prefetch(
+                "project__product_links",
+                queryset=ProjectRegistrationProduct.objects.select_related("product").order_by("rank", "id"),
+            ),
+            models.Prefetch(
+                "work_item__project__product_links",
+                queryset=ProjectRegistrationProduct.objects.select_related("product").order_by("rank", "id"),
+            ),
+        )
         .all()
     )
     legal_projects = (
         ProjectRegistration.objects
         .select_related("type")
+        .prefetch_related(product_prefetch)
         .filter(legal_entities__isnull=False)
         .distinct()
         .order_by("-number", "-id")
@@ -82,11 +136,17 @@ def _projects_context():
     work_projects = (
         ProjectRegistration.objects
         .select_related("type")
+        .prefetch_related(product_prefetch)
         .filter(work_items__isnull=False)
         .distinct()
         .order_by("-number", "-id")
     )
-    reg_filter_projects = ProjectRegistration.objects.select_related("type").order_by("-number", "-id")
+    reg_filter_projects = (
+        ProjectRegistration.objects
+        .select_related("type")
+        .prefetch_related(product_prefetch)
+        .order_by("-number", "-id")
+    )
     return {
         "registrations": registrations,
         "reg_filter_projects": reg_filter_projects,
@@ -96,6 +156,165 @@ def _projects_context():
         "legal_entities": legal_entities,
         "legal_projects": legal_projects,
     }
+
+
+def _product_option_label(product):
+    return " ".join(
+        part for part in ((product.short_name or "").strip(), (product.display_name or "").strip()) if part
+    )
+
+
+def _registration_product_catalog():
+    products = list(Product.objects.order_by("position", "id"))
+    catalog_meta = build_consulting_catalog_meta()
+    consulting_types = []
+    service_categories = []
+    seen_consulting_types = set()
+    seen_service_categories = set()
+    for item in catalog_meta["consulting_types"]:
+        label = item["label"]
+        if label and label not in seen_consulting_types:
+            seen_consulting_types.add(label)
+            consulting_types.append(label)
+    for item in catalog_meta["service_categories"]:
+        label = item["label"]
+        if label and label not in seen_service_categories:
+            seen_service_categories.add(label)
+            service_categories.append(label)
+    return {
+        "options": [
+            {"id": product.pk, "label": _product_option_label(product)}
+            for product in products
+        ],
+        "meta": {
+            "consulting_types": consulting_types,
+            "service_categories": service_categories,
+            "products": [
+                {
+                    "id": product.pk,
+                    "label": _product_option_label(product),
+                    "short_label": (product.short_name or "").strip(),
+                    "consulting_type": (product.consulting_type_display or "").strip(),
+                    "service_category": (product.service_category_display or "").strip(),
+                    "service_subtype": (product.service_subtype_display or "").strip(),
+                }
+                for product in products
+            ],
+        },
+    }
+
+
+def _request_list(data, key):
+    if hasattr(data, "getlist"):
+        return [str(value or "").strip() for value in data.getlist(key)]
+    value = data.get(key, [])
+    if isinstance(value, (list, tuple)):
+        return [str(item or "").strip() for item in value]
+    return [str(value or "").strip()]
+
+
+def _registration_selected_type_rows(form, registration=None):
+    if form.is_bound:
+        consulting_types = _request_list(form.data, "type_consulting")
+        service_categories = _request_list(form.data, "type_service_category")
+        service_subtypes = _request_list(form.data, "type_service_subtype")
+        product_ids = _request_list(form.data, "type_id")
+        row_count = max(
+            len(consulting_types),
+            len(service_categories),
+            len(service_subtypes),
+            len(product_ids),
+            1,
+        )
+        rows = []
+        for index in range(row_count):
+            row = {
+                "rank": index + 1,
+                "consulting_type": consulting_types[index] if index < len(consulting_types) else "",
+                "service_category": service_categories[index] if index < len(service_categories) else "",
+                "service_subtype": service_subtypes[index] if index < len(service_subtypes) else "",
+                "product_id": product_ids[index] if index < len(product_ids) else "",
+            }
+            has_data = any(
+                row[key]
+                for key in ("consulting_type", "service_category", "service_subtype", "product_id")
+            )
+            if has_data or row_count == 1:
+                rows.append(row)
+        return rows or [{
+            "rank": 1,
+            "consulting_type": "",
+            "service_category": "",
+            "service_subtype": "",
+            "product_id": "",
+        }]
+    if registration is None:
+        registration = getattr(form, "instance", None)
+    if registration and getattr(registration, "pk", None):
+        return [
+            {
+                "rank": index,
+                "consulting_type": (product.consulting_type_display or "").strip(),
+                "service_category": (product.service_category_display or "").strip(),
+                "service_subtype": (product.service_subtype_display or "").strip(),
+                "product_id": str(product.pk),
+            }
+            for index, product in enumerate(registration.ordered_products(), start=1)
+        ] or [{
+            "rank": 1,
+            "consulting_type": "",
+            "service_category": "",
+            "service_subtype": "",
+            "product_id": "",
+        }]
+    return [{
+        "rank": 1,
+        "consulting_type": "",
+        "service_category": "",
+        "service_subtype": "",
+        "product_id": "",
+    }]
+
+
+def _registration_form_context(form, action, registration=None):
+    catalog = _registration_product_catalog()
+    ranked_products = _registration_selected_type_rows(form, registration)
+    return {
+        "form": form,
+        "action": action,
+        "registration": registration,
+        "product_options": catalog["options"],
+        "registration_type_meta_json": json.dumps(catalog["meta"], ensure_ascii=False),
+        "ranked_products": ranked_products,
+    }
+
+
+def _save_ranked_registration_products(registration, product_ids):
+    normalized_ids = []
+    seen = set()
+    for raw_id in product_ids:
+        try:
+            product_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if product_id in seen:
+            continue
+        seen.add(product_id)
+        normalized_ids.append(product_id)
+
+    ProjectRegistrationProduct.objects.filter(registration=registration).delete()
+    if normalized_ids:
+        ProjectRegistrationProduct.objects.bulk_create(
+            [
+                ProjectRegistrationProduct(
+                    registration=registration,
+                    product_id=product_id,
+                    rank=rank,
+                )
+                for rank, product_id in enumerate(normalized_ids, start=1)
+            ]
+        )
+    _sync_project_registration_primary_product(registration.pk)
 
 def _render_projects_updated(request):
     resp = render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context())
@@ -157,14 +376,15 @@ def projects_partial(request):
 def registration_form_create(request):
     if request.method == "GET":
         form = ProjectRegistrationForm()
-        return render(request, REG_FORM_TEMPLATE, {"form": form, "action": "create"})
+        return render(request, REG_FORM_TEMPLATE, _registration_form_context(form, "create"))
     form = ProjectRegistrationForm(request.POST)
     if not form.is_valid():
-        return render(request, REG_FORM_TEMPLATE, {"form": form, "action": "create"})
+        return render(request, REG_FORM_TEMPLATE, _registration_form_context(form, "create"))
     obj = form.save(commit=False)
     if not getattr(obj, "position", 0):
         obj.position = _next_position(ProjectRegistration)
     obj.save()
+    _save_ranked_registration_products(obj, getattr(form, "cleaned_type_ids", []))
     _sync_to_legal_entity_record(
         obj.customer, obj.country, obj.identifier,
         obj.registration_number, obj.registration_date, request.user,
@@ -180,11 +400,14 @@ def registration_form_edit(request, pk: int):
     reg = get_object_or_404(ProjectRegistration, pk=pk)
     if request.method == "GET":
         form = ProjectRegistrationForm(instance=reg)
-        return render(request, REG_FORM_TEMPLATE, {"form": form, "action": "edit", "registration": reg})
+        return render(request, REG_FORM_TEMPLATE, _registration_form_context(form, "edit", reg))
     form = ProjectRegistrationForm(request.POST, instance=reg)
     if not form.is_valid():
-        return render(request, REG_FORM_TEMPLATE, {"form": form, "action": "edit", "registration": reg})
+        return render(request, REG_FORM_TEMPLATE, _registration_form_context(form, "edit", reg))
     obj = form.save()
+    _save_ranked_registration_products(obj, getattr(form, "cleaned_type_ids", []))
+    for work_item in obj.work_items.select_related("project").all():
+        _ensure_performer_rows_for_work_item(work_item)
     _sync_to_legal_entity_record(
         obj.customer, obj.country, obj.identifier,
         obj.registration_number, obj.registration_date, request.user,
@@ -275,8 +498,8 @@ def work_deps(request):
 
     return JsonResponse({
         "ok": True,
-        "type": str(reg.type) if reg.type_id else "",
-        "type_short": getattr(reg.type, "short_name", "") if reg.type_id else "",
+        "type": reg.type_short_display,
+        "type_short": reg.type_short_display,
         "name": reg.name or "",
         "project_manager": reg.project_manager or "",
         "country_id": reg.country_id or "",
@@ -318,15 +541,14 @@ def registration_form_edit(request, pk: int):
     reg = get_object_or_404(ProjectRegistration, pk=pk)
     if request.method == "GET":
         form = ProjectRegistrationForm(instance=reg)
-        return render(request, REG_FORM_TEMPLATE, {
-            "form": form, "action": "edit", "registration": reg
-        })
+        return render(request, REG_FORM_TEMPLATE, _registration_form_context(form, "edit", reg))
     form = ProjectRegistrationForm(request.POST, instance=reg)
     if not form.is_valid():
-        return render(request, REG_FORM_TEMPLATE, {
-            "form": form, "action": "edit", "registration": reg
-        })
+        return render(request, REG_FORM_TEMPLATE, _registration_form_context(form, "edit", reg))
     obj = form.save()
+    _save_ranked_registration_products(obj, getattr(form, "cleaned_type_ids", []))
+    for work_item in obj.work_items.select_related("project").all():
+        _ensure_performer_rows_for_work_item(work_item)
     _sync_to_legal_entity_record(
         obj.customer, obj.country, obj.identifier,
         obj.registration_number, obj.registration_date, request.user,
@@ -335,7 +557,7 @@ def registration_form_edit(request, pk: int):
 
 class RegistrationChoiceField(forms.ModelChoiceField):
     def label_from_instance(self, obj):
-        type_label = getattr(obj.type, "short_name", obj.type) if obj.type_id else ""
+        type_label = getattr(obj, "type_short_display", "") or ""
         name_label = obj.name or ""
         parts = [obj.short_uid]
         if type_label:
@@ -352,6 +574,30 @@ def _employee_full_name(employee):
         employee.patronymic.strip(),
     ]
     return " ".join(part for part in parts if part).strip()
+
+
+def _ordered_registration_sections(registration):
+    product_rank_map = getattr(registration, "product_rank_map", {})
+    product_ids = list(product_rank_map.keys())
+    if not product_ids and getattr(registration, "type_id", None):
+        product_ids = [registration.type_id]
+        product_rank_map = {registration.type_id: 1}
+    if not product_ids:
+        return []
+    sections = list(
+        TypicalSection.objects
+        .filter(product_id__in=product_ids)
+        .select_related("product", "expertise_dir")
+        .order_by("position", "id")
+    )
+    sections.sort(
+        key=lambda section: (
+            product_rank_map.get(section.product_id, 999999),
+            section.position,
+            section.id,
+        )
+    )
+    return sections
 
 
 def _executor_choices(current_value=""):
@@ -667,8 +913,23 @@ def _bind_dynamic_performer_fields(form, *, data=None, instance=None):
         qs = TypicalSection.objects.none()
         if reg_id:
             reg = ProjectRegistration.objects.select_related("type").filter(pk=reg_id).first()
-            if reg and reg.type_id:
-                qs = TypicalSection.objects.filter(product=reg.type).select_related("product").order_by("position", "id")
+            if reg:
+                section_ids = [section.pk for section in _ordered_registration_sections(reg)]
+                if section_ids:
+                    ordering = models.Case(
+                        *[
+                            models.When(pk=section_id, then=position)
+                            for position, section_id in enumerate(section_ids)
+                        ],
+                        default=len(section_ids),
+                        output_field=models.IntegerField(),
+                    )
+                    qs = (
+                        TypicalSection.objects
+                        .filter(pk__in=section_ids)
+                        .select_related("product")
+                        .order_by(ordering, "id")
+                    )
         form.fields["typical_section"].queryset = qs
         form.fields["typical_section"].label_from_instance = _typical_section_option_label
 
@@ -698,14 +959,41 @@ def _bind_dynamic_performer_fields(form, *, data=None, instance=None):
 
 def _performers_context(user=None):
     active_participation_statuses = ["Не начат", "В работе"]
+    registration_products_prefetch = models.Prefetch(
+        "registration__product_links",
+        queryset=ProjectRegistrationProduct.objects.select_related("product").order_by("rank", "id"),
+    )
+    project_products_prefetch = models.Prefetch(
+        "product_links",
+        queryset=ProjectRegistrationProduct.objects.select_related("product").order_by("rank", "id"),
+    )
     performers = (
         Performer.objects
-        .select_related("registration", "registration__type", "typical_section", "typical_section__expertise_direction", "employee", "employee__user", "currency")
+        .select_related(
+            "registration",
+            "registration__type",
+            "typical_section",
+            "typical_section__product",
+            "typical_section__expertise_direction",
+            "employee",
+            "employee__user",
+            "currency",
+        )
+        .prefetch_related(registration_products_prefetch)
         .order_by("position", "id")
     )
     participation_performers = (
         Performer.objects
-        .select_related("registration", "registration__type", "typical_section", "typical_section__expertise_direction", "employee", "employee__user")
+        .select_related(
+            "registration",
+            "registration__type",
+            "typical_section",
+            "typical_section__product",
+            "typical_section__expertise_direction",
+            "employee",
+            "employee__user",
+        )
+        .prefetch_related(registration_products_prefetch)
         .annotate(executor_trim=Trim("executor"))
         .filter(registration__status__in=active_participation_statuses)
         .exclude(executor_trim="")
@@ -715,12 +1003,21 @@ def _performers_context(user=None):
     participation_projects = (
         ProjectRegistration.objects
         .select_related("type")
+        .prefetch_related(project_products_prefetch)
         .filter(id__in=participation_project_ids)
         .order_by("-number", "-id")
     )
     info_request_performers = (
         Performer.objects
-        .select_related("registration", "registration__type", "typical_section", "employee", "employee__user")
+        .select_related(
+            "registration",
+            "registration__type",
+            "typical_section",
+            "typical_section__product",
+            "employee",
+            "employee__user",
+        )
+        .prefetch_related(registration_products_prefetch)
         .annotate(executor_trim=Trim("executor"))
         .filter(
             registration__status__in=active_participation_statuses,
@@ -733,12 +1030,22 @@ def _performers_context(user=None):
     info_request_projects = (
         ProjectRegistration.objects
         .select_related("type")
+        .prefetch_related(project_products_prefetch)
         .filter(id__in=info_request_project_ids)
         .order_by("-number", "-id")
     )
     contract_performers = (
         Performer.objects
-        .select_related("registration", "registration__type", "typical_section", "employee", "employee__user", "currency")
+        .select_related(
+            "registration",
+            "registration__type",
+            "typical_section",
+            "typical_section__product",
+            "employee",
+            "employee__user",
+            "currency",
+        )
+        .prefetch_related(registration_products_prefetch)
         .annotate(executor_trim=Trim("executor"))
         .filter(
             registration__status__in=active_participation_statuses,
@@ -752,6 +1059,7 @@ def _performers_context(user=None):
     contract_projects = (
         ProjectRegistration.objects
         .select_related("type")
+        .prefetch_related(project_products_prefetch)
         .filter(id__in=contract_project_ids)
         .order_by("-number", "-id")
     )
@@ -965,13 +1273,23 @@ def _build_direction_hourly_rate_map():
 
 
 def _performer_form_ctx(form, action: str, performer=None):
-    regs = ProjectRegistration.objects.select_related("type", "group_member").order_by("position", "id")
+    regs = (
+        ProjectRegistration.objects
+        .select_related("type", "group_member")
+        .prefetch_related(
+            models.Prefetch(
+                "product_links",
+                queryset=ProjectRegistrationProduct.objects.select_related("product").order_by("rank", "id"),
+            )
+        )
+        .order_by("position", "id")
+    )
 
     reg_map = {
         str(r.id): {
             "group": r.group_display,
-            "type": str(r.type) if r.type_id else "",
-            "type_short": getattr(r.type, "short_name", "") if r.type_id else "",
+            "type": r.type_short_display,
+            "type_short": r.type_short_display,
             "type_id": r.type_id,
             "name": r.name,
         }
@@ -989,23 +1307,19 @@ def _performer_form_ctx(form, action: str, performer=None):
     }
     sections_map = {}
     for r in regs:
-        if not r.type_id:
+        ordered_sections = _ordered_registration_sections(r)
+        if not ordered_sections:
             sections_map[str(r.id)] = []
             continue
-        qs = (
-            TypicalSection.objects
-            .filter(product=r.type)
-            .select_related("product", "expertise_dir")
-            .order_by("position", "id")
-        )
         sections_map[str(r.id)] = [
             {
                 "id": s.id,
                 "label": _typical_section_option_label(s),
+                "product_id": s.product_id,
                 "pricing_method": (s.expertise_dir.pricing_method or "") if s.expertise_dir_id else "",
                 "direction_id": s.expertise_direction_id,
             }
-            for s in qs
+            for s in ordered_sections
         ]
 
     executor_grade_map = _build_executor_grade_map()
@@ -1532,7 +1846,7 @@ def legal_entity_work_deps(request):
     return JsonResponse({
         "ok": True,
         "project": getattr(work.project, "short_uid", ""),
-        "type": work.type or "",
+        "type": getattr(work.project, "type_short_display", "") or work.type or "",
         "name": work.name or "",
         "country_id": work.country_id or "",
     })
@@ -1932,7 +2246,7 @@ def create_contract_project(request):
     def _find_template(perf):
         """Find the best matching ContractTemplate for a Performer row."""
         project = perf.registration
-        product = project.type
+        product = getattr(getattr(perf, "typical_section", None), "product", None) or getattr(project, "primary_product", None) or project.type
         if not product:
             return None
 

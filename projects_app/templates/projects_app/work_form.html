@@ -127,8 +127,8 @@
 
   projectSel?.addEventListener('change', refillByProject);
 
-  // На открытии модалки: если редактирование и поля пустые — тоже подтянем
-  if (projectSel?.value && (!typeInput?.value || !nameInput?.value || !managerSel?.value)) {
+  // На открытии модалки всегда подтягиваем актуальные данные из связанного проекта
+  if (projectSel?.value) {
     refillByProject();
   }
 

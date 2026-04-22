@@ -844,9 +844,10 @@ class ContactsAppTests(TestCase):
         self.assertEqual(form.fields["code"].initial, "+7")
         self.assertEqual(form.fields["valid_from"].initial, date.today())
         self.assertEqual(form.fields["code"].widget.attrs["placeholder"], "Код")
-        self.assertIn('"flag": "🇷🇺"', form.country_meta_json)
+        self.assertIn('"iso2": "ru"', form.country_meta_json)
         self.assertIn('"mobilePlaceholder":', form.country_meta_json)
         self.assertIn('"landlinePlaceholder":', form.country_meta_json)
+        self.assertEqual(form.initial_country_iso2, "ru")
         self.assertTrue(form.fields["region"].widget.attrs["readonly"])
 
     def test_tel_form_show_region_field_only_for_russia(self):
@@ -914,6 +915,49 @@ class ContactsAppTests(TestCase):
         self.assertEqual(form.cleaned_data["code"], "+7")
         self.assertEqual(form.cleaned_data["phone_number"], "(705) 186-10-36")
         self.assertEqual(form.cleaned_data["region"], "")
+
+    def test_tel_form_strips_digit_only_country_code_for_non_ru_landline(self):
+        # Non-RU landlines skip ``phonenumbers`` normalization, so the
+        # country-code prefix has to be stripped here to avoid duplicating
+        # the leading ``1`` in ``phone_number`` while ``code`` already holds
+        # ``+1``.
+        form = PhoneRecordForm(
+            data={
+                "person": self.person.pk,
+                "phone_type": PhoneRecord.PHONE_TYPE_LANDLINE,
+                "country": self.us_country.pk,
+                "code": "+1",
+                "phone_number": "14155551234",
+                "region": "",
+                "extension": "",
+                "valid_from": "",
+                "valid_to": "",
+            }
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.cleaned_data["code"], "+1")
+        self.assertEqual(form.cleaned_data["phone_number"], "4155551234")
+
+    def test_tel_form_strips_digit_only_country_code_for_ru_mobile(self):
+        form = PhoneRecordForm(
+            data={
+                "person": self.person.pk,
+                "phone_type": PhoneRecord.PHONE_TYPE_MOBILE,
+                "country": self.country.pk,
+                "code": "+7",
+                "phone_number": "79991234567",
+                "valid_from": "",
+                "valid_to": "",
+            }
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.cleaned_data["code"], "+7")
+        self.assertNotIn("+7", form.cleaned_data["phone_number"])
+        self.assertFalse(form.cleaned_data["phone_number"].startswith("8"))
+        self.assertEqual(form.cleaned_data["phone_number"], "(999) 123-45-67")
+        self.assertEqual(form.cleaned_data["region"], "Москва")
 
     def test_tel_form_keeps_landline_number_unformatted_and_stores_extension(self):
         form = PhoneRecordForm(

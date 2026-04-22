@@ -22,7 +22,14 @@ from yandexdisk_app.workspace import (
 
 class WorkspaceFolderVariablesTests(SimpleTestCase):
     def make_project(self, *, short_uid="444410RU", product_short="DD", name="Проект Альфа"):
-        product = Product(short_name=product_short, name_en="Due Diligence", name_ru="ДД", service_type="service")
+        product = Product(
+            short_name=product_short,
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
         return ProjectRegistration(short_uid=short_uid, type=product, name=name)
 
     def test_resolve_workspace_folder_name_replaces_project_label(self):
@@ -78,7 +85,9 @@ class WorkspacePublishingTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
         )
         self.project = ProjectRegistration.objects.create(
             number=4444,
@@ -111,7 +120,9 @@ class FolderSyncTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
         )
         self.project = ProjectRegistration.objects.create(
             number=6001,

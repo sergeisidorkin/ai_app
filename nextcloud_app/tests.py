@@ -470,7 +470,9 @@ class NextcloudWorkspaceTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
         )
         self.project = ProjectRegistration.objects.create(
             number=6001,
@@ -623,7 +625,9 @@ class NextcloudProposalWorkspaceTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
         )
         self.proposal = ProposalRegistration.objects.create(
             number=3333,

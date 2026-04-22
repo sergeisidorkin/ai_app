@@ -42,7 +42,7 @@ from policy_app.models import (
     TypicalServiceComposition,
     TypicalServiceTerm,
 )
-from projects_app.models import ProjectRegistration
+from projects_app.models import ProjectRegistration, ProjectRegistrationProduct
 from users_app.models import Employee
 from yandexdisk_app.models import YandexDiskAccount
 
@@ -109,7 +109,9 @@ class ProposalDocumentGenerationTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
         self.country = OKSMCountry.objects.create(
@@ -940,7 +942,9 @@ class ProposalDispatchSendTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
         self.country = OKSMCountry.objects.create(
@@ -1034,6 +1038,16 @@ class ProposalDispatchSendTests(TestCase):
             agreement_number=f"IMCM/{self.successful_proposal.number}",
         )
         self.assertEqual(project.type, self.successful_proposal.type)
+        self.assertEqual(project.type_short_display, self.successful_proposal.type.short_name)
+        self.assertEqual(
+            list(
+                ProjectRegistrationProduct.objects
+                .filter(registration=project)
+                .order_by("rank")
+                .values_list("product_id", flat=True)
+            ),
+            [self.successful_proposal.type_id],
+        )
         self.assertEqual(project.name, self.successful_proposal.name)
         self.assertEqual(project.year, self.successful_proposal.year)
         self.assertEqual(project.customer, self.successful_proposal.customer)
@@ -1412,7 +1426,9 @@ class ProposalDispatchSignTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
         LetterTemplate.objects.update_or_create(
@@ -1608,7 +1624,9 @@ class ProposalDispatchFormTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
         self.country = OKSMCountry.objects.create(
@@ -1759,7 +1777,9 @@ class ProposalRegistrationFormTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
         payload = {
@@ -1898,7 +1918,9 @@ class ProposalRegistrationFormTests(TestCase):
             short_name="FIX",
             name_en="Fixed rate",
             name_ru="Фиксированный курс",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
         proposal = ProposalRegistration.objects.create(
@@ -1937,7 +1959,9 @@ class ProposalRegistrationFormTests(TestCase):
             short_name="FIXTXT",
             name_en="Fixed text",
             name_ru="Фиксированный текст",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
         proposal = ProposalRegistration.objects.create(
@@ -1977,7 +2001,9 @@ class ProposalRegistrationFormTests(TestCase):
             short_name="FIXBLANK",
             name_en="Blank rate",
             name_ru="Пустой курс",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
         proposal = ProposalRegistration.objects.create(
@@ -2078,7 +2104,9 @@ class ProposalRegistrationFormTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
         proposal = ProposalRegistration.objects.create(
@@ -2159,7 +2187,9 @@ class ProposalRegistrationFormTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
         form = ProposalRegistrationForm(
@@ -2258,7 +2288,9 @@ class ProposalRegistrationFormTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
 
@@ -2318,7 +2350,9 @@ class ProposalRegistrationFormTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
 
@@ -2369,7 +2403,9 @@ class ProposalRegistrationFormTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
 
@@ -2416,7 +2452,9 @@ class ProposalRegistrationFormTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
         TypicalSection.objects.create(
@@ -2478,7 +2516,9 @@ class ProposalRegistrationFormTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
         proposal = ProposalRegistration.objects.create(
@@ -2702,7 +2742,9 @@ class ProposalRegistrationFormTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
         proposal = ProposalRegistration.objects.create(
@@ -2826,7 +2868,9 @@ class ProposalRegistrationFormTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
 
@@ -2883,7 +2927,9 @@ class ProposalRegistrationFormTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
 
@@ -2934,7 +2980,9 @@ class ProposalRegistrationFormTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
 
@@ -2983,7 +3031,9 @@ class ProposalRegistrationFormTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
 
@@ -3045,7 +3095,9 @@ class ProposalRegistrationFormTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
 
@@ -3107,7 +3159,9 @@ class ProposalRegistrationFormTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
 
@@ -3167,7 +3221,9 @@ class ProposalRegistrationFormTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
 
@@ -3231,7 +3287,9 @@ class ProposalRegistrationFormTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
 
@@ -3290,7 +3348,9 @@ class ProposalRegistrationFormTests(TestCase):
             short_name="ZERO",
             name_en="Zero values",
             name_ru="Нулевые значения",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
 
@@ -3371,7 +3431,9 @@ class ProposalFormContextTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
         section = TypicalSection.objects.create(
@@ -3468,7 +3530,9 @@ class ProposalFormContextTests(TestCase):
             short_name="CUR",
             name_en="Current specialties",
             name_ru="Актуальные специальности",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
         section = TypicalSection.objects.create(
@@ -3515,7 +3579,9 @@ class ProposalFormContextTests(TestCase):
             short_name="TKP",
             name_en="TKP product",
             name_ru="ТКП продукт",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
         TypicalSection.objects.create(
@@ -3554,7 +3620,9 @@ class ProposalFormContextTests(TestCase):
             short_name="SEC",
             name_en="Section product",
             name_ru="Продукт разделов",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
         TypicalSection.objects.create(
@@ -3595,7 +3663,9 @@ class ProposalFormContextTests(TestCase):
             short_name="VAL",
             name_en="Valuation",
             name_ru="Оценка",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=2,
         )
         expertise = ExpertiseDirection.objects.create(
@@ -3664,7 +3734,9 @@ class ProposalFormContextTests(TestCase):
             short_name="TAX",
             name_en="Tax",
             name_ru="Налоги",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=5,
         )
         section = TypicalSection.objects.create(
@@ -3732,7 +3804,9 @@ class ProposalFormContextTests(TestCase):
             short_name="COM",
             name_en="Commercial Offer",
             name_ru="Коммерческое предложение",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=3,
         )
         ServiceGoalReport.objects.create(
@@ -3767,7 +3841,9 @@ class ProposalFormContextTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=4,
         )
         section = TypicalSection.objects.create(
@@ -3814,7 +3890,9 @@ class ProposalFormContextTests(TestCase):
             short_name="TERM",
             name_en="Terms",
             name_ru="Сроки",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=5,
         )
         TypicalServiceTerm.objects.create(
@@ -3894,7 +3972,9 @@ class ProposalNextcloudWorkspaceHookTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
 
@@ -4089,7 +4169,9 @@ class ProposalDispatchDiskColumnTests(TestCase):
             short_name="DD",
             name_en="Due Diligence",
             name_ru="ДД",
-            service_type="service",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
             position=1,
         )
         self.proposal = ProposalRegistration.objects.create(

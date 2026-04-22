@@ -8,6 +8,10 @@ from django.utils.html import format_html
 from django.views.decorators.http import require_POST
 
 from .models import (
+    ConsultingDirection,
+    ConsultingDirectionType,
+    ConsultingServiceSubtype,
+    ConsultingServiceType,
     ExpertiseDirection,
     Grade,
     Product,
@@ -34,21 +38,72 @@ class TypicalSectionSpecialtyInline(admin.TabularInline):
     ordering = ("rank", "id")
 
 
+class ConsultingDirectionTypeInline(admin.TabularInline):
+    model = ConsultingDirectionType
+    extra = 0
+    fields = ("position", "name")
+    ordering = ("position", "id")
+
+
+class ConsultingServiceTypeInline(admin.TabularInline):
+    model = ConsultingServiceType
+    extra = 0
+    fields = ("position", "consulting_type", "name", "code")
+    ordering = ("position", "id")
+
+
+class ConsultingServiceSubtypeInline(admin.TabularInline):
+    model = ConsultingServiceSubtype
+    extra = 0
+    fields = ("position", "service_type", "name")
+    ordering = ("position", "id")
+
+
+@admin.register(ConsultingDirection)
+class ConsultingDirectionAdmin(TimestampedAdmin):
+    list_display = (
+        "position",
+        "consulting_types_display",
+        "service_types_display",
+        "service_codes_display",
+        "service_subtypes_display",
+        "updated_at",
+    )
+    list_editable = ("position",)
+    list_display_links = ("consulting_types_display",)
+    ordering = ("position", "id")
+    inlines = (ConsultingDirectionTypeInline, ConsultingServiceTypeInline, ConsultingServiceSubtypeInline)
+
+
 @admin.register(Product)
 class ProductAdmin(TimestampedAdmin):
+    readonly_fields = TimestampedAdmin.readonly_fields + ("service_code",)
+
     list_display = (
         "position",
         "short_name",
         "display_name",
         "name_en",
         "name_ru",
-        "service_type",
+        "consulting_type_display",
+        "service_category_display",
+        "service_code",
+        "service_subtype_display",
         "owner_display",
         "updated_at",
     )
     list_editable = ("position",)
     list_display_links = ("short_name",)
-    search_fields = ("short_name", "display_name", "name_en", "name_ru", "service_type")
+    search_fields = (
+        "short_name",
+        "display_name",
+        "name_en",
+        "name_ru",
+        "consulting_type",
+        "service_category",
+        "service_code",
+        "service_subtype",
+    )
     filter_horizontal = ("owners",)
     ordering = ("position", "id")
     fieldsets = (
@@ -58,7 +113,10 @@ class ProductAdmin(TimestampedAdmin):
                 "short_name",
                 "display_name",
                 ("name_en", "name_ru"),
-                "service_type",
+                "consulting_type_ref",
+                "service_category_ref",
+                "service_code",
+                "service_subtype_ref",
             ),
         }),
         ("Владельцы", {

@@ -44,9 +44,7 @@ def _sanitize(name: str) -> str:
 
 
 def _build_project_label(project: ProjectRegistration) -> str:
-    type_name = ""
-    if project.type:
-        type_name = getattr(project.type, "short_name", "") or str(project.type)
+    type_name = getattr(project, "type_short_display", "") or ""
     return " ".join(part for part in (project.short_uid, type_name, project.name) if part).strip()
 
 
@@ -381,10 +379,22 @@ def create_source_data_workspace_stream(user, project: ProjectRegistration):
     multi_asset = len(unique_assets) > 1
 
     # -- numbering: NN by position among ALL product sections -------------
+    product_rank_map = getattr(project, "product_rank_map", {})
+    product_ids = list(product_rank_map.keys())
+    if not product_ids and getattr(project, "type_id", None):
+        product_ids = [project.type_id]
+        product_rank_map = {project.type_id: 1}
     all_sections = list(
         TypicalSection.objects
-        .filter(product=project.type)
+        .filter(product_id__in=product_ids)
         .order_by("position", "id")
+    ) if product_ids else []
+    all_sections.sort(
+        key=lambda section: (
+            product_rank_map.get(section.product_id, 999999),
+            section.position,
+            section.id,
+        )
     )
     section_nn = {}  # section.id -> ordinal
     for idx, sec in enumerate(all_sections, start=1):

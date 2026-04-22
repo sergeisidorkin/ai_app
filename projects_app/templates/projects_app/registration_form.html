@@ -16,55 +16,108 @@
   hx-swap="outerHTML">
   <div class="modal-body modal-body-scroll">
     {% csrf_token %}
+    {{ form.type_ids }}
 
     <div class="row g-2">
 
       <div class="col-3">
         <label class="form-label">Номер</label>
-        {{ form.number }}
+        <div class="number-input-shell">
+          {{ form.number }}
+          <div class="number-input-display" id="registration-number-display" aria-hidden="true"></div>
+        </div>
       </div>
-      <div class="col-3">
+      <div class="col-3 registration-col-type-aligned">
         <label class="form-label">Вид соглашения</label>
         {{ form.agreement_type }}
       </div>
-      <div class="col-3">
+      <div class="col-3 registration-col-subtype-aligned">
         <label class="form-label">Группа</label>
         <div class="group-select-shell">
           {{ form.group_member }}
           <div class="group-select-display" id="registration-group-display" aria-hidden="true"></div>
         </div>
       </div>
-      <div class="col-3">
-        <label class="form-label">Тип</label>
-        {{ form.type }}
-      </div>
-      <!-- Строка 2 -->
-      <div class="col-3">
+      <div class="col-3 registration-col-type-block-end">
         <label class="form-label">Название</label>
         {{ form.name }}
       </div>
+      <div class="col-12">
+        <label class="form-label">Тип</label>
+        <script type="application/json" id="registration-type-meta">{{ registration_type_meta_json|safe }}</script>
+        <div class="registration-type-block">
+          <div class="registration-type-card">
+            <div class="registration-type-head">
+              <span aria-hidden="true"></span>
+              <div class="row g-2 registration-type-head-labels">
+                <div class="col-12 col-xl-3">Вид консалтинга</div>
+                <div class="col-12 col-xl-3">Тип услуги</div>
+                <div class="col-12 col-xl-3">Подтип услуги</div>
+                <div class="col-12 col-xl-3">Продукт</div>
+              </div>
+              <span aria-hidden="true"></span>
+            </div>
+            <div id="registration-products-container" class="registration-products-container">
+              {% for rp in ranked_products %}
+                <div class="registration-product-row"
+                     data-selected-product-id="{{ rp.product_id|default:'' }}"
+                     data-selected-consulting-type="{{ rp.consulting_type|default:'' }}"
+                     data-selected-service-category="{{ rp.service_category|default:'' }}"
+                     data-selected-service-subtype="{{ rp.service_subtype|default:'' }}">
+                  <div class="registration-product-row-inner">
+                    <span class="badge rounded-circle d-flex align-items-center justify-content-center registration-product-badge">{{ rp.rank }}</span>
+                    <div class="row g-2 flex-grow-1 registration-product-fields">
+                      <div class="col-12 col-xl-3">
+                        <select name="type_consulting" class="form-select registration-consulting-select"></select>
+                      </div>
+                      <div class="col-12 col-xl-3">
+                        <select name="type_service_category" class="form-select registration-service-category-select"></select>
+                      </div>
+                      <div class="col-12 col-xl-3">
+                        <select name="type_service_subtype" class="form-select registration-service-subtype-select"></select>
+                      </div>
+                      <div class="col-12 col-xl-3">
+                        <div class="registration-product-select-shell">
+                          <select name="type_id" class="form-select registration-product-select"></select>
+                          <div class="registration-product-display" aria-hidden="true"></div>
+                        </div>
+                      </div>
+                    </div>
+                    <button type="button" class="btn btn-sm registration-product-remove" title="Удалить" aria-label="Удалить строку типа">&times;</button>
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          </div>
+          <button type="button" id="registration-add-product" class="btn"
+                  style="margin-top:.75rem; border:1px solid #ced4da; background-color:#fff; color:#495057; font-size:1rem; padding:.375rem .75rem;">
+            <i class="bi bi-plus-circle me-2"></i>Добавить продукт
+          </button>
+        </div>
+      </div>
+
+      <!-- Строка 2 -->
       <div class="col-3">
         <label class="form-label">Статус</label>
         {{ form.status }}
       </div>
-      <div class="col-3">
+      <div class="col-3 registration-col-type-aligned">
         <label class="form-label">Дедлайн</label>
         {{ form.deadline }}
       </div>
-      <div class="col-3">
+      <div class="col-3 registration-col-subtype-aligned">
         <label class="form-label">Год</label>
         {{ form.year }}
       </div>
-
-      <!-- Строка 3 -->
-      <div class="col-6">
+      <div class="col-3 registration-col-type-block-end">
         <label class="form-label">Руководитель проекта</label>
         {{ form.project_manager }}
       </div>
+
       <div class="w-100"></div>
 
       <!-- Строка 4 -->
-      <div class="col-6">
+      <div class="col-6 registration-col-type-aligned-wide">
         <label class="form-label">Заказчик: краткое наименование юрлица</label>
         <div class="ler-ac-wrap">
           {{ form.customer }}
@@ -80,15 +133,15 @@
         <label class="form-label">Заказчик: страна регистрации</label>
         {{ form.country }}
       </div>
-      <div class="col-3">
+      <div class="col-3 registration-col-type-aligned">
         <label class="form-label">Идентификатор</label>
         {{ form.identifier }}
       </div>
-      <div class="col-3">
+      <div class="col-3 registration-col-subtype-aligned">
         <label class="form-label">Регистрационный номер</label>
         {{ form.registration_number }}
       </div>
-      <div class="col-3 mb-3">
+      <div class="col-3 mb-3 registration-col-type-block-end">
         <label class="form-label">Дата регистрации</label>
         {{ form.registration_date }}
       </div>
@@ -100,7 +153,7 @@
         <ul class="mb-0">
           {% for field, errors in form.errors.items %}
             {% for err in errors %}
-              <li>{{ field }}: {{ err }}</li>
+              <li>{% if field == "type_ids" %}Тип{% else %}{{ field }}{% endif %}: {{ err }}</li>
             {% endfor %}
           {% endfor %}
           {% for err in form.non_field_errors %}<li>{{ err }}</li>{% endfor %}
@@ -115,9 +168,42 @@
   </div>
 </form>
 <style>
+  #projects-modal .modal-dialog {
+    max-width: min(1500px, calc(100vw - 2rem));
+  }
+  #projects-modal .modal-footer .btn {
+    position: relative;
+    left: 18px;
+  }
   #projects-modal .readonly-field {
     background-color: #f8f9fa;
     color: #6c757d;
+  }
+  #projects-modal .number-input-shell {
+    position: relative;
+  }
+  #projects-modal .number-input-shell input[type="number"] {
+    position: relative;
+    z-index: 1;
+    color: transparent;
+    caret-color: #212529;
+  }
+  #projects-modal .number-input-shell input[type="number"]::placeholder {
+    color: transparent;
+  }
+  #projects-modal .number-input-display {
+    position: absolute;
+    top: 50%;
+    left: .75rem;
+    right: 2rem;
+    z-index: 2;
+    transform: translateY(-50%);
+    pointer-events: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #212529;
+    line-height: 1.5;
   }
   #projects-modal .group-select-shell {
     position: relative;
@@ -126,6 +212,9 @@
     position: relative;
     z-index: 2;
     opacity: 0.01;
+  }
+  #projects-modal .group-select-shell select option {
+    white-space: nowrap;
   }
   #projects-modal .group-select-display {
     position: absolute;
@@ -159,6 +248,166 @@
     opacity: .7;
     background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M2 5l6 6 6-6'/%3e%3c/svg%3e");
   }
+  #projects-modal .registration-type-block {
+    border: 1px solid #dee2e6;
+    border-radius: .5rem;
+    background: #f8f9fa;
+    padding: .75rem;
+  }
+  #projects-modal .registration-type-card {
+    border: 1px solid #dee2e6;
+    border-radius: .5rem;
+    background: #fff;
+    padding: .75rem .75rem 1.25rem .75rem;
+  }
+  #projects-modal .registration-type-head {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    column-gap: .5rem;
+    align-items: end;
+    margin-bottom: .5rem;
+  }
+  #projects-modal .registration-type-head-labels {
+    min-width: 0;
+    color: #212529;
+    font-size: .875rem;
+    font-weight: 500;
+  }
+  #projects-modal .registration-products-container {
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+  }
+  #projects-modal .registration-product-row {
+    padding: 0;
+  }
+  #projects-modal .registration-product-row-inner {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    column-gap: .5rem;
+    align-items: center;
+  }
+  #projects-modal .registration-product-badge {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    font-size: .65rem;
+    border: 1px solid #6c757d;
+    color: #6c757d;
+    background: transparent;
+    font-weight: 400;
+    font-family: "SF Pro Text", system-ui, -apple-system, sans-serif;
+    font-variant-numeric: tabular-nums;
+    align-self: center;
+  }
+  #projects-modal .registration-product-fields {
+    min-width: 0;
+  }
+  #projects-modal .registration-product-select-shell {
+    position: relative;
+  }
+  #projects-modal .registration-product-select-shell .registration-product-select {
+    position: relative;
+    z-index: 2;
+    opacity: 0.01;
+  }
+  #projects-modal .registration-product-display {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    padding: .375rem 2.25rem .375rem .75rem;
+    font: inherit;
+    line-height: inherit;
+    color: #212529;
+    background-color: #fff;
+    border: 1px solid #ced4da;
+    border-radius: .375rem;
+    pointer-events: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #projects-modal .registration-product-display.is-placeholder {
+    color: #6c757d;
+  }
+  #projects-modal .registration-product-display::after {
+    content: "";
+    position: absolute;
+    right: .75rem;
+    top: 50%;
+    width: 16px;
+    height: 16px;
+    transform: translateY(-50%);
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 16px 12px;
+    opacity: .7;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M2 5l6 6 6-6'/%3e%3c/svg%3e");
+  }
+  #projects-modal .registration-product-remove {
+    flex-shrink: 0;
+    color: #adb5bd;
+    border: none;
+    font-size: 1.25rem;
+    line-height: 1;
+    padding: 0 .25rem;
+    align-self: center;
+  }
+  #projects-modal .registration-product-remove:hover {
+    color: #dc3545;
+  }
+  @media (min-width: 1200px) {
+    #projects-modal .registration-col-type-aligned {
+      flex: 0 0 calc(25% - 26px);
+      width: calc(25% - 26px);
+      max-width: calc(25% - 26px);
+    }
+    #projects-modal .registration-col-type-aligned-wide {
+      flex: 0 0 calc(50% - 26px);
+      width: calc(50% - 26px);
+      max-width: calc(50% - 26px);
+    }
+    #projects-modal .registration-col-subtype-aligned {
+      flex: 0 0 calc(25% - 26px);
+      width: calc(25% - 26px);
+      max-width: calc(25% - 26px);
+    }
+    #projects-modal .registration-col-type-block-end {
+      flex: 0 0 calc(25% + 52px);
+      width: calc(25% + 52px);
+      max-width: calc(25% + 52px);
+    }
+    #projects-modal .registration-type-head-labels,
+    #projects-modal .registration-product-fields {
+      display: grid;
+      grid-template-columns: calc(25% - 26px) 25% 25% calc(25% + 26px);
+      align-items: center;
+    }
+    #projects-modal .registration-type-head-labels > [class*="col-"],
+    #projects-modal .registration-product-fields > [class*="col-"] {
+      width: auto;
+      max-width: none;
+      padding-left: calc(var(--bs-gutter-x, 1.5rem) * .5);
+      padding-right: calc(var(--bs-gutter-x, 1.5rem) * .5);
+    }
+    #projects-modal .registration-type-head-labels > :nth-child(1) {
+      padding-left: calc(var(--bs-gutter-x, 1.5rem) * .5 + 18px);
+    }
+    #projects-modal .registration-type-head-labels > :nth-child(2) {
+      padding-left: calc(var(--bs-gutter-x, 1.5rem) * .5 + 8px);
+    }
+    #projects-modal .registration-type-head-labels > :nth-child(4) {
+      padding-left: calc(var(--bs-gutter-x, 1.5rem) * .5);
+      transform: translateX(-8px);
+    }
+  }
+  @media (max-width: 1199.98px) {
+    #projects-modal .registration-type-head {
+      display: none;
+    }
+  }
 </style>
 <script>
   function attachGroupSelectDisplay(node) {
@@ -176,6 +425,265 @@
 
     select.addEventListener("change", syncDisplay);
     syncDisplay();
+  }
+
+  function attachRegistrationNumberDisplay(node) {
+    if (!node) return;
+    const input = node.querySelector("#registration-number-input");
+    const display = node.querySelector("#registration-number-display");
+    if (!input || !display || input.dataset.numberBound === "1") return;
+    input.dataset.numberBound = "1";
+
+    const syncDisplay = () => {
+      const raw = (input.value || "").replace(/\D+/g, "").slice(0, 4);
+      display.textContent = raw ? raw.padStart(4, "0") : "";
+    };
+
+    input.addEventListener("input", syncDisplay);
+    input.addEventListener("change", syncDisplay);
+    syncDisplay();
+  }
+
+  function attachRegistrationProducts(node) {
+    if (!node) return;
+    const container = node.querySelector("#registration-products-container");
+    const addBtn = node.querySelector("#registration-add-product");
+    const metaEl = node.querySelector("#registration-type-meta");
+    if (!container || !addBtn || !metaEl || container.dataset.bound === "1") return;
+    container.dataset.bound = "1";
+
+    let meta = {};
+    try {
+      meta = JSON.parse(metaEl.textContent || "{}");
+    } catch (error) {
+      meta = {};
+    }
+    const products = Array.isArray(meta.products) ? meta.products : [];
+    const consultingTypes = Array.isArray(meta.consulting_types) ? meta.consulting_types : [];
+    const serviceCategories = Array.isArray(meta.service_categories) ? meta.service_categories : [];
+    const productById = new Map(products.map((product) => [String(product.id), product]));
+
+    const uniqueValues = (items) => {
+      const seen = new Set();
+      return items.filter((item) => {
+        const value = String(item || "").trim();
+        if (!value || seen.has(value)) return false;
+        seen.add(value);
+        return true;
+      });
+    };
+
+    const buildOptions = (select, items, placeholder, selectedValue, mapper) => {
+      if (!select) return;
+      const normalizedSelected = String(selectedValue || "");
+      select.innerHTML = "";
+      if (placeholder) {
+        const placeholderOption = document.createElement("option");
+        placeholderOption.value = "";
+        placeholderOption.textContent = placeholder;
+        select.appendChild(placeholderOption);
+      }
+      items.forEach((item) => {
+        const option = document.createElement("option");
+        const mapped = mapper ? mapper(item) : { value: item, label: item };
+        option.value = String(mapped.value || "");
+        option.textContent = mapped.label || "";
+        select.appendChild(option);
+      });
+      select.value = normalizedSelected;
+      if (select.value !== normalizedSelected) {
+        select.value = "";
+      }
+    };
+
+    const filteredProducts = (consultingType, serviceCategory, serviceSubtype) => (
+      products.filter((product) => {
+        if (consultingType && product.consulting_type !== consultingType) return false;
+        if (serviceCategory && product.service_category !== serviceCategory) return false;
+        if (serviceSubtype && product.service_subtype !== serviceSubtype) return false;
+        return true;
+      })
+    );
+
+    const syncRow = (row, state = {}) => {
+      const consultingSelect = row.querySelector(".registration-consulting-select");
+      const categorySelect = row.querySelector(".registration-service-category-select");
+      const subtypeSelect = row.querySelector(".registration-service-subtype-select");
+      const productSelect = row.querySelector(".registration-product-select");
+      const productDisplay = row.querySelector(".registration-product-display");
+      const hasOwn = (key) => Object.prototype.hasOwnProperty.call(state, key);
+      const incomingProductId = hasOwn("productId") ? state.productId : (productSelect?.value ?? "");
+      const selectedProduct = productById.get(String(incomingProductId || ""));
+
+      let consultingValue = hasOwn("consultingType") ? state.consultingType : (consultingSelect?.value ?? "");
+      let categoryValue = hasOwn("serviceCategory") ? state.serviceCategory : (categorySelect?.value ?? "");
+      let subtypeValue = hasOwn("serviceSubtype") ? state.serviceSubtype : (subtypeSelect?.value ?? "");
+      let productValue = String(incomingProductId ?? "");
+
+      if (selectedProduct) {
+        consultingValue = selectedProduct.consulting_type || consultingValue;
+        categoryValue = selectedProduct.service_category || categoryValue;
+        subtypeValue = selectedProduct.service_subtype || subtypeValue;
+        productValue = String(selectedProduct.id);
+      }
+
+      buildOptions(
+        consultingSelect,
+        consultingTypes,
+        "— выберите вид консалтинга —",
+        consultingValue
+      );
+      consultingValue = consultingSelect?.value || "";
+
+      const categoryOptions = uniqueValues(
+        filteredProducts(consultingValue, "", "").map((product) => product.service_category)
+      );
+      const orderedCategories = serviceCategories.filter((value) => categoryOptions.includes(value));
+      const extraCategories = categoryOptions.filter((value) => !orderedCategories.includes(value));
+      buildOptions(
+        categorySelect,
+        orderedCategories.concat(extraCategories),
+        consultingValue ? "— выберите тип услуги —" : "— выберите вид консалтинга —",
+        categoryValue
+      );
+      categoryValue = categorySelect?.value || "";
+
+      const subtypeOptions = uniqueValues(
+        filteredProducts(consultingValue, categoryValue, "").map((product) => product.service_subtype)
+      );
+      buildOptions(
+        subtypeSelect,
+        subtypeOptions,
+        categoryValue ? "— выберите подтип услуги —" : "— выберите тип услуги —",
+        subtypeValue
+      );
+      subtypeValue = subtypeSelect?.value || "";
+
+      buildOptions(
+        productSelect,
+        filteredProducts(consultingValue, categoryValue, subtypeValue),
+        "— выберите продукт —",
+        productValue,
+        (product) => ({ value: product.id, label: product.label })
+      );
+      const displayProduct = productById.get(String(productSelect?.value || ""));
+      if (productDisplay) {
+        const displayText = displayProduct?.short_label || "— выберите продукт —";
+        productDisplay.textContent = displayText;
+        productDisplay.classList.toggle("is-placeholder", !displayProduct);
+      }
+
+      row.dataset.selectedConsultingType = consultingValue;
+      row.dataset.selectedServiceCategory = categoryValue;
+      row.dataset.selectedServiceSubtype = subtypeValue;
+      row.dataset.selectedProductId = productSelect?.value || "";
+    };
+
+    const renumberRows = () => {
+      container.querySelectorAll(".registration-product-row").forEach((row, idx) => {
+        const badge = row.querySelector(".registration-product-badge");
+        if (badge) badge.textContent = idx + 1;
+      });
+    };
+
+    const bindRow = (row) => {
+      if (!row || row.dataset.eventsBound === "1") return;
+      row.dataset.eventsBound = "1";
+      const consultingSelect = row.querySelector(".registration-consulting-select");
+      const categorySelect = row.querySelector(".registration-service-category-select");
+      const subtypeSelect = row.querySelector(".registration-service-subtype-select");
+      const productSelect = row.querySelector(".registration-product-select");
+
+      consultingSelect?.addEventListener("change", () => {
+        syncRow(row, {
+          consultingType: consultingSelect.value,
+          serviceCategory: "",
+          serviceSubtype: "",
+          productId: "",
+        });
+      });
+      categorySelect?.addEventListener("change", () => {
+        syncRow(row, {
+          consultingType: consultingSelect?.value || "",
+          serviceCategory: categorySelect.value,
+          serviceSubtype: "",
+          productId: "",
+        });
+      });
+      subtypeSelect?.addEventListener("change", () => {
+        syncRow(row, {
+          consultingType: consultingSelect?.value || "",
+          serviceCategory: categorySelect?.value || "",
+          serviceSubtype: subtypeSelect.value,
+          productId: "",
+        });
+      });
+      productSelect?.addEventListener("change", () => {
+        syncRow(row, { productId: productSelect.value });
+      });
+    };
+
+    const buildRow = (initialState = {}) => {
+      const row = document.createElement("div");
+      row.className = "registration-product-row";
+      row.dataset.selectedConsultingType = initialState.consultingType || "";
+      row.dataset.selectedServiceCategory = initialState.serviceCategory || "";
+      row.dataset.selectedServiceSubtype = initialState.serviceSubtype || "";
+      row.dataset.selectedProductId = initialState.productId || "";
+      let html = '<div class="registration-product-row-inner">'
+        + '<span class="badge rounded-circle d-flex align-items-center justify-content-center registration-product-badge"></span>'
+        + '<div class="row g-2 flex-grow-1 registration-product-fields">'
+        + '<div class="col-12 col-xl-3"><select name="type_consulting" class="form-select registration-consulting-select"></select></div>'
+        + '<div class="col-12 col-xl-3"><select name="type_service_category" class="form-select registration-service-category-select"></select></div>'
+        + '<div class="col-12 col-xl-3"><select name="type_service_subtype" class="form-select registration-service-subtype-select"></select></div>'
+        + '<div class="col-12 col-xl-3"><div class="registration-product-select-shell"><select name="type_id" class="form-select registration-product-select"></select><div class="registration-product-display" aria-hidden="true"></div></div></div>'
+        + '</div>'
+        + '<button type="button" class="btn btn-sm registration-product-remove" title="Удалить" aria-label="Удалить строку типа">&times;</button>'
+        + '</div>';
+      row.innerHTML = html;
+      bindRow(row);
+      syncRow(row, initialState);
+      return row;
+    };
+
+    addBtn.addEventListener("click", () => {
+      container.appendChild(buildRow({}));
+      renumberRows();
+    });
+
+    container.addEventListener("click", (event) => {
+      const removeBtn = event.target.closest(".registration-product-remove");
+      if (!removeBtn) return;
+      const rows = container.querySelectorAll(".registration-product-row");
+      const row = removeBtn.closest(".registration-product-row");
+      const isFirstRow = row && rows[0] === row;
+      if (isFirstRow) {
+        row.dataset.selectedConsultingType = "";
+        row.dataset.selectedServiceCategory = "";
+        row.dataset.selectedServiceSubtype = "";
+        row.dataset.selectedProductId = "";
+        syncRow(row, {
+          consultingType: "",
+          serviceCategory: "",
+          serviceSubtype: "",
+          productId: "",
+        });
+        return;
+      }
+      removeBtn.closest(".registration-product-row")?.remove();
+      renumberRows();
+    });
+
+    container.querySelectorAll(".registration-product-row").forEach((row) => {
+      bindRow(row);
+      syncRow(row, {
+        consultingType: row.dataset.selectedConsultingType || "",
+        serviceCategory: row.dataset.selectedServiceCategory || "",
+        serviceSubtype: row.dataset.selectedServiceSubtype || "",
+        productId: row.dataset.selectedProductId || "",
+      });
+    });
+    renumberRows();
   }
 
   function attachCountryIdentifierSync(node) {
@@ -330,7 +838,9 @@
     const modal = document.querySelector("#projects-modal");
     if (!modal) return;
     const form = modal.querySelector("form");
+    attachRegistrationNumberDisplay(form);
     attachGroupSelectDisplay(form);
+    attachRegistrationProducts(form);
     attachCountryIdentifierSync(form);
     attachGuillemets(form);
     attachLerAutocomplete(form);

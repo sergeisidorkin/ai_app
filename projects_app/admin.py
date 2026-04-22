@@ -1,11 +1,11 @@
 from django.contrib import admin
-from .models import ProjectRegistration, WorkVolume, Performer, LegalEntity
+from .models import LegalEntity, Performer, ProjectRegistration, ProjectRegistrationProduct, WorkVolume
 
 @admin.register(ProjectRegistration)
 class ProjectRegistrationAdmin(admin.ModelAdmin):
     list_display = (
         "position", "number", "group_display_value", "agreement_type", "agreement_number",
-        "short_uid", "type", "name", "status", "year", "customer",
+        "short_uid", "type_value", "name", "status", "year", "customer",
     )
     list_editable = ("position",)
     list_display_links = ("number", "name")
@@ -16,6 +16,17 @@ class ProjectRegistrationAdmin(admin.ModelAdmin):
     @admin.display(description="Группа", ordering="group")
     def group_display_value(self, obj):
         return obj.group_display
+
+    @admin.display(description="Тип")
+    def type_value(self, obj):
+        return obj.type_short_display
+
+
+@admin.register(ProjectRegistrationProduct)
+class ProjectRegistrationProductAdmin(admin.ModelAdmin):
+    list_display = ("registration", "product", "rank")
+    list_select_related = ("registration", "product")
+    ordering = ("registration__position", "rank", "id")
 
 @admin.register(WorkVolume)
 class WorkVolumeAdmin(admin.ModelAdmin):

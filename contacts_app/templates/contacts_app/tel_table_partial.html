@@ -19,8 +19,8 @@
       <th>Тип</th>
       <th>Номер телефона</th>
       <th class="text-center">Основной</th>
-      <th>Действ. от</th>
-      <th>Действ. до</th>
+      <th class="text-nowrap">Действ. от</th>
+      <th class="text-nowrap">Действ. до</th>
       <th>Запись</th>
       <th>Автор записи</th>
       <th>Источник</th>
@@ -44,8 +44,8 @@
         </div>
         {% endif %}
       </td>
-      <td class="text-nowrap"><span class="clf-id-mono">{{ item.pk|stringformat:"05d" }}-TEL</span></td>
-      <td class="text-nowrap"><span class="clf-id-mono">{{ item.person.pk|stringformat:"05d" }}-PRS</span></td>
+      <td class="text-nowrap"><span class="clf-id-droid-mono">{{ item.pk|stringformat:"05d" }}-TEL</span></td>
+      <td class="text-nowrap"><span class="clf-id-droid-mono">{{ item.person.pk|stringformat:"05d" }}-PRS</span></td>
       <td>{{ item.country.short_name|default:"—" }}</td>
       <td>
         {% if item.phone_type == "mobile" %}
@@ -56,7 +56,7 @@
           —
         {% endif %}
       </td>
-      <td>
+      <td class="text-nowrap">
         {% if item.phone_number %}
           {% if item.code %}{{ item.code }} {% endif %}{{ item.phone_number }}{% if item.extension %} доб. {{ item.extension }}{% endif %}
         {% else %}

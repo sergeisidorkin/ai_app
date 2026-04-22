@@ -5,7 +5,7 @@ from django.utils import timezone
 
 from classifiers_app.models import OKSMCountry, OKVCurrency, LegalEntityIdentifier
 from group_app.models import GroupMember
-from policy_app.models import TypicalSection
+from policy_app.models import Product, TypicalSection
 from users_app.models import Employee
 
 from .models import LegalEntity, Performer, ProjectRegistration, WorkVolume
@@ -118,9 +118,18 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
     number = forms.IntegerField(
         label="Номер",
         required=True,
-        min_value=3333,
+        min_value=0,
         max_value=9999,
-        widget=forms.NumberInput(attrs={"min": 3333, "max": 9999, "placeholder": "3333–9999"}),
+        widget=forms.NumberInput(
+            attrs={
+                "id": "registration-number-input",
+                "min": 0,
+                "max": 9999,
+                "step": 1,
+                "placeholder": "0001",
+                "autocomplete": "off",
+            }
+        ),
     )
     deadline = forms.DateField(required=True,
                                widget=forms.TextInput(attrs=DATE_INPUT_ATTRS),
@@ -159,11 +168,12 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         widget=forms.TextInput(attrs=DATE_INPUT_ATTRS),
         input_formats=DATE_INPUT_FORMATS,
     )
+    type_ids = forms.CharField(required=False, widget=forms.HiddenInput())
 
     class Meta:
         model = ProjectRegistration
         fields = [
-            "number", "group_member", "agreement_type", "type", "name",
+            "number", "group_member", "agreement_type", "name",
             "status", "deadline", "year",
             "country", "customer", "identifier", "registration_number",
             "registration_date", "project_manager",
@@ -180,7 +190,6 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         self.fields["group_member"].queryset = _group_choices(current_group_member)
         self.fields["group_member"].label_from_instance = lambda obj: obj.group_display_label
         self.fields["group_member"].empty_label = "— Не выбрано —"
-        self.fields["type"].required = True
         self.fields["project_manager"].choices = _project_manager_choices(current_manager)
 
         today = timezone.now().date()
@@ -224,6 +233,42 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
 
     def clean_project_manager(self):
         return (self.cleaned_data.get("project_manager") or "").strip()
+
+    def clean(self):
+        cleaned_data = super().clean()
+        product_ids = []
+        raw_product_ids = self.data.getlist("type_id") if hasattr(self.data, "getlist") else self.data.get("type_id", [])
+        if not isinstance(raw_product_ids, (list, tuple)):
+            raw_product_ids = [raw_product_ids]
+        for raw_id in raw_product_ids:
+            raw_id = str(raw_id or "").strip()
+            if not raw_id:
+                continue
+            try:
+                product_ids.append(int(raw_id))
+            except (TypeError, ValueError):
+                continue
+
+        seen = set()
+        normalized_ids = []
+        for product_id in product_ids:
+            if product_id in seen:
+                continue
+            seen.add(product_id)
+            normalized_ids.append(product_id)
+
+        valid_ids = list(
+            Product.objects
+            .filter(pk__in=normalized_ids)
+            .order_by("position", "id")
+            .values_list("pk", flat=True)
+        )
+        valid_set = set(valid_ids)
+        ordered_valid_ids = [product_id for product_id in normalized_ids if product_id in valid_set]
+        if not ordered_valid_ids:
+            self.add_error("type_ids", "Укажите хотя бы один продукт.")
+        self.cleaned_type_ids = ordered_valid_ids
+        return cleaned_data
 
 
 class ContractConditionsForm(BootstrapMixin, forms.ModelForm):
@@ -344,7 +389,7 @@ class ContractConditionsForm(BootstrapMixin, forms.ModelForm):
 
 class ProjectChoiceField(forms.ModelChoiceField):
     def label_from_instance(self, obj):
-        type_label = getattr(obj.type, "short_name", obj.type) if obj.type_id else ""
+        type_label = getattr(obj, "type_short_display", "") or ""
         name_label = obj.name or ""
         parts = [obj.short_uid]
         if type_label:
@@ -413,7 +458,19 @@ class WorkVolumeForm(BootstrapMixin, forms.ModelForm):
         self.fields["country"].label_from_instance = lambda obj: obj.short_name
         if not self.data and not current_manager and getattr(self.instance, "project_id", None):
             self.fields["manager"].initial = self.instance.project.project_manager or ""
+        if not self.data and getattr(self.instance, "project_id", None):
+            self.fields["type"].initial = getattr(self.instance.project, "type_short_display", "") or ""
+            self.fields["name"].initial = self.instance.project.name or ""
         self._bootstrapify()
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        if instance.project_id:
+            instance.type = getattr(instance.project, "type_short_display", "") or ""
+            instance.name = instance.project.name or ""
+        if commit:
+            instance.save()
+        return instance
 
 class PerformerForm(forms.ModelForm):
     registration = ProjectChoiceField(
@@ -597,13 +654,18 @@ class LegalEntityForm(BootstrapMixin, forms.ModelForm):
             country_qs = (country_qs | OKSMCountry.objects.filter(pk=self.instance.country_id)).distinct().order_by("short_name")
         self.fields["country"].queryset = country_qs
         self.fields["country"].label_from_instance = lambda obj: obj.short_name
+        if not self.data and getattr(self.instance, "work_item_id", None):
+            self.fields["work_type"].initial = (
+                getattr(self.instance.work_item.project, "type_short_display", "") or ""
+            )
+            self.fields["work_name"].initial = self.instance.work_item.name or ""
         self._bootstrapify()
 
     def save(self, commit=True):
         instance = super().save(commit=False)
         if instance.work_item_id:
             instance.project = instance.work_item.project
-            instance.work_type = instance.work_item.type or ""
+            instance.work_type = getattr(instance.work_item.project, "type_short_display", "") or ""
             instance.work_name = instance.work_item.name or ""
         if commit:
             instance.save()

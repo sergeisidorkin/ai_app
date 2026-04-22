@@ -1,15 +1,18 @@
-import json
-
 from django import forms
 from django.contrib.auth.models import User
 from django.db.models import Q
 from django.utils import timezone
+import json
 
 from classifiers_app.models import OKVCurrency
 from experts_app.models import ExpertSpecialty
 from group_app.models import OrgUnit
 from group_app.models import GroupMember
 from .models import (
+    ConsultingDirection,
+    ConsultingDirectionType,
+    ConsultingServiceSubtype,
+    ConsultingServiceType,
     Product,
     TypicalSection,
     SectionStructure,
@@ -43,15 +46,38 @@ class CommaDecimalField(forms.DecimalField):
 
 
 class ProductForm(forms.ModelForm):
+    consulting_type_ref = forms.ModelChoiceField(
+        label="Вид консалтинга",
+        queryset=ConsultingDirectionType.objects.none(),
+        widget=forms.Select(attrs={"class": "form-select", "id": "id_consulting_type"}),
+    )
+    service_category_ref = forms.ModelChoiceField(
+        label="Тип услуг",
+        queryset=ConsultingServiceType.objects.none(),
+        widget=forms.Select(attrs={"class": "form-select", "id": "id_service_category"}),
+    )
+    service_subtype_ref = forms.ModelChoiceField(
+        label="Подтип услуги",
+        queryset=ConsultingServiceSubtype.objects.none(),
+        widget=forms.Select(attrs={"class": "form-select", "id": "id_service_subtype"}),
+    )
+
     class Meta:
         model = Product
-        fields = ["short_name", "name_en", "display_name", "name_ru", "service_type"]
+        fields = [
+            "short_name",
+            "name_en",
+            "display_name",
+            "name_ru",
+            "consulting_type_ref",
+            "service_category_ref",
+            "service_subtype_ref",
+        ]
         widgets = {
             "short_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Краткое имя"}),
             "name_en": forms.TextInput(attrs={"class": "form-control", "placeholder": "English name"}),
             "display_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Отображаемое в системе имя"}),
             "name_ru": forms.TextInput(attrs={"class": "form-control", "placeholder": "Русское наименование"}),
-            "service_type": forms.TextInput(attrs={"class": "form-control", "placeholder": "Тип услуги"}),
         }
         error_messages = {
             "short_name": {
@@ -61,6 +87,9 @@ class ProductForm(forms.ModelForm):
 
     def __init__(self, *args, request_user=None, **kwargs):
         super().__init__(*args, **kwargs)
+        self.fields["consulting_type_ref"].required = True
+        self.fields["service_category_ref"].required = True
+        self.fields["service_subtype_ref"].required = True
         self.owner_options = list(GroupMember.objects.order_by("position", "id").values("pk", "short_name"))
         self.selected_owner_ids = []
         self.is_group_selected = False
@@ -78,6 +107,47 @@ class ProductForm(forms.ModelForm):
                     self.instance.owners.values_list("pk", flat=True)
                 )
 
+        consulting_type = None
+        category = None
+        if self.data:
+            consulting_type = self.data.get("consulting_type_ref") or None
+            category = self.data.get("service_category_ref") or None
+        elif self.instance.pk:
+            consulting_type = self.instance.consulting_type_ref_id or None
+            category = self.instance.service_category_ref_id or None
+        self.fields["consulting_type_ref"].queryset = ConsultingDirectionType.objects.order_by("position", "id")
+        category_qs = ConsultingServiceType.objects.select_related("consulting_type").order_by("consulting_type__position", "position", "id")
+        if consulting_type:
+            category_qs = category_qs.filter(consulting_type_id=consulting_type)
+        else:
+            category_qs = category_qs.none()
+        self.fields["service_category_ref"].queryset = category_qs
+        subtype_qs = ConsultingServiceSubtype.objects.select_related("service_type", "service_type__consulting_type").order_by(
+            "service_type__consulting_type__position", "service_type__position", "position", "id"
+        )
+        if category:
+            subtype_qs = subtype_qs.filter(service_type_id=category)
+        else:
+            subtype_qs = subtype_qs.none()
+        self.fields["service_subtype_ref"].queryset = subtype_qs
+
+    def clean(self):
+        cleaned_data = super().clean()
+        consulting_type = cleaned_data.get("consulting_type_ref")
+        service_category = cleaned_data.get("service_category_ref")
+        service_subtype = cleaned_data.get("service_subtype_ref")
+        if not consulting_type:
+            self.add_error("consulting_type_ref", "Обязательное поле.")
+        if not service_category:
+            self.add_error("service_category_ref", "Обязательное поле.")
+        if not service_subtype:
+            self.add_error("service_subtype_ref", "Обязательное поле.")
+        if consulting_type and service_category and service_category.consulting_type_id != consulting_type.pk:
+            self.add_error("service_category_ref", "Выберите значение из списка для выбранного вида консалтинга.")
+        if service_category and service_subtype and service_subtype.service_type_id != service_category.pk:
+            self.add_error("service_subtype_ref", "Выберите значение из списка для выбранного типа услуг.")
+        return cleaned_data
+
     def save(self, commit=True):
         obj = super().save(commit=False)
         owner_values = self.data.getlist("owner_ids")
@@ -93,6 +163,236 @@ class ProductForm(forms.ModelForm):
                 member_ids = [int(v) for v in owner_values if v != OWNER_GROUP_VALUE and v.isdigit()]
                 obj.owners.set(member_ids)
         return obj
+
+
+class ConsultingDirectionForm(forms.ModelForm):
+    consulting_types_payload = forms.CharField(
+        required=False,
+        widget=forms.HiddenInput(attrs={"id": "id_consulting_types_payload"}),
+    )
+    service_types_payload = forms.CharField(
+        required=False,
+        widget=forms.HiddenInput(attrs={"id": "id_service_types_payload"}),
+    )
+    service_subtypes_payload = forms.CharField(
+        required=False,
+        widget=forms.HiddenInput(attrs={"id": "id_service_subtypes_payload"}),
+    )
+
+    class Meta:
+        model = ConsultingDirection
+        fields = []
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.initial_catalog = {
+            "consulting_types": [],
+            "service_types": [],
+            "service_subtypes": [],
+        }
+        if self.is_bound:
+            for payload_key, state_key in (
+                ("consulting_types_payload", "consulting_types"),
+                ("service_types_payload", "service_types"),
+                ("service_subtypes_payload", "service_subtypes"),
+            ):
+                raw = (self.data.get(payload_key) or "").strip()
+                if not raw:
+                    continue
+                try:
+                    parsed = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, list):
+                    self.initial_catalog[state_key] = parsed
+        elif self.instance and self.instance.pk:
+            self.initial_catalog = {
+                "consulting_types": [
+                    {"id": item.pk, "name": item.name}
+                    for item in self.instance.consulting_types.order_by("position", "id")
+                ],
+                "service_types": [
+                    {
+                        "id": item.pk,
+                        "consulting_type": item.consulting_type.name,
+                        "name": item.name,
+                        "code": item.code,
+                    }
+                    for item in self.instance.service_types.select_related("consulting_type").order_by("position", "id")
+                ],
+                "service_subtypes": [
+                    {
+                        "id": item.pk,
+                        "consulting_type": item.service_type.consulting_type.name,
+                        "service_type": item.service_type.name,
+                        "code": item.service_type.code,
+                        "name": item.name,
+                    }
+                    for item in self.instance.service_subtypes.select_related(
+                        "service_type", "service_type__consulting_type"
+                    ).order_by("position", "id")
+                ],
+            }
+        self.cleaned_consulting_types = []
+        self.cleaned_service_types = []
+        self.cleaned_service_subtypes = []
+
+    def _parse_payload(self, field_name):
+        raw = (self.cleaned_data.get(field_name) or "").strip()
+        if not raw:
+            return []
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            raise forms.ValidationError("Не удалось разобрать данные формы.")
+        if not isinstance(parsed, list):
+            raise forms.ValidationError("Ожидался список значений.")
+        return parsed
+
+    def clean(self):
+        cleaned_data = super().clean()
+        consulting_types = self._parse_payload("consulting_types_payload")
+        service_types = self._parse_payload("service_types_payload")
+        service_subtypes = self._parse_payload("service_subtypes_payload")
+
+        normalized_types = []
+        type_names = set()
+        for index, item in enumerate(consulting_types, start=1):
+            if not isinstance(item, dict):
+                raise forms.ValidationError("Строка вида консалтинга заполнена некорректно.")
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            if name in type_names:
+                raise forms.ValidationError(f"Вид консалтинга «{name}» указан несколько раз.")
+            type_names.add(name)
+            normalized_types.append({"id": item.get("id") or "", "name": name, "position": index})
+        if not normalized_types:
+            raise forms.ValidationError("Добавьте хотя бы один вид консалтинга.")
+
+        normalized_service_types = []
+        service_type_keys = set()
+        for index, item in enumerate(service_types, start=1):
+            if not isinstance(item, dict):
+                raise forms.ValidationError("Строка типа услуг заполнена некорректно.")
+            consulting_type = str(item.get("consulting_type") or "").strip()
+            name = str(item.get("name") or "").strip()
+            code = str(item.get("code") or "").strip()
+            if not consulting_type and not name and not code:
+                continue
+            if not consulting_type or consulting_type not in type_names:
+                raise forms.ValidationError("Для каждого типа услуг выберите существующий вид консалтинга.")
+            if not name:
+                raise forms.ValidationError("Для каждого типа услуг заполните наименование.")
+            if not code:
+                raise forms.ValidationError("Для каждого типа услуг заполните код.")
+            key = (consulting_type, name)
+            if key in service_type_keys:
+                raise forms.ValidationError(f"Тип услуг «{name}» для вида «{consulting_type}» указан несколько раз.")
+            service_type_keys.add(key)
+            normalized_service_types.append(
+                {
+                    "id": item.get("id") or "",
+                    "consulting_type": consulting_type,
+                    "name": name,
+                    "code": code,
+                    "position": index,
+                }
+            )
+
+        normalized_service_subtypes = []
+        subtype_keys = set()
+        for index, item in enumerate(service_subtypes, start=1):
+            if not isinstance(item, dict):
+                raise forms.ValidationError("Строка подтипа услуги заполнена некорректно.")
+            consulting_type = str(item.get("consulting_type") or "").strip()
+            service_type = str(item.get("service_type") or "").strip()
+            name = str(item.get("name") or "").strip()
+            if not consulting_type and not service_type and not name:
+                continue
+            if (consulting_type, service_type) not in service_type_keys:
+                raise forms.ValidationError("Для каждого подтипа выберите существующий тип услуг.")
+            if not name:
+                raise forms.ValidationError("Для каждого подтипа услуги заполните наименование.")
+            key = (consulting_type, service_type, name)
+            if key in subtype_keys:
+                raise forms.ValidationError(
+                    f"Подтип услуги «{name}» для типа «{service_type}» указан несколько раз."
+                )
+            subtype_keys.add(key)
+            normalized_service_subtypes.append(
+                {
+                    "id": item.get("id") or "",
+                    "consulting_type": consulting_type,
+                    "service_type": service_type,
+                    "name": name,
+                    "position": index,
+                }
+            )
+
+        self.cleaned_consulting_types = normalized_types
+        self.cleaned_service_types = normalized_service_types
+        self.cleaned_service_subtypes = normalized_service_subtypes
+        return cleaned_data
+
+    def save(self, commit=True):
+        direction = super().save(commit=commit)
+        existing_types = {str(item.pk): item for item in direction.consulting_types.all()}
+        existing_service_types = {str(item.pk): item for item in direction.service_types.all()}
+        existing_subtypes = {str(item.pk): item for item in direction.service_subtypes.all()}
+
+        type_by_name = {}
+        kept_type_ids = []
+        for item in self.cleaned_consulting_types:
+            obj = existing_types.get(str(item["id"])) if item.get("id") else None
+            if obj is None:
+                obj = ConsultingDirectionType(direction=direction)
+            obj.direction = direction
+            obj.name = item["name"]
+            obj.position = item["position"]
+            obj.save()
+            kept_type_ids.append(obj.pk)
+            type_by_name[obj.name] = obj
+
+        service_type_by_key = {}
+        kept_service_type_ids = []
+        for item in self.cleaned_service_types:
+            obj = existing_service_types.get(str(item["id"])) if item.get("id") else None
+            if obj is None:
+                obj = ConsultingServiceType(direction=direction)
+            obj.direction = direction
+            obj.consulting_type = type_by_name[item["consulting_type"]]
+            obj.name = item["name"]
+            obj.code = item["code"]
+            obj.position = item["position"]
+            obj.save()
+            kept_service_type_ids.append(obj.pk)
+            service_type_by_key[(obj.consulting_type.name, obj.name)] = obj
+
+        kept_subtype_ids = []
+        for item in self.cleaned_service_subtypes:
+            obj = existing_subtypes.get(str(item["id"])) if item.get("id") else None
+            if obj is None:
+                obj = ConsultingServiceSubtype(direction=direction)
+            obj.direction = direction
+            obj.service_type = service_type_by_key[(item["consulting_type"], item["service_type"])]
+            obj.name = item["name"]
+            obj.position = item["position"]
+            obj.save()
+            kept_subtype_ids.append(obj.pk)
+
+        direction.service_subtypes.exclude(pk__in=kept_subtype_ids).delete()
+        direction.service_types.exclude(pk__in=kept_service_type_ids).delete()
+        direction.consulting_types.exclude(pk__in=kept_type_ids).delete()
+
+        affected_products = Product.objects.filter(
+            Q(consulting_type_ref__direction=direction)
+            | Q(service_category_ref__direction=direction)
+            | Q(service_subtype_ref__direction=direction)
+        ).distinct()
+        for product in affected_products:
+            product.save()
+        return direction
 
 class TypicalSectionForm(forms.ModelForm):
     product = forms.ModelChoiceField(

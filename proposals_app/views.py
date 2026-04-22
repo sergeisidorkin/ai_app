@@ -36,7 +36,7 @@ from policy_app.models import (
     TypicalServiceComposition,
     TypicalServiceTerm,
 )
-from projects_app.models import ProjectRegistration
+from projects_app.models import ProjectRegistration, ProjectRegistrationProduct, _sync_project_registration_primary_product
 from smtp_app.models import ExternalSMTPAccount
 from core.proposal_registry_columns import get_proposal_registry_ui_columns
 from users_app.models import Employee
@@ -1895,9 +1895,23 @@ def proposal_dispatch_transfer_to_contract(request):
                 },
             )
             if was_created:
+                if proposal.type_id:
+                    ProjectRegistrationProduct.objects.update_or_create(
+                        registration=project,
+                        product=proposal.type,
+                        defaults={"rank": 1},
+                    )
+                    _sync_project_registration_primary_product(project.pk)
                 created += 1
                 next_position += 1
             else:
+                if proposal.type_id and not project.product_links.exists():
+                    ProjectRegistrationProduct.objects.update_or_create(
+                        registration=project,
+                        product=proposal.type,
+                        defaults={"rank": 1},
+                    )
+                    _sync_project_registration_primary_product(project.pk)
                 existing += 1
 
         ProposalRegistration.objects.filter(pk__in=proposal_ids).update(

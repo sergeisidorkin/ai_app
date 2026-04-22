@@ -277,6 +277,7 @@
 
   document.addEventListener('click', function (e) {
     var mapping = {
+      'products-csv-upload-btn': 'products-csv-file-input',
       'sections-csv-upload-btn': 'sections-csv-file-input',
     };
     for (var btnId in mapping) {
@@ -291,6 +292,7 @@
 
   document.addEventListener('change', async function (e) {
     var mapping = {
+      'products-csv-file-input': '/policy/policy/product/csv-upload/',
       'sections-csv-file-input': '/policy/policy/section/csv-upload/',
     };
     var url = mapping[e.target.id];

@@ -42,10 +42,10 @@
               </div>
             </td>
             <td class="text-nowrap">
-              {% if reg %}{{ reg.short_uid }}{% endif %}
+              {% if reg %}<span class="clf-id-droid-mono">{{ reg.short_uid }}</span>{% endif %}
             </td>
             <td class="text-nowrap">{{ reg.group_display }}</td>
-            <td class="text-nowrap">{{ reg.type }}</td>
+            <td class="text-nowrap">{{ reg.type_short_display }}</td>
             <td class="text-nowrap">{{ reg.get_agreement_type_display }}</td>
             <td class="text-nowrap">{{ reg.agreement_number }}</td>
             <td class="text-nowrap">{{ reg.name|default:reg.title }}</td>

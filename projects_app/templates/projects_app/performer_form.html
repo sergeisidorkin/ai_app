@@ -268,15 +268,16 @@
 
     var regId = regSel ? regSel.value : '';
     var regInfo = regMap[regId] || {};
-    var productId = regInfo.type_id;
     var sectionId = sectSel ? sectSel.value : '';
-    if (!productId || !sectionId) return;
+    if (!sectionId) return;
 
     var sectList = sectMap[regId] || [];
     var sectInfo = null;
     for (var i = 0; i < sectList.length; i++) {
       if (String(sectList[i].id) === String(sectionId)) { sectInfo = sectList[i]; break; }
     }
+    var productId = sectInfo ? sectInfo.product_id : regInfo.type_id;
+    if (!productId) return;
     var pricingMethod = sectInfo ? (sectInfo.pricing_method || '') : '';
 
     var Y = execInfo.base_rate_share / 100;

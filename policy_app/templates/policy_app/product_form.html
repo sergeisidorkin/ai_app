@@ -17,6 +17,7 @@
     id="product-form">
   <div class="modal-body">
     {% csrf_token %}
+    <script type="application/json" id="product-service-meta">{{ product_service_meta_json|safe }}</script>
     <div class="mb-3">
       <label class="form-label">Краткое имя</label>
       {{ form.short_name }}
@@ -37,8 +38,36 @@
       {{ form.display_name }}
     </div>
     <div class="mb-3">
-      <label class="form-label">Тип услуги</label>
-      {{ form.service_type }}
+      <label class="form-label">Вид консалтинга</label>
+      {{ form.consulting_type_ref }}
+      {% if form.consulting_type_ref.errors %}
+        <div class="text-danger small mt-1">{{ form.consulting_type_ref.errors.0 }}</div>
+      {% endif %}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Тип услуг</label>
+      {{ form.service_category_ref }}
+      {% if form.service_category_ref.errors %}
+        <div class="text-danger small mt-1">{{ form.service_category_ref.errors.0 }}</div>
+      {% endif %}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Код</label>
+      <input type="text"
+             class="form-control readonly-field"
+             id="id_service_code_display"
+             value="{% if form.instance.service_category_ref_id %}{{ form.instance.service_category_ref.code }}{% else %}{{ form.instance.service_code }}{% endif %}"
+             readonly
+             tabindex="-1"
+             autocomplete="off"
+             aria-readonly="true">
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Подтип услуги</label>
+      {{ form.service_subtype_ref }}
+      {% if form.service_subtype_ref.errors %}
+        <div class="text-danger small mt-1">{{ form.service_subtype_ref.errors.0 }}</div>
+      {% endif %}
     </div>
     <div class="mb-3">
       <label class="form-label">Владелец</label>
@@ -85,37 +114,127 @@
   </div>
 </form>
 
+<style>
+  #policy-modal .readonly-field {
+    background-color: #f8f9fa;
+    color: #6c757d;
+  }
+</style>
+
 <script>
 (function() {
   const GROUP_VAL = "__group__";
   const dropdown = document.getElementById("product-owner-dropdown");
-  if (!dropdown) return;
-  const checks = dropdown.querySelectorAll(".js-product-owner");
-  const label = dropdown.querySelector(".js-product-owner-label");
-  const groupCb = document.getElementById("product-owner-group");
+  if (dropdown) {
+    const checks = dropdown.querySelectorAll(".js-product-owner");
+    const label = dropdown.querySelector(".js-product-owner-label");
+    const groupCb = document.getElementById("product-owner-group");
 
-  function updateLabel() {
-    const selected = Array.from(checks).filter(cb => cb.checked);
-    if (!selected.length) { label.textContent = "Группа"; return; }
-    if (groupCb && groupCb.checked) { label.textContent = "Группа"; return; }
-    if (selected.length === 1) {
-      label.textContent = selected[0].nextElementSibling?.textContent?.trim() || "1";
-      return;
+    function updateLabel() {
+      const selected = Array.from(checks).filter(cb => cb.checked);
+      if (!selected.length) { label.textContent = "Группа"; return; }
+      if (groupCb && groupCb.checked) { label.textContent = "Группа"; return; }
+      if (selected.length === 1) {
+        label.textContent = selected[0].nextElementSibling?.textContent?.trim() || "1";
+        return;
+      }
+      label.textContent = selected.length + " выбрано";
     }
-    label.textContent = selected.length + " выбрано";
+
+    checks.forEach(cb => {
+      cb.addEventListener("change", function() {
+        if (this.value === GROUP_VAL && this.checked) {
+          checks.forEach(c => { if (c.value !== GROUP_VAL) c.checked = false; });
+        } else if (this.value !== GROUP_VAL && this.checked) {
+          if (groupCb) groupCb.checked = false;
+        }
+        updateLabel();
+      });
+    });
+
+    updateLabel();
   }
 
-  checks.forEach(cb => {
-    cb.addEventListener("change", function() {
-      if (this.value === GROUP_VAL && this.checked) {
-        checks.forEach(c => { if (c.value !== GROUP_VAL) c.checked = false; });
-      } else if (this.value !== GROUP_VAL && this.checked) {
-        if (groupCb) groupCb.checked = false;
-      }
-      updateLabel();
-    });
-  });
+  const metaEl = document.getElementById("product-service-meta");
+  const consultingEl = document.getElementById("id_consulting_type");
+  const catEl = document.getElementById("id_service_category");
+  const subEl = document.getElementById("id_service_subtype");
+  const codeEl = document.getElementById("id_service_code_display");
+  if (metaEl && consultingEl && catEl && subEl && codeEl) {
+    let meta = {};
+    try {
+      meta = JSON.parse(metaEl.textContent || "{}");
+    } catch (e) {}
+    const categories = Array.isArray(meta.service_categories) ? meta.service_categories : [];
+    const subtypes = Array.isArray(meta.service_subtypes) ? meta.service_subtypes : [];
 
-  updateLabel();
+    function rebuildCategoryOptions() {
+      const consultingTypeId = consultingEl.value;
+      const previous = catEl.value;
+      const options = categories.filter(item => String(item.consulting_type_id) === String(consultingTypeId || ""));
+      catEl.innerHTML = "";
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = consultingTypeId ? "— выберите тип услуг —" : "— выберите вид консалтинга —";
+      catEl.appendChild(placeholder);
+      options.forEach(function(item) {
+        const option = document.createElement("option");
+        option.value = String(item.id);
+        option.textContent = item.label;
+        catEl.appendChild(option);
+      });
+      catEl.value = previous;
+      if (catEl.value !== previous) {
+        catEl.value = "";
+      }
+    }
+
+    function syncCode() {
+      const selected = categories.find(item => String(item.id) === String(catEl.value || ""));
+      codeEl.value = selected ? (selected.code || "") : "";
+    }
+
+    function rebuildSubtypeOptions() {
+      const categoryId = catEl.value;
+      const prev = subEl.value;
+      subEl.innerHTML = "";
+      if (!categoryId) {
+        const o = document.createElement("option");
+        o.value = "";
+        o.textContent = "— выберите тип услуг —";
+        subEl.appendChild(o);
+      } else {
+        subtypes
+          .filter(function(item) { return String(item.service_category_id) === String(categoryId); })
+          .forEach(function(item) {
+          const o = document.createElement("option");
+          o.value = String(item.id);
+          o.textContent = item.label;
+          subEl.appendChild(o);
+          });
+      }
+      if (Array.from(subEl.options).some(opt => opt.value === String(prev))) {
+        subEl.value = prev;
+      } else {
+        subEl.value = "";
+      }
+    }
+
+    function syncCategoryDependencies() {
+      rebuildCategoryOptions();
+      rebuildSubtypeOptions();
+      syncCode();
+    }
+
+    consultingEl.addEventListener("change", function() {
+      catEl.value = "";
+      subEl.value = "";
+      syncCategoryDependencies();
+    });
+    catEl.addEventListener("input", syncCode);
+    catEl.addEventListener("change", syncCategoryDependencies);
+
+    syncCategoryDependencies();
+  }
 })();
 </script>
