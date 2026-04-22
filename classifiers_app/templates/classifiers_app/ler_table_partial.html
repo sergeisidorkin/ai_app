@@ -42,8 +42,8 @@
                     </div>
                 {% endif %}
             </td>
-            <td class="text-nowrap"><span class="clf-id-mono">{{ item.pk|stringformat:"05d" }}-ATR</span></td>
-            <td class="text-nowrap"><span class="clf-id-mono">{% if item.identifier_record %}{{ item.identifier_record.pk|stringformat:"05d" }}-IDN{% else %}—{% endif %}</span></td>
+            <td class="text-nowrap"><span class="clf-id-droid-mono">{{ item.pk|stringformat:"05d" }}-ATR</span></td>
+            <td class="text-nowrap"><span class="clf-id-droid-mono">{% if item.identifier_record %}{{ item.identifier_record.pk|stringformat:"05d" }}-IDN{% else %}—{% endif %}</span></td>
             <td>{{ item.short_name }}</td>
             <td>{{ item.full_name|default:"—" }}</td>
             <td class="text-nowrap">{% if item.record_date %}{{ item.record_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>

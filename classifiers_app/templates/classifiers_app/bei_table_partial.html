@@ -45,8 +45,8 @@
                     </div>
                 {% endif %}
             </td>
-            <td class="text-nowrap"><span class="clf-id-mono">{{ item.pk|stringformat:"05d" }}-IDN</span></td>
-            <td class="text-nowrap"><span class="clf-id-mono">{{ item.business_entity.pk|stringformat:"05d" }}-BSN</span></td>
+            <td class="text-nowrap"><span class="clf-id-droid-mono">{{ item.pk|stringformat:"05d" }}-IDN</span></td>
+            <td class="text-nowrap"><span class="clf-id-droid-mono">{{ item.business_entity.pk|stringformat:"05d" }}-BSN</span></td>
             <td class="text-nowrap">{{ item.registration_code|default:"—" }}</td>
             <td>{% if item.registration_country %}{{ item.registration_country.short_name }}{% else %}—{% endif %}</td>
             <td>{{ item.identifier_type|default:"—" }}</td>
