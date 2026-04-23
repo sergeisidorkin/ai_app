@@ -1900,6 +1900,7 @@ def proposal_dispatch_transfer_to_contract(request):
         ProposalRegistration.objects
         .filter(pk__in=proposal_ids)
         .select_related("group_member", "type", "country")
+        .prefetch_related("product_links__product")
         .order_by("position", "id")
     )
     if len(proposals) != len(proposal_ids):
@@ -1908,6 +1909,28 @@ def proposal_dispatch_transfer_to_contract(request):
     created = 0
     existing = 0
     transferred_at_display = timezone.localtime().strftime("%d.%m.%Y %H:%M")
+
+    def iter_ranked_proposal_products(proposal):
+        links = list(getattr(proposal, "product_links", []).all()) if hasattr(getattr(proposal, "product_links", None), "all") else []
+        if links:
+            for index, link in enumerate(sorted(links, key=lambda item: ((item.rank or 0), item.pk or 0)), start=1):
+                if getattr(link, "product_id", None):
+                    yield link.product, index
+            return
+        if proposal.type_id:
+            yield proposal.type, 1
+
+    def sync_project_products_from_proposal(project, proposal):
+        has_products = False
+        for product, rank in iter_ranked_proposal_products(proposal):
+            has_products = True
+            ProjectRegistrationProduct.objects.update_or_create(
+                registration=project,
+                product=product,
+                defaults={"rank": rank},
+            )
+        if has_products:
+            _sync_project_registration_primary_product(project.pk)
 
     with transaction.atomic():
         next_position = (ProjectRegistration.objects.aggregate(mx=Max("position")).get("mx") or 0) + 1
@@ -1947,23 +1970,12 @@ def proposal_dispatch_transfer_to_contract(request):
                     registration_number=proposal.registration_number,
                     registration_date=proposal.registration_date,
                 )
-                if proposal.type_id:
-                    ProjectRegistrationProduct.objects.update_or_create(
-                        registration=project,
-                        product=proposal.type,
-                        defaults={"rank": 1},
-                    )
-                    _sync_project_registration_primary_product(project.pk)
+                sync_project_products_from_proposal(project, proposal)
                 created += 1
                 next_position += 1
             else:
-                if proposal.type_id and not project.product_links.exists():
-                    ProjectRegistrationProduct.objects.update_or_create(
-                        registration=project,
-                        product=proposal.type,
-                        defaults={"rank": 1},
-                    )
-                    _sync_project_registration_primary_product(project.pk)
+                if not project.product_links.exists():
+                    sync_project_products_from_proposal(project, proposal)
                 existing += 1
 
         ProposalRegistration.objects.filter(pk__in=proposal_ids).update(

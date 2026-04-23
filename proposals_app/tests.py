@@ -1066,6 +1066,50 @@ class ProposalDispatchSendTests(TestCase):
         )
         self.assertTrue(self.successful_proposal.transfer_to_contract_date)
 
+    def test_dispatch_transfer_to_contract_copies_all_ranked_proposal_products_when_creating_project(self):
+        second_product = Product.objects.create(
+            short_name="QAQC_MULTI",
+            name_en="QAQC Multi",
+            name_ru="QAQC Multi",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Контроль качества",
+            position=2,
+        )
+        ProposalRegistrationProduct.objects.create(
+            proposal=self.successful_proposal,
+            product=second_product,
+            rank=1,
+        )
+        ProposalRegistrationProduct.objects.create(
+            proposal=self.successful_proposal,
+            product=self.product,
+            rank=2,
+        )
+
+        response = self.client.post(
+            reverse("proposal_dispatch_transfer_to_contract"),
+            {"proposal_ids[]": [self.successful_proposal.pk]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        project = ProjectRegistration.objects.get(
+            number=self.successful_proposal.number,
+            group_member=self.successful_proposal.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            agreement_number=f"IMCM/{self.successful_proposal.number}",
+        )
+        self.assertEqual(
+            list(
+                ProjectRegistrationProduct.objects
+                .filter(registration=project)
+                .order_by("rank", "id")
+                .values_list("product_id", flat=True)
+            ),
+            [second_product.pk, self.product.pk],
+        )
+        self.assertEqual(project.type_id, second_product.pk)
+
     def test_dispatch_transfer_to_contract_reuses_existing_main_contract_for_ru_group(self):
         existing_project = ProjectRegistration.objects.create(
             number=self.successful_proposal.number,
@@ -1099,6 +1143,55 @@ class ProposalDispatchSendTests(TestCase):
             ProjectRegistration.objects.get(pk=existing_project.pk).agreement_number,
             f"IMCM/{self.successful_proposal.number}",
         )
+
+    def test_dispatch_transfer_to_contract_copies_all_ranked_proposal_products_to_existing_project_without_links(self):
+        second_product = Product.objects.create(
+            short_name="CTRL_EXISTING",
+            name_en="Control Existing",
+            name_ru="Control Existing",
+            consulting_type="Горный",
+            service_category="Контроль",
+            service_subtype="Контроль качества",
+            position=2,
+        )
+        ProposalRegistrationProduct.objects.create(
+            proposal=self.successful_proposal,
+            product=second_product,
+            rank=1,
+        )
+        ProposalRegistrationProduct.objects.create(
+            proposal=self.successful_proposal,
+            product=self.product,
+            rank=2,
+        )
+        existing_project = ProjectRegistration.objects.create(
+            number=self.successful_proposal.number,
+            group_member=self.successful_proposal.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            agreement_number=f"IMCM/{self.successful_proposal.number}",
+            type=self.product,
+            name="Уже существует",
+            year=2026,
+            position=1,
+        )
+
+        response = self.client.post(
+            reverse("proposal_dispatch_transfer_to_contract"),
+            {"proposal_ids[]": [self.successful_proposal.pk]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            list(
+                ProjectRegistrationProduct.objects
+                .filter(registration=existing_project)
+                .order_by("rank", "id")
+                .values_list("product_id", flat=True)
+            ),
+            [second_product.pk, self.product.pk],
+        )
+        existing_project.refresh_from_db()
+        self.assertEqual(existing_project.type_id, second_product.pk)
 
     def test_dispatch_transfer_to_contract_handles_duplicate_existing_main_contracts(self):
         first_project = ProjectRegistration.objects.create(

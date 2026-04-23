@@ -133,10 +133,12 @@
   var countryCodeEl = document.getElementById('id_registration_country_code_display');
   var regionCodeEl = document.getElementById('id_registration_region_code_display');
   var identifierTypeEl = document.getElementById('id_identifier_type');
+  var numberEl = document.getElementById('id_number');
   var validToEl = document.getElementById('id_valid_to');
   var isActiveEl = document.getElementById('id_is_active');
   if (!validToEl || !isActiveEl) return;
   var searchUrl = '{% url "brl_business_entity_search" %}';
+  var regionAutofillUrl = '{% url "ler_region_autofill" %}';
 
   function fitListWidth(list) {
     if (!list) return;
@@ -296,9 +298,9 @@
     regionEl.appendChild(opt);
   }
 
-  function loadRegions(countryId, preserveCurrent) {
+  function loadRegions(countryId, preserveCurrent, selectedRegion) {
     if (!countryEl || !regionEl) return;
-    var currentRegion = preserveCurrent ? (regionEl.value || '') : '';
+    var currentRegion = preserveCurrent ? (regionEl.value || '') : (selectedRegion || '');
     if (!countryId) {
       regionEl.innerHTML = '<option value="">---------</option>';
       syncRegionCode();
@@ -332,6 +334,53 @@
         regionEl.value = currentRegion;
         syncRegionCode();
       });
+  }
+
+  function bindRegionAutofill() {
+    if (!countryEl || !identifierTypeEl || !numberEl || !regionEl) return;
+    var debounce = null;
+    var requestSeq = 0;
+
+    function applyRegion(regionName) {
+      loadRegions(countryEl.value || '', false, String(regionName || '').trim());
+    }
+
+    function schedule() {
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(function() {
+        var seq = requestSeq + 1;
+        requestSeq = seq;
+        var countryId = String(countryEl.value || '').trim();
+        var identifier = String(identifierTypeEl.value || '').trim();
+        var registrationNumber = String(numberEl.value || '').trim();
+
+        if (!countryId) {
+          applyRegion('');
+          return;
+        }
+
+        var url = regionAutofillUrl
+          + '?country_id=' + encodeURIComponent(countryId)
+          + '&identifier=' + encodeURIComponent(identifier)
+          + '&registration_number=' + encodeURIComponent(registrationNumber);
+
+        fetch(url)
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            if (seq !== requestSeq) return;
+            applyRegion(data && data.region ? data.region : '');
+          })
+          .catch(function() {
+            if (seq !== requestSeq) return;
+            applyRegion('');
+          });
+      }, 150);
+    }
+
+    numberEl.addEventListener('input', schedule);
+    numberEl.addEventListener('change', schedule);
+    countryEl.addEventListener('change', schedule);
+    identifierTypeEl.addEventListener('change', schedule);
   }
 
   function loadIdentifierTypes(countryId, preserveCurrent) {
@@ -401,6 +450,7 @@
   validToEl.addEventListener('input', syncIsActive);
   validToEl.addEventListener('change', syncIsActive);
   bindBusinessEntityAutocomplete();
+  bindRegionAutofill();
   syncIsActive();
   syncRegionCode();
 })();

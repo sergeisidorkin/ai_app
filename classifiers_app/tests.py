@@ -1,4 +1,6 @@
 from datetime import date
+import csv
+import io
 import json
 
 from django.contrib.auth import get_user_model
@@ -27,7 +29,7 @@ from classifiers_app.forms import (
     BusinessEntityLegalAddressRecordForm,
     BusinessEntityRecordForm,
 )
-from classifiers_app.views import sync_autocomplete_registry_entry
+from classifiers_app.views import BUSINESS_REGISTRY_CSV_FIELDS, sync_autocomplete_registry_entry
 
 
 class OKSMCountryTests(TestCase):
@@ -1067,6 +1069,357 @@ class BusinessRegistryMasterFilterTests(TestCase):
         self.assertGreaterEqual(response.content.decode().count('hx-target="this"'), 6)
 
 
+class BusinessRegistryCsvTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="business-registry-csv-user",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+        self.alpha = BusinessEntityRecord.objects.create(
+            name='ООО "Альфа"',
+            record_date=date(2024, 1, 10),
+            record_author="tester",
+            source="source-alpha",
+            comment="comment-alpha",
+            position=1,
+        )
+        self.beta = BusinessEntityRecord.objects.create(
+            name='ООО "Бета"',
+            record_date=date(2024, 1, 11),
+            record_author="tester",
+            source="source-beta",
+            comment="comment-beta",
+            position=2,
+        )
+        self.alpha_identifier = BusinessEntityIdentifierRecord.objects.create(
+            business_entity=self.alpha,
+            identifier_type="ОГРН",
+            registration_country=self.country,
+            registration_region="Москва",
+            record_date=date(2024, 1, 10),
+            record_author="tester",
+            registration_date=date(2024, 1, 10),
+            number="7700000001",
+            valid_from=date(2024, 1, 10),
+            position=1,
+        )
+        self.beta_identifier = BusinessEntityIdentifierRecord.objects.create(
+            business_entity=self.beta,
+            identifier_type="ИНН",
+            registration_country=self.country,
+            registration_region="Тюмень",
+            record_date=date(2024, 1, 11),
+            record_author="tester",
+            registration_date=date(2024, 1, 11),
+            number="7200000002",
+            valid_from=date(2024, 1, 11),
+            position=2,
+        )
+        LegalEntityRecord.objects.create(
+            attribute=LegalEntityRecord.ATTRIBUTE_NAME,
+            identifier_record=self.alpha_identifier,
+            registration_country=self.country,
+            registration_region="Москва",
+            record_date=date(2024, 1, 10),
+            record_author="tester",
+            registration_date=date(2024, 1, 10),
+            registration_number="7700000001",
+            identifier="ОГРН",
+            short_name='ООО "Альфа"',
+            full_name='Общество с ограниченной ответственностью "Альфа"',
+            name_received_date=date(2024, 1, 10),
+            position=1,
+        )
+        LegalEntityRecord.objects.create(
+            attribute=LegalEntityRecord.ATTRIBUTE_NAME,
+            identifier_record=self.beta_identifier,
+            registration_country=self.country,
+            registration_region="Тюмень",
+            record_date=date(2024, 1, 11),
+            record_author="tester",
+            registration_date=date(2024, 1, 11),
+            registration_number="7200000002",
+            identifier="ИНН",
+            short_name='ООО "Бета"',
+            full_name='Общество с ограниченной ответственностью "Бета"',
+            name_received_date=date(2024, 1, 11),
+            position=2,
+        )
+        LegalEntityRecord.objects.create(
+            attribute=LegalEntityRecord.ATTRIBUTE_LEGAL_ADDRESS,
+            identifier_record=self.alpha_identifier,
+            registration_country=self.country,
+            registration_region="Москва",
+            record_date=date(2024, 1, 10),
+            record_author="tester",
+            postal_code="101000",
+            locality="Москва",
+            street="Тверская",
+            building="1",
+            valid_from=date(2024, 1, 10),
+            position=3,
+        )
+        LegalEntityRecord.objects.create(
+            attribute=LegalEntityRecord.ATTRIBUTE_LEGAL_ADDRESS,
+            identifier_record=self.beta_identifier,
+            registration_country=self.country,
+            registration_region="Тюмень",
+            record_date=date(2024, 1, 11),
+            record_author="tester",
+            postal_code="625000",
+            locality="Тюмень",
+            street="Республики",
+            building="2",
+            valid_from=date(2024, 1, 11),
+            position=4,
+        )
+        self.event = BusinessEntityReorganizationEvent.objects.create(
+            reorganization_event_uid="00001-REO",
+            relation_type="Присоединение",
+            event_date=date(2025, 1, 10),
+            comment="Объединение реестров",
+            position=1,
+        )
+        BusinessEntityRelationRecord.objects.create(
+            event=self.event,
+            from_business_entity=self.alpha,
+            to_business_entity=self.beta,
+            position=1,
+        )
+
+    def _make_csv_upload(self, rows):
+        buffer = io.StringIO()
+        writer = csv.DictWriter(buffer, fieldnames=BUSINESS_REGISTRY_CSV_FIELDS, delimiter=";", lineterminator="\n")
+        writer.writeheader()
+        for row in rows:
+            payload = {field: "" for field in BUSINESS_REGISTRY_CSV_FIELDS}
+            payload.update(row)
+            writer.writerow(payload)
+        return SimpleUploadedFile(
+            "business-registry.csv",
+            ("\ufeff" + buffer.getvalue()).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+    def test_csv_download_exports_all_business_registry_sections(self):
+        response = self.client.get(reverse("business_registry_csv_download"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "text/csv; charset=utf-8")
+        self.assertIn('attachment; filename="business-registry.csv"', response["Content-Disposition"])
+
+        rows = list(csv.DictReader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(
+            {row["section"] for row in rows},
+            {"business_entity", "identifier", "name", "address", "relation"},
+        )
+
+        relation_row = next(row for row in rows if row["section"] == "relation")
+        self.assertEqual(relation_row["event_ref"], "00001-REO")
+        self.assertEqual(relation_row["from_business_entity_ref"], f"{self.alpha.pk:05d}-BSN")
+        self.assertEqual(relation_row["to_business_entity_ref"], f"{self.beta.pk:05d}-BSN")
+
+    def test_csv_upload_replaces_entire_business_registry(self):
+        upload = self._make_csv_upload(
+            [
+                {
+                    "section": "business_entity",
+                    "business_entity_ref": "00010-BSN",
+                    "position": "1",
+                    "business_entity_name": 'ООО "Новый источник"',
+                    "record_date": "2026-01-10",
+                    "record_author": "csv-import",
+                    "source": "csv-source",
+                    "comment": "csv-comment",
+                },
+                {
+                    "section": "business_entity",
+                    "business_entity_ref": "00011-BSN",
+                    "position": "2",
+                    "business_entity_name": 'ООО "Новый приемник"',
+                    "record_date": "2026-01-11",
+                    "record_author": "csv-import",
+                },
+                {
+                    "section": "identifier",
+                    "business_entity_ref": "00010-BSN",
+                    "identifier_ref": "00010-IDN",
+                    "position": "1",
+                    "record_date": "2026-01-10",
+                    "record_author": "csv-import",
+                    "identifier_type": "ОГРН",
+                    "registration_country_code": "643",
+                    "registration_country_name": "Россия",
+                    "registration_region": "Москва",
+                    "registration_date": "2026-01-10",
+                    "registration_number": "7701234567890",
+                    "valid_from": "2026-01-10",
+                },
+                {
+                    "section": "identifier",
+                    "business_entity_ref": "00011-BSN",
+                    "identifier_ref": "00011-IDN",
+                    "position": "2",
+                    "record_date": "2026-01-11",
+                    "record_author": "csv-import",
+                    "identifier_type": "ИНН",
+                    "registration_country_code": "643",
+                    "registration_country_name": "Россия",
+                    "registration_region": "Санкт-Петербург",
+                    "registration_date": "2026-01-11",
+                    "registration_number": "7801234567",
+                    "valid_from": "2026-01-11",
+                },
+                {
+                    "section": "name",
+                    "business_entity_ref": "00010-BSN",
+                    "identifier_ref": "00010-IDN",
+                    "position": "1",
+                    "record_date": "2026-01-10",
+                    "record_author": "csv-import",
+                    "registration_country_code": "643",
+                    "registration_country_name": "Россия",
+                    "registration_region": "Москва",
+                    "registration_date": "2026-01-10",
+                    "registration_number": "7701234567890",
+                    "identifier_value": "ОГРН",
+                    "short_name": 'ООО "Новый источник"',
+                    "full_name": 'Общество с ограниченной ответственностью "Новый источник"',
+                    "name_received_date": "2026-01-10",
+                },
+                {
+                    "section": "name",
+                    "business_entity_ref": "00011-BSN",
+                    "identifier_ref": "00011-IDN",
+                    "position": "2",
+                    "record_date": "2026-01-11",
+                    "record_author": "csv-import",
+                    "registration_country_code": "643",
+                    "registration_country_name": "Россия",
+                    "registration_region": "Санкт-Петербург",
+                    "registration_date": "2026-01-11",
+                    "registration_number": "7801234567",
+                    "identifier_value": "ИНН",
+                    "short_name": 'ООО "Новый приемник"',
+                    "full_name": 'Общество с ограниченной ответственностью "Новый приемник"',
+                    "name_received_date": "2026-01-11",
+                },
+                {
+                    "section": "address",
+                    "business_entity_ref": "00010-BSN",
+                    "identifier_ref": "00010-IDN",
+                    "position": "3",
+                    "record_date": "2026-01-10",
+                    "record_author": "csv-import",
+                    "registration_country_code": "643",
+                    "registration_country_name": "Россия",
+                    "registration_region": "Москва",
+                    "valid_from": "2026-01-10",
+                    "postal_code": "101000",
+                    "locality": "Москва",
+                    "street": "Новая",
+                    "building": "10",
+                },
+                {
+                    "section": "address",
+                    "business_entity_ref": "00011-BSN",
+                    "identifier_ref": "00011-IDN",
+                    "position": "4",
+                    "record_date": "2026-01-11",
+                    "record_author": "csv-import",
+                    "registration_country_code": "643",
+                    "registration_country_name": "Россия",
+                    "registration_region": "Санкт-Петербург",
+                    "valid_from": "2026-01-11",
+                    "postal_code": "190000",
+                    "locality": "Санкт-Петербург",
+                    "street": "Главная",
+                    "building": "11",
+                },
+                {
+                    "section": "relation",
+                    "event_ref": "90001-REO",
+                    "from_business_entity_ref": "00010-BSN",
+                    "to_business_entity_ref": "00011-BSN",
+                    "position": "1",
+                    "relation_type": "Присоединение",
+                    "event_uid": "90001-REO",
+                    "event_date": "2026-02-01",
+                    "event_position": "1",
+                    "comment": "CSV relation",
+                },
+            ]
+        )
+
+        response = self.client.post(reverse("business_registry_csv_upload"), {"csv_file": upload})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["created"], 9)
+        self.assertEqual(BusinessEntityRecord.objects.count(), 2)
+        self.assertEqual(BusinessEntityIdentifierRecord.objects.count(), 2)
+        self.assertEqual(
+            LegalEntityRecord.objects.filter(attribute=LegalEntityRecord.ATTRIBUTE_NAME).count(),
+            2,
+        )
+        self.assertEqual(
+            LegalEntityRecord.objects.filter(attribute=LegalEntityRecord.ATTRIBUTE_LEGAL_ADDRESS).count(),
+            2,
+        )
+        self.assertEqual(BusinessEntityRelationRecord.objects.count(), 1)
+        self.assertEqual(BusinessEntityReorganizationEvent.objects.count(), 1)
+        self.assertFalse(BusinessEntityRecord.objects.filter(name='ООО "Альфа"').exists())
+        self.assertTrue(BusinessEntityRecord.objects.filter(name='ООО "Новый источник"').exists())
+        relation = BusinessEntityRelationRecord.objects.select_related("event").get()
+        self.assertEqual(relation.event.reorganization_event_uid, "90001-REO")
+        self.assertEqual(relation.event.comment, "CSV relation")
+
+    def test_csv_upload_rolls_back_when_references_are_invalid(self):
+        upload = self._make_csv_upload(
+            [
+                {
+                    "section": "business_entity",
+                    "business_entity_ref": "00020-BSN",
+                    "position": "1",
+                    "business_entity_name": 'ООО "Промежуточная"',
+                },
+                {
+                    "section": "identifier",
+                    "business_entity_ref": "missing-BSN",
+                    "identifier_ref": "00020-IDN",
+                    "position": "1",
+                    "identifier_type": "ОГРН",
+                    "registration_country_code": "643",
+                    "registration_country_name": "Россия",
+                    "registration_number": "123",
+                },
+            ]
+        )
+
+        response = self.client.post(reverse("business_registry_csv_upload"), {"csv_file": upload})
+
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertTrue(payload["warnings"])
+        self.assertTrue(BusinessEntityRecord.objects.filter(name='ООО "Альфа"').exists())
+        self.assertEqual(BusinessEntityRecord.objects.count(), 2)
+        self.assertEqual(BusinessEntityIdentifierRecord.objects.count(), 2)
+        self.assertEqual(BusinessEntityRelationRecord.objects.count(), 1)
+
+
 class BusinessEntityIdentifierFormTests(TestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user(
@@ -1101,6 +1454,14 @@ class BusinessEntityIdentifierFormTests(TestCase):
             name='ООО "Дата"',
             position=1,
         )
+
+    def test_create_form_wires_region_autofill_endpoint_for_identifier_number(self):
+        response = self.client.get(reverse("bei_form_create"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, reverse("ler_region_autofill"))
+        self.assertContains(response, 'id="id_number"', html=False)
+        self.assertContains(response, 'id="id_registration_region"', html=False)
 
     def test_create_accepts_registration_date_in_russian_format(self):
         response = self.client.post(

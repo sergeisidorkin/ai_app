@@ -109,6 +109,8 @@ urlpatterns = [
     path("lw/<int:pk>/move-up/", views.lw_move_up, name="lw_move_up"),
     path("lw/<int:pk>/move-down/", views.lw_move_down, name="lw_move_down"),
     path("lw/csv-upload/", views.lw_csv_upload, name="lw_csv_upload"),
+    path("business-registry/csv-download/", views.business_registry_csv_download, name="business_registry_csv_download"),
+    path("business-registry/csv-upload/", views.business_registry_csv_upload, name="business_registry_csv_upload"),
     # База юридических лиц (LER)
     path("ler/search/", views.ler_search, name="ler_search"),
     path("ler/identifiers-for-country/", views.ler_identifiers_for_country, name="ler_identifiers_for_country"),
