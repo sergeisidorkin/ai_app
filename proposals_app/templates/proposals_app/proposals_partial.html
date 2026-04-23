@@ -115,7 +115,7 @@
                 </div>
               {% endif %}
             </td>
-            <td data-col="number">{{ proposal.number }}</td>
+            <td data-col="number">{{ proposal.formatted_number }}</td>
             <td data-col="group">{{ proposal.group_display }}</td>
             <td class="text-center p-0 proposal-quick-edit-col" style="width:1%;">
               {% if request.user.is_authenticated and request.user.is_staff %}
@@ -277,7 +277,7 @@
                 </div>
               {% endif %}
             </td>
-            <td>{{ proposal.number }}</td>
+            <td>{{ proposal.formatted_number }}</td>
             <td>{{ proposal.group_display }}</td>
             <td class="text-center p-0 proposal-quick-edit-col" style="width:1%;">
               {% if request.user.is_authenticated and request.user.is_staff %}

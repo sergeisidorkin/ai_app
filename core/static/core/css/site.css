@@ -2902,6 +2902,34 @@ html.proposal-progress-cursor * {
   position: relative;
 }
 
+#proposals-pane .number-input-shell {
+  position: relative;
+}
+
+#proposals-pane .number-input-shell input[type="number"] {
+  color: transparent;
+  caret-color: #212529;
+}
+
+#proposals-pane .number-input-shell input[type="number"]::placeholder {
+  color: transparent;
+}
+
+#proposals-pane .number-input-display {
+  position: absolute;
+  top: 50%;
+  left: .75rem;
+  right: 2rem;
+  z-index: 2;
+  transform: translateY(-50%);
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #212529;
+  line-height: 1.5;
+}
+
 #proposals-pane .group-select-shell select {
   position: relative;
   z-index: 2;
@@ -2938,6 +2966,262 @@ html.proposal-progress-cursor * {
   background-size: 16px 12px;
   opacity: .7;
   background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M2 5l6 6 6-6'/%3e%3c/svg%3e");
+}
+
+#proposals-pane .proposal-type-block {
+  border: 1px solid #dee2e6;
+  border-radius: .5rem;
+  background: #f8f9fa;
+  padding: .75rem;
+}
+
+#proposals-pane .proposal-type-card {
+  border: 1px solid #dee2e6;
+  border-radius: .5rem;
+  background: #fff;
+  padding: .75rem .75rem 1.25rem .75rem;
+}
+
+#proposals-pane .proposal-type-head {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 1.5rem;
+  column-gap: .5rem;
+  align-items: end;
+  margin-bottom: .5rem;
+}
+
+#proposals-pane .proposal-type-head-labels {
+  min-width: 0;
+  margin: 0;
+}
+
+#proposals-pane .proposal-type-head-field-label {
+  display: block;
+  color: inherit;
+  font: inherit;
+  line-height: 1.5;
+}
+
+#proposals-pane .proposal-products-container {
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+}
+
+#proposals-pane .proposal-product-row {
+  padding: 0;
+}
+
+#proposals-pane .proposal-product-row-inner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  column-gap: .5rem;
+  align-items: center;
+}
+
+#proposals-pane .proposal-product-badge {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: .65rem;
+  border: 1px solid #6c757d;
+  color: #6c757d;
+  background: transparent;
+  font-weight: 400;
+  font-family: "SF Pro Text", system-ui, -apple-system, sans-serif;
+  font-variant-numeric: tabular-nums;
+  align-self: center;
+  justify-self: center;
+}
+
+#proposals-pane .proposal-product-fields {
+  min-width: 0;
+  margin: 0;
+  --bs-gutter-y: 0;
+  align-items: center;
+}
+
+#proposals-pane .proposal-product-select-shell {
+  position: relative;
+}
+
+#proposals-pane .proposal-product-fields .form-select,
+#proposals-pane .proposal-product-display {
+  min-height: calc(1.5em + .75rem + 2px);
+  height: calc(1.5em + .75rem + 2px);
+}
+
+#proposals-pane .proposal-product-select-shell select {
+  position: relative;
+  z-index: 2;
+  opacity: .01;
+}
+
+#proposals-pane .proposal-product-display {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  padding: .375rem 2.25rem .375rem .75rem;
+  color: #212529;
+  background-color: #fff;
+  border: 1px solid #ced4da;
+  border-radius: .375rem;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#proposals-pane .proposal-product-display::after {
+  content: "";
+  position: absolute;
+  right: .75rem;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  transform: translateY(-50%);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 16px 12px;
+  opacity: .7;
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M2 5l6 6 6-6'/%3e%3c/svg%3e");
+}
+
+#proposals-pane .proposal-product-display.is-placeholder {
+  color: #6c757d;
+}
+
+#policy-modal .policy-product-select-shell {
+  position: relative;
+}
+
+#policy-modal .policy-product-select-shell select.policy-product-select {
+  position: relative;
+  z-index: 2;
+  opacity: .01;
+}
+
+#policy-modal .policy-product-select-display {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  min-height: calc(1.5em + .75rem + 2px);
+  height: calc(1.5em + .75rem + 2px);
+  padding: .375rem 2.25rem .375rem .75rem;
+  color: #212529;
+  background-color: #fff;
+  border: 1px solid #ced4da;
+  border-radius: .375rem;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#policy-modal .policy-product-select-display::after {
+  content: "";
+  position: absolute;
+  right: .75rem;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  transform: translateY(-50%);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 16px 12px;
+  opacity: .7;
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M2 5l6 6 6-6'/%3e%3c/svg%3e");
+}
+
+#policy-modal .policy-product-select-display.is-placeholder {
+  color: #6c757d;
+}
+
+#proposals-pane .proposal-product-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  position: relative;
+  top: -1px;
+  left: -2px;
+  color: #adb5bd;
+  border: none;
+  font-size: 1.25rem;
+  line-height: 1;
+  padding: 0 .25rem;
+  align-self: center;
+  justify-self: center;
+}
+
+#proposals-pane .proposal-product-remove:hover {
+  color: #dc3545;
+}
+
+#proposals-pane .proposal-add-product-btn {
+  margin-top: .75rem;
+  border: 1px solid #ced4da;
+  background-color: #fff;
+  color: #495057;
+  font-size: 1rem;
+  padding: .375rem .75rem;
+}
+
+#proposals-pane .proposal-stage-blocks-container {
+  display: contents;
+}
+
+#proposals-pane .proposal-stage-service-block {
+  margin-top: var(--bs-gutter-y, 1rem);
+  padding-left: calc(var(--bs-gutter-x, 1.5rem) * .5);
+  padding-right: calc(var(--bs-gutter-x, 1.5rem) * .5);
+}
+
+#proposals-pane .proposal-stage-commercial-block {
+  margin-top: .25rem;
+  padding-left: calc(var(--bs-gutter-x, 1.5rem) * .5);
+  padding-right: calc(var(--bs-gutter-x, 1.5rem) * .5);
+}
+
+#proposals-pane .proposal-stage-commercial-block + .proposal-stage-commercial-block {
+  margin-top: var(--bs-gutter-y, 1rem);
+}
+
+#proposals-pane .proposal-stage-block-title {
+  display: block;
+  margin-top: 0;
+}
+
+#proposals-pane .proposal-terms-table .proposal-terms-stage-col {
+  width: 5.5rem;
+  min-width: 5.5rem;
+  max-width: 5.5rem;
+}
+
+#proposals-pane .proposal-terms-table th.proposal-terms-stage-col,
+#proposals-pane .proposal-terms-table td.proposal-terms-stage-col {
+  padding-left: 0 !important;
+  padding-right: .25rem !important;
+}
+
+#proposals-pane .proposal-terms-table > :not(caption) > * > * {
+  border-top: 0;
+  border-bottom: 0;
+}
+
+#proposals-pane .proposal-stage-label-input {
+  text-align: center;
+}
+
+#proposals-pane .proposal-stage-terms-total-row td {
+  background: transparent;
 }
 
 #proposals-pane .proposal-project-name-composite {
@@ -3807,6 +4091,10 @@ body.proposal-service-text-modal-open {
 
 #proposals-pane .proposal-service-text-modal__toolbar,
 #policy-modal .proposal-service-text-modal__toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .75rem;
   padding: .75rem 1rem;
   border-left: 0;
   border-right: 0;
@@ -3816,9 +4104,11 @@ body.proposal-service-text-modal-open {
 #proposals-pane .proposal-service-text-toolbar,
 #policy-modal .proposal-service-text-toolbar {
   display: flex;
+  flex: 1 1 auto;
   flex-wrap: wrap;
   gap: .5rem;
   align-items: center;
+  min-width: 0;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -3831,8 +4121,8 @@ body.proposal-service-text-modal-open {
   display: inline-flex;
   align-items: center;
   gap: .5rem;
-  margin: 0 0 0 1.25rem;
-  padding-left: .9rem;
+  margin: 0 0 0 .35rem;
+  padding-left: .75rem;
   border-left: 1px solid #e9ecef;
   min-height: 2rem;
 }

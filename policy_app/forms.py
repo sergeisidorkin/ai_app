@@ -38,6 +38,42 @@ def _coerce_positive_int(value):
     return parsed if parsed > 0 else None
 
 
+def _service_goal_report_product_option_label(product):
+    short_name = str(getattr(product, "short_name", "") or "").strip()
+    display_name = str(getattr(product, "display_name", "") or "").strip()
+    if short_name and display_name and display_name != short_name:
+        return f"{short_name} {display_name}"
+    return short_name or display_name
+
+
+def _policy_product_short_label(product):
+    short_name = str(getattr(product, "short_name", "") or "").strip()
+    display_name = str(getattr(product, "display_name", "") or "").strip()
+    return short_name or display_name
+
+
+class PolicyProductSelect(forms.Select):
+    def create_option(self, name, value, label, selected, index, subindex=None, attrs=None):
+        option = super().create_option(name, value, label, selected, index, subindex=subindex, attrs=attrs)
+        instance = getattr(value, "instance", None)
+        if instance is not None:
+            option_attrs = option.setdefault("attrs", {})
+            option_attrs["data-short-label"] = _policy_product_short_label(instance)
+        return option
+
+
+def _configure_policy_product_field(field):
+    field.queryset = Product.objects.order_by("position", "id")
+    field.label_from_instance = _service_goal_report_product_option_label
+    widget_attrs = dict(getattr(field.widget, "attrs", {}) or {})
+    classes = [part for part in str(widget_attrs.get("class", "") or "").split() if part]
+    if "policy-product-select" not in classes:
+        classes.append("policy-product-select")
+    widget_attrs["class"] = " ".join(classes)
+    field.widget = PolicyProductSelect(attrs=widget_attrs)
+    field.widget.choices = field.choices
+
+
 class CommaDecimalField(forms.DecimalField):
     def to_python(self, value):
         if isinstance(value, str):
@@ -449,6 +485,7 @@ class TypicalSectionForm(forms.ModelForm):
 
     def __init__(self, *args, request_user=None, **kwargs):
         super().__init__(*args, **kwargs)
+        _configure_policy_product_field(self.fields["product"])
         self.fields["expertise_dir"].queryset = ExpertiseDirection.objects.order_by("position", "id")
         self.fields["expertise_dir"].label_from_instance = (
             lambda obj: f"{obj.short_name} {obj.name}"
@@ -474,6 +511,7 @@ class SectionStructureForm(forms.ModelForm):
 
     def __init__(self, *args, request_user=None, **kwargs):
         super().__init__(*args, **kwargs)
+        _configure_policy_product_field(self.fields["product"])
         self.fields["section"].label_from_instance = (
             lambda obj: f"{obj.code}: {obj.name_ru or obj.name_en}"
         )
@@ -496,6 +534,10 @@ class ServiceGoalReportForm(forms.ModelForm):
         queryset=Product.objects.all(),
         widget=forms.Select(attrs={"class": "form-select"}),
     )
+
+    def __init__(self, *args, request_user=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        _configure_policy_product_field(self.fields["product"])
 
     class Meta:
         model = ServiceGoalReport
@@ -548,7 +590,7 @@ class TypicalServiceCompositionForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["product"].label_from_instance = lambda obj: obj.short_name
+        _configure_policy_product_field(self.fields["product"])
         self.fields["section"].label_from_instance = lambda obj: obj.name_ru
 
         product_id = None
@@ -660,6 +702,10 @@ class TypicalServiceTermForm(forms.ModelForm):
                 "placeholder": "0",
             }),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        _configure_policy_product_field(self.fields["product"])
 
 
 class ExpertiseDirectionForm(forms.ModelForm):
@@ -980,7 +1026,7 @@ class TariffForm(forms.ModelForm):
     def __init__(self, *args, request_user=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.request_user = request_user
-        self.fields["product"].label_from_instance = lambda obj: obj.short_name
+        _configure_policy_product_field(self.fields["product"])
         self.fields["section"].label_from_instance = (
             lambda obj: f"{obj.code}: {obj.name_ru or obj.name_en}"
         )

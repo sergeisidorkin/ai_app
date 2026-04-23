@@ -24,11 +24,12 @@ class ProposalRegistration(models.Model):
         FINAL = "final", "Итоговое"
         SENT = "sent", "Отправленное"
         COMPLETED = "completed", "Завершённое"
+        NOT_HELD = "not_held", "Несостоявшееся"
 
     position = models.PositiveIntegerField(default=0, db_index=True, verbose_name="Позиция")
     number = models.PositiveIntegerField(
         verbose_name="Номер",
-        validators=[MinValueValidator(3333), MaxValueValidator(9999)],
+        validators=[MinValueValidator(0), MaxValueValidator(9999)],
     )
     group = models.CharField("Группа", max_length=2, default="RU", db_index=True)
     group_member = models.ForeignKey(
@@ -113,6 +114,7 @@ class ProposalRegistration(models.Model):
     )
     service_composition_mode = models.CharField("Режим состава услуг", max_length=20, blank=True, default="sections")
     commercial_totals_json = models.JSONField("Итоги коммерческого предложения", default=dict, blank=True)
+    stage_payloads_json = models.JSONField("Данные этапов ТКП", default=list, blank=True)
     evaluation_date = models.DateField("Дата оценки", null=True, blank=True)
     service_term_months = models.DecimalField(
         "Срок подготовки Предварительного отчёта, мес.",
@@ -258,6 +260,10 @@ class ProposalRegistration(models.Model):
         return f"{self.short_uid} — {self.get_kind_display()}"
 
     @property
+    def formatted_number(self):
+        return f"{int(self.number or 0):04d}"
+
+    @property
     def contact_short_name(self):
         parts = [part for part in str(self.contact_full_name or "").strip().split() if part]
         if not parts:
@@ -350,6 +356,66 @@ class ProposalRegistration(models.Model):
         if not self.short_uid or self._needs_uid_refresh():
             self.short_uid = self._build_short_uid()
         super().save(*args, **kwargs)
+
+    def _ordered_product_links(self):
+        prefetched = getattr(self, "_prefetched_objects_cache", {})
+        if "product_links" in prefetched:
+            return list(prefetched["product_links"])
+        if not self.pk:
+            return []
+        return list(
+            self.product_links.select_related("product").order_by("rank", "id")
+        )
+
+    def ordered_products(self):
+        links = self._ordered_product_links()
+        if links:
+            return [link.product for link in links if getattr(link, "product_id", None)]
+        return [self.type] if self.type else []
+
+    @property
+    def ordered_product_ids(self):
+        return [product.pk for product in self.ordered_products() if getattr(product, "pk", None)]
+
+    @property
+    def product_rank_map(self):
+        return {product_id: index for index, product_id in enumerate(self.ordered_product_ids, start=1)}
+
+    @property
+    def primary_product(self):
+        products = self.ordered_products()
+        return products[0] if products else None
+
+    @property
+    def last_product(self):
+        products = self.ordered_products()
+        return products[-1] if products else None
+
+
+class ProposalRegistrationProduct(models.Model):
+    proposal = models.ForeignKey(
+        ProposalRegistration,
+        on_delete=models.CASCADE,
+        related_name="product_links",
+        verbose_name="ТКП",
+    )
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.PROTECT,
+        related_name="proposal_registration_links",
+        verbose_name="Продукт",
+    )
+    rank = models.PositiveIntegerField("Ранг", default=1)
+
+    class Meta:
+        app_label = "proposals_app"
+        ordering = ["rank", "id"]
+        verbose_name = "Продукт ТКП"
+        verbose_name_plural = "Продукты ТКП"
+        unique_together = [("proposal", "product")]
+
+    def __str__(self):
+        return f"{self.proposal.short_uid} — {self.product.short_name} (#{self.rank})"
 
 
 class ProposalAsset(models.Model):

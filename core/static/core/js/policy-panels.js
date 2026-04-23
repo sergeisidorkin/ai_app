@@ -69,6 +69,45 @@
     }
   }
 
+  function syncPolicyProductSelectDisplay(select) {
+    const shell = select?.closest('.policy-product-select-shell');
+    const display = shell?.querySelector('.policy-product-select-display');
+    if (!display) return;
+    const selected = select.options[select.selectedIndex];
+    const hasValue = !!String(selected?.value || '').trim();
+    const shortLabel = String(selected?.dataset?.shortLabel || '').trim();
+    const fallbackLabel = String(selected?.textContent || '').trim();
+    display.textContent = hasValue ? (shortLabel || fallbackLabel) : (fallbackLabel || '---------');
+    display.classList.toggle('is-placeholder', !hasValue);
+  }
+
+  function enhancePolicyProductSelect(select) {
+    if (!select || select.dataset.policyProductEnhanced === '1') {
+      if (select) syncPolicyProductSelectDisplay(select);
+      return;
+    }
+    const parent = select.parentElement;
+    if (!parent) return;
+    const shell = document.createElement('div');
+    shell.className = 'policy-product-select-shell';
+    parent.insertBefore(shell, select);
+    shell.appendChild(select);
+    const display = document.createElement('div');
+    display.className = 'policy-product-select-display';
+    shell.appendChild(display);
+    select.dataset.policyProductEnhanced = '1';
+    select.addEventListener('change', function () {
+      syncPolicyProductSelectDisplay(select);
+    });
+    syncPolicyProductSelectDisplay(select);
+  }
+
+  function initPolicyProductSelects(root) {
+    qa('select.policy-product-select', root).forEach(function (select) {
+      enhancePolicyProductSelect(select);
+    });
+  }
+
   function getMasterForPanel(panel) {
     const id = panel?.id;
     if (!id) return null;
@@ -326,6 +365,12 @@
     window.__tableSelLast = null;
   });
 
+  document.body.addEventListener('htmx:afterSwap', function (e) {
+    if (!e.target) return;
+    initPolicyProductSelects(e.target);
+  });
+
+  initPolicyProductSelects(document);
   initTypicalServiceCompositionWrapToggle();
   collapseSpecialtyTariffsSpecialties();
 })();

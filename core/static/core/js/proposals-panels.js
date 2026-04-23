@@ -35,6 +35,13 @@
   const PROPOSAL_STATUS_FILTER_PREF_KEY = 'proposals:status-filter';
   const PROPOSAL_KIND_FILTER_ALL = '__all__';
   const PROPOSAL_STATUS_FILTER_ALL = '__all__';
+  const PROPOSAL_STATUS_FILTER_OPTIONS = [
+    { value: 'preliminary', label: 'Предварительное' },
+    { value: 'final', label: 'Итоговое' },
+    { value: 'sent', label: 'Отправленное' },
+    { value: 'completed', label: 'Завершённое' },
+    { value: 'not_held', label: 'Несостоявшееся' },
+  ];
   const QUILL_JS = '/static/letters_app/vendor/quill/quill.min.js';
   const QUILL_CSS = '/static/letters_app/vendor/quill/quill.snow.css';
   let proposalQuillLoaded = false;
@@ -375,12 +382,27 @@
 
     const availableStatuses = [];
     const seenStatuses = new Set();
+    const availableStatusLabels = new Map();
     rows.forEach((row) => {
       const statusValue = row.dataset.status || '';
       const statusText = row.dataset.statusLabel || statusValue;
-      if (!statusValue || seenStatuses.has(statusValue)) return;
-      seenStatuses.add(statusValue);
-      availableStatuses.push({ value: statusValue, label: statusText });
+      if (!statusValue) return;
+      if (!availableStatusLabels.has(statusValue)) {
+        availableStatusLabels.set(statusValue, statusText);
+      }
+    });
+    PROPOSAL_STATUS_FILTER_OPTIONS.forEach((item) => {
+      if (seenStatuses.has(item.value)) return;
+      seenStatuses.add(item.value);
+      availableStatuses.push({
+        value: item.value,
+        label: availableStatusLabels.get(item.value) || item.label,
+      });
+    });
+    availableStatusLabels.forEach((label, value) => {
+      if (seenStatuses.has(value)) return;
+      seenStatuses.add(value);
+      availableStatuses.push({ value: value, label: label });
     });
 
     kindListContainer.innerHTML = '';
@@ -712,6 +734,23 @@
     };
 
     select.addEventListener('change', sync);
+    sync();
+  }
+
+  function attachProposalNumberDisplay(root) {
+    if (!root) return;
+    const input = root.querySelector('#proposal-number-input');
+    const display = root.querySelector('#proposal-number-display');
+    if (!input || !display || input.dataset.numberBound === '1') return;
+    input.dataset.numberBound = '1';
+
+    const sync = function () {
+      const raw = String(input.value || '').replace(/\D+/g, '').slice(0, 4);
+      display.textContent = raw ? raw.padStart(4, '0') : '';
+    };
+
+    input.addEventListener('input', sync);
+    input.addEventListener('change', sync);
     sync();
   }
 
@@ -1795,8 +1834,52 @@
     }
   }
 
+  function getProposalOwningForm(node) {
+    if (!node) return null;
+    if (node.matches?.('form[data-proposal-form]')) return node;
+    return node.closest?.('form[data-proposal-form]') || null;
+  }
+
+  function getProposalStageScope(node) {
+    if (!node) return null;
+    if (node.matches?.('[data-proposal-stage-root="1"]')) return node;
+    return node.closest?.('[data-proposal-stage-root="1"]') || null;
+  }
+
+  function getProposalScope(node) {
+    return getProposalStageScope(node) || getProposalOwningForm(node) || node;
+  }
+
+  function getProposalStageKey(node) {
+    return String(getProposalStageScope(node)?.dataset?.proposalStageKey || '').trim();
+  }
+
+  function getProposalStageRoots(form, stageKey) {
+    const key = String(stageKey || '').trim();
+    if (!form || !key) return [];
+    return Array.from(form.querySelectorAll('[data-proposal-stage-root="1"]')).filter(function (node) {
+      return String(node?.dataset?.proposalStageKey || '').trim() === key;
+    });
+  }
+
+  function getProposalStageRootByKind(form, stageKey, kind) {
+    return getProposalStageRoots(form, stageKey).find(function (node) {
+      return String(node?.dataset?.proposalStageKind || '').trim() === String(kind || '').trim();
+    }) || null;
+  }
+
   function getProposalTypeId(form) {
-    return (form?.querySelector('select[name="type"]')?.value || '').trim();
+    const stageScope = getProposalStageScope(form);
+    if (stageScope) {
+      const stageTypeInput = stageScope.querySelector?.('[data-proposal-stage-type]');
+      if (stageTypeInput) {
+        return String(stageTypeInput.value || '').trim();
+      }
+    }
+    const scope = getProposalOwningForm(form) || form;
+    const typeSelects = Array.from(scope?.querySelectorAll?.('select[name="type"]') || []);
+    if (!typeSelects.length) return '';
+    return String(typeSelects[typeSelects.length - 1]?.value || '').trim();
   }
 
   function getProposalTypicalSectionEntries(form) {
@@ -1988,7 +2071,8 @@
   function getProposalCommercialDayCounts(form, serviceName, currentValues, options) {
     const autofill = getProposalCommercialAutofill(form, serviceName);
     const defaultDays = Number.parseInt(autofill.serviceDaysTkp || 0, 10) || 0;
-    const assetsPayloadInput = form?.querySelector('#proposal-assets-payload');
+    const assetsPayloadInput = form?.querySelector('#proposal-assets-payload')
+      || getProposalOwningForm(form)?.querySelector('#proposal-assets-payload');
     let assetCount = 0;
     try {
       const rows = JSON.parse(assetsPayloadInput?.value || '[]');
@@ -2977,11 +3061,20 @@
 
   function attachProposalServicesStore(root) {
     if (!root) return null;
-    const form = root.closest('form[data-proposal-form]') || root;
-    const commercialInput = form.querySelector('#proposal-commercial-offer-payload');
-    const serviceInput = form.querySelector('#proposal-service-sections-payload');
+    const scope = getProposalScope(root);
+    const form = getProposalOwningForm(scope) || scope;
+    const stageKey = getProposalStageKey(scope);
+    const commercialRoot = stageKey ? getProposalStageRootByKind(form, stageKey, 'commercial') : scope;
+    const serviceRoot = stageKey ? getProposalStageRootByKind(form, stageKey, 'service') : scope;
+    const commercialInput = commercialRoot?.querySelector('#proposal-commercial-offer-payload');
+    const serviceInput = serviceRoot?.querySelector('#proposal-service-sections-payload');
     if (!commercialInput || !serviceInput) return null;
-    if (form.__proposalServicesStore) return form.__proposalServicesStore;
+    if (stageKey) {
+      form.__proposalStageServicesStores = form.__proposalStageServicesStores || {};
+      if (form.__proposalStageServicesStores[stageKey]) return form.__proposalStageServicesStores[stageKey];
+    } else if (form.__proposalServicesStore) {
+      return form.__proposalServicesStore;
+    }
 
     function parsePayload(input) {
       try {
@@ -2997,19 +3090,19 @@
         return normalizeProposalTravelExpensesRow(row);
       }
       const serviceName = String(row?.service_name || '').trim();
-      const autofill = getProposalCommercialAutofill(form, serviceName);
+      const autofill = getProposalCommercialAutofill(scope, serviceName);
       const specialty = autofill.jobTitle || String(row?.job_title || '').trim();
       const forceAutofill = options?.forceAutofill === true;
       const specialistValue = String(row?.specialist || '').trim();
       const statusValue = String(row?.professional_status || '').trim();
       const specialist = forceAutofill ? autofill.specialist : (specialistValue || autofill.specialist);
-      const specialistStatus = getProposalCommercialSpecialistStatus(form, serviceName, specialist);
+      const specialistStatus = getProposalCommercialSpecialistStatus(scope, serviceName, specialist);
       const currentRate = String(row?.rate_eur_per_day || '').trim();
-      const autofillRate = getProposalCommercialRateValue(form, serviceName, specialist);
+      const autofillRate = getProposalCommercialRateValue(scope, serviceName, specialist);
       const currentDayCounts = Array.isArray(row?.asset_day_counts)
         ? row.asset_day_counts.map(function (value) { return String(value ?? '').trim(); })
         : [];
-      const autofillDayCounts = getProposalCommercialDayCounts(form, serviceName, currentDayCounts, {
+      const autofillDayCounts = getProposalCommercialDayCounts(scope, serviceName, currentDayCounts, {
         replaceAll: forceAutofill,
       });
       return {
@@ -3019,7 +3112,7 @@
           ? (specialistStatus || autofill.professionalStatus)
           : (statusValue || specialistStatus || autofill.professionalStatus),
         service_name: serviceName,
-        code: getProposalTypicalSectionCode(form, serviceName) || String(row?.code || '').trim(),
+        code: getProposalTypicalSectionCode(scope, serviceName) || String(row?.code || '').trim(),
         rate_eur_per_day: forceAutofill ? (autofillRate || currentRate) : (currentRate || autofillRate),
         asset_day_counts: forceAutofill
           ? autofillDayCounts
@@ -3091,13 +3184,16 @@
         serviceRows: api.getServiceRows(),
         meta: meta || null,
       };
-      form.dispatchEvent(new CustomEvent('proposal-commercial-changed', { detail: detail }));
-      form.dispatchEvent(new CustomEvent('proposal-service-sections-changed', {
-        detail: {
-          rows: detail.serviceRows,
-          meta: meta || null,
-        },
-      }));
+      const eventTargets = stageKey ? getProposalStageRoots(form, stageKey) : [form];
+      eventTargets.forEach(function (target) {
+        target.dispatchEvent(new CustomEvent('proposal-commercial-changed', { detail: detail }));
+        target.dispatchEvent(new CustomEvent('proposal-service-sections-changed', {
+          detail: {
+            rows: detail.serviceRows,
+            meta: meta || null,
+          },
+        }));
+      });
       listeners.slice().forEach(function (listener) {
         listener(detail);
       });
@@ -3144,7 +3240,7 @@
       },
       replaceFromType: function (meta) {
         api.commitServiceRows(
-          getProposalTypicalSectionEntries(form).map(function (entry) {
+          getProposalTypicalSectionEntries(scope).map(function (entry) {
             return {
               service_name: (entry?.name || '').trim(),
               code: (entry?.code || '').trim(),
@@ -3172,28 +3268,91 @@
     };
 
     syncHiddenInputs();
-    form.__proposalServicesStore = api;
+    if (stageKey) {
+      form.__proposalStageServicesStores[stageKey] = api;
+    } else {
+      form.__proposalServicesStore = api;
+    }
     return api;
   }
 
   function attachProposalCommercialTable(root, assetsApi) {
     if (!root) return null;
-    const form = root.closest('form[data-proposal-form]') || root;
-    const servicesStore = attachProposalServicesStore(form);
-    const serviceCostInput = form.querySelector('[name="service_cost"]');
-    const table = form.querySelector('#proposal-commercial-table');
-    const payloadInput = form.querySelector('#proposal-commercial-offer-payload');
-    const totalsPayloadInput = form.querySelector('#proposal-commercial-totals-payload');
-    const thead = form.querySelector('#proposal-commercial-thead');
-    const tbody = form.querySelector('#proposal-commercial-tbody');
-    const addBtn = form.querySelector('#proposal-commercial-add-btn');
-    const actions = form.querySelector('#proposal-commercial-row-actions');
-    const upBtn = form.querySelector('#proposal-commercial-up-btn');
-    const downBtn = form.querySelector('#proposal-commercial-down-btn');
-    const deleteBtn = form.querySelector('#proposal-commercial-delete-btn');
-    if (!table || !payloadInput || !totalsPayloadInput || !thead || !tbody || !addBtn || !actions || !upBtn || !downBtn || !deleteBtn) return null;
-    if (form.dataset.commercialBound === '1') return form.__proposalCommercialTableApi || null;
-    form.dataset.commercialBound = '1';
+    const scope = getProposalScope(root);
+    const formRoot = getProposalOwningForm(scope) || scope;
+    const form = scope;
+    const isSummaryCommercialBlock = scope.dataset.proposalCommercialSummary === '1';
+    const servicesStore = isSummaryCommercialBlock ? null : attachProposalServicesStore(scope);
+    const serviceCostInput = formRoot.querySelector('[name="service_cost"]');
+    const table = scope.querySelector('#proposal-commercial-table');
+    const payloadInput = scope.querySelector('#proposal-commercial-offer-payload');
+    const totalsPayloadInput = scope.querySelector('#proposal-commercial-totals-payload');
+    const thead = scope.querySelector('#proposal-commercial-thead');
+    const tbody = scope.querySelector('#proposal-commercial-tbody');
+    const addBtn = scope.querySelector('#proposal-commercial-add-btn');
+    const actions = scope.querySelector('#proposal-commercial-row-actions');
+    const upBtn = scope.querySelector('#proposal-commercial-up-btn');
+    const downBtn = scope.querySelector('#proposal-commercial-down-btn');
+    const deleteBtn = scope.querySelector('#proposal-commercial-delete-btn');
+    if (
+      !table || !payloadInput || !totalsPayloadInput || !thead || !tbody
+      || (!isSummaryCommercialBlock && (!addBtn || !actions || !upBtn || !downBtn || !deleteBtn))
+    ) return null;
+    if (scope.dataset.commercialBound === '1') return scope.__proposalCommercialTableApi || null;
+    scope.dataset.commercialBound = '1';
+
+    function hasVisibleSummaryCommercialBlock() {
+      const summaryBlock = formRoot.querySelector('[data-proposal-commercial-summary="1"]');
+      return !!summaryBlock && !summaryBlock.classList.contains('d-none');
+    }
+
+    function getStageCommercialBlocks() {
+      return Array.from(
+        formRoot.querySelectorAll('#proposal-commercial-stages-container [data-proposal-stage-kind="commercial"]')
+      );
+    }
+
+    function getMasterCommercialBlock() {
+      return getStageCommercialBlocks()[0] || null;
+    }
+
+    function isCommercialRateMasterBlock() {
+      if (scope.dataset.proposalCommercialRateMaster === '1') return true;
+      return !isSummaryCommercialBlock && getMasterCommercialBlock() === scope;
+    }
+
+    function shouldSyncServiceCost() {
+      return isSummaryCommercialBlock ? hasVisibleSummaryCommercialBlock() : !hasVisibleSummaryCommercialBlock();
+    }
+
+    function readCommercialTotalsState(block) {
+      try {
+        return normalizeProposalCommercialTotalsState(
+          JSON.parse(block?.querySelector('#proposal-commercial-totals-payload')?.value || '{}')
+        );
+      } catch (error) {
+        return normalizeProposalCommercialTotalsState({});
+      }
+    }
+
+    function getCommercialRateStateFromBlock(block) {
+      if (!block) return null;
+      const totalsState = readCommercialTotalsState(block);
+      const rubTotalRow = block.querySelector('tr[data-rub-total-row="1"]');
+      const rateInput = rubTotalRow?.querySelector('.proposal-commercial-rate');
+      const serviceInput = rubTotalRow?.querySelector('.proposal-commercial-service-text');
+      return {
+        exchange_rate: rawMoney(rateInput?.value || totalsState.exchange_rate || ''),
+        rub_total_service_text: String(serviceInput?.value || totalsState.rub_total_service_text || '').trim(),
+      };
+    }
+
+    function getSharedCommercialRateState() {
+      if (isCommercialRateMasterBlock()) return null;
+      const masterBlock = getMasterCommercialBlock();
+      if (!masterBlock || masterBlock === scope) return null;
+      return getCommercialRateStateFromBlock(masterBlock);
+    }
 
     function parsePayload() {
       if (servicesStore) return servicesStore.getRows();
@@ -3253,10 +3412,36 @@
       totalsPayloadInput.value = JSON.stringify(normalizeProposalCommercialTotalsState(state));
     }
 
-    function getEditableRows() {
+    function applySharedCommercialRateState() {
+      const sharedState = getSharedCommercialRateState();
+      if (!sharedState) return;
+      const rubTotalRow = findFixedRow('tr[data-rub-total-row="1"]');
+      const serviceInput = rubTotalRow?.querySelector('.proposal-commercial-service-text');
+      const rateInput = rubTotalRow?.querySelector('.proposal-commercial-rate');
+      if (serviceInput && document.activeElement !== serviceInput) {
+        serviceInput.value = String(sharedState.rub_total_service_text || '').trim();
+      }
+      if (rateInput && document.activeElement !== rateInput) {
+        rateInput.value = sharedState.exchange_rate
+          ? formatProposalExchangeRateDisplay(sharedState.exchange_rate)
+          : '';
+      }
+      const currentState = parseTotalsPayload();
+      setTotalsPayload({
+        ...currentState,
+        exchange_rate: sharedState.exchange_rate,
+        rub_total_service_text: String(sharedState.rub_total_service_text || '').trim(),
+      });
+    }
+
+    function getDataRows() {
       return getRows().filter(function (row) {
         return !isFixedRow(row);
       });
+    }
+
+    function getEditableRows() {
+      return getDataRows();
     }
 
     function getSelectedRows() {
@@ -3396,6 +3581,11 @@
 
     function syncActions() {
       const hasSelected = getSelectedRows().length > 0;
+      if (isSummaryCommercialBlock) {
+        if (upBtn) upBtn.disabled = !hasSelected;
+        if (downBtn) downBtn.disabled = !hasSelected;
+        return;
+      }
       actions.classList.toggle('d-none', !hasSelected);
       actions.classList.toggle('d-flex', hasSelected);
     }
@@ -3470,7 +3660,7 @@
         return;
       }
 
-      if (isTravelExpenses && isReadOnly) {
+      if (isTravelExpenses && getTravelExpensesMode(row) !== PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION) {
         sourceValues = Array.from({ length: assetRows.length }, function () { return ''; });
       }
 
@@ -3553,12 +3743,12 @@
     }
 
     function computeSummaryValues() {
-      const editableRows = getEditableRows();
+      const dataRows = getDataRows();
       const assetCount = Math.max(getAssetRows().length, 1);
       const dayCounts = Array.from({ length: assetCount }, function () { return 0; });
       let total = 0;
 
-      editableRows.forEach(function (row) {
+      dataRows.forEach(function (row) {
         getDayInputs(row).forEach(function (input, index) {
           const value = parseInt((input.value || '').trim(), 10);
           if (Number.isFinite(value)) dayCounts[index] += value;
@@ -3621,6 +3811,7 @@
     }
 
     function computeCommercialFinancialTotals() {
+      applySharedCommercialRateState();
       const summaryTotal = parseFloat(rawMoney(
         findFixedRow('tr[data-summary-with-travel-row="1"]')?.querySelector('.proposal-commercial-total')?.value
         || findFixedRow('tr[data-summary-row="1"]')?.querySelector('.proposal-commercial-total')?.value
@@ -3669,6 +3860,7 @@
     }
 
     function syncServiceCostValue(valueRaw) {
+      if (!shouldSyncServiceCost()) return;
       if (!serviceCostInput || document.activeElement === serviceCostInput) return;
       serviceCostInput.value = valueRaw ? fmtMoney(valueRaw) : '';
     }
@@ -3725,6 +3917,11 @@
         travel_expenses_mode: getTravelExpensesMode(findFixedRow('tr[data-travel-expenses-row="1"]')),
       });
       syncAllFinancialServiceCellExpansions();
+      if (isCommercialRateMasterBlock()) {
+        formRoot.dispatchEvent(new CustomEvent('proposal-commercial-shared-rate-changed', {
+          detail: getCommercialRateStateFromBlock(scope),
+        }));
+      }
     }
 
     function updatePayload(meta) {
@@ -3762,7 +3959,7 @@
       }
       if (rate) rate.value = data.rate_eur_per_day ? fmtMoney(data.rate_eur_per_day) : '';
       if (total) total.value = data.total_eur_without_vat ? fmtMoney(data.total_eur_without_vat) : '';
-      syncDayCells(row, getAssetRows(), data.asset_day_counts || []);
+      syncDayCells(row, getAssetRows(), data.asset_day_counts || [], { readOnly: isSummaryCommercialBlock });
       recalcRowTotal(row);
     }
 
@@ -3793,6 +3990,11 @@
         data.specialist || autofill.specialist || ''
       );
       specialistSelect.value = data.specialist || autofill.specialist || '';
+      if (isSummaryCommercialBlock) {
+        specialistSelect.disabled = true;
+        specialistSelect.tabIndex = -1;
+        specialistSelect.classList.add('readonly-field');
+      }
       specialistTd.appendChild(specialistSelect);
       row.appendChild(specialistTd);
 
@@ -3818,15 +4020,70 @@
         )
         || autofill.professionalStatus
         || '';
+      if (isSummaryCommercialBlock) {
+        statusInput.readOnly = true;
+        statusInput.tabIndex = -1;
+        statusInput.classList.add('readonly-field');
+      }
       statusTd.appendChild(statusInput);
       row.appendChild(statusTd);
 
       const serviceTd = createProposalTableCell();
-      const serviceSelect = document.createElement('select');
-      serviceSelect.className = 'form-select proposal-commercial-service';
-      syncProposalCommercialServiceSelect(serviceSelect, form, data.service_name || '');
-      serviceSelect.value = data.service_name || '';
-      serviceTd.appendChild(serviceSelect);
+      let serviceSelect = null;
+      if (isSummaryCommercialBlock) {
+        const serviceInput = document.createElement('input');
+        serviceInput.type = 'text';
+        serviceInput.className = 'form-control proposal-commercial-service readonly-field';
+        serviceInput.readOnly = true;
+        serviceInput.tabIndex = -1;
+        serviceInput.value = '';
+        serviceTd.appendChild(serviceInput);
+      } else {
+        serviceSelect = document.createElement('select');
+        serviceSelect.className = 'form-select proposal-commercial-service';
+        syncProposalCommercialServiceSelect(serviceSelect, form, data.service_name || '');
+        serviceSelect.value = data.service_name || '';
+        serviceTd.appendChild(serviceSelect);
+        serviceSelect.addEventListener('change', function () {
+          const serviceAutofill = getProposalCommercialAutofill(form, serviceSelect.value || '');
+          titleInput.value = serviceAutofill.jobTitle || '';
+          syncProposalCommercialSpecialistSelect(
+            specialistSelect,
+            form,
+            serviceSelect.value || '',
+            serviceAutofill.specialist || ''
+          );
+          specialistSelect.value = serviceAutofill.specialist || '';
+          statusInput.value = getProposalCommercialSpecialistStatus(
+            form,
+            serviceSelect.value || '',
+            specialistSelect.value || ''
+          ) || serviceAutofill.professionalStatus || '';
+          const rateValue = getProposalCommercialRateValue(
+            form,
+            serviceSelect.value || '',
+            specialistSelect.value || ''
+          );
+          rateInput.value = rateValue ? fmtMoney(rateValue) : '';
+          syncDayCells(
+            row,
+            getAssetRows(),
+            getProposalCommercialDayCounts(
+              form,
+              serviceSelect.value || '',
+              getDayInputs(row).map(function (input) { return input.value || ''; }),
+              { replaceAll: true }
+            )
+          );
+          recalcRowTotal(row);
+          updatePayload({ reason: 'row-edit', rowIndex: getRows().indexOf(row) });
+        });
+        serviceSelect.addEventListener('input', function () {
+          if (!serviceSelect.value) {
+            updatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
+          }
+        });
+      }
       row.appendChild(serviceTd);
 
       const rateTd = createProposalTableCell('proposal-commercial-rate-cell');
@@ -3835,6 +4092,11 @@
       rateInput.className = 'form-control js-money-input proposal-commercial-rate';
       rateInput.inputMode = 'decimal';
       rateInput.value = data.rate_eur_per_day ? fmtMoney(data.rate_eur_per_day) : '';
+      if (isSummaryCommercialBlock) {
+        rateInput.readOnly = true;
+        rateInput.tabIndex = -1;
+        rateInput.classList.add('readonly-field');
+      }
       rateTd.appendChild(rateInput);
       row.appendChild(rateTd);
 
@@ -3849,86 +4111,49 @@
       totalTd.appendChild(totalInput);
       row.appendChild(totalTd);
 
-      syncDayCells(row, getAssetRows(), data.asset_day_counts || []);
+      syncDayCells(row, getAssetRows(), data.asset_day_counts || [], { readOnly: isSummaryCommercialBlock });
 
       [statusInput].forEach(function (input) {
+        if (isSummaryCommercialBlock) return;
         input.addEventListener('change', function () {
           updatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
         });
       });
-      statusInput.addEventListener('input', function () {
-        updatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
-      });
-      specialistSelect.addEventListener('change', function () {
-        const specialistStatus = getProposalCommercialSpecialistStatus(
-          form,
-          serviceSelect.value || '',
-          specialistSelect.value || ''
-        );
-        const rateValue = getProposalCommercialRateValue(
-          form,
-          serviceSelect.value || '',
-          specialistSelect.value || ''
-        );
-        if (specialistStatus) {
-          statusInput.value = specialistStatus;
-        } else if (!(specialistSelect.value || '').trim()) {
-          statusInput.value = '';
-        }
-        if (rateValue) {
-          rateInput.value = fmtMoney(rateValue);
-          recalcRowTotal(row);
-        }
-        updatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
-      });
-      serviceSelect.addEventListener('change', function () {
-        const serviceAutofill = getProposalCommercialAutofill(form, serviceSelect.value || '');
-        titleInput.value = serviceAutofill.jobTitle || '';
-        syncProposalCommercialSpecialistSelect(
-          specialistSelect,
-          form,
-          serviceSelect.value || '',
-          serviceAutofill.specialist || ''
-        );
-        specialistSelect.value = serviceAutofill.specialist || '';
-        statusInput.value = getProposalCommercialSpecialistStatus(
-          form,
-          serviceSelect.value || '',
-          specialistSelect.value || ''
-        ) || serviceAutofill.professionalStatus || '';
-        const rateValue = getProposalCommercialRateValue(
-          form,
-          serviceSelect.value || '',
-          specialistSelect.value || ''
-        );
-        rateInput.value = rateValue ? fmtMoney(rateValue) : '';
-        syncDayCells(
-          row,
-          getAssetRows(),
-          getProposalCommercialDayCounts(
+      if (!isSummaryCommercialBlock) {
+        statusInput.addEventListener('input', function () {
+          updatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
+        });
+        specialistSelect.addEventListener('change', function () {
+          const specialistStatus = getProposalCommercialSpecialistStatus(
             form,
             serviceSelect.value || '',
-            getDayInputs(row).map(function (input) { return input.value || ''; }),
-            { replaceAll: true }
-          )
-        );
-        recalcRowTotal(row);
-        updatePayload({ reason: 'row-edit', rowIndex: getRows().indexOf(row) });
-      });
-      serviceSelect.addEventListener('input', function () {
-        if (!serviceSelect.value) {
+            specialistSelect.value || ''
+          );
+          const rateValue = getProposalCommercialRateValue(
+            form,
+            serviceSelect.value || '',
+            specialistSelect.value || ''
+          );
+          if (specialistStatus) {
+            statusInput.value = specialistStatus;
+          } else if (!(specialistSelect.value || '').trim()) {
+            statusInput.value = '';
+          }
+          if (rateValue) {
+            rateInput.value = fmtMoney(rateValue);
+            recalcRowTotal(row);
+          }
           updatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
-        }
-      });
-
-      rateInput.addEventListener('change', function () {
-        recalcRowTotal(row);
-        updatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
-      });
-      rateInput.addEventListener('input', function () {
-        recalcRowTotal(row);
-        updatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
-      });
+        });
+        rateInput.addEventListener('change', function () {
+          recalcRowTotal(row);
+          updatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
+        });
+        rateInput.addEventListener('input', function () {
+          recalcRowTotal(row);
+          updatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
+        });
+      }
 
       attachMoneyInputs(row);
       recalcRowTotal(row);
@@ -3960,6 +4185,11 @@
         rateSelect.appendChild(option);
       });
       rateSelect.value = getTravelExpensesMode(row);
+      if (isSummaryCommercialBlock) {
+        rateSelect.disabled = true;
+        rateSelect.tabIndex = -1;
+        rateSelect.classList.add('readonly-field');
+      }
       rateTd.appendChild(rateSelect);
       row.appendChild(rateTd);
 
@@ -3973,20 +4203,22 @@
       totalTd.appendChild(totalInput);
       row.appendChild(totalTd);
 
-      syncDayCells(row, getAssetRows(), data.asset_day_counts || []);
+      syncDayCells(row, getAssetRows(), data.asset_day_counts || [], { readOnly: isSummaryCommercialBlock });
 
-      rateSelect.addEventListener('change', function () {
-        row.dataset.travelExpensesMode = normalizeProposalTravelExpensesMode(rateSelect.value) || PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL;
-        if (getTravelExpensesMode(row) === PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL) {
-          row.dataset.preservedActualTotalRaw = '';
-        }
-        const nextValues = getTravelExpensesMode(row) === PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION
-          ? getDayInputs(row).map(function (input) { return input.value || ''; })
-          : [];
-        syncDayCells(row, getAssetRows(), nextValues);
-        recalcTravelRowTotal(row);
-        updatePayload({ reason: 'travel-expenses-mode-change' });
-      });
+      if (!isSummaryCommercialBlock) {
+        rateSelect.addEventListener('change', function () {
+          row.dataset.travelExpensesMode = normalizeProposalTravelExpensesMode(rateSelect.value) || PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL;
+          if (getTravelExpensesMode(row) === PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL) {
+            row.dataset.preservedActualTotalRaw = '';
+          }
+          const nextValues = getTravelExpensesMode(row) === PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION
+            ? getDayInputs(row).map(function (input) { return input.value || ''; })
+            : [];
+          syncDayCells(row, getAssetRows(), nextValues);
+          recalcTravelRowTotal(row);
+          updatePayload({ reason: 'travel-expenses-mode-change' });
+        });
+      }
 
       attachMoneyInputs(row);
       recalcTravelRowTotal(row);
@@ -4074,7 +4306,7 @@
         serviceTd.colSpan = 1;
         const serviceWrap = document.createElement('div');
         serviceWrap.className = 'proposal-commercial-financial-service-wrap';
-        if (config.showCbrLink) {
+        if (config.showCbrLink && isCommercialRateMasterBlock()) {
           const serviceActions = document.createElement('div');
           serviceActions.className = 'proposal-commercial-service-actions';
           const serviceLink = document.createElement('a');
@@ -4130,12 +4362,18 @@
         serviceInput.type = 'text';
         serviceInput.className = 'form-control proposal-commercial-service-text';
         serviceInput.value = config.serviceStateKey ? (state[config.serviceStateKey] || '') : '';
-        serviceInput.addEventListener('input', function () {
-          syncCommercialFinancialRows();
-        });
-        serviceInput.addEventListener('change', function () {
-          syncCommercialFinancialRows();
-        });
+        if (config.showCbrLink && !isCommercialRateMasterBlock()) {
+          serviceInput.readOnly = true;
+          serviceInput.tabIndex = -1;
+          serviceInput.classList.add('readonly-field');
+        } else {
+          serviceInput.addEventListener('input', function () {
+            syncCommercialFinancialRows();
+          });
+          serviceInput.addEventListener('change', function () {
+            syncCommercialFinancialRows();
+          });
+        }
         serviceWrap.appendChild(serviceInput);
         serviceTd.appendChild(serviceWrap);
         row.appendChild(serviceTd);
@@ -4149,12 +4387,18 @@
         rateInput.dataset.moneyPrecision = '4';
         rateInput.inputMode = 'decimal';
         rateInput.value = state.exchange_rate ? formatProposalExchangeRateDisplay(state.exchange_rate) : '';
-        rateInput.addEventListener('input', function () {
-          syncCommercialFinancialRows();
-        });
-        rateInput.addEventListener('change', function () {
-          syncCommercialFinancialRows();
-        });
+        if (!isCommercialRateMasterBlock()) {
+          rateInput.readOnly = true;
+          rateInput.tabIndex = -1;
+          rateInput.classList.add('readonly-field');
+        } else {
+          rateInput.addEventListener('input', function () {
+            syncCommercialFinancialRows();
+          });
+          rateInput.addEventListener('change', function () {
+            syncCommercialFinancialRows();
+          });
+        }
         rateTd.appendChild(rateInput);
       } else if (config.rateMode === 'percent') {
         const rateInput = document.createElement('input');
@@ -4294,28 +4538,36 @@
       updatePayload({ reason: 'row-delete' });
     }
 
-    addBtn.addEventListener('click', function () {
-      const row = createRow({});
-      const firstFixedRow = getRows().find(function (item) { return isFixedRow(item); });
-      if (firstFixedRow) {
-        tbody.insertBefore(row, firstFixedRow);
-      } else {
-        tbody.appendChild(row);
-      }
-      updatePayload({ reason: 'row-add', rowIndex: getEditableRows().length - 1 });
-      row.querySelector('.proposal-commercial-specialist')?.focus();
-    });
+    if (!isSummaryCommercialBlock && addBtn) {
+      addBtn.addEventListener('click', function () {
+        const row = createRow({});
+        const firstFixedRow = getRows().find(function (item) { return isFixedRow(item); });
+        if (firstFixedRow) {
+          tbody.insertBefore(row, firstFixedRow);
+        } else {
+          tbody.appendChild(row);
+        }
+        updatePayload({ reason: 'row-add', rowIndex: getEditableRows().length - 1 });
+        row.querySelector('.proposal-commercial-specialist')?.focus();
+      });
+    }
 
-    upBtn.addEventListener('click', function () { moveSelected('up'); });
-    downBtn.addEventListener('click', function () { moveSelected('down'); });
-    deleteBtn.addEventListener('click', deleteSelected);
+    if (upBtn) {
+      upBtn.addEventListener('click', function () { moveSelected('up'); });
+    }
+    if (downBtn) {
+      downBtn.addEventListener('click', function () { moveSelected('down'); });
+    }
+    if (!isSummaryCommercialBlock && deleteBtn) {
+      deleteBtn.addEventListener('click', deleteSelected);
+    }
 
-    form.addEventListener('proposal-assets-changed', function (event) {
+    formRoot.addEventListener('proposal-assets-changed', function (event) {
       const rows = Array.isArray(event.detail?.rows) ? event.detail.rows : getAssetRows();
       const meta = event.detail?.meta || {};
       renderHeader(rows);
       getRows().forEach(function (row) {
-        if (meta.reason === 'row-add') {
+        if (meta.reason === 'row-add' && !isSummaryCommercialBlock) {
           syncDayCells(
             row,
             rows,
@@ -4336,15 +4588,25 @@
           syncSummaryWithTravelRowValues();
           return;
         }
-        syncDayCells(row, rows, undefined, { readOnly: isFixedRow(row) && !isTravelRow(row) });
+        syncDayCells(row, rows, undefined, { readOnly: isSummaryCommercialBlock || (isFixedRow(row) && !isTravelRow(row)) });
       });
       updatePayload({ reason: 'sync-asset-columns' });
     });
 
-    servicesStore.subscribe(function (detail) {
-      if (detail?.meta?.source === 'commercial-view') return;
-      renderRows(detail?.rows || []);
-    });
+    if (servicesStore) {
+      servicesStore.subscribe(function (detail) {
+        if (detail?.meta?.source === 'commercial-view') return;
+        renderRows(detail?.rows || []);
+      });
+    }
+    if (!scope.dataset.commercialSharedRateBound) {
+      scope.dataset.commercialSharedRateBound = '1';
+      formRoot.addEventListener('proposal-commercial-shared-rate-changed', function () {
+        if (isCommercialRateMasterBlock()) return;
+        applySharedCommercialRateState();
+        syncCommercialFinancialRows();
+      });
+    }
 
     renderHeader(getAssetRows());
     renderRows(parsePayload());
@@ -4363,25 +4625,26 @@
         updatePayload(meta);
       },
     };
-    form.__proposalCommercialTableApi = api;
+    scope.__proposalCommercialTableApi = api;
     return api;
   }
 
   function attachProposalServiceSectionsTable(root) {
     if (!root) return null;
-    const form = root.closest('form[data-proposal-form]') || root;
-    const servicesStore = attachProposalServicesStore(form);
-    const payloadInput = form.querySelector('#proposal-service-sections-payload');
-    const tbody = form.querySelector('#proposal-service-sections-tbody');
-    const addBtn = form.querySelector('#proposal-service-section-add-btn');
-    const actions = form.querySelector('#proposal-service-sections-row-actions');
-    const upBtn = form.querySelector('#proposal-service-section-up-btn');
-    const downBtn = form.querySelector('#proposal-service-section-down-btn');
-    const deleteBtn = form.querySelector('#proposal-service-section-delete-btn');
-    const masterCheck = form.querySelector('#proposal-service-sections-master-check');
+    const scope = getProposalScope(root);
+    const form = scope;
+    const servicesStore = attachProposalServicesStore(scope);
+    const payloadInput = scope.querySelector('#proposal-service-sections-payload');
+    const tbody = scope.querySelector('#proposal-service-sections-tbody');
+    const addBtn = scope.querySelector('#proposal-service-section-add-btn');
+    const actions = scope.querySelector('#proposal-service-sections-row-actions');
+    const upBtn = scope.querySelector('#proposal-service-section-up-btn');
+    const downBtn = scope.querySelector('#proposal-service-section-down-btn');
+    const deleteBtn = scope.querySelector('#proposal-service-section-delete-btn');
+    const masterCheck = scope.querySelector('#proposal-service-sections-master-check');
     if (!payloadInput || !tbody || !addBtn || !actions || !upBtn || !downBtn || !deleteBtn) return null;
-    if (form.dataset.serviceSectionsBound === '1') return form.__proposalServiceSectionsTableApi || null;
-    form.dataset.serviceSectionsBound = '1';
+    if (scope.dataset.serviceSectionsBound === '1') return scope.__proposalServiceSectionsTableApi || null;
+    scope.dataset.serviceSectionsBound = '1';
 
     function parsePayload() {
       if (servicesStore) return servicesStore.getServiceRows();
@@ -4539,19 +4802,12 @@
       syncActions();
     });
 
-    form.querySelector('select[name="type"]')?.addEventListener('change', function () {
-      if (servicesStore) {
-        servicesStore.replaceFromType({ reason: 'sync-services-by-type', source: 'type-change' });
-        return;
-      }
-    });
-
     if (servicesStore) {
       servicesStore.subscribe(function (detail) {
         if (detail?.meta?.source === 'service-view') return;
         renderRows(detail?.serviceRows || []);
       });
-      if (!servicesStore.getRows().length && getProposalTypeId(form)) {
+      if (!servicesStore.getRows().length && getProposalTypeId(scope)) {
         servicesStore.replaceFromType({ reason: 'autofill-service-sections-by-type', source: 'type-change' });
       }
       renderRows(servicesStore.getServiceRows());
@@ -4580,13 +4836,13 @@
         updatePayload(meta);
       },
     };
-    form.__proposalServiceSectionsTableApi = api;
+    scope.__proposalServiceSectionsTableApi = api;
     return api;
   }
 
   function attachProposalServiceTextEditor(root) {
     if (!root) return null;
-    const form = root.closest('form[data-proposal-form]') || root;
+    const form = getProposalScope(root);
     const openBtn = form.querySelector('#proposal-service-text-edit-btn');
     const modal = form.querySelector('#proposal-service-text-modal');
     const closeBtn = form.querySelector('#proposal-service-text-close-btn');
@@ -5316,6 +5572,20 @@
       return addDays(wholeDate, fractionalDays);
     }
 
+    function subtractDecimalMonths(date, months) {
+      const safeMonths = Number.isFinite(months) ? Math.max(months, 0) : 0;
+      const wholeMonths = Math.trunc(safeMonths);
+      const fractionalMonths = safeMonths - wholeMonths;
+      const fractionalDays = Math.round(fractionalMonths * 30);
+      const baseDate = addDays(startOfDay(date), -fractionalDays);
+      const targetYear = baseDate.getFullYear();
+      const targetMonthIndex = baseDate.getMonth() - wholeMonths;
+      const targetMonthStart = new Date(targetYear, targetMonthIndex, 1);
+      const targetMonthEndDay = new Date(targetMonthStart.getFullYear(), targetMonthStart.getMonth() + 1, 0).getDate();
+      const day = Math.min(baseDate.getDate(), targetMonthEndDay);
+      return new Date(targetMonthStart.getFullYear(), targetMonthStart.getMonth(), day);
+    }
+
     function addDecimalWeeks(date, weeks) {
       const safeWeeks = Number.isFinite(weeks) ? Math.max(weeks, 0) : 0;
       return addDays(date, Math.round(safeWeeks * 7));
@@ -5340,8 +5610,22 @@
       return Number.isFinite(value) ? roundProposalDecimal(value).toFixed(1) : '';
     }
 
+    function normalizeProposalDecimalInputValue(input) {
+      if (!input) return null;
+      const parsed = parseProposalDecimal(input.value);
+      input.value = parsed === null ? '' : formatProposalDecimal(parsed);
+      return parsed;
+    }
+
     function getProposalBaseStartDate() {
       return getNearestMonday(addDays(new Date(), 14));
+    }
+
+    function getProposalDefaultEvaluationDate() {
+      const today = new Date();
+      const year = today.getFullYear();
+      const julyFirst = new Date(year, 6, 1);
+      return today < julyFirst ? new Date(year, 0, 1) : new Date(year, 5, 1);
     }
 
     function decimalMonthsBetween(start, end) {
@@ -5394,8 +5678,8 @@
       const finalReportWeeksInput = form.querySelector('[name="final_report_term_weeks"]');
       if (!preliminaryDateInput || !finalDateInput || !serviceTermInput || !finalReportWeeksInput) return;
 
-      const preliminaryMonths = parseProposalDecimal(serviceTermInput.value);
-      const finalWeeks = parseProposalDecimal(finalReportWeeksInput.value);
+      const preliminaryMonths = normalizeProposalDecimalInputValue(serviceTermInput);
+      const finalWeeks = normalizeProposalDecimalInputValue(finalReportWeeksInput);
       if (preliminaryMonths === null || finalWeeks === null) return;
 
       const preliminaryDateValue = String(preliminaryDateInput.value || '').trim();
@@ -5428,7 +5712,7 @@
       if (!preliminaryDateInput || !finalDateInput || !finalReportWeeksInput) return;
 
       const preliminaryDate = parseProposalDate(preliminaryDateInput.value);
-      const finalWeeks = parseProposalDecimal(finalReportWeeksInput.value);
+      const finalWeeks = normalizeProposalDecimalInputValue(finalReportWeeksInput);
       if (!preliminaryDate || finalWeeks === null) return;
       setDateFieldValue(finalDateInput, formatProposalDateIso(addDecimalWeeks(preliminaryDate, finalWeeks)));
     }
@@ -5440,7 +5724,7 @@
       if (!preliminaryDateInput || !finalDateInput || !finalReportWeeksInput) return;
 
       const finalDate = parseProposalDate(finalDateInput.value);
-      const finalWeeks = parseProposalDecimal(finalReportWeeksInput.value);
+      const finalWeeks = normalizeProposalDecimalInputValue(finalReportWeeksInput);
       if (!finalDate || finalWeeks === null) return;
       setDateFieldValue(preliminaryDateInput, formatProposalDateIso(subtractDecimalWeeks(finalDate, finalWeeks)));
     }
@@ -5472,11 +5756,29 @@
     let proposalReportTermsEditMode = false;
 
     function applyProposalReportTermsLockState() {
+      const lockIcons = qa('.js-proposal-report-terms-lock', form);
+      const stageRows = qa('.proposal-stage-terms-row', form);
+      if (stageRows.length) {
+        stageRows.forEach(function (row) {
+          setProposalReadonly(row.querySelector('.proposal-stage-preliminary-report-date'), proposalReportTermsEditMode, { lockPicker: true });
+          setProposalReadonly(row.querySelector('.proposal-stage-final-report-date'), proposalReportTermsEditMode, { lockPicker: true });
+          setProposalReadonly(row.querySelector('.proposal-stage-service-term-months'), !proposalReportTermsEditMode);
+          setProposalReadonly(row.querySelector('.proposal-stage-final-report-term-weeks'), !proposalReportTermsEditMode);
+        });
+        lockIcons.forEach(function (icon) {
+          icon.classList.toggle('bi-lock-fill', !proposalReportTermsEditMode);
+          icon.classList.toggle('bi-unlock-fill', proposalReportTermsEditMode);
+          icon.title = proposalReportTermsEditMode
+            ? 'Заблокировать ввод сроков'
+            : 'Разблокировать ввод сроков';
+        });
+        return;
+      }
+
       const preliminaryDateInput = form.querySelector('input[name="preliminary_report_date"]');
       const finalDateInput = form.querySelector('input[name="final_report_date"]');
       const serviceTermInput = form.querySelector('[name="service_term_months"]');
       const finalReportWeeksInput = form.querySelector('[name="final_report_term_weeks"]');
-      const lockIcons = qa('.js-proposal-report-terms-lock', form);
       if (!preliminaryDateInput || !finalDateInput || !serviceTermInput || !finalReportWeeksInput) return;
 
       if (proposalReportTermsEditMode) {
@@ -5495,6 +5797,879 @@
           ? 'Заблокировать ввод сроков'
           : 'Разблокировать ввод сроков';
       });
+    }
+
+    function attachProposalStageProducts(assetsApi) {
+      const container = form.querySelector('#proposal-products-container');
+      const addBtn = form.querySelector('#proposal-add-product');
+      const metaEl = form.querySelector('#proposal-type-meta');
+      const serviceStagesContainer = form.querySelector('#proposal-service-stages-container');
+      const commercialStagesContainer = form.querySelector('#proposal-commercial-stages-container');
+      const termsTbody = form.querySelector('#proposal-stage-terms-tbody');
+      if (!container || !addBtn || !metaEl || !serviceStagesContainer || !commercialStagesContainer || !termsTbody) return null;
+      if (form.dataset.stageProductsBound === '1') return form.__proposalStageProductsApi || null;
+      form.dataset.stageProductsBound = '1';
+
+      let meta = {};
+      try {
+        meta = JSON.parse(metaEl.textContent || '{}');
+      } catch (error) {
+        meta = {};
+      }
+      const products = Array.isArray(meta.products) ? meta.products : [];
+      const consultingTypes = Array.isArray(meta.consulting_types) ? meta.consulting_types : [];
+      const serviceCategories = Array.isArray(meta.service_categories) ? meta.service_categories : [];
+      const productById = new Map(products.map(function (product) { return [String(product.id), product]; }));
+      form.__proposalStageUidCounter = form.__proposalStageUidCounter || (getProductRowsInitialMaxStageUid() + 1);
+
+      function getProductRowsInitialMaxStageUid() {
+        return Array.from(container.querySelectorAll('.proposal-product-row')).reduce(function (maxValue, row, index) {
+          const raw = String(row.dataset.stageUid || (index + 1));
+          const numeric = Number.parseInt(raw, 10);
+          return Number.isFinite(numeric) ? Math.max(maxValue, numeric) : maxValue;
+        }, 0);
+      }
+
+      function nextStageUid() {
+        const uid = form.__proposalStageUidCounter || 1;
+        form.__proposalStageUidCounter = uid + 1;
+        return String(uid);
+      }
+
+      function getProductRows() {
+        return Array.from(container.querySelectorAll('.proposal-product-row'));
+      }
+
+      function getServiceBlocks() {
+        return Array.from(serviceStagesContainer.querySelectorAll('[data-proposal-stage-kind="service"]'));
+      }
+
+      function getCommercialBlocks() {
+        return Array.from(commercialStagesContainer.querySelectorAll('[data-proposal-stage-kind="commercial"]'));
+      }
+
+      function getSummaryCommercialBlock() {
+        return commercialStagesContainer.querySelector('[data-proposal-stage-kind="commercial-summary"]');
+      }
+
+      function getStageTermRows() {
+        return Array.from(termsTbody.querySelectorAll('.proposal-stage-terms-row'));
+      }
+
+      function getTotalsRow() {
+        return termsTbody.querySelector('.proposal-stage-terms-total-row');
+      }
+
+      function getAssetRows() {
+        return assetsApi ? assetsApi.getSerializedRows() : [];
+      }
+
+      function uniqueValues(items) {
+        const seen = new Set();
+        return items.filter(function (item) {
+          const value = String(item || '').trim();
+          if (!value || seen.has(value)) return false;
+          seen.add(value);
+          return true;
+        });
+      }
+
+      function buildOptions(select, items, placeholder, selectedValue, mapper) {
+        if (!select) return;
+        const normalizedSelected = String(selectedValue || '');
+        select.innerHTML = '';
+        if (placeholder) {
+          const option = document.createElement('option');
+          option.value = '';
+          option.textContent = placeholder;
+          select.appendChild(option);
+        }
+        items.forEach(function (item) {
+          const option = document.createElement('option');
+          const mapped = mapper ? mapper(item) : { value: item, label: item };
+          option.value = String(mapped.value || '');
+          option.textContent = mapped.label || '';
+          select.appendChild(option);
+        });
+        select.value = normalizedSelected;
+        if (select.value !== normalizedSelected) select.value = '';
+      }
+
+      function filteredProducts(consultingType, serviceCategory, serviceSubtype) {
+        return products.filter(function (product) {
+          if (consultingType && product.consulting_type !== consultingType) return false;
+          if (serviceCategory && product.service_category !== serviceCategory) return false;
+          if (serviceSubtype && product.service_subtype !== serviceSubtype) return false;
+          return true;
+        });
+      }
+
+      function resetClonedStageBlock(block) {
+        block.querySelectorAll('tbody').forEach(function (tbody) {
+          tbody.innerHTML = '';
+        });
+        block.querySelectorAll('input[type="hidden"]').forEach(function (input) {
+          if (input.matches('[data-proposal-stage-type]')) {
+            input.value = '';
+            return;
+          }
+          if (input.name === 'service_composition_mode') {
+            input.value = 'sections';
+            return;
+          }
+          if (input.name === 'commercial_totals_payload') {
+            input.value = JSON.stringify(normalizeProposalCommercialTotalsState({}));
+            return;
+          }
+          input.value = '';
+        });
+        block.querySelectorAll('textarea').forEach(function (textarea) {
+          textarea.value = '';
+        });
+        block.querySelectorAll('input:not([type="hidden"])').forEach(function (input) {
+          if (input.classList.contains('proposal-stage-label-input')) return;
+          if (input.type === 'checkbox') {
+            input.checked = false;
+            return;
+          }
+          input.value = '';
+        });
+        delete block.__proposalServiceSectionsTableApi;
+        delete block.__proposalServiceTextEditorApi;
+        delete block.__proposalCommercialTableApi;
+        delete block.dataset.serviceSectionsBound;
+        delete block.dataset.serviceTextEditorBound;
+        delete block.dataset.commercialBound;
+        delete block.dataset.commercialSharedRateBound;
+        delete block.dataset.proposalCommercialRateMaster;
+        delete block.dataset.summarySyncBound;
+      }
+
+      function cloneStageBlock(block) {
+        const clone = block.cloneNode(true);
+        resetClonedStageBlock(clone);
+        return clone;
+      }
+
+      function cloneTermsRow(row) {
+        const clone = row.cloneNode(true);
+        delete clone.dataset.eventsBound;
+        delete clone.dataset.manualDateSource;
+        delete clone.dataset.forceDatesFromTerms;
+        clone.querySelectorAll('input').forEach(function (input) {
+          delete input.dataset.hasPicker;
+          if (!input.classList.contains('proposal-stage-label-input')) {
+            input.value = '';
+          }
+        });
+        return clone;
+      }
+
+      function ensureMirroredBlocks() {
+        let serviceBlocks = getServiceBlocks();
+        while (serviceBlocks.length < getProductRows().length && serviceBlocks.length) {
+          const clone = cloneStageBlock(serviceBlocks[serviceBlocks.length - 1]);
+          serviceStagesContainer.appendChild(clone);
+          serviceBlocks = getServiceBlocks();
+        }
+        while (serviceBlocks.length > getProductRows().length && serviceBlocks.length > 1) {
+          serviceBlocks[serviceBlocks.length - 1].remove();
+          serviceBlocks = getServiceBlocks();
+        }
+
+        let commercialBlocks = getCommercialBlocks();
+        while (commercialBlocks.length < getProductRows().length && commercialBlocks.length) {
+          const clone = cloneStageBlock(commercialBlocks[commercialBlocks.length - 1]);
+          const summaryCommercialBlock = getSummaryCommercialBlock();
+          if (summaryCommercialBlock) {
+            commercialStagesContainer.insertBefore(clone, summaryCommercialBlock);
+          } else {
+            commercialStagesContainer.appendChild(clone);
+          }
+          commercialBlocks = getCommercialBlocks();
+        }
+        while (commercialBlocks.length > getProductRows().length && commercialBlocks.length > 1) {
+          commercialBlocks[commercialBlocks.length - 1].remove();
+          commercialBlocks = getCommercialBlocks();
+        }
+
+        let termRows = getStageTermRows();
+        while (termRows.length < getProductRows().length && termRows.length) {
+          termsTbody.insertBefore(cloneTermsRow(termRows[termRows.length - 1]), getTotalsRow());
+          termRows = getStageTermRows();
+        }
+        while (termRows.length > getProductRows().length && termRows.length > 1) {
+          termRows[termRows.length - 1].remove();
+          termRows = getStageTermRows();
+        }
+      }
+
+      function syncStageLabels() {
+        const productRows = getProductRows();
+        const serviceBlocks = getServiceBlocks();
+        const commercialBlocks = getCommercialBlocks();
+        const termRows = getStageTermRows();
+        const hasMultipleStages = productRows.length > 1;
+        const summaryCommercialBlock = getSummaryCommercialBlock();
+        function buildStageTitle(baseTitle, rank, productId) {
+          if (!hasMultipleStages) return baseTitle;
+          const product = productById.get(String(productId || '').trim()) || null;
+          const shortLabel = String(product?.short_label || '').trim();
+          return shortLabel
+            ? baseTitle + ': Этап ' + rank + ' ' + shortLabel
+            : baseTitle + ': Этап ' + rank;
+        }
+        productRows.forEach(function (row, index) {
+          const rank = index + 1;
+          if (!row.dataset.stageUid) row.dataset.stageUid = nextStageUid();
+          const stageUid = row.dataset.stageUid;
+          const productId = String(row.querySelector('.proposal-product-select')?.value || '').trim();
+          row.querySelector('.proposal-product-badge').textContent = rank;
+          const serviceBlock = serviceBlocks[index];
+          const commercialBlock = commercialBlocks[index];
+          const termRow = termRows[index];
+          [serviceBlock, commercialBlock].forEach(function (block) {
+            if (!block) return;
+            block.dataset.proposalStageKey = stageUid;
+            if (block.dataset.proposalStageKind === 'commercial') {
+              block.dataset.proposalCommercialRateMaster = index === 0 ? '1' : '0';
+            }
+            block.querySelectorAll('.proposal-stage-block-title').forEach(function (title) {
+              if (block.dataset.proposalStageKind === 'service') {
+                title.textContent = buildStageTitle('Состав услуг / техническое задание', rank, productId);
+              } else {
+                title.textContent = buildStageTitle('Коммерческое предложение', rank, productId);
+              }
+            });
+          });
+          if (termRow) {
+            termRow.dataset.proposalStageKey = stageUid;
+            const stageInput = termRow.querySelector('.proposal-stage-label-input');
+            if (stageInput) stageInput.value = 'Этап ' + rank;
+          }
+        });
+        if (summaryCommercialBlock) {
+          summaryCommercialBlock.classList.toggle('d-none', !hasMultipleStages);
+          summaryCommercialBlock.dataset.proposalStageKey = 'summary';
+          summaryCommercialBlock.dataset.proposalCommercialRateMaster = '0';
+          summaryCommercialBlock.querySelectorAll('.proposal-stage-block-title').forEach(function (title) {
+            title.textContent = 'Коммерческое предложение: все этапы';
+          });
+        }
+        getTotalsRow()?.classList.toggle('d-none', productRows.length <= 1);
+      }
+
+      function bindProductRow(row) {
+        if (!row || row.dataset.eventsBound === '1') return;
+        if (!row.dataset.stageUid) row.dataset.stageUid = nextStageUid();
+        row.dataset.eventsBound = '1';
+        const consultingSelect = row.querySelector('.proposal-consulting-select');
+        const categorySelect = row.querySelector('.proposal-service-category-select');
+        const subtypeSelect = row.querySelector('.proposal-service-subtype-select');
+        const productSelect = row.querySelector('.proposal-product-select');
+
+        function syncRow(state) {
+          const selectedProduct = productById.get(String(state?.productId ?? productSelect?.value ?? ''));
+          let consultingValue = String(state?.consultingType ?? consultingSelect?.value ?? '');
+          let categoryValue = String(state?.serviceCategory ?? categorySelect?.value ?? '');
+          let subtypeValue = String(state?.serviceSubtype ?? subtypeSelect?.value ?? '');
+          let productValue = String(state?.productId ?? productSelect?.value ?? '');
+          if (selectedProduct) {
+            consultingValue = selectedProduct.consulting_type || consultingValue;
+            categoryValue = selectedProduct.service_category || categoryValue;
+            subtypeValue = selectedProduct.service_subtype || subtypeValue;
+            productValue = String(selectedProduct.id);
+          }
+          buildOptions(consultingSelect, consultingTypes, '— выберите вид консалтинга —', consultingValue);
+          consultingValue = consultingSelect?.value || '';
+          const categoryOptions = uniqueValues(filteredProducts(consultingValue, '', '').map(function (product) {
+            return product.service_category;
+          }));
+          const orderedCategories = serviceCategories.filter(function (value) { return categoryOptions.includes(value); });
+          const extraCategories = categoryOptions.filter(function (value) { return !orderedCategories.includes(value); });
+          buildOptions(
+            categorySelect,
+            orderedCategories.concat(extraCategories),
+            consultingValue ? '— выберите тип услуги —' : '— выберите вид консалтинга —',
+            categoryValue
+          );
+          categoryValue = categorySelect?.value || '';
+          const subtypeOptions = uniqueValues(filteredProducts(consultingValue, categoryValue, '').map(function (product) {
+            return product.service_subtype;
+          }));
+          buildOptions(
+            subtypeSelect,
+            subtypeOptions,
+            categoryValue ? '— выберите подтип услуги —' : '— выберите тип услуги —',
+            subtypeValue
+          );
+          subtypeValue = subtypeSelect?.value || '';
+          buildOptions(
+            productSelect,
+            filteredProducts(consultingValue, categoryValue, subtypeValue),
+            '— выберите продукт —',
+            productValue,
+            function (product) {
+              return { value: product.id, label: product.label };
+            }
+          );
+          const displayProduct = productById.get(String(productSelect?.value || ''));
+          const productDisplay = row.querySelector('.proposal-product-display');
+          if (productDisplay) {
+            productDisplay.textContent = displayProduct?.short_label || '— выберите продукт —';
+            productDisplay.classList.toggle('is-placeholder', !displayProduct);
+          }
+          row.dataset.selectedConsultingType = consultingValue;
+          row.dataset.selectedServiceCategory = categoryValue;
+          row.dataset.selectedServiceSubtype = subtypeValue;
+          row.dataset.selectedProductId = productSelect?.value || '';
+        }
+
+        consultingSelect?.addEventListener('change', function () {
+          syncRow({ consultingType: consultingSelect.value, serviceCategory: '', serviceSubtype: '', productId: '' });
+          syncStageContent();
+        });
+        categorySelect?.addEventListener('change', function () {
+          syncRow({ consultingType: consultingSelect?.value || '', serviceCategory: categorySelect.value, serviceSubtype: '', productId: '' });
+          syncStageContent();
+        });
+        subtypeSelect?.addEventListener('change', function () {
+          syncRow({ consultingType: consultingSelect?.value || '', serviceCategory: categorySelect?.value || '', serviceSubtype: subtypeSelect.value, productId: '' });
+          syncStageContent();
+        });
+        productSelect?.addEventListener('change', function () {
+          syncRow({ productId: productSelect.value });
+          syncStageContent();
+        });
+
+        syncRow({
+          consultingType: row.dataset.selectedConsultingType || '',
+          serviceCategory: row.dataset.selectedServiceCategory || '',
+          serviceSubtype: row.dataset.selectedServiceSubtype || '',
+          productId: row.dataset.selectedProductId || '',
+        });
+      }
+
+      function bindTermsRows() {
+        getStageTermRows().forEach(function (row) {
+          if (row.dataset.eventsBound === '1') return;
+          row.dataset.eventsBound = '1';
+          row.querySelectorAll('.js-date').forEach(function (input) {
+            initProposalDateInput(input);
+          });
+          const monthsInput = row.querySelector('.proposal-stage-service-term-months');
+          const weeksInput = row.querySelector('.proposal-stage-final-report-term-weeks');
+          normalizeProposalDecimalInputValue(monthsInput);
+          normalizeProposalDecimalInputValue(weeksInput);
+          ['input', 'change'].forEach(function (eventName) {
+            row.querySelector('.proposal-stage-evaluation-date')?.addEventListener(eventName, function () {
+              syncStageEvaluationDates(row.querySelector('.proposal-stage-evaluation-date')?.value || '');
+            });
+            monthsInput?.addEventListener(eventName, function () {
+              syncStageTerms();
+              if (eventName === 'change') normalizeProposalDecimalInputValue(monthsInput);
+            });
+            weeksInput?.addEventListener(eventName, function () {
+              syncStageTerms();
+              if (eventName === 'change') normalizeProposalDecimalInputValue(weeksInput);
+            });
+            row.querySelector('.proposal-stage-preliminary-report-date')?.addEventListener(eventName, function () {
+              if (!proposalReportTermsEditMode) {
+                row.dataset.manualDateSource = 'preliminary';
+                syncStageTerms();
+              }
+            });
+            row.querySelector('.proposal-stage-final-report-date')?.addEventListener(eventName, function () {
+              if (!proposalReportTermsEditMode) {
+                row.dataset.manualDateSource = 'final';
+                syncStageTerms();
+              }
+            });
+          });
+        });
+      }
+
+      function getSharedEvaluationDateValue(preferredValue) {
+        const preferredDate = parseProposalDate(preferredValue);
+        if (preferredDate) return formatProposalDateIso(preferredDate);
+        const firstInput = getStageTermRows()[0]?.querySelector('.proposal-stage-evaluation-date');
+        const firstDate = parseProposalDate(firstInput?.value) || getProposalDefaultEvaluationDate();
+        return formatProposalDateIso(firstDate);
+      }
+
+      function syncStageEvaluationDates(preferredValue) {
+        const sharedValue = getSharedEvaluationDateValue(preferredValue);
+        getStageTermRows().forEach(function (row) {
+          const evaluationInput = row.querySelector('.proposal-stage-evaluation-date');
+          if (evaluationInput) {
+            setDateFieldValue(evaluationInput, sharedValue);
+          }
+        });
+      }
+
+      function ensureStageEditorsInitialized() {
+        getServiceBlocks().forEach(function (block) {
+          attachProposalServiceSectionsTable(block);
+          attachProposalServiceTextEditor(block);
+        });
+        getCommercialBlocks().forEach(function (block) {
+          attachProposalCommercialTable(block, assetsApi);
+        });
+        const summaryCommercialBlock = getSummaryCommercialBlock();
+        if (summaryCommercialBlock) {
+          attachProposalCommercialTable(summaryCommercialBlock, assetsApi);
+        }
+      }
+
+      function parseCommercialTotalsPayload(block) {
+        try {
+          return normalizeProposalCommercialTotalsState(
+            JSON.parse(block?.querySelector('#proposal-commercial-totals-payload')?.value || '{}')
+          );
+        } catch (error) {
+          return normalizeProposalCommercialTotalsState({});
+        }
+      }
+
+      function parseCommercialOfferPayload(block) {
+        try {
+          const data = JSON.parse(block?.querySelector('#proposal-commercial-offer-payload')?.value || '[]');
+          return Array.isArray(data) ? data : [];
+        } catch (error) {
+          return [];
+        }
+      }
+
+      function getSummaryCommercialRowOrder() {
+        const summaryCommercialBlock = getSummaryCommercialBlock();
+        const rows = parseCommercialOfferPayload(summaryCommercialBlock);
+        const order = new Map();
+        rows.forEach(function (row, index) {
+          if (isProposalTravelExpensesRow(row)) return;
+          const key = String(row?.specialist || '').trim() + '\u0000' + String(row?.job_title || '').trim();
+          if (key && !order.has(key)) {
+            order.set(key, index);
+          }
+        });
+        return order;
+      }
+
+      function buildSummaryCommercialRows() {
+        const assetCount = Math.max(getAssetRows().length, 1);
+        const groupedRows = [];
+        const groupedByKey = new Map();
+        const preferredOrder = getSummaryCommercialRowOrder();
+        const travelDayTotals = Array.from({ length: assetCount }, function () { return 0; });
+        let travelTotal = 0;
+        let hasTravelCalculation = false;
+        let hasTravelActual = false;
+        let hasTravelData = false;
+
+        getCommercialBlocks().forEach(function (block) {
+          const api = attachProposalCommercialTable(block, assetsApi);
+          const rows = Array.isArray(api?.getSerializedRows?.()) ? api.getSerializedRows() : [];
+          const totalsState = parseCommercialTotalsPayload(block);
+          const travelMode = normalizeProposalTravelExpensesMode(totalsState.travel_expenses_mode) || PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL;
+          rows.forEach(function (row) {
+            if (isProposalTravelExpensesRow(row)) {
+              const totalValue = parseFloat(rawMoney(row?.total_eur_without_vat || ''));
+              if (Number.isFinite(totalValue)) {
+                travelTotal += totalValue;
+                hasTravelData = true;
+              }
+              if (travelMode === PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION) {
+                hasTravelCalculation = true;
+                (Array.isArray(row?.asset_day_counts) ? row.asset_day_counts : []).slice(0, assetCount).forEach(function (value, index) {
+                  const numericValue = parseFloat(rawMoney(value || ''));
+                  if (Number.isFinite(numericValue)) {
+                    travelDayTotals[index] += numericValue;
+                    hasTravelData = true;
+                  }
+                });
+              } else if (totalValue || String(row?.total_eur_without_vat || '').trim()) {
+                hasTravelActual = true;
+              }
+              return;
+            }
+
+            const specialist = String(row?.specialist || '').trim();
+            const jobTitle = String(row?.job_title || '').trim();
+            const key = specialist + '\u0000' + jobTitle;
+            let bucket = groupedByKey.get(key);
+            if (!bucket) {
+              bucket = {
+                specialist: specialist,
+                job_title: jobTitle,
+                professional_status: String(row?.professional_status || '').trim(),
+                service_name: '',
+                rate_eur_per_day: String(row?.rate_eur_per_day || '').trim(),
+                asset_day_counts: Array.from({ length: assetCount }, function () { return 0; }),
+                total_eur_without_vat: 0,
+              };
+              groupedByKey.set(key, bucket);
+              groupedRows.push(bucket);
+            }
+            (Array.isArray(row?.asset_day_counts) ? row.asset_day_counts : []).slice(0, assetCount).forEach(function (value, index) {
+              const numericValue = parseInt(String(value || '').trim(), 10);
+              if (Number.isFinite(numericValue)) {
+                bucket.asset_day_counts[index] += numericValue;
+              }
+            });
+            const totalValue = parseFloat(rawMoney(row?.total_eur_without_vat || ''));
+            if (Number.isFinite(totalValue)) {
+              bucket.total_eur_without_vat += totalValue;
+            }
+          });
+        });
+
+        const rows = groupedRows.map(function (bucket, index) {
+          return {
+            specialist: bucket.specialist,
+            job_title: bucket.job_title,
+            professional_status: bucket.professional_status,
+            service_name: '',
+            rate_eur_per_day: bucket.rate_eur_per_day,
+            asset_day_counts: bucket.asset_day_counts.map(function (value) { return value > 0 ? String(value) : ''; }),
+            total_eur_without_vat: bucket.total_eur_without_vat > 0 ? bucket.total_eur_without_vat.toFixed(2) : '',
+            __summaryOrderIndex: index,
+          };
+        });
+
+        rows.sort(function (left, right) {
+          const leftKey = String(left?.specialist || '').trim() + '\u0000' + String(left?.job_title || '').trim();
+          const rightKey = String(right?.specialist || '').trim() + '\u0000' + String(right?.job_title || '').trim();
+          const leftOrder = preferredOrder.has(leftKey) ? preferredOrder.get(leftKey) : Number.MAX_SAFE_INTEGER;
+          const rightOrder = preferredOrder.has(rightKey) ? preferredOrder.get(rightKey) : Number.MAX_SAFE_INTEGER;
+          if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+          return (left.__summaryOrderIndex || 0) - (right.__summaryOrderIndex || 0);
+        });
+
+        const serializedRows = rows.map(function (row) {
+          return {
+            specialist: row.specialist,
+            job_title: row.job_title,
+            professional_status: row.professional_status,
+            service_name: row.service_name,
+            rate_eur_per_day: row.rate_eur_per_day,
+            asset_day_counts: row.asset_day_counts,
+            total_eur_without_vat: row.total_eur_without_vat,
+          };
+        });
+
+        const travelMode = (
+          hasTravelCalculation && !hasTravelActual
+            ? PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION
+            : PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL
+        );
+        if (hasTravelData) {
+          serializedRows.push({
+            specialist: '',
+            job_title: '',
+            professional_status: '',
+            service_name: PROPOSAL_TRAVEL_EXPENSES_LABEL,
+            rate_eur_per_day: '',
+            asset_day_counts: travelMode === PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION
+              ? travelDayTotals.map(function (value) { return value > 0 ? fmtMoney(value.toFixed(2)) : ''; })
+              : Array.from({ length: assetCount }, function () { return ''; }),
+            total_eur_without_vat: travelTotal > 0 ? travelTotal.toFixed(2) : '',
+          });
+        }
+
+        return {
+          rows: serializedRows,
+          travelMode: travelMode,
+        };
+      }
+
+      function syncSummaryCommercialBlock() {
+        const summaryCommercialBlock = getSummaryCommercialBlock();
+        const hasMultipleStages = getProductRows().length > 1;
+        if (!summaryCommercialBlock) return;
+        summaryCommercialBlock.classList.toggle('d-none', !hasMultipleStages);
+        if (!hasMultipleStages) return;
+        const summaryApi = attachProposalCommercialTable(summaryCommercialBlock, assetsApi);
+        if (!summaryApi) return;
+        const summaryPayload = buildSummaryCommercialRows();
+        const totalsInput = summaryCommercialBlock.querySelector('#proposal-commercial-totals-payload');
+        const totalsState = parseCommercialTotalsPayload(summaryCommercialBlock);
+        totalsState.travel_expenses_mode = summaryPayload.travelMode;
+        if (totalsInput) {
+          totalsInput.value = JSON.stringify(normalizeProposalCommercialTotalsState(totalsState));
+        }
+        summaryApi.replaceRows(summaryPayload.rows, { reason: 'summary-sync' });
+      }
+
+      function bindSummaryCommercialSync() {
+        getCommercialBlocks().forEach(function (block) {
+          if (block.dataset.summarySyncBound === '1') return;
+          block.dataset.summarySyncBound = '1';
+          block.addEventListener('proposal-commercial-changed', function () {
+            syncSummaryCommercialBlock();
+          });
+        });
+      }
+
+      function syncStageTerms() {
+        const termRows = getStageTermRows();
+        const states = termRows.map(function (row) {
+          const monthsInput = row.querySelector('.proposal-stage-service-term-months');
+          const weeksInput = row.querySelector('.proposal-stage-final-report-term-weeks');
+          const months = normalizeProposalDecimalInputValue(monthsInput);
+          const weeks = normalizeProposalDecimalInputValue(weeksInput);
+          return {
+            row: row,
+            monthsInput: monthsInput,
+            preliminaryInput: row.querySelector('.proposal-stage-preliminary-report-date'),
+            weeksInput: weeksInput,
+            finalInput: row.querySelector('.proposal-stage-final-report-date'),
+            months: months,
+            weeks: weeks,
+            preliminaryDate: parseProposalDate(row.querySelector('.proposal-stage-preliminary-report-date')?.value),
+            finalDate: parseProposalDate(row.querySelector('.proposal-stage-final-report-date')?.value),
+            shouldForceDatesFromTerms: row.dataset.forceDatesFromTerms === '1',
+            manualDateSource: String(row.dataset.manualDateSource || '').trim(),
+            calculatedPreliminaryDate: null,
+            calculatedFinalDate: null,
+          };
+        });
+
+        function applyStateDates(state) {
+          setDateFieldValue(
+            state.preliminaryInput,
+            state.calculatedPreliminaryDate ? formatProposalDateIso(state.calculatedPreliminaryDate) : ''
+          );
+          setDateFieldValue(
+            state.finalInput,
+            state.calculatedFinalDate ? formatProposalDateIso(state.calculatedFinalDate) : ''
+          );
+        }
+
+        function computeForwardDates(startDate, state) {
+          if (state.months === null) {
+            state.calculatedPreliminaryDate = null;
+            state.calculatedFinalDate = null;
+            return startDate;
+          }
+          state.calculatedPreliminaryDate = addDecimalMonths(startDate, state.months);
+          if (state.weeks === null) {
+            state.calculatedFinalDate = null;
+            return state.calculatedPreliminaryDate;
+          }
+          state.calculatedFinalDate = addDecimalWeeks(state.calculatedPreliminaryDate, state.weeks);
+          return state.calculatedFinalDate;
+        }
+
+        if (proposalReportTermsEditMode) {
+          let startDate = form.__proposalStageBaseStartDate || getProposalBaseStartDate();
+          states.forEach(function (state) {
+            startDate = computeForwardDates(startDate, state);
+            applyStateDates(state);
+            delete state.row.dataset.forceDatesFromTerms;
+            delete state.row.dataset.manualDateSource;
+          });
+        } else {
+          let baseStartDate = form.__proposalStageBaseStartDate || getProposalBaseStartDate();
+          const manualIndex = states.findIndex(function (state) {
+            if (state.manualDateSource === 'preliminary') return !!state.preliminaryDate && state.months !== null;
+            if (state.manualDateSource === 'final') return !!state.finalDate && state.weeks !== null;
+            return false;
+          });
+
+          if (manualIndex >= 0) {
+            const manualState = states[manualIndex];
+            let manualStageStartDate = null;
+            if (manualState.manualDateSource === 'preliminary') {
+              manualState.calculatedPreliminaryDate = manualState.preliminaryDate;
+              manualState.calculatedFinalDate = manualState.weeks !== null
+                ? addDecimalWeeks(manualState.preliminaryDate, manualState.weeks)
+                : null;
+              manualStageStartDate = manualState.preliminaryDate && manualState.months !== null
+                ? subtractDecimalMonths(manualState.preliminaryDate, manualState.months)
+                : null;
+            } else {
+              manualState.calculatedFinalDate = manualState.finalDate;
+              manualState.calculatedPreliminaryDate = manualState.weeks !== null
+                ? subtractDecimalWeeks(manualState.finalDate, manualState.weeks)
+                : null;
+              manualStageStartDate = manualState.calculatedPreliminaryDate && manualState.months !== null
+                ? subtractDecimalMonths(manualState.calculatedPreliminaryDate, manualState.months)
+                : null;
+            }
+
+            let rollingStartDate = manualStageStartDate;
+
+            for (let index = manualIndex - 1; index >= 0; index -= 1) {
+              const state = states[index];
+              state.calculatedFinalDate = rollingStartDate;
+              state.calculatedPreliminaryDate = rollingStartDate && state.weeks !== null
+                ? subtractDecimalWeeks(rollingStartDate, state.weeks)
+                : null;
+              rollingStartDate = state.calculatedPreliminaryDate && state.months !== null
+                ? subtractDecimalMonths(state.calculatedPreliminaryDate, state.months)
+                : rollingStartDate;
+            }
+
+            if (rollingStartDate) {
+              baseStartDate = rollingStartDate;
+              form.__proposalStageBaseStartDate = baseStartDate;
+            }
+
+            let forwardStartDate = manualState.calculatedFinalDate || manualState.calculatedPreliminaryDate || manualStageStartDate || baseStartDate;
+            for (let index = manualIndex + 1; index < states.length; index += 1) {
+              const state = states[index];
+              forwardStartDate = computeForwardDates(forwardStartDate, state);
+            }
+
+            states.forEach(applyStateDates);
+          } else {
+            let startDate = baseStartDate;
+            states.forEach(function (state) {
+              const shouldComputeFromTerms = state.shouldForceDatesFromTerms || (!state.preliminaryDate && !state.finalDate);
+              if (shouldComputeFromTerms) {
+                startDate = computeForwardDates(startDate, state);
+                applyStateDates(state);
+              } else {
+                startDate = state.finalDate || state.preliminaryDate || startDate;
+              }
+            });
+          }
+
+          states.forEach(function (state) {
+            delete state.row.dataset.forceDatesFromTerms;
+            delete state.row.dataset.manualDateSource;
+          });
+        }
+        const totalsRow = getTotalsRow();
+        if (!totalsRow) return;
+        const totalMonths = termRows.reduce(function (sum, row) {
+          return sum + (parseProposalDecimal(row.querySelector('.proposal-stage-service-term-months')?.value) || 0);
+        }, 0);
+        const totalWeeks = termRows.reduce(function (sum, row) {
+          return sum + (parseProposalDecimal(row.querySelector('.proposal-stage-final-report-term-weeks')?.value) || 0);
+        }, 0);
+        const totalMonthsInput = totalsRow.querySelector('.proposal-stage-total-service-term-months');
+        const totalWeeksInput = totalsRow.querySelector('.proposal-stage-total-final-report-term-weeks');
+        if (totalMonthsInput) totalMonthsInput.value = termRows.length > 1 ? formatProposalDecimal(totalMonths) : '';
+        if (totalWeeksInput) totalWeeksInput.value = termRows.length > 1 ? formatProposalDecimal(totalWeeks) : '';
+      }
+
+      function syncStageContent() {
+        ensureMirroredBlocks();
+        syncStageLabels();
+        ensureStageEditorsInitialized();
+        bindSummaryCommercialSync();
+        bindTermsRows();
+        getProductRows().forEach(function (row, index) {
+          const productId = String(row.querySelector('.proposal-product-select')?.value || '').trim();
+          const serviceBlock = getServiceBlocks()[index];
+          const commercialBlock = getCommercialBlocks()[index];
+          const termsRow = getStageTermRows()[index];
+          [serviceBlock, commercialBlock].forEach(function (block) {
+            if (!block) return;
+            const typeInput = block.querySelector('[data-proposal-stage-type]');
+            const previousProductId = String(typeInput?.value || '').trim();
+            if (typeInput) typeInput.value = productId;
+            const store = attachProposalServicesStore(block);
+            if (store && productId && (productId !== previousProductId || !store.getRows().length)) {
+              store.replaceFromType({ reason: 'stage-product-change', source: 'type-change' });
+            }
+          });
+          if (termsRow) {
+            const termEntry = getProposalTypicalServiceTermEntry(serviceBlock || row);
+            const evaluationInput = termsRow.querySelector('.proposal-stage-evaluation-date');
+            const monthsInput = termsRow.querySelector('.proposal-stage-service-term-months');
+            const weeksInput = termsRow.querySelector('.proposal-stage-final-report-term-weeks');
+            const previousProductId = String(termsRow.dataset.productId || '');
+            if (evaluationInput && (!String(evaluationInput.value || '').trim() || productId !== String(termsRow.dataset.productId || ''))) {
+              setDateFieldValue(evaluationInput, getSharedEvaluationDateValue());
+            }
+            if (termEntry && monthsInput && weeksInput) {
+              if (!String(monthsInput.value || '').trim() || productId !== previousProductId) {
+                monthsInput.value = formatProposalDecimal(parseProposalDecimal(termEntry.preliminary_report_months) || 0);
+              }
+              if (!String(weeksInput.value || '').trim() || productId !== previousProductId) {
+                weeksInput.value = formatProposalDecimal(parseProposalDecimal(termEntry.final_report_weeks) || 0);
+              }
+            }
+            if (productId !== previousProductId) {
+              termsRow.dataset.forceDatesFromTerms = '1';
+            }
+            termsRow.dataset.productId = productId;
+          }
+        });
+        syncStageEvaluationDates();
+        syncStageTerms();
+        applyProposalReportTermsLockState();
+        syncSummaryCommercialBlock();
+        form.dispatchEvent(new CustomEvent('proposal-stage-products-changed'));
+      }
+
+      addBtn.addEventListener('click', function () {
+        const firstRow = getProductRows()[0];
+        const lastRow = getProductRows()[getProductRows().length - 1];
+        const clone = lastRow ? lastRow.cloneNode(true) : null;
+        if (!clone) return;
+        const firstProductId = String(
+          firstRow?.querySelector('.proposal-product-select')?.value
+          || firstRow?.dataset?.selectedProductId
+          || ''
+        ).trim();
+        const copiedState = firstProductId ? {
+          consultingType: String(
+            firstRow?.querySelector('.proposal-consulting-select')?.value
+            || firstRow?.dataset?.selectedConsultingType
+            || ''
+          ).trim(),
+          serviceCategory: String(
+            firstRow?.querySelector('.proposal-service-category-select')?.value
+            || firstRow?.dataset?.selectedServiceCategory
+            || ''
+          ).trim(),
+          serviceSubtype: String(
+            firstRow?.querySelector('.proposal-service-subtype-select')?.value
+            || firstRow?.dataset?.selectedServiceSubtype
+            || ''
+          ).trim(),
+        } : null;
+        clone.dataset.stageUid = nextStageUid();
+        clone.dataset.selectedConsultingType = copiedState?.consultingType || '';
+        clone.dataset.selectedServiceCategory = copiedState?.serviceCategory || '';
+        clone.dataset.selectedServiceSubtype = copiedState?.serviceSubtype || '';
+        clone.dataset.selectedProductId = '';
+        delete clone.dataset.eventsBound;
+        container.appendChild(clone);
+        bindProductRow(clone);
+        syncStageContent();
+      });
+
+      container.addEventListener('click', function (event) {
+        const removeBtn = event.target.closest('.proposal-product-remove');
+        if (!removeBtn) return;
+        const rows = getProductRows();
+        const row = removeBtn.closest('.proposal-product-row');
+        if (!row) return;
+        if (rows.length === 1) {
+          row.dataset.selectedConsultingType = '';
+          row.dataset.selectedServiceCategory = '';
+          row.dataset.selectedServiceSubtype = '';
+          row.dataset.selectedProductId = '';
+          delete row.dataset.eventsBound;
+          row.querySelectorAll('select').forEach(function (select) { select.value = ''; });
+          bindProductRow(row);
+        } else {
+          row.remove();
+        }
+        syncStageContent();
+      });
+
+      getProductRows().forEach(bindProductRow);
+      syncStageContent();
+
+      const api = {
+        sync: syncStageContent,
+      };
+      form.__proposalStageProductsApi = api;
+      return api;
     }
 
     function initCompositeProposalField(options) {
@@ -5565,7 +6740,7 @@
       form.addEventListener('proposal-asset-owner-changed', syncSuffixFromAssetOwner);
       form.addEventListener('proposal-customer-changed', syncSuffixFromAssetOwner);
       form.querySelector('[name="asset_owner_matches_customer"]')?.addEventListener('change', syncSuffixFromAssetOwner);
-      form.querySelector('select[name="type"]')?.addEventListener('change', function () {
+      form.addEventListener('proposal-stage-products-changed', function () {
         syncPrefixFromType(true);
       });
 
@@ -5574,6 +6749,7 @@
       syncCombinedValue();
     }
 
+    attachProposalNumberDisplay(form);
     attachGroupSelectDisplay(form);
     attachReportLanguagesDropdown(form);
     attachCountryIdentifierSync(form);
@@ -5607,18 +6783,13 @@
     [
       'registration_date',
       'asset_owner_registration_date',
-      'evaluation_date',
-      'preliminary_report_date',
-      'final_report_date',
     ].forEach(function (fieldName) {
       initProposalDateInput(form.querySelector('input[name="' + fieldName + '"]'));
     });
     const assetsApi = attachProposalAssetsTable(form);
-    attachProposalServiceSectionsTable(form);
-    attachProposalServiceTextEditor(form);
+    const stageProductsApi = attachProposalStageProducts(assetsApi);
     const legalEntitiesApi = attachProposalLegalEntitiesTable(form);
     const objectsApi = attachProposalObjectsTable(form);
-    attachProposalCommercialTable(form, assetsApi);
     attachProposalAssetsToLegalEntitiesSync(form, assetsApi, legalEntitiesApi);
     attachProposalLegalEntitiesToObjectsSync(form, legalEntitiesApi, objectsApi);
     form.querySelector('[name="advance_percent"]')?.addEventListener('input', syncFinalReportPercent);
@@ -5626,36 +6797,8 @@
     qa('.js-proposal-report-terms-lock', form).forEach(function (icon) {
       icon.addEventListener('click', function () {
         proposalReportTermsEditMode = !proposalReportTermsEditMode;
-        applyProposalReportTermsLockState();
+        stageProductsApi?.sync();
       });
-    });
-    form.querySelector('select[name="type"]')?.addEventListener('change', function () {
-      syncProposalServiceTermMonths(true);
-      syncProposalReportDates(true);
-    });
-    form.querySelector('[name="service_term_months"]')?.addEventListener('input', function () {
-      syncProposalReportDates(true);
-    });
-    form.querySelector('[name="service_term_months"]')?.addEventListener('change', function () {
-      syncProposalReportDates(true);
-    });
-    form.querySelector('[name="final_report_term_weeks"]')?.addEventListener('input', function () {
-      syncProposalReportDates(true);
-    });
-    form.querySelector('[name="final_report_term_weeks"]')?.addEventListener('change', function () {
-      syncProposalReportDates(true);
-    });
-    form.querySelector('input[name="preliminary_report_date"]')?.addEventListener('input', function () {
-      if (!proposalReportTermsEditMode) syncProposalFinalDateFromPreliminary();
-    });
-    form.querySelector('input[name="preliminary_report_date"]')?.addEventListener('change', function () {
-      if (!proposalReportTermsEditMode) syncProposalFinalDateFromPreliminary();
-    });
-    form.querySelector('input[name="final_report_date"]')?.addEventListener('input', function () {
-      if (!proposalReportTermsEditMode) syncProposalPreliminaryDateFromFinal();
-    });
-    form.querySelector('input[name="final_report_date"]')?.addEventListener('change', function () {
-      if (!proposalReportTermsEditMode) syncProposalPreliminaryDateFromFinal();
     });
     form.querySelector('[name="asset_owner_matches_customer"]')?.addEventListener('change', function () {
       syncAssetOwnerFromCustomer('customer-sync');
@@ -5683,9 +6826,6 @@
         assetsApi?.fillEmptyRowsFromDefaults();
       }
     });
-    syncProposalServiceTermMonths(false);
-    applyProposalReportTermsLockState();
-    syncProposalReportDates(false);
     ['asset_owner', 'asset_owner_registration_number', 'asset_owner_registration_date'].forEach(function (fieldName) {
       form.querySelector('[name="' + fieldName + '"]')?.addEventListener('change', function () {
         form.dispatchEvent(new CustomEvent('proposal-asset-owner-changed', { detail: { reason: 'owner-change' } }));
@@ -5700,6 +6840,8 @@
     syncFinalReportPercent();
     syncAssetOwnerFromCustomer('customer-sync');
     assetsApi?.fillEmptyRowsFromDefaults();
+      applyProposalReportTermsLockState();
+    stageProductsApi?.sync();
   }
 
   function initProposalDispatchForm() {

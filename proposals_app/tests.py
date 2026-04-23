@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, quote, urlparse
 from django.contrib.auth import get_user_model
 from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.http import QueryDict
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -61,6 +62,7 @@ from .models import (
     ProposalLegalEntity,
     ProposalObject,
     ProposalRegistration,
+    ProposalRegistrationProduct,
     ProposalTemplate,
     ProposalVariable,
 )
@@ -1098,6 +1100,52 @@ class ProposalDispatchSendTests(TestCase):
             f"IMCM/{self.successful_proposal.number}",
         )
 
+    def test_dispatch_transfer_to_contract_handles_duplicate_existing_main_contracts(self):
+        first_project = ProjectRegistration.objects.create(
+            number=self.successful_proposal.number,
+            group_member=self.successful_proposal.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            agreement_number=f"IMCM/{self.successful_proposal.number}",
+            type=self.product,
+            name="Уже существует 1",
+            year=2026,
+            position=1,
+        )
+        ProjectRegistration.objects.create(
+            number=self.successful_proposal.number,
+            group_member=self.successful_proposal.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            agreement_number=f"IMCM/{self.successful_proposal.number}",
+            type=self.product,
+            name="Уже существует 2",
+            year=2026,
+            position=2,
+        )
+
+        response = self.client.post(
+            reverse("proposal_dispatch_transfer_to_contract"),
+            {"proposal_ids[]": [self.successful_proposal.pk]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["created"], 0)
+        self.assertEqual(payload["existing"], 1)
+        self.assertEqual(
+            ProjectRegistration.objects.filter(
+                number=self.successful_proposal.number,
+                group_member=self.successful_proposal.group_member,
+                agreement_type=ProjectRegistration.AgreementType.MAIN,
+                agreement_number=f"IMCM/{self.successful_proposal.number}",
+            ).count(),
+            2,
+        )
+        self.assertEqual(
+            ProjectRegistration.objects.get(pk=first_project.pk).agreement_number,
+            f"IMCM/{self.successful_proposal.number}",
+        )
+
     @override_settings(PROPOSAL_SYSTEM_FROM_EMAIL="ai@imcmontanai.ru")
     @patch("proposals_app.services.send_notification_email")
     def test_dispatch_send_updates_only_successfully_sent_rows(self, mocked_send_notification_email):
@@ -1808,6 +1856,16 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertIsNotNone(currency_id)
         self.assertEqual(form.fields["currency"].queryset.get(pk=currency_id).code_alpha, "RUB")
 
+    def test_number_field_matches_zero_padded_project_range(self):
+        form = ProposalRegistrationForm()
+
+        self.assertEqual(form.fields["number"].min_value, 0)
+        self.assertEqual(form.fields["number"].max_value, 9999)
+        self.assertEqual(form.fields["number"].widget.attrs["id"], "proposal-number-input")
+        self.assertEqual(form.fields["number"].widget.attrs["min"], 0)
+        self.assertEqual(form.fields["number"].widget.attrs["max"], 9999)
+        self.assertEqual(form.fields["number"].widget.attrs["placeholder"], "0001")
+
     def test_bound_form_ignores_invalid_country_ids_when_building_region_choices(self):
         form = ProposalRegistrationForm(
             data=self._base_form_payload(
@@ -2053,7 +2111,7 @@ class ProposalRegistrationFormTests(TestCase):
         form = ProposalRegistrationForm(data={})
 
         self.assertFalse(form.is_valid())
-        self.assertEqual(form.errors["type"][0], "Обязательное поле.")
+        self.assertEqual(form.errors["number"][0], "Обязательное поле.")
 
     def test_form_uses_russian_integer_error_message(self):
         form = ProposalRegistrationForm(data=self._base_form_payload(number="abc"))
@@ -2083,6 +2141,21 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(option_by_value["completed"]["label"], "Завершённое")
         self.assertTrue(option_by_value["sent"]["attrs"].get("disabled"))
         self.assertTrue(option_by_value["completed"]["attrs"].get("disabled"))
+
+    def test_form_includes_not_held_status_after_completed(self):
+        form = ProposalRegistrationForm()
+
+        choices = list(form.fields["status"].choices)
+        self.assertEqual(
+            choices,
+            [
+                ("preliminary", "Предварительное"),
+                ("final", "Итоговое"),
+                ("sent", "Отправленное"),
+                ("completed", "Завершённое"),
+                ("not_held", "Несостоявшееся"),
+            ],
+        )
 
     def test_form_rejects_manual_selection_of_non_editable_status(self):
         form = ProposalRegistrationForm(
@@ -3394,6 +3467,539 @@ class ProposalRegistrationFormTests(TestCase):
         )
 
 
+    def test_form_saves_ranked_products_and_uses_summary_commercial_payload_for_multistage(self):
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        first_product = Product.objects.create(
+            short_name="STAGE-1",
+            name_en="Stage One",
+            name_ru="Этап 1",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        second_product = Product.objects.create(
+            short_name="STAGE-2",
+            name_en="Stage Two",
+            name_ru="Этап 2",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Оптимизация",
+            position=2,
+        )
+        totals_payload = json.dumps(
+            {
+                "exchange_rate": "95.1000",
+                "discount_percent": "5",
+                "contract_total": "1000",
+                "contract_total_auto": "1000",
+                "rub_total_service_text": "Курс ЦБ",
+                "discounted_total_service_text": "Скидка",
+                "travel_expenses_mode": "actual",
+            },
+            ensure_ascii=False,
+        )
+        payload = QueryDict("", mutable=True)
+        payload.update(
+            {
+                "number": "3333",
+                "group_member": str(group_member.pk),
+                "name": "Мультиэтапное ТКП",
+                "kind": ProposalRegistration.ProposalKind.REGULAR,
+                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "year": "2026",
+            }
+        )
+        payload.setlist("type", [str(first_product.pk), str(second_product.pk)])
+        payload.setlist(
+            "type_consulting",
+            [first_product.consulting_type_display, second_product.consulting_type_display],
+        )
+        payload.setlist(
+            "type_service_category",
+            [first_product.service_category_display, second_product.service_category_display],
+        )
+        payload.setlist(
+            "type_service_subtype",
+            [first_product.service_subtype_display, second_product.service_subtype_display],
+        )
+        payload.setlist(
+            "service_sections_payload",
+            [
+                json.dumps([{"service_name": "Этап 1", "code": "1"}], ensure_ascii=False),
+                json.dumps([{"service_name": "Этап 2", "code": "2"}], ensure_ascii=False),
+            ],
+        )
+        payload.setlist("service_sections_editor_state", ["[]", "[]"])
+        payload.setlist("service_customer_tz_editor_state", ["", ""])
+        payload.setlist("service_composition_customer_tz", ["", ""])
+        payload.setlist("service_composition_mode", ["sections", "sections"])
+        payload.setlist("service_composition", ["ТЗ этапа 1", "ТЗ этапа 2"])
+        payload.setlist(
+            "commercial_offer_payload",
+            [
+                "[]",
+                json.dumps(
+                    [
+                        {
+                            "specialist": "Эксперт",
+                            "job_title": "Руководитель",
+                            "professional_status": "Senior",
+                            "service_name": "Этап 2",
+                            "rate_eur_per_day": "500",
+                            "asset_day_counts": ["2"],
+                            "total_eur_without_vat": "1000",
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+            ],
+        )
+        payload.setlist("commercial_totals_payload", [totals_payload, totals_payload])
+        payload["summary_commercial_offer_payload"] = json.dumps(
+            [
+                {
+                    "specialist": "Эксперт",
+                    "job_title": "Руководитель",
+                    "professional_status": "Senior",
+                    "service_name": "",
+                    "rate_eur_per_day": "500",
+                    "asset_day_counts": ["2"],
+                    "total_eur_without_vat": "1000",
+                }
+            ],
+            ensure_ascii=False,
+        )
+        payload["summary_commercial_totals_payload"] = totals_payload
+        payload.setlist("evaluation_date", ["01.01.2026", "05.02.2026"])
+        payload.setlist("service_term_months", ["1.0", "2.0"])
+        payload.setlist("preliminary_report_date", ["15.01.2026", "15.04.2026"])
+        payload.setlist("final_report_term_weeks", ["2.0", "3.0"])
+        payload.setlist("final_report_date", ["29.01.2026", "06.05.2026"])
+
+        form = ProposalRegistrationForm(data=payload)
+
+        self.assertTrue(form.is_valid(), form.errors)
+        proposal = form.save(commit=False)
+        proposal.save()
+        form._save_ranked_products(proposal)
+        form.save_commercial_offers(proposal)
+        proposal.refresh_from_db()
+
+        self.assertEqual(proposal.type_id, second_product.pk)
+        self.assertEqual(
+            list(ProposalRegistrationProduct.objects.filter(proposal=proposal).order_by("rank").values_list("product_id", flat=True)),
+            [first_product.pk, second_product.pk],
+        )
+        self.assertEqual(proposal.ordered_product_ids, [first_product.pk, second_product.pk])
+        self.assertEqual(proposal.service_sections_json, [{"service_name": "Этап 2", "code": "2"}])
+        self.assertEqual(str(proposal.service_term_months), "2.0")
+        self.assertEqual(str(proposal.final_report_term_weeks), "3.0")
+        self.assertEqual(proposal.stage_payloads_json[-1]["product_id"], second_product.pk)
+        self.assertEqual(proposal.stage_payloads_json[-1]["service_composition"], "ТЗ этапа 2")
+        self.assertEqual(proposal.commercial_offers.count(), 1)
+        self.assertEqual(proposal.commercial_offers.first().specialist, "Эксперт")
+        self.assertEqual(proposal.commercial_offers.first().service_name, "")
+        self.assertEqual(proposal.commercial_totals_json["contract_total"], "1000")
+        self.assertEqual(str(proposal.service_cost), "1000.00")
+
+    def test_form_rehydrates_stage_rows_from_saved_stage_payloads(self):
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        first_product = Product.objects.create(
+            short_name="A",
+            name_en="Alpha",
+            name_ru="Альфа",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        second_product = Product.objects.create(
+            short_name="B",
+            name_en="Beta",
+            name_ru="Бета",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Оптимизация",
+            position=2,
+        )
+        proposal = ProposalRegistration.objects.create(
+            number=3333,
+            group_member=group_member,
+            type=second_product,
+            name="ТКП",
+            year=2026,
+            stage_payloads_json=[
+                {
+                    "rank": 1,
+                    "product_id": first_product.pk,
+                    "service_sections_json": [{"service_name": "Альфа", "code": "A"}],
+                    "service_sections_editor_state": [],
+                    "service_customer_tz_editor_state": {},
+                    "service_composition_customer_tz": "",
+                    "service_composition_mode": "sections",
+                    "service_composition": "ТЗ 1",
+                    "commercial_offer_payload": [],
+                    "commercial_totals_json": {"discount_percent": "5"},
+                    "evaluation_date": "01.01.2026",
+                    "service_term_months": "1.0",
+                    "preliminary_report_date": "15.01.2026",
+                    "final_report_term_weeks": "2.0",
+                    "final_report_date": "29.01.2026",
+                },
+                {
+                    "rank": 2,
+                    "product_id": second_product.pk,
+                    "service_sections_json": [{"service_name": "Бета", "code": "B"}],
+                    "service_sections_editor_state": [],
+                    "service_customer_tz_editor_state": {},
+                    "service_composition_customer_tz": "",
+                    "service_composition_mode": "sections",
+                    "service_composition": "ТЗ 2",
+                    "commercial_offer_payload": [],
+                    "commercial_totals_json": {"discount_percent": "5"},
+                    "evaluation_date": "05.02.2026",
+                    "service_term_months": "2.0",
+                    "preliminary_report_date": "15.04.2026",
+                    "final_report_term_weeks": "3.0",
+                    "final_report_date": "06.05.2026",
+                },
+            ],
+        )
+        ProposalRegistrationProduct.objects.bulk_create(
+            [
+                ProposalRegistrationProduct(proposal=proposal, product=first_product, rank=1),
+                ProposalRegistrationProduct(proposal=proposal, product=second_product, rank=2),
+            ]
+        )
+
+        form = ProposalRegistrationForm(instance=proposal)
+
+        self.assertEqual(len(form.stage_rows), 2)
+        self.assertEqual(form.stage_rows[0]["product_id"], str(first_product.pk))
+        self.assertEqual(form.stage_rows[1]["product_id"], str(second_product.pk))
+        self.assertEqual(form.stage_rows[0]["product_short_label"], "A")
+        self.assertEqual(form.stage_rows[1]["product_short_label"], "B")
+        self.assertEqual(form.stage_rows[1]["service_composition"], "ТЗ 2")
+        self.assertEqual(form.stage_rows[1]["final_report_date"], "06.05.2026")
+
+    def test_resolve_variables_uses_summary_payload_after_multistage_save(self):
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        first_product = Product.objects.create(
+            short_name="FIRST",
+            name_en="First Product",
+            name_ru="Первый продукт",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        second_product = Product.objects.create(
+            short_name="LAST",
+            name_en="Last Product",
+            name_ru="Последний продукт",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Оптимизация",
+            position=2,
+        )
+        ServiceGoalReport.objects.create(
+            product=first_product,
+            service_goal="Цель первого этапа",
+            service_goal_genitive="Подготовки первого этапа",
+            report_title="ТКП этап 1",
+            position=1,
+        )
+        ServiceGoalReport.objects.create(
+            product=second_product,
+            service_goal="Цель второго этапа",
+            service_goal_genitive="Подготовки второго этапа",
+            report_title="ТКП этап 2",
+            position=1,
+        )
+        totals_payload = json.dumps(
+            {
+                "exchange_rate": "95.1000",
+                "discount_percent": "0",
+                "contract_total": "1000",
+                "contract_total_auto": "1000",
+                "rub_total_service_text": "Курс ЦБ",
+                "discounted_total_service_text": "Скидка",
+                "travel_expenses_mode": "actual",
+            },
+            ensure_ascii=False,
+        )
+        payload = QueryDict("", mutable=True)
+        payload.update(
+            {
+                "number": "3333",
+                "group_member": str(group_member.pk),
+                "name": "Экспорт по последнему этапу",
+                "kind": ProposalRegistration.ProposalKind.REGULAR,
+                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "year": "2026",
+            }
+        )
+        payload.setlist("type", [str(first_product.pk), str(second_product.pk)])
+        payload.setlist(
+            "type_consulting",
+            [first_product.consulting_type_display, second_product.consulting_type_display],
+        )
+        payload.setlist(
+            "type_service_category",
+            [first_product.service_category_display, second_product.service_category_display],
+        )
+        payload.setlist(
+            "type_service_subtype",
+            [first_product.service_subtype_display, second_product.service_subtype_display],
+        )
+        payload.setlist(
+            "service_sections_payload",
+            [
+                json.dumps([{"service_name": "Этап 1 услуга", "code": "S1"}], ensure_ascii=False),
+                json.dumps([{"service_name": "Этап 2 услуга", "code": "S2"}], ensure_ascii=False),
+            ],
+        )
+        payload.setlist(
+            "service_sections_editor_state",
+            [
+                json.dumps([{"html": "<p>Scope 1</p>", "plain_text": "Scope 1"}], ensure_ascii=False),
+                json.dumps([{"html": "<p><strong>Scope 2</strong></p>", "plain_text": "Scope 2"}], ensure_ascii=False),
+            ],
+        )
+        payload.setlist("service_customer_tz_editor_state", ["", ""])
+        payload.setlist("service_composition_customer_tz", ["", ""])
+        payload.setlist("service_composition_mode", ["sections", "sections"])
+        payload.setlist("service_composition", ["Описание этапа 1", "Описание этапа 2"])
+        payload.setlist(
+            "commercial_offer_payload",
+            [
+                json.dumps(
+                    [
+                        {
+                            "specialist": "Stage 1",
+                            "job_title": "Роль 1",
+                            "professional_status": "A",
+                            "service_name": "Этап 1 услуга",
+                            "rate_eur_per_day": "100",
+                            "asset_day_counts": ["1"],
+                            "total_eur_without_vat": "100",
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    [
+                        {
+                            "specialist": "Stage 2",
+                            "job_title": "Роль 2",
+                            "professional_status": "B",
+                            "service_name": "Этап 2 услуга",
+                            "rate_eur_per_day": "200",
+                            "asset_day_counts": ["2"],
+                            "total_eur_without_vat": "400",
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+            ],
+        )
+        payload.setlist("commercial_totals_payload", [totals_payload, totals_payload])
+        payload["summary_commercial_offer_payload"] = json.dumps(
+            [
+                {
+                    "specialist": "Summary expert",
+                    "job_title": "Сводная роль",
+                    "professional_status": "SUM",
+                    "service_name": "",
+                    "rate_eur_per_day": "150",
+                    "asset_day_counts": ["3"],
+                    "total_eur_without_vat": "500",
+                }
+            ],
+            ensure_ascii=False,
+        )
+        payload["summary_commercial_totals_payload"] = json.dumps(
+            {
+                "exchange_rate": "95.1000",
+                "discount_percent": "0",
+                "contract_total": "500",
+                "contract_total_auto": "500",
+                "rub_total_service_text": "Курс ЦБ",
+                "discounted_total_service_text": "Скидка",
+                "travel_expenses_mode": "actual",
+            },
+            ensure_ascii=False,
+        )
+        payload.setlist("evaluation_date", ["01.01.2026", "05.02.2026"])
+        payload.setlist("service_term_months", ["1.0", "2.0"])
+        payload.setlist("preliminary_report_date", ["15.01.2026", "15.04.2026"])
+        payload.setlist("final_report_term_weeks", ["2.0", "3.0"])
+        payload.setlist("final_report_date", ["29.01.2026", "06.05.2026"])
+
+        form = ProposalRegistrationForm(data=payload)
+
+        self.assertTrue(form.is_valid(), form.errors)
+        proposal = form.save(commit=False)
+        proposal.save()
+        form._save_ranked_products(proposal)
+        form.save_commercial_offers(proposal)
+
+        replacements, lists, tables = resolve_variables(
+            proposal,
+            [
+                ProposalVariable(key="{{service_goal_genitive}}", is_computed=True),
+                ProposalVariable(key="[[scope_of_work]]", is_computed=True),
+                ProposalVariable(key="[[budget_table]]", is_computed=True),
+            ],
+        )
+
+        self.assertEqual(proposal.type_id, second_product.pk)
+        self.assertEqual(replacements["{{service_goal_genitive}}"], "Подготовки второго этапа")
+        self.assertEqual(lists["[[scope_of_work]]"], [{"html": "<p><strong>Scope 2</strong></p>"}])
+        budget_rows = tables["[[budget_table]]"]["rows"]
+        self.assertEqual(budget_rows[1][0]["text"], "Summary expert")
+        self.assertEqual(budget_rows[1][1]["text"], "Сводная роль, SUM")
+
+    def test_multistage_fallback_aggregates_travel_day_counts_for_calculation_mode(self):
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        first_product = Product.objects.create(
+            short_name="TRAVEL-1",
+            name_en="Travel One",
+            name_ru="Командировка 1",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        second_product = Product.objects.create(
+            short_name="TRAVEL-2",
+            name_en="Travel Two",
+            name_ru="Командировка 2",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Оптимизация",
+            position=2,
+        )
+        totals_payload = json.dumps(
+            {
+                "exchange_rate": "95.1000",
+                "discount_percent": "0",
+                "contract_total": "1000",
+                "contract_total_auto": "1000",
+                "rub_total_service_text": "Курс ЦБ",
+                "discounted_total_service_text": "Скидка",
+                "travel_expenses_mode": "calculation",
+            },
+            ensure_ascii=False,
+        )
+        payload = QueryDict("", mutable=True)
+        payload.update(
+            {
+                "number": "3333",
+                "group_member": str(group_member.pk),
+                "name": "Командировки по всем этапам",
+                "kind": ProposalRegistration.ProposalKind.REGULAR,
+                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "year": "2026",
+            }
+        )
+        payload.setlist("type", [str(first_product.pk), str(second_product.pk)])
+        payload.setlist(
+            "type_consulting",
+            [first_product.consulting_type_display, second_product.consulting_type_display],
+        )
+        payload.setlist(
+            "type_service_category",
+            [first_product.service_category_display, second_product.service_category_display],
+        )
+        payload.setlist(
+            "type_service_subtype",
+            [first_product.service_subtype_display, second_product.service_subtype_display],
+        )
+        payload.setlist("service_sections_payload", ["[]", "[]"])
+        payload.setlist("service_sections_editor_state", ["[]", "[]"])
+        payload.setlist("service_customer_tz_editor_state", ["", ""])
+        payload.setlist("service_composition_customer_tz", ["", ""])
+        payload.setlist("service_composition_mode", ["sections", "sections"])
+        payload.setlist("service_composition", ["", ""])
+        payload.setlist(
+            "commercial_offer_payload",
+            [
+                json.dumps(
+                    [
+                        {
+                            "specialist": "",
+                            "job_title": "",
+                            "professional_status": "",
+                            "service_name": "Командировочные расходы, евро",
+                            "rate_eur_per_day": "",
+                            "asset_day_counts": ["1.50", "2.00"],
+                            "total_eur_without_vat": "3.50",
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    [
+                        {
+                            "specialist": "",
+                            "job_title": "",
+                            "professional_status": "",
+                            "service_name": "Командировочные расходы, евро",
+                            "rate_eur_per_day": "",
+                            "asset_day_counts": ["3.00", "4.00"],
+                            "total_eur_without_vat": "7.00",
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+            ],
+        )
+        payload.setlist("commercial_totals_payload", [totals_payload, totals_payload])
+        payload.setlist("evaluation_date", ["01.01.2026", "05.02.2026"])
+        payload.setlist("service_term_months", ["1.0", "2.0"])
+        payload.setlist("preliminary_report_date", ["15.01.2026", "15.04.2026"])
+        payload.setlist("final_report_term_weeks", ["2.0", "3.0"])
+        payload.setlist("final_report_date", ["29.01.2026", "06.05.2026"])
+
+        form = ProposalRegistrationForm(data=payload)
+
+        self.assertTrue(form.is_valid(), form.errors)
+        proposal = form.save()
+        form.save_commercial_offers(proposal)
+        proposal.refresh_from_db()
+
+        travel_offer = proposal.commercial_offers.get(service_name="Командировочные расходы, евро")
+        self.assertEqual(travel_offer.asset_day_counts, ["4.50", "6.00"])
+        self.assertEqual(str(travel_offer.total_eur_without_vat), "10.50")
+        self.assertEqual(proposal.commercial_totals_json["travel_expenses_mode"], "calculation")
+
+
 class ProposalFormContextTests(TestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user(
@@ -3951,6 +4557,69 @@ class ProposalFormContextTests(TestCase):
         self.assertContains(response, 'name="final_report_date"', html=False)
         self.assertContains(response, 'id="proposal-typical-service-terms-data"', html=False)
         self.assertContains(response, 'js-proposal-report-terms-lock', count=2, html=False)
+        self.assertContains(response, 'id="proposal-number-display"', html=False)
+        self.assertContains(response, 'placeholder="0001"', html=False)
+
+    def test_proposal_form_renders_multistage_containers(self):
+        with patch("proposals_app.forms.get_cbr_eur_rate_for_today", return_value=Decimal("95.1111")):
+            response = self.client.get(reverse("proposal_form_create"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="proposal-products-container"', html=False)
+        self.assertContains(response, 'id="proposal-service-stages-container"', html=False)
+        self.assertContains(response, 'id="proposal-commercial-stages-container"', html=False)
+        self.assertContains(response, 'id="proposal-stage-terms-tbody"', html=False)
+        self.assertContains(response, "Состав услуг / техническое задание", html=False)
+        self.assertContains(response, "Коммерческое предложение", html=False)
+        self.assertNotContains(response, "Состав услуг / техническое задание: Этап 1", html=False)
+        self.assertNotContains(response, "Коммерческое предложение: Этап 1", html=False)
+        self.assertContains(response, 'name="summary_commercial_offer_payload"', html=False)
+
+    def test_proposal_form_edit_renders_stage_titles_with_product_short_names(self):
+        first_product = Product.objects.create(
+            short_name="TDD",
+            name_en="Technical Due Diligence",
+            name_ru="ТДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        second_product = Product.objects.create(
+            short_name="JORC",
+            name_en="JORC Report",
+            name_ru="JORC",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Оптимизация",
+            position=2,
+        )
+        proposal = ProposalRegistration.objects.create(
+            number=3333,
+            group_member=self.group_member,
+            type=second_product,
+            name="Мультиэтапное ТКП",
+            year=2026,
+            stage_payloads_json=[
+                {"rank": 1, "product_id": first_product.pk},
+                {"rank": 2, "product_id": second_product.pk},
+            ],
+        )
+        ProposalRegistrationProduct.objects.bulk_create(
+            [
+                ProposalRegistrationProduct(proposal=proposal, product=first_product, rank=1),
+                ProposalRegistrationProduct(proposal=proposal, product=second_product, rank=2),
+            ]
+        )
+
+        response = self.client.get(reverse("proposal_form_edit", args=[proposal.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Состав услуг / техническое задание: Этап 1 TDD", html=False)
+        self.assertContains(response, "Состав услуг / техническое задание: Этап 2 JORC", html=False)
+        self.assertContains(response, "Коммерческое предложение: Этап 1 TDD", html=False)
+        self.assertContains(response, "Коммерческое предложение: Этап 2 JORC", html=False)
+        self.assertContains(response, "Коммерческое предложение: все этапы", html=False)
 
 
 class ProposalNextcloudWorkspaceHookTests(TestCase):
@@ -4182,6 +4851,15 @@ class ProposalDispatchDiskColumnTests(TestCase):
             year=2026,
             proposal_workspace_disk_path="/Corporate Root/ТКП/2026/333300RU DD Тестовое ТКП",
         )
+
+    def test_proposals_partial_renders_zero_padded_number(self):
+        self.proposal.number = 1
+        self.proposal.save(update_fields=["number", "short_uid"])
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, ">0001<", html=False)
 
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
     def test_proposals_partial_renders_disk_icon_with_nextcloud_share_target(self, mocked_list_user_shares):
