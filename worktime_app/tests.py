@@ -1,7 +1,11 @@
+import csv
+import io
+from calendar import monthrange
 from datetime import date, timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.template.loader import render_to_string
 from django.test import RequestFactory, TestCase
 from django.urls import reverse
@@ -9,7 +13,7 @@ from django.utils import timezone
 
 from notifications_app.models import Notification, NotificationPerformerLink
 from notifications_app.services import process_participation_notification
-from policy_app.models import DEPARTMENT_HEAD_GROUP, Product
+from policy_app.models import ADMIN_GROUP, DEPARTMENT_HEAD_GROUP, Product
 from projects_app.models import Performer, ProjectRegistration
 from proposals_app.models import ProposalRegistration
 from users_app.models import Employee
@@ -30,7 +34,7 @@ class WorktimeAppTests(TestCase):
             last_name="Иванов",
         )
         self.client.force_login(self.user)
-        self.employee = Employee.objects.create(user=self.user, patronymic="Иванович")
+        self.employee = Employee.objects.create(user=self.user, patronymic="Иванович", role=ADMIN_GROUP)
 
         self.other_user = get_user_model().objects.create_user(
             username="other-worktime-user",
@@ -123,6 +127,25 @@ class WorktimeAppTests(TestCase):
 
     def _full_name(self, employee):
         return Performer.employee_full_name(employee)
+
+    def _worktime_csv_header(self, month_value):
+        year, month = [int(part) for part in str(month_value).split("-", 1)]
+        total_days = monthrange(year, month)[1]
+        return ["Сотрудник", "Проект", "Тип", "Название", *[str(day) for day in range(1, total_days + 1)]]
+
+    def _make_worktime_csv_upload(self, header, rows, *, name="worktime.csv"):
+        buffer = io.StringIO()
+        writer = csv.writer(buffer, delimiter=";")
+        writer.writerow(header)
+        writer.writerows(rows)
+        return SimpleUploadedFile(
+            name,
+            buffer.getvalue().encode("utf-8-sig"),
+            content_type="text/csv",
+        )
+
+    def _parse_worktime_csv_response(self, response):
+        return list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
 
     def test_attach_group_histograms_scales_detail_rows_to_group_bar(self):
         groups = [
@@ -1000,6 +1023,57 @@ class WorktimeAppTests(TestCase):
         self.assertContains(response, 'value="month"', html=False)
         self.assertContains(response, "Апрель, 2026 г.")
 
+    def test_general_partial_renders_csv_controls_for_employee_month_breakdown(self):
+        response = self.client.get(
+            reverse("worktime_partial"),
+            {"scale": "month", "period": "2026-04", "breakdown": "employees"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Скачать CSV")
+        self.assertContains(response, "Загрузить CSV")
+        self.assertContains(response, 'data-worktime-csv-download-url="/worktime/csv-download/"', html=False)
+        self.assertContains(response, 'data-worktime-csv-upload-url="/worktime/csv-upload/"', html=False)
+        self.assertContains(response, 'class="btn btn-primary btn-sm d-flex align-items-center"', html=False, count=2)
+        self.assertContains(response, 'class="bi bi-cloud-arrow-down me-2"', html=False)
+        self.assertNotContains(
+            response,
+            'disabled title="Загрузка и скачивание CSV доступны только для месячного табеля с разбивкой по сотрудникам."',
+            html=False,
+        )
+
+    def test_general_partial_disables_csv_controls_for_activity_breakdown(self):
+        response = self.client.get(
+            reverse("worktime_partial"),
+            {"scale": "month", "period": "2026-04", "breakdown": "activities"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Скачать CSV")
+        self.assertContains(response, "Загрузить CSV")
+        self.assertContains(
+            response,
+            'disabled title="Загрузка и скачивание CSV доступны только для месячного табеля с разбивкой по сотрудникам."',
+            html=False,
+            count=2,
+        )
+        self.assertContains(response, "Загрузка и скачивание CSV доступны только для месячного табеля с разбивкой по сотрудникам.")
+
+    def test_general_partial_hides_csv_controls_for_non_admin_user(self):
+        self.employee.role = ""
+        self.employee.save(update_fields=["role"])
+
+        response = self.client.get(
+            reverse("worktime_partial"),
+            {"scale": "month", "period": "2026-04", "breakdown": "employees"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "Скачать CSV")
+        self.assertNotContains(response, "Загрузить CSV")
+        self.assertNotContains(response, 'data-worktime-csv-download-url="/worktime/csv-download/"', html=False)
+        self.assertNotContains(response, 'data-worktime-csv-upload-url="/worktime/csv-upload/"', html=False)
+
     def test_general_partial_year_scale_aggregates_hours_by_month(self):
         assignment = WorktimeAssignment.objects.create(
             registration=self.registration,
@@ -1033,6 +1107,360 @@ class WorktimeAppTests(TestCase):
         self.assertContains(response, ">13<", html=False)
         self.assertContains(response, ">3<", html=False)
         self.assertNotContains(response, f'hours_{assignment.pk}_20260407', html=False)
+
+    def test_worktime_csv_download_returns_selected_month_data(self):
+        assignment = WorktimeAssignment.objects.create(
+            registration=self.registration,
+            employee=self.employee,
+            executor_name=self._full_name(self.employee),
+            source_type=WorktimeAssignment.SourceType.PERFORMER_CONFIRMATION,
+        )
+        WorktimeEntry.objects.create(
+            assignment=assignment,
+            work_date=date(2026, 4, 1),
+            hours=7,
+        )
+        WorktimeEntry.objects.create(
+            assignment=assignment,
+            work_date=date(2026, 4, 3),
+            hours=5,
+        )
+
+        response = self.client.get(
+            reverse("worktime_csv_download"),
+            {"scale": "month", "period": "2026-04", "breakdown": "employees"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("text/csv", response["Content-Type"])
+        self.assertEqual(response["Content-Disposition"], 'attachment; filename="worktime-2026-04.csv"')
+        rows = self._parse_worktime_csv_response(response)
+        self.assertEqual(rows[0], self._worktime_csv_header("2026-04"))
+        self.assertEqual(rows[1][0], self._full_name(self.employee))
+        self.assertEqual(rows[1][1], assignment.display_project_code)
+        self.assertEqual(rows[1][2], assignment.display_type_label)
+        self.assertEqual(rows[1][3], assignment.display_project_name)
+        self.assertEqual(rows[1][4], "7")
+        self.assertEqual(rows[1][5], "")
+        self.assertEqual(rows[1][6], "5")
+
+    def test_worktime_csv_upload_replaces_only_selected_month_for_touched_rows(self):
+        assignment = WorktimeAssignment.objects.create(
+            registration=self.registration,
+            employee=self.employee,
+            executor_name=self._full_name(self.employee),
+            source_type=WorktimeAssignment.SourceType.PERFORMER_CONFIRMATION,
+        )
+        untouched_assignment = WorktimeAssignment.objects.create(
+            registration=self.second_registration,
+            employee=self.employee,
+            executor_name=self._full_name(self.employee),
+            source_type=WorktimeAssignment.SourceType.PROJECT_MANAGER,
+        )
+        WorktimeEntry.objects.create(assignment=assignment, work_date=date(2026, 4, 1), hours=3)
+        WorktimeEntry.objects.create(assignment=assignment, work_date=date(2026, 4, 2), hours=4)
+        WorktimeEntry.objects.create(assignment=assignment, work_date=date(2026, 5, 1), hours=7)
+        WorktimeEntry.objects.create(assignment=untouched_assignment, work_date=date(2026, 4, 1), hours=5)
+
+        april_days = [""] * 30
+        april_days[0] = "8"
+        april_days[2] = "6"
+        upload = self._make_worktime_csv_upload(
+            self._worktime_csv_header("2026-04"),
+            [[
+                self._full_name(self.employee),
+                assignment.display_project_code,
+                assignment.display_type_label,
+                assignment.display_project_name,
+                *april_days,
+            ]],
+        )
+
+        response = self.client.post(
+            reverse("worktime_csv_upload"),
+            {
+                "csv_file": upload,
+                "scale": "month",
+                "period": "2026-04",
+                "breakdown": "employees",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {"ok": True, "created": 1, "updated": 1, "deleted": 1},
+        )
+        self.assertEqual(
+            list(
+                WorktimeEntry.objects.filter(assignment=assignment)
+                .order_by("work_date")
+                .values_list("work_date", "hours")
+            ),
+            [
+                (date(2026, 4, 1), 8),
+                (date(2026, 4, 3), 6),
+                (date(2026, 5, 1), 7),
+            ],
+        )
+        self.assertEqual(
+            list(
+                WorktimeEntry.objects.filter(assignment=untouched_assignment)
+                .order_by("work_date")
+                .values_list("work_date", "hours")
+            ),
+            [(date(2026, 4, 1), 5)],
+        )
+
+    def test_worktime_csv_upload_creates_missing_assignment_for_existing_project_and_employee(self):
+        april_days = [""] * 30
+        april_days[0] = "8"
+        upload = self._make_worktime_csv_upload(
+            self._worktime_csv_header("2026-04"),
+            [[
+                self._full_name(self.employee),
+                self.second_registration.short_uid,
+                self.second_registration.type_short_display or "—",
+                self.second_registration.name,
+                *april_days,
+            ]],
+        )
+
+        response = self.client.post(
+            reverse("worktime_csv_upload"),
+            {
+                "csv_file": upload,
+                "scale": "month",
+                "period": "2026-04",
+                "breakdown": "employees",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "ok": True,
+                "created": 1,
+                "updated": 0,
+                "deleted": 0,
+                "created_assignments": 1,
+            },
+        )
+        assignment = WorktimeAssignment.objects.get(
+            registration=self.second_registration,
+            executor_name=self._full_name(self.employee),
+        )
+        self.assertEqual(assignment.employee, self.employee)
+        self.assertEqual(assignment.record_type, WorktimeAssignment.RecordType.PROJECT)
+        self.assertEqual(assignment.source_type, WorktimeAssignment.SourceType.MANUAL_PERSONAL_WEEK)
+        self.assertTrue(
+            PersonalWorktimeWeekAssignment.objects.filter(
+                assignment=assignment,
+                week_start=date(2026, 3, 30),
+            ).exists()
+        )
+        self.assertEqual(
+            list(
+                WorktimeEntry.objects.filter(assignment=assignment)
+                .order_by("work_date")
+                .values_list("work_date", "hours")
+            ),
+            [(date(2026, 4, 1), 8)],
+        )
+        visible_response = self.client.get(reverse("personal_worktime_partial"), {"week": "2026-04-01"})
+        hidden_response = self.client.get(reverse("personal_worktime_partial"), {"week": "2026-04-14"})
+        self.assertContains(visible_response, self.second_registration.name)
+        self.assertNotContains(hidden_response, self.second_registration.name)
+
+    def test_worktime_csv_upload_rejects_missing_file(self):
+        response = self.client.post(
+            reverse("worktime_csv_upload"),
+            {"scale": "month", "period": "2026-04", "breakdown": "employees"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json(), {"ok": False, "error": "Файл не выбран."})
+
+    def test_worktime_csv_upload_rejects_non_csv_file(self):
+        response = self.client.post(
+            reverse("worktime_csv_upload"),
+            {
+                "csv_file": SimpleUploadedFile("worktime.txt", b"test", content_type="text/plain"),
+                "scale": "month",
+                "period": "2026-04",
+                "breakdown": "employees",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json(), {"ok": False, "error": "Допустимы только файлы CSV."})
+
+    def test_worktime_csv_upload_rejects_invalid_header(self):
+        upload = self._make_worktime_csv_upload(
+            ["Сотрудник", "Проект", "Тип", "Название", "1", "2"],
+            [["Иван Иванов", "4444", "WT", "Проект Альфа", "8", "4"]],
+        )
+
+        response = self.client.post(
+            reverse("worktime_csv_upload"),
+            {
+                "csv_file": upload,
+                "scale": "month",
+                "period": "2026-04",
+                "breakdown": "employees",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.json()["ok"])
+        self.assertIn("CSV должен содержать колонки:", response.json()["error"])
+
+    def test_worktime_csv_upload_reports_unknown_row(self):
+        assignment = WorktimeAssignment.objects.create(
+            registration=self.registration,
+            employee=self.employee,
+            executor_name=self._full_name(self.employee),
+            source_type=WorktimeAssignment.SourceType.PERFORMER_CONFIRMATION,
+        )
+        april_days = [""] * 30
+        april_days[0] = "8"
+        upload = self._make_worktime_csv_upload(
+            self._worktime_csv_header("2026-04"),
+            [[
+                "Несуществующий Сотрудник",
+                assignment.display_project_code,
+                assignment.display_type_label,
+                assignment.display_project_name,
+                *april_days,
+            ]],
+        )
+
+        response = self.client.post(
+            reverse("worktime_csv_upload"),
+            {
+                "csv_file": upload,
+                "scale": "month",
+                "period": "2026-04",
+                "breakdown": "employees",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertEqual(payload["error"], "Не удалось обработать ни одной строки табеля.")
+        self.assertIn("не найден среди штатных сотрудников", payload["warnings"][0])
+
+    def test_worktime_csv_upload_rejects_hours_out_of_range(self):
+        assignment = WorktimeAssignment.objects.create(
+            registration=self.registration,
+            employee=self.employee,
+            executor_name=self._full_name(self.employee),
+            source_type=WorktimeAssignment.SourceType.PERFORMER_CONFIRMATION,
+        )
+        april_days = [""] * 30
+        april_days[0] = "25"
+        upload = self._make_worktime_csv_upload(
+            self._worktime_csv_header("2026-04"),
+            [[
+                self._full_name(self.employee),
+                assignment.display_project_code,
+                assignment.display_type_label,
+                assignment.display_project_name,
+                *april_days,
+            ]],
+        )
+
+        response = self.client.post(
+            reverse("worktime_csv_upload"),
+            {
+                "csv_file": upload,
+                "scale": "month",
+                "period": "2026-04",
+                "breakdown": "employees",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertEqual(payload["error"], "Не удалось обработать ни одной строки табеля.")
+        self.assertIn("должно быть в диапазоне от 0 до 24", payload["warnings"][0])
+
+    def test_worktime_csv_upload_rejects_activity_breakdown(self):
+        upload = self._make_worktime_csv_upload(
+            self._worktime_csv_header("2026-04"),
+            [],
+        )
+
+        response = self.client.post(
+            reverse("worktime_csv_upload"),
+            {
+                "csv_file": upload,
+                "scale": "month",
+                "period": "2026-04",
+                "breakdown": "activities",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json(),
+            {
+                "ok": False,
+                "error": "Загрузка и скачивание CSV доступны только для месячного табеля с разбивкой по сотрудникам.",
+            },
+        )
+
+    def test_worktime_csv_download_rejects_year_scale(self):
+        response = self.client.get(
+            reverse("worktime_csv_download"),
+            {"scale": "year", "period": "2026", "breakdown": "employees"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.content.decode("utf-8"),
+            "Загрузка и скачивание CSV доступны только для месячного табеля с разбивкой по сотрудникам.",
+        )
+
+    def test_worktime_csv_upload_forbidden_for_non_admin_role(self):
+        self.employee.role = ""
+        self.employee.save(update_fields=["role"])
+        upload = self._make_worktime_csv_upload(self._worktime_csv_header("2026-04"), [])
+
+        response = self.client.post(
+            reverse("worktime_csv_upload"),
+            {
+                "csv_file": upload,
+                "scale": "month",
+                "period": "2026-04",
+                "breakdown": "employees",
+            },
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.json(),
+            {
+                "ok": False,
+                "error": "Загрузка и скачивание CSV доступны только пользователям с ролью Администратор.",
+            },
+        )
+
+    def test_worktime_csv_download_forbidden_for_non_admin_role(self):
+        self.employee.role = ""
+        self.employee.save(update_fields=["role"])
+
+        response = self.client.get(
+            reverse("worktime_csv_download"),
+            {"scale": "month", "period": "2026-04", "breakdown": "employees"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.content.decode("utf-8"),
+            "Загрузка и скачивание CSV доступны только пользователям с ролью Администратор.",
+        )
 
     def test_panel_defers_initial_timesheet_load_until_explicit_event(self):
         request = self.factory.get("/")

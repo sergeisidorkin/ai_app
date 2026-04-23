@@ -1007,7 +1007,7 @@ def _proposals_context(request=None, user=None, *, debug_nextcloud_links=False):
         "asset_owner_country",
         "type",
         "currency",
-    ).all()
+    ).prefetch_related("product_links__product").all()
     _attach_proposal_folder_urls(proposals, user=user, request=request, debug_nextcloud_links=debug_nextcloud_links)
     proposal_templates = list(ProposalTemplate.objects.select_related("group_member", "product").all())
     proposal_variables = ProposalVariable.objects.all()

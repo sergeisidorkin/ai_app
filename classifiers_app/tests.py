@@ -1419,6 +1419,126 @@ class BusinessRegistryCsvTests(TestCase):
         self.assertEqual(BusinessEntityIdentifierRecord.objects.count(), 2)
         self.assertEqual(BusinessEntityRelationRecord.objects.count(), 1)
 
+    def test_csv_upload_accepts_multiple_relations_for_same_event_without_event_position(self):
+        upload = self._make_csv_upload(
+            [
+                {
+                    "section": "business_entity",
+                    "business_entity_ref": "00030-BSN",
+                    "position": "1",
+                    "business_entity_name": 'ООО "Источник 1"',
+                },
+                {
+                    "section": "business_entity",
+                    "business_entity_ref": "00031-BSN",
+                    "position": "2",
+                    "business_entity_name": 'ООО "Источник 2"',
+                },
+                {
+                    "section": "business_entity",
+                    "business_entity_ref": "00032-BSN",
+                    "position": "3",
+                    "business_entity_name": 'ООО "Приемник"',
+                },
+                {
+                    "section": "identifier",
+                    "business_entity_ref": "00030-BSN",
+                    "identifier_ref": "00030-IDN",
+                    "position": "1",
+                    "registration_country_code": "643",
+                    "registration_country_name": "Россия",
+                },
+                {
+                    "section": "identifier",
+                    "business_entity_ref": "00031-BSN",
+                    "identifier_ref": "00031-IDN",
+                    "position": "2",
+                    "registration_country_code": "643",
+                    "registration_country_name": "Россия",
+                },
+                {
+                    "section": "identifier",
+                    "business_entity_ref": "00032-BSN",
+                    "identifier_ref": "00032-IDN",
+                    "position": "3",
+                    "registration_country_code": "643",
+                    "registration_country_name": "Россия",
+                },
+                {
+                    "section": "name",
+                    "business_entity_ref": "00030-BSN",
+                    "identifier_ref": "00030-IDN",
+                    "position": "1",
+                    "short_name": 'ООО "Источник 1"',
+                },
+                {
+                    "section": "name",
+                    "business_entity_ref": "00031-BSN",
+                    "identifier_ref": "00031-IDN",
+                    "position": "2",
+                    "short_name": 'ООО "Источник 2"',
+                },
+                {
+                    "section": "name",
+                    "business_entity_ref": "00032-BSN",
+                    "identifier_ref": "00032-IDN",
+                    "position": "3",
+                    "short_name": 'ООО "Приемник"',
+                },
+                {
+                    "section": "address",
+                    "business_entity_ref": "00030-BSN",
+                    "identifier_ref": "00030-IDN",
+                    "position": "4",
+                },
+                {
+                    "section": "address",
+                    "business_entity_ref": "00031-BSN",
+                    "identifier_ref": "00031-IDN",
+                    "position": "5",
+                },
+                {
+                    "section": "address",
+                    "business_entity_ref": "00032-BSN",
+                    "identifier_ref": "00032-IDN",
+                    "position": "6",
+                },
+                {
+                    "section": "relation",
+                    "event_ref": "90010-REO",
+                    "from_business_entity_ref": "00030-BSN",
+                    "to_business_entity_ref": "00032-BSN",
+                    "position": "1",
+                    "relation_type": "Слияние",
+                    "event_uid": "90010-REO",
+                    "event_date": "2026-03-01",
+                    "comment": "two sources",
+                },
+                {
+                    "section": "relation",
+                    "event_ref": "90010-REO",
+                    "from_business_entity_ref": "00031-BSN",
+                    "to_business_entity_ref": "00032-BSN",
+                    "position": "2",
+                    "relation_type": "Слияние",
+                    "event_uid": "90010-REO",
+                    "event_date": "2026-03-01",
+                    "comment": "two sources",
+                },
+            ]
+        )
+
+        response = self.client.post(reverse("business_registry_csv_upload"), {"csv_file": upload})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(BusinessEntityReorganizationEvent.objects.count(), 1)
+        self.assertEqual(BusinessEntityRelationRecord.objects.count(), 2)
+        event = BusinessEntityReorganizationEvent.objects.get()
+        self.assertEqual(event.reorganization_event_uid, "90010-REO")
+        self.assertEqual(event.position, 1)
+
 
 class BusinessEntityIdentifierFormTests(TestCase):
     def setUp(self):

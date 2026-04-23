@@ -341,8 +341,8 @@
     var debounce = null;
     var requestSeq = 0;
 
-    function applyRegion(regionName) {
-      loadRegions(countryEl.value || '', false, String(regionName || '').trim());
+    function applyRegion(regionName, preserveCurrent) {
+      loadRegions(countryEl.value || '', !!preserveCurrent, String(regionName || '').trim());
     }
 
     function schedule() {
@@ -355,7 +355,7 @@
         var registrationNumber = String(numberEl.value || '').trim();
 
         if (!countryId) {
-          applyRegion('');
+          applyRegion('', false);
           return;
         }
 
@@ -368,11 +368,16 @@
           .then(function(r) { return r.json(); })
           .then(function(data) {
             if (seq !== requestSeq) return;
-            applyRegion(data && data.region ? data.region : '');
+            var suggestedRegion = data && data.region ? String(data.region).trim() : '';
+            if (suggestedRegion) {
+              applyRegion(suggestedRegion, false);
+              return;
+            }
+            applyRegion('', true);
           })
           .catch(function() {
             if (seq !== requestSeq) return;
-            applyRegion('');
+            applyRegion('', true);
           });
       }, 150);
     }

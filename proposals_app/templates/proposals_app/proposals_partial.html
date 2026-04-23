@@ -126,7 +126,7 @@
               {% endif %}
             </td>
             <td data-col="tkp-id" class="proposal-id-cell"><span class="clf-id-droid-mono">{{ proposal.short_uid }}</span></td>
-            <td data-col="type">{{ proposal.type.short_name|default:proposal.type }}</td>
+            <td data-col="type">{{ proposal.type_short_display }}</td>
             <td data-col="name">{{ proposal.name }}</td>
             <td data-col="kind">{{ proposal.get_kind_display }}</td>
             <td data-col="status" class="proposal-status-cell">{{ proposal.get_status_display }}</td>
@@ -288,7 +288,7 @@
               {% endif %}
             </td>
             <td class="proposal-id-cell"><span class="clf-id-droid-mono">{{ proposal.short_uid }}</span></td>
-            <td>{{ proposal.type.short_name|default:proposal.type }}</td>
+            <td>{{ proposal.type_short_display }}</td>
             <td>{{ proposal.name }}</td>
             <td class="text-nowrap">
               {% with folder_url=proposal.proposal_workspace_folder_url %}
