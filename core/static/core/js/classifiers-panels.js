@@ -1083,6 +1083,13 @@
       }
       if (data.ok) {
         var html = '<div class="mb-2"><strong>Создано строк: ' + data.created + '</strong></div>';
+        if (data.summary && data.summary.length) {
+          html += '<div class="text-muted mb-2">';
+          for (var summaryIdx = 0; summaryIdx < data.summary.length; summaryIdx++) {
+            html += '<div class="mb-1">' + esc(data.summary[summaryIdx]) + '</div>';
+          }
+          html += '</div>';
+        }
         if (data.updated) {
           html += '<div class="mb-2"><strong>Обновлено строк: ' + data.updated + '</strong></div>';
         }
@@ -1114,7 +1121,10 @@
           html += '</div>';
         }
         showCsvResult(html);
-        if (refreshName && TABLE_CONFIG[refreshName]) {
+        if (uploadOptions.refreshAllBusinessRegistries) {
+          await initBusinessEntityMasterFilter(true);
+          await refreshBusinessRegistryTablesLatest();
+        } else if (refreshName && TABLE_CONFIG[refreshName]) {
           await refreshTable(refreshName);
         } else {
           await htmx.ajax('GET', '/classifiers/partial/' + filterQueryString(), {
@@ -1122,7 +1132,16 @@
           });
         }
       } else {
-        showCsvResult('<div class="text-danger"><strong>Ошибка:</strong> ' + esc(data.error || 'Неизвестная ошибка') + '</div>');
+        var errorHtml = '<div class="text-danger"><strong>Ошибка:</strong> ' + esc(data.error || 'Неизвестная ошибка') + '</div>';
+        if (data.warnings && data.warnings.length) {
+          errorHtml += '<div class="text-danger mt-2"><strong>Детали (' + data.warnings.length + '):</strong></div>';
+          errorHtml += '<div class="text-danger" style="max-height:200px;overflow-y:auto;">';
+          for (var warningIdx = 0; warningIdx < data.warnings.length; warningIdx++) {
+            errorHtml += '<div class="mb-1">' + esc(data.warnings[warningIdx]) + '</div>';
+          }
+          errorHtml += '</div>';
+        }
+        showCsvResult(errorHtml);
       }
     } catch (err) {
       showCsvResult('<div class="text-danger"><strong>Ошибка загрузки:</strong> ' + esc(err.message) + '</div>');
@@ -1131,7 +1150,13 @@
 
   // CSV upload buttons (OKSM + OKV)
   document.addEventListener('click', function (e) {
+    var downloadBtn = e.target.closest('#ber-csv-download-btn');
+    if (downloadBtn) {
+      window.location.href = '/classifiers/business-registry/csv-download/';
+      return;
+    }
     var mapping = {
+      'ber-csv-upload-btn': 'ber-csv-file-input',
       'oksm-csv-upload-btn': 'oksm-csv-file-input',
       'okv-csv-upload-btn': 'okv-csv-file-input',
       'numcap-csv-upload-btn': 'numcap-csv-file-input',
@@ -1152,6 +1177,7 @@
 
   document.addEventListener('change', async function (e) {
     var mapping = {
+      'ber-csv-file-input': { url: '/classifiers/business-registry/csv-upload/', refresh: null, refreshAllBusinessRegistries: true },
       'oksm-csv-file-input': { url: '/classifiers/oksm/csv-upload/', refresh: null },
       'okv-csv-file-input':  { url: '/classifiers/okv/csv-upload/',  refresh: null },
       'numcap-csv-file-input': { url: '/classifiers/numcap/csv-upload/', refresh: 'numcap-select', sequential: true, replaceFirstOnly: true },

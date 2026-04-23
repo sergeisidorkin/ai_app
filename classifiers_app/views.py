@@ -91,6 +91,47 @@ BRL_TABLE_URL = "/classifiers/brl/table/"
 BUSINESS_ENTITY_SOURCE_BER = "[База юрлиц / Реестр бизнес-сущностей]"
 BUSINESS_ENTITY_SOURCE_LER = "[База юрлиц / Реестр наименований]"
 BUSINESS_ENTITY_SOURCE_BRL = "[База юрлиц / Реестр связей]"
+BUSINESS_REGISTRY_CSV_FIELDS = [
+    "section",
+    "business_entity_ref",
+    "identifier_ref",
+    "event_ref",
+    "from_business_entity_ref",
+    "to_business_entity_ref",
+    "position",
+    "business_entity_name",
+    "record_date",
+    "record_author",
+    "source",
+    "comment",
+    "identifier_type",
+    "registration_country_code",
+    "registration_country_name",
+    "registration_region",
+    "registration_date",
+    "registration_number",
+    "identifier_value",
+    "valid_from",
+    "valid_to",
+    "short_name",
+    "full_name",
+    "name_received_date",
+    "name_changed_date",
+    "postal_code",
+    "municipality",
+    "settlement",
+    "locality",
+    "district",
+    "street",
+    "building",
+    "premise",
+    "premise_part",
+    "relation_type",
+    "event_uid",
+    "event_date",
+    "event_position",
+]
+BUSINESS_REGISTRY_CSV_UPLOAD_AFFECTED = ["ber-select", "bei-select", "ler-select", "bea-select", "brl-select"]
 PAGINATION_PRESERVED_PARAMS = {
     "business_entity_ids",
     "oksm_date",
@@ -1555,6 +1596,666 @@ def _parse_csv_date(raw: str) -> date_type | None:
         except ValueError:
             continue
     return None
+
+
+def _csv_cell(value):
+    if value is None:
+        return ""
+    if isinstance(value, date_type):
+        return value.isoformat()
+    return str(value)
+
+
+def _business_entity_csv_ref(entity_id: int) -> str:
+    return f"{entity_id:05d}-BSN"
+
+
+def _identifier_csv_ref(identifier_id: int) -> str:
+    return f"{identifier_id:05d}-IDN"
+
+
+def _event_csv_ref(event) -> str:
+    value = (getattr(event, "reorganization_event_uid", "") or "").strip()
+    if value:
+        return value
+    return f"{getattr(event, 'pk', 0):05d}-REO"
+
+
+def _read_uploaded_dict_rows(csv_file):
+    if not csv_file:
+        raise ValueError("Файл не выбран.")
+    if not csv_file.name.lower().endswith(".csv"):
+        raise ValueError("Допустимы только файлы CSV.")
+
+    try:
+        raw = csv_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_file.seek(0)
+            raw = csv_file.read().decode("cp1251")
+        except Exception as exc:
+            raise ValueError(
+                "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251)."
+            ) from exc
+
+    def parse_rows(delimiter):
+        reader = csv.DictReader(io.StringIO(raw), delimiter=delimiter)
+        return reader.fieldnames or [], list(reader)
+
+    fieldnames, rows = parse_rows(";")
+    if len(fieldnames) <= 1:
+        fieldnames, rows = parse_rows(",")
+    if not fieldnames:
+        raise ValueError("Файл пуст или не содержит заголовок CSV.")
+    return fieldnames, rows
+
+
+def _parse_import_csv_date(raw_value, *, row_number, field_label, errors):
+    value = (raw_value or "").strip()
+    if not value:
+        return None
+    parsed = _parse_csv_date(value)
+    if parsed is None:
+        errors.append(f"Строка {row_number}: неверная дата в поле «{field_label}»: «{value}».")
+    return parsed
+
+
+def _parse_import_position(raw_value, *, row_number, field_label, fallback, errors):
+    value = (raw_value or "").strip()
+    if not value:
+        return fallback
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        errors.append(f"Строка {row_number}: поле «{field_label}» должно быть целым числом.")
+        return fallback
+    if parsed < 1:
+        errors.append(f"Строка {row_number}: поле «{field_label}» должно быть не меньше 1.")
+        return fallback
+    return parsed
+
+
+def _resolve_import_country(*, code, name, row_number, field_label, countries_by_code, countries_by_name, errors):
+    code_value = (code or "").strip()
+    name_value = (name or "").strip()
+    if not code_value and not name_value:
+        return None
+
+    country = None
+    if code_value:
+        country = countries_by_code.get(code_value)
+    if country is None and name_value:
+        country = countries_by_name.get(name_value.lower())
+    if country is None:
+        lookup_value = code_value or name_value
+        errors.append(f"Строка {row_number}: страна «{lookup_value}» не найдена для поля «{field_label}».")
+        return None
+    return country
+
+
+def _build_business_registry_csv_rows():
+    rows = []
+
+    for item in BusinessEntityRecord.objects.order_by("position", "id").iterator():
+        rows.append(
+            {
+                "section": "business_entity",
+                "business_entity_ref": _business_entity_csv_ref(item.pk),
+                "position": _csv_cell(item.position),
+                "business_entity_name": _csv_cell(item.name),
+                "record_date": _csv_cell(item.record_date),
+                "record_author": _csv_cell(item.record_author),
+                "source": _csv_cell(item.source),
+                "comment": _csv_cell(item.comment),
+            }
+        )
+
+    identifiers = BusinessEntityIdentifierRecord.objects.select_related("business_entity", "registration_country").order_by(
+        "position", "id"
+    )
+    for item in identifiers.iterator():
+        rows.append(
+            {
+                "section": "identifier",
+                "business_entity_ref": _business_entity_csv_ref(item.business_entity_id),
+                "identifier_ref": _identifier_csv_ref(item.pk),
+                "position": _csv_cell(item.position),
+                "record_date": _csv_cell(item.record_date),
+                "record_author": _csv_cell(item.record_author),
+                "identifier_type": _csv_cell(item.identifier_type),
+                "registration_country_code": _csv_cell(item.registration_country.code if item.registration_country_id else ""),
+                "registration_country_name": _csv_cell(item.registration_country.short_name if item.registration_country_id else ""),
+                "registration_region": _csv_cell(item.registration_region),
+                "registration_date": _csv_cell(item.registration_date),
+                "registration_number": _csv_cell(item.number),
+                "valid_from": _csv_cell(item.valid_from),
+                "valid_to": _csv_cell(item.valid_to),
+            }
+        )
+
+    legal_records = LegalEntityRecord.objects.select_related(
+        "identifier_record__business_entity",
+        "registration_country",
+    ).order_by("position", "id")
+    for item in legal_records.filter(attribute=LegalEntityRecord.ATTRIBUTE_NAME).iterator():
+        identifier_record = item.identifier_record
+        rows.append(
+            {
+                "section": "name",
+                "business_entity_ref": _business_entity_csv_ref(identifier_record.business_entity_id) if identifier_record and identifier_record.business_entity_id else "",
+                "identifier_ref": _identifier_csv_ref(identifier_record.pk) if identifier_record else "",
+                "position": _csv_cell(item.position),
+                "record_date": _csv_cell(item.record_date),
+                "record_author": _csv_cell(item.record_author),
+                "registration_country_code": _csv_cell(item.registration_country.code if item.registration_country_id else ""),
+                "registration_country_name": _csv_cell(item.registration_country.short_name if item.registration_country_id else ""),
+                "registration_region": _csv_cell(item.registration_region),
+                "registration_date": _csv_cell(item.registration_date),
+                "registration_number": _csv_cell(item.registration_number),
+                "identifier_value": _csv_cell(item.identifier),
+                "short_name": _csv_cell(item.short_name),
+                "full_name": _csv_cell(item.full_name),
+                "name_received_date": _csv_cell(item.name_received_date),
+                "name_changed_date": _csv_cell(item.name_changed_date),
+            }
+        )
+
+    for item in legal_records.filter(attribute=LegalEntityRecord.ATTRIBUTE_LEGAL_ADDRESS).iterator():
+        identifier_record = item.identifier_record
+        rows.append(
+            {
+                "section": "address",
+                "business_entity_ref": _business_entity_csv_ref(identifier_record.business_entity_id) if identifier_record and identifier_record.business_entity_id else "",
+                "identifier_ref": _identifier_csv_ref(identifier_record.pk) if identifier_record else "",
+                "position": _csv_cell(item.position),
+                "record_date": _csv_cell(item.record_date),
+                "record_author": _csv_cell(item.record_author),
+                "registration_country_code": _csv_cell(item.registration_country.code if item.registration_country_id else ""),
+                "registration_country_name": _csv_cell(item.registration_country.short_name if item.registration_country_id else ""),
+                "registration_region": _csv_cell(item.registration_region),
+                "valid_from": _csv_cell(item.valid_from),
+                "valid_to": _csv_cell(item.valid_to),
+                "postal_code": _csv_cell(item.postal_code),
+                "municipality": _csv_cell(item.municipality),
+                "settlement": _csv_cell(item.settlement),
+                "locality": _csv_cell(item.locality),
+                "district": _csv_cell(item.district),
+                "street": _csv_cell(item.street),
+                "building": _csv_cell(item.building),
+                "premise": _csv_cell(item.premise),
+                "premise_part": _csv_cell(item.premise_part),
+            }
+        )
+
+    relations = BusinessEntityRelationRecord.objects.select_related(
+        "event",
+        "from_business_entity",
+        "to_business_entity",
+    ).order_by("position", "id")
+    for item in relations.iterator():
+        event = item.event
+        rows.append(
+            {
+                "section": "relation",
+                "event_ref": _event_csv_ref(event),
+                "from_business_entity_ref": _business_entity_csv_ref(item.from_business_entity_id),
+                "to_business_entity_ref": _business_entity_csv_ref(item.to_business_entity_id),
+                "position": _csv_cell(item.position),
+                "relation_type": _csv_cell(event.relation_type if event else ""),
+                "event_uid": _csv_cell(event.reorganization_event_uid if event else ""),
+                "event_date": _csv_cell(event.event_date if event else ""),
+                "event_position": _csv_cell(event.position if event else ""),
+                "comment": _csv_cell(event.comment if event else ""),
+            }
+        )
+
+    return rows
+
+
+def _import_business_registry_csv_rows(rows):
+    errors = []
+    business_entities = []
+    identifiers = []
+    names = []
+    addresses = []
+    relations = []
+    event_definitions = {}
+    event_order = []
+
+    countries_by_code = {item.code.strip(): item for item in OKSMCountry.objects.exclude(code="")}
+    countries_by_name = {item.short_name.strip().lower(): item for item in OKSMCountry.objects.exclude(short_name="")}
+    entity_refs = set()
+    identifier_refs = set()
+    event_ref_to_uid = {}
+
+    section_positions = {
+        "business_entity": 1,
+        "identifier": 1,
+        "name": 1,
+        "address": 1,
+        "relation": 1,
+        "event": 1,
+    }
+
+    for row_number, row in enumerate(rows, start=2):
+        if not any((value or "").strip() for value in row.values()):
+            continue
+
+        section = (row.get("section") or "").strip()
+        if section not in {"business_entity", "identifier", "name", "address", "relation"}:
+            errors.append(f"Строка {row_number}: неизвестное значение в поле «section»: «{section or '—'}».")
+            continue
+
+        if section == "business_entity":
+            ref = (row.get("business_entity_ref") or "").strip()
+            if not ref:
+                errors.append(f"Строка {row_number}: отсутствует business_entity_ref.")
+                continue
+            if ref in entity_refs:
+                errors.append(f"Строка {row_number}: повторяющийся business_entity_ref «{ref}».")
+                continue
+            entity_refs.add(ref)
+            name = (row.get("business_entity_name") or "").strip()
+            if not name:
+                errors.append(f"Строка {row_number}: отсутствует наименование бизнес-сущности.")
+                continue
+            business_entities.append(
+                {
+                    "ref": ref,
+                    "name": name,
+                    "record_date": _parse_import_csv_date(
+                        row.get("record_date"),
+                        row_number=row_number,
+                        field_label="record_date",
+                        errors=errors,
+                    ),
+                    "record_author": (row.get("record_author") or "").strip(),
+                    "source": (row.get("source") or "").strip(),
+                    "comment": (row.get("comment") or "").strip(),
+                    "position": _parse_import_position(
+                        row.get("position"),
+                        row_number=row_number,
+                        field_label="position",
+                        fallback=section_positions["business_entity"],
+                        errors=errors,
+                    ),
+                }
+            )
+            section_positions["business_entity"] += 1
+            continue
+
+        if section == "identifier":
+            ref = (row.get("identifier_ref") or "").strip()
+            business_entity_ref = (row.get("business_entity_ref") or "").strip()
+            if not ref:
+                errors.append(f"Строка {row_number}: отсутствует identifier_ref.")
+                continue
+            if ref in identifier_refs:
+                errors.append(f"Строка {row_number}: повторяющийся identifier_ref «{ref}».")
+                continue
+            if not business_entity_ref:
+                errors.append(f"Строка {row_number}: отсутствует business_entity_ref для идентификатора.")
+                continue
+            identifier_refs.add(ref)
+            identifiers.append(
+                {
+                    "ref": ref,
+                    "business_entity_ref": business_entity_ref,
+                    "record_date": _parse_import_csv_date(
+                        row.get("record_date"),
+                        row_number=row_number,
+                        field_label="record_date",
+                        errors=errors,
+                    ),
+                    "record_author": (row.get("record_author") or "").strip(),
+                    "identifier_type": (row.get("identifier_type") or "").strip(),
+                    "registration_country": _resolve_import_country(
+                        code=row.get("registration_country_code"),
+                        name=row.get("registration_country_name"),
+                        row_number=row_number,
+                        field_label="registration_country_code",
+                        countries_by_code=countries_by_code,
+                        countries_by_name=countries_by_name,
+                        errors=errors,
+                    ),
+                    "registration_region": (row.get("registration_region") or "").strip(),
+                    "registration_date": _parse_import_csv_date(
+                        row.get("registration_date"),
+                        row_number=row_number,
+                        field_label="registration_date",
+                        errors=errors,
+                    ),
+                    "number": (row.get("registration_number") or "").strip(),
+                    "valid_from": _parse_import_csv_date(
+                        row.get("valid_from"),
+                        row_number=row_number,
+                        field_label="valid_from",
+                        errors=errors,
+                    ),
+                    "valid_to": _parse_import_csv_date(
+                        row.get("valid_to"),
+                        row_number=row_number,
+                        field_label="valid_to",
+                        errors=errors,
+                    ),
+                    "position": _parse_import_position(
+                        row.get("position"),
+                        row_number=row_number,
+                        field_label="position",
+                        fallback=section_positions["identifier"],
+                        errors=errors,
+                    ),
+                }
+            )
+            section_positions["identifier"] += 1
+            continue
+
+        if section in {"name", "address"}:
+            identifier_ref = (row.get("identifier_ref") or "").strip()
+            if not identifier_ref:
+                errors.append(f"Строка {row_number}: отсутствует identifier_ref для раздела «{section}».")
+                continue
+            item = {
+                "section": section,
+                "identifier_ref": identifier_ref,
+                "business_entity_ref": (row.get("business_entity_ref") or "").strip(),
+                "record_date": _parse_import_csv_date(
+                    row.get("record_date"),
+                    row_number=row_number,
+                    field_label="record_date",
+                    errors=errors,
+                ),
+                "record_author": (row.get("record_author") or "").strip(),
+                "registration_country": _resolve_import_country(
+                    code=row.get("registration_country_code"),
+                    name=row.get("registration_country_name"),
+                    row_number=row_number,
+                    field_label="registration_country_code",
+                    countries_by_code=countries_by_code,
+                    countries_by_name=countries_by_name,
+                    errors=errors,
+                ),
+                "registration_region": (row.get("registration_region") or "").strip(),
+                "registration_date": _parse_import_csv_date(
+                    row.get("registration_date"),
+                    row_number=row_number,
+                    field_label="registration_date",
+                    errors=errors,
+                ),
+                "registration_number": (row.get("registration_number") or "").strip(),
+                "identifier_value": (row.get("identifier_value") or "").strip(),
+                "short_name": (row.get("short_name") or "").strip(),
+                "full_name": (row.get("full_name") or "").strip(),
+                "name_received_date": _parse_import_csv_date(
+                    row.get("name_received_date"),
+                    row_number=row_number,
+                    field_label="name_received_date",
+                    errors=errors,
+                ),
+                "name_changed_date": _parse_import_csv_date(
+                    row.get("name_changed_date"),
+                    row_number=row_number,
+                    field_label="name_changed_date",
+                    errors=errors,
+                ),
+                "postal_code": (row.get("postal_code") or "").strip(),
+                "municipality": (row.get("municipality") or "").strip(),
+                "settlement": (row.get("settlement") or "").strip(),
+                "locality": (row.get("locality") or "").strip(),
+                "district": (row.get("district") or "").strip(),
+                "street": (row.get("street") or "").strip(),
+                "building": (row.get("building") or "").strip(),
+                "premise": (row.get("premise") or "").strip(),
+                "premise_part": (row.get("premise_part") or "").strip(),
+                "valid_from": _parse_import_csv_date(
+                    row.get("valid_from"),
+                    row_number=row_number,
+                    field_label="valid_from",
+                    errors=errors,
+                ),
+                "valid_to": _parse_import_csv_date(
+                    row.get("valid_to"),
+                    row_number=row_number,
+                    field_label="valid_to",
+                    errors=errors,
+                ),
+                "position": _parse_import_position(
+                    row.get("position"),
+                    row_number=row_number,
+                    field_label="position",
+                    fallback=section_positions[section],
+                    errors=errors,
+                ),
+            }
+            if section == "name" and not item["short_name"]:
+                errors.append(f"Строка {row_number}: отсутствует short_name для раздела «name».")
+            if section == "name":
+                names.append(item)
+            else:
+                addresses.append(item)
+            section_positions[section] += 1
+            continue
+
+        event_ref = (row.get("event_ref") or "").strip()
+        from_ref = (row.get("from_business_entity_ref") or "").strip()
+        to_ref = (row.get("to_business_entity_ref") or "").strip()
+        if not event_ref:
+            errors.append(f"Строка {row_number}: отсутствует event_ref для связи.")
+            continue
+        if not from_ref or not to_ref:
+            errors.append(f"Строка {row_number}: для связи должны быть заполнены from_business_entity_ref и to_business_entity_ref.")
+            continue
+        event_uid = (row.get("event_uid") or "").strip() or event_ref
+        event_definition = {
+            "event_uid": event_uid,
+            "relation_type": (row.get("relation_type") or "").strip(),
+            "event_date": _parse_import_csv_date(
+                row.get("event_date"),
+                row_number=row_number,
+                field_label="event_date",
+                errors=errors,
+            ),
+            "comment": (row.get("comment") or "").strip(),
+            "position": _parse_import_position(
+                row.get("event_position"),
+                row_number=row_number,
+                field_label="event_position",
+                fallback=section_positions["event"],
+                errors=errors,
+            ),
+        }
+        existing_event = event_definitions.get(event_ref)
+        if existing_event and existing_event != event_definition:
+            errors.append(f"Строка {row_number}: данные события «{event_ref}» конфликтуют с предыдущими строками.")
+        elif not existing_event:
+            event_definitions[event_ref] = event_definition
+            event_order.append(event_ref)
+            section_positions["event"] += 1
+        owner_ref = event_ref_to_uid.get(event_uid)
+        if owner_ref and owner_ref != event_ref:
+            errors.append(f"Строка {row_number}: event_uid «{event_uid}» используется для разных событий.")
+        else:
+            event_ref_to_uid[event_uid] = event_ref
+        relations.append(
+            {
+                "event_ref": event_ref,
+                "from_business_entity_ref": from_ref,
+                "to_business_entity_ref": to_ref,
+                "position": _parse_import_position(
+                    row.get("position"),
+                    row_number=row_number,
+                    field_label="position",
+                    fallback=section_positions["relation"],
+                    errors=errors,
+                ),
+            }
+        )
+        section_positions["relation"] += 1
+
+    entity_ref_map = {item["ref"]: item for item in business_entities}
+    identifier_ref_map = {item["ref"]: item for item in identifiers}
+
+    for item in identifiers:
+        if item["business_entity_ref"] not in entity_ref_map:
+            errors.append(
+                f"Идентификатор «{item['ref']}» ссылается на отсутствующую бизнес-сущность «{item['business_entity_ref']}»."
+            )
+
+    for item in names + addresses:
+        owner = identifier_ref_map.get(item["identifier_ref"])
+        if owner is None:
+            errors.append(f"Запись раздела «{item['section']}» ссылается на отсутствующий identifier_ref «{item['identifier_ref']}».")
+            continue
+        if item["business_entity_ref"] and item["business_entity_ref"] != owner["business_entity_ref"]:
+            errors.append(
+                f"Запись раздела «{item['section']}» с identifier_ref «{item['identifier_ref']}» указывает неверный business_entity_ref «{item['business_entity_ref']}»."
+            )
+
+    for item in relations:
+        if item["from_business_entity_ref"] not in entity_ref_map:
+            errors.append(
+                f"Связь с event_ref «{item['event_ref']}» ссылается на отсутствующий from_business_entity_ref «{item['from_business_entity_ref']}»."
+            )
+        if item["to_business_entity_ref"] not in entity_ref_map:
+            errors.append(
+                f"Связь с event_ref «{item['event_ref']}» ссылается на отсутствующий to_business_entity_ref «{item['to_business_entity_ref']}»."
+            )
+
+    if errors:
+        raise ValueError(errors)
+
+    created_counts = {
+        "business_entities": 0,
+        "identifiers": 0,
+        "names": 0,
+        "addresses": 0,
+        "relations": 0,
+        "events": 0,
+    }
+
+    with transaction.atomic():
+        BusinessEntityRelationRecord.objects.all().delete()
+        BusinessEntityReorganizationEvent.objects.all().delete()
+        LegalEntityRecord.objects.filter(
+            attribute__in=[
+                LegalEntityRecord.ATTRIBUTE_NAME,
+                LegalEntityRecord.ATTRIBUTE_LEGAL_ADDRESS,
+            ]
+        ).delete()
+        BusinessEntityIdentifierRecord.objects.all().delete()
+        BusinessEntityRecord.objects.all().delete()
+
+        created_entities = {}
+        for item in business_entities:
+            created_entities[item["ref"]] = BusinessEntityRecord.objects.create(
+                name=item["name"],
+                record_date=item["record_date"],
+                record_author=item["record_author"],
+                source=item["source"],
+                comment=item["comment"],
+                position=item["position"],
+            )
+            created_counts["business_entities"] += 1
+
+        created_identifiers = {}
+        for item in identifiers:
+            created_identifiers[item["ref"]] = BusinessEntityIdentifierRecord.objects.create(
+                business_entity=created_entities[item["business_entity_ref"]],
+                identifier_type=item["identifier_type"],
+                registration_country=item["registration_country"],
+                registration_region=item["registration_region"],
+                record_date=item["record_date"],
+                record_author=item["record_author"],
+                registration_date=item["registration_date"],
+                number=item["number"],
+                valid_from=item["valid_from"],
+                valid_to=item["valid_to"],
+                position=item["position"],
+            )
+            created_counts["identifiers"] += 1
+
+        for item in names:
+            LegalEntityRecord.objects.create(
+                attribute=LegalEntityRecord.ATTRIBUTE_NAME,
+                identifier_record=created_identifiers[item["identifier_ref"]],
+                registration_country=item["registration_country"],
+                registration_region=item["registration_region"],
+                record_date=item["record_date"],
+                record_author=item["record_author"],
+                registration_date=item["registration_date"],
+                registration_number=item["registration_number"],
+                identifier=item["identifier_value"],
+                short_name=item["short_name"],
+                full_name=item["full_name"],
+                name_received_date=item["name_received_date"],
+                name_changed_date=item["name_changed_date"],
+                position=item["position"],
+            )
+            created_counts["names"] += 1
+
+        for item in addresses:
+            LegalEntityRecord.objects.create(
+                attribute=LegalEntityRecord.ATTRIBUTE_LEGAL_ADDRESS,
+                identifier_record=created_identifiers[item["identifier_ref"]],
+                registration_country=item["registration_country"],
+                registration_region=item["registration_region"],
+                record_date=item["record_date"],
+                record_author=item["record_author"],
+                postal_code=item["postal_code"],
+                municipality=item["municipality"],
+                settlement=item["settlement"],
+                locality=item["locality"],
+                district=item["district"],
+                street=item["street"],
+                building=item["building"],
+                premise=item["premise"],
+                premise_part=item["premise_part"],
+                valid_from=item["valid_from"],
+                valid_to=item["valid_to"],
+                position=item["position"],
+            )
+            created_counts["addresses"] += 1
+
+        created_events = {}
+        for event_ref in event_order:
+            definition = event_definitions[event_ref]
+            created_events[event_ref] = BusinessEntityReorganizationEvent.objects.create(
+                reorganization_event_uid=definition["event_uid"],
+                relation_type=definition["relation_type"],
+                event_date=definition["event_date"],
+                comment=definition["comment"],
+                position=definition["position"],
+            )
+            created_counts["events"] += 1
+
+        for item in relations:
+            BusinessEntityRelationRecord.objects.create(
+                event=created_events[item["event_ref"]],
+                from_business_entity=created_entities[item["from_business_entity_ref"]],
+                to_business_entity=created_entities[item["to_business_entity_ref"]],
+                position=item["position"],
+            )
+            created_counts["relations"] += 1
+
+    total_created = (
+        created_counts["business_entities"]
+        + created_counts["identifiers"]
+        + created_counts["names"]
+        + created_counts["addresses"]
+        + created_counts["relations"]
+    )
+    return {
+        "ok": True,
+        "created": total_created,
+        "summary": [
+            f"Бизнес-сущности: {created_counts['business_entities']}",
+            f"Идентификаторы: {created_counts['identifiers']}",
+            f"Наименования: {created_counts['names']}",
+            f"Юридические адреса: {created_counts['addresses']}",
+            f"Связи: {created_counts['relations']}",
+            f"События реорганизации: {created_counts['events']}",
+        ],
+    }
 
 
 @login_required
@@ -3898,3 +4599,63 @@ def ler_csv_upload(request):
     if errors:
         result["warnings"] = errors[:50]
     return JsonResponse(result)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def business_registry_csv_download(request):
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=BUSINESS_REGISTRY_CSV_FIELDS, delimiter=";", lineterminator="\n")
+    writer.writeheader()
+    for row in _build_business_registry_csv_rows():
+        writer.writerow({field: row.get(field, "") for field in BUSINESS_REGISTRY_CSV_FIELDS})
+
+    response = HttpResponse("\ufeff" + output.getvalue(), content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="business-registry.csv"'
+    return response
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def business_registry_csv_upload(request):
+    try:
+        fieldnames, rows = _read_uploaded_dict_rows(request.FILES.get("csv_file"))
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+
+    missing_headers = [field for field in BUSINESS_REGISTRY_CSV_FIELDS if field not in fieldnames]
+    if missing_headers:
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "CSV не соответствует ожидаемому формату.",
+                "warnings": [f"Отсутствуют колонки: {', '.join(missing_headers)}"],
+            },
+            status=400,
+        )
+
+    try:
+        payload = _import_business_registry_csv_rows(rows)
+    except ValueError as exc:
+        warnings = list(exc.args[0]) if exc.args and isinstance(exc.args[0], list) else [str(exc)]
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "CSV содержит ошибки в данных.",
+                "warnings": warnings[:50],
+            },
+            status=400,
+        )
+    except Exception as exc:
+        logger.exception("Business registry CSV import failed")
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": f"Не удалось импортировать CSV: {exc}",
+            },
+            status=400,
+        )
+
+    return JsonResponse(payload)

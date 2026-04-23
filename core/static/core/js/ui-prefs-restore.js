@@ -97,7 +97,7 @@
   function restoreMainTab() {
     if (!window.bootstrap) return;
     var savedTab = P.get('main:tab', null);
-    var targetTab = savedTab || window.location.hash;
+    var targetTab = window.location.hash || savedTab;
     var link = targetTab
       ? document.querySelector('#sidebar a[href="' + targetTab + '"][data-bs-toggle="tab"]')
       : null;
