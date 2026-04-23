@@ -265,10 +265,10 @@
                   <td class="p-1 worktime-flex-cell">
                     <input type="number"
                            name="{{ cell.input_name }}"
-                           value="{{ cell.value|default_if_none:'' }}"
+                           value="{{ cell.value|default_if_none:''|unlocalize }}"
                            min="0"
                            max="24"
-                           step="1"
+                           step="0.01"
                            class="form-control form-control-sm worktime-cell-input"
                            data-worktime-grid-input
                            aria-label="Часы за {{ cell.date|date:'d.m.Y' }}">
