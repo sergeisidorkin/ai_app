@@ -24,11 +24,15 @@
         hx-target="#proposals-pane"
         hx-swap="outerHTML">
     {% csrf_token %}
+    {{ form.type_ids }}
 
     <div class="row g-3">
       <div class="col-2">
         <label class="form-label">{{ form.number.label }}</label>
-        {{ form.number }}
+        <div class="number-input-shell">
+          {{ form.number }}
+          <div class="number-input-display" id="proposal-number-display" aria-hidden="true"></div>
+        </div>
       </div>
       <div class="col-4">
         <label class="form-label">{{ form.group_member.label }}</label>
@@ -50,11 +54,60 @@
         {{ form.year }}
       </div>
 
-      <div class="col-3">
-        <label class="form-label">{{ form.type.label }}</label>
-        {{ form.type }}
+      <div class="col-12">
+        <label class="form-label">Тип</label>
+        <script type="application/json" id="proposal-type-meta">{{ proposal_type_meta_json|safe }}</script>
+        <div class="proposal-type-block">
+          <div class="proposal-type-card">
+            <div class="proposal-type-head">
+              <span aria-hidden="true"></span>
+              <div class="row g-2 proposal-type-head-labels">
+                <div class="col-12 col-xl-3"><span class="form-label mb-0 proposal-type-head-field-label">Вид консалтинга</span></div>
+                <div class="col-12 col-xl-3"><span class="form-label mb-0 proposal-type-head-field-label">Тип услуги</span></div>
+                <div class="col-12 col-xl-3"><span class="form-label mb-0 proposal-type-head-field-label">Подтип услуги</span></div>
+                <div class="col-12 col-xl-3"><span class="form-label mb-0 proposal-type-head-field-label">Продукт</span></div>
+              </div>
+              <span aria-hidden="true"></span>
+            </div>
+            <div id="proposal-products-container" class="proposal-products-container">
+              {% for stage in form.stage_rows %}
+                <div class="proposal-product-row"
+                     data-selected-product-id="{{ stage.product_id|default:'' }}"
+                     data-selected-consulting-type="{{ stage.consulting_type|default:'' }}"
+                     data-selected-service-category="{{ stage.service_category|default:'' }}"
+                     data-selected-service-subtype="{{ stage.service_subtype|default:'' }}">
+                  <div class="proposal-product-row-inner">
+                    <span class="badge rounded-circle d-flex align-items-center justify-content-center proposal-product-badge">{{ stage.rank }}</span>
+                    <div class="row g-2 flex-grow-1 proposal-product-fields">
+                      <div class="col-12 col-xl-3">
+                        <select name="type_consulting" class="form-select proposal-consulting-select"></select>
+                      </div>
+                      <div class="col-12 col-xl-3">
+                        <select name="type_service_category" class="form-select proposal-service-category-select"></select>
+                      </div>
+                      <div class="col-12 col-xl-3">
+                        <select name="type_service_subtype" class="form-select proposal-service-subtype-select"></select>
+                      </div>
+                      <div class="col-12 col-xl-3">
+                        <div class="proposal-product-select-shell">
+                          <select name="type" class="form-select proposal-product-select"></select>
+                          <div class="proposal-product-display" aria-hidden="true"></div>
+                        </div>
+                      </div>
+                    </div>
+                    <button type="button" class="btn btn-sm proposal-product-remove" title="Удалить" aria-label="Удалить этап">&times;</button>
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          </div>
+          <button type="button" id="proposal-add-product" class="btn proposal-add-product-btn">
+            <i class="bi bi-plus-circle me-2"></i>Добавить продукт
+          </button>
+        </div>
       </div>
-      <div class="col-9">
+
+      <div class="col-12">
         <label class="form-label">{{ form.name.label }}</label>
         {{ form.name }}
       </div>
@@ -162,149 +215,11 @@
                  id="proposal-purpose-suffix">
         </div>
       </div>
-      <div class="col-12">
-        <label class="form-label mb-2">Состав услуг / техническое задание</label>
-        {{ form.service_sections_payload }}
-        {{ form.service_sections_editor_state }}
-        {{ form.service_customer_tz_editor_state }}
-        {{ form.service_composition_customer_tz }}
-        {{ form.service_composition_mode }}
-        <div class="proposal-assets-editor proposal-service-sections-editor">
-          <div class="table-responsive">
-            <table class="table table-sm align-middle mb-2 proposal-assets-table proposal-service-sections-table" id="proposal-service-sections-table">
-              <thead>
-                <tr>
-                  <th class="w-checkbox proposal-assets-check-col">
-                    <div class="form-check proposal-asset-check-wrap">
-                      <input type="checkbox" class="form-check-input proposal-service-sections-master-check" id="proposal-service-sections-master-check">
-                    </div>
-                  </th>
-                  <th class="proposal-service-section-name-header"><span class="proposal-service-section-header-text">Наименование раздела (услуги)</span></th>
-                  <th><span class="proposal-service-section-header-text">Код</span></th>
-                </tr>
-              </thead>
-              <tbody id="proposal-service-sections-tbody"></tbody>
-            </table>
-          </div>
-          <div class="d-flex align-items-stretch gap-2 mt-3">
-            <button type="button" id="proposal-service-section-add-btn" class="btn btn-sm proposal-asset-add-btn d-flex align-items-center">
-              <i class="bi bi-plus-circle me-2"></i>Добавить услугу
-            </button>
-            <button type="button" id="proposal-service-text-edit-btn" class="btn btn-sm proposal-asset-add-btn">
-              <i class="bi bi-pencil-square me-1"></i>Редактировать ТЗ
-            </button>
-            <div id="proposal-service-sections-row-actions" class="d-none">
-              <div class="btn-group">
-                <button type="button" id="proposal-service-section-up-btn" class="btn btn-outline-primary btn-sm" title="Переместить вверх" aria-label="Переместить вверх">
-                  <i class="bi bi-arrow-up-square"></i>
-                </button>
-                <button type="button" id="proposal-service-section-down-btn" class="btn btn-outline-primary btn-sm" title="Переместить вниз" aria-label="Переместить вниз">
-                  <i class="bi bi-arrow-down-square"></i>
-                </button>
-                <button type="button" id="proposal-service-section-delete-btn" class="btn btn-outline-danger btn-sm" title="Удалить" aria-label="Удалить">
-                  <i class="bi bi-x-square"></i>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="proposal-service-text-modal d-none" id="proposal-service-text-modal" aria-hidden="true">
-          <div class="proposal-service-text-modal__backdrop"></div>
-          <div class="proposal-service-text-modal__dialog">
-            <div class="proposal-service-text-modal__header">
-              <h5 class="mb-0">Состав услуг / техническое задание</h5>
-              <button type="button" class="btn-close" id="proposal-service-text-close-btn" aria-label="Закрыть"></button>
-            </div>
-            <div class="proposal-service-text-modal__toolbar">
-              <div class="proposal-service-text-toolbar" id="proposal-service-text-toolbar">
-                <div class="proposal-service-text-toolbar__group">
-                  <select class="form-select form-select-sm proposal-service-text-toolbar__select" data-format="font" aria-label="Шрифт">
-                    <option value="calibri" selected>Calibri</option>
-                    <option value="cambria">Cambria</option>
-                    <option value="sans">Sans Serif</option>
-                    <option value="serif">Serif</option>
-                    <option value="monospace">Monospace</option>
-                    <option value="georgia">Georgia</option>
-                    <option value="times-new-roman">Times New Roman</option>
-                  </select>
-                </div>
-                <div class="proposal-service-text-toolbar__group">
-                  <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-format="bold" aria-label="Жирный">
-                    <i class="bi bi-type-bold"></i>
-                  </button>
-                  <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-format="italic" aria-label="Курсив">
-                    <i class="bi bi-type-italic"></i>
-                  </button>
-                  <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-format="underline" aria-label="Подчеркнутый">
-                    <i class="bi bi-type-underline"></i>
-                  </button>
-                </div>
-                <div class="proposal-service-text-toolbar__group">
-                  <div class="proposal-service-text-toolbar__color-combo">
-                    <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn proposal-service-text-toolbar__btn--combo" data-apply-color="color" aria-label="Применить цвет текста" title="Применить цвет текста">
-                      <i class="bi bi-palette"></i>
-                    </button>
-                    <label class="proposal-service-text-toolbar__color" title="Выбрать цвет текста" aria-label="Выбрать цвет текста">
-                      <input type="color" value="#000000" data-color-source="color">
-                      <span class="proposal-service-text-toolbar__color-swatch" data-color-preview="color" style="background:#000000;"></span>
-                    </label>
-                  </div>
-                  <div class="proposal-service-text-toolbar__color-combo">
-                    <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn proposal-service-text-toolbar__btn--combo" data-apply-color="background" aria-label="Применить цвет фона" title="Применить цвет фона">
-                      <i class="bi bi-paint-bucket"></i>
-                    </button>
-                    <label class="proposal-service-text-toolbar__color" title="Выбрать цвет фона" aria-label="Выбрать цвет фона">
-                      <input type="color" value="#ffffff" data-color-source="background">
-                      <span class="proposal-service-text-toolbar__color-swatch" data-color-preview="background" style="background:#ffffff;"></span>
-                    </label>
-                  </div>
-                </div>
-                <div class="proposal-service-text-toolbar__group">
-                  <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-list="ordered" aria-label="Нумерованный список">
-                    <img src="{% static 'core/icons/list-1-2.svg' %}" alt="" class="proposal-service-text-toolbar__icon">
-                  </button>
-                  <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-list="bullet" aria-label="Маркированный список">
-                    <img src="{% static 'core/icons/list-ul.svg' %}" alt="" class="proposal-service-text-toolbar__icon">
-                  </button>
-                </div>
-                <div class="proposal-service-text-toolbar__group">
-                  <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-align="justify" aria-label="По ширине">
-                    <img src="{% static 'core/icons/text-align-justify.svg' %}" alt="" class="proposal-service-text-toolbar__icon">
-                  </button>
-                  <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-align="left" aria-label="По левому краю">
-                    <img src="{% static 'core/icons/text-align-left.svg' %}" alt="" class="proposal-service-text-toolbar__icon">
-                  </button>
-                  <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-align="center" aria-label="По центру">
-                    <img src="{% static 'core/icons/text-align-center.svg' %}" alt="" class="proposal-service-text-toolbar__icon">
-                  </button>
-                  <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-align="right" aria-label="По правому краю">
-                    <img src="{% static 'core/icons/text-align-right.svg' %}" alt="" class="proposal-service-text-toolbar__icon">
-                  </button>
-                </div>
-                <div class="proposal-service-text-toolbar__group">
-                  <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-action="clean" aria-label="Очистить форматирование">
-                    <i class="bi bi-eraser"></i>
-                  </button>
-                </div>
-                <div class="form-check form-switch proposal-service-mode-toggle-wrap">
-                  <input class="form-check-input" type="checkbox" role="switch" id="proposal-service-mode-toggle">
-                  <label class="form-check-label" for="proposal-service-mode-toggle">Вставить ТЗ Заказчика</label>
-                </div>
-              </div>
-            </div>
-            <div class="proposal-service-text-modal__body">
-              <div class="proposal-service-text-modal__cards" id="proposal-service-text-cards"></div>
-            </div>
-            <div class="proposal-service-text-modal__footer">
-              <button type="button" class="btn btn-primary btn-sm" id="proposal-service-text-save-btn">Сохранить</button>
-              <button type="button" class="btn btn-outline-secondary btn-sm" id="proposal-service-text-cancel-btn">Отмена</button>
-            </div>
-          </div>
-        </div>
-      </div>
 
-      <div class="d-none">
-        {{ form.service_composition }}
+      <div id="proposal-service-stages-container" class="proposal-stage-blocks-container">
+        {% for stage in form.stage_rows %}
+          {% include "proposals_app/_proposal_stage_service_block.html" with stage=stage %}
+        {% endfor %}
       </div>
 
       <div class="col-12">
@@ -429,38 +344,75 @@
         </div>
       </div>
 
-      <div class="col">
-        <label class="form-label">{{ form.evaluation_date.label }}</label>
-        {{ form.evaluation_date }}
+      <div class="col-12">
+        <label class="form-label mb-2">Сроки</label>
+        <div class="proposal-assets-editor proposal-terms-editor">
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0 proposal-assets-table proposal-terms-table">
+              <thead>
+                <tr>
+                  <th class="proposal-terms-stage-col">Этапы</th>
+                  <th>{{ form.evaluation_date.label }}</th>
+                  <th>
+                    {{ form.service_term_months.label }}
+                    <i class="bi bi-lock-fill ms-1 js-proposal-report-terms-lock" role="button" title="Разблокировать ввод сроков"></i>
+                  </th>
+                  <th>{{ form.preliminary_report_date.label }}</th>
+                  <th>
+                    {{ form.final_report_term_weeks.label }}
+                    <i class="bi bi-lock-fill ms-1 js-proposal-report-terms-lock" role="button" title="Разблокировать ввод сроков"></i>
+                  </th>
+                  <th>{{ form.final_report_date.label }}</th>
+                </tr>
+              </thead>
+              <tbody id="proposal-stage-terms-tbody">
+                {% for stage in form.stage_rows %}
+                  <tr class="proposal-stage-terms-row" data-proposal-stage-key="{{ stage.rank }}">
+                    <td class="proposal-terms-stage-col">
+                      <input type="text" class="form-control readonly-field proposal-stage-label-input" value="Этап {{ stage.rank }}" readonly tabindex="-1">
+                    </td>
+                    <td>
+                      <input type="text" name="evaluation_date" class="form-control js-date proposal-stage-evaluation-date" value="{{ stage.evaluation_date }}">
+                    </td>
+                    <td>
+                      <input type="number" name="service_term_months" min="0" step="0.1" class="form-control readonly-field proposal-stage-service-term-months" value="{{ stage.service_term_months|floatformat:'1' }}" readonly tabindex="-1">
+                    </td>
+                    <td>
+                      <input type="text" name="preliminary_report_date" class="form-control js-date proposal-stage-preliminary-report-date" value="{{ stage.preliminary_report_date }}">
+                    </td>
+                    <td>
+                      <input type="number" name="final_report_term_weeks" min="0" step="0.1" class="form-control readonly-field proposal-stage-final-report-term-weeks" value="{{ stage.final_report_term_weeks|floatformat:'1' }}" readonly tabindex="-1">
+                    </td>
+                    <td>
+                      <input type="text" name="final_report_date" class="form-control js-date proposal-stage-final-report-date" value="{{ stage.final_report_date }}">
+                    </td>
+                  </tr>
+                {% endfor %}
+                <tr class="proposal-stage-terms-total-row{% if form.stage_rows|length <= 1 %} d-none{% endif %}">
+                  <td class="proposal-terms-stage-col">
+                    <input type="text" class="form-control readonly-field proposal-stage-label-input" value="Итого" readonly tabindex="-1">
+                  </td>
+                  <td>
+                    <input type="text" class="form-control readonly-field proposal-stage-total-evaluation-date" value="" readonly tabindex="-1">
+                  </td>
+                  <td>
+                    <input type="number" class="form-control readonly-field proposal-stage-total-service-term-months" value="" readonly tabindex="-1">
+                  </td>
+                  <td>
+                    <input type="text" class="form-control readonly-field proposal-stage-total-preliminary-report-date" value="" readonly tabindex="-1">
+                  </td>
+                  <td>
+                    <input type="number" class="form-control readonly-field proposal-stage-total-final-report-term-weeks" value="" readonly tabindex="-1">
+                  </td>
+                  <td>
+                    <input type="text" class="form-control readonly-field proposal-stage-total-final-report-date" value="" readonly tabindex="-1">
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
-      <div class="col">
-        <label class="form-label">
-          {{ form.service_term_months.label }}
-          <i class="bi bi-lock-fill ms-1 js-proposal-report-terms-lock"
-             role="button"
-             title="Разблокировать ввод сроков"></i>
-        </label>
-        {{ form.service_term_months }}
-      </div>
-      <div class="col">
-        <label class="form-label">{{ form.preliminary_report_date.label }}</label>
-        {{ form.preliminary_report_date }}
-      </div>
-      <div class="col">
-        <label class="form-label">
-          {{ form.final_report_term_weeks.label }}
-          <i class="bi bi-lock-fill ms-1 js-proposal-report-terms-lock"
-             role="button"
-             title="Разблокировать ввод сроков"></i>
-        </label>
-        {{ form.final_report_term_weeks }}
-      </div>
-      <div class="col">
-        <label class="form-label">{{ form.final_report_date.label }}</label>
-        {{ form.final_report_date }}
-      </div>
-
-      <div class="w-100"></div>
 
       <div class="col-3">
         <label class="form-label">{{ form.report_languages.label }}</label>
@@ -509,36 +461,11 @@
       </div>
       <div class="w-100"></div>
 
-      <div class="col-12">
-        <label class="form-label mb-2">Коммерческое предложение</label>
-        {{ form.commercial_offer_payload }}
-        {{ form.commercial_totals_payload }}
-        <div class="proposal-assets-editor proposal-commercial-editor">
-          <div class="table-responsive">
-            <table class="table table-sm align-middle mb-2 proposal-assets-table proposal-commercial-table" id="proposal-commercial-table">
-              <thead id="proposal-commercial-thead"></thead>
-              <tbody id="proposal-commercial-tbody"></tbody>
-            </table>
-          </div>
-          <div class="d-flex align-items-stretch gap-2 mt-3">
-            <button type="button" id="proposal-commercial-add-btn" class="btn btn-sm proposal-asset-add-btn d-flex align-items-center">
-              <i class="bi bi-plus-circle me-2"></i>Добавить строку
-            </button>
-            <div id="proposal-commercial-row-actions" class="d-none">
-              <div class="btn-group">
-                <button type="button" id="proposal-commercial-up-btn" class="btn btn-outline-primary btn-sm" title="Переместить вверх" aria-label="Переместить вверх">
-                  <i class="bi bi-arrow-up-square"></i>
-                </button>
-                <button type="button" id="proposal-commercial-down-btn" class="btn btn-outline-primary btn-sm" title="Переместить вниз" aria-label="Переместить вниз">
-                  <i class="bi bi-arrow-down-square"></i>
-                </button>
-                <button type="button" id="proposal-commercial-delete-btn" class="btn btn-outline-danger btn-sm" title="Удалить" aria-label="Удалить">
-                  <i class="bi bi-x-square"></i>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+      <div id="proposal-commercial-stages-container" class="proposal-stage-blocks-container">
+        {% for stage in form.stage_rows %}
+          {% include "proposals_app/_proposal_stage_commercial_block.html" with stage=stage %}
+        {% endfor %}
+        {% include "proposals_app/_proposal_stage_commercial_block.html" with stage=form.summary_commercial_row is_summary=True %}
       </div>
 
       <div class="col-4">
@@ -563,6 +490,7 @@
         {{ form.advance_term_days }}
       </div>
       <div class="w-100"></div>
+
       <div class="col-4">
         <label class="form-label">{{ form.preliminary_report_percent.label }}</label>
         <div class="proposal-inline-percent">
@@ -595,7 +523,7 @@
         <ul class="mb-0">
           {% for field, errors in form.errors.items %}
             {% for err in errors %}
-              <li>{{ field }}: {{ err }}</li>
+              <li>{% if field == "type_ids" %}Тип{% else %}{{ field }}{% endif %}: {{ err }}</li>
             {% endfor %}
           {% endfor %}
           {% for err in form.non_field_errors %}

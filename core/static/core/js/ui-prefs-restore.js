@@ -80,25 +80,51 @@
     });
   }
 
-  /* ── Main tab (saved preference; URL hash takes priority) */
+  /* ── Main tab (saved preference; URL hash fallback) */
+
+  function getMainTabLinks() {
+    return Array.from(document.querySelectorAll('#sidebar a[data-bs-toggle="tab"][href^="#"]'));
+  }
+
+  function syncMainTabHash(href) {
+    if (!href || href.charAt(0) !== '#') return;
+    if (!window.history || typeof window.history.replaceState !== 'function') return;
+    var nextUrl = window.location.pathname + window.location.search + href;
+    if (window.location.hash === href) return;
+    window.history.replaceState(null, '', nextUrl);
+  }
 
   function restoreMainTab() {
-    if (window.location.hash) return;
-    var tab = P.get('main:tab', null);
-    if (!tab) return;
-    var link = document.querySelector('a[href="' + tab + '"][data-bs-toggle="tab"]');
-    if (link && window.bootstrap) {
+    if (!window.bootstrap) return;
+    var savedTab = P.get('main:tab', null);
+    var targetTab = savedTab || window.location.hash;
+    var link = targetTab
+      ? document.querySelector('#sidebar a[href="' + targetTab + '"][data-bs-toggle="tab"]')
+      : null;
+
+    if (!link) {
+      link = getMainTabLinks()[0] || null;
+    }
+
+    if (link) {
       window.bootstrap.Tab.getOrCreateInstance(link).show();
     }
   }
 
   function bindMainTabs() {
-    document.querySelectorAll('#sidebar a[data-bs-toggle="tab"]').forEach(function (el) {
-      if (el.__prefBound) return;
-      el.__prefBound = true;
-      el.addEventListener('shown.bs.tab', function () {
-        P.set('main:tab', el.getAttribute('href'));
-      });
+    if (document.__mainTabsPrefBound) return;
+    document.__mainTabsPrefBound = true;
+
+    document.addEventListener('shown.bs.tab', function (event) {
+      var el = event.target;
+      if (!el || typeof el.getAttribute !== 'function') return;
+      var href = el.getAttribute('href');
+      if (!href || href.charAt(0) !== '#') return;
+      var pane = document.getElementById(href.slice(1));
+      var mainContent = document.querySelector('main > .tab-content');
+      if (!pane || !mainContent || pane.parentElement !== mainContent) return;
+      P.set('main:tab', href);
+      syncMainTabHash(href);
     });
   }
 
@@ -116,10 +142,16 @@
     bindMainTabs();
   }
 
-  document.addEventListener('DOMContentLoaded', function () {
+  function init() {
     restoreAll();
     bindAll();
-  });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
 
   document.body.addEventListener('htmx:afterSettle', function () {
     restoreSidebar();

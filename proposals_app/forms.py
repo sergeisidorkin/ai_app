@@ -23,6 +23,7 @@ from .models import (
     ProposalLegalEntity,
     ProposalObject,
     ProposalRegistration,
+    ProposalRegistrationProduct,
     ProposalTemplate,
     ProposalVariable,
 )
@@ -283,13 +284,39 @@ def _default_proposal_evaluation_date(today=None):
     return date(today.year, 6, 1)
 
 
+def _proposal_request_list(data, key):
+    if hasattr(data, "getlist"):
+        return [str(value or "") for value in data.getlist(key)]
+    value = data.get(key, [])
+    if isinstance(value, (list, tuple)):
+        return [str(item or "") for item in value]
+    return [str(value or "")]
+
+
+def _format_stage_date(value):
+    if not value:
+        return ""
+    if isinstance(value, str):
+        return value
+    return value.strftime("%d.%m.%Y")
+
+
 class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
     number = forms.IntegerField(
         label="Номер",
         required=True,
-        min_value=3333,
+        min_value=0,
         max_value=9999,
-        widget=forms.NumberInput(attrs={"min": 3333, "max": 9999, "placeholder": "3333-9999"}),
+        widget=forms.NumberInput(
+            attrs={
+                "id": "proposal-number-input",
+                "min": 0,
+                "max": 9999,
+                "step": 1,
+                "placeholder": "0001",
+                "autocomplete": "off",
+            }
+        ),
     )
     group_member = forms.ModelChoiceField(
         label="Группа",
@@ -525,6 +552,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         min_value=0,
         widget=forms.NumberInput(attrs={"min": 0, "step": 1}),
     )
+    type_ids = forms.CharField(required=False, widget=forms.HiddenInput())
     assets_payload = forms.CharField(
         required=False,
         widget=forms.HiddenInput(attrs={"id": "proposal-assets-payload"}),
@@ -544,6 +572,14 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
     commercial_totals_payload = forms.CharField(
         required=False,
         widget=forms.HiddenInput(attrs={"id": "proposal-commercial-totals-payload"}),
+    )
+    summary_commercial_offer_payload = forms.CharField(
+        required=False,
+        widget=forms.HiddenInput(attrs={"id": "proposal-summary-commercial-offer-payload"}),
+    )
+    summary_commercial_totals_payload = forms.CharField(
+        required=False,
+        widget=forms.HiddenInput(attrs={"id": "proposal-summary-commercial-totals-payload"}),
     )
     service_sections_payload = forms.CharField(
         required=False,
@@ -635,9 +671,22 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         if self.data:
             data = self.data.copy()
             for field_name in self._decimal_text_fields:
-                value = data.get(field_name, "")
-                if value:
-                    data[field_name] = str(value).replace("\u00a0", "").replace(" ", "").replace(",", ".")
+                if hasattr(data, "getlist"):
+                    values = data.getlist(field_name)
+                    if values:
+                        data.setlist(
+                            field_name,
+                            [str(value or "").replace("\u00a0", "").replace(" ", "").replace(",", ".") for value in values],
+                        )
+                else:
+                    value = data.get(field_name, "")
+                    if isinstance(value, (list, tuple)):
+                        data[field_name] = [
+                            str(item or "").replace("\u00a0", "").replace(" ", "").replace(",", ".")
+                            for item in value
+                        ]
+                    elif value:
+                        data[field_name] = str(value).replace("\u00a0", "").replace(" ", "").replace(",", ".")
             self.data = data
         for field in self.fields.values():
             _apply_russian_error_messages(field)
@@ -650,7 +699,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             self.fields["evaluation_date"].initial = _default_proposal_evaluation_date()
         self.fields["type"].queryset = Product.objects.order_by("position", "id")
         self.fields["type"].label_from_instance = lambda obj: obj.short_name
-        self.fields["type"].required = True
+        self.fields["type"].required = False
         self.fields["type"].empty_label = "— Не выбрано —"
         self.fields["name"].required = True
         self.fields["year"].required = not bool(self.instance and self.instance.pk)
@@ -854,6 +903,29 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 totals_payload,
                 ensure_ascii=False,
             )
+        if self.instance and self.instance.pk and "summary_commercial_offer_payload" not in self.data:
+            self.fields["summary_commercial_offer_payload"].initial = json.dumps(
+                self._serialize_instance_commercial_rows(),
+                ensure_ascii=False,
+            )
+        elif "summary_commercial_offer_payload" not in self.data:
+            self.fields["summary_commercial_offer_payload"].initial = "[]"
+        if self.instance and self.instance.pk and "summary_commercial_totals_payload" not in self.data:
+            summary_totals_payload = {
+                "discount_percent": "5",
+                "rub_total_service_text": "Курс евро Банка России на текущую дату:",
+                "discounted_total_service_text": "Размер скидки:",
+                **dict(self.instance.commercial_totals_json or {}),
+            }
+            self.fields["summary_commercial_totals_payload"].initial = json.dumps(
+                self._merge_stage_commercial_totals_payload(summary_totals_payload),
+                ensure_ascii=False,
+            )
+        elif "summary_commercial_totals_payload" not in self.data:
+            self.fields["summary_commercial_totals_payload"].initial = json.dumps(
+                self._merge_stage_commercial_totals_payload({}),
+                ensure_ascii=False,
+            )
         if self.instance and self.instance.pk and "service_sections_payload" not in self.data:
             self.fields["service_sections_payload"].initial = json.dumps(
                 [
@@ -925,6 +997,304 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 "final_report_percent",
                 self.instance.final_report_percent,
             )
+        self.stage_rows = self._build_stage_rows()
+        self.summary_commercial_row = self._build_summary_commercial_row()
+
+    def _default_stage_commercial_totals_payload(self):
+        payload = {
+            "discount_percent": "5",
+            "rub_total_service_text": get_cbr_eur_rate_text(),
+            "discounted_total_service_text": "Размер скидки:",
+            "travel_expenses_mode": PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL,
+        }
+        eur_rate = get_cbr_eur_rate_for_today()
+        if eur_rate is not None:
+            payload["exchange_rate"] = format(eur_rate.quantize(Decimal("0.0001")), "f")
+        return payload
+
+    def _merge_stage_commercial_totals_payload(self, payload):
+        return {
+            **self._default_stage_commercial_totals_payload(),
+            **(payload or {}),
+        }
+
+    def _serialize_instance_commercial_rows(self):
+        if not self.instance or not self.instance.pk:
+            return []
+        return [
+            {
+                "specialist": item.specialist or "",
+                "job_title": item.job_title or "",
+                "professional_status": item.professional_status or "",
+                "service_name": item.service_name or "",
+                "rate_eur_per_day": str(item.rate_eur_per_day or ""),
+                "asset_day_counts": list(item.asset_day_counts or []),
+                "total_eur_without_vat": str(item.total_eur_without_vat or ""),
+            }
+            for item in self.instance.commercial_offers.all()
+        ]
+
+    def _build_summary_commercial_row(self):
+        offer_payload = ""
+        totals_payload = ""
+        if self.is_bound:
+            offer_payload = str(self.data.get("summary_commercial_offer_payload") or "").strip()
+            totals_payload = str(self.data.get("summary_commercial_totals_payload") or "").strip()
+        if not offer_payload:
+            offer_payload = str(self.fields["summary_commercial_offer_payload"].initial or "[]")
+        if not totals_payload:
+            totals_payload = str(
+                self.fields["summary_commercial_totals_payload"].initial
+                or json.dumps(self._merge_stage_commercial_totals_payload({}), ensure_ascii=False)
+            )
+        return {
+            "commercial_offer_payload": offer_payload or "[]",
+            "commercial_totals_payload": totals_payload,
+        }
+
+    def _empty_stage_row(self, rank=1):
+        return {
+            "rank": rank,
+            "consulting_type": "",
+            "service_category": "",
+            "service_subtype": "",
+            "product_id": "",
+            "product_short_label": "",
+            "service_sections_payload": "[]",
+            "service_sections_editor_state": "[]",
+            "service_customer_tz_editor_state": "",
+            "service_composition_customer_tz": "",
+            "service_composition_mode": "sections",
+            "service_composition": "",
+            "commercial_offer_payload": "[]",
+            "commercial_totals_payload": json.dumps(
+                self._merge_stage_commercial_totals_payload({}),
+                ensure_ascii=False,
+            ),
+            "evaluation_date": _format_stage_date(self.fields["evaluation_date"].initial),
+            "service_term_months": "",
+            "preliminary_report_date": "",
+            "final_report_term_weeks": "",
+            "final_report_date": "",
+        }
+
+    def _build_stage_rows_from_bound_data(self):
+        field_names = (
+            "type_consulting",
+            "type_service_category",
+            "type_service_subtype",
+            "type",
+            "service_sections_payload",
+            "service_sections_editor_state",
+            "service_customer_tz_editor_state",
+            "service_composition_customer_tz",
+            "service_composition_mode",
+            "service_composition",
+            "commercial_offer_payload",
+            "commercial_totals_payload",
+            "evaluation_date",
+            "service_term_months",
+            "preliminary_report_date",
+            "final_report_term_weeks",
+            "final_report_date",
+        )
+        rows_map = {name: _proposal_request_list(self.data, name) for name in field_names}
+        product_ids = {
+            int(raw)
+            for raw in rows_map["type"]
+            if str(raw or "").strip().isdigit()
+        }
+        product_map = {
+            str(product.pk): product
+            for product in Product.objects.filter(pk__in=product_ids)
+        }
+        row_count = max([len(values) for values in rows_map.values()] or [0], default=0)
+        row_count = max(row_count, 1)
+        rows = []
+        for index in range(row_count):
+            product_id = (rows_map["type"][index] if index < len(rows_map["type"]) else "").strip()
+            product = product_map.get(product_id)
+            row = {
+                "rank": len(rows) + 1,
+                "consulting_type": (rows_map["type_consulting"][index] if index < len(rows_map["type_consulting"]) else "").strip(),
+                "service_category": (
+                    rows_map["type_service_category"][index] if index < len(rows_map["type_service_category"]) else ""
+                ).strip(),
+                "service_subtype": (
+                    rows_map["type_service_subtype"][index] if index < len(rows_map["type_service_subtype"]) else ""
+                ).strip(),
+                "product_id": product_id,
+                "product_short_label": (getattr(product, "short_name", "") or "").strip(),
+                "service_sections_payload": (
+                    rows_map["service_sections_payload"][index] if index < len(rows_map["service_sections_payload"]) else "[]"
+                ),
+                "service_sections_editor_state": (
+                    rows_map["service_sections_editor_state"][index]
+                    if index < len(rows_map["service_sections_editor_state"])
+                    else "[]"
+                ),
+                "service_customer_tz_editor_state": (
+                    rows_map["service_customer_tz_editor_state"][index]
+                    if index < len(rows_map["service_customer_tz_editor_state"])
+                    else ""
+                ),
+                "service_composition_customer_tz": (
+                    rows_map["service_composition_customer_tz"][index]
+                    if index < len(rows_map["service_composition_customer_tz"])
+                    else ""
+                ),
+                "service_composition_mode": (
+                    rows_map["service_composition_mode"][index]
+                    if index < len(rows_map["service_composition_mode"])
+                    else "sections"
+                ).strip()
+                or "sections",
+                "service_composition": (
+                    rows_map["service_composition"][index] if index < len(rows_map["service_composition"]) else ""
+                ),
+                "commercial_offer_payload": (
+                    rows_map["commercial_offer_payload"][index]
+                    if index < len(rows_map["commercial_offer_payload"])
+                    else "[]"
+                ),
+                "commercial_totals_payload": (
+                    rows_map["commercial_totals_payload"][index]
+                    if index < len(rows_map["commercial_totals_payload"])
+                    else json.dumps(self._merge_stage_commercial_totals_payload({}), ensure_ascii=False)
+                ),
+                "evaluation_date": (
+                    rows_map["evaluation_date"][index] if index < len(rows_map["evaluation_date"]) else ""
+                ).strip(),
+                "service_term_months": (
+                    rows_map["service_term_months"][index] if index < len(rows_map["service_term_months"]) else ""
+                ).strip(),
+                "preliminary_report_date": (
+                    rows_map["preliminary_report_date"][index]
+                    if index < len(rows_map["preliminary_report_date"])
+                    else ""
+                ).strip(),
+                "final_report_term_weeks": (
+                    rows_map["final_report_term_weeks"][index]
+                    if index < len(rows_map["final_report_term_weeks"])
+                    else ""
+                ).strip(),
+                "final_report_date": (
+                    rows_map["final_report_date"][index] if index < len(rows_map["final_report_date"]) else ""
+                ).strip(),
+            }
+            has_data = any(
+                row[key]
+                for key in (
+                    "consulting_type",
+                    "service_category",
+                    "service_subtype",
+                    "product_id",
+                    "service_composition",
+                    "service_composition_customer_tz",
+                    "evaluation_date",
+                    "service_term_months",
+                    "preliminary_report_date",
+                    "final_report_term_weeks",
+                    "final_report_date",
+                )
+            )
+            if has_data or row_count == 1:
+                rows.append(row)
+        return rows or [self._empty_stage_row()]
+
+    def _build_stage_rows_from_instance(self):
+        instance = self.instance
+        if not instance or not instance.pk:
+            return [self._empty_stage_row()]
+
+        ordered_products = list(instance.ordered_products())
+        product_map = {str(product.pk): product for product in ordered_products if getattr(product, "pk", None)}
+        stored_stages = list(instance.stage_payloads_json or [])
+        if stored_stages:
+            normalized_rows = []
+            for index, payload in enumerate(stored_stages, start=1):
+                payload = payload if isinstance(payload, dict) else {}
+                product_id = str(payload.get("product_id") or "")
+                product = product_map.get(product_id)
+                normalized_rows.append(
+                    {
+                        "rank": index,
+                        "consulting_type": (getattr(product, "consulting_type_display", "") or "").strip(),
+                        "service_category": (getattr(product, "service_category_display", "") or "").strip(),
+                        "service_subtype": (getattr(product, "service_subtype_display", "") or "").strip(),
+                        "product_id": product_id,
+                        "product_short_label": (getattr(product, "short_name", "") or "").strip(),
+                        "service_sections_payload": json.dumps(payload.get("service_sections_json") or [], ensure_ascii=False),
+                        "service_sections_editor_state": json.dumps(
+                            payload.get("service_sections_editor_state") or [],
+                            ensure_ascii=False,
+                        ),
+                        "service_customer_tz_editor_state": json.dumps(
+                            payload.get("service_customer_tz_editor_state") or {},
+                            ensure_ascii=False,
+                        )
+                        if payload.get("service_customer_tz_editor_state")
+                        else "",
+                        "service_composition_customer_tz": str(payload.get("service_composition_customer_tz") or ""),
+                        "service_composition_mode": str(payload.get("service_composition_mode") or "sections") or "sections",
+                        "service_composition": str(payload.get("service_composition") or ""),
+                        "commercial_offer_payload": json.dumps(
+                            payload.get("commercial_offer_payload") or [],
+                            ensure_ascii=False,
+                        ),
+                        "commercial_totals_payload": json.dumps(
+                            self._merge_stage_commercial_totals_payload(payload.get("commercial_totals_json") or {}),
+                            ensure_ascii=False,
+                        ),
+                        "evaluation_date": str(payload.get("evaluation_date") or ""),
+                        "service_term_months": str(payload.get("service_term_months") or ""),
+                        "preliminary_report_date": str(payload.get("preliminary_report_date") or ""),
+                        "final_report_term_weeks": str(payload.get("final_report_term_weeks") or ""),
+                        "final_report_date": str(payload.get("final_report_date") or ""),
+                    }
+                )
+            if normalized_rows:
+                return normalized_rows
+
+        product = ordered_products[-1] if ordered_products else getattr(instance, "type", None)
+        commercial_rows = self._serialize_instance_commercial_rows()
+        return [
+            {
+                "rank": 1,
+                "consulting_type": (getattr(product, "consulting_type_display", "") or "").strip(),
+                "service_category": (getattr(product, "service_category_display", "") or "").strip(),
+                "service_subtype": (getattr(product, "service_subtype_display", "") or "").strip(),
+                "product_id": str(getattr(product, "pk", "") or ""),
+                "product_short_label": (getattr(product, "short_name", "") or "").strip(),
+                "service_sections_payload": json.dumps(instance.service_sections_json or [], ensure_ascii=False),
+                "service_sections_editor_state": json.dumps(instance.service_sections_editor_state or [], ensure_ascii=False),
+                "service_customer_tz_editor_state": json.dumps(
+                    instance.service_customer_tz_editor_state or {},
+                    ensure_ascii=False,
+                )
+                if instance.service_customer_tz_editor_state
+                else "",
+                "service_composition_customer_tz": instance.service_composition_customer_tz or "",
+                "service_composition_mode": instance.service_composition_mode or "sections",
+                "service_composition": instance.service_composition or "",
+                "commercial_offer_payload": json.dumps(commercial_rows, ensure_ascii=False),
+                "commercial_totals_payload": json.dumps(
+                    self._merge_stage_commercial_totals_payload(instance.commercial_totals_json or {}),
+                    ensure_ascii=False,
+                ),
+                "evaluation_date": _format_stage_date(instance.evaluation_date),
+                "service_term_months": str(instance.service_term_months or ""),
+                "preliminary_report_date": _format_stage_date(instance.preliminary_report_date),
+                "final_report_term_weeks": str(instance.final_report_term_weeks or ""),
+                "final_report_date": _format_stage_date(instance.final_report_date),
+            }
+        ]
+
+    def _build_stage_rows(self):
+        if self.is_bound:
+            return self._build_stage_rows_from_bound_data()
+        rows = self._build_stage_rows_from_instance()
+        return rows or [self._empty_stage_row()]
 
     def clean_group_member(self):
         member = self.cleaned_data.get("group_member")
@@ -952,6 +1322,591 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         ) or Decimal("0")
         result = Decimal("100") - advance - preliminary
         return result.quantize(Decimal("0.01"))
+
+    def _parse_stage_date(self, value, *, row_index, field_label):
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        parsed = _parse_proposal_form_date(raw)
+        if parsed is None:
+            raise forms.ValidationError(f"Этап {row_index}: поле «{field_label}» заполнено некорректно.")
+        return parsed
+
+    def _parse_stage_decimal(self, value, *, row_index, field_label):
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        return self._parse_payload_decimal(raw, f"Этап {row_index}: поле «{field_label}» заполнено некорректно.")
+
+    def _load_stage_json(self, raw, *, row_index, field_label, expected_type, default):
+        raw = str(raw or "").strip()
+        if not raw:
+            return default
+        try:
+            value = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raise forms.ValidationError(f"Этап {row_index}: поле «{field_label}» передано в некорректном формате.")
+        if not isinstance(value, expected_type):
+            raise forms.ValidationError(f"Этап {row_index}: поле «{field_label}» передано в некорректном формате.")
+        return value
+
+    def _normalize_stage_service_sections(self, raw, *, row_index, product=None):
+        items = self._load_stage_json(
+            raw,
+            row_index=row_index,
+            field_label="Состав услуг / техническое задание",
+            expected_type=list,
+            default=[],
+        )
+        sections_by_name = {}
+        if product is not None:
+            for section in TypicalSection.objects.filter(product=product).order_by("position", "id"):
+                name_ru = (section.name_ru or "").strip()
+                if name_ru and name_ru not in sections_by_name:
+                    sections_by_name[name_ru] = (section.code or "").strip()
+        normalized = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            service_name = str(item.get("service_name") or "").strip()
+            code = str(item.get("code") or "").strip()
+            if not service_name and not code:
+                continue
+            normalized.append(
+                {
+                    "service_name": service_name,
+                    "code": sections_by_name.get(service_name, "") or code,
+                }
+            )
+        return normalized
+
+    def _normalize_stage_editor_state(self, raw, *, row_index):
+        items = self._load_stage_json(
+            raw,
+            row_index=row_index,
+            field_label="Состояние редактора состава услуг",
+            expected_type=list,
+            default=[],
+        )
+        normalized = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            normalized.append(
+                {
+                    "code": str(item.get("code") or "").strip(),
+                    "service_name": str(item.get("service_name") or "").strip(),
+                    "html": str(item.get("html") or "").strip(),
+                    "plain_text": str(item.get("plain_text") or "").strip(),
+                }
+            )
+        return normalized
+
+    def _normalize_stage_customer_tz_state(self, raw, *, row_index):
+        value = self._load_stage_json(
+            raw,
+            row_index=row_index,
+            field_label="Состояние редактора ТЗ Заказчика",
+            expected_type=dict,
+            default={},
+        )
+        return {
+            "html": str(value.get("html") or "").strip(),
+            "plain_text": str(value.get("plain_text") or "").strip(),
+        }
+
+    def _load_summary_json(self, raw, *, field_label, expected_type, default):
+        raw = str(raw or "").strip()
+        if not raw:
+            return default
+        try:
+            value = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raise forms.ValidationError(f"Сводный блок: поле «{field_label}» передано в некорректном формате.")
+        if not isinstance(value, expected_type):
+            raise forms.ValidationError(f"Сводный блок: поле «{field_label}» передано в некорректном формате.")
+        return value
+
+    def _normalize_stage_commercial_rows(self, raw, *, row_index, totals_raw=""):
+        items = self._load_stage_json(
+            raw,
+            row_index=row_index,
+            field_label="Коммерческое предложение",
+            expected_type=list,
+            default=[],
+        )
+        travel_expenses_mode = self._normalize_stage_commercial_totals(
+            totals_raw,
+            row_index=row_index,
+        ).get("travel_expenses_mode")
+        normalized = []
+        for index, item in enumerate(items, start=1):
+            if not isinstance(item, dict):
+                continue
+            specialist = str(item.get("specialist") or "").strip()
+            job_title = str(item.get("job_title") or "").strip()
+            professional_status = str(item.get("professional_status") or "").strip()
+            service_name = str(item.get("service_name") or "").strip()
+            rate_raw = str(item.get("rate_eur_per_day") or "").strip()
+            total_raw = str(item.get("total_eur_without_vat") or "").strip()
+            asset_day_counts = item.get("asset_day_counts") or []
+            if not isinstance(asset_day_counts, list):
+                asset_day_counts = []
+            is_travel_expenses_row = is_proposal_travel_expenses_name(service_name)
+            cleaned_day_counts = []
+            if is_travel_expenses_row and travel_expenses_mode == PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION:
+                for day_idx, raw_value in enumerate(asset_day_counts, start=1):
+                    value = str(raw_value or "").strip()
+                    if not value:
+                        cleaned_day_counts.append("")
+                        continue
+                    parsed_amount = self._parse_payload_decimal(
+                        value,
+                        f"Этап {row_index}: значение по активу #{day_idx} заполнено некорректно.",
+                    )
+                    if parsed_amount is not None and parsed_amount < 0:
+                        raise forms.ValidationError(
+                            f"Этап {row_index}: значение по активу #{day_idx} не может быть отрицательным."
+                        )
+                    cleaned_day_counts.append(self._serialize_payload_decimal(parsed_amount))
+            else:
+                for day_idx, raw_value in enumerate(asset_day_counts, start=1):
+                    value = str(raw_value or "").strip()
+                    if not value:
+                        cleaned_day_counts.append("")
+                        continue
+                    try:
+                        parsed_int = int(value)
+                    except (TypeError, ValueError):
+                        raise forms.ValidationError(
+                            f"Этап {row_index}: значение дня #{day_idx} заполнено некорректно."
+                        )
+                    if parsed_int < 0:
+                        raise forms.ValidationError(
+                            f"Этап {row_index}: значение дня #{day_idx} не может быть отрицательным."
+                        )
+                    cleaned_day_counts.append(parsed_int)
+            row_has_data = any(
+                [
+                    specialist,
+                    job_title,
+                    professional_status,
+                    service_name,
+                    rate_raw,
+                    total_raw,
+                    any(value != "" for value in cleaned_day_counts),
+                ]
+            )
+            if not row_has_data:
+                continue
+            rate_value = self._parse_payload_decimal(
+                rate_raw,
+                f"Этап {row_index}: поле «Ставка, евро / день» заполнено некорректно.",
+            )
+            total_value = self._parse_payload_decimal(
+                total_raw,
+                f"Этап {row_index}: поле «Итого, евро без НДС» заполнено некорректно.",
+            )
+            if is_travel_expenses_row:
+                rate_value = None
+                if travel_expenses_mode == PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION:
+                    total_value = sum(
+                        (
+                            Decimal(str(value))
+                            for value in cleaned_day_counts
+                            if value not in (None, "")
+                        ),
+                        Decimal("0"),
+                    )
+                else:
+                    cleaned_day_counts = ["" for _ in cleaned_day_counts]
+            normalized.append(
+                {
+                    "position": index,
+                    "specialist": specialist,
+                    "job_title": job_title,
+                    "professional_status": professional_status,
+                    "service_name": service_name,
+                    "rate_eur_per_day": rate_value,
+                    "asset_day_counts": cleaned_day_counts,
+                    "total_eur_without_vat": total_value,
+                }
+            )
+        return normalized
+
+    def _normalize_stage_commercial_totals(self, raw, *, row_index):
+        value = self._load_stage_json(
+            raw,
+            row_index=row_index,
+            field_label="Итоги коммерческого предложения",
+            expected_type=dict,
+            default={},
+        )
+        return self._merge_stage_commercial_totals_payload(
+            {
+                "exchange_rate": str(value.get("exchange_rate") or "").strip(),
+                "discount_percent": str(value.get("discount_percent") or "").strip(),
+                "contract_total": str(value.get("contract_total") or "").strip(),
+                "contract_total_auto": str(value.get("contract_total_auto") or "").strip(),
+                "rub_total_service_text": str(value.get("rub_total_service_text") or "").strip(),
+                "discounted_total_service_text": str(value.get("discounted_total_service_text") or "").strip(),
+                "travel_expenses_mode": str(value.get("travel_expenses_mode") or "").strip()
+                or PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL,
+            }
+        )
+
+    def _normalize_summary_commercial_rows(self, raw, *, totals_raw=""):
+        items = self._load_summary_json(
+            raw,
+            field_label="Коммерческое предложение",
+            expected_type=list,
+            default=[],
+        )
+        travel_expenses_mode = self._normalize_summary_commercial_totals(
+            totals_raw,
+        ).get("travel_expenses_mode")
+        normalized = []
+        for index, item in enumerate(items, start=1):
+            if not isinstance(item, dict):
+                continue
+            specialist = str(item.get("specialist") or "").strip()
+            job_title = str(item.get("job_title") or "").strip()
+            professional_status = str(item.get("professional_status") or "").strip()
+            service_name = str(item.get("service_name") or "").strip()
+            rate_raw = str(item.get("rate_eur_per_day") or "").strip()
+            total_raw = str(item.get("total_eur_without_vat") or "").strip()
+            asset_day_counts = item.get("asset_day_counts") or []
+            if not isinstance(asset_day_counts, list):
+                asset_day_counts = []
+            is_travel_expenses_row = is_proposal_travel_expenses_name(service_name)
+            cleaned_day_counts = []
+            if is_travel_expenses_row and travel_expenses_mode == PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION:
+                for day_idx, raw_value in enumerate(asset_day_counts, start=1):
+                    value = str(raw_value or "").strip()
+                    if not value:
+                        cleaned_day_counts.append("")
+                        continue
+                    parsed_amount = self._parse_payload_decimal(
+                        value,
+                        f"Сводный блок: значение по подстолбцу #{day_idx} заполнено некорректно.",
+                    )
+                    if parsed_amount is not None and parsed_amount < 0:
+                        raise forms.ValidationError(
+                            f"Сводный блок: значение по подстолбцу #{day_idx} не может быть отрицательным."
+                        )
+                    cleaned_day_counts.append(self._serialize_payload_decimal(parsed_amount))
+            else:
+                for day_idx, raw_value in enumerate(asset_day_counts, start=1):
+                    value = str(raw_value or "").strip()
+                    if not value:
+                        cleaned_day_counts.append("")
+                        continue
+                    try:
+                        parsed_int = int(value)
+                    except (TypeError, ValueError):
+                        raise forms.ValidationError(
+                            f"Сводный блок: значение дня #{day_idx} заполнено некорректно."
+                        )
+                    if parsed_int < 0:
+                        raise forms.ValidationError(
+                            f"Сводный блок: значение дня #{day_idx} не может быть отрицательным."
+                        )
+                    cleaned_day_counts.append(parsed_int)
+            row_has_data = any(
+                [
+                    specialist,
+                    job_title,
+                    professional_status,
+                    service_name,
+                    rate_raw,
+                    total_raw,
+                    any(value != "" for value in cleaned_day_counts),
+                ]
+            )
+            if not row_has_data:
+                continue
+            rate_value = self._parse_payload_decimal(
+                rate_raw,
+                "Сводный блок: поле «Ставка, евро / день» заполнено некорректно.",
+            )
+            total_value = self._parse_payload_decimal(
+                total_raw,
+                "Сводный блок: поле «Итого, евро без НДС» заполнено некорректно.",
+            )
+            if is_travel_expenses_row:
+                rate_value = None
+                if travel_expenses_mode == PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION:
+                    total_value = sum(
+                        (
+                            Decimal(str(value))
+                            for value in cleaned_day_counts
+                            if value not in (None, "")
+                        ),
+                        Decimal("0"),
+                    )
+                else:
+                    cleaned_day_counts = ["" for _ in cleaned_day_counts]
+            normalized.append(
+                {
+                    "position": index,
+                    "specialist": specialist,
+                    "job_title": job_title,
+                    "professional_status": professional_status,
+                    "service_name": service_name,
+                    "rate_eur_per_day": rate_value,
+                    "asset_day_counts": cleaned_day_counts,
+                    "total_eur_without_vat": total_value,
+                }
+            )
+        return normalized
+
+    def _normalize_summary_commercial_totals(self, raw):
+        value = self._load_summary_json(
+            raw,
+            field_label="Итоги коммерческого предложения",
+            expected_type=dict,
+            default={},
+        )
+        return self._merge_stage_commercial_totals_payload(
+            {
+                "exchange_rate": str(value.get("exchange_rate") or "").strip(),
+                "discount_percent": str(value.get("discount_percent") or "").strip(),
+                "contract_total": str(value.get("contract_total") or "").strip(),
+                "contract_total_auto": str(value.get("contract_total_auto") or "").strip(),
+                "rub_total_service_text": str(value.get("rub_total_service_text") or "").strip(),
+                "discounted_total_service_text": str(value.get("discounted_total_service_text") or "").strip(),
+                "travel_expenses_mode": str(value.get("travel_expenses_mode") or "").strip()
+                or PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL,
+            }
+        )
+
+    def _build_summary_commercial_fallback(self, stage_payloads):
+        asset_count = max(
+            [len(item.get("asset_day_counts") or []) for stage in stage_payloads for item in stage["commercial_offer_payload"]],
+            default=0,
+        )
+        asset_count = max(asset_count, 1)
+        grouped_rows = {}
+        travel_total = Decimal("0")
+        travel_day_totals = [Decimal("0") for _ in range(asset_count)]
+        has_travel_calculation = False
+        has_travel_actual = False
+
+        for stage in stage_payloads:
+            travel_mode = (
+                str((stage.get("commercial_totals_json") or {}).get("travel_expenses_mode") or "").strip()
+                or PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL
+            )
+            for item in stage["commercial_offer_payload"]:
+                is_travel_row = is_proposal_travel_expenses_name(item.get("service_name") or "")
+                day_values = list(item.get("asset_day_counts") or [])[:asset_count]
+                while len(day_values) < asset_count:
+                    day_values.append("")
+                if is_travel_row:
+                    total_value = item.get("total_eur_without_vat") or Decimal("0")
+                    if not isinstance(total_value, Decimal):
+                        total_value = self._parse_payload_decimal(
+                            total_value,
+                            "Сводный блок: поле «Итого, евро без НДС» заполнено некорректно.",
+                        ) or Decimal("0")
+                    travel_total += total_value
+                    if travel_mode == PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION:
+                        has_travel_calculation = True
+                        for index, raw_value in enumerate(day_values):
+                            if raw_value in (None, ""):
+                                continue
+                            travel_day_totals[index] += Decimal(str(raw_value))
+                    else:
+                        has_travel_actual = True
+                    continue
+
+                key = (
+                    str(item.get("specialist") or "").strip(),
+                    str(item.get("job_title") or "").strip(),
+                )
+                bucket = grouped_rows.get(key)
+                if bucket is None:
+                    bucket = {
+                        "position": len(grouped_rows) + 1,
+                        "specialist": key[0],
+                        "job_title": key[1],
+                        "professional_status": str(item.get("professional_status") or "").strip(),
+                        "service_name": "",
+                        "rate_eur_per_day": item.get("rate_eur_per_day"),
+                        "asset_day_counts": [0 for _ in range(asset_count)],
+                        "total_eur_without_vat": Decimal("0"),
+                    }
+                    grouped_rows[key] = bucket
+                for index, raw_value in enumerate(day_values):
+                    if raw_value in (None, ""):
+                        continue
+                    bucket["asset_day_counts"][index] += int(raw_value)
+                total_value = item.get("total_eur_without_vat") or Decimal("0")
+                if not isinstance(total_value, Decimal):
+                    total_value = self._parse_payload_decimal(
+                        total_value,
+                        "Сводный блок: поле «Итого, евро без НДС» заполнено некорректно.",
+                    ) or Decimal("0")
+                bucket["total_eur_without_vat"] += total_value
+
+        summary_rows = []
+        for bucket in grouped_rows.values():
+            summary_rows.append(
+                {
+                    "position": bucket["position"],
+                    "specialist": bucket["specialist"],
+                    "job_title": bucket["job_title"],
+                    "professional_status": bucket["professional_status"],
+                    "service_name": "",
+                    "rate_eur_per_day": bucket["rate_eur_per_day"],
+                    "asset_day_counts": [value if value else "" for value in bucket["asset_day_counts"]],
+                    "total_eur_without_vat": bucket["total_eur_without_vat"],
+                }
+            )
+
+        travel_mode = (
+            PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION
+            if has_travel_calculation and not has_travel_actual
+            else PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL
+        )
+        if has_travel_calculation or has_travel_actual or travel_total > 0:
+            summary_rows.append(
+                {
+                    "position": len(summary_rows) + 1,
+                    "specialist": "",
+                    "job_title": "",
+                    "professional_status": "",
+                    "service_name": PROPOSAL_TRAVEL_EXPENSES_LABEL,
+                    "rate_eur_per_day": None,
+                    "asset_day_counts": (
+                        [self._serialize_payload_decimal(value) if value else "" for value in travel_day_totals]
+                        if travel_mode == PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION
+                        else ["" for _ in range(asset_count)]
+                    ),
+                    "total_eur_without_vat": travel_total,
+                }
+            )
+
+        return summary_rows, travel_mode
+
+    def _parse_summary_service_cost(self, totals):
+        contract_total = str((totals or {}).get("contract_total") or "").strip()
+        if not contract_total:
+            return None
+        return self._parse_payload_decimal(
+            contract_total,
+            "Сводный блок: поле «Стоимость услуг» заполнено некорректно.",
+        )
+
+    def _collect_stage_payloads(self):
+        stage_payloads = []
+        cleaned_product_ids = []
+        seen_product_ids = set()
+        for row in self.stage_rows:
+            rank = int(row.get("rank") or len(stage_payloads) + 1)
+            row_has_data = any(
+                str(row.get(key) or "").strip()
+                for key in (
+                    "consulting_type",
+                    "service_category",
+                    "service_subtype",
+                    "product_id",
+                    "service_composition",
+                    "service_composition_customer_tz",
+                    "evaluation_date",
+                    "service_term_months",
+                    "preliminary_report_date",
+                    "final_report_term_weeks",
+                    "final_report_date",
+                )
+            )
+            product_raw = str(row.get("product_id") or "").strip()
+            if not product_raw:
+                if row_has_data:
+                    raise forms.ValidationError(f"Этап {rank}: выберите продукт.")
+                continue
+            try:
+                product_id = int(product_raw)
+            except (TypeError, ValueError):
+                raise forms.ValidationError(f"Этап {rank}: выбран некорректный продукт.")
+            product = Product.objects.filter(pk=product_id).first()
+            if product is None:
+                raise forms.ValidationError(f"Этап {rank}: выбранный продукт не найден.")
+            if product_id in seen_product_ids:
+                raise forms.ValidationError(f"Этап {rank}: продукт уже выбран для другого этапа.")
+            seen_product_ids.add(product_id)
+            cleaned_product_ids.append(product_id)
+
+            service_composition_mode = str(row.get("service_composition_mode") or "sections").strip() or "sections"
+            if service_composition_mode not in {"sections", "customer_tz"}:
+                service_composition_mode = "sections"
+            service_composition_customer_tz = str(row.get("service_composition_customer_tz") or "").strip()
+
+            stage_payloads.append(
+                {
+                    "rank": rank,
+                    "product": product,
+                    "product_id": product_id,
+                    "service_sections_json": self._normalize_stage_service_sections(
+                        row.get("service_sections_payload"),
+                        row_index=rank,
+                        product=product,
+                    ),
+                    "service_sections_editor_state": self._normalize_stage_editor_state(
+                        row.get("service_sections_editor_state"),
+                        row_index=rank,
+                    ),
+                    "service_customer_tz_editor_state": self._normalize_stage_customer_tz_state(
+                        row.get("service_customer_tz_editor_state"),
+                        row_index=rank,
+                    ),
+                    "service_composition_customer_tz": service_composition_customer_tz,
+                    "service_composition_mode": service_composition_mode,
+                    "service_composition": (
+                        service_composition_customer_tz
+                        if service_composition_mode == "customer_tz"
+                        else str(row.get("service_composition") or "").strip()
+                    ),
+                    "commercial_offer_payload": self._normalize_stage_commercial_rows(
+                        row.get("commercial_offer_payload"),
+                        row_index=rank,
+                        totals_raw=row.get("commercial_totals_payload"),
+                    ),
+                    "commercial_totals_json": self._normalize_stage_commercial_totals(
+                        row.get("commercial_totals_payload"),
+                        row_index=rank,
+                    ),
+                    "evaluation_date": self._parse_stage_date(
+                        row.get("evaluation_date"),
+                        row_index=rank,
+                        field_label="Дата оценки",
+                    ),
+                    "service_term_months": self._parse_stage_decimal(
+                        row.get("service_term_months"),
+                        row_index=rank,
+                        field_label="Срок подготовки Предварительного отчёта, мес.",
+                    ),
+                    "preliminary_report_date": self._parse_stage_date(
+                        row.get("preliminary_report_date"),
+                        row_index=rank,
+                        field_label="Дата Предварительного отчёта",
+                    ),
+                    "final_report_term_weeks": self._parse_stage_decimal(
+                        row.get("final_report_term_weeks"),
+                        row_index=rank,
+                        field_label="Срок подготовки Итогового отчёта, нед.",
+                    ),
+                    "final_report_date": self._parse_stage_date(
+                        row.get("final_report_date"),
+                        row_index=rank,
+                        field_label="Дата Итогового отчёта",
+                    ),
+                }
+            )
+        self.cleaned_type_ids = cleaned_product_ids
+        self.cleaned_stage_payloads = stage_payloads
+        if not cleaned_product_ids:
+            self.add_error("type_ids", "Укажите хотя бы один продукт.")
 
     def clean(self):
         cleaned = super().clean()
@@ -1000,23 +1955,147 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         if cleaned.get("service_composition_mode") == "customer_tz":
             cleaned["service_composition"] = cleaned.get("service_composition_customer_tz") or ""
 
+        try:
+            self._collect_stage_payloads()
+        except forms.ValidationError as error:
+            self.add_error("type_ids", error)
+            return cleaned
+
+        if getattr(self, "cleaned_stage_payloads", None) and len(self.cleaned_stage_payloads) > 1:
+            summary_offer_raw = str(cleaned.get("summary_commercial_offer_payload") or "").strip()
+            summary_totals_raw = str(cleaned.get("summary_commercial_totals_payload") or "").strip()
+            if summary_offer_raw:
+                self.cleaned_commercial_offers = self._normalize_summary_commercial_rows(
+                    summary_offer_raw,
+                    totals_raw=summary_totals_raw,
+                )
+            else:
+                self.cleaned_commercial_offers, inferred_travel_mode = self._build_summary_commercial_fallback(
+                    self.cleaned_stage_payloads
+                )
+                if not summary_totals_raw:
+                    summary_totals_raw = json.dumps(
+                        {
+                            **(self.cleaned_stage_payloads[-1]["commercial_totals_json"] or {}),
+                            "travel_expenses_mode": inferred_travel_mode,
+                        },
+                        ensure_ascii=False,
+                    )
+            self.cleaned_commercial_totals = (
+                self._normalize_summary_commercial_totals(summary_totals_raw)
+                if summary_totals_raw
+                else self._merge_stage_commercial_totals_payload({})
+            )
+            if not str(self.cleaned_commercial_totals.get("travel_expenses_mode") or "").strip():
+                _, inferred_travel_mode = self._build_summary_commercial_fallback(self.cleaned_stage_payloads)
+                self.cleaned_commercial_totals["travel_expenses_mode"] = inferred_travel_mode
+            summary_service_cost = self._parse_summary_service_cost(self.cleaned_commercial_totals)
+            cleaned["service_cost"] = summary_service_cost
+
+        if getattr(self, "cleaned_stage_payloads", None):
+            last_stage = self.cleaned_stage_payloads[-1]
+            cleaned["type"] = last_stage["product"]
+            cleaned["service_composition_mode"] = last_stage["service_composition_mode"]
+            cleaned["service_composition"] = last_stage["service_composition"]
+            cleaned["service_composition_customer_tz"] = last_stage["service_composition_customer_tz"]
+            cleaned["evaluation_date"] = last_stage["evaluation_date"]
+            cleaned["service_term_months"] = last_stage["service_term_months"]
+            cleaned["preliminary_report_date"] = last_stage["preliminary_report_date"]
+            cleaned["final_report_term_weeks"] = last_stage["final_report_term_weeks"]
+            cleaned["final_report_date"] = last_stage["final_report_date"]
+
         return cleaned
 
     def save(self, commit=True):
         instance = super().save(commit=False)
-        instance.service_sections_json = [
+        stage_payloads = list(getattr(self, "cleaned_stage_payloads", []))
+        last_stage = stage_payloads[-1] if stage_payloads else None
+        if last_stage:
+            instance.type = last_stage["product"]
+            instance.service_sections_json = list(last_stage["service_sections_json"])
+            instance.service_sections_editor_state = list(last_stage["service_sections_editor_state"])
+            instance.service_customer_tz_editor_state = dict(last_stage["service_customer_tz_editor_state"])
+            instance.service_composition_customer_tz = last_stage["service_composition_customer_tz"]
+            instance.service_composition_mode = last_stage["service_composition_mode"]
+            instance.service_composition = last_stage["service_composition"]
+            instance.commercial_totals_json = dict(last_stage["commercial_totals_json"])
+            instance.evaluation_date = last_stage["evaluation_date"]
+            instance.service_term_months = last_stage["service_term_months"]
+            instance.preliminary_report_date = last_stage["preliminary_report_date"]
+            instance.final_report_term_weeks = last_stage["final_report_term_weeks"]
+            instance.final_report_date = last_stage["final_report_date"]
+            self.cleaned_service_sections = list(last_stage["service_sections_json"])
+            self.cleaned_service_sections_editor_state = list(last_stage["service_sections_editor_state"])
+            self.cleaned_service_customer_tz_editor_state = dict(last_stage["service_customer_tz_editor_state"])
+            if len(stage_payloads) == 1:
+                instance.commercial_totals_json = dict(last_stage["commercial_totals_json"])
+                self.cleaned_commercial_offers = list(last_stage["commercial_offer_payload"])
+                self.cleaned_commercial_totals = dict(last_stage["commercial_totals_json"])
+            else:
+                instance.commercial_totals_json = dict(getattr(self, "cleaned_commercial_totals", {}) or {})
+        else:
+            instance.service_sections_json = [
+                {
+                    "service_name": item["service_name"],
+                    "code": item["code"],
+                }
+                for item in getattr(self, "cleaned_service_sections", [])
+            ]
+            instance.service_sections_editor_state = getattr(self, "cleaned_service_sections_editor_state", [])
+            instance.service_customer_tz_editor_state = getattr(self, "cleaned_service_customer_tz_editor_state", {})
+            instance.commercial_totals_json = getattr(self, "cleaned_commercial_totals", {})
+        instance.stage_payloads_json = [
             {
-                "service_name": item["service_name"],
-                "code": item["code"],
+                "rank": item["rank"],
+                "product_id": item["product_id"],
+                "service_sections_json": list(item["service_sections_json"]),
+                "service_sections_editor_state": list(item["service_sections_editor_state"]),
+                "service_customer_tz_editor_state": dict(item["service_customer_tz_editor_state"]),
+                "service_composition_customer_tz": item["service_composition_customer_tz"],
+                "service_composition_mode": item["service_composition_mode"],
+                "service_composition": item["service_composition"],
+                "commercial_offer_payload": [
+                    {
+                        "position": offer.get("position") or index,
+                        "specialist": offer.get("specialist") or "",
+                        "job_title": offer.get("job_title") or "",
+                        "professional_status": offer.get("professional_status") or "",
+                        "service_name": offer.get("service_name") or "",
+                        "rate_eur_per_day": str(offer.get("rate_eur_per_day") or ""),
+                        "asset_day_counts": list(offer.get("asset_day_counts") or []),
+                        "total_eur_without_vat": str(offer.get("total_eur_without_vat") or ""),
+                    }
+                    for index, offer in enumerate(item["commercial_offer_payload"], start=1)
+                ],
+                "commercial_totals_json": dict(item["commercial_totals_json"]),
+                "evaluation_date": _format_stage_date(item["evaluation_date"]),
+                "service_term_months": str(item["service_term_months"] or ""),
+                "preliminary_report_date": _format_stage_date(item["preliminary_report_date"]),
+                "final_report_term_weeks": str(item["final_report_term_weeks"] or ""),
+                "final_report_date": _format_stage_date(item["final_report_date"]),
             }
-            for item in getattr(self, "cleaned_service_sections", [])
+            for item in stage_payloads
         ]
-        instance.service_sections_editor_state = getattr(self, "cleaned_service_sections_editor_state", [])
-        instance.service_customer_tz_editor_state = getattr(self, "cleaned_service_customer_tz_editor_state", {})
-        instance.commercial_totals_json = getattr(self, "cleaned_commercial_totals", {})
         if commit:
             instance.save()
+            self._save_ranked_products(instance)
         return instance
+
+    def _save_ranked_products(self, proposal):
+        product_ids = list(getattr(self, "cleaned_type_ids", []))
+        ProposalRegistrationProduct.objects.filter(proposal=proposal).delete()
+        if not product_ids:
+            return
+        ProposalRegistrationProduct.objects.bulk_create(
+            [
+                ProposalRegistrationProduct(
+                    proposal=proposal,
+                    product_id=product_id,
+                    rank=rank,
+                )
+                for rank, product_id in enumerate(product_ids, start=1)
+            ]
+        )
 
     def clean_service_sections_editor_state(self):
         raw = (self.cleaned_data.get("service_sections_editor_state") or "").strip()
@@ -1636,16 +2715,18 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             [
                 ProposalCommercialOffer(
                     proposal=proposal,
-                    position=item["position"],
+                    position=item.get("position") or index,
                     specialist=item["specialist"],
                     job_title=item["job_title"],
                     professional_status=item["professional_status"],
                     service_name=item["service_name"],
-                    rate_eur_per_day=item["rate_eur_per_day"],
+                    rate_eur_per_day=(None if item.get("rate_eur_per_day") in ("", None) else item.get("rate_eur_per_day")),
                     asset_day_counts=item["asset_day_counts"],
-                    total_eur_without_vat=item["total_eur_without_vat"],
+                    total_eur_without_vat=(
+                        None if item.get("total_eur_without_vat") in ("", None) else item.get("total_eur_without_vat")
+                    ),
                 )
-                for item in items
+                for index, item in enumerate(items, start=1)
             ]
         )
 

@@ -23,7 +23,7 @@ from core.cloud_storage import (
 from core.oidc import IMCOAuth2Validator
 from core.oidc_settings import oidc_pkce_required
 from core.models import CloudStorageSettings
-from policy_app.models import DEPARTMENT_HEAD_GROUP
+from policy_app.models import DEPARTMENT_HEAD_GROUP, EXPERT_GROUP
 from users_app.models import Employee
 
 User = get_user_model()
@@ -211,3 +211,20 @@ class HomePagePermissionsTests(TestCase):
         self.assertNotContains(response, '<span class="link-text">Логи</span>', html=False)
         self.assertNotContains(response, 'section id="templates"', html=False)
         self.assertNotContains(response, 'section id="debugger"', html=False)
+
+    def test_expert_does_not_get_classifiers_section_markup(self):
+        user = User.objects.create_user(
+            username="expert-home",
+            email="expert-home@example.com",
+            password="Secret123!",
+            is_staff=True,
+        )
+        expert_group, _ = Group.objects.get_or_create(name=EXPERT_GROUP)
+        user.groups.add(expert_group)
+        self.client.force_login(user)
+
+        response = self.client.get(reverse("home"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, '<span class="link-text">Справочники</span>', html=False)
+        self.assertNotContains(response, 'section id="classifiers"', html=False)

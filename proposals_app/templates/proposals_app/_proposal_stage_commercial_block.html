@@ -1,0 +1,59 @@
+<div class="col-12 proposal-stage-commercial-block{% if is_summary and form.stage_rows|length <= 1 %} d-none{% endif %}"
+     data-proposal-stage-root="1"
+     data-proposal-stage-kind="{% if is_summary %}commercial-summary{% else %}commercial{% endif %}"
+     data-proposal-stage-key="{% if is_summary %}summary{% else %}{{ stage.rank }}{% endif %}"
+     {% if is_summary %}data-proposal-commercial-summary="1"{% endif %}>
+  {% if not is_summary %}
+    <input type="hidden" data-proposal-stage-type value="{{ stage.product_id }}">
+  {% endif %}
+  <label class="form-label mb-2 proposal-stage-block-title">
+    {% if is_summary %}
+      Коммерческое предложение: все этапы
+    {% else %}
+      Коммерческое предложение{% if form.stage_rows|length > 1 %}: Этап {{ stage.rank }}{% if stage.product_short_label %} {{ stage.product_short_label }}{% endif %}{% endif %}
+    {% endif %}
+  </label>
+  <input type="hidden" name="{% if is_summary %}summary_commercial_offer_payload{% else %}commercial_offer_payload{% endif %}" id="proposal-commercial-offer-payload" value="{{ stage.commercial_offer_payload }}">
+  <input type="hidden" name="{% if is_summary %}summary_commercial_totals_payload{% else %}commercial_totals_payload{% endif %}" id="proposal-commercial-totals-payload" value="{{ stage.commercial_totals_payload }}">
+  <div class="proposal-assets-editor proposal-commercial-editor">
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-2 proposal-assets-table proposal-commercial-table" id="proposal-commercial-table">
+        <thead id="proposal-commercial-thead"></thead>
+        <tbody id="proposal-commercial-tbody"></tbody>
+      </table>
+    </div>
+    {% if not is_summary %}
+      <div class="d-flex align-items-stretch gap-2 mt-3">
+        <button type="button" id="proposal-commercial-add-btn" class="btn btn-sm proposal-asset-add-btn d-flex align-items-center">
+          <i class="bi bi-plus-circle me-2"></i>Добавить строку
+        </button>
+        <div id="proposal-commercial-row-actions" class="d-none">
+          <div class="btn-group">
+            <button type="button" id="proposal-commercial-up-btn" class="btn btn-outline-primary btn-sm" title="Переместить вверх" aria-label="Переместить вверх">
+              <i class="bi bi-arrow-up-square"></i>
+            </button>
+            <button type="button" id="proposal-commercial-down-btn" class="btn btn-outline-primary btn-sm" title="Переместить вниз" aria-label="Переместить вниз">
+              <i class="bi bi-arrow-down-square"></i>
+            </button>
+            <button type="button" id="proposal-commercial-delete-btn" class="btn btn-outline-danger btn-sm" title="Удалить" aria-label="Удалить">
+              <i class="bi bi-x-square"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    {% else %}
+      <div class="d-flex align-items-stretch gap-2 mt-3">
+        <div id="proposal-commercial-row-actions" class="d-flex">
+          <div class="btn-group">
+            <button type="button" id="proposal-commercial-up-btn" class="btn btn-outline-primary btn-sm" title="Переместить вверх" aria-label="Переместить вверх">
+              <i class="bi bi-arrow-up-square"></i>
+            </button>
+            <button type="button" id="proposal-commercial-down-btn" class="btn btn-outline-primary btn-sm" title="Переместить вниз" aria-label="Переместить вниз">
+              <i class="bi bi-arrow-down-square"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+</div>

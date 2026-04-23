@@ -12,7 +12,7 @@ from django.urls import reverse
 from classifiers_app.models import OKVCurrency
 from experts_app.models import ExpertSpecialty
 from group_app.models import GroupMember, OrgUnit
-from policy_app.forms import ProductForm
+from policy_app.forms import ProductForm, ServiceGoalReportForm
 from policy_app.models import (
     ConsultingDirection,
     ConsultingDirectionType,
@@ -374,6 +374,15 @@ class TypicalSectionViewsTests(TestCase):
         section = TypicalSection.objects.get(code="SEC-2")
         self.assertTrue(section.exclude_from_tkp_autofill)
 
+    def test_section_form_renders_product_options_with_display_name(self):
+        response = self.client.get(reverse("section_form_create"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '<select name="product"', html=False)
+        self.assertContains(response, "policy-product-select")
+        self.assertContains(response, 'data-short-label="SEC"', html=False)
+        self.assertContains(response, "SEC Sections")
+
     def test_section_csv_upload_accepts_rows_without_legacy_executor_column(self):
         csv_file = SimpleUploadedFile(
             "sections.csv",
@@ -390,6 +399,36 @@ class TypicalSectionViewsTests(TestCase):
         self.assertEqual(response.json()["created"], 1)
         self.assertEqual(response.json()["warnings"], [])
         self.assertTrue(TypicalSection.objects.filter(code="SEC-3").exists())
+
+
+class SectionStructureViewsTests(TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            username="policy-structures-admin",
+            password="secret123",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.product = Product.objects.create(
+            short_name="STR",
+            name_en="Structure",
+            display_name="Structure System",
+            name_ru="Структура",
+            consulting_type="Горный",
+            service_category="Инжиниринг",
+            service_subtype="По международным стандартам",
+            position=1,
+        )
+
+    def test_structure_form_renders_product_options_with_display_name(self):
+        response = self.client.get(reverse("structure_form_create"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '<select name="product"', html=False)
+        self.assertContains(response, "policy-product-select")
+        self.assertContains(response, 'data-short-label="STR"', html=False)
+        self.assertContains(response, "STR Structure System")
 
 
 class ServiceGoalReportViewsTests(TestCase):
@@ -447,6 +486,19 @@ class ServiceGoalReportViewsTests(TestCase):
         self.assertEqual(item.service_goal_genitive, "Подготовки документов")
         self.assertEqual(item.report_title, "Отчет по документам")
         self.assertEqual(item.position, 1)
+
+    def test_service_goal_report_form_renders_product_picker_with_display_name(self):
+        response = self.client.get(reverse("service_goal_report_form_create"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '<select name="product"', html=False)
+        self.assertContains(response, "policy-product-select")
+        self.assertContains(response, 'data-short-label="TAX"', html=False)
+        self.assertContains(response, "TAX Tax")
+
+        form = ServiceGoalReportForm()
+        labels = [label for _, label in form.fields["product"].choices]
+        self.assertIn("TAX Tax", labels)
 
     def test_move_up_reorders_globally_across_table(self):
         other_product = Product.objects.create(
@@ -606,6 +658,15 @@ class TypicalServiceCompositionViewsTests(TestCase):
         self.assertEqual(item.service_composition_editor_state, editor_state)
         self.assertEqual(item.position, 1)
 
+    def test_typical_service_composition_form_renders_product_options_with_display_name(self):
+        response = self.client.get(reverse("typical_service_composition_form_create"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '<select name="product"', html=False)
+        self.assertContains(response, "policy-product-select")
+        self.assertContains(response, 'data-short-label="TAX2"', html=False)
+        self.assertContains(response, "TAX2 Tax 2")
+
     def test_create_typical_service_composition_rejects_section_from_other_product(self):
         response = self.client.post(
             reverse("typical_service_composition_form_create"),
@@ -714,6 +775,15 @@ class TypicalServiceTermViewsTests(TestCase):
         self.assertEqual(item.preliminary_report_months, Decimal("2.5"))
         self.assertEqual(item.final_report_weeks, 4)
         self.assertEqual(item.position, 1)
+
+    def test_typical_service_term_form_renders_product_options_with_display_name(self):
+        response = self.client.get(reverse("typical_service_term_form_create"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '<select name="product"', html=False)
+        self.assertContains(response, "policy-product-select")
+        self.assertContains(response, 'data-short-label="TERM"', html=False)
+        self.assertContains(response, "TERM Terms")
 
     def test_create_typical_service_term_accepts_comma_decimal(self):
         response = self.client.post(
@@ -962,6 +1032,15 @@ class TariffViewsTests(TestCase):
         tariff = Tariff.objects.get()
         self.assertEqual(tariff.service_hours, 12)
         self.assertEqual(tariff.service_days_tkp, 7)
+
+    def test_tariff_form_renders_product_options_with_display_name(self):
+        response = self.client.get(reverse("tariff_form_create"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '<select name="product"', html=False)
+        self.assertContains(response, "policy-product-select")
+        self.assertContains(response, 'data-short-label="TAR"', html=False)
+        self.assertContains(response, "TAR Tariff product")
 
     def test_move_up_normalizes_positions_before_reorder(self):
         first = Tariff.objects.create(

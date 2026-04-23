@@ -201,6 +201,40 @@ class ProjectRegistrationFormTests(TestCase):
         self.assertEqual(registration.short_uid, "000100RU")
         self.assertTrue(registration.display_identifier.startswith("0001 "))
 
+    def test_form_allows_duplicate_project_identity_values_and_keeps_project_id_unique(self):
+        first = ProjectRegistration.objects.create(
+            number=4444,
+            group_member=self.group_member,
+            type=self.product,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            name="Проект Дубль 1",
+            status="Не начат",
+        )
+
+        form = ProjectRegistrationForm(
+            data={
+                "number": 4444,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [self.product.pk],
+                "name": "Проект Дубль 2",
+                "status": "Не начат",
+                "deadline": "2026-01-10",
+                "year": 2026,
+            }
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        duplicate = form.save()
+        duplicate.refresh_from_db()
+
+        self.assertEqual(first.number, duplicate.number)
+        self.assertEqual(first.group_member_id, duplicate.group_member_id)
+        self.assertEqual(first.agreement_type, duplicate.agreement_type)
+        self.assertEqual(first.agreement_number, duplicate.agreement_number)
+        self.assertNotEqual(first.pk, duplicate.pk)
+        self.assertNotEqual(first.short_uid, duplicate.short_uid)
+
     def test_cleaned_type_ids_keep_ranked_order_without_duplicates(self):
         form = ProjectRegistrationForm()
         bound_form = ProjectRegistrationForm(
@@ -378,6 +412,42 @@ class ProjectRegistrationRegistrySyncTests(TestCase):
         self.assertEqual(project.type_short_display, "DD")
         self.assertEqual(
             list(project.product_links.order_by("rank").values_list("product_id", flat=True)),
+            [self.product.pk],
+        )
+
+    def test_manual_registration_save_allows_duplicate_identity_values(self):
+        first = ProjectRegistration.objects.create(
+            number=4444,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            agreement_number="IMCM/4444",
+            type=self.product,
+            name="Проект Альфа",
+            status="Не начат",
+            year=2026,
+            position=1,
+        )
+
+        response = self._post_registration()
+
+        self.assertEqual(response.status_code, 200)
+        duplicates = list(
+            ProjectRegistration.objects
+            .filter(
+                number=4444,
+                group_member=self.group_member,
+                agreement_type=ProjectRegistration.AgreementType.MAIN,
+                agreement_number="IMCM/4444",
+                type=self.product,
+            )
+            .order_by("id")
+        )
+        self.assertEqual(len(duplicates), 2)
+        self.assertNotEqual(duplicates[0].pk, duplicates[1].pk)
+        self.assertNotEqual(duplicates[0].short_uid, duplicates[1].short_uid)
+        self.assertEqual(first.short_uid, duplicates[0].short_uid)
+        self.assertEqual(
+            list(duplicates[1].product_links.order_by("rank").values_list("product_id", flat=True)),
             [self.product.pk],
         )
 

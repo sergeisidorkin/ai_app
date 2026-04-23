@@ -135,12 +135,6 @@ class ProjectRegistration(models.Model):
         ordering = ["position", "id"]
         verbose_name = "Регистрация проекта"
         verbose_name_plural = "Регистрация проекта"
-        constraints = [
-            models.UniqueConstraint(
-                fields=("number", "group_member", "agreement_type", "agreement_number"),
-                name="project_registration_identity_unique",
-            ),
-        ]
 
     def __str__(self):
         base = f"{self.formatted_number}{self.group_alpha2}"

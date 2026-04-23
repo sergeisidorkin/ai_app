@@ -28,6 +28,7 @@ from nextcloud_app.api import NextcloudApiClient, NextcloudApiError
 from nextcloud_app.models import NextcloudUserLink
 from nextcloud_app.workspace import build_proposal_workspace_path, create_proposal_workspace
 from policy_app.models import (
+    Product,
     ServiceGoalReport,
     SpecialtyTariff,
     Tariff,
@@ -35,6 +36,7 @@ from policy_app.models import (
     TypicalSectionSpecialty,
     TypicalServiceComposition,
     TypicalServiceTerm,
+    build_consulting_catalog_meta,
 )
 from projects_app.models import ProjectRegistration, ProjectRegistrationProduct, _sync_project_registration_primary_product
 from smtp_app.models import ExternalSMTPAccount
@@ -1130,6 +1132,44 @@ def _resolve_workspace_folder_file_id(workspace_path: str) -> str:
         return ""
 
 
+def _proposal_product_catalog():
+    products = list(Product.objects.order_by("position", "id"))
+    catalog_meta = build_consulting_catalog_meta()
+    consulting_types = []
+    service_categories = []
+    seen_consulting_types = set()
+    seen_service_categories = set()
+    for item in catalog_meta["consulting_types"]:
+        label = item["label"]
+        if label and label not in seen_consulting_types:
+            seen_consulting_types.add(label)
+            consulting_types.append(label)
+    for item in catalog_meta["service_categories"]:
+        label = item["label"]
+        if label and label not in seen_service_categories:
+            seen_service_categories.add(label)
+            service_categories.append(label)
+    return {
+        "consulting_types": consulting_types,
+        "service_categories": service_categories,
+        "products": [
+            {
+                "id": product.pk,
+                "label": " ".join(
+                    part
+                    for part in ((product.short_name or "").strip(), (product.display_name or "").strip())
+                    if part
+                ),
+                "short_label": (product.short_name or "").strip(),
+                "consulting_type": (product.consulting_type_display or "").strip(),
+                "service_category": (product.service_category_display or "").strip(),
+                "service_subtype": (product.service_subtype_display or "").strip(),
+            }
+            for product in products
+        ],
+    }
+
+
 def _render_proposal_form(request, *, form, action, proposal=None):
     def _section_specialty_names(section):
         names = []
@@ -1429,6 +1469,7 @@ def _render_proposal_form(request, *, form, action, proposal=None):
             "form": form,
             "action": action,
             "proposal": proposal,
+            "proposal_type_meta_json": json.dumps(_proposal_product_catalog(), ensure_ascii=False),
             "typical_sections_json": sections_map,
             "service_goal_reports_json": service_goal_reports_map,
             "typical_service_compositions_json": typical_service_compositions_map,
@@ -1567,6 +1608,7 @@ def proposal_form_create(request):
     if not getattr(proposal, "position", 0):
         proposal.position = _next_position(ProposalRegistration)
     proposal.save()
+    form._save_ranked_products(proposal)
     form.save_assets(proposal, request.user)
     form.save_legal_entities(proposal, request.user)
     form.save_objects(proposal, request.user)
@@ -1876,25 +1918,35 @@ def proposal_dispatch_transfer_to_contract(request):
                 or ""
             ).strip().upper()
             agreement_number = f"IMCM/{proposal.number}" if group_alpha2 == "RU" else ""
-            project, was_created = ProjectRegistration.objects.get_or_create(
-                number=proposal.number,
-                group_member=proposal.group_member,
-                agreement_type=ProjectRegistration.AgreementType.MAIN,
-                agreement_number=agreement_number,
-                defaults={
-                    "position": next_position,
-                    "group": proposal.group,
-                    "type": proposal.type,
-                    "name": proposal.name,
-                    "year": proposal.year,
-                    "customer": proposal.customer,
-                    "country": proposal.country,
-                    "identifier": proposal.identifier,
-                    "registration_number": proposal.registration_number,
-                    "registration_date": proposal.registration_date,
-                },
+            project = (
+                ProjectRegistration.objects
+                .filter(
+                    number=proposal.number,
+                    group_member=proposal.group_member,
+                    agreement_type=ProjectRegistration.AgreementType.MAIN,
+                    agreement_number=agreement_number,
+                )
+                .order_by("position", "id")
+                .first()
             )
+            was_created = project is None
             if was_created:
+                project = ProjectRegistration.objects.create(
+                    number=proposal.number,
+                    group_member=proposal.group_member,
+                    agreement_type=ProjectRegistration.AgreementType.MAIN,
+                    agreement_number=agreement_number,
+                    position=next_position,
+                    group=proposal.group,
+                    type=proposal.type,
+                    name=proposal.name,
+                    year=proposal.year,
+                    customer=proposal.customer,
+                    country=proposal.country,
+                    identifier=proposal.identifier,
+                    registration_number=proposal.registration_number,
+                    registration_date=proposal.registration_date,
+                )
                 if proposal.type_id:
                     ProjectRegistrationProduct.objects.update_or_create(
                         registration=project,

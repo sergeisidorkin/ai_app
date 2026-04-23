@@ -22,7 +22,7 @@
     <ul class="nav nav-pills flex-column gap-2 px-2 py-3">
       {% if request.user.is_staff %}
         <li class="nav-item">
-          <a class="nav-link active d-flex align-items-center" href="#notifications" data-bs-toggle="tab">
+          <a class="nav-link d-flex align-items-center" href="#notifications" data-bs-toggle="tab">
             <i class="bi bi-bell me-2"></i>
             <span class="link-text">Уведомления</span>
           </a>
@@ -205,7 +205,7 @@
   <main class="flex-grow-1 py-4 px-3" style="min-width:0; overflow-x:clip;">
     <div class="tab-content">
       <!-- Уведомления -->
-      <section id="notifications" class="tab-pane fade show active">
+      <section id="notifications" class="tab-pane fade">
         <div class="templates-bleed">
           <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
             <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
@@ -870,6 +870,7 @@
       {% endif %}
 
       <!-- Справочники -->
+      {% if not is_expert %}
       <section id="classifiers" class="tab-pane fade">
         <div class="d-flex templates-bleed">
           <!-- Второй уровень сайдбара для раздела "Справочники" -->
@@ -1565,6 +1566,7 @@
           </div>
         </div>
       </section>
+      {% endif %}
 
         <script>
         (function () {
@@ -2403,7 +2405,6 @@
               window.bootstrap.Tab.getOrCreateInstance(link).show();
             }
           }
-          showTabFromHash();
           window.addEventListener('hashchange', showTabFromHash);
         });
         </script>
