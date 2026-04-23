@@ -4936,6 +4936,15 @@ class ProposalDispatchDiskColumnTests(TestCase):
             service_subtype="Аудит соответствия стандартам",
             position=1,
         )
+        self.second_product = Product.objects.create(
+            short_name="QAQC",
+            name_en="QAQC",
+            name_ru="QAQC",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Контроль качества",
+            position=2,
+        )
         self.proposal = ProposalRegistration.objects.create(
             number=3333,
             group_member=self.group_member,
@@ -4953,6 +4962,22 @@ class ProposalDispatchDiskColumnTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, ">0001<", html=False)
+        self.proposal.refresh_from_db()
+        self.assertEqual(self.proposal.short_uid, "00010RU")
+        self.assertContains(response, ">00010RU<", html=False)
+
+    def test_proposals_partial_renders_multiple_products_with_hyphen_in_type_column(self):
+        ProposalRegistrationProduct.objects.bulk_create(
+            [
+                ProposalRegistrationProduct(proposal_id=self.proposal.pk, product=self.product, rank=1),
+                ProposalRegistrationProduct(proposal_id=self.proposal.pk, product=self.second_product, rank=2),
+            ]
+        )
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, ">DD-QAQC<", html=False)
 
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
     def test_proposals_partial_renders_disk_icon_with_nextcloud_share_target(self, mocked_list_user_shares):

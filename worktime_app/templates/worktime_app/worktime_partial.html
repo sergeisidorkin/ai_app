@@ -384,6 +384,33 @@
         <i class="bi bi-plus-circle me-2"></i>Добавить строку
       </button>
     </div>
+  {% else %}
+    {% if worktime_csv_controls_visible %}
+    <div class="d-flex align-items-stretch gap-2 mt-3 flex-wrap" data-worktime-csv-actions>
+      <button type="button"
+              class="btn btn-primary btn-sm d-flex align-items-center"
+              data-worktime-csv-download-btn
+              data-worktime-csv-download-url="{{ worktime_csv_download_url }}"
+              {% if not worktime_csv_controls_enabled %}disabled title="{{ worktime_csv_disabled_hint }}"{% endif %}>
+        <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+      </button>
+      <button type="button"
+              class="btn btn-primary btn-sm d-flex align-items-center"
+              data-worktime-csv-upload-btn
+              data-worktime-csv-upload-url="{{ worktime_csv_upload_url }}"
+              {% if not worktime_csv_controls_enabled %}disabled title="{{ worktime_csv_disabled_hint }}"{% endif %}>
+        <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+      </button>
+      <input type="file"
+             accept=".csv"
+             class="d-none"
+             data-worktime-csv-file-input
+             {% if not worktime_csv_controls_enabled %}disabled{% endif %}>
+      {% if not worktime_csv_controls_enabled %}
+        <span class="text-muted small align-self-center">{{ worktime_csv_disabled_hint }}</span>
+      {% endif %}
+    </div>
+    {% endif %}
   {% endif %}
 </form>
 
@@ -2004,6 +2031,202 @@
       return reloadWorktimePanel(document.querySelector('#worktime-content-timesheet [data-worktime-panel]'));
     }
 
+    function escapeWorktimeHtml(value) {
+      return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function cleanupWorktimeCsvModalArtifacts() {
+      if (document.querySelector('.modal.show')) return;
+      document.querySelectorAll('.modal-backdrop').forEach(function (backdrop) {
+        backdrop.remove();
+      });
+      document.body.classList.remove('modal-open');
+      document.body.style.removeProperty('padding-right');
+    }
+
+    function ensureWorktimeCsvModalBinding(modalEl) {
+      if (!modalEl || modalEl.dataset.worktimeCsvBound === '1') return;
+      modalEl.dataset.worktimeCsvBound = '1';
+      modalEl.addEventListener('hidden.bs.modal', function () {
+        var onHidden = modalEl._worktimeCsvOnHidden;
+        modalEl._worktimeCsvOnHidden = null;
+        cleanupWorktimeCsvModalArtifacts();
+        if (typeof onHidden === 'function') {
+          onHidden();
+        }
+      });
+    }
+
+    function showWorktimeCsvResult(html, options) {
+      var modalEl = document.getElementById('worktime-csv-result-modal');
+      var body = document.getElementById('worktime-csv-result-body');
+      if (!modalEl || !body || !window.bootstrap) {
+        window.alert(String(html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() || 'Результат загрузки CSV недоступен.');
+        return;
+      }
+      var modalOptions = options || {};
+      ensureWorktimeCsvModalBinding(modalEl);
+      modalEl._worktimeCsvOnHidden = typeof modalOptions.onHidden === 'function' ? modalOptions.onHidden : null;
+      body.innerHTML = html;
+      window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    }
+
+    function readWorktimeJsonResponse(response) {
+      var contentType = response.headers.get('content-type') || '';
+      if (contentType.indexOf('application/json') !== -1) {
+        return response.json().catch(function () {
+          return { ok: response.ok, error: 'Получен некорректный ответ сервера.' };
+        });
+      }
+      return response.text().then(function (text) {
+        return { ok: response.ok, error: text || 'Получен некорректный ответ сервера.' };
+      }).catch(function () {
+        return { ok: response.ok, error: 'Получен некорректный ответ сервера.' };
+      });
+    }
+
+    function buildWorktimeCsvParams(panel) {
+      var params = new URLSearchParams();
+      var form = panel && panel.querySelector ? panel.querySelector('[data-worktime-period-form]') : null;
+      if (!form) return params;
+      var formData = new FormData(form);
+      ['scale', 'period', 'breakdown', 'hist_sort'].forEach(function (name) {
+        var value = String(formData.get(name) || '').trim();
+        if (value) {
+          params.set(name, value);
+        }
+      });
+      return params;
+    }
+
+    function worktimeCsvControlsEnabled(panel) {
+      var params = buildWorktimeCsvParams(panel);
+      var scale = String(params.get('scale') || 'month').toLowerCase();
+      var breakdown = String(params.get('breakdown') || 'employees').toLowerCase();
+      return scale === 'month' && breakdown === 'employees';
+    }
+
+    function buildWorktimeCsvSuccessHtml(data) {
+      var created = Number(data && data.created ? data.created : 0);
+      var updated = Number(data && data.updated ? data.updated : 0);
+      var deleted = Number(data && data.deleted ? data.deleted : 0);
+      var createdAssignments = Number(data && data.created_assignments ? data.created_assignments : 0);
+      var warnings = data && Array.isArray(data.warnings) ? data.warnings : [];
+      var totalChanges = created + updated + deleted;
+      var html = totalChanges
+        ? '<div class="mb-2"><strong>Импорт завершен.</strong></div>'
+        : '<div class="mb-2 text-muted"><strong>Изменений нет.</strong></div>';
+      if (createdAssignments) {
+        html += '<div class="mb-1"><strong>Создано строк табеля: ' + escapeWorktimeHtml(createdAssignments) + '</strong></div>';
+      }
+      html += '<div class="mb-1"><strong>Добавлено значений: ' + escapeWorktimeHtml(created) + '</strong></div>';
+      html += '<div class="mb-1"><strong>Обновлено значений: ' + escapeWorktimeHtml(updated) + '</strong></div>';
+      html += '<div class="mb-1"><strong>Удалено значений: ' + escapeWorktimeHtml(deleted) + '</strong></div>';
+      if (warnings.length) {
+        html += '<div class="text-danger mt-3 mb-1"><strong>Предупреждения (' + escapeWorktimeHtml(warnings.length) + '):</strong></div>';
+        html += '<div class="text-danger" style="max-height:200px;overflow-y:auto;">';
+        warnings.forEach(function (warning) {
+          html += '<div class="mb-1">' + escapeWorktimeHtml(warning) + '</div>';
+        });
+        html += '</div>';
+      }
+      return html;
+    }
+
+    function buildWorktimeCsvErrorHtml(data) {
+      var errorMessage = data && data.error ? data.error : 'Неизвестная ошибка.';
+      var warnings = data && Array.isArray(data.warnings) ? data.warnings : [];
+      var html = '<div class="text-danger"><strong>Ошибка:</strong> ' + escapeWorktimeHtml(errorMessage) + '</div>';
+      if (warnings.length) {
+        html += '<div class="text-danger mt-2"><strong>Детали (' + escapeWorktimeHtml(warnings.length) + '):</strong></div>';
+        html += '<div class="text-danger" style="max-height:200px;overflow-y:auto;">';
+        warnings.forEach(function (warning) {
+          html += '<div class="mb-1">' + escapeWorktimeHtml(warning) + '</div>';
+        });
+        html += '</div>';
+      }
+      return html;
+    }
+
+    function getWorktimeCsvFileInput(button) {
+      var actions = button && button.closest ? button.closest('[data-worktime-csv-actions]') : null;
+      return actions && actions.querySelector ? actions.querySelector('[data-worktime-csv-file-input]') : null;
+    }
+
+    function handleWorktimeCsvUpload(button, fileInput, file) {
+      var panel = button && button.closest ? button.closest('[data-worktime-panel]') : null;
+      var uploadUrl = button ? (button.dataset.worktimeCsvUploadUrl || '') : '';
+      if (!panel || !uploadUrl || !file) return Promise.resolve();
+      if (!worktimeCsvControlsEnabled(panel)) {
+        showWorktimeCsvResult(buildWorktimeCsvErrorHtml({
+          error: 'Загрузка и скачивание CSV доступны только для месячного табеля с разбивкой по сотрудникам.'
+        }));
+        return Promise.resolve();
+      }
+
+      var formData = new FormData();
+      formData.append('csv_file', file);
+      buildWorktimeCsvParams(panel).forEach(function (value, key) {
+        formData.append(key, value);
+      });
+      var csrfField = panel.querySelector('[data-worktime-save-form] input[name="csrfmiddlewaretoken"]');
+      if (csrfField && csrfField.value) {
+        formData.append('csrfmiddlewaretoken', csrfField.value);
+      }
+
+      button.disabled = true;
+      return window.fetch(uploadUrl, {
+        method: 'POST',
+        body: formData,
+        credentials: 'same-origin',
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest'
+        }
+      }).then(readWorktimeJsonResponse)
+        .then(function (data) {
+          if (data && data.ok) {
+            showWorktimeCsvResult(buildWorktimeCsvSuccessHtml(data), {
+              onHidden: function () {
+                reloadWorktimePanel(panel);
+              }
+            });
+            return;
+          }
+          showWorktimeCsvResult(buildWorktimeCsvErrorHtml(data || { error: 'Неизвестная ошибка.' }));
+        })
+        .catch(function (error) {
+          showWorktimeCsvResult(buildWorktimeCsvErrorHtml({
+            error: error && error.message ? error.message : 'Не удалось загрузить CSV.'
+          }));
+        })
+        .finally(function () {
+          if (fileInput) {
+            fileInput.value = '';
+          }
+          button.disabled = false;
+        });
+    }
+
+    function handleWorktimeCsvDownload(button) {
+      var panel = button && button.closest ? button.closest('[data-worktime-panel]') : null;
+      var downloadUrl = button ? (button.dataset.worktimeCsvDownloadUrl || '') : '';
+      if (!panel || !downloadUrl) return;
+      if (!worktimeCsvControlsEnabled(panel)) {
+        showWorktimeCsvResult(buildWorktimeCsvErrorHtml({
+          error: 'Загрузка и скачивание CSV доступны только для месячного табеля с разбивкой по сотрудникам.'
+        }));
+        return;
+      }
+      var params = buildWorktimeCsvParams(panel);
+      var requestUrl = params.toString() ? (downloadUrl + '?' + params.toString()) : downloadUrl;
+      window.location.href = requestUrl;
+    }
+
     function getWorktimeAutosaveState(form) {
       if (!form) return null;
       var state = worktimeAutosaveStates.get(form);
@@ -2442,6 +2665,33 @@
           swap: 'innerHTML'
         });
       });
+    });
+
+    document.addEventListener('click', function (event) {
+      var uploadButton = event.target && event.target.closest ? event.target.closest('[data-worktime-csv-upload-btn]') : null;
+      if (uploadButton) {
+        event.preventDefault();
+        var fileInput = getWorktimeCsvFileInput(uploadButton);
+        if (!fileInput) return;
+        fileInput.value = '';
+        fileInput.click();
+        return;
+      }
+      var downloadButton = event.target && event.target.closest ? event.target.closest('[data-worktime-csv-download-btn]') : null;
+      if (!downloadButton) return;
+      event.preventDefault();
+      handleWorktimeCsvDownload(downloadButton);
+    });
+
+    document.addEventListener('change', function (event) {
+      var fileInput = event.target && event.target.closest ? event.target.closest('[data-worktime-csv-file-input]') : null;
+      if (!fileInput) return;
+      var file = fileInput.files && fileInput.files[0];
+      if (!file) return;
+      var actions = fileInput.closest('[data-worktime-csv-actions]');
+      var uploadButton = actions && actions.querySelector ? actions.querySelector('[data-worktime-csv-upload-btn]') : null;
+      if (!uploadButton) return;
+      handleWorktimeCsvUpload(uploadButton, fileInput, file);
     });
 
     document.addEventListener('submit', function (event) {

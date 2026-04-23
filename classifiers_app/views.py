@@ -2046,6 +2046,8 @@ def _import_business_registry_csv_rows(rows):
             errors.append(f"Строка {row_number}: для связи должны быть заполнены from_business_entity_ref и to_business_entity_ref.")
             continue
         event_uid = (row.get("event_uid") or "").strip() or event_ref
+        existing_event = event_definitions.get(event_ref)
+        event_position_fallback = existing_event["position"] if existing_event else section_positions["event"]
         event_definition = {
             "event_uid": event_uid,
             "relation_type": (row.get("relation_type") or "").strip(),
@@ -2060,11 +2062,10 @@ def _import_business_registry_csv_rows(rows):
                 row.get("event_position"),
                 row_number=row_number,
                 field_label="event_position",
-                fallback=section_positions["event"],
+                fallback=event_position_fallback,
                 errors=errors,
             ),
         }
-        existing_event = event_definitions.get(event_ref)
         if existing_event and existing_event != event_definition:
             errors.append(f"Строка {row_number}: данные события «{event_ref}» конфликтуют с предыдущими строками.")
         elif not existing_event:

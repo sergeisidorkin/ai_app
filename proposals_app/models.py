@@ -347,7 +347,7 @@ class ProposalRegistration(models.Model):
         )
 
     def _build_short_uid(self):
-        return f"{self.number}{self.group_order_number}{self.group_alpha2}"
+        return f"{self.formatted_number}{self.group_order_number}{self.group_alpha2}"
 
     def save(self, *args, **kwargs):
         member = self._resolved_group_member()
@@ -390,6 +390,24 @@ class ProposalRegistration(models.Model):
     def last_product(self):
         products = self.ordered_products()
         return products[-1] if products else None
+
+    @property
+    def type_short_names(self):
+        labels = []
+        seen = set()
+        for product in self.ordered_products():
+            label = (
+                getattr(product, "short_name", "")
+                or str(product or "")
+            ).strip()
+            if label and label not in seen:
+                seen.add(label)
+                labels.append(label)
+        return labels
+
+    @property
+    def type_short_display(self):
+        return "-".join(self.type_short_names)
 
 
 class ProposalRegistrationProduct(models.Model):
