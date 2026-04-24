@@ -108,7 +108,7 @@
                   data-template-type="{{ template_type }}">
             Отмена
           </button>
-          {% if user_has_custom and not is_superuser %}
+          {% if user_has_custom and not can_manage_shared_templates %}
             <button type="button" class="btn btn-outline-danger btn-sm ms-auto js-letter-reset"
                     data-template-type="{{ template_type }}"
                     data-reset-url="{% url 'letter_template_reset' template_type %}">
@@ -161,7 +161,7 @@
   </div>
 
   <!-- User templates card (superuser only) -->
-  {% if is_superuser and user_templates %}
+  {% if can_manage_shared_templates and user_templates %}
     <div class="card shadow-sm mt-3">
       <div class="card-body">
         <div class="d-flex align-items-center mb-4">

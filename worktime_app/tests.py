@@ -171,11 +171,35 @@ class WorktimeAppTests(TestCase):
 
         result = _attach_group_histograms(groups)
 
-        self.assertEqual(result[0]["histogram_width_percent"], 100.0)
-        self.assertEqual(result[0]["rows"][0]["histogram_width_percent"], 2.0)
-        self.assertEqual(result[0]["rows"][1]["histogram_width_percent"], 100.0)
-        self.assertEqual(result[1]["histogram_width_percent"], 18.0)
-        self.assertEqual(result[1]["rows"][0]["histogram_width_percent"], 18.0)
+        self.assertEqual(result[0]["histogram_width_percent"], Decimal("100"))
+        self.assertEqual(result[0]["rows"][0]["histogram_width_percent"], Decimal("2"))
+        self.assertEqual(result[0]["rows"][1]["histogram_width_percent"], Decimal("100"))
+        self.assertEqual(result[1]["histogram_width_percent"], Decimal("18"))
+        self.assertEqual(result[1]["rows"][0]["histogram_width_percent"], Decimal("18"))
+
+    def test_general_partial_renders_histograms_with_decimal_hours(self):
+        assignment_a = WorktimeAssignment.objects.create(
+            registration=self.registration,
+            employee=self.employee,
+            executor_name=self._full_name(self.employee),
+            source_type=WorktimeAssignment.SourceType.PERFORMER_CONFIRMATION,
+        )
+        assignment_b = WorktimeAssignment.objects.create(
+            registration=self.second_registration,
+            employee=self.other_employee,
+            executor_name=self._full_name(self.other_employee),
+            source_type=WorktimeAssignment.SourceType.PROJECT_MANAGER,
+        )
+        WorktimeEntry.objects.create(assignment=assignment_a, work_date=date(2026, 4, 1), hours=Decimal("7.50"))
+        WorktimeEntry.objects.create(assignment=assignment_b, work_date=date(2026, 4, 2), hours=Decimal("3.25"))
+
+        response = self.client.get(reverse("worktime_partial"), {"month": "2026-04", "hist_sort": "desc"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, self._full_name(self.employee))
+        self.assertContains(response, self._full_name(self.other_employee))
+        self.assertContains(response, "7,5")
+        self.assertContains(response, "3,25")
 
     def test_project_manager_save_creates_assignment(self):
         registration = ProjectRegistration.objects.create(

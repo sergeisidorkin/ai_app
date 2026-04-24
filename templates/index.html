@@ -654,10 +654,7 @@
             <div class="ps-3">
               <div id="letters-content-proposal-sending"
                    class="letters-section-content"
-                   hx-get="{% url 'letter_template_partial' 'proposal_sending' %}"
-                   hx-trigger="intersect once"
-                   hx-swap="innerHTML">
-                <div class="text-center py-4"><div class="spinner-border spinner-border-sm text-secondary"></div></div>
+                   data-letters-url="{% url 'letter_template_partial' 'proposal_sending' %}">
               </div>
               <div id="letters-content-participation-confirmation" class="letters-section-content d-none"
                    data-letters-url="{% url 'letter_template_partial' 'participation_confirmation' %}">
@@ -1729,16 +1726,149 @@
             if (link) link.classList.add('active');
           }
 
-          function switchLettersSection(key) {
+          var LETTERS_LOAD_TIMEOUT_MS = 15000;
+          var LETTERS_DEFAULT_SECTION = 'proposal-sending';
+
+          function escapeLettersHtml(value) {
+            return String(value == null ? '' : value)
+              .replace(/&/g, '&amp;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;')
+              .replace(/"/g, '&quot;')
+              .replace(/'/g, '&#39;');
+          }
+
+          function renderLettersLoadingState(target) {
+            if (!target) return;
+            target.innerHTML = '<div class="text-center py-4"><div class="spinner-border spinner-border-sm text-secondary" role="status" aria-hidden="true"></div></div>';
+          }
+
+          function renderLettersErrorState(target, message) {
+            if (!target) return;
+            target.innerHTML =
+              '<div class="alert alert-warning d-flex flex-column align-items-start gap-2 my-3" role="alert">' +
+                '<div class="fw-semibold">Не удалось загрузить раздел.</div>' +
+                '<div class="small text-muted">' + escapeLettersHtml(message) + '</div>' +
+                '<button type="button" class="btn btn-outline-primary btn-sm" data-letters-retry-btn>Повторить</button>' +
+              '</div>';
+          }
+
+          function lettersTabIsVisible() {
+            var tab = document.getElementById('letters');
+            return !!(tab && tab.classList.contains('show') && tab.classList.contains('active'));
+          }
+
+          function getLettersSectionState(target) {
+            return target && target.dataset ? (target.dataset.loadState || 'idle') : 'idle';
+          }
+
+          function setLettersSectionState(target, state) {
+            if (!target || !target.dataset) return;
+            if (state) {
+              target.dataset.loadState = state;
+            } else {
+              delete target.dataset.loadState;
+            }
+          }
+
+          function hasLettersCardContent(target) {
+            return !!(target && target.querySelector && target.querySelector('[id^="letter-card-"]'));
+          }
+
+          function isLettersSectionStale(target) {
+            if (!target) return false;
+            if (getLettersSectionState(target) === 'loading') return false;
+            return !!(
+              target.querySelector &&
+              target.querySelector('.spinner-border') &&
+              !hasLettersCardContent(target)
+            );
+          }
+
+          function loadLettersSection(target, options) {
+            if (!target) return Promise.resolve(false);
+            var url = target.getAttribute('data-letters-url');
+            if (!url) return Promise.resolve(false);
+
+            var force = !!(options && options.force);
+            var state = getLettersSectionState(target);
+            var stale = isLettersSectionStale(target);
+
+            if (state === 'loading' && target._lettersLoadPromise) {
+              return target._lettersLoadPromise;
+            }
+            if (!force && state === 'loaded' && !stale) {
+              return Promise.resolve(true);
+            }
+
+            setLettersSectionState(target, 'loading');
+            renderLettersLoadingState(target);
+
+            var controller = window.AbortController ? new AbortController() : null;
+            var didTimeout = false;
+            var timeoutId = controller ? window.setTimeout(function () {
+              didTimeout = true;
+              controller.abort();
+            }, LETTERS_LOAD_TIMEOUT_MS) : 0;
+
+            var requestPromise = window.fetch(url, {
+              method: 'GET',
+              credentials: 'same-origin',
+              headers: {
+                'HX-Request': 'true',
+                'X-Requested-With': 'XMLHttpRequest'
+              },
+              signal: controller ? controller.signal : undefined
+            })
+              .then(function (response) {
+                return response.text().then(function (html) {
+                  return { response: response, html: html };
+                });
+              })
+              .then(function (result) {
+                if (!result.response.ok) {
+                  var httpError = new Error('HTTP ' + result.response.status);
+                  httpError.status = result.response.status;
+                  throw httpError;
+                }
+                target.innerHTML = result.html;
+                if (window.htmx) {
+                  window.htmx.process(target);
+                }
+                setLettersSectionState(target, 'loaded');
+                return true;
+              })
+              .catch(function (error) {
+                var message = didTimeout
+                  ? 'Сервер не ответил вовремя. Попробуйте ещё раз.'
+                  : (
+                    error && error.status
+                      ? ('Сервер вернул ошибку (' + error.status + '). Попробуйте ещё раз.')
+                      : 'Проверьте соединение и повторите попытку.'
+                  );
+                renderLettersErrorState(target, message);
+                setLettersSectionState(target, 'error');
+                return false;
+              })
+              .finally(function () {
+                if (timeoutId) {
+                  window.clearTimeout(timeoutId);
+                }
+                target._lettersLoadPromise = null;
+              });
+
+            target._lettersLoadPromise = requestPromise;
+            return requestPromise;
+          }
+
+          function switchLettersSection(key, options) {
+            var opts = options || {};
             document.querySelectorAll('.letters-section-content').forEach(function(el) { el.classList.add('d-none'); });
             var target = document.getElementById('letters-content-' + key);
             if (target) {
               target.classList.remove('d-none');
-              var url = target.getAttribute('data-letters-url');
-              if (url && !target.dataset.loaded) {
-                target.dataset.loaded = '1';
-                target.innerHTML = '<div class="text-center py-4"><div class="spinner-border spinner-border-sm text-secondary"></div></div>';
-                htmx.ajax('GET', url, {target: target, swap: 'innerHTML'});
+              if (opts.load !== false) {
+                loadLettersSection(target, { force: isLettersSectionStale(target) });
               }
             }
             if (titleEl) titleEl.textContent = LETTERS_TITLES[key] || '';
@@ -1756,12 +1886,27 @@
             });
           }
 
+          document.addEventListener('click', function (e) {
+            var retryButton = e.target && e.target.closest ? e.target.closest('[data-letters-retry-btn]') : null;
+            if (!retryButton) return;
+            e.preventDefault();
+            var target = retryButton.closest('.letters-section-content');
+            loadLettersSection(target, { force: true });
+          });
+
+          document.addEventListener('shown.bs.tab', function (e) {
+            var tabLink = e.target;
+            if (!tabLink || !tabLink.matches || !tabLink.matches('a[href="#letters"][data-bs-toggle="tab"]')) return;
+            var activeLink = sidebar && sidebar.querySelector('.list-group-item.active');
+            var sectionKey = activeLink ? activeLink.dataset.lettersSection : LETTERS_DEFAULT_SECTION;
+            switchLettersSection(sectionKey, { load: true });
+          });
+
           document.addEventListener('DOMContentLoaded', function () {
             var saved = window.UIPref ? UIPref.get('letters:section', null) : null;
-            if (saved && LETTERS_TITLES[saved]) {
-              activateSidebarLink(saved);
-              switchLettersSection(saved);
-            }
+            var initial = saved && LETTERS_TITLES[saved] ? saved : LETTERS_DEFAULT_SECTION;
+            activateSidebarLink(initial);
+            switchLettersSection(initial, { load: lettersTabIsVisible() });
           });
         })();
         </script>

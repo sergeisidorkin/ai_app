@@ -59,6 +59,7 @@ MONTH_SHORT_LABELS = {
 WEEKDAY_LABELS = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
 MAX_HOURS_PER_DAY = Decimal("24")
 WORKTIME_HOURS_QUANT = Decimal("0.01")
+ZERO_DECIMAL = Decimal("0")
 PERSONAL_WEEK_LIMIT_WEEKS = 2
 PERSONAL_WEEK_LIMIT_ERROR = "Нельзя выбрать слишком далекую будущую неделю. Доступны текущая неделя и только две следующие."
 WORKTIME_ACCESS_ERROR = 'Табель доступен только штатным сотрудникам с правами staff. Пользователи с трудоустройством "Внештатный сотрудник" не допускаются.'
@@ -832,38 +833,57 @@ def _group_totals(groups, visible_days):
 def _attach_group_histograms(groups):
     if not groups:
         return groups
-    min_width_percent = 18.0
-    row_min_width_percent = 2.0
-    totals = [group.get("grand_total", 0) or 0 for group in groups]
+    min_width_percent = Decimal("18")
+    row_min_width_percent = Decimal("2")
+    max_width_percent = Decimal("100")
+    totals = [_coerce_worktime_decimal(group.get("grand_total", 0) or 0) for group in groups]
     min_total = min(totals)
     max_total = max(totals)
     spread = max_total - min_total
     for group in groups:
-        value = group.get("grand_total", 0) or 0
+        value = _coerce_worktime_decimal(group.get("grand_total", 0) or 0)
         if spread <= 0:
-            normalized = 100.0 if max_total > 0 else min_width_percent
+            normalized = max_width_percent if max_total > 0 else min_width_percent
         else:
-            normalized = min_width_percent + ((value - min_total) / spread) * (100.0 - min_width_percent)
-        group["histogram_width_percent"] = round(normalized, 3)
-        group_max_width = group["histogram_width_percent"]
-        row_totals = [row.get("total_hours", 0) or 0 for row in group.get("rows", [])]
+            normalized = min_width_percent + ((value - min_total) / spread) * (max_width_percent - min_width_percent)
+        group_max_width = round(normalized, 3)
+        group["histogram_width_percent"] = group_max_width
+        row_totals = [_coerce_worktime_decimal(row.get("total_hours", 0) or 0) for row in group.get("rows", [])]
         if not row_totals:
             continue
         min_row_total = min(row_totals)
         max_row_total = max(row_totals)
         row_spread = max_row_total - min_row_total
         for row in group.get("rows", []):
-            row_total = row.get("total_hours", 0) or 0
+            row_total = _coerce_worktime_decimal(row.get("total_hours", 0) or 0)
             if row_spread <= 0:
                 row_normalized = group_max_width if max_row_total > 0 else row_min_width_percent
             elif max_row_total <= 0:
                 row_normalized = row_min_width_percent
             else:
                 row_normalized = row_min_width_percent + ((row_total - min_row_total) / row_spread) * max(
-                    group_max_width - row_min_width_percent, 0
+                    group_max_width - row_min_width_percent, Decimal("0")
                 )
             row["histogram_width_percent"] = round(row_normalized, 3)
     return groups
+
+
+def _coerce_worktime_decimal(value):
+    if value in (None, ""):
+        return ZERO_DECIMAL
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
+
+
+def _format_worktime_hours_for_csv(value):
+    if value is None:
+        return ""
+    decimal_value = value if isinstance(value, Decimal) else Decimal(str(value))
+    text = format(decimal_value, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
 
 
 def _apply_histogram_sort(groups, hist_sort):
@@ -1300,7 +1320,7 @@ def worktime_csv_download(request):
                 descriptor["type_label"],
                 descriptor["name_label"],
                 *[
-                    "" if day_values.get(work_day) is None else day_values.get(work_day)
+                    _format_worktime_hours_for_csv(day_values.get(work_day))
                     for work_day in month_days
                 ],
             ]

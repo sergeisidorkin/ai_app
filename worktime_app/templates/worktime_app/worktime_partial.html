@@ -1,4 +1,4 @@
-{% load l10n %}
+{% load l10n worktime_format %}
 {% if is_personal_week_view %}
   <div class="d-flex align-items-center gap-2 mb-3 table-section-header flex-wrap">
     <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
@@ -274,15 +274,15 @@
                            aria-label="Часы за {{ cell.date|date:'d.m.Y' }}">
                   </td>
                 {% endfor %}
-                <td class="text-end fw-semibold worktime-total-cell" data-worktime-row-total>{{ row.total_hours|localize }}</td>
+                <td class="text-end fw-semibold worktime-total-cell" data-worktime-row-total>{{ row.total_hours|worktime_hours }}</td>
               </tr>
             {% endfor %}
             <tr class="table-light fw-semibold worktime-summary-row">
               <td colspan="3" class="text-end worktime-sticky-total"></td>
               {% for total in column_totals %}
-                <td class="text-center worktime-flex-total-cell" data-worktime-column-total>{{ total|localize }}</td>
+                <td class="text-center worktime-flex-total-cell" data-worktime-column-total>{{ total|worktime_hours }}</td>
               {% endfor %}
-              <td class="text-end worktime-total-cell" data-worktime-grand-total>{{ grand_total|localize }}</td>
+              <td class="text-end worktime-total-cell" data-worktime-grand-total>{{ grand_total|worktime_hours }}</td>
             </tr>
           {% else %}
             <tr>
@@ -315,10 +315,10 @@
                   {% endif %}
                   {% for cell in row.cells %}
                   <td class="text-center worktime-flex-total-cell">
-                    <span class="worktime-cell-display{% if not cell.value %} worktime-zero-display{% endif %}">{{ cell.value|default:0|localize }}</span>
+                    <span class="worktime-cell-display{% if not cell.value %} worktime-zero-display{% endif %}">{{ cell.value|default:0|worktime_hours }}</span>
                   </td>
                   {% endfor %}
-                  <td class="text-end fw-semibold worktime-total-cell" data-worktime-row-total>{{ row.total_hours|localize }}</td>
+                  <td class="text-end fw-semibold worktime-total-cell" data-worktime-row-total>{{ row.total_hours|worktime_hours }}</td>
                 <td class="worktime-hist-cell worktime-hist-cell-bar">
                   <div class="worktime-hist-track worktime-hist-track-secondary">
                     <div class="worktime-hist-bar worktime-hist-bar-secondary" style="width: {{ row.histogram_width_percent }}%;"></div>
@@ -344,10 +344,10 @@
                 </td>
                 {% for total in group.column_totals %}
                   <td class="text-center worktime-flex-total-cell">
-                    <span class="worktime-cell-display{% if not total %} worktime-zero-display{% endif %}">{{ total|localize }}</span>
+                    <span class="worktime-cell-display{% if not total %} worktime-zero-display{% endif %}">{{ total|worktime_hours }}</span>
                   </td>
                 {% endfor %}
-                <td class="text-end worktime-total-cell">{{ group.grand_total|localize }}</td>
+                <td class="text-end worktime-total-cell">{{ group.grand_total|worktime_hours }}</td>
                 <td class="worktime-hist-cell worktime-hist-cell-bar">
                   <div class="worktime-hist-track">
                     <div class="worktime-hist-bar" style="width: {{ group.histogram_width_percent }}%;"></div>
@@ -359,10 +359,10 @@
               <td colspan="3" class="worktime-sticky-total">Итого</td>
               {% for total in column_totals %}
                 <td class="text-center worktime-flex-total-cell">
-                  <span class="worktime-cell-display{% if not total %} worktime-zero-display{% endif %}">{{ total|localize }}</span>
+                  <span class="worktime-cell-display{% if not total %} worktime-zero-display{% endif %}">{{ total|worktime_hours }}</span>
                 </td>
               {% endfor %}
-              <td class="text-end worktime-total-cell">{{ grand_total|localize }}</td>
+              <td class="text-end worktime-total-cell">{{ grand_total|worktime_hours }}</td>
               <td class="worktime-hist-cell"></td>
             </tr>
           {% else %}
