@@ -1,7 +1,10 @@
 from django.contrib.auth.decorators import login_required
+from django.db import transaction
 from django.http import JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
+
+from policy_app.models import DIRECTOR_GROUP
 
 from .models import LetterTemplate
 from .services import get_effective_template
@@ -54,18 +57,58 @@ def _user_templates_list(template_type):
     return result
 
 
+def _shared_templates_queryset(template_type):
+    return LetterTemplate.objects.filter(
+        template_type=template_type,
+        user__isnull=True,
+    ).order_by("-updated_at", "-pk")
+
+
+def _can_manage_shared_letter_templates(user):
+    if not user.is_superuser:
+        return False
+    employee = getattr(user, "employee_profile", None)
+    return getattr(employee, "role", "") != DIRECTOR_GROUP
+
+
+def _save_shared_letter_template(*, template_type, subject, body_html):
+    with transaction.atomic():
+        tpl = _shared_templates_queryset(template_type).select_for_update().first()
+        if tpl is None:
+            return LetterTemplate.objects.create(
+                template_type=template_type,
+                user=None,
+                subject_template=subject,
+                body_html=body_html,
+                is_default=True,
+            )
+
+        tpl.subject_template = subject
+        tpl.body_html = body_html
+        tpl.is_default = True
+        tpl.save(update_fields=["subject_template", "body_html", "is_default", "updated_at"])
+        (
+            LetterTemplate.objects
+            .filter(template_type=template_type, user__isnull=True, is_default=True)
+            .exclude(pk=tpl.pk)
+            .update(is_default=False)
+        )
+        return tpl
+
+
 def _base_context(request, template_type, tpl, **extra):
     variables = LetterTemplate.TEMPLATE_VARIABLES.get(template_type, [])
+    can_manage_shared_templates = _can_manage_shared_letter_templates(request.user)
     ctx = {
         "template": tpl,
         "template_type": template_type,
         "template_type_display": VALID_TYPES[template_type],
         "card_title": LetterTemplate.TEMPLATE_CARD_TITLES.get(template_type, ""),
         "variables": variables,
-        "is_superuser": request.user.is_superuser,
+        "can_manage_shared_templates": can_manage_shared_templates,
         "cc_recipients": _cc_display_list(tpl),
     }
-    if request.user.is_superuser:
+    if can_manage_shared_templates:
         ctx["user_templates"] = _user_templates_list(template_type)
     ctx.update(extra)
     return ctx
@@ -99,15 +142,11 @@ def letter_template_save(request, template_type):
     if not body_html:
         return JsonResponse({"error": "empty body"}, status=400)
 
-    if request.user.is_superuser:
-        tpl, _created = LetterTemplate.objects.update_or_create(
+    if _can_manage_shared_letter_templates(request.user):
+        tpl = _save_shared_letter_template(
             template_type=template_type,
-            user=None,
-            defaults={
-                "subject_template": subject,
-                "body_html": body_html,
-                "is_default": True,
-            },
+            subject=subject,
+            body_html=body_html,
         )
     else:
         tpl, _created = LetterTemplate.objects.update_or_create(

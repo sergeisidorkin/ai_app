@@ -155,8 +155,10 @@ class WorktimeEntry(models.Model):
         verbose_name="Строка табеля",
     )
     work_date = models.DateField("Дата")
-    hours = models.PositiveIntegerField(
+    hours = models.DecimalField(
         "Количество часов",
+        max_digits=5,
+        decimal_places=2,
         validators=[MinValueValidator(0), MaxValueValidator(24)],
     )
     created_at = models.DateTimeField(auto_now_add=True)

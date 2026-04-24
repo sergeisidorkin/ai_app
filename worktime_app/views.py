@@ -3,6 +3,7 @@ import io
 import json
 from calendar import monthrange
 from datetime import date, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 
 from django import forms
 from django.contrib.auth.decorators import login_required
@@ -56,7 +57,9 @@ MONTH_SHORT_LABELS = {
     12: "Дек",
 }
 WEEKDAY_LABELS = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
-MAX_HOURS_PER_DAY = 24
+MAX_HOURS_PER_DAY = Decimal("24")
+WORKTIME_HOURS_QUANT = Decimal("0.01")
+ZERO_DECIMAL = Decimal("0")
 PERSONAL_WEEK_LIMIT_WEEKS = 2
 PERSONAL_WEEK_LIMIT_ERROR = "Нельзя выбрать слишком далекую будущую неделю. Доступны текущая неделя и только две следующие."
 WORKTIME_ACCESS_ERROR = 'Табель доступен только штатным сотрудникам с правами staff. Пользователи с трудоустройством "Внештатный сотрудник" не допускаются.'
@@ -280,6 +283,7 @@ def _build_worktime_csv_project_index():
     registrations = (
         ProjectRegistration.objects
         .select_related("type")
+        .prefetch_related("product_links__product")
         .order_by("id")
     )
     for registration in registrations:
@@ -328,6 +332,7 @@ def _find_or_create_worktime_csv_assignment(
 ):
     assignment = assignments_by_key.get(row_key)
     if assignment is not None:
+        _ensure_worktime_csv_week_links(assignment, week_starts)
         return assignment, False
 
     if not week_starts:
@@ -359,11 +364,7 @@ def _find_or_create_worktime_csv_assignment(
     if assignment is None:
         raise forms.ValidationError("не удалось создать строку табеля для проекта и сотрудника.")
 
-    for week_start in week_starts[1:]:
-        PersonalWorktimeWeekAssignment.objects.get_or_create(
-            assignment=assignment,
-            week_start=week_start,
-        )
+    _ensure_worktime_csv_week_links(assignment, week_starts)
 
     assignments_by_key[row_key] = assignment
     assignments_by_key[_worktime_csv_assignment_key(assignment)] = assignment
@@ -425,20 +426,19 @@ def _normalize_worktime_csv_row(row, expected_length):
 
 
 def _parse_worktime_csv_hours(raw_value, work_day, *, row_number):
-    raw_text = str(raw_value or "").strip()
-    if not raw_text:
-        return None
-    try:
-        hours = int(raw_text)
-    except (TypeError, ValueError):
-        raise forms.ValidationError(
-            f"Строка {row_number}: значение за {work_day.strftime('%d.%m.%Y')} должно быть целым числом."
-        )
-    if hours < 0 or hours > MAX_HOURS_PER_DAY:
-        raise forms.ValidationError(
-            f"Строка {row_number}: количество часов за {work_day.strftime('%d.%m.%Y')} должно быть в диапазоне от 0 до {MAX_HOURS_PER_DAY}."
-        )
-    return hours
+    return _parse_worktime_hours_value(
+        raw_value,
+        work_day,
+        invalid_message=f"Строка {row_number}: значение за {work_day.strftime('%d.%m.%Y')} должно быть числом.",
+        precision_message=(
+            f"Строка {row_number}: значение за {work_day.strftime('%d.%m.%Y')} "
+            "должно быть числом с не более чем двумя знаками после запятой."
+        ),
+        range_message=(
+            f"Строка {row_number}: количество часов за {work_day.strftime('%d.%m.%Y')} "
+            f"должно быть в диапазоне от 0 до {MAX_HOURS_PER_DAY}."
+        ),
+    )
 
 
 def _parse_worktime_csv_row_values(month_days, raw_values, *, row_number):
@@ -454,6 +454,34 @@ def _worktime_csv_week_starts(day_values):
         for work_day, hours in (day_values or {}).items()
         if hours is not None
     })
+
+
+def _ensure_worktime_csv_week_links(assignment, week_starts):
+    if assignment is None or assignment.source_type != WorktimeAssignment.SourceType.MANUAL_PERSONAL_WEEK:
+        return
+    for week_start in week_starts or []:
+        PersonalWorktimeWeekAssignment.objects.get_or_create(
+            assignment=assignment,
+            week_start=week_start,
+        )
+
+
+def _parse_worktime_hours_value(raw_value, work_day, *, invalid_message, precision_message, range_message):
+    raw_text = str(raw_value or "").strip().replace(",", ".")
+    if not raw_text:
+        return None
+    try:
+        hours = Decimal(raw_text)
+    except (InvalidOperation, TypeError, ValueError):
+        raise forms.ValidationError(invalid_message)
+    if not hours.is_finite():
+        raise forms.ValidationError(invalid_message)
+    normalized_hours = hours.quantize(WORKTIME_HOURS_QUANT)
+    if normalized_hours != hours:
+        raise forms.ValidationError(precision_message)
+    if normalized_hours < 0 or normalized_hours > MAX_HOURS_PER_DAY:
+        raise forms.ValidationError(range_message)
+    return normalized_hours
 
 
 def _base_worktime_assignment_queryset():
@@ -805,38 +833,57 @@ def _group_totals(groups, visible_days):
 def _attach_group_histograms(groups):
     if not groups:
         return groups
-    min_width_percent = 18.0
-    row_min_width_percent = 2.0
-    totals = [group.get("grand_total", 0) or 0 for group in groups]
+    min_width_percent = Decimal("18")
+    row_min_width_percent = Decimal("2")
+    max_width_percent = Decimal("100")
+    totals = [_coerce_worktime_decimal(group.get("grand_total", 0) or 0) for group in groups]
     min_total = min(totals)
     max_total = max(totals)
     spread = max_total - min_total
     for group in groups:
-        value = group.get("grand_total", 0) or 0
+        value = _coerce_worktime_decimal(group.get("grand_total", 0) or 0)
         if spread <= 0:
-            normalized = 100.0 if max_total > 0 else min_width_percent
+            normalized = max_width_percent if max_total > 0 else min_width_percent
         else:
-            normalized = min_width_percent + ((value - min_total) / spread) * (100.0 - min_width_percent)
-        group["histogram_width_percent"] = round(normalized, 3)
-        group_max_width = group["histogram_width_percent"]
-        row_totals = [row.get("total_hours", 0) or 0 for row in group.get("rows", [])]
+            normalized = min_width_percent + ((value - min_total) / spread) * (max_width_percent - min_width_percent)
+        group_max_width = round(normalized, 3)
+        group["histogram_width_percent"] = group_max_width
+        row_totals = [_coerce_worktime_decimal(row.get("total_hours", 0) or 0) for row in group.get("rows", [])]
         if not row_totals:
             continue
         min_row_total = min(row_totals)
         max_row_total = max(row_totals)
         row_spread = max_row_total - min_row_total
         for row in group.get("rows", []):
-            row_total = row.get("total_hours", 0) or 0
+            row_total = _coerce_worktime_decimal(row.get("total_hours", 0) or 0)
             if row_spread <= 0:
                 row_normalized = group_max_width if max_row_total > 0 else row_min_width_percent
             elif max_row_total <= 0:
                 row_normalized = row_min_width_percent
             else:
                 row_normalized = row_min_width_percent + ((row_total - min_row_total) / row_spread) * max(
-                    group_max_width - row_min_width_percent, 0
+                    group_max_width - row_min_width_percent, Decimal("0")
                 )
             row["histogram_width_percent"] = round(row_normalized, 3)
     return groups
+
+
+def _coerce_worktime_decimal(value):
+    if value in (None, ""):
+        return ZERO_DECIMAL
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
+
+
+def _format_worktime_hours_for_csv(value):
+    if value is None:
+        return ""
+    decimal_value = value if isinstance(value, Decimal) else Decimal(str(value))
+    text = format(decimal_value, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
 
 
 def _apply_histogram_sort(groups, hist_sort):
@@ -1018,17 +1065,19 @@ def _parse_hours_payload(request_post, assignment_ids, month_days):
             if not raw_value:
                 parsed[(assignment_id, work_day)] = None
                 continue
-            try:
-                hours = int(raw_value)
-            except (TypeError, ValueError):
-                raise forms.ValidationError(
-                    f"Значение за {work_day.strftime('%d.%m.%Y')} должно быть целым числом."
-                )
-            if hours < 0 or hours > MAX_HOURS_PER_DAY:
-                raise forms.ValidationError(
-                    f"Количество часов за {work_day.strftime('%d.%m.%Y')} должно быть в диапазоне от 0 до {MAX_HOURS_PER_DAY}."
-                )
-            parsed[(assignment_id, work_day)] = hours
+            parsed[(assignment_id, work_day)] = _parse_worktime_hours_value(
+                raw_value,
+                work_day,
+                invalid_message=f"Значение за {work_day.strftime('%d.%m.%Y')} должно быть числом.",
+                precision_message=(
+                    f"Значение за {work_day.strftime('%d.%m.%Y')} "
+                    "должно быть числом с не более чем двумя знаками после запятой."
+                ),
+                range_message=(
+                    f"Количество часов за {work_day.strftime('%d.%m.%Y')} "
+                    f"должно быть в диапазоне от 0 до {MAX_HOURS_PER_DAY}."
+                ),
+            )
     return parsed
 
 
@@ -1271,7 +1320,7 @@ def worktime_csv_download(request):
                 descriptor["type_label"],
                 descriptor["name_label"],
                 *[
-                    "" if day_values.get(work_day) is None else day_values.get(work_day)
+                    _format_worktime_hours_for_csv(day_values.get(work_day))
                     for work_day in month_days
                 ],
             ]

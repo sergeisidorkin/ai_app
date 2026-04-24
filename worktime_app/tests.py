@@ -2,23 +2,26 @@ import csv
 import io
 from calendar import monthrange
 from datetime import date, timedelta
+from decimal import Decimal
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import connection
 from django.template.loader import render_to_string
 from django.test import RequestFactory, TestCase
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
 from notifications_app.models import Notification, NotificationPerformerLink
 from notifications_app.services import process_participation_notification
 from policy_app.models import ADMIN_GROUP, DEPARTMENT_HEAD_GROUP, Product
-from projects_app.models import Performer, ProjectRegistration
+from projects_app.models import Performer, ProjectRegistration, ProjectRegistrationProduct
 from proposals_app.models import ProposalRegistration
 from users_app.models import Employee
 from worktime_app.models import PersonalWorktimeWeekAssignment, WorktimeAssignment, WorktimeEntry
-from worktime_app.views import _attach_group_histograms, _worktime_context
+from worktime_app.views import _attach_group_histograms, _build_worktime_csv_project_index, _worktime_context
 
 
 class WorktimeAppTests(TestCase):
@@ -168,11 +171,35 @@ class WorktimeAppTests(TestCase):
 
         result = _attach_group_histograms(groups)
 
-        self.assertEqual(result[0]["histogram_width_percent"], 100.0)
-        self.assertEqual(result[0]["rows"][0]["histogram_width_percent"], 2.0)
-        self.assertEqual(result[0]["rows"][1]["histogram_width_percent"], 100.0)
-        self.assertEqual(result[1]["histogram_width_percent"], 18.0)
-        self.assertEqual(result[1]["rows"][0]["histogram_width_percent"], 18.0)
+        self.assertEqual(result[0]["histogram_width_percent"], Decimal("100"))
+        self.assertEqual(result[0]["rows"][0]["histogram_width_percent"], Decimal("2"))
+        self.assertEqual(result[0]["rows"][1]["histogram_width_percent"], Decimal("100"))
+        self.assertEqual(result[1]["histogram_width_percent"], Decimal("18"))
+        self.assertEqual(result[1]["rows"][0]["histogram_width_percent"], Decimal("18"))
+
+    def test_general_partial_renders_histograms_with_decimal_hours(self):
+        assignment_a = WorktimeAssignment.objects.create(
+            registration=self.registration,
+            employee=self.employee,
+            executor_name=self._full_name(self.employee),
+            source_type=WorktimeAssignment.SourceType.PERFORMER_CONFIRMATION,
+        )
+        assignment_b = WorktimeAssignment.objects.create(
+            registration=self.second_registration,
+            employee=self.other_employee,
+            executor_name=self._full_name(self.other_employee),
+            source_type=WorktimeAssignment.SourceType.PROJECT_MANAGER,
+        )
+        WorktimeEntry.objects.create(assignment=assignment_a, work_date=date(2026, 4, 1), hours=Decimal("7.50"))
+        WorktimeEntry.objects.create(assignment=assignment_b, work_date=date(2026, 4, 2), hours=Decimal("3.25"))
+
+        response = self.client.get(reverse("worktime_partial"), {"month": "2026-04", "hist_sort": "desc"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, self._full_name(self.employee))
+        self.assertContains(response, self._full_name(self.other_employee))
+        self.assertContains(response, "7,5")
+        self.assertContains(response, "3,25")
 
     def test_project_manager_save_creates_assignment(self):
         registration = ProjectRegistration.objects.create(
@@ -602,6 +629,39 @@ class WorktimeAppTests(TestCase):
             [
                 (date(2026, 4, 1), 8),
                 (date(2026, 4, 2), 6),
+            ],
+        )
+
+    def test_save_accepts_decimal_hours_for_month(self):
+        assignment = WorktimeAssignment.objects.create(
+            registration=self.registration,
+            employee=self.employee,
+            executor_name=self._full_name(self.employee),
+            source_type=WorktimeAssignment.SourceType.PERFORMER_CONFIRMATION,
+        )
+
+        response = self.client.post(
+            reverse("worktime_save"),
+            {
+                "scope": "all",
+                "month": "2026-04",
+                "assignment_ids": [str(assignment.pk)],
+                f"hours_{assignment.pk}_20260401": "7.5",
+                f"hours_{assignment.pk}_20260402": "0,25",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Табель сохранен.")
+        self.assertEqual(
+            list(
+                WorktimeEntry.objects.filter(assignment=assignment)
+                .order_by("work_date")
+                .values_list("work_date", "hours")
+            ),
+            [
+                (date(2026, 4, 1), Decimal("7.50")),
+                (date(2026, 4, 2), Decimal("0.25")),
             ],
         )
 
@@ -1272,6 +1332,147 @@ class WorktimeAppTests(TestCase):
         hidden_response = self.client.get(reverse("personal_worktime_partial"), {"week": "2026-04-14"})
         self.assertContains(visible_response, self.second_registration.name)
         self.assertNotContains(hidden_response, self.second_registration.name)
+
+    def test_worktime_csv_upload_accepts_decimal_hours(self):
+        assignment = WorktimeAssignment.objects.create(
+            registration=self.registration,
+            employee=self.employee,
+            executor_name=self._full_name(self.employee),
+            source_type=WorktimeAssignment.SourceType.PERFORMER_CONFIRMATION,
+        )
+        april_days = [""] * 30
+        april_days[0] = "7,5"
+        april_days[1] = "0.25"
+        upload = self._make_worktime_csv_upload(
+            self._worktime_csv_header("2026-04"),
+            [[
+                self._full_name(self.employee),
+                assignment.display_project_code,
+                assignment.display_type_label,
+                assignment.display_project_name,
+                *april_days,
+            ]],
+        )
+
+        response = self.client.post(
+            reverse("worktime_csv_upload"),
+            {
+                "csv_file": upload,
+                "scale": "month",
+                "period": "2026-04",
+                "breakdown": "employees",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {"ok": True, "created": 2, "updated": 0, "deleted": 0},
+        )
+        self.assertEqual(
+            list(
+                WorktimeEntry.objects.filter(assignment=assignment)
+                .order_by("work_date")
+                .values_list("work_date", "hours")
+            ),
+            [
+                (date(2026, 4, 1), Decimal("7.50")),
+                (date(2026, 4, 2), Decimal("0.25")),
+            ],
+        )
+
+    def test_worktime_csv_upload_reuses_existing_manual_assignment_and_adds_missing_week_links(self):
+        assignment = WorktimeAssignment.objects.create(
+            registration=self.second_registration,
+            employee=self.employee,
+            executor_name=self._full_name(self.employee),
+            source_type=WorktimeAssignment.SourceType.MANUAL_PERSONAL_WEEK,
+        )
+        PersonalWorktimeWeekAssignment.objects.create(
+            assignment=assignment,
+            week_start=date(2026, 3, 30),
+        )
+        WorktimeEntry.objects.create(assignment=assignment, work_date=date(2026, 4, 1), hours=8)
+
+        april_days = [""] * 30
+        april_days[0] = "8"
+        april_days[13] = "6"
+        upload = self._make_worktime_csv_upload(
+            self._worktime_csv_header("2026-04"),
+            [[
+                self._full_name(self.employee),
+                self.second_registration.short_uid,
+                self.second_registration.type_short_display or "—",
+                self.second_registration.name,
+                *april_days,
+            ]],
+        )
+
+        response = self.client.post(
+            reverse("worktime_csv_upload"),
+            {
+                "csv_file": upload,
+                "scale": "month",
+                "period": "2026-04",
+                "breakdown": "employees",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {"ok": True, "created": 1, "updated": 0, "deleted": 0},
+        )
+        self.assertTrue(
+            PersonalWorktimeWeekAssignment.objects.filter(
+                assignment=assignment,
+                week_start=date(2026, 4, 13),
+            ).exists()
+        )
+        self.assertEqual(
+            list(
+                WorktimeEntry.objects.filter(assignment=assignment)
+                .order_by("work_date")
+                .values_list("work_date", "hours")
+            ),
+            [(date(2026, 4, 1), 8), (date(2026, 4, 14), 6)],
+        )
+        visible_response = self.client.get(reverse("personal_worktime_partial"), {"week": "2026-04-14"})
+        self.assertContains(visible_response, self.second_registration.name)
+
+    def test_build_worktime_csv_project_index_prefetches_product_links(self):
+        third_registration = ProjectRegistration.objects.create(
+            number=4446,
+            type=self.product,
+            name="Проект Гамма",
+            deadline=date(2026, 4, 30),
+        )
+        for registration, rank in (
+            (self.registration, 1),
+            (self.second_registration, 2),
+            (third_registration, 3),
+        ):
+            ProjectRegistrationProduct.objects.create(
+                registration=registration,
+                product=self.product,
+                rank=rank,
+            )
+
+        with CaptureQueriesContext(connection) as queries:
+            projects_by_code, projects_by_key, duplicate_keys = _build_worktime_csv_project_index()
+
+        self.assertLessEqual(len(queries), 3)
+        self.assertIn(self.registration.short_uid.casefold(), projects_by_code)
+        self.assertIn(third_registration.short_uid.casefold(), projects_by_code)
+        self.assertFalse(duplicate_keys)
+        self.assertIn(
+            (
+                self.registration.short_uid.casefold(),
+                (self.registration.type_short_display or "—").casefold(),
+                self.registration.name.casefold(),
+            ),
+            projects_by_key,
+        )
 
     def test_worktime_csv_upload_rejects_missing_file(self):
         response = self.client.post(
