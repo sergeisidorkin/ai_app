@@ -334,8 +334,9 @@
                              data-worktime-calculated-downtime-input
                              data-worktime-scheduled-hours="{{ cell.scheduled_hours|default:0|unlocalize }}"
                              disabled
-                           {% elif cell.is_vacation_non_working_day %}
-                             data-worktime-vacation-non-working-input
+                          {% elif cell.is_blocked_non_working_day %}
+                            data-worktime-blocked-non-working-input
+                            {% if cell.is_vacation_non_working_day %}data-worktime-vacation-non-working-input{% endif %}
                              disabled
                            {% endif %}
                            aria-label="Часы за {{ cell.date|date:'d.m.Y' }}">
@@ -858,11 +859,15 @@
   .worktime-calendar-wrap {
     width: 100%;
     min-width: 0;
-    overflow-x: auto;
+    overflow-x: hidden;
     overflow-y: hidden;
     max-width: 100%;
     padding-bottom: .55rem;
     -webkit-overflow-scrolling: touch;
+  }
+
+  .worktime-calendar-wrap.worktime-calendar-wrap-scrollable {
+    overflow-x: auto;
   }
 
   .worktime-calendar-table {
@@ -2554,34 +2559,6 @@
     border-bottom-right-radius: .35rem;
   }
 
-  .flatpickr-calendar .flatpickr-day.worktime-week-hover.worktime-production-holiday-day:not(.prevMonthDay):not(.nextMonthDay),
-  .flatpickr-calendar .flatpickr-day.worktime-week-hover.worktime-production-holiday-day:not(.prevMonthDay):not(.nextMonthDay):hover {
-    --worktime-week-fill: #f1f3f5;
-    --worktime-week-border: #adb5bd;
-  }
-
-  .flatpickr-calendar .flatpickr-day.worktime-week-hover.worktime-production-holiday-day:not(.prevMonthDay):not(.nextMonthDay)::before {
-    left: -1px;
-    right: -1px;
-    border-left: 0;
-    border-right: 0;
-    border-radius: 0;
-  }
-
-  .flatpickr-calendar .dayContainer .flatpickr-day.worktime-week-hover.worktime-production-holiday-day:nth-child(7n+1)::before {
-    left: 0;
-    border-left: 1px solid var(--worktime-week-border);
-    border-top-left-radius: .35rem;
-    border-bottom-left-radius: .35rem;
-  }
-
-  .flatpickr-calendar .dayContainer .flatpickr-day.worktime-week-hover.worktime-production-holiday-day:nth-child(7n)::before {
-    right: 0;
-    border-right: 1px solid var(--worktime-week-border);
-    border-top-right-radius: .35rem;
-    border-bottom-right-radius: .35rem;
-  }
-
   .flatpickr-calendar .flatpickr-day.worktime-week-selected.worktime-production-holiday-day:not(.prevMonthDay):not(.nextMonthDay),
   .flatpickr-calendar .flatpickr-day.worktime-week-selected.worktime-production-holiday-day:not(.prevMonthDay):not(.nextMonthDay):hover {
     --worktime-week-fill: rgba(13, 110, 253, .10);
@@ -2604,6 +2581,34 @@
   }
 
   .flatpickr-calendar .dayContainer .flatpickr-day.worktime-week-selected.worktime-production-holiday-day:nth-child(7n)::before {
+    right: 0;
+    border-right: 1px solid var(--worktime-week-border);
+    border-top-right-radius: .35rem;
+    border-bottom-right-radius: .35rem;
+  }
+
+  .flatpickr-calendar .flatpickr-day.worktime-week-hover.worktime-production-holiday-day:not(.prevMonthDay):not(.nextMonthDay),
+  .flatpickr-calendar .flatpickr-day.worktime-week-hover.worktime-production-holiday-day:not(.prevMonthDay):not(.nextMonthDay):hover {
+    --worktime-week-fill: #f1f3f5;
+    --worktime-week-border: #adb5bd;
+  }
+
+  .flatpickr-calendar .flatpickr-day.worktime-week-hover.worktime-production-holiday-day:not(.prevMonthDay):not(.nextMonthDay)::before {
+    left: -1px;
+    right: -1px;
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;
+  }
+
+  .flatpickr-calendar .dayContainer .flatpickr-day.worktime-week-hover.worktime-production-holiday-day:nth-child(7n+1)::before {
+    left: 0;
+    border-left: 1px solid var(--worktime-week-border);
+    border-top-left-radius: .35rem;
+    border-bottom-left-radius: .35rem;
+  }
+
+  .flatpickr-calendar .dayContainer .flatpickr-day.worktime-week-hover.worktime-production-holiday-day:nth-child(7n)::before {
     right: 0;
     border-right: 1px solid var(--worktime-week-border);
     border-top-right-radius: .35rem;
@@ -2718,8 +2723,10 @@
     var worktimeTableResizeObserver = window.__worktimeTableResizeObserver || null;
     var worktimeAutosaveStates = window.__worktimeAutosaveStates || new WeakMap();
     var cleanupWorktimeFloatingScroll = window.__cleanupWorktimeFloatingScroll || null;
+    var cleanupWorktimeStickyHeader = window.__cleanupWorktimeStickyHeader || null;
     window.__worktimeAutosaveStates = worktimeAutosaveStates;
     window.__cleanupWorktimeFloatingScroll = cleanupWorktimeFloatingScroll;
+    window.__cleanupWorktimeStickyHeader = cleanupWorktimeStickyHeader;
 
     function getStoredWorktimeGeneralCollapseState() {
       try {
@@ -3240,7 +3247,7 @@
     function syncWorktimeWrapOverflowState(wrap, table) {
       if (!wrap || !table) return;
       var overflowWidth = Math.ceil((table.scrollWidth || 0) - (wrap.clientWidth || 0));
-      wrap.classList.toggle('worktime-calendar-wrap-scrollable', overflowWidth > 1);
+      wrap.classList.toggle('worktime-calendar-wrap-scrollable', overflowWidth > 8);
     }
 
     function syncWorktimeTableLayout(root) {
@@ -3311,6 +3318,7 @@
       window.requestAnimationFrame(function () {
         syncWorktimeTableLayout(root);
         setupWorktimeFloatingScroll(root);
+        setupWorktimeStickyHeader(root);
       });
       window.setTimeout(function () {
         syncWorktimeTableLayout(root);
@@ -3321,6 +3329,7 @@
       window.setTimeout(function () {
         syncWorktimeTableLayout(root);
         setupWorktimeFloatingScroll(root);
+        setupWorktimeStickyHeader(root);
       }, 300);
       bindWorktimeTableObservers(root);
     }
@@ -3387,7 +3396,7 @@
           return;
         }
 
-        var hasOverflow = tableWrap.scrollWidth > tableWrap.clientWidth;
+        var hasOverflow = (tableWrap.scrollWidth - tableWrap.clientWidth) > 8;
         if (!hasOverflow) {
           proxy.style.display = 'none';
           return;
@@ -3437,6 +3446,551 @@
         }
       };
       window.__cleanupWorktimeFloatingScroll = cleanupWorktimeFloatingScroll;
+      update();
+    }
+
+    function clearWorktimeStickyHeader() {
+      if (typeof cleanupWorktimeStickyHeader === 'function') {
+        cleanupWorktimeStickyHeader();
+      }
+      cleanupWorktimeStickyHeader = null;
+      window.__cleanupWorktimeStickyHeader = null;
+    }
+
+    function setupWorktimeStickyHeader(root) {
+      clearWorktimeStickyHeader();
+
+      var scope = root && root.querySelectorAll ? root : document;
+      var section = null;
+      if (scope.matches && scope.matches('#worktime-content-timesheet')) {
+        section = scope;
+      } else if (scope.querySelector) {
+        section = scope.querySelector('#worktime-content-timesheet');
+      }
+      if (!section) {
+        section = document.querySelector('#worktime-content-timesheet');
+      }
+      if (!section || section.classList.contains('d-none') || section.offsetParent === null) return;
+
+      var panel = section.querySelector('[data-worktime-panel]');
+      var filterHeader = panel ? panel.querySelector('.table-section-header') : null;
+      var table = panel ? panel.querySelector('.worktime-calendar-table-general') : null;
+      var tableWrap = table ? table.closest('.worktime-calendar-wrap') : null;
+      var thead = table ? table.querySelector('thead') : null;
+      var cardBody = panel ? panel.closest('.card-body') : null;
+      var tableCard = panel ? panel.closest('.card') : null;
+      var sectionHeader = document.querySelector('#worktime .section-header');
+      if (!panel || !filterHeader || !table || !tableWrap || !thead || !cardBody || !tableCard || !sectionHeader) return;
+
+      var originalFilterGap = parseFloat(getComputedStyle(filterHeader).marginBottom) || 0;
+      var measuredCardGap = tableCard.getBoundingClientRect().top - sectionHeader.getBoundingClientRect().bottom;
+      var fallbackCardGap = (parseFloat(getComputedStyle(sectionHeader).marginBottom) || 0) + (parseFloat(getComputedStyle(tableCard).marginTop) || 0);
+      var stickyCardGap = measuredCardGap >= 0 && measuredCardGap < 160 ? measuredCardGap : fallbackCardGap;
+      var initialCardTop = tableCard.getBoundingClientRect().top + (window.pageYOffset || 0);
+      var pageBg = (function () {
+        var bodyBg = getComputedStyle(document.body).backgroundColor;
+        if (bodyBg && bodyBg !== 'transparent' && bodyBg !== 'rgba(0, 0, 0, 0)') return bodyBg;
+        var htmlBg = getComputedStyle(document.documentElement).backgroundColor;
+        if (htmlBg && htmlBg !== 'transparent' && htmlBg !== 'rgba(0, 0, 0, 0)') return htmlBg;
+        return '#f8f9fa';
+      })();
+      var cardStyles = getComputedStyle(tableCard);
+      var cardRadius = cardStyles.borderTopLeftRadius || '.375rem';
+      var cardBorderColor = cardStyles.borderTopColor || 'var(--bs-border-color,#dee2e6)';
+      var cardBorderWidth = cardStyles.borderTopWidth || '1px';
+      var cardBorderWidthPx = parseFloat(cardBorderWidth) || 1;
+      var headerBorderColor = (function () {
+        var firstHeaderCell = thead.querySelector('th');
+        if (!firstHeaderCell) return cardBorderColor;
+        var headerStyles = getComputedStyle(firstHeaderCell);
+        return headerStyles.borderBottomColor || cardBorderColor;
+      })();
+      var cornerSize = Math.max(8, (parseFloat(cardRadius) || 6) * 2);
+
+      var filterSpacer = document.createElement('div');
+      filterSpacer.style.display = 'none';
+      filterHeader.parentNode.insertBefore(filterSpacer, filterHeader.nextSibling);
+
+      var gapFill = document.createElement('div');
+      gapFill.style.cssText = (
+        'display:none;position:fixed;z-index:1028;pointer-events:none;' +
+        'background:' + pageBg + ';'
+      );
+      document.body.appendChild(gapFill);
+
+      var sideFrame = document.createElement('div');
+      sideFrame.style.cssText = (
+        'display:none;position:fixed;z-index:1029;pointer-events:none;box-sizing:border-box;' +
+        'background:#fff;' +
+        'border-left:' + cardBorderWidth + ' solid ' + cardBorderColor + ';' +
+        'border-right:' + cardBorderWidth + ' solid ' + cardBorderColor + ';' +
+        'border-top:' + cardBorderWidth + ' solid ' + cardBorderColor + ';' +
+        'border-radius:' + cardRadius + ' ' + cardRadius + ' 0 0;'
+      );
+      document.body.appendChild(sideFrame);
+
+      var cornerMaskL = document.createElement('div');
+      var cornerMaskR = document.createElement('div');
+      var cornerMaskCss = (
+        'display:none;position:fixed;z-index:1028;pointer-events:none;' +
+        'width:' + (cornerSize + 8) + 'px;height:' + (cornerSize + 8) + 'px;' +
+        'background:' + pageBg + ';'
+      );
+      cornerMaskL.style.cssText = cornerMaskCss;
+      cornerMaskR.style.cssText = cornerMaskCss;
+      document.body.appendChild(cornerMaskL);
+      document.body.appendChild(cornerMaskR);
+
+      var cloneOuter = document.createElement('div');
+      cloneOuter.className = 'worktime-thead-clone';
+      cloneOuter.style.cssText = (
+        'display:none;position:fixed;z-index:1030;overflow:hidden;background:#fff;box-sizing:border-box;' +
+        'box-shadow:inset 0 -1px 0 ' + headerBorderColor + ';'
+      );
+      var cloneInner = document.createElement('div');
+      cloneInner.style.overflow = 'hidden';
+      cloneInner.style.boxSizing = 'border-box';
+      cloneOuter.appendChild(cloneInner);
+      var stickyDivider = document.createElement('div');
+      stickyDivider.style.cssText = 'display:none;position:absolute;top:0;bottom:0;width:1px;background:#c8d0d9;z-index:4;pointer-events:none;';
+      cloneOuter.appendChild(stickyDivider);
+      var frozenHeaderOverlay = document.createElement('div');
+      frozenHeaderOverlay.style.cssText = 'display:none;position:absolute;top:0;bottom:0;overflow:hidden;background:#fff;z-index:3;';
+      cloneOuter.appendChild(frozenHeaderOverlay);
+      var cloneScroll = document.createElement('div');
+      cloneInner.appendChild(cloneScroll);
+      document.body.appendChild(cloneOuter);
+
+      cloneOuter.addEventListener('click', function (event) {
+        var target = event.target;
+        if (!target || !target.closest) return;
+
+        var collapseButton = target.closest('[data-worktime-general-collapse-toggle]');
+        if (collapseButton) {
+          var realCollapseButton = table.querySelector('[data-worktime-general-collapse-toggle]');
+          if (realCollapseButton) realCollapseButton.click();
+          return;
+        }
+
+        var sortButton = target.closest('[data-worktime-hist-sort-btn]');
+        if (sortButton) {
+          var sortValue = sortButton.dataset.worktimeHistSortBtn || '';
+          var realSortButton = table.querySelector('[data-worktime-hist-sort-btn="' + sortValue + '"]');
+          if (realSortButton) realSortButton.click();
+        }
+      });
+
+      var isFilterStuck = false;
+      var isTheadStuck = false;
+      var resizeObs = null;
+      var frozenHeaderWidth = 0;
+
+      function buildHeaderTable() {
+        var clonedTable = document.createElement('table');
+        clonedTable.className = table.className;
+        if (table.getAttribute('style')) {
+          clonedTable.setAttribute('style', table.getAttribute('style'));
+        }
+
+        var realHeaders = thead.querySelectorAll('th');
+        var measuredWidths = Array.prototype.map.call(realHeaders, function (header) {
+          var rect = header.getBoundingClientRect();
+          return rect && rect.width ? rect.width : (header.offsetWidth || 0);
+        });
+        var totalWidth = measuredWidths.reduce(function (sum, width) { return sum + width; }, 0);
+        var tableRect = table.getBoundingClientRect();
+        var fallbackTableWidth = tableRect && tableRect.width ? tableRect.width : (table.offsetWidth || 0);
+        var lockedWidth = totalWidth > 0 ? totalWidth : fallbackTableWidth;
+
+        clonedTable.style.width = lockedWidth + 'px';
+        clonedTable.style.minWidth = lockedWidth + 'px';
+        clonedTable.style.maxWidth = lockedWidth + 'px';
+        clonedTable.style.tableLayout = 'fixed';
+        clonedTable.style.margin = '0';
+
+        var newColgroup = document.createElement('colgroup');
+        measuredWidths.forEach(function (width) {
+          var col = document.createElement('col');
+          col.style.width = width + 'px';
+          newColgroup.appendChild(col);
+        });
+        clonedTable.appendChild(newColgroup);
+
+        var theadClone = thead.cloneNode(true);
+        theadClone.style.visibility = 'visible';
+        clonedTable.appendChild(theadClone);
+
+        var clonedHeaders = clonedTable.querySelectorAll('thead th');
+        realHeaders.forEach(function (header, index) {
+          if (!clonedHeaders[index]) return;
+          var width = measuredWidths[index] + 'px';
+          clonedHeaders[index].style.width = width;
+          clonedHeaders[index].style.minWidth = width;
+          clonedHeaders[index].style.maxWidth = width;
+          clonedHeaders[index].style.boxSizing = 'border-box';
+        });
+
+        var realSelectHeader = thead.querySelector('.worktime-col-select');
+        var realProjectHeader = thead.querySelector('.worktime-col-project');
+        var realTypeHeader = thead.querySelector('.worktime-col-type');
+        var realNameHeader = thead.querySelector('.worktime-col-name');
+        var selectWidth = realSelectHeader ? (realSelectHeader.getBoundingClientRect().width || 0) : 0;
+        var projectWidth = realProjectHeader ? (realProjectHeader.getBoundingClientRect().width || 0) : 0;
+        var typeWidth = realTypeHeader ? (realTypeHeader.getBoundingClientRect().width || 0) : 0;
+        var nameWidth = realNameHeader ? (realNameHeader.getBoundingClientRect().width || 0) : 0;
+
+        if (projectWidth > 0) clonedTable.style.setProperty('--worktime-project-width', projectWidth + 'px');
+        if (typeWidth > 0) clonedTable.style.setProperty('--worktime-type-width', typeWidth + 'px');
+        if (nameWidth > 0) clonedTable.style.setProperty('--worktime-name-width', nameWidth + 'px');
+        clonedTable.style.setProperty('--worktime-project-sticky-left', selectWidth + 'px');
+        clonedTable.style.setProperty('--worktime-type-sticky-left', (selectWidth + projectWidth) + 'px');
+        clonedTable.style.setProperty('--worktime-name-sticky-left', (selectWidth + projectWidth + typeWidth) + 'px');
+
+        return clonedTable;
+      }
+
+      function buildClone() {
+        cloneScroll.innerHTML = '';
+        frozenHeaderOverlay.innerHTML = '';
+        frozenHeaderWidth = 0;
+
+        var clonedTable = buildHeaderTable();
+        if (tableWrap.classList.contains('worktime-calendar-wrap-scrollable')) {
+          clonedTable.querySelectorAll('thead .worktime-sticky-select, thead .worktime-sticky-col, thead .worktime-sticky-col-2, thead .worktime-sticky-col-3').forEach(function (header) {
+            header.style.visibility = 'hidden';
+          });
+          frozenHeaderWidth = getFrozenHeaderWidth();
+          frozenHeaderOverlay.appendChild(buildFrozenHeaderTable());
+        }
+        cloneScroll.appendChild(clonedTable);
+      }
+
+      function syncCloneScroll() {
+        var scrollLeft = tableWrap.scrollLeft || 0;
+        cloneInner.scrollLeft = 0;
+        if (tableWrap.classList.contains('worktime-calendar-wrap-scrollable')) {
+          cloneScroll.style.marginLeft = (-(scrollLeft + frozenHeaderWidth)) + 'px';
+        } else {
+          cloneScroll.style.marginLeft = '';
+          cloneInner.scrollLeft = scrollLeft;
+        }
+      }
+
+      function getFrozenHeaderWidth() {
+        return [
+          thead.querySelector('.worktime-col-select'),
+          thead.querySelector('.worktime-col-project'),
+          thead.querySelector('.worktime-col-type'),
+          thead.querySelector('.worktime-col-name')
+        ].filter(Boolean).reduce(function (sum, header) {
+          return sum + (header.getBoundingClientRect().width || 0);
+        }, 0);
+      }
+
+      function buildFrozenHeaderTable() {
+        var sourceHeaders = [
+          thead.querySelector('.worktime-col-select'),
+          thead.querySelector('.worktime-col-project'),
+          thead.querySelector('.worktime-col-type'),
+          thead.querySelector('.worktime-col-name')
+        ].filter(Boolean);
+        var widths = sourceHeaders.map(function (header) {
+          return header.getBoundingClientRect().width || 0;
+        });
+        var frozenWidth = widths.reduce(function (sum, width) {
+          return sum + width;
+        }, 0);
+        var frozenTable = document.createElement('table');
+        frozenTable.className = table.className;
+        frozenTable.style.width = frozenWidth + 'px';
+        frozenTable.style.minWidth = frozenWidth + 'px';
+        frozenTable.style.margin = '0';
+        frozenTable.style.tableLayout = 'fixed';
+        frozenTable.style.height = '100%';
+        frozenTable.style.borderCollapse = 'collapse';
+
+        var colgroup = document.createElement('colgroup');
+        widths.forEach(function (width) {
+          var col = document.createElement('col');
+          col.style.width = width + 'px';
+          colgroup.appendChild(col);
+        });
+        frozenTable.appendChild(colgroup);
+
+        var frozenThead = document.createElement('thead');
+        frozenThead.style.height = '100%';
+        var row = document.createElement('tr');
+        row.style.height = '100%';
+        sourceHeaders.forEach(function (header, index) {
+          var clonedHeader = header.cloneNode(true);
+          var width = widths[index] + 'px';
+          clonedHeader.style.position = 'static';
+          clonedHeader.style.left = 'auto';
+          clonedHeader.style.width = width;
+          clonedHeader.style.minWidth = width;
+          clonedHeader.style.maxWidth = width;
+          clonedHeader.style.height = '100%';
+          clonedHeader.style.boxSizing = 'border-box';
+          clonedHeader.style.visibility = 'visible';
+          row.appendChild(clonedHeader);
+        });
+        frozenThead.appendChild(row);
+        frozenTable.appendChild(frozenThead);
+
+        return frozenTable;
+      }
+
+      function fixedTop() {
+        var rect = sectionHeader.getBoundingClientRect();
+        return Math.max(0, rect.bottom);
+      }
+
+      function fixedCardTop() {
+        return fixedTop() + stickyCardGap;
+      }
+
+      function filterGap() {
+        return originalFilterGap;
+      }
+
+      function positionElements() {
+        var cardRect = tableCard.getBoundingClientRect();
+        var tableWrapRect = tableWrap.getBoundingClientRect();
+        var mainEl = section.closest('main') || document.body;
+        var mainRect = mainEl.getBoundingClientRect ? mainEl.getBoundingClientRect() : cardRect;
+        var bodyStyle = getComputedStyle(cardBody);
+        var contentLeft = tableWrapRect.left - cardRect.left;
+        var contentRight = cardRect.right - tableWrapRect.right;
+        var padTop = parseFloat(bodyStyle.paddingTop) || 0;
+        var cardTop = fixedCardTop();
+        var top = cardTop + cardBorderWidthPx + padTop;
+        var headerHeight = filterHeader.offsetHeight;
+        var cloneTop = top + headerHeight + filterGap();
+
+        gapFill.style.top = fixedTop() + 'px';
+        gapFill.style.left = mainRect.left + 'px';
+        gapFill.style.width = mainRect.width + 'px';
+        gapFill.style.height = stickyCardGap + 'px';
+
+        filterHeader.style.top = top + 'px';
+        filterHeader.style.left = tableWrapRect.left + 'px';
+        filterHeader.style.width = tableWrapRect.width + 'px';
+
+        sideFrame.style.top = cardTop + 'px';
+        sideFrame.style.left = cardRect.left + 'px';
+        sideFrame.style.width = cardRect.width + 'px';
+        cornerMaskL.style.top = (cardTop - 4) + 'px';
+        cornerMaskL.style.left = (cardRect.left - 4) + 'px';
+        cornerMaskR.style.top = (cardTop - 4) + 'px';
+        cornerMaskR.style.left = (cardRect.right - cornerSize - 4) + 'px';
+
+        if (isTheadStuck) {
+          var theadRect = thead.getBoundingClientRect();
+          var theadHeight = theadRect && theadRect.height ? theadRect.height : thead.offsetHeight;
+          if (!theadHeight) {
+            theadHeight = headerHeight;
+          }
+          cloneOuter.style.top = cloneTop + 'px';
+          cloneOuter.style.left = tableWrapRect.left + 'px';
+          cloneOuter.style.width = tableWrapRect.width + 'px';
+          cloneOuter.style.height = theadHeight + 'px';
+          cloneInner.style.height = '100%';
+
+          if (tableWrap.classList.contains('worktime-calendar-wrap-scrollable')) {
+            cloneInner.style.position = 'absolute';
+            cloneInner.style.top = '0';
+            cloneInner.style.bottom = '0';
+            cloneInner.style.left = frozenHeaderWidth + 'px';
+            cloneInner.style.width = Math.max(0, tableWrapRect.width - frozenHeaderWidth) + 'px';
+            cloneInner.style.paddingLeft = '0';
+            cloneInner.style.paddingRight = '0';
+            frozenHeaderOverlay.style.left = '0';
+            frozenHeaderOverlay.style.width = frozenHeaderWidth + 'px';
+            frozenHeaderOverlay.style.display = 'block';
+            stickyDivider.style.left = (frozenHeaderWidth - 1) + 'px';
+            stickyDivider.style.display = 'block';
+          } else {
+            cloneInner.style.position = '';
+            cloneInner.style.top = '';
+            cloneInner.style.bottom = '';
+            cloneInner.style.left = '';
+            cloneInner.style.width = '';
+            cloneInner.style.paddingLeft = '0';
+            cloneInner.style.paddingRight = '0';
+            frozenHeaderOverlay.style.display = 'none';
+            stickyDivider.style.display = 'none';
+          }
+
+          sideFrame.style.height = (cardBorderWidthPx + padTop + headerHeight + filterGap() + cloneOuter.offsetHeight) + 'px';
+          sideFrame.style.boxShadow = '';
+        } else {
+          sideFrame.style.height = (cardBorderWidthPx + padTop + headerHeight + filterGap()) + 'px';
+          sideFrame.style.boxShadow = '';
+          cloneOuter.style.height = '';
+          cloneInner.style.height = '';
+          cloneInner.style.position = '';
+          cloneInner.style.top = '';
+          cloneInner.style.bottom = '';
+          cloneInner.style.left = '';
+          cloneInner.style.width = '';
+          frozenHeaderOverlay.style.display = 'none';
+          stickyDivider.style.display = 'none';
+        }
+      }
+
+      function activateFilter() {
+        if (isFilterStuck) return;
+        isFilterStuck = true;
+
+        var style = getComputedStyle(filterHeader);
+        filterSpacer.style.height = filterHeader.offsetHeight + 'px';
+        filterSpacer.style.marginBottom = style.marginBottom;
+        filterSpacer.style.display = 'block';
+
+        filterHeader.style.position = 'fixed';
+        filterHeader.style.zIndex = '1031';
+        filterHeader.style.margin = '0';
+        filterHeader.style.boxSizing = 'border-box';
+        filterHeader.style.background = '#fff';
+
+        sideFrame.style.display = 'block';
+        gapFill.style.display = 'block';
+        cornerMaskL.style.display = 'block';
+        cornerMaskR.style.display = 'block';
+        positionElements();
+      }
+
+      function activateThead() {
+        if (isTheadStuck) return;
+        isTheadStuck = true;
+
+        buildClone();
+        cloneOuter.style.display = 'block';
+        thead.style.visibility = 'hidden';
+
+        positionElements();
+        syncCloneScroll();
+      }
+
+      function deactivateThead() {
+        if (!isTheadStuck) return;
+        isTheadStuck = false;
+
+        cloneOuter.style.display = 'none';
+        thead.style.visibility = '';
+        positionElements();
+      }
+
+      function deactivateFilter() {
+        if (!isFilterStuck) return;
+        if (isTheadStuck) deactivateThead();
+        isFilterStuck = false;
+
+        filterHeader.style.position = '';
+        filterHeader.style.top = '';
+        filterHeader.style.left = '';
+        filterHeader.style.width = '';
+        filterHeader.style.zIndex = '';
+        filterHeader.style.margin = '';
+        filterHeader.style.boxSizing = '';
+        filterHeader.style.background = '';
+        filterSpacer.style.display = 'none';
+        filterSpacer.style.height = '';
+        filterSpacer.style.marginBottom = '';
+        sideFrame.style.display = 'none';
+        gapFill.style.display = 'none';
+        cornerMaskL.style.display = 'none';
+        cornerMaskR.style.display = 'none';
+        frozenHeaderOverlay.style.display = 'none';
+        stickyDivider.style.display = 'none';
+        cloneOuter.style.display = 'none';
+        thead.style.visibility = '';
+      }
+
+      function update() {
+        if (!panel.isConnected || section.classList.contains('d-none') || section.offsetParent === null) {
+          deactivateFilter();
+          return;
+        }
+
+        var shouldStickFilter = tableCard.getBoundingClientRect().top < initialCardTop;
+        if (shouldStickFilter && !isFilterStuck) {
+          activateFilter();
+        } else if (!shouldStickFilter && isFilterStuck) {
+          deactivateFilter();
+        }
+
+        if (!isFilterStuck) return;
+
+        var bodyStyle = getComputedStyle(cardBody);
+        var padTop = parseFloat(bodyStyle.paddingTop) || 0;
+        var cloneTop = fixedCardTop() + cardBorderWidthPx + padTop + filterHeader.offsetHeight + filterGap();
+        var shouldStickThead = tableWrap.getBoundingClientRect().top <= cloneTop;
+        if (shouldStickThead && !isTheadStuck) {
+          activateThead();
+        } else if (!shouldStickThead && isTheadStuck) {
+          deactivateThead();
+        }
+
+        positionElements();
+        if (isTheadStuck) {
+          syncCloneScroll();
+        }
+      }
+
+      function onFrame() {
+        window.requestAnimationFrame(update);
+      }
+
+      tableWrap.addEventListener('scroll', syncCloneScroll, { passive: true });
+      window.addEventListener('scroll', onFrame, { passive: true });
+      window.addEventListener('resize', onFrame, { passive: true });
+
+      if (window.ResizeObserver) {
+        resizeObs = new ResizeObserver(function () {
+          if (isTheadStuck) {
+            buildClone();
+          }
+          update();
+        });
+        resizeObs.observe(cardBody);
+        resizeObs.observe(tableWrap);
+        resizeObs.observe(sectionHeader);
+      }
+
+      cleanupWorktimeStickyHeader = function () {
+        deactivateFilter();
+        tableCard.style.borderTopLeftRadius = '';
+        tableCard.style.borderTopRightRadius = '';
+        tableCard.style.borderTopWidth = '';
+        thead.style.visibility = '';
+        tableWrap.removeEventListener('scroll', syncCloneScroll);
+        window.removeEventListener('scroll', onFrame);
+        window.removeEventListener('resize', onFrame);
+        if (resizeObs) {
+          resizeObs.disconnect();
+          resizeObs = null;
+        }
+        if (filterSpacer.isConnected) {
+          filterSpacer.remove();
+        }
+        if (sideFrame.isConnected) {
+          sideFrame.remove();
+        }
+        if (gapFill.isConnected) {
+          gapFill.remove();
+        }
+        if (cornerMaskL.isConnected) {
+          cornerMaskL.remove();
+        }
+        if (cornerMaskR.isConnected) {
+          cornerMaskR.remove();
+        }
+        if (cloneOuter.isConnected) {
+          cloneOuter.remove();
+        }
+      };
+      window.__cleanupWorktimeStickyHeader = cleanupWorktimeStickyHeader;
       update();
     }
 

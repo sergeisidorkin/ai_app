@@ -26,6 +26,7 @@ from users_app.models import Employee
 from worktime_app.models import PersonalWorktimeWeekAssignment, WorktimeAssignment, WorktimeEntry
 from worktime_app.views import (
     REGULAR_WORKDAY_HOURS,
+    SHORTENED_WORKDAY_HOURS,
     ZERO_DECIMAL,
     _attach_group_histograms,
     _attach_row_histograms,
@@ -1015,6 +1016,7 @@ class WorktimeAppTests(TestCase):
         )
         ProductionCalendarDay.objects.create(country=country, date=date(2026, 4, 8), is_working_day=False, is_holiday=True, working_hours=Decimal("0.0"))
         ProductionCalendarDay.objects.create(country=country, date=date(2026, 4, 9), is_working_day=False, is_weekend=True, working_hours=Decimal("0.0"))
+        ProductionCalendarDay.objects.create(country=country, date=date(2026, 4, 10), is_working_day=True, is_shortened_day=True)
         project_assignment = WorktimeAssignment.objects.create(
             registration=self.registration,
             employee=self.employee,
@@ -1034,7 +1036,7 @@ class WorktimeAppTests(TestCase):
         self.assertEqual(downtime_row["assignment"].record_type, WorktimeAssignment.RecordType.DOWNTIME)
         self.assertTrue(downtime_row["is_calculated_downtime"])
         self.assertTrue(downtime_row["is_locked"])
-        self.assertEqual(downtime_values[:5], [Decimal("6.0"), Decimal("4.0"), ZERO_DECIMAL, ZERO_DECIMAL, REGULAR_WORKDAY_HOURS])
+        self.assertEqual(downtime_values[:5], [Decimal("6.0"), Decimal("4.0"), ZERO_DECIMAL, ZERO_DECIMAL, SHORTENED_WORKDAY_HOURS])
         self.assertFalse(context["days"][0]["is_non_working_day"])
         self.assertTrue(context["days"][2]["is_non_working_day"])
         self.assertTrue(context["days"][3]["is_non_working_day"])
@@ -1091,6 +1093,42 @@ class WorktimeAppTests(TestCase):
         self.assertTrue(vacation_row["cells"][2]["is_vacation_non_working_day"])
         self.assertContains(response, "data-worktime-vacation-non-working-input", html=False)
 
+    def test_personal_partial_disables_absence_hours_on_non_working_days(self):
+        country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            alpha2="RU",
+            alpha3="RUS",
+        )
+        company = GroupMember.objects.create(
+            short_name="IMC Russia",
+            country_name="Россия",
+            country_code="643",
+        )
+        self.employee.employment = company.short_name
+        self.employee.save(update_fields=["employment"])
+        ProductionCalendarDay.objects.create(country=country, date=date(2026, 4, 8), is_working_day=False, is_holiday=True, working_hours=Decimal("0.0"))
+        time_off_assignment = WorktimeAssignment.objects.create(
+            record_type=WorktimeAssignment.RecordType.TIME_OFF,
+            employee=self.employee,
+            executor_name=self._full_name(self.employee),
+            source_type=WorktimeAssignment.SourceType.MANUAL_PERSONAL_WEEK,
+        )
+        PersonalWorktimeWeekAssignment.objects.create(assignment=time_off_assignment, week_start=date(2026, 4, 6))
+        WorktimeEntry.objects.create(assignment=time_off_assignment, work_date=date(2026, 4, 8), hours=Decimal("8"))
+
+        response = self.client.get(reverse("personal_worktime_partial"), {"week": "2026-04-10"})
+
+        self.assertEqual(response.status_code, 200)
+        time_off_row = next(
+            row for row in response.context["rows"]
+            if row["assignment"].pk == time_off_assignment.pk
+        )
+        self.assertIsNone(time_off_row["cells"][2]["value"])
+        self.assertTrue(time_off_row["cells"][2]["is_blocked_non_working_day"])
+        self.assertContains(response, "data-worktime-blocked-non-working-input", html=False)
+
     def test_personal_save_removes_vacation_hours_on_non_working_days(self):
         country = OKSMCountry.objects.create(
             number=643,
@@ -1130,6 +1168,49 @@ class WorktimeAppTests(TestCase):
         self.assertFalse(
             WorktimeEntry.objects.filter(
                 assignment=vacation_assignment,
+                work_date=date(2026, 4, 8),
+            ).exists()
+        )
+
+    def test_personal_save_removes_absence_hours_on_non_working_days(self):
+        country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            alpha2="RU",
+            alpha3="RUS",
+        )
+        company = GroupMember.objects.create(
+            short_name="IMC Russia",
+            country_name="Россия",
+            country_code="643",
+        )
+        self.employee.employment = company.short_name
+        self.employee.save(update_fields=["employment"])
+        ProductionCalendarDay.objects.create(country=country, date=date(2026, 4, 8), is_working_day=False, is_holiday=True, working_hours=Decimal("0.0"))
+        sick_leave_assignment = WorktimeAssignment.objects.create(
+            record_type=WorktimeAssignment.RecordType.SICK_LEAVE,
+            employee=self.employee,
+            executor_name=self._full_name(self.employee),
+            source_type=WorktimeAssignment.SourceType.MANUAL_PERSONAL_WEEK,
+        )
+        PersonalWorktimeWeekAssignment.objects.create(assignment=sick_leave_assignment, week_start=date(2026, 4, 6))
+        WorktimeEntry.objects.create(assignment=sick_leave_assignment, work_date=date(2026, 4, 8), hours=Decimal("8"))
+
+        response = self.client.post(
+            reverse("worktime_save"),
+            {
+                "scope": "personal",
+                "week": "2026-04-10",
+                "assignment_ids": [str(sick_leave_assignment.pk)],
+                f"hours_{sick_leave_assignment.pk}_20260408": "6",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            WorktimeEntry.objects.filter(
+                assignment=sick_leave_assignment,
                 work_date=date(2026, 4, 8),
             ).exists()
         )
@@ -2582,6 +2663,235 @@ class WorktimeAppTests(TestCase):
                 .values_list("work_date", "hours")
             ),
             [(date(2026, 4, 2), 8)],
+        )
+
+    def test_worktime_csv_upload_removes_vacation_hours_on_non_working_days(self):
+        country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            alpha2="RU",
+            alpha3="RUS",
+        )
+        company = GroupMember.objects.create(
+            short_name="IMC Russia",
+            country_name="Россия",
+            country_code="643",
+        )
+        self.employee.employment = company.short_name
+        self.employee.save(update_fields=["employment"])
+        ProductionCalendarDay.objects.create(
+            country=country,
+            date=date(2026, 4, 2),
+            is_working_day=False,
+            is_holiday=True,
+            working_hours=Decimal("0.0"),
+        )
+
+        april_days = [""] * 30
+        april_days[1] = "8"
+        april_days[2] = "8"
+        upload = self._make_worktime_csv_upload(
+            self._worktime_csv_header("2026-04"),
+            [[
+                self._full_name(self.employee),
+                WorktimeAssignment.RecordType.VACATION.label,
+                "",
+                "",
+                *april_days,
+            ]],
+        )
+
+        response = self.client.post(
+            reverse("worktime_csv_upload"),
+            {
+                "csv_file": upload,
+                "scale": "month",
+                "period": "2026-04",
+                "breakdown": "employees",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "ok": True,
+                "created": 1,
+                "updated": 0,
+                "deleted": 0,
+                "created_assignments": 1,
+            },
+        )
+        vacation_assignment = WorktimeAssignment.objects.get(
+            registration__isnull=True,
+            proposal_registration__isnull=True,
+            executor_name=self._full_name(self.employee),
+            record_type=WorktimeAssignment.RecordType.VACATION,
+        )
+        self.assertEqual(
+            list(
+                WorktimeEntry.objects.filter(assignment=vacation_assignment)
+                .order_by("work_date")
+                .values_list("work_date", "hours")
+            ),
+            [(date(2026, 4, 3), Decimal("8.00"))],
+        )
+
+    def test_worktime_csv_upload_removes_absence_hours_on_non_working_days(self):
+        country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            alpha2="RU",
+            alpha3="RUS",
+        )
+        company = GroupMember.objects.create(
+            short_name="IMC Russia",
+            country_name="Россия",
+            country_code="643",
+        )
+        self.employee.employment = company.short_name
+        self.employee.save(update_fields=["employment"])
+        ProductionCalendarDay.objects.create(
+            country=country,
+            date=date(2026, 4, 2),
+            is_working_day=False,
+            is_holiday=True,
+            working_hours=Decimal("0.0"),
+        )
+
+        april_days = [""] * 30
+        april_days[1] = "8"
+        april_days[2] = "8"
+        upload = self._make_worktime_csv_upload(
+            self._worktime_csv_header("2026-04"),
+            [[
+                self._full_name(self.employee),
+                WorktimeAssignment.RecordType.OTHER_ABSENCE.label,
+                "",
+                "",
+                *april_days,
+            ]],
+        )
+
+        response = self.client.post(
+            reverse("worktime_csv_upload"),
+            {
+                "csv_file": upload,
+                "scale": "month",
+                "period": "2026-04",
+                "breakdown": "employees",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "ok": True,
+                "created": 1,
+                "updated": 0,
+                "deleted": 0,
+                "created_assignments": 1,
+            },
+        )
+        absence_assignment = WorktimeAssignment.objects.get(
+            registration__isnull=True,
+            proposal_registration__isnull=True,
+            executor_name=self._full_name(self.employee),
+            record_type=WorktimeAssignment.RecordType.OTHER_ABSENCE,
+        )
+        self.assertEqual(
+            list(
+                WorktimeEntry.objects.filter(assignment=absence_assignment)
+                .order_by("work_date")
+                .values_list("work_date", "hours")
+            ),
+            [(date(2026, 4, 3), Decimal("8.00"))],
+        )
+
+    def test_worktime_csv_upload_adds_calculated_downtime_for_missing_hours(self):
+        country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            alpha2="RU",
+            alpha3="RUS",
+        )
+        company = GroupMember.objects.create(
+            short_name="IMC Russia",
+            country_name="Россия",
+            country_code="643",
+        )
+        self.employee.employment = company.short_name
+        self.employee.save(update_fields=["employment"])
+        ProductionCalendarDay.objects.create(country=country, date=date(2026, 4, 6), is_working_day=True, working_hours=Decimal("8.0"))
+        ProductionCalendarDay.objects.create(country=country, date=date(2026, 4, 7), is_working_day=True, is_shortened_day=True)
+        assignment = WorktimeAssignment.objects.create(
+            registration=self.registration,
+            employee=self.employee,
+            executor_name=self._full_name(self.employee),
+            source_type=WorktimeAssignment.SourceType.PERFORMER_CONFIRMATION,
+        )
+
+        april_days = [""] * 30
+        april_days[5] = "5"
+        april_days[6] = "2"
+        upload = self._make_worktime_csv_upload(
+            self._worktime_csv_header("2026-04"),
+            [[
+                self._full_name(self.employee),
+                assignment.display_project_code,
+                assignment.display_type_label,
+                assignment.display_project_name,
+                *april_days,
+            ]],
+        )
+
+        response = self.client.post(
+            reverse("worktime_csv_upload"),
+            {
+                "csv_file": upload,
+                "scale": "month",
+                "period": "2026-04",
+                "breakdown": "employees",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "ok": True,
+                "created": 4,
+                "updated": 0,
+                "deleted": 0,
+                "created_assignments": 1,
+            },
+        )
+        downtime_assignment = WorktimeAssignment.objects.get(
+            registration__isnull=True,
+            proposal_registration__isnull=True,
+            executor_name=self._full_name(self.employee),
+            record_type=WorktimeAssignment.RecordType.DOWNTIME,
+        )
+        self.assertTrue(
+            PersonalWorktimeWeekAssignment.objects.filter(
+                assignment=downtime_assignment,
+                week_start=date(2026, 4, 6),
+            ).exists()
+        )
+        self.assertEqual(
+            list(
+                WorktimeEntry.objects.filter(assignment=downtime_assignment)
+                .order_by("work_date")
+                .values_list("work_date", "hours")
+            ),
+            [
+                (date(2026, 4, 6), Decimal("3.00")),
+                (date(2026, 4, 7), SHORTENED_WORKDAY_HOURS - Decimal("2.00")),
+            ],
         )
 
     def test_worktime_csv_upload_reuses_calculated_downtime_assignment(self):
