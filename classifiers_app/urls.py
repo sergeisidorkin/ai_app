@@ -109,6 +109,14 @@ urlpatterns = [
     path("lw/<int:pk>/move-up/", views.lw_move_up, name="lw_move_up"),
     path("lw/<int:pk>/move-down/", views.lw_move_down, name="lw_move_down"),
     path("lw/csv-upload/", views.lw_csv_upload, name="lw_csv_upload"),
+    # Производственный календарь
+    path("pc/partial/", views.pc_partial, name="pc_partial"),
+    path("pc/table/", views.pc_table_partial, name="pc_table_partial"),
+    path("pc/generate/", views.pc_generate, name="pc_generate"),
+    path("pc/load-source/", views.pc_load_source, name="pc_load_source"),
+    path("pc/create/", views.pc_form_create, name="pc_form_create"),
+    path("pc/<int:pk>/edit/", views.pc_form_edit, name="pc_form_edit"),
+    path("pc/<int:pk>/delete/", views.pc_delete, name="pc_delete"),
     path("business-registry/csv-download/", views.business_registry_csv_download, name="business_registry_csv_download"),
     path("business-registry/csv-upload/", views.business_registry_csv_upload, name="business_registry_csv_upload"),
     # База юридических лиц (LER)

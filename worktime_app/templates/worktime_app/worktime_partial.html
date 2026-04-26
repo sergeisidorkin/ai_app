@@ -10,7 +10,10 @@
           hx-target="closest [data-worktime-panel]"
           hx-swap="innerHTML"
           data-worktime-week-form
-          data-worktime-week-max="{{ week_max_value }}">
+          data-worktime-week-max="{{ week_max_value }}"
+          data-worktime-calendar-days="{{ personal_calendar_marks_json }}"
+          data-worktime-calendar-years="{{ personal_calendar_mark_years }}"
+          data-worktime-calendar-url="{{ personal_calendar_marks_url }}">
       <span class="worktime-week-filter-anchor">
         <button class="worktime-week-filter-btn text-nowrap"
                 type="button"
@@ -22,6 +25,7 @@
           <i class="bi bi-calendar3 worktime-week-filter-icon" aria-hidden="true"></i>
         </button>
         <input type="hidden" name="week" value="{{ week_value }}" data-worktime-week-value>
+        <input type="hidden" name="hist_sort" value="{{ histogram_sort_value }}" data-worktime-hist-sort-value>
         <input type="text"
                value="{{ week_value }}"
                class="worktime-week-picker-input"
@@ -48,6 +52,7 @@
       <input type="hidden" name="period" value="{{ period_value }}" data-worktime-period-value>
       <input type="hidden" name="hist_sort" value="{{ histogram_sort_value }}" data-worktime-hist-sort-value>
       <input type="hidden" name="breakdown" value="{{ breakdown_value }}" data-worktime-breakdown-value>
+      <input type="hidden" name="company" value="{{ company_filter_value }}" data-worktime-company-value>
 
       <div class="dropdown worktime-scale-filter-wrap">
         <button class="btn btn-outline-secondary btn-sm dropdown-toggle worktime-scale-filter-btn"
@@ -174,14 +179,49 @@
     <input type="hidden" name="period" value="{{ period_value }}">
     <input type="hidden" name="hist_sort" value="{{ histogram_sort_value }}">
     <input type="hidden" name="breakdown" value="{{ breakdown_value }}">
+    <input type="hidden" name="company" value="{{ company_filter_value }}">
   {% endif %}
 
   <div class="worktime-calendar-wrap">
-    <table class="table table-sm align-middle worktime-calendar-table mb-0{% if is_personal_week_view %} worktime-calendar-table-personal{% else %} worktime-calendar-table-general{% endif %}"
+    <table class="table table-sm align-middle worktime-calendar-table mb-0{% if is_personal_week_view %} worktime-calendar-table-personal{% else %} worktime-calendar-table-general{% endif %}{% if is_general_year_view %} worktime-calendar-table-year{% endif %}{% if is_activity_breakdown %} worktime-calendar-table-activities{% endif %}"
            style="--worktime-flex-column-count: {{ days|length }};"
-           data-worktime-flex-column-count="{{ days|length }}">
+           data-worktime-flex-column-count="{{ days|length }}"
+           {% if is_personal_week_view %}
+             data-queued-row-order
+             data-row-order-save-url="{{ personal_reorder_url }}?week={{ week_value }}"
+             data-row-order-week="{{ week_value }}"
+             data-row-order-signature="{{ personal_order_signature }}"
+             data-row-order-context="worktime-personal:{{ week_value }}"
+             data-worktime-reorder-url="{{ personal_reorder_url }}?week={{ week_value }}"
+             data-worktime-order-signature="{{ personal_order_signature }}"
+           {% endif %}>
+      <colgroup>
+        {% if is_personal_week_view %}
+          <col class="worktime-colgroup-select">
+        {% endif %}
+        <col class="worktime-colgroup-project">
+        <col class="worktime-colgroup-type">
+        <col class="worktime-colgroup-name">
+        {% for day in days %}
+          <col class="worktime-colgroup-flex">
+        {% endfor %}
+        <col class="worktime-colgroup-total">
+        <col class="worktime-colgroup-hist">
+      </colgroup>
       <thead>
         <tr>
+          {% if is_personal_week_view %}
+            <th class="worktime-col-select worktime-sticky-select">
+              <div class="form-check m-0 d-flex justify-content-center">
+                <input class="form-check-input"
+                       type="checkbox"
+                       id="worktime-personal-master"
+                       data-worktime-target-name="worktime-personal-select"
+                       data-worktime-actions-id="worktime-personal-actions"
+                       aria-label="Выделить все строки личного табеля">
+              </div>
+            </th>
+          {% endif %}
           <th class="text-nowrap worktime-sticky-col worktime-col-project">Проект</th>
           <th class="text-nowrap worktime-sticky-col-2 worktime-col-type">Тип</th>
           <th class="text-nowrap worktime-sticky-col-3 worktime-col-name">
@@ -203,7 +243,7 @@
             {% endif %}
           </th>
           {% for day in days %}
-            <th class="text-center worktime-day-head text-nowrap">
+            <th class="text-center worktime-day-head text-nowrap{% if day.is_non_working_day %} worktime-non-working-day-head{% endif %}">
               {% if day.header_label %}
                 {{ day.header_label }}
               {% elif not is_personal_week_view %}
@@ -215,42 +255,57 @@
             </th>
           {% endfor %}
           <th class="text-nowrap text-end worktime-total-head">Итого</th>
-          {% if not is_personal_week_view %}
-            <th class="worktime-hist-head" aria-label="Гистограмма">
-              <span class="worktime-hist-sort-controls">
-                <button type="button"
-                        class="clf-wrap-btn{% if histogram_sort_value == 'desc' %} active{% endif %}"
-                        data-worktime-hist-sort-btn="desc"
-                        data-worktime-hist-sort-active="{% if histogram_sort_value == 'desc' %}1{% else %}0{% endif %}"
-                        title="Сортировать по убыванию"
-                        aria-label="Сортировать по убыванию">
-                  <i class="bi bi-caret-down-fill"></i>
-                </button>
-                <button type="button"
-                        class="clf-wrap-btn{% if histogram_sort_value == 'asc' %} active{% endif %}"
-                        data-worktime-hist-sort-btn="asc"
-                        data-worktime-hist-sort-active="{% if histogram_sort_value == 'asc' %}1{% else %}0{% endif %}"
-                        title="Сортировать по возрастанию"
-                        aria-label="Сортировать по возрастанию">
-                  <i class="bi bi-caret-up-fill"></i>
-                </button>
-              </span>
-            </th>
-          {% endif %}
+          <th class="worktime-hist-head" aria-label="Гистограмма">
+            <span class="worktime-hist-sort-controls">
+              <button type="button"
+                      class="clf-wrap-btn{% if histogram_sort_value == 'desc' %} active{% endif %}"
+                      data-worktime-hist-sort-btn="desc"
+                      data-worktime-hist-sort-active="{% if histogram_sort_value == 'desc' %}1{% else %}0{% endif %}"
+                      title="Сортировать по убыванию"
+                      aria-label="Сортировать по убыванию">
+                <i class="bi bi-caret-down-fill"></i>
+              </button>
+              <button type="button"
+                      class="clf-wrap-btn{% if histogram_sort_value == 'asc' %} active{% endif %}"
+                      data-worktime-hist-sort-btn="asc"
+                      data-worktime-hist-sort-active="{% if histogram_sort_value == 'asc' %}1{% else %}0{% endif %}"
+                      title="Сортировать по возрастанию"
+                      aria-label="Сортировать по возрастанию">
+                <i class="bi bi-caret-up-fill"></i>
+              </button>
+            </span>
+          </th>
         </tr>
       </thead>
       <tbody>
         {% if is_personal_week_view %}
           {% if rows %}
             {% for row in rows %}
-              <tr{% if row.assignment.record_type != 'project' %} class="worktime-non-project-row"{% endif %}>
+              <tr{% if row.assignment.record_type != 'project' %} class="worktime-non-project-row{% if row.is_calculated_downtime %} worktime-calculated-downtime-row{% endif %}"{% elif row.is_calculated_downtime %} class="worktime-calculated-downtime-row"{% endif %}
+                  {% if not row.is_locked %}data-row-order-id="{{ row.assignment.id }}"{% endif %}
+                  data-worktime-assignment-id="{{ row.assignment.id }}"
+                  data-worktime-histogram-segment="{{ row.daily_histogram_segment_key|default:'' }}"
+                  {% if row.is_calculated_downtime %}data-worktime-calculated-downtime-row="1"{% endif %}
+                  data-worktime-delete-url="{% url 'personal_worktime_row_delete' row.assignment.id %}?week={{ week_value }}"
+                  data-worktime-move-up-url="{% url 'personal_worktime_row_move_up' row.assignment.id %}?week={{ week_value }}"
+                  data-worktime-move-down-url="{% url 'personal_worktime_row_move_down' row.assignment.id %}?week={{ week_value }}">
+                <td class="worktime-sticky-select worktime-select-cell">
+                  <div class="form-check m-0 d-flex justify-content-center">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           name="worktime-personal-select"
+                           value="{{ row.assignment.id }}"
+                           {% if row.is_locked %}disabled{% endif %}
+                           aria-label="Выделить строку личного табеля">
+                  </div>
+                </td>
                 {% if row.display_mode == 'registry' %}
                   <td class="text-nowrap worktime-sticky-col{% if row.is_tkp %} worktime-tkp-registry-cell{% endif %}">
                     <input type="hidden" name="assignment_ids" value="{{ row.assignment.id }}">
                     {{ row.project_code }}
                   </td>
                   <td class="text-nowrap worktime-sticky-col-2{% if row.is_tkp %} worktime-tkp-registry-cell{% endif %}">
-                    {{ row.type_label }}
+                    <span class="worktime-type-cell-content">{{ row.type_label }}</span>
                   </td>
                   <td class="text-nowrap worktime-sticky-col-3 worktime-col-name-cell{% if row.is_tkp %} worktime-tkp-registry-cell{% endif %}">
                     <span class="worktime-name-cell-content{% if row.is_tkp %} worktime-tkp-registry-cell{% endif %}">{{ row.name_label }}</span>
@@ -258,35 +313,123 @@
                 {% else %}
                   <td colspan="3" class="text-nowrap worktime-sticky-col-span3 worktime-col-merged">
                     <input type="hidden" name="assignment_ids" value="{{ row.assignment.id }}">
-                    <span class="worktime-merged-cell-content">{{ row.merged_label }}</span>
+                    {% if row.is_calculated_downtime %}
+                      <span class="worktime-merged-cell-content">{{ row.merged_label }}<i class="bi bi-lock worktime-calculated-downtime-lock-icon" aria-hidden="true"></i></span>
+                    {% else %}
+                      <span class="worktime-merged-cell-content">{{ row.merged_label }}</span>
+                    {% endif %}
                   </td>
                 {% endif %}
                 {% for cell in row.cells %}
-                  <td class="p-1 worktime-flex-cell">
+                  <td class="p-1 worktime-flex-cell{% if row.daily_histogram_segment_key == 'vacation' and cell.value %} worktime-vacation-hours-cell{% endif %}{% if cell.is_non_working_day %} worktime-non-working-day-cell{% endif %}">
                     <input type="number"
                            name="{{ cell.input_name }}"
-                           value="{{ cell.value|default_if_none:''|unlocalize }}"
+                           value="{% if cell.hide_downtime_zero %}{% else %}{{ cell.value|worktime_hours_input }}{% endif %}"
                            min="0"
                            max="24"
                            step="0.01"
                            class="form-control form-control-sm worktime-cell-input"
                            data-worktime-grid-input
+                           {% if row.is_calculated_downtime %}
+                             data-worktime-calculated-downtime-input
+                             data-worktime-scheduled-hours="{{ cell.scheduled_hours|default:0|unlocalize }}"
+                             disabled
+                           {% elif cell.is_vacation_non_working_day %}
+                             data-worktime-vacation-non-working-input
+                             disabled
+                           {% endif %}
                            aria-label="Часы за {{ cell.date|date:'d.m.Y' }}">
                   </td>
                 {% endfor %}
-                <td class="text-end fw-semibold worktime-total-cell" data-worktime-row-total>{{ row.total_hours|worktime_hours }}</td>
+                <td class="text-end fw-semibold worktime-total-cell" data-worktime-row-total data-worktime-rounded-total>{{ row.total_hours|worktime_hours }}</td>
+                <td class="worktime-hist-cell worktime-hist-cell-bar">
+                  <div class="worktime-hist-track worktime-hist-track-secondary">
+                    <div class="worktime-hist-bar worktime-hist-bar-secondary" style="width: {{ row.histogram_width_percent }}%;"></div>
+                  </div>
+                </td>
               </tr>
             {% endfor %}
             <tr class="table-light fw-semibold worktime-summary-row">
-              <td colspan="3" class="text-end worktime-sticky-total"></td>
-              {% for total in column_totals %}
-                <td class="text-center worktime-flex-total-cell" data-worktime-column-total>{{ total|worktime_hours }}</td>
+              <td colspan="4" class="text-end worktime-sticky-total"></td>
+              {% for cell in summary_column_cells %}
+                <td class="text-center worktime-flex-total-cell{% if cell.has_vacation %} worktime-vacation-summary-cell{% endif %}{% if cell.is_non_working_day %} worktime-non-working-day-total-cell{% endif %}" data-worktime-column-total>
+                  <span class="worktime-cell-display{% if not cell.display_total and not cell.is_empty_non_working_day %} worktime-zero-display{% endif %}{% if cell.vacation_only %} worktime-vacation-summary-value{% endif %}" data-worktime-rounded-total>{% if cell.is_empty_non_working_day %}{% else %}{{ cell.display_total|worktime_hours }}{% endif %}</span>
+                </td>
               {% endfor %}
-              <td class="text-end worktime-total-cell" data-worktime-grand-total>{{ grand_total|worktime_hours }}</td>
+              <td class="text-end worktime-total-cell" data-worktime-grand-total data-worktime-rounded-total>{{ grand_total|worktime_hours }}</td>
+              <td class="worktime-hist-cell"></td>
             </tr>
+              <tr class="worktime-daily-histogram-row{% if not daily_histogram.has_data %} d-none{% endif %}" data-worktime-daily-histogram-row>
+                <td colspan="4" class="worktime-sticky-total worktime-daily-histogram-spacer worktime-composition-cell">
+                  <div class="worktime-composition-wrap">
+                    <div class="worktime-composition-donut"
+                         data-worktime-composition-donut
+                         title="Структура часов за видимый период">
+                      <div class="worktime-composition-ring worktime-composition-ring-outer"
+                           data-worktime-composition-outer
+                           style="background: {{ daily_histogram.composition.outer_gradient|default:'transparent' }};"></div>
+                      <div class="worktime-composition-ring-inner-shell"></div>
+                      <div class="worktime-composition-ring worktime-composition-ring-inner"
+                           data-worktime-composition-inner
+                           style="background: {{ daily_histogram.composition.inner_gradient|default:'transparent' }};"></div>
+                      <div class="worktime-composition-hole"></div>
+                    </div>
+                  </div>
+                </td>
+                {% for column in daily_histogram.columns %}
+                  <td class="worktime-daily-histogram-cell{% if column.is_non_working_day %} worktime-non-working-day-chart-cell{% endif %}">
+                    <div class="worktime-daily-histogram-column{% if not column.has_value %} worktime-daily-histogram-column-empty{% endif %}{% if column.is_non_working_day %} worktime-non-working-day-histogram-column{% endif %}{% if column.is_non_working_day and not column.has_value %} worktime-non-working-day-histogram-column-hidden{% endif %}"
+                         data-worktime-daily-histogram-column
+                         data-worktime-daily-histogram-day="{{ forloop.counter0 }}">
+                      {% for segment in column.segments %}
+                        <div class="worktime-daily-histogram-segment worktime-daily-histogram-segment-{{ segment.key }}{% if not segment.has_value %} worktime-daily-histogram-segment-hidden{% endif %}"
+                             data-worktime-daily-histogram-segment="{{ segment.key }}"
+                             data-worktime-histogram-value="{{ segment.value|default:0|unlocalize }}"
+                             data-worktime-histogram-label="{{ segment.label }}"
+                             data-worktime-histogram-category="{{ segment.category_label }}"
+                             style="height: {{ segment.height_percent }}%;"
+                             title="{% if segment.has_value %}{{ segment.category_label }} / {{ segment.label }}: {{ segment.value|worktime_hours }} ч.{% endif %}"></div>
+                      {% endfor %}
+                    </div>
+                  </td>
+                {% endfor %}
+                <td colspan="2" class="worktime-daily-histogram-empty-cell{% if show_composition_legend %} worktime-composition-legend-cell{% endif %}">
+                  {% if show_composition_legend %}
+                    <div class="worktime-composition-legend">
+                      {% for group in daily_histogram.composition.legend_groups %}
+                        <div class="worktime-composition-legend-group" data-worktime-legend-group="{{ group.key }}">
+                          <div class="worktime-composition-legend-category">
+                            <button type="button"
+                                    class="worktime-composition-legend-visibility-btn"
+                                    data-worktime-category-toggle="{{ group.key }}"
+                                    data-worktime-category-label="{{ group.label }}"
+                                    aria-pressed="false"
+                                    title="Скрыть категорию {{ group.label }}"
+                                    aria-label="Скрыть категорию {{ group.label }}">
+                              <i class="bi bi-eye" aria-hidden="true"></i>
+                            </button>
+                            <span class="worktime-composition-legend-dot worktime-composition-legend-dot-category" style="background: {{ group.color }};"></span>
+                            <span class="worktime-composition-legend-category-label">{{ group.label }}</span>
+                          </div>
+                          {% if group.children %}
+                            <div class="worktime-composition-legend-children">
+                              {% for segment in group.children %}
+                                <div class="worktime-composition-legend-child">
+                                  <span class="worktime-composition-legend-dot worktime-composition-legend-dot-child" style="background: {{ segment.color }};"></span>
+                                  <span class="worktime-composition-legend-child-label">{{ segment.label }}</span>
+                                </div>
+                              {% endfor %}
+                            </div>
+                          {% endif %}
+                        </div>
+                      {% endfor %}
+                    </div>
+                  {% endif %}
+                </td>
+              </tr>
           {% else %}
             <tr>
-              <td colspan="{{ days|length|add:'4' }}" class="text-muted">Пока нет строк табеля для выбранной недели.</td>
+              <td colspan="{{ days|length|add:'6' }}" class="text-muted">Пока нет строк табеля для выбранной недели.</td>
             </tr>
           {% endif %}
         {% else %}
@@ -295,14 +438,15 @@
               {% for row in group.rows %}
                 <tr{% if row.assignment.record_type != 'project' %} class="worktime-non-project-row"{% endif %}
                     data-worktime-detail-row
-                    data-worktime-group-key="{{ group.key }}">
+                    data-worktime-group-key="{{ group.key }}"
+                    data-worktime-histogram-segment="{{ row.daily_histogram_segment_key|default:'' }}">
                   {% if row.display_mode == 'registry' %}
                     <td class="text-nowrap worktime-sticky-col{% if row.is_tkp %} worktime-tkp-registry-cell{% endif %}">
                       <input type="hidden" name="assignment_ids" value="{{ row.assignment.id }}">
                       {{ row.project_code }}
                     </td>
                     <td class="text-nowrap worktime-sticky-col-2{% if row.is_tkp %} worktime-tkp-registry-cell{% endif %}">
-                      {{ row.type_label }}
+                    <span class="worktime-type-cell-content">{{ row.type_label }}</span>
                     </td>
                     <td class="text-nowrap worktime-sticky-col-3 worktime-col-name-cell{% if row.is_tkp %} worktime-tkp-registry-cell{% endif %}">
                       <span class="worktime-name-cell-content{% if row.is_tkp %} worktime-tkp-registry-cell{% endif %}">{{ row.name_label }}</span>
@@ -314,11 +458,11 @@
                     </td>
                   {% endif %}
                   {% for cell in row.cells %}
-                  <td class="text-center worktime-flex-total-cell">
+                  <td class="text-center worktime-flex-total-cell{% if row.daily_histogram_segment_key == 'vacation' and cell.value %} worktime-vacation-hours-cell{% endif %}{% if cell.is_non_working_day %} worktime-non-working-day-cell{% endif %}">
                     <span class="worktime-cell-display{% if not cell.value %} worktime-zero-display{% endif %}">{{ cell.value|default:0|worktime_hours }}</span>
                   </td>
                   {% endfor %}
-                  <td class="text-end fw-semibold worktime-total-cell" data-worktime-row-total>{{ row.total_hours|worktime_hours }}</td>
+                  <td class="text-end fw-semibold worktime-total-cell" data-worktime-row-total data-worktime-rounded-total>{{ row.total_hours|worktime_hours }}</td>
                 <td class="worktime-hist-cell worktime-hist-cell-bar">
                   <div class="worktime-hist-track worktime-hist-track-secondary">
                     <div class="worktime-hist-bar worktime-hist-bar-secondary" style="width: {{ row.histogram_width_percent }}%;"></div>
@@ -342,12 +486,12 @@
                     </button>
                   </span>
                 </td>
-                {% for total in group.column_totals %}
-                  <td class="text-center worktime-flex-total-cell">
-                    <span class="worktime-cell-display{% if not total %} worktime-zero-display{% endif %}">{{ total|worktime_hours }}</span>
+                  {% for cell in group.column_cells %}
+                  <td class="text-center worktime-flex-total-cell{% if cell.has_vacation %} worktime-vacation-summary-cell{% endif %}{% if cell.is_non_working_day %} worktime-non-working-day-total-cell{% endif %}">
+                    <span class="worktime-cell-display{% if not cell.display_total %} worktime-zero-display{% endif %}{% if cell.vacation_only %} worktime-vacation-summary-value{% endif %}" data-worktime-rounded-total>{{ cell.display_total|worktime_hours }}</span>
                   </td>
                 {% endfor %}
-                <td class="text-end worktime-total-cell">{{ group.grand_total|worktime_hours }}</td>
+                <td class="text-end worktime-total-cell" data-worktime-rounded-total>{{ group.grand_total|worktime_hours }}</td>
                 <td class="worktime-hist-cell worktime-hist-cell-bar">
                   <div class="worktime-hist-track">
                     <div class="worktime-hist-bar" style="width: {{ group.histogram_width_percent }}%;"></div>
@@ -357,14 +501,82 @@
             {% endfor %}
             <tr class="fw-semibold worktime-summary-row worktime-grand-summary-row">
               <td colspan="3" class="worktime-sticky-total">Итого</td>
-              {% for total in column_totals %}
-                <td class="text-center worktime-flex-total-cell">
-                  <span class="worktime-cell-display{% if not total %} worktime-zero-display{% endif %}">{{ total|worktime_hours }}</span>
+              {% for cell in total_column_cells %}
+                <td class="text-center worktime-flex-total-cell{% if cell.is_non_working_day %} worktime-non-working-day-total-cell{% endif %}">
+                  <span class="worktime-cell-display{% if not cell.total %} worktime-zero-display{% endif %}" data-worktime-rounded-total>{{ cell.total|worktime_hours }}</span>
                 </td>
               {% endfor %}
-              <td class="text-end worktime-total-cell">{{ grand_total|worktime_hours }}</td>
+              <td class="text-end worktime-total-cell" data-worktime-rounded-total>{{ grand_total|worktime_hours }}</td>
               <td class="worktime-hist-cell"></td>
             </tr>
+              <tr class="worktime-daily-histogram-row{% if not daily_histogram.has_data %} d-none{% endif %}" data-worktime-daily-histogram-row>
+                <td colspan="3" class="worktime-sticky-total worktime-daily-histogram-spacer worktime-composition-cell">
+                  <div class="worktime-composition-wrap">
+                    <div class="worktime-composition-donut"
+                         data-worktime-composition-donut
+                         title="Структура часов за видимый период">
+                      <div class="worktime-composition-ring worktime-composition-ring-outer"
+                           data-worktime-composition-outer
+                           style="background: {{ daily_histogram.composition.outer_gradient|default:'transparent' }};"></div>
+                      <div class="worktime-composition-ring-inner-shell"></div>
+                      <div class="worktime-composition-ring worktime-composition-ring-inner"
+                           data-worktime-composition-inner
+                           style="background: {{ daily_histogram.composition.inner_gradient|default:'transparent' }};"></div>
+                      <div class="worktime-composition-hole"></div>
+                    </div>
+                  </div>
+                </td>
+                {% for column in daily_histogram.columns %}
+                  <td class="worktime-daily-histogram-cell">
+                    <div class="worktime-daily-histogram-column{% if not column.has_value %} worktime-daily-histogram-column-empty{% endif %}{% if column.is_non_working_day and not column.has_value %} worktime-non-working-day-empty-histogram-column{% endif %}"
+                         data-worktime-daily-histogram-column
+                         data-worktime-daily-histogram-day="{{ forloop.counter0 }}">
+                      {% for segment in column.segments %}
+                        <div class="worktime-daily-histogram-segment worktime-daily-histogram-segment-{{ segment.key }}{% if not segment.has_value %} worktime-daily-histogram-segment-hidden{% endif %}"
+                             data-worktime-daily-histogram-segment="{{ segment.key }}"
+                             data-worktime-histogram-value="{{ segment.value|default:0|unlocalize }}"
+                             data-worktime-histogram-label="{{ segment.label }}"
+                             data-worktime-histogram-category="{{ segment.category_label }}"
+                             style="height: {{ segment.height_percent }}%;"
+                             title="{% if segment.has_value %}{{ segment.category_label }} / {{ segment.label }}: {{ segment.value|worktime_hours }} ч.{% endif %}"></div>
+                      {% endfor %}
+                    </div>
+                  </td>
+                {% endfor %}
+                <td colspan="2" class="worktime-daily-histogram-empty-cell{% if show_composition_legend %} worktime-composition-legend-cell{% endif %}">
+                  {% if show_composition_legend %}
+                    <div class="worktime-composition-legend">
+                      {% for group in daily_histogram.composition.legend_groups %}
+                        <div class="worktime-composition-legend-group" data-worktime-legend-group="{{ group.key }}">
+                          <div class="worktime-composition-legend-category">
+                            <button type="button"
+                                    class="worktime-composition-legend-visibility-btn"
+                                    data-worktime-category-toggle="{{ group.key }}"
+                                    data-worktime-category-label="{{ group.label }}"
+                                    aria-pressed="false"
+                                    title="Скрыть категорию {{ group.label }}"
+                                    aria-label="Скрыть категорию {{ group.label }}">
+                              <i class="bi bi-eye" aria-hidden="true"></i>
+                            </button>
+                            <span class="worktime-composition-legend-dot worktime-composition-legend-dot-category" style="background: {{ group.color }};"></span>
+                            <span class="worktime-composition-legend-category-label">{{ group.label }}</span>
+                          </div>
+                          {% if group.children %}
+                            <div class="worktime-composition-legend-children">
+                              {% for segment in group.children %}
+                                <div class="worktime-composition-legend-child">
+                                  <span class="worktime-composition-legend-dot worktime-composition-legend-dot-child" style="background: {{ segment.color }};"></span>
+                                  <span class="worktime-composition-legend-child-label">{{ segment.label }}</span>
+                                </div>
+                              {% endfor %}
+                            </div>
+                          {% endif %}
+                        </div>
+                      {% endfor %}
+                    </div>
+                  {% endif %}
+                </td>
+              </tr>
           {% else %}
             <tr>
               <td colspan="{{ days|length|add:'5' }}" class="text-muted">Пока нет строк табеля для выбранного периода.</td>
@@ -383,6 +595,34 @@
               data-worktime-add-row-url="{{ personal_add_row_url }}?week={{ week_value }}">
         <i class="bi bi-plus-circle me-2"></i>Добавить строку
       </button>
+      <div id="worktime-personal-actions" class="d-none">
+        <div class="btn-group">
+          <button type="button"
+                  class="btn btn-outline-primary btn-sm h-100 py-0"
+                  data-worktime-panel-action="up"
+                  title="{% if histogram_sort_value %}Изменение порядка недоступно при сортировке по гистограмме{% else %}Переместить вверх{% endif %}"
+                  aria-label="Переместить вверх"
+                  {% if histogram_sort_value %}disabled{% endif %}>
+            <i class="bi bi-arrow-up-square"></i>
+          </button>
+          <button type="button"
+                  class="btn btn-outline-primary btn-sm h-100 py-0"
+                  data-worktime-panel-action="down"
+                  title="{% if histogram_sort_value %}Изменение порядка недоступно при сортировке по гистограмме{% else %}Переместить вниз{% endif %}"
+                  aria-label="Переместить вниз"
+                  {% if histogram_sort_value %}disabled{% endif %}>
+            <i class="bi bi-arrow-down-square"></i>
+          </button>
+          <button type="button"
+                  class="btn btn-outline-danger btn-sm h-100 py-0"
+                  data-worktime-panel-action="delete"
+                  title="Удалить"
+                  aria-label="Удалить">
+            <i class="bi bi-x-square"></i>
+          </button>
+        </div>
+      </div>
+      <span class="row-order-status text-muted d-none align-self-center" data-row-order-status></span>
     </div>
   {% else %}
     {% if worktime_csv_controls_visible %}
@@ -427,6 +667,45 @@
     position: relative;
     display: inline-flex;
     align-items: center;
+  }
+
+  .row-order-status {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 26px;
+    min-height: 24px;
+    margin-left: -.35rem;
+    line-height: 1;
+  }
+
+  .row-order-status-spinner {
+    position: relative;
+    display: inline-block;
+    width: 1rem;
+    height: 1rem;
+    border-radius: 50%;
+    background: conic-gradient(from 25deg, rgba(143, 154, 165, 0) 0deg, rgba(143, 154, 165, .18) 120deg, rgba(143, 154, 165, .92) 330deg, rgba(143, 154, 165, 0) 360deg);
+    animation: rowOrderStatusSpinner 820ms linear infinite;
+  }
+
+  .row-order-status-spinner::after {
+    content: "";
+    position: absolute;
+    inset: 2px;
+    border-radius: 50%;
+    background: #fff;
+  }
+
+  .row-order-status-error {
+    min-width: 0;
+    font-size: .78rem;
+  }
+
+  @keyframes rowOrderStatusSpinner {
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .worktime-week-filter-btn {
@@ -577,31 +856,70 @@
   }
 
   .worktime-calendar-wrap {
+    width: 100%;
+    min-width: 0;
     overflow-x: auto;
+    overflow-y: hidden;
     max-width: 100%;
+    padding-bottom: .55rem;
+    -webkit-overflow-scrolling: touch;
   }
 
   .worktime-calendar-table {
     --worktime-grid-color: #dee2e6;
     --worktime-active-cell-color: var(--bs-primary, #075D94);
+    --worktime-select-width: 0px;
     --worktime-project-width: 90px;
     --worktime-type-width: 50px;
     --worktime-name-width: 160px;
     --worktime-flex-width: 36px;
     --worktime-total-width: 72px;
-    --worktime-hist-width: 72px;
+    --worktime-hist-width: 184px;
+    --worktime-project-sticky-left: 0px;
     --worktime-type-sticky-left: 90px;
     --worktime-name-sticky-left: 140px;
+    --worktime-summary-chart-top-gap: 1rem;
+    --worktime-summary-chart-height: 276px;
+    --worktime-summary-chart-column-width: calc(100% - 4px);
     white-space: nowrap;
     border-collapse: separate;
     border-spacing: 0;
-    width: 100%;
+    width: max-content;
+    min-width: 100%;
     table-layout: fixed;
   }
 
   .worktime-calendar-table th,
   .worktime-calendar-table td {
     vertical-align: middle;
+  }
+
+  .worktime-calendar-table .worktime-colgroup-select {
+    width: var(--worktime-select-width);
+  }
+
+  .worktime-calendar-table .worktime-colgroup-project {
+    width: var(--worktime-project-width);
+  }
+
+  .worktime-calendar-table .worktime-colgroup-type {
+    width: var(--worktime-type-width);
+  }
+
+  .worktime-calendar-table .worktime-colgroup-name {
+    width: var(--worktime-name-width);
+  }
+
+  .worktime-calendar-table .worktime-colgroup-flex {
+    width: var(--worktime-flex-width);
+  }
+
+  .worktime-calendar-table .worktime-colgroup-total {
+    width: var(--worktime-total-width);
+  }
+
+  .worktime-calendar-table .worktime-colgroup-hist {
+    width: var(--worktime-hist-width);
   }
 
   .worktime-day-head {
@@ -642,22 +960,60 @@
     padding-right: .25rem;
   }
 
+  .worktime-calendar-table .worktime-col-select,
+  .worktime-calendar-table td.worktime-sticky-select {
+    width: var(--worktime-select-width);
+    min-width: var(--worktime-select-width);
+    max-width: var(--worktime-select-width);
+    padding-left: 0;
+    padding-right: 0;
+  }
+
   .worktime-calendar-table .worktime-col-project,
   .worktime-calendar-table td.worktime-sticky-col {
     width: var(--worktime-project-width);
-    min-width: 90px;
+    min-width: var(--worktime-project-width);
+    max-width: var(--worktime-project-width);
   }
 
   .worktime-calendar-table .worktime-col-type,
   .worktime-calendar-table td.worktime-sticky-col-2 {
     width: var(--worktime-type-width);
-    min-width: 50px;
+    min-width: var(--worktime-type-width);
+    max-width: var(--worktime-type-width);
+  }
+
+  .worktime-calendar-table .worktime-type-cell-content {
+    display: inline-block;
+    white-space: nowrap;
   }
 
   .worktime-calendar-table .worktime-col-name,
   .worktime-calendar-table td.worktime-sticky-col-3 {
     width: var(--worktime-name-width);
-    min-width: 160px;
+    min-width: var(--worktime-name-width);
+    max-width: var(--worktime-name-width);
+  }
+
+  .worktime-calendar-table .worktime-select-cell {
+    text-align: center;
+  }
+
+  .worktime-calendar-table .worktime-sticky-select .form-check {
+    align-items: center;
+    min-height: 0;
+    padding-left: 0;
+  }
+
+  .worktime-calendar-table .worktime-sticky-select .form-check-input {
+    float: none;
+    margin: 0;
+  }
+
+  .worktime-calendar-table-personal .worktime-calculated-downtime-row .worktime-select-cell .form-check-input:disabled {
+    background-color: #e9ecef !important;
+    border-color: #d5dbe1 !important;
+    opacity: 1 !important;
   }
 
   .worktime-calendar-table .worktime-col-name-cell {
@@ -670,6 +1026,7 @@
   .worktime-calendar-table .worktime-col-merged {
     width: calc(var(--worktime-project-width) + var(--worktime-type-width) + var(--worktime-name-width));
     min-width: calc(var(--worktime-project-width) + var(--worktime-type-width) + var(--worktime-name-width));
+    max-width: calc(var(--worktime-project-width) + var(--worktime-type-width) + var(--worktime-name-width));
     overflow: hidden;
     padding-right: .5rem;
     box-shadow: inset -1px 0 0 #dee2e6;
@@ -769,9 +1126,31 @@
     white-space: nowrap;
   }
 
+  .worktime-calendar-table .worktime-calculated-downtime-lock-icon {
+    color: #8b95a1;
+    font-size: .82rem;
+    line-height: 1;
+    margin-left: .35rem;
+    vertical-align: .04em;
+  }
+
   .worktime-calendar-table .worktime-day-head {
     width: var(--worktime-flex-width);
     min-width: var(--worktime-flex-width);
+  }
+
+  .worktime-calendar-table-personal .worktime-non-working-day-head {
+    color: #8b95a1;
+    font-weight: 400;
+  }
+
+  .worktime-calendar-table-general .worktime-non-working-day-head {
+    color: #c8cfd6;
+  }
+
+  .worktime-calendar-table-general .worktime-non-working-day-head .worktime-general-day-head-weekday,
+  .worktime-calendar-table-general .worktime-non-working-day-head .worktime-general-day-head-date {
+    color: #c8cfd6;
   }
 
   .worktime-calendar-table .worktime-flex-cell,
@@ -795,6 +1174,10 @@
 
   .worktime-calendar-table-general {
     min-width: 0;
+  }
+
+  .worktime-calendar-table-general.worktime-calendar-table-year {
+    --worktime-summary-chart-column-width: 57px;
   }
 
   .worktime-calendar-table-general .worktime-day-head,
@@ -830,7 +1213,7 @@
   .worktime-calendar-table-personal {
     --worktime-flex-width: 56px;
     --worktime-total-width: 80px;
-    min-width: calc(90px + 50px + 160px + 80px + (56px * var(--worktime-flex-column-count, 1)));
+    min-width: calc(90px + 50px + 160px + 80px + 184px + (56px * var(--worktime-flex-column-count, 1)));
   }
 
   .worktime-calendar-table .worktime-flex-cell {
@@ -848,9 +1231,95 @@
     background: #fff;
   }
 
+  .worktime-calendar-table-personal tbody tr.table-active > td:not(.worktime-sticky-total) {
+    --bs-table-bg: #f3f7fb;
+    background: #f3f7fb !important;
+  }
+
+  .worktime-calendar-table-personal tbody tr.table-active > td.worktime-sticky-col-3,
+  .worktime-calendar-table-personal tbody tr.table-active > td.worktime-sticky-col-span3,
+  .worktime-calendar-table-personal tbody tr.table-active > td.worktime-col-name-cell {
+    background: #f3f7fb !important;
+  }
+
+  .worktime-calendar-table tbody tr[data-worktime-histogram-segment="vacation"] > td.worktime-vacation-hours-cell {
+    background: #fef6fa !important;
+  }
+
+  .worktime-calendar-table tbody tr[data-worktime-histogram-segment="vacation"]:hover > td.worktime-vacation-hours-cell,
+  .worktime-calendar-table tbody tr[data-worktime-histogram-segment="vacation"]:focus-within > td.worktime-vacation-hours-cell {
+    background: #fbeaf4 !important;
+  }
+
+  .worktime-calendar-table tbody tr[data-worktime-histogram-segment="vacation"]:hover > td.worktime-vacation-hours-cell .worktime-cell-input,
+  .worktime-calendar-table tbody tr[data-worktime-histogram-segment="vacation"]:focus-within > td.worktime-vacation-hours-cell .worktime-cell-input {
+    background: #fbeaf4 !important;
+  }
+
+  .worktime-calendar-table tbody tr[data-worktime-histogram-segment="vacation"]:hover > td.worktime-vacation-hours-cell .worktime-cell-display,
+  .worktime-calendar-table tbody tr[data-worktime-histogram-segment="vacation"]:hover > td.worktime-vacation-hours-cell .worktime-cell-input,
+  .worktime-calendar-table tbody tr[data-worktime-histogram-segment="vacation"]:focus-within > td.worktime-vacation-hours-cell .worktime-cell-display,
+  .worktime-calendar-table tbody tr[data-worktime-histogram-segment="vacation"]:focus-within > td.worktime-vacation-hours-cell .worktime-cell-input {
+    color: #e6a5c9;
+    -webkit-text-fill-color: #e6a5c9;
+  }
+
+  .worktime-calendar-table tbody tr[data-worktime-histogram-segment="vacation"] > td.worktime-vacation-hours-cell .worktime-cell-input {
+    background: #fef6fa !important;
+  }
+
+  .worktime-calendar-table tbody tr[data-worktime-histogram-segment="vacation"] > td.worktime-vacation-hours-cell .worktime-cell-display,
+  .worktime-calendar-table tbody tr[data-worktime-histogram-segment="vacation"] > td.worktime-vacation-hours-cell .worktime-cell-input {
+    color: #ebb6d2;
+    -webkit-text-fill-color: #ebb6d2;
+  }
+
+  .worktime-calendar-table-personal tbody tr.table-active[data-worktime-histogram-segment="vacation"] > td.worktime-vacation-hours-cell,
+  .worktime-calendar-table-personal tbody tr.table-active[data-worktime-histogram-segment="vacation"]:hover > td.worktime-vacation-hours-cell,
+  .worktime-calendar-table-personal tbody tr.table-active[data-worktime-histogram-segment="vacation"]:focus-within > td.worktime-vacation-hours-cell {
+    background: #f9e3f0 !important;
+  }
+
+  .worktime-calendar-table-personal tbody tr.table-active[data-worktime-histogram-segment="vacation"] > td.worktime-vacation-hours-cell .worktime-cell-input {
+    background: #f9e3f0 !important;
+  }
+
+  .worktime-calendar-table-personal tbody tr.table-active[data-worktime-histogram-segment="vacation"] > td.worktime-vacation-hours-cell .worktime-cell-display,
+  .worktime-calendar-table-personal tbody tr.table-active[data-worktime-histogram-segment="vacation"] > td.worktime-vacation-hours-cell .worktime-cell-input {
+    color: #df9fc4;
+    -webkit-text-fill-color: #df9fc4;
+  }
+
+  .worktime-calendar-table .worktime-summary-row > td.worktime-vacation-summary-cell {
+    background: #fae3f0 !important;
+  }
+
   .worktime-calendar-table .worktime-summary-row:hover > td,
   .worktime-calendar-table .worktime-summary-row:focus-within > td {
     background: rgb(246, 250, 254) !important;
+  }
+
+  .worktime-calendar-table .worktime-summary-row:hover > td.worktime-vacation-summary-cell,
+  .worktime-calendar-table .worktime-summary-row:focus-within > td.worktime-vacation-summary-cell {
+    background: #fae3f0 !important;
+  }
+
+  .worktime-calendar-table-general .worktime-group-row > td.worktime-vacation-summary-cell,
+  .worktime-calendar-table-general .worktime-group-row:hover > td.worktime-vacation-summary-cell,
+  .worktime-calendar-table-general .worktime-group-row:focus-within > td.worktime-vacation-summary-cell {
+    border-left-color: rgba(227, 155, 201, .34) !important;
+    border-right-color: rgba(227, 155, 201, .34) !important;
+  }
+
+  .worktime-calendar-table-general .worktime-group-row > td:has(+ td.worktime-vacation-summary-cell),
+  .worktime-calendar-table-general .worktime-group-row:hover > td:has(+ td.worktime-vacation-summary-cell),
+  .worktime-calendar-table-general .worktime-group-row:focus-within > td:has(+ td.worktime-vacation-summary-cell) {
+    border-right-color: rgba(227, 155, 201, .34) !important;
+  }
+
+  .worktime-calendar-table .worktime-vacation-summary-value {
+    color: #ebb6d2;
+    -webkit-text-fill-color: #ebb6d2;
   }
 
   .worktime-calendar-table .worktime-grand-summary-row:hover > td,
@@ -971,8 +1440,15 @@
     -moz-appearance: textfield;
   }
 
-  .worktime-calendar-table .worktime-sticky-col {
+  .worktime-calendar-table .worktime-sticky-select {
+    position: sticky;
     left: 0;
+    background: inherit;
+    z-index: 3;
+  }
+
+  .worktime-calendar-table .worktime-sticky-col {
+    left: var(--worktime-project-sticky-left);
   }
 
   .worktime-calendar-table .worktime-sticky-col-2 {
@@ -985,17 +1461,56 @@
 
   .worktime-calendar-table .worktime-sticky-col-span3 {
     position: sticky;
-    left: 0;
+    left: var(--worktime-project-sticky-left);
     background: inherit;
     z-index: 2;
   }
 
+  .worktime-sticky-select,
   .worktime-sticky-col,
   .worktime-sticky-col-2,
   .worktime-sticky-col-3 {
     position: sticky;
     background: inherit;
     z-index: 2;
+  }
+
+  .worktime-calendar-table-personal tbody tr.table-active {
+    --bs-table-bg: #f1f3f5;
+    --bs-table-active-bg: #f1f3f5;
+    --bs-table-accent-bg: transparent;
+  }
+
+  .worktime-calendar-table-personal tbody tr.table-active > td:not(.worktime-sticky-total),
+  .worktime-calendar-table-personal tbody tr.table-active > th:not(.worktime-sticky-total) {
+    background: #f1f3f5 !important;
+  }
+
+  .worktime-calendar-table-personal tbody tr.table-active > td.worktime-sticky-select,
+  .worktime-calendar-table-personal tbody tr.table-active > td.worktime-sticky-col,
+  .worktime-calendar-table-personal tbody tr.table-active > td.worktime-sticky-col-2,
+  .worktime-calendar-table-personal tbody tr.table-active > td.worktime-sticky-col-3,
+  .worktime-calendar-table-personal tbody tr.table-active > td.worktime-sticky-col-span3,
+  .worktime-calendar-table-personal tbody tr.table-active > td.worktime-col-name-cell,
+  .worktime-calendar-table-personal tbody tr.table-active > td.worktime-col-merged,
+  .worktime-calendar-table-personal tbody tr.table-active.worktime-non-project-row > td:not(.worktime-sticky-total) {
+    background: #f1f3f5 !important;
+  }
+
+  .worktime-calendar-table-personal tbody tr.table-active[data-worktime-histogram-segment="vacation"] > td.worktime-vacation-hours-cell,
+  .worktime-calendar-table-personal tbody tr.table-active[data-worktime-histogram-segment="vacation"]:hover > td.worktime-vacation-hours-cell,
+  .worktime-calendar-table-personal tbody tr.table-active[data-worktime-histogram-segment="vacation"]:focus-within > td.worktime-vacation-hours-cell {
+    background: #f8ddec !important;
+  }
+
+  .worktime-calendar-table-personal tbody tr.table-active[data-worktime-histogram-segment="vacation"] > td.worktime-vacation-hours-cell .worktime-cell-input {
+    background: #f8ddec !important;
+  }
+
+  .worktime-calendar-table-personal tbody tr.table-active[data-worktime-histogram-segment="vacation"] > td.worktime-vacation-hours-cell .worktime-cell-display,
+  .worktime-calendar-table-personal tbody tr.table-active[data-worktime-histogram-segment="vacation"] > td.worktime-vacation-hours-cell .worktime-cell-input {
+    color: #d98fba;
+    -webkit-text-fill-color: #d98fba;
   }
 
   .worktime-group-row .worktime-sticky-total {
@@ -1006,6 +1521,10 @@
 
   .worktime-calendar-table-general .worktime-group-row > .worktime-sticky-total {
     border-bottom: 0 !important;
+  }
+
+  .worktime-calendar-table-general.worktime-calendar-table-activities tr[data-worktime-detail-row]:not(:hover):not(:focus-within) > .worktime-sticky-col-span3 {
+    background: #fff !important;
   }
 
   .worktime-calendar-table-general .worktime-group-row > td:not(.worktime-sticky-total),
@@ -1047,6 +1566,518 @@
   .worktime-calendar-table .worktime-grand-summary-row .worktime-hist-cell {
     background: #e3e9f0;
     border-bottom: 1px solid var(--worktime-grid-color);
+  }
+
+  .worktime-calendar-table .worktime-daily-histogram-row > td {
+    padding-top: var(--worktime-summary-chart-top-gap);
+    padding-bottom: 0;
+    border-top: 0;
+    border-bottom: 0;
+    background: transparent !important;
+  }
+
+  .worktime-calendar-table .worktime-daily-histogram-row:hover > td,
+  .worktime-calendar-table .worktime-daily-histogram-row:focus-within > td {
+    background: transparent !important;
+  }
+
+  .worktime-calendar-table .worktime-daily-histogram-row .worktime-sticky-total {
+    background: #fff !important;
+    box-shadow: none;
+    z-index: 6;
+    overflow: hidden;
+    isolation: isolate;
+    contain: paint;
+  }
+
+  .worktime-calendar-table .worktime-daily-histogram-spacer,
+  .worktime-calendar-table .worktime-daily-histogram-empty-cell {
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    vertical-align: top;
+  }
+
+  .worktime-calendar-table .worktime-composition-cell {
+    padding-top: 0;
+    padding-right: .75rem;
+    vertical-align: top;
+    background: #fff !important;
+    position: sticky;
+    left: 0;
+    z-index: 7;
+    overflow: hidden;
+    isolation: isolate;
+    contain: paint;
+  }
+
+  .worktime-calendar-table .worktime-composition-cell::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: #fff;
+    z-index: 0;
+    pointer-events: none;
+  }
+
+  .worktime-calendar-table .worktime-composition-wrap {
+    min-height: var(--worktime-summary-chart-height);
+    height: var(--worktime-summary-chart-height);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    background: #fff;
+    position: relative;
+    z-index: 1;
+  }
+
+  .worktime-calendar-table .worktime-composition-legend {
+    margin-top: 0;
+    min-height: var(--worktime-summary-chart-height);
+    display: grid;
+    gap: .6rem;
+    line-height: 1.25;
+    text-align: left;
+    align-content: center;
+  }
+
+  .worktime-calendar-table .worktime-composition-legend-cell {
+    padding-top: 0;
+    padding-bottom: 0;
+    padding-left: 3.3rem;
+    vertical-align: top;
+  }
+
+  .worktime-calendar-wrap.worktime-calendar-wrap-scrollable .worktime-calendar-table .worktime-sticky-col-3,
+  .worktime-calendar-wrap.worktime-calendar-wrap-scrollable .worktime-calendar-table .worktime-sticky-col-span3,
+  .worktime-calendar-wrap.worktime-calendar-wrap-scrollable .worktime-calendar-table .worktime-sticky-total,
+  .worktime-calendar-wrap.worktime-calendar-wrap-scrollable .worktime-calendar-table .worktime-composition-cell {
+    box-shadow: inset -1px 0 0 #c8d0d9 !important;
+  }
+
+  .worktime-calendar-wrap.worktime-calendar-wrap-scrollable .worktime-calendar-table .worktime-composition-cell::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 1px;
+    background: #c8d0d9;
+    z-index: 2;
+    pointer-events: none;
+  }
+
+  .worktime-calendar-table .worktime-composition-legend-group {
+    display: grid;
+    gap: .3rem;
+    transition: opacity .22s ease;
+    overflow: visible;
+  }
+
+  .worktime-calendar-table .worktime-composition-legend-group[data-worktime-category-visible="0"] {
+    opacity: .48;
+  }
+
+  .worktime-calendar-table .worktime-composition-legend-category {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: .38rem;
+    min-width: 0;
+  }
+
+  .worktime-calendar-table .worktime-composition-legend-category-label {
+    font-size: .78rem;
+    font-weight: 400;
+    color: #111;
+  }
+
+  .worktime-calendar-table .worktime-composition-legend-visibility-btn {
+    position: absolute;
+    left: calc(-2rem - .38rem);
+    top: 50%;
+    transform: translateY(-50%);
+    width: 2rem;
+    height: 1rem;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #8b97a3;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex: 0 0 auto;
+    cursor: pointer;
+    transition: color .18s ease, opacity .18s ease;
+  }
+
+  .worktime-calendar-table .worktime-composition-legend-visibility-btn:hover,
+  .worktime-calendar-table .worktime-composition-legend-visibility-btn:focus-visible {
+    color: #4f5d6a;
+    outline: none;
+  }
+
+  .worktime-calendar-table .worktime-composition-legend-group[data-worktime-category-visible="0"] .worktime-composition-legend-visibility-btn {
+    color: #9aa5af;
+  }
+
+  .worktime-calendar-table .worktime-composition-legend-children {
+    display: grid;
+    gap: .18rem;
+    padding-left: 0;
+  }
+
+  .worktime-calendar-table .worktime-composition-legend-child {
+    display: inline-flex;
+    align-items: center;
+    gap: .38rem;
+    min-width: 0;
+  }
+
+  .worktime-calendar-table .worktime-composition-legend-child-label {
+    font-size: .71rem;
+    color: #6c757d;
+  }
+
+  .worktime-calendar-table .worktime-composition-legend-dot {
+    border-radius: 50%;
+    flex: 0 0 auto;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .08);
+  }
+
+  .worktime-calendar-table .worktime-composition-legend-dot-category,
+  .worktime-calendar-table .worktime-composition-legend-dot-child {
+    width: .58rem;
+    height: .58rem;
+  }
+
+  .worktime-calendar-table .worktime-composition-donut {
+    position: relative;
+    width: var(--worktime-summary-chart-height);
+    height: var(--worktime-summary-chart-height);
+    flex: 0 0 auto;
+  }
+
+  .worktime-calendar-table .worktime-composition-ring {
+    position: absolute;
+    border-radius: 50%;
+    background: transparent;
+  }
+
+  .worktime-calendar-table .worktime-composition-ring-outer {
+    inset: 0;
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 24px), #000 calc(100% - 24px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 24px), #000 calc(100% - 24px));
+  }
+
+  .worktime-calendar-table .worktime-composition-ring-inner-shell {
+    position: absolute;
+    inset: 24px;
+    border-radius: 50%;
+    background: #fff;
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+  }
+
+  .worktime-calendar-table .worktime-composition-ring-inner {
+    inset: 26px;
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 21px), #000 calc(100% - 21px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 21px), #000 calc(100% - 21px));
+  }
+
+  .worktime-calendar-table .worktime-composition-hole {
+    position: absolute;
+    inset: 47px;
+    border-radius: 50%;
+    background: #fff;
+  }
+
+  .worktime-calendar-table .worktime-daily-histogram-cell {
+    padding: 0 .35rem 0;
+    vertical-align: top;
+  }
+
+  .worktime-calendar-table-personal .worktime-daily-histogram-row > td.worktime-daily-histogram-cell {
+    position: relative;
+    background: linear-gradient(to top, rgba(7, 93, 148, .06), rgba(7, 93, 148, .015)) !important;
+    border-top: 0 !important;
+    border-bottom: 0 !important;
+    box-shadow:
+      inset 0 -1px 0 var(--worktime-grid-color),
+      inset -1px 0 0 var(--worktime-grid-color);
+  }
+
+  .worktime-calendar-table-personal .worktime-daily-histogram-row .worktime-composition-cell::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--worktime-grid-color);
+    z-index: 2;
+    pointer-events: none;
+  }
+
+  .worktime-calendar-table .worktime-daily-histogram-column {
+    width: var(--worktime-summary-chart-column-width);
+    max-width: calc(100% - 4px);
+    margin: 0 auto;
+    height: var(--worktime-summary-chart-height);
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: stretch;
+    overflow: hidden;
+    border-radius: 0;
+    border-top: 1px solid #e6edf3;
+    border-bottom: 1px solid #e6edf3;
+    background: linear-gradient(to top, rgba(7, 93, 148, .06), rgba(7, 93, 148, .015));
+    box-sizing: border-box;
+    pointer-events: auto;
+  }
+
+  .worktime-calendar-table-personal .worktime-daily-histogram-column {
+    width: 39px;
+    max-width: calc(100% - 12px);
+    z-index: 1;
+    background: rgba(255, 255, 255, .3);
+    border-top-color: #d1d8df;
+    border-bottom-color: #d1d8df;
+  }
+
+  .worktime-calendar-table-personal .worktime-daily-histogram-column.worktime-daily-histogram-column-empty {
+    background: rgba(255, 255, 255, .3);
+  }
+
+  .worktime-calendar-table-general .worktime-daily-histogram-column.worktime-non-working-day-empty-histogram-column {
+    background: #fff !important;
+    border-top-color: transparent;
+    border-bottom-color: transparent;
+  }
+
+  .worktime-calendar-table-general .worktime-daily-histogram-column.worktime-non-working-day-empty-histogram-column::before,
+  .worktime-calendar-table-general .worktime-daily-histogram-column.worktime-non-working-day-empty-histogram-column::after {
+    background: transparent !important;
+  }
+
+  .worktime-calendar-table {
+    --worktime-non-working-day-overlay: rgba(0, 0, 0, .018);
+    --worktime-non-working-day-summary-overlay: rgba(7, 93, 148, .035);
+    --worktime-non-working-day-grand-summary-overlay: rgba(7, 93, 148, .07);
+    --worktime-non-working-day-chart-overlay: rgba(7, 93, 148, .022);
+  }
+
+  .worktime-calendar-table .worktime-non-working-day-cell,
+  .worktime-calendar-table .worktime-non-working-day-total-cell {
+    background-image: linear-gradient(var(--worktime-non-working-day-overlay), var(--worktime-non-working-day-overlay)) !important;
+  }
+
+  .worktime-calendar-table tbody tr:hover > td.worktime-non-working-day-cell,
+  .worktime-calendar-table tbody tr:focus-within > td.worktime-non-working-day-cell,
+  .worktime-calendar-table .worktime-summary-row:hover > td.worktime-non-working-day-total-cell,
+  .worktime-calendar-table .worktime-summary-row:focus-within > td.worktime-non-working-day-total-cell {
+    background-image: linear-gradient(var(--worktime-non-working-day-overlay), var(--worktime-non-working-day-overlay)) !important;
+  }
+
+  .worktime-calendar-table-general .worktime-summary-row > td.worktime-non-working-day-total-cell,
+  .worktime-calendar-table-general .worktime-summary-row:hover > td.worktime-non-working-day-total-cell,
+  .worktime-calendar-table-general .worktime-summary-row:focus-within > td.worktime-non-working-day-total-cell {
+    background-image: linear-gradient(var(--worktime-non-working-day-summary-overlay), var(--worktime-non-working-day-summary-overlay)) !important;
+  }
+
+  .worktime-calendar-table-general .worktime-grand-summary-row > td.worktime-non-working-day-total-cell,
+  .worktime-calendar-table-general .worktime-grand-summary-row:hover > td.worktime-non-working-day-total-cell,
+  .worktime-calendar-table-general .worktime-grand-summary-row:focus-within > td.worktime-non-working-day-total-cell {
+    background-image: linear-gradient(var(--worktime-non-working-day-grand-summary-overlay), var(--worktime-non-working-day-grand-summary-overlay)) !important;
+  }
+
+  .worktime-calendar-table-general .worktime-grand-summary-row > td,
+  .worktime-calendar-table-general .worktime-grand-summary-row:hover > td,
+  .worktime-calendar-table-general .worktime-grand-summary-row:focus-within > td {
+    border-left-color: rgba(7, 93, 148, .10) !important;
+    border-right-color: rgba(7, 93, 148, .10) !important;
+  }
+
+  .worktime-calendar-table-general .worktime-grand-summary-row > td.worktime-non-working-day-total-cell,
+  .worktime-calendar-table-general .worktime-grand-summary-row:hover > td.worktime-non-working-day-total-cell,
+  .worktime-calendar-table-general .worktime-grand-summary-row:focus-within > td.worktime-non-working-day-total-cell {
+    border-left-color: rgba(7, 93, 148, .18) !important;
+    border-right-color: rgba(7, 93, 148, .18) !important;
+  }
+
+  .worktime-calendar-table-general .worktime-grand-summary-row > td:has(+ td.worktime-non-working-day-total-cell),
+  .worktime-calendar-table-general .worktime-grand-summary-row:hover > td:has(+ td.worktime-non-working-day-total-cell),
+  .worktime-calendar-table-general .worktime-grand-summary-row:focus-within > td:has(+ td.worktime-non-working-day-total-cell) {
+    border-right-color: rgba(7, 93, 148, .18) !important;
+  }
+
+  .worktime-calendar-table-general .worktime-grand-summary-row > td.worktime-non-working-day-total-cell .worktime-zero-display {
+    color: #b4bdc6 !important;
+  }
+
+  .worktime-calendar-table .worktime-summary-row > td.worktime-vacation-summary-cell.worktime-non-working-day-total-cell,
+  .worktime-calendar-table .worktime-summary-row:hover > td.worktime-vacation-summary-cell.worktime-non-working-day-total-cell,
+  .worktime-calendar-table .worktime-summary-row:focus-within > td.worktime-vacation-summary-cell.worktime-non-working-day-total-cell {
+    background:
+      linear-gradient(var(--worktime-non-working-day-overlay), var(--worktime-non-working-day-overlay)),
+      #fae3f0 !important;
+  }
+
+  .worktime-calendar-table-general .worktime-summary-row > td.worktime-vacation-summary-cell.worktime-non-working-day-total-cell,
+  .worktime-calendar-table-general .worktime-summary-row:hover > td.worktime-vacation-summary-cell.worktime-non-working-day-total-cell,
+  .worktime-calendar-table-general .worktime-summary-row:focus-within > td.worktime-vacation-summary-cell.worktime-non-working-day-total-cell {
+    background:
+      linear-gradient(var(--worktime-non-working-day-summary-overlay), var(--worktime-non-working-day-summary-overlay)),
+      #fae3f0 !important;
+  }
+
+  .worktime-calendar-table-general .worktime-grand-summary-row > td.worktime-vacation-summary-cell.worktime-non-working-day-total-cell,
+  .worktime-calendar-table-general .worktime-grand-summary-row:hover > td.worktime-vacation-summary-cell.worktime-non-working-day-total-cell,
+  .worktime-calendar-table-general .worktime-grand-summary-row:focus-within > td.worktime-vacation-summary-cell.worktime-non-working-day-total-cell {
+    background:
+      linear-gradient(var(--worktime-non-working-day-grand-summary-overlay), var(--worktime-non-working-day-grand-summary-overlay)),
+      #fae3f0 !important;
+  }
+
+  .worktime-calendar-table-personal tbody tr[data-worktime-histogram-segment="vacation"] > td.worktime-vacation-hours-cell.worktime-non-working-day-cell,
+  .worktime-calendar-table-personal tbody tr[data-worktime-histogram-segment="vacation"]:hover > td.worktime-vacation-hours-cell.worktime-non-working-day-cell,
+  .worktime-calendar-table-personal tbody tr[data-worktime-histogram-segment="vacation"]:focus-within > td.worktime-vacation-hours-cell.worktime-non-working-day-cell,
+  .worktime-calendar-table-personal tbody tr.table-active[data-worktime-histogram-segment="vacation"] > td.worktime-vacation-hours-cell.worktime-non-working-day-cell,
+  .worktime-calendar-table-personal tbody tr.table-active[data-worktime-histogram-segment="vacation"]:hover > td.worktime-vacation-hours-cell.worktime-non-working-day-cell,
+  .worktime-calendar-table-personal tbody tr.table-active[data-worktime-histogram-segment="vacation"]:focus-within > td.worktime-vacation-hours-cell.worktime-non-working-day-cell,
+  .worktime-calendar-table-personal tbody tr[data-worktime-histogram-segment="vacation"] > td.worktime-vacation-hours-cell.worktime-non-working-day-cell .worktime-cell-input,
+  .worktime-calendar-table-personal tbody tr[data-worktime-histogram-segment="vacation"]:hover > td.worktime-vacation-hours-cell.worktime-non-working-day-cell .worktime-cell-input,
+  .worktime-calendar-table-personal tbody tr[data-worktime-histogram-segment="vacation"]:focus-within > td.worktime-vacation-hours-cell.worktime-non-working-day-cell .worktime-cell-input,
+  .worktime-calendar-table-personal tbody tr.table-active[data-worktime-histogram-segment="vacation"] > td.worktime-vacation-hours-cell.worktime-non-working-day-cell .worktime-cell-input,
+  .worktime-calendar-table-personal tbody tr.table-active[data-worktime-histogram-segment="vacation"]:hover > td.worktime-vacation-hours-cell.worktime-non-working-day-cell .worktime-cell-input,
+  .worktime-calendar-table-personal tbody tr.table-active[data-worktime-histogram-segment="vacation"]:focus-within > td.worktime-vacation-hours-cell.worktime-non-working-day-cell .worktime-cell-input {
+    background-image: linear-gradient(var(--worktime-non-working-day-overlay), var(--worktime-non-working-day-overlay)) !important;
+  }
+
+  .worktime-calendar-table .worktime-daily-histogram-row > td.worktime-daily-histogram-cell.worktime-non-working-day-chart-cell {
+    background:
+      linear-gradient(var(--worktime-non-working-day-chart-overlay), var(--worktime-non-working-day-chart-overlay)),
+      linear-gradient(to top, rgba(7, 93, 148, .06), rgba(7, 93, 148, .015)) !important;
+  }
+
+  .worktime-calendar-table .worktime-daily-histogram-column.worktime-non-working-day-histogram-column,
+  .worktime-calendar-table .worktime-daily-histogram-column.worktime-daily-histogram-column-empty.worktime-non-working-day-histogram-column {
+    background:
+      linear-gradient(var(--worktime-non-working-day-chart-overlay), var(--worktime-non-working-day-chart-overlay)),
+      linear-gradient(to top, rgba(7, 93, 148, .06), rgba(7, 93, 148, .015)) !important;
+  }
+
+  .worktime-calendar-table-personal .worktime-daily-histogram-column.worktime-non-working-day-histogram-column,
+  .worktime-calendar-table-personal .worktime-daily-histogram-column.worktime-daily-histogram-column-empty.worktime-non-working-day-histogram-column {
+    background:
+      linear-gradient(var(--worktime-non-working-day-chart-overlay), var(--worktime-non-working-day-chart-overlay)),
+      rgba(255, 255, 255, .3) !important;
+  }
+
+  .worktime-calendar-table-personal .worktime-daily-histogram-column.worktime-non-working-day-histogram-column-hidden {
+    display: none;
+  }
+
+  .worktime-calendar-table .worktime-daily-histogram-column::before,
+  .worktime-calendar-table .worktime-daily-histogram-column::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: #e6edf3;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .worktime-calendar-table .worktime-daily-histogram-column::before {
+    left: 0;
+  }
+
+  .worktime-calendar-table .worktime-daily-histogram-column::after {
+    right: 0;
+  }
+
+  .worktime-calendar-table.worktime-calendar-table-personal .worktime-daily-histogram-column::before,
+  .worktime-calendar-table.worktime-calendar-table-personal .worktime-daily-histogram-column::after {
+    background: #d1d8df;
+  }
+
+  .worktime-calendar-table .worktime-daily-histogram-segment {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    margin-left: 0;
+    margin-right: 0;
+    min-height: 0;
+    flex: 0 0 auto;
+    box-shadow: none;
+    box-sizing: border-box;
+    border-left: 1px solid var(--worktime-daily-histogram-segment-border, transparent);
+    border-right: 1px solid var(--worktime-daily-histogram-segment-border, transparent);
+    pointer-events: auto;
+    transition:
+      height .26s ease,
+      border-color .26s ease;
+  }
+
+  .worktime-calendar-table .worktime-daily-histogram-segment-hidden {
+    height: 0 !important;
+    border-left-color: transparent !important;
+    border-right-color: transparent !important;
+    pointer-events: none;
+  }
+
+  .worktime-calendar-table .worktime-daily-histogram-segment-strategic_development {
+    background: #c2efab;
+    --worktime-daily-histogram-segment-border: #a7da90;
+  }
+
+  .worktime-calendar-table .worktime-daily-histogram-segment-business_development {
+    background: #89d463;
+    --worktime-daily-histogram-segment-border: #72bc51;
+  }
+
+  .worktime-calendar-table .worktime-daily-histogram-segment-administration {
+    background: #4f95bf;
+    --worktime-daily-histogram-segment-border: #3f81aa;
+  }
+
+  .worktime-calendar-table .worktime-daily-histogram-segment-tkp {
+    background: #5fb142;
+    --worktime-daily-histogram-segment-border: #4d9633;
+  }
+
+  .worktime-calendar-table .worktime-daily-histogram-segment-project {
+    background: #2a74a1;
+    --worktime-daily-histogram-segment-border: #1f638d;
+  }
+
+  .worktime-calendar-table .worktime-daily-histogram-segment-other_absence {
+    background: #b8c2cc;
+    --worktime-daily-histogram-segment-border: #a1acb7;
+  }
+
+  .worktime-calendar-table .worktime-daily-histogram-segment-sick_leave {
+    background: #cbd3db;
+    --worktime-daily-histogram-segment-border: #b3bec8;
+  }
+
+  .worktime-calendar-table .worktime-daily-histogram-segment-time_off {
+    background: #d9e0e6;
+    --worktime-daily-histogram-segment-border: #c0c8cf;
+  }
+
+  .worktime-calendar-table .worktime-daily-histogram-segment-vacation {
+    background: #f5c9e1;
+    --worktime-daily-histogram-segment-border: #e39bc9;
+  }
+
+  .worktime-calendar-table .worktime-daily-histogram-segment-downtime {
+    background: #a78ed5;
+    --worktime-daily-histogram-segment-border: #9474c5;
   }
 
   .worktime-hist-track {
@@ -1474,7 +2505,156 @@
 
   .flatpickr-day.prevMonthDay,
   .flatpickr-day.nextMonthDay {
-    color: #adb5bd;
+    color: #ced4da;
+  }
+
+  .flatpickr-calendar .flatpickr-day.worktime-production-holiday-day,
+  .flatpickr-calendar .flatpickr-day.prevMonthDay.worktime-production-holiday-day,
+  .flatpickr-calendar .flatpickr-day.nextMonthDay.worktime-production-holiday-day {
+    color: #d00000 !important;
+    font-weight: 600;
+  }
+
+  .flatpickr-calendar .flatpickr-day.worktime-production-holiday-day:not(.prevMonthDay):not(.nextMonthDay),
+  .flatpickr-calendar .flatpickr-day.worktime-production-holiday-day:not(.prevMonthDay):not(.nextMonthDay):hover {
+    --worktime-week-fill: rgba(208, 0, 0, .10);
+    --worktime-week-border: rgba(208, 0, 0, .18);
+    background: transparent !important;
+    border-color: transparent !important;
+  }
+
+  .flatpickr-calendar .flatpickr-day.worktime-production-holiday-day:not(.prevMonthDay):not(.nextMonthDay)::before {
+    content: "";
+    position: absolute;
+    top: 1px;
+    bottom: 1px;
+    left: -1px;
+    right: -1px;
+    background: var(--worktime-week-fill);
+    border-top: 1px solid var(--worktime-week-border);
+    border-bottom: 1px solid var(--worktime-week-border);
+    border-radius: 0;
+    z-index: -1;
+    pointer-events: none;
+  }
+
+  .flatpickr-calendar .flatpickr-day.worktime-production-holiday-day.worktime-production-holiday-single:not(.prevMonthDay):not(.nextMonthDay)::before,
+  .flatpickr-calendar .flatpickr-day.worktime-production-holiday-day.worktime-production-holiday-start:not(.prevMonthDay):not(.nextMonthDay)::before {
+    left: 1px;
+    border-left: 1px solid var(--worktime-week-border);
+    border-top-left-radius: .35rem;
+    border-bottom-left-radius: .35rem;
+  }
+
+  .flatpickr-calendar .flatpickr-day.worktime-production-holiday-day.worktime-production-holiday-single:not(.prevMonthDay):not(.nextMonthDay)::before,
+  .flatpickr-calendar .flatpickr-day.worktime-production-holiday-day.worktime-production-holiday-end:not(.prevMonthDay):not(.nextMonthDay)::before {
+    right: 1px;
+    border-right: 1px solid var(--worktime-week-border);
+    border-top-right-radius: .35rem;
+    border-bottom-right-radius: .35rem;
+  }
+
+  .flatpickr-calendar .flatpickr-day.worktime-week-hover.worktime-production-holiday-day:not(.prevMonthDay):not(.nextMonthDay),
+  .flatpickr-calendar .flatpickr-day.worktime-week-hover.worktime-production-holiday-day:not(.prevMonthDay):not(.nextMonthDay):hover {
+    --worktime-week-fill: #f1f3f5;
+    --worktime-week-border: #adb5bd;
+  }
+
+  .flatpickr-calendar .flatpickr-day.worktime-week-hover.worktime-production-holiday-day:not(.prevMonthDay):not(.nextMonthDay)::before {
+    left: -1px;
+    right: -1px;
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;
+  }
+
+  .flatpickr-calendar .dayContainer .flatpickr-day.worktime-week-hover.worktime-production-holiday-day:nth-child(7n+1)::before {
+    left: 0;
+    border-left: 1px solid var(--worktime-week-border);
+    border-top-left-radius: .35rem;
+    border-bottom-left-radius: .35rem;
+  }
+
+  .flatpickr-calendar .dayContainer .flatpickr-day.worktime-week-hover.worktime-production-holiday-day:nth-child(7n)::before {
+    right: 0;
+    border-right: 1px solid var(--worktime-week-border);
+    border-top-right-radius: .35rem;
+    border-bottom-right-radius: .35rem;
+  }
+
+  .flatpickr-calendar .flatpickr-day.worktime-week-selected.worktime-production-holiday-day:not(.prevMonthDay):not(.nextMonthDay),
+  .flatpickr-calendar .flatpickr-day.worktime-week-selected.worktime-production-holiday-day:not(.prevMonthDay):not(.nextMonthDay):hover {
+    --worktime-week-fill: rgba(13, 110, 253, .10);
+    --worktime-week-border: rgba(13, 110, 253, .18);
+  }
+
+  .flatpickr-calendar .flatpickr-day.worktime-week-selected.worktime-production-holiday-day:not(.prevMonthDay):not(.nextMonthDay)::before {
+    left: -1px;
+    right: -1px;
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;
+  }
+
+  .flatpickr-calendar .dayContainer .flatpickr-day.worktime-week-selected.worktime-production-holiday-day:nth-child(7n+1)::before {
+    left: 0;
+    border-left: 1px solid var(--worktime-week-border);
+    border-top-left-radius: .35rem;
+    border-bottom-left-radius: .35rem;
+  }
+
+  .flatpickr-calendar .dayContainer .flatpickr-day.worktime-week-selected.worktime-production-holiday-day:nth-child(7n)::before {
+    right: 0;
+    border-right: 1px solid var(--worktime-week-border);
+    border-top-right-radius: .35rem;
+    border-bottom-right-radius: .35rem;
+  }
+
+  .flatpickr-calendar .flatpickr-day.prevMonthDay.worktime-production-holiday-day,
+  .flatpickr-calendar .flatpickr-day.nextMonthDay.worktime-production-holiday-day {
+    color: #ced4da !important;
+    font-weight: 400;
+  }
+
+  .flatpickr-calendar .flatpickr-day.worktime-production-weekend-day,
+  .flatpickr-calendar .flatpickr-day.prevMonthDay.worktime-production-weekend-day,
+  .flatpickr-calendar .flatpickr-day.nextMonthDay.worktime-production-weekend-day {
+    color: #adb5bd !important;
+    font-weight: 400;
+  }
+
+  .flatpickr-calendar .flatpickr-day.prevMonthDay.worktime-production-weekend-day,
+  .flatpickr-calendar .flatpickr-day.nextMonthDay.worktime-production-weekend-day {
+    color: #ced4da !important;
+  }
+
+  .flatpickr-calendar .flatpickr-day.worktime-production-shortened-day,
+  .flatpickr-calendar .flatpickr-day.prevMonthDay.worktime-production-shortened-day,
+  .flatpickr-calendar .flatpickr-day.nextMonthDay.worktime-production-shortened-day {
+    font-weight: 400;
+  }
+
+  .flatpickr-calendar .flatpickr-day.worktime-production-shortened-day .worktime-production-shortened-mark {
+    position: absolute;
+    top: 5px;
+    color: currentColor;
+    font-size: .78rem;
+    font-weight: 300;
+    line-height: 1;
+    pointer-events: none;
+  }
+
+  .flatpickr-calendar .flatpickr-day.worktime-production-shortened-day-single .worktime-production-shortened-mark {
+    left: calc(50% + .24rem);
+  }
+
+  .flatpickr-calendar .flatpickr-day.worktime-production-shortened-day-double .worktime-production-shortened-mark {
+    left: calc(50% + .45rem);
+  }
+
+  .flatpickr-calendar .flatpickr-day.prevMonthDay.worktime-production-shortened-day .worktime-production-shortened-mark,
+  .flatpickr-calendar .flatpickr-day.nextMonthDay.worktime-production-shortened-day .worktime-production-shortened-mark {
+    display: none;
   }
 
   .flatpickr-day.flatpickr-disabled,
@@ -1533,9 +2713,13 @@
     var WORKTIME_GENERAL_MONTH_PERIOD_STORAGE_KEY = 'worktime.general.period.month';
     var WORKTIME_GENERAL_YEAR_PERIOD_STORAGE_KEY = 'worktime.general.period.year';
     var WORKTIME_GENERAL_HIST_SORT_STORAGE_KEY = 'worktime.general.histSort';
+    var WORKTIME_GENERAL_COMPANY_FILTER_STORAGE_KEY = 'worktime.general.companyFilter';
+    var WORKTIME_PERSONAL_HIST_SORT_STORAGE_KEY = 'worktime.personal.histSort';
     var worktimeTableResizeObserver = window.__worktimeTableResizeObserver || null;
     var worktimeAutosaveStates = window.__worktimeAutosaveStates || new WeakMap();
+    var cleanupWorktimeFloatingScroll = window.__cleanupWorktimeFloatingScroll || null;
     window.__worktimeAutosaveStates = worktimeAutosaveStates;
+    window.__cleanupWorktimeFloatingScroll = cleanupWorktimeFloatingScroll;
 
     function getStoredWorktimeGeneralCollapseState() {
       try {
@@ -1682,6 +2866,54 @@
       }
     }
 
+    function normalizeWorktimeGeneralCompanyFilter(value) {
+      var rawValue = String(value || '').trim();
+      if (!rawValue || rawValue === '__all__') return '__all__';
+      var seen = {};
+      var ids = [];
+      rawValue.split(',').forEach(function (part) {
+        var id = String(part || '').trim();
+        if (!/^\d+$/.test(id) || seen[id]) return;
+        seen[id] = true;
+        ids.push(id);
+      });
+      return ids.length ? ids.join(',') : '__all__';
+    }
+
+    function setStoredWorktimeGeneralCompanyFilterState(value) {
+      try {
+        if (!window.localStorage) return;
+        var normalized = normalizeWorktimeGeneralCompanyFilter(value);
+        window.localStorage.setItem(WORKTIME_GENERAL_COMPANY_FILTER_STORAGE_KEY, normalized || '__all__');
+      } catch (error) {
+        // Ignore localStorage access failures.
+      }
+    }
+
+    function getStoredWorktimePersonalHistSortState() {
+      try {
+        if (!window.localStorage) return '';
+        var rawValue = (window.localStorage.getItem(WORKTIME_PERSONAL_HIST_SORT_STORAGE_KEY) || '').toLowerCase();
+        return rawValue === 'asc' || rawValue === 'desc' ? rawValue : '';
+      } catch (error) {
+        return '';
+      }
+    }
+
+    function setStoredWorktimePersonalHistSortState(value) {
+      try {
+        if (!window.localStorage) return;
+        var normalized = (value || '').toLowerCase();
+        if (normalized === 'asc' || normalized === 'desc') {
+          window.localStorage.setItem(WORKTIME_PERSONAL_HIST_SORT_STORAGE_KEY, normalized);
+        } else {
+          window.localStorage.removeItem(WORKTIME_PERSONAL_HIST_SORT_STORAGE_KEY);
+        }
+      } catch (error) {
+        // Ignore localStorage access failures.
+      }
+    }
+
     function normalizeWorktimeGeneralScale(value) {
       var normalized = (value || '').toLowerCase();
       return normalized === 'year' ? 'year' : 'month';
@@ -1722,12 +2954,34 @@
       return normalized === 'asc' || normalized === 'desc' ? normalized : '';
     }
 
+    function syncStoredWorktimePersonalPreferences(weekForm) {
+      if (!weekForm) return false;
+      var sortField = weekForm.querySelector('[data-worktime-hist-sort-value]');
+      if (!sortField) return false;
+      var requestHasExplicitSort = false;
+      try {
+        var currentUrl = new URL(window.location.href);
+        requestHasExplicitSort = currentUrl.searchParams.has('hist_sort');
+      } catch (error) {
+        requestHasExplicitSort = false;
+      }
+      if (!requestHasExplicitSort) {
+        sortField.value = normalizeWorktimeGeneralHistSort(sortField.value || getStoredWorktimePersonalHistSortState());
+      } else {
+        sortField.value = normalizeWorktimeGeneralHistSort(sortField.value);
+      }
+      setStoredWorktimePersonalHistSortState(sortField.value);
+      weekForm.dataset.worktimePreferencesRestored = '1';
+      return false;
+    }
+
     function syncStoredWorktimeGeneralPreferences(periodForm) {
       if (!periodForm) return false;
       var scaleField = periodForm.querySelector('[data-worktime-scale-value]');
       var breakdownField = periodForm.querySelector('[data-worktime-breakdown-value]');
       var sortField = periodForm.querySelector('[data-worktime-hist-sort-value]');
       var periodField = periodForm.querySelector('[data-worktime-period-value]');
+      var companyField = periodForm.querySelector('[data-worktime-company-value]');
       if (!scaleField || !breakdownField || !sortField || !periodField) return false;
 
       scaleField.value = normalizeWorktimeGeneralScale(scaleField.value);
@@ -1735,10 +2989,16 @@
       sortField.value = normalizeWorktimeGeneralHistSort(sortField.value);
       periodField.value = normalizeWorktimeGeneralPeriod(periodField.value, scaleField.value)
         || deriveFallbackWorktimeGeneralPeriod(periodField.value, scaleField.value);
+      if (companyField) {
+        companyField.value = normalizeWorktimeGeneralCompanyFilter(companyField.value);
+      }
       setStoredWorktimeGeneralScaleState(scaleField.value);
       setStoredWorktimeGeneralBreakdownState(breakdownField.value);
       setStoredWorktimeGeneralPeriodState(periodField.value, scaleField.value);
       setStoredWorktimeGeneralHistSortState(sortField.value);
+      if (companyField) {
+        setStoredWorktimeGeneralCompanyFilterState(companyField.value);
+      }
       periodForm.dataset.worktimePreferencesRestored = '1';
       return false;
     }
@@ -1859,26 +3119,35 @@
       scope.querySelectorAll('[data-worktime-period-form]').forEach(function (periodForm) {
         syncStoredWorktimeGeneralPreferences(periodForm);
       });
+      scope.querySelectorAll('[data-worktime-week-form]').forEach(function (weekForm) {
+        syncStoredWorktimePersonalPreferences(weekForm);
+      });
       scope.querySelectorAll('[data-worktime-hist-sort-btn]').forEach(function (button) {
         if (button.dataset.worktimeHistSortBound === '1') return;
         button.dataset.worktimeHistSortBound = '1';
         button.addEventListener('click', function (event) {
           event.preventDefault();
           var panel = button.closest('[data-worktime-panel]') || document.querySelector('#worktime-content-timesheet [data-worktime-panel]');
-          var periodForm = panel && panel.querySelector ? panel.querySelector('[data-worktime-period-form]') : null;
-          var sortField = periodForm && periodForm.querySelector ? periodForm.querySelector('[data-worktime-hist-sort-value]') : null;
-          if (!periodForm || !sortField) return;
+          var targetForm = panel && panel.querySelector
+            ? panel.querySelector('[data-worktime-period-form], [data-worktime-week-form]')
+            : null;
+          var sortField = targetForm && targetForm.querySelector ? targetForm.querySelector('[data-worktime-hist-sort-value]') : null;
+          if (!targetForm || !sortField) return;
           var nextValue = button.dataset.worktimeHistSortBtn || '';
           if (button.dataset.worktimeHistSortActive === '1') {
             nextValue = '';
           }
           sortField.value = nextValue;
-          setStoredWorktimeGeneralHistSortState(sortField.value);
+          if (targetForm.matches && targetForm.matches('[data-worktime-period-form]')) {
+            setStoredWorktimeGeneralHistSortState(sortField.value);
+          } else if (targetForm.matches && targetForm.matches('[data-worktime-week-form]')) {
+            setStoredWorktimePersonalHistSortState(sortField.value);
+          }
           if (!reloadWorktimePanel(panel)) {
-            if (typeof periodForm.requestSubmit === 'function') {
-              periodForm.requestSubmit();
+            if (typeof targetForm.requestSubmit === 'function') {
+              targetForm.requestSubmit();
             } else {
-              periodForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+              targetForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
             }
           }
         });
@@ -1930,6 +3199,50 @@
       return Math.min.apply(Math, candidates);
     }
 
+    function resolveWorktimeTypeColumnWidth(table, minTypeWidth) {
+      var measuredTextWidth = 0;
+      table.querySelectorAll('.worktime-type-cell-content').forEach(function (content) {
+        var contentWidth = Math.ceil(content.getBoundingClientRect().width || 0);
+        if (contentWidth > measuredTextWidth) {
+          measuredTextWidth = contentWidth;
+        }
+      });
+      var sampleCell = table.querySelector('td.worktime-sticky-col-2, .worktime-col-type');
+      if (!sampleCell || !window.getComputedStyle) {
+        return Math.max(minTypeWidth, measuredTextWidth);
+      }
+      var computedStyle = window.getComputedStyle(sampleCell);
+      var paddingLeft = parseFloat(computedStyle.paddingLeft || '0') || 0;
+      var paddingRight = parseFloat(computedStyle.paddingRight || '0') || 0;
+      var borderAllowance = 2;
+      return Math.max(minTypeWidth, Math.ceil(measuredTextWidth + paddingLeft + paddingRight + borderAllowance));
+    }
+
+    function syncWorktimeStickyLeftOffsets(table, fallbackSelectWidth, fallbackProjectWidth, fallbackTypeWidth) {
+      if (!table) return;
+      var selectHead = table.querySelector('thead .worktime-col-select');
+      var projectHead = table.querySelector('thead .worktime-col-project');
+      var typeHead = table.querySelector('thead .worktime-col-type');
+      if (!projectHead || !typeHead) return;
+
+      var renderedSelectWidth = selectHead ? (selectHead.getBoundingClientRect().width || 0) : 0;
+      var renderedProjectWidth = projectHead.getBoundingClientRect().width || 0;
+      var renderedTypeWidth = typeHead.getBoundingClientRect().width || 0;
+      var selectWidth = renderedSelectWidth > 0 ? renderedSelectWidth : (fallbackSelectWidth || 0);
+      var projectWidth = renderedProjectWidth > 0 ? renderedProjectWidth : (fallbackProjectWidth || 0);
+      var typeWidth = renderedTypeWidth > 0 ? renderedTypeWidth : (fallbackTypeWidth || 0);
+
+      table.style.setProperty('--worktime-project-sticky-left', selectWidth + 'px');
+      table.style.setProperty('--worktime-type-sticky-left', (selectWidth + projectWidth) + 'px');
+      table.style.setProperty('--worktime-name-sticky-left', (selectWidth + projectWidth + typeWidth) + 'px');
+    }
+
+    function syncWorktimeWrapOverflowState(wrap, table) {
+      if (!wrap || !table) return;
+      var overflowWidth = Math.ceil((table.scrollWidth || 0) - (wrap.clientWidth || 0));
+      wrap.classList.toggle('worktime-calendar-wrap-scrollable', overflowWidth > 1);
+    }
+
     function syncWorktimeTableLayout(root) {
       var scope = root && root.querySelectorAll ? root : document;
       scope.querySelectorAll('.worktime-calendar-table[data-worktime-flex-column-count]').forEach(function (table) {
@@ -1940,46 +3253,64 @@
         var containerWidth = resolveWorktimeTableContainerWidth(table, wrap);
         if (!containerWidth) return;
 
+        var minSelectWidth = table.querySelector('.worktime-colgroup-select') ? 30 : 0;
         var minProjectWidth = 90;
         var minTypeWidth = 50;
         var minNameWidth = 160;
         var minFlexWidth = table.classList.contains('worktime-calendar-table-personal') ? 56 : 36;
         var minTotalWidth = table.classList.contains('worktime-calendar-table-personal') ? 80 : 72;
-        var minHistWidth = table.classList.contains('worktime-calendar-table-general') ? 72 : 0;
-        var minTableWidth = minProjectWidth + minTypeWidth + minNameWidth + minTotalWidth + minHistWidth + (minFlexWidth * flexCount);
+        var minHistWidth = table.querySelector('.worktime-colgroup-hist') ? 184 : 0;
+        var typeWidth = resolveWorktimeTypeColumnWidth(table, minTypeWidth);
+        var minTableWidth = minSelectWidth + minProjectWidth + typeWidth + minNameWidth + minTotalWidth + minHistWidth + (minFlexWidth * flexCount);
 
         if (containerWidth <= minTableWidth) {
+          table.style.setProperty('--worktime-select-width', minSelectWidth + 'px');
           table.style.setProperty('--worktime-project-width', minProjectWidth + 'px');
-          table.style.setProperty('--worktime-type-width', minTypeWidth + 'px');
+          table.style.setProperty('--worktime-type-width', typeWidth + 'px');
           table.style.setProperty('--worktime-name-width', minNameWidth + 'px');
           table.style.setProperty('--worktime-flex-width', minFlexWidth + 'px');
           table.style.setProperty('--worktime-total-width', minTotalWidth + 'px');
           table.style.setProperty('--worktime-hist-width', minHistWidth + 'px');
-          table.style.setProperty('--worktime-type-sticky-left', minProjectWidth + 'px');
-          table.style.setProperty('--worktime-name-sticky-left', (minProjectWidth + minTypeWidth) + 'px');
+          table.style.setProperty('--worktime-project-sticky-left', minSelectWidth + 'px');
+          table.style.setProperty('--worktime-type-sticky-left', (minSelectWidth + minProjectWidth) + 'px');
+          table.style.setProperty('--worktime-name-sticky-left', (minSelectWidth + minProjectWidth + typeWidth) + 'px');
+          syncWorktimeStickyLeftOffsets(table, minSelectWidth, minProjectWidth, typeWidth);
+          syncWorktimeWrapOverflowState(wrap, table);
           return;
         }
 
-        var extraWidth = containerWidth - minTableWidth;
-        var projectWidth = minProjectWidth + (extraWidth * 0.03);
-        var typeWidth = minTypeWidth + (extraWidth * 0.018);
-        var nameWidth = minNameWidth + (extraWidth * 0.07);
-        var flexWidth = minFlexWidth + ((extraWidth * 0.882) / flexCount);
+        var extraWidth = Math.max(0, containerWidth - minTableWidth);
+        var projectWidth = Math.round(minProjectWidth + (extraWidth * 0.03));
+        var flexWidth = Math.floor(minFlexWidth + ((extraWidth * 0.90) / flexCount));
+        var occupiedWidth = (
+          minSelectWidth +
+          projectWidth +
+          typeWidth +
+          minTotalWidth +
+          minHistWidth +
+          (flexWidth * flexCount)
+        );
+        var nameWidth = Math.max(minNameWidth, containerWidth - occupiedWidth);
 
+        table.style.setProperty('--worktime-select-width', minSelectWidth + 'px');
         table.style.setProperty('--worktime-project-width', projectWidth + 'px');
         table.style.setProperty('--worktime-type-width', typeWidth + 'px');
         table.style.setProperty('--worktime-name-width', nameWidth + 'px');
         table.style.setProperty('--worktime-flex-width', flexWidth + 'px');
         table.style.setProperty('--worktime-total-width', minTotalWidth + 'px');
         table.style.setProperty('--worktime-hist-width', minHistWidth + 'px');
-        table.style.setProperty('--worktime-type-sticky-left', projectWidth + 'px');
-        table.style.setProperty('--worktime-name-sticky-left', (projectWidth + typeWidth) + 'px');
+        table.style.setProperty('--worktime-project-sticky-left', minSelectWidth + 'px');
+        table.style.setProperty('--worktime-type-sticky-left', (minSelectWidth + projectWidth) + 'px');
+        table.style.setProperty('--worktime-name-sticky-left', (minSelectWidth + projectWidth + typeWidth) + 'px');
+        syncWorktimeStickyLeftOffsets(table, minSelectWidth, projectWidth, typeWidth);
+        syncWorktimeWrapOverflowState(wrap, table);
       });
     }
 
     function syncWorktimeTablesSoon(root) {
       window.requestAnimationFrame(function () {
         syncWorktimeTableLayout(root);
+        setupWorktimeFloatingScroll(root);
       });
       window.setTimeout(function () {
         syncWorktimeTableLayout(root);
@@ -1989,8 +3320,124 @@
       }, 120);
       window.setTimeout(function () {
         syncWorktimeTableLayout(root);
+        setupWorktimeFloatingScroll(root);
       }, 300);
       bindWorktimeTableObservers(root);
+    }
+
+    function clearWorktimeFloatingScroll() {
+      if (typeof cleanupWorktimeFloatingScroll === 'function') {
+        cleanupWorktimeFloatingScroll();
+      }
+      cleanupWorktimeFloatingScroll = null;
+      window.__cleanupWorktimeFloatingScroll = null;
+    }
+
+    function resolveActiveWorktimeCalendarWrap(root) {
+      var scope = root && root.querySelectorAll ? root : document;
+      var wraps = Array.from(scope.querySelectorAll('.worktime-calendar-wrap'));
+      if (!wraps.length && scope !== document) {
+        wraps = Array.from(document.querySelectorAll('.worktime-calendar-wrap'));
+      }
+      for (var i = 0; i < wraps.length; i += 1) {
+        var wrap = wraps[i];
+        if (!wrap || !wrap.querySelector('.worktime-calendar-table[data-worktime-flex-column-count]')) continue;
+        if (wrap.offsetParent === null) continue;
+        if ((wrap.clientWidth || 0) <= 0) continue;
+        return wrap;
+      }
+      return null;
+    }
+
+    function setupWorktimeFloatingScroll(root) {
+      clearWorktimeFloatingScroll();
+
+      var tableWrap = resolveActiveWorktimeCalendarWrap(root);
+      if (!tableWrap) return;
+
+      var proxy = document.createElement('div');
+      proxy.style.cssText = 'display:none;position:fixed;overflow-x:auto;overflow-y:hidden;z-index:1041;bottom:0;left:0;background:#f8f9fa;';
+      var inner = document.createElement('div');
+      inner.style.height = '1px';
+      proxy.appendChild(inner);
+      document.body.appendChild(proxy);
+
+      var syncing = false;
+
+      function onProxyScroll() {
+        if (syncing) return;
+        syncing = true;
+        tableWrap.scrollLeft = proxy.scrollLeft;
+        syncing = false;
+      }
+
+      function onTableScroll() {
+        if (syncing) return;
+        syncing = true;
+        proxy.scrollLeft = tableWrap.scrollLeft;
+        syncing = false;
+      }
+
+      proxy.addEventListener('scroll', onProxyScroll, { passive: true });
+      tableWrap.addEventListener('scroll', onTableScroll, { passive: true });
+
+      function update() {
+        if (!tableWrap.isConnected || tableWrap.offsetParent === null) {
+          proxy.style.display = 'none';
+          return;
+        }
+
+        var hasOverflow = tableWrap.scrollWidth > tableWrap.clientWidth;
+        if (!hasOverflow) {
+          proxy.style.display = 'none';
+          return;
+        }
+
+        var wrapRect = tableWrap.getBoundingClientRect();
+        var viewH = window.innerHeight;
+        var nativeBarVisible = wrapRect.bottom <= viewH;
+
+        if (nativeBarVisible || wrapRect.width <= 0) {
+          proxy.style.display = 'none';
+          return;
+        }
+
+        proxy.style.display = 'block';
+        proxy.style.bottom = '0';
+        proxy.style.left = wrapRect.left + 'px';
+        proxy.style.width = wrapRect.width + 'px';
+        inner.style.width = tableWrap.scrollWidth + 'px';
+        proxy.scrollLeft = tableWrap.scrollLeft;
+      }
+
+      function onFrame() {
+        window.requestAnimationFrame(update);
+      }
+
+      window.addEventListener('scroll', onFrame, { passive: true });
+      window.addEventListener('resize', onFrame, { passive: true });
+
+      var resizeObs = null;
+      if (window.ResizeObserver) {
+        resizeObs = new ResizeObserver(onFrame);
+        resizeObs.observe(tableWrap);
+      }
+
+      cleanupWorktimeFloatingScroll = function () {
+        proxy.removeEventListener('scroll', onProxyScroll);
+        tableWrap.removeEventListener('scroll', onTableScroll);
+        window.removeEventListener('scroll', onFrame);
+        window.removeEventListener('resize', onFrame);
+        if (resizeObs) {
+          resizeObs.disconnect();
+          resizeObs = null;
+        }
+        if (proxy.isConnected) {
+          proxy.remove();
+        }
+      };
+      window.__cleanupWorktimeFloatingScroll = cleanupWorktimeFloatingScroll;
+      update();
     }
 
     function buildWorktimePanelRequestUrl(panel) {
@@ -2015,15 +3462,33 @@
       );
     }
 
-    function reloadWorktimePanel(panel) {
+    function flushWorktimeRowOrder(panel) {
+      if (
+        !window.__queuedRowOrder ||
+        typeof window.__queuedRowOrder.flushPanel !== 'function'
+      ) {
+        return Promise.resolve(true);
+      }
+      return window.__queuedRowOrder.flushPanel(panel);
+    }
+
+    function reloadWorktimePanel(panel, options) {
       if (!panel || !window.htmx) return false;
       var requestUrl = buildWorktimePanelRequestUrl(panel);
       if (!requestUrl) return false;
-      renderWorktimePanelLoadingState(panel);
-      window.htmx.ajax('GET', requestUrl, {
-        target: panel,
-        swap: panel.getAttribute('hx-swap') || 'innerHTML'
-      });
+      panel.setAttribute('hx-get', requestUrl);
+      var runReload = function () {
+        renderWorktimePanelLoadingState(panel);
+        window.htmx.ajax('GET', requestUrl, {
+          target: panel,
+          swap: panel.getAttribute('hx-swap') || 'innerHTML'
+        });
+      };
+      if (options && options.skipRowOrderFlush) {
+        runReload();
+        return true;
+      }
+      flushWorktimeRowOrder(panel).finally(runReload);
       return true;
     }
 
@@ -2038,6 +3503,203 @@
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+    }
+
+    var worktimeSelectionState = window.__worktimeTableSel || {};
+    window.__worktimeTableSel = worktimeSelectionState;
+    window.__worktimeTableSelLast = window.__worktimeTableSelLast || null;
+
+    function getWorktimeCookie(name) {
+      var match = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
+      return match ? match.pop() : '';
+    }
+
+    function isPersonalWorktimePanel(panel) {
+      return !!(panel && panel.closest && panel.closest('#worktime-content-personal-timesheet'));
+    }
+
+    function getWorktimeSelectionName(panel) {
+      if (!isPersonalWorktimePanel(panel)) return '';
+      var master = panel.querySelector('input.form-check-input[data-worktime-target-name][data-worktime-actions-id]');
+      return master ? (master.getAttribute('data-worktime-target-name') || '') : '';
+    }
+
+    function getWorktimeSelectionActions(panel, name) {
+      if (!panel || !name) return null;
+      var master = panel.querySelector('input.form-check-input[data-worktime-target-name="' + name + '"]');
+      if (!master) return null;
+      var actionsId = master.getAttribute('data-worktime-actions-id') || '';
+      return actionsId ? panel.querySelector('#' + actionsId) : null;
+    }
+
+    function getWorktimeRowChecks(panel, name) {
+      if (!panel || !name) return [];
+      return Array.from(panel.querySelectorAll('tbody input.form-check-input[name="' + name + '"]'));
+    }
+
+    function isVisibleWorktimeRowCheckbox(box) {
+      var row = box && box.closest ? box.closest('tr') : null;
+      return !!row && !row.classList.contains('d-none') && !box.disabled;
+    }
+
+    function getVisibleWorktimeRowChecks(panel, name) {
+      return getWorktimeRowChecks(panel, name).filter(isVisibleWorktimeRowCheckbox);
+    }
+
+    function getCheckedWorktimeRowChecks(panel, name) {
+      return getVisibleWorktimeRowChecks(panel, name).filter(function (box) {
+        return !!box.checked;
+      });
+    }
+
+    function updateWorktimeSelectionHighlight(panel, name) {
+      getWorktimeRowChecks(panel, name).forEach(function (box) {
+        var row = box.closest('tr');
+        if (row) {
+          row.classList.toggle('table-active', !!box.checked);
+        }
+      });
+    }
+
+    function updateWorktimeMasterSelectionState(panel, name) {
+      if (!panel || !name) return;
+      var master = panel.querySelector('input.form-check-input[data-worktime-target-name="' + name + '"]');
+      if (!master) return;
+      var boxes = getVisibleWorktimeRowChecks(panel, name);
+      var checkedCount = boxes.filter(function (box) { return box.checked; }).length;
+      master.checked = boxes.length > 0 && checkedCount === boxes.length;
+      master.indeterminate = checkedCount > 0 && checkedCount < boxes.length;
+    }
+
+    function ensureWorktimeSelectionActionsVisibility(panel, name) {
+      var actions = getWorktimeSelectionActions(panel, name);
+      if (!actions) return;
+      var anyChecked = getCheckedWorktimeRowChecks(panel, name).length > 0;
+      actions.classList.toggle('d-none', !anyChecked);
+      actions.classList.toggle('d-flex', anyChecked);
+    }
+
+    function syncWorktimeSelectionState(panel) {
+      var name = getWorktimeSelectionName(panel);
+      if (!name) return;
+      updateWorktimeMasterSelectionState(panel, name);
+      updateWorktimeSelectionHighlight(panel, name);
+      ensureWorktimeSelectionActionsVisibility(panel, name);
+    }
+
+    function restoreWorktimeSelectionState(panel) {
+      var name = getWorktimeSelectionName(panel);
+      if (!name) return;
+      var storedIds = worktimeSelectionState[name] || [];
+      var selectedIds = new Set(storedIds.map(String));
+      getWorktimeRowChecks(panel, name).forEach(function (box) {
+        box.checked = selectedIds.has(String(box.value));
+      });
+      syncWorktimeSelectionState(panel);
+      try {
+        delete worktimeSelectionState[name];
+      } catch (error) {
+        worktimeSelectionState[name] = [];
+      }
+      if (window.__worktimeTableSelLast === name) {
+        window.__worktimeTableSelLast = null;
+      }
+    }
+
+    function postWorktimeRowAction(url) {
+      return window.fetch(url, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'X-CSRFToken': getWorktimeCookie('csrftoken'),
+          'X-Requested-With': 'XMLHttpRequest'
+        }
+      }).then(function (response) {
+        if (!response.ok) {
+          throw new Error('Worktime row action failed with status ' + response.status);
+        }
+        return response;
+      });
+    }
+
+    function runWorktimeRowSelectionAction(panel, action) {
+      var name = getWorktimeSelectionName(panel);
+      if (!name) return Promise.resolve(false);
+      var checked = getCheckedWorktimeRowChecks(panel, name);
+      if (!checked.length) return Promise.resolve(false);
+
+      if (action === 'delete' && !window.confirm('Удалить ' + checked.length + ' строк(у/и) из личного табеля? Значения за выбранную неделю будут очищены.')) {
+        return Promise.resolve(false);
+      }
+
+      if (action === 'delete') {
+        worktimeSelectionState[name] = [];
+        window.__worktimeTableSelLast = null;
+      } else {
+        worktimeSelectionState[name] = checked.map(function (box) { return String(box.value); });
+        window.__worktimeTableSelLast = name;
+      }
+
+      if (
+        (action === 'up' || action === 'down') &&
+        window.__queuedRowOrder &&
+        typeof window.__queuedRowOrder.moveSelection === 'function'
+      ) {
+        var moved = window.__queuedRowOrder.moveSelection(panel, action, {
+          selectionName: name,
+          selectedIds: checked.map(function (box) { return String(box.value); }),
+          onAfterMove: function () {
+            syncWorktimeSelectionState(panel);
+            syncWorktimeTablesSoon(panel);
+          }
+        });
+        return Promise.resolve(!!moved);
+      }
+
+      var urls = checked.map(function (box) {
+        var row = box.closest('tr');
+        if (!row || !row.dataset) return '';
+        if (action === 'up') return row.dataset.worktimeMoveUpUrl || '';
+        if (action === 'down') return row.dataset.worktimeMoveDownUrl || '';
+        if (action === 'delete') return row.dataset.worktimeDeleteUrl || '';
+        return '';
+      }).filter(Boolean);
+      if (!urls.length) return Promise.resolve(false);
+      if (action === 'down') {
+        urls.reverse();
+      }
+
+      var flushPromise = (
+        window.__worktimeAutosave &&
+        typeof window.__worktimeAutosave.flushVisible === 'function'
+      ) ? window.__worktimeAutosave.flushVisible() : Promise.resolve(true);
+
+      if (action === 'delete') {
+        flushPromise = Promise.all([
+          flushPromise,
+          flushWorktimeRowOrder(panel)
+        ]).then(function (results) {
+          return results.every(Boolean);
+        });
+      }
+
+      return flushPromise.then(function (flushed) {
+        if (flushed === false) return false;
+        var chain = Promise.resolve();
+        urls.forEach(function (url) {
+          chain = chain.then(function () {
+            return postWorktimeRowAction(url);
+          });
+        });
+        return chain.then(function () {
+          reloadWorktimePanel(panel);
+          return true;
+        });
+      }).catch(function (error) {
+        console.error('Failed to run worktime row selection action', error);
+        window.alert('Не удалось выполнить действие со строками личного табеля.');
+        return false;
+      });
     }
 
     function cleanupWorktimeCsvModalArtifacts() {
@@ -2095,7 +3757,7 @@
       var form = panel && panel.querySelector ? panel.querySelector('[data-worktime-period-form]') : null;
       if (!form) return params;
       var formData = new FormData(form);
-      ['scale', 'period', 'breakdown', 'hist_sort'].forEach(function (name) {
+      ['scale', 'period', 'breakdown', 'hist_sort', 'company'].forEach(function (name) {
         var value = String(formData.get(name) || '').trim();
         if (value) {
           params.set(name, value);
@@ -2394,6 +4056,49 @@
       return numericValue;
     }
 
+    function formatWorktimeInputValue(value) {
+      if (!Number.isFinite(value)) return '';
+      var normalized = Math.round(value * 100) / 100;
+      if (Math.abs(normalized - Math.round(normalized)) < 0.000001) {
+        return String(Math.round(normalized));
+      }
+      return normalized.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+    }
+
+    function syncCalculatedDowntimeRows(table) {
+      if (!table) return;
+      var downtimeRows = Array.from(table.querySelectorAll('[data-worktime-calculated-downtime-row]'));
+      if (!downtimeRows.length) return;
+      var dataRows = Array.from(table.querySelectorAll('tbody tr')).filter(function (row) {
+        return row.querySelector('[data-worktime-grid-input]');
+      });
+      downtimeRows.forEach(function (downtimeRow) {
+        var downtimeInputs = Array.from(downtimeRow.querySelectorAll('[data-worktime-grid-input]'));
+        downtimeInputs.forEach(function (input, columnIndex) {
+          var scheduledHours = Number(String(input.dataset.worktimeScheduledHours || '0').replace(',', '.'));
+          var otherTotal = 0;
+          var vacationTotal = 0;
+          dataRows.forEach(function (row) {
+            if (row === downtimeRow || row.dataset.worktimeCalculatedDowntimeRow === '1') return;
+            var otherInput = Array.from(row.querySelectorAll('[data-worktime-grid-input]'))[columnIndex];
+            var value = parseWorktimeHoursValue(otherInput);
+            otherTotal += value;
+            if (row.dataset.worktimeHistogramSegment === 'vacation') {
+              vacationTotal += value;
+            }
+          });
+          if (!Number.isFinite(scheduledHours) || scheduledHours <= 0) {
+            input.value = '';
+            syncWorktimeZeroInputState(input);
+            return;
+          }
+          var downtimeValue = Math.max(scheduledHours - otherTotal, 0);
+          input.value = downtimeValue <= 0 && vacationTotal > 0 ? '' : formatWorktimeInputValue(downtimeValue);
+          syncWorktimeZeroInputState(input);
+        });
+      });
+    }
+
     function syncWorktimeZeroInputState(input) {
       if (!input) return;
       var rawValue = String(input.value || '').trim().replace(',', '.');
@@ -2401,13 +4106,312 @@
       input.classList.toggle('worktime-zero-value', hasZeroValue);
     }
 
-    function formatWorktimeTotalValue(value) {
+    function syncWorktimeVacationInputState(input) {
+      if (!input) return;
+      var cell = input.closest('.worktime-flex-cell');
+      var row = input.closest('tr[data-worktime-histogram-segment]');
+      if (!cell || !row) return;
+      var rawValue = String(input.value || '').trim().replace(',', '.');
+      var numericValue = rawValue === '' ? 0 : Number(rawValue);
+      var hasVacationHours = row.dataset.worktimeHistogramSegment === 'vacation' && Number.isFinite(numericValue) && numericValue > 0;
+      cell.classList.toggle('worktime-vacation-hours-cell', hasVacationHours);
+    }
+
+    function syncWorktimeVacationSummaryState(summaryRow, columnTotals, vacationColumnTotals) {
+      if (!summaryRow) return;
+      Array.from(summaryRow.querySelectorAll('[data-worktime-column-total]')).forEach(function (cell, columnIndex) {
+        var totalValue = Number(columnTotals[columnIndex] || 0);
+        var vacationValue = Number(vacationColumnTotals[columnIndex] || 0);
+        var otherValue = totalValue - vacationValue;
+        var hasVacationHours = vacationValue > 0;
+        var vacationOnly = hasVacationHours && otherValue <= 0;
+        var displayValue = hasVacationHours && otherValue > 0 ? otherValue : totalValue;
+        var isEmptyNonWorkingDay = cell.classList.contains('worktime-non-working-day-total-cell') && !(displayValue > 0);
+        cell.classList.toggle('worktime-vacation-summary-cell', hasVacationHours);
+        var valueEl = cell.querySelector('.worktime-cell-display');
+        if (valueEl) {
+          valueEl.textContent = isEmptyNonWorkingDay ? '' : formatWorktimeRoundedTotalValue(displayValue);
+          valueEl.classList.toggle('worktime-zero-display', !isEmptyNonWorkingDay && !(displayValue > 0));
+          valueEl.classList.toggle('worktime-vacation-summary-value', vacationOnly);
+        } else {
+          cell.textContent = isEmptyNonWorkingDay ? '' : formatWorktimeRoundedTotalValue(displayValue);
+        }
+      });
+    }
+
+    function formatWorktimeRoundedTotalValue(value) {
       if (!Number.isFinite(value)) return '0';
-      return new Intl.NumberFormat('ru-RU', {
-        useGrouping: false,
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 2
-      }).format(value);
+      return String(Math.round(value));
+    }
+
+    function parseWorktimeDisplayValue(value) {
+      var normalized = String(value || '').trim().replace(/\s+/g, '').replace(',', '.');
+      if (!normalized) return null;
+      var numericValue = Number(normalized);
+      return Number.isFinite(numericValue) ? numericValue : null;
+    }
+
+    function formatWorktimeHoursDisplayValue(value) {
+      if (!Number.isFinite(value)) return '0';
+      var normalized = Math.round(value * 10) / 10;
+      if (Math.abs(normalized - Math.round(normalized)) < 0.000001) {
+        return String(Math.round(normalized));
+      }
+      return normalized.toFixed(1).replace(/0+$/, '').replace(/\.$/, '').replace('.', ',');
+    }
+
+    var WORKTIME_COMPOSITION_CATEGORIES = [
+      { key: 'downtime', label: 'Простой', color: '#9474c5' },
+      { key: 'absence', label: 'Отсутствие', color: '#8b95a1' },
+      { key: 'vacation', label: 'Отпуск', color: '#e39bc9' },
+      { key: 'development', label: 'Развитие', color: '#559e39' },
+      { key: 'work', label: 'Рабочие процессы', color: '#075d94' }
+    ];
+
+    var WORKTIME_COMPOSITION_SEGMENTS = [
+      { key: 'downtime', label: 'Простой', categoryKey: 'downtime', categoryLabel: 'Простой', color: '#a78ed5' },
+      { key: 'other_absence', label: 'Прочее отсутствие', categoryKey: 'absence', categoryLabel: 'Отсутствие', color: '#b8c2cc' },
+      { key: 'sick_leave', label: 'Больничный', categoryKey: 'absence', categoryLabel: 'Отсутствие', color: '#cbd3db' },
+      { key: 'time_off', label: 'Отгул', categoryKey: 'absence', categoryLabel: 'Отсутствие', color: '#d9e0e6' },
+      { key: 'vacation', label: 'Отпуск', categoryKey: 'vacation', categoryLabel: 'Отпуск', color: '#f5c9e1' },
+      { key: 'strategic_development', label: 'Стратегическое развитие', categoryKey: 'development', categoryLabel: 'Развитие', color: '#c2efab' },
+      { key: 'business_development', label: 'Бизнес-девелопмент', categoryKey: 'development', categoryLabel: 'Развитие', color: '#89d463' },
+      { key: 'tkp', label: 'ТКП', categoryKey: 'development', categoryLabel: 'Развитие', color: '#5fb142' },
+      { key: 'administration', label: 'Администрирование', categoryKey: 'work', categoryLabel: 'Рабочие процессы', color: '#4f95bf' },
+      { key: 'project', label: 'Проект', categoryKey: 'work', categoryLabel: 'Рабочие процессы', color: '#2a74a1' },
+    ];
+
+    var WORKTIME_CATEGORY_KEY_BY_SEGMENT = WORKTIME_COMPOSITION_SEGMENTS.reduce(function (index, segment) {
+      index[segment.key] = segment.categoryKey;
+      return index;
+    }, {});
+
+    function bindWorktimeRoundedTotals(root) {
+      var scope = root && root.querySelectorAll ? root : document;
+      scope.querySelectorAll('[data-worktime-rounded-total]').forEach(function (cell) {
+        var value = parseWorktimeDisplayValue(cell.textContent);
+        if (value === null) return;
+        cell.textContent = formatWorktimeRoundedTotalValue(value);
+      });
+    }
+
+    function buildWorktimeConicGradient(items) {
+      var filtered = (items || []).filter(function (item) {
+        return Number.isFinite(item.value) && item.value > 0;
+      });
+      var total = filtered.reduce(function (sum, item) { return sum + item.value; }, 0);
+      if (!(total > 0)) return 'transparent';
+      var current = 0;
+      var stops = [];
+      filtered.forEach(function (item) {
+        var start = (current / total) * 100;
+        current += item.value;
+        var end = (current / total) * 100;
+        stops.push(item.color + ' ' + start.toFixed(3) + '% ' + end.toFixed(3) + '%');
+      });
+      return 'conic-gradient(' + stops.join(', ') + ')';
+    }
+
+    function buildWorktimeCompositionTooltip(categoryItems, segmentItems) {
+      var lines = [];
+      categoryItems.forEach(function (category) {
+        if (!(category.value > 0)) return;
+        lines.push(category.label + ': ' + formatWorktimeHoursDisplayValue(category.value) + ' ч.');
+        segmentItems.forEach(function (segment) {
+          if (segment.categoryKey !== category.key || !(segment.value > 0)) return;
+          lines.push('  ' + segment.label + ': ' + formatWorktimeHoursDisplayValue(segment.value) + ' ч.');
+        });
+      });
+      return lines.join('\n');
+    }
+
+    function getWorktimeHiddenCategories(table) {
+      if (!table) return new Set();
+      if (!(table.__worktimeHiddenCategories instanceof Set)) {
+        table.__worktimeHiddenCategories = new Set();
+      }
+      return table.__worktimeHiddenCategories;
+    }
+
+    function collectWorktimeChartState(table) {
+      if (!table) {
+        return {
+          histogramColumns: [],
+          compositionSegmentTotals: {},
+          maxHistogramTotal: 0
+        };
+      }
+
+      var histogramColumns = [];
+      var compositionSegmentTotals = {};
+      var maxHistogramTotal = 0;
+
+      Array.from(table.querySelectorAll('[data-worktime-daily-histogram-column]')).forEach(function (columnEl, columnIndex) {
+        var columnData = { total: 0, segments: {} };
+        Array.from(columnEl.querySelectorAll('[data-worktime-daily-histogram-segment]')).forEach(function (segmentEl) {
+          var segmentKey = segmentEl.dataset.worktimeDailyHistogramSegment || '';
+          if (!segmentKey) return;
+          var rawValue = Number(String(segmentEl.dataset.worktimeHistogramValue || '0').replace(',', '.'));
+          var segmentValue = Number.isFinite(rawValue) && rawValue > 0 ? rawValue : 0;
+          columnData.segments[segmentKey] = segmentValue;
+          columnData.total += segmentValue;
+          compositionSegmentTotals[segmentKey] = (compositionSegmentTotals[segmentKey] || 0) + segmentValue;
+        });
+        if (columnData.total > maxHistogramTotal) {
+          maxHistogramTotal = columnData.total;
+        }
+        histogramColumns[columnIndex] = columnData;
+      });
+
+      table.__worktimeChartState = {
+        histogramColumns: histogramColumns,
+        compositionSegmentTotals: compositionSegmentTotals,
+        maxHistogramTotal: maxHistogramTotal
+      };
+      return table.__worktimeChartState;
+    }
+
+    function getWorktimeChartState(table) {
+      if (!table) return collectWorktimeChartState(table);
+      return table.__worktimeChartState || collectWorktimeChartState(table);
+    }
+
+    function updateWorktimeCategoryLegend(table) {
+      if (!table) return;
+      var hiddenCategories = getWorktimeHiddenCategories(table);
+      table.querySelectorAll('[data-worktime-legend-group]').forEach(function (groupEl) {
+        var categoryKey = groupEl.dataset.worktimeLegendGroup || '';
+        var isVisible = !hiddenCategories.has(categoryKey);
+        groupEl.dataset.worktimeCategoryVisible = isVisible ? '1' : '0';
+        var button = groupEl.querySelector('[data-worktime-category-toggle]');
+        if (!button) return;
+        var categoryLabel = button.dataset.worktimeCategoryLabel || categoryKey;
+        var actionLabel = isVisible ? 'Скрыть категорию ' + categoryLabel : 'Показать категорию ' + categoryLabel;
+        button.setAttribute('aria-pressed', isVisible ? 'false' : 'true');
+        button.setAttribute('title', actionLabel);
+        button.setAttribute('aria-label', actionLabel);
+        var icon = button.querySelector('i');
+        if (icon) {
+          icon.className = isVisible ? 'bi bi-eye' : 'bi bi-eye-slash';
+        }
+      });
+    }
+
+    function updateWorktimeCompositionDonut(table, compositionSegmentTotals) {
+      if (!table) return;
+      var donut = table.querySelector('[data-worktime-composition-donut]');
+      if (!donut) return;
+      var outerRing = donut.querySelector('[data-worktime-composition-outer]');
+      var innerRing = donut.querySelector('[data-worktime-composition-inner]');
+      if (!outerRing || !innerRing) return;
+      var hiddenCategories = getWorktimeHiddenCategories(table);
+
+      var categoryItems = WORKTIME_COMPOSITION_CATEGORIES.map(function (category) {
+        var categoryValue = 0;
+        WORKTIME_COMPOSITION_SEGMENTS.forEach(function (segment) {
+          if (segment.categoryKey !== category.key) return;
+          categoryValue += compositionSegmentTotals[segment.key] || 0;
+        });
+        return {
+          key: category.key,
+          label: category.label,
+          color: category.color,
+          value: categoryValue
+        };
+      }).filter(function (category) {
+        return !hiddenCategories.has(category.key);
+      });
+      var segmentItems = WORKTIME_COMPOSITION_SEGMENTS.map(function (segment) {
+        return {
+          key: segment.key,
+          label: segment.label,
+          categoryKey: segment.categoryKey,
+          categoryLabel: segment.categoryLabel,
+          color: segment.color,
+          value: compositionSegmentTotals[segment.key] || 0
+        };
+      }).filter(function (segment) {
+        return !hiddenCategories.has(segment.categoryKey);
+      });
+      var total = segmentItems.reduce(function (sum, item) { return sum + item.value; }, 0);
+      donut.classList.toggle('d-none', !(total > 0));
+      if (!(total > 0)) {
+        donut.title = '';
+        return;
+      }
+      donut.classList.add('worktime-composition-donut-updating');
+      window.requestAnimationFrame(function () {
+        outerRing.style.background = buildWorktimeConicGradient(categoryItems);
+        innerRing.style.background = buildWorktimeConicGradient(segmentItems);
+        donut.title = buildWorktimeCompositionTooltip(categoryItems, segmentItems);
+        window.setTimeout(function () {
+          donut.classList.remove('worktime-composition-donut-updating');
+        }, 320);
+      });
+    }
+
+    function updateWorktimeDailyHistogram(table, histogramColumns, maxHistogramTotal) {
+      if (!table) return;
+      var histogramRow = table.querySelector('[data-worktime-daily-histogram-row]');
+      if (!histogramRow) return;
+      var hiddenCategories = getWorktimeHiddenCategories(table);
+      var hasOriginalData = false;
+      var visibleMaxHistogramTotal = 0;
+
+      (histogramColumns || []).forEach(function (columnData) {
+        var visibleTotal = 0;
+        Object.keys((columnData && columnData.segments) || {}).forEach(function (segmentKey) {
+          var segmentValue = Number(columnData.segments[segmentKey] || 0);
+          if (segmentValue > 0) {
+            hasOriginalData = true;
+          }
+          if (hiddenCategories.has(WORKTIME_CATEGORY_KEY_BY_SEGMENT[segmentKey])) return;
+          visibleTotal += segmentValue;
+        });
+        if (visibleTotal > visibleMaxHistogramTotal) {
+          visibleMaxHistogramTotal = visibleTotal;
+        }
+      });
+
+      histogramRow.classList.toggle('d-none', !hasOriginalData);
+      if (!hasOriginalData) return;
+
+      Array.from(histogramRow.querySelectorAll('[data-worktime-daily-histogram-column]')).forEach(function (columnEl, columnIndex) {
+        var columnData = histogramColumns[columnIndex] || { total: 0, segments: {} };
+        var visibleColumnTotal = 0;
+        Array.from(columnEl.querySelectorAll('[data-worktime-daily-histogram-segment]')).forEach(function (segmentEl) {
+          var segmentKey = segmentEl.dataset.worktimeDailyHistogramSegment || '';
+          var rawSegmentValue = columnData.segments && Number.isFinite(columnData.segments[segmentKey])
+            ? columnData.segments[segmentKey]
+            : 0;
+          var segmentValue = hiddenCategories.has(WORKTIME_CATEGORY_KEY_BY_SEGMENT[segmentKey]) ? 0 : rawSegmentValue;
+          visibleColumnTotal += segmentValue;
+          var heightPercent = segmentValue > 0
+            ? Math.round((segmentValue / visibleMaxHistogramTotal) * 100000) / 1000
+            : 0;
+          var label = segmentEl.dataset.worktimeHistogramLabel || segmentKey;
+          var category = segmentEl.dataset.worktimeHistogramCategory || '';
+          segmentEl.style.height = heightPercent + '%';
+          segmentEl.classList.remove('d-none');
+          segmentEl.classList.toggle('worktime-daily-histogram-segment-hidden', !(segmentValue > 0));
+          segmentEl.title = segmentValue > 0
+            ? (category ? category + ' / ' + label + ': ' + formatWorktimeHoursDisplayValue(segmentValue) + ' ч.' : label + ': ' + formatWorktimeHoursDisplayValue(segmentValue) + ' ч.')
+            : '';
+        });
+        columnEl.classList.toggle('worktime-daily-histogram-column-empty', !(visibleColumnTotal > 0));
+        columnEl.classList.toggle(
+          'worktime-non-working-day-histogram-column-hidden',
+          columnEl.classList.contains('worktime-non-working-day-histogram-column') && !(visibleColumnTotal > 0)
+        );
+      });
+    }
+
+    function renderWorktimeCharts(table) {
+      if (!table) return;
+      var chartState = getWorktimeChartState(table);
+      updateWorktimeCategoryLegend(table);
+      updateWorktimeCompositionDonut(table, chartState.compositionSegmentTotals || {});
+      updateWorktimeDailyHistogram(table, chartState.histogramColumns || [], chartState.maxHistogramTotal || 0);
     }
 
     function updateWorktimeTableTotals(table) {
@@ -2416,37 +4420,102 @@
         return row.querySelector('[data-worktime-grid-input]');
       });
       if (!dataRows.length) return;
+      syncCalculatedDowntimeRows(table);
 
       var columnTotals = [];
+      var vacationColumnTotals = [];
       var grandTotal = 0;
+      var histogramColumns = [];
+      var maxHistogramTotal = 0;
+      var compositionSegmentTotals = {};
+      var nonDowntimeColumnTotals = [];
+
+      dataRows.forEach(function (row) {
+        if (row.dataset.worktimeCalculatedDowntimeRow === '1') return;
+        Array.from(row.querySelectorAll('[data-worktime-grid-input]')).forEach(function (input, columnIndex) {
+          nonDowntimeColumnTotals[columnIndex] = (nonDowntimeColumnTotals[columnIndex] || 0) + parseWorktimeHoursValue(input);
+        });
+      });
 
       dataRows.forEach(function (row) {
         var rowInputs = Array.from(row.querySelectorAll('[data-worktime-grid-input]'));
         var rowTotal = 0;
+        var histogramSegmentKey = row.dataset.worktimeHistogramSegment || '';
+        var isCalculatedDowntimeRow = row.dataset.worktimeCalculatedDowntimeRow === '1';
         rowInputs.forEach(function (input, columnIndex) {
           var value = parseWorktimeHoursValue(input);
           rowTotal += value;
           columnTotals[columnIndex] = (columnTotals[columnIndex] || 0) + value;
+          if (histogramSegmentKey === 'vacation' && value > 0) {
+            vacationColumnTotals[columnIndex] = (vacationColumnTotals[columnIndex] || 0) + value;
+          }
+          if (histogramSegmentKey && value > 0 && (!isCalculatedDowntimeRow || (nonDowntimeColumnTotals[columnIndex] || 0) > 0)) {
+            if (!histogramColumns[columnIndex]) {
+              histogramColumns[columnIndex] = { total: 0, segments: {} };
+            }
+            histogramColumns[columnIndex].total += value;
+            histogramColumns[columnIndex].segments[histogramSegmentKey] =
+              (histogramColumns[columnIndex].segments[histogramSegmentKey] || 0) + value;
+            if (histogramColumns[columnIndex].total > maxHistogramTotal) {
+              maxHistogramTotal = histogramColumns[columnIndex].total;
+            }
+            compositionSegmentTotals[histogramSegmentKey] =
+              (compositionSegmentTotals[histogramSegmentKey] || 0) + value;
+          }
         });
         grandTotal += rowTotal;
 
         var rowTotalCell = row.querySelector('[data-worktime-row-total]');
         if (rowTotalCell) {
-          rowTotalCell.textContent = formatWorktimeTotalValue(rowTotal);
+          rowTotalCell.textContent = formatWorktimeRoundedTotalValue(rowTotal);
         }
       });
 
       var summaryRow = table.querySelector('.worktime-summary-row');
       if (!summaryRow) return;
 
-      Array.from(summaryRow.querySelectorAll('[data-worktime-column-total]')).forEach(function (cell, columnIndex) {
-        cell.textContent = formatWorktimeTotalValue(columnTotals[columnIndex] || 0);
-      });
+      syncWorktimeVacationSummaryState(summaryRow, columnTotals, vacationColumnTotals);
 
       var grandTotalCell = summaryRow.querySelector('[data-worktime-grand-total]');
       if (grandTotalCell) {
-        grandTotalCell.textContent = formatWorktimeTotalValue(grandTotal);
+        grandTotalCell.textContent = formatWorktimeRoundedTotalValue(grandTotal);
       }
+
+      table.__worktimeChartState = {
+        histogramColumns: histogramColumns,
+        compositionSegmentTotals: compositionSegmentTotals,
+        maxHistogramTotal: maxHistogramTotal
+      };
+      renderWorktimeCharts(table);
+    }
+
+    function bindWorktimeCategoryVisibility(root) {
+      var scope = root && root.querySelectorAll ? root : document;
+      scope.querySelectorAll('[data-worktime-category-toggle]').forEach(function (button) {
+        if (button.dataset.worktimeCategoryToggleBound === '1') return;
+        button.dataset.worktimeCategoryToggleBound = '1';
+        button.addEventListener('click', function (event) {
+          event.preventDefault();
+          var table = this.closest('.worktime-calendar-table');
+          var categoryKey = this.dataset.worktimeCategoryToggle || '';
+          if (!table || !categoryKey) return;
+          var hiddenCategories = getWorktimeHiddenCategories(table);
+          if (hiddenCategories.has(categoryKey)) {
+            hiddenCategories.delete(categoryKey);
+          } else {
+            hiddenCategories.add(categoryKey);
+          }
+          renderWorktimeCharts(table);
+        });
+      });
+
+      scope.querySelectorAll('.worktime-calendar-table').forEach(function (table) {
+        if (!table.querySelector('[data-worktime-daily-histogram-row]')) return;
+        if (!table.__worktimeChartState) {
+          collectWorktimeChartState(table);
+        }
+        renderWorktimeCharts(table);
+      });
     }
 
     function bindWorktimeRealtimeTotals(root) {
@@ -2457,14 +4526,17 @@
         var table = input.closest('.worktime-calendar-table');
         if (table) tablesToRefresh.add(table);
         syncWorktimeZeroInputState(input);
+        syncWorktimeVacationInputState(input);
         if (input.dataset.worktimeTotalsBound === '1') return;
         input.dataset.worktimeTotalsBound = '1';
         input.addEventListener('input', function () {
           syncWorktimeZeroInputState(this);
+          syncWorktimeVacationInputState(this);
           updateWorktimeTableTotals(this.closest('.worktime-calendar-table'));
         });
         input.addEventListener('change', function () {
           syncWorktimeZeroInputState(this);
+          syncWorktimeVacationInputState(this);
         });
       });
 
@@ -2601,7 +4673,9 @@
       bindWorktimeHistogramSort(document);
       bindWorktimeGeneralCollapse(document);
       bindWorktimeAutosave(document);
+      bindWorktimeRoundedTotals(document);
       bindWorktimeRealtimeTotals(document);
+      bindWorktimeCategoryVisibility(document);
       bindWorktimeCellKeyboardNavigation(document);
     });
 
@@ -2610,7 +4684,9 @@
       bindWorktimeHistogramSort(document);
       bindWorktimeGeneralCollapse(document);
       bindWorktimeAutosave(document);
+      bindWorktimeRoundedTotals(document);
       bindWorktimeRealtimeTotals(document);
+      bindWorktimeCategoryVisibility(document);
       bindWorktimeCellKeyboardNavigation(document);
     });
 
@@ -2619,7 +4695,9 @@
       bindWorktimeHistogramSort(event.target || document);
       bindWorktimeGeneralCollapse(event.target || document);
       bindWorktimeAutosave(event.target || document);
+      bindWorktimeRoundedTotals(event.target || document);
       bindWorktimeRealtimeTotals(event.target || document);
+      bindWorktimeCategoryVisibility(event.target || document);
       bindWorktimeCellKeyboardNavigation(event.target || document);
     });
 
@@ -2628,7 +4706,9 @@
       bindWorktimeHistogramSort(document);
       bindWorktimeGeneralCollapse(document);
       bindWorktimeAutosave(document);
+      bindWorktimeRoundedTotals(document);
       bindWorktimeRealtimeTotals(document);
+      bindWorktimeCategoryVisibility(document);
       bindWorktimeCellKeyboardNavigation(document);
     });
 
@@ -2649,9 +4729,9 @@
       if (!button) return;
       event.preventDefault();
       var requestUrl = button.dataset.worktimeAddRowUrl;
+      var sourcePanel = button.closest('[data-worktime-panel]');
       var modalEl = document.getElementById('worktime-modal');
       if (modalEl) {
-        var sourcePanel = button.closest('[data-worktime-panel]');
         modalEl._worktimeSourcePanel = sourcePanel || null;
       }
       if (!requestUrl || !window.htmx) return;
@@ -2659,6 +4739,10 @@
         window.__worktimeAutosave &&
         typeof window.__worktimeAutosave.flushVisible === 'function'
       ) ? window.__worktimeAutosave.flushVisible() : Promise.resolve(true);
+      flushPromise = Promise.all([
+        flushPromise,
+        flushWorktimeRowOrder(sourcePanel)
+      ]);
       flushPromise.finally(function () {
         window.htmx.ajax('GET', requestUrl, {
           target: '#worktime-modal .modal-content',
@@ -2681,6 +4765,41 @@
       if (!downloadButton) return;
       event.preventDefault();
       handleWorktimeCsvDownload(downloadButton);
+    });
+
+    document.addEventListener('change', function (event) {
+      var master = event.target && event.target.closest ? event.target.closest('input.form-check-input[data-worktime-target-name][data-worktime-actions-id]') : null;
+      if (master) {
+        var masterPanel = master.closest('[data-worktime-panel]');
+        if (!isPersonalWorktimePanel(masterPanel)) return;
+        var masterName = master.getAttribute('data-worktime-target-name') || '';
+        getVisibleWorktimeRowChecks(masterPanel, masterName).forEach(function (box) {
+          box.checked = master.checked;
+        });
+        master.indeterminate = false;
+        syncWorktimeSelectionState(masterPanel);
+        return;
+      }
+
+      var rowCheckbox = event.target && event.target.closest ? event.target.closest('tbody input.form-check-input[name]') : null;
+      if (!rowCheckbox) return;
+      var panel = rowCheckbox.closest('[data-worktime-panel]');
+      if (!isPersonalWorktimePanel(panel)) return;
+      if (rowCheckbox.name !== getWorktimeSelectionName(panel)) return;
+      syncWorktimeSelectionState(panel);
+      if (!rowCheckbox.checked && document.activeElement === rowCheckbox && typeof rowCheckbox.blur === 'function') {
+        rowCheckbox.blur();
+      }
+    });
+
+    document.addEventListener('click', function (event) {
+      var actionButton = event.target && event.target.closest ? event.target.closest('button[data-worktime-panel-action]') : null;
+      if (!actionButton) return;
+      var panel = actionButton.closest('[data-worktime-panel]');
+      if (!isPersonalWorktimePanel(panel)) return;
+      event.preventDefault();
+      if (actionButton.disabled) return;
+      runWorktimeRowSelectionAction(panel, actionButton.getAttribute('data-worktime-panel-action') || '');
     });
 
     document.addEventListener('change', function (event) {
@@ -2728,7 +4847,12 @@
             var modalEl = document.getElementById('worktime-modal');
             var sourcePanel = modalEl && modalEl._worktimeSourcePanel ? modalEl._worktimeSourcePanel : null;
             reloadWorktimePanel(sourcePanel);
-            document.body.dispatchEvent(new CustomEvent('worktime-updated', { bubbles: true }));
+            document.body.dispatchEvent(new CustomEvent('worktime-updated', {
+              bubbles: true,
+              detail: {
+                skipPanel: sourcePanel || null
+              }
+            }));
             return;
           }
           modalContent.innerHTML = html;
@@ -2750,6 +4874,22 @@
       modalEl._worktimeSourcePanel = null;
       var modal = window.bootstrap.Modal.getInstance(modalEl) || window.bootstrap.Modal.getOrCreateInstance(modalEl);
       modal.hide();
+    });
+
+    document.body.addEventListener('htmx:afterSettle', function (event) {
+      var panel = event.target && event.target.closest ? event.target.closest('[data-worktime-panel]') : null;
+      if (!isPersonalWorktimePanel(panel)) return;
+      if (window.__worktimeTableSelLast) {
+        restoreWorktimeSelectionState(panel);
+        return;
+      }
+      syncWorktimeSelectionState(panel);
+    });
+
+    document.body.addEventListener('queued-row-order:conflict', function (event) {
+      var panel = event.detail && event.detail.panel;
+      if (!isPersonalWorktimePanel(panel)) return;
+      reloadWorktimePanel(panel, { skipRowOrderFlush: true });
     });
 
     document.body.addEventListener('htmx:afterRequest', function (event) {

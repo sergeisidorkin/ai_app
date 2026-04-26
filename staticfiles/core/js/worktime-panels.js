@@ -218,7 +218,7 @@
 
   function submitWorktimeGetForm(form) {
     if (!form) return;
-    flushVisibleWorktimeAutosave().finally(function () {
+    flushVisibleWorktimePendingState().finally(function () {
       if (form.matches && form.matches('[data-worktime-period-form]')) {
         persistWorktimeGeneralPreferences(form);
       }
@@ -227,9 +227,7 @@
         var url = form.getAttribute('hx-get') || form.getAttribute('action') || window.location.pathname;
         var params = new URLSearchParams(new FormData(form)).toString();
         var requestUrl = params ? (url + (url.indexOf('?') === -1 ? '?' : '&') + params) : url;
-        if (form.matches && form.matches('[data-worktime-period-form]')) {
-          target.setAttribute('hx-get', requestUrl);
-        }
+        target.setAttribute('hx-get', requestUrl);
         window.htmx.ajax('GET', requestUrl, {
           target: target,
           swap: form.getAttribute('hx-swap') || 'innerHTML'
@@ -253,6 +251,22 @@
     return window.__worktimeAutosave.flushVisible();
   }
 
+  function flushVisibleWorktimeRowOrder() {
+    if (!window.__queuedRowOrder || typeof window.__queuedRowOrder.flushVisible !== 'function') {
+      return Promise.resolve(true);
+    }
+    return window.__queuedRowOrder.flushVisible();
+  }
+
+  function flushVisibleWorktimePendingState() {
+    return Promise.all([
+      flushVisibleWorktimeAutosave(),
+      flushVisibleWorktimeRowOrder()
+    ]).then(function (results) {
+      return results.every(Boolean);
+    });
+  }
+
   function persistWorktimeGeneralPreferences(form) {
     if (!form || !window.localStorage) return;
     try {
@@ -260,12 +274,14 @@
       var breakdownInput = form.querySelector('[data-worktime-breakdown-value]');
       var histSortInput = form.querySelector('[data-worktime-hist-sort-value]');
       var periodInput = form.querySelector('[data-worktime-period-value]');
+      var companyInput = form.querySelector('[data-worktime-company-value]');
       if (!scaleInput || !breakdownInput || !histSortInput || !periodInput) return;
 
       var scaleValue = String(scaleInput.value || '').toLowerCase() === 'year' ? 'year' : 'month';
       var breakdownValue = String(breakdownInput.value || '').toLowerCase() === 'activities' ? 'activities' : 'employees';
       var histSortValue = String(histSortInput.value || '').toLowerCase();
       var periodValue = String(periodInput.value || '').trim();
+      var companyValue = String(companyInput && companyInput.value || '').trim();
 
       window.localStorage.setItem('worktime.general.scale', scaleValue);
       window.localStorage.setItem('worktime.general.breakdown', breakdownValue);
@@ -286,6 +302,7 @@
           window.localStorage.setItem('worktime.general.period.month', monthMatch[1] + '-' + monthMatch[2]);
         }
       }
+      window.localStorage.setItem('worktime.general.companyFilter', companyValue || '__all__');
     } catch (error) {
       // Ignore localStorage access failures.
     }
@@ -799,10 +816,9 @@
             periodInput.value = String(selectedDate.getFullYear());
             form.dataset.worktimePeriodAnchorYear = String(selectedDate.getFullYear());
           } else {
-            var monthNumber = parseInt(form.dataset.worktimeLastMonth || String(selectedDate.getMonth() + 1), 10);
-            if (!monthNumber || monthNumber < 1 || monthNumber > 12) monthNumber = 1;
-            periodInput.value = selectedDate.getFullYear() + '-' + pad2(monthNumber);
-            form.dataset.worktimePeriodAnchorYear = String(selectedDate.getFullYear());
+            var currentDate = new Date();
+            periodInput.value = currentDate.getFullYear() + '-' + pad2(currentDate.getMonth() + 1);
+            form.dataset.worktimePeriodAnchorYear = String(currentDate.getFullYear());
           }
           syncWorktimePeriodPicker(form);
           hideWorktimePeriodPanel(form);

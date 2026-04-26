@@ -511,3 +511,43 @@ class LivingWage(models.Model):
 
     def __str__(self):
         return f"{self.country.short_name} / {self.region.region_name} — {self.amount}"
+
+
+class ProductionCalendarDay(models.Model):
+    country = models.ForeignKey(
+        OKSMCountry,
+        verbose_name="Страна",
+        on_delete=models.CASCADE,
+        related_name="production_calendar_days",
+    )
+    date = models.DateField("Дата", db_index=True)
+    is_weekend = models.BooleanField("Выходной день", default=False)
+    is_holiday = models.BooleanField("Официальный праздник", default=False)
+    is_working_day = models.BooleanField("Рабочий день", default=True)
+    is_shortened_day = models.BooleanField("Сокращенный день", default=False)
+    working_hours = models.DecimalField("Рабочие часы", max_digits=4, decimal_places=1, blank=True, null=True)
+    holiday_name = models.CharField("Название праздника", max_length=512, blank=True, default="")
+    source = models.CharField("Источник", max_length=255, blank=True, default="")
+    source_document = models.TextField("Документ-основание", blank=True, default="")
+    is_manual = models.BooleanField("Ручная корректировка", default=False)
+    comment = models.TextField("Комментарий", blank=True, default="")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["country__short_name", "date", "id"]
+        verbose_name = "День производственного календаря"
+        verbose_name_plural = "Производственный календарь"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["country", "date"],
+                name="production_calendar_unique_country_date",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["country", "date"], name="pcd_country_date_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.country.short_name} — {self.date:%d.%m.%Y}"

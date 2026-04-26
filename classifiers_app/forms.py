@@ -20,8 +20,10 @@ from .models import (
     BusinessEntityAttributeRecord,
     BusinessEntityReorganizationEvent,
     BusinessEntityRelationRecord,
+    ProductionCalendarDay,
     detect_legal_entity_region_by_identifier,
 )
+from .production_calendar import supported_countries_queryset, is_country_supported
 
 
 def _active_countries_qs():
@@ -1168,6 +1170,56 @@ class LivingWageForm(forms.ModelForm):
             return Decimal(cleaned)
         except (InvalidOperation, ValueError):
             raise forms.ValidationError("Введите корректное числовое значение.")
+
+
+class ProductionCalendarDayForm(forms.ModelForm):
+    country = forms.ModelChoiceField(
+        label="Страна",
+        queryset=OKSMCountry.objects.none(),
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        qs = supported_countries_queryset()
+        if self.instance and self.instance.pk and self.instance.country_id:
+            qs = (qs | OKSMCountry.objects.filter(pk=self.instance.country_id)).distinct()
+        self.fields["country"].queryset = qs.order_by("short_name", "position", "id")
+        self.fields["country"].label_from_instance = lambda obj: f"{obj.short_name} ({obj.alpha2})"
+
+    def clean_country(self):
+        country = self.cleaned_data.get("country")
+        if country and not is_country_supported(country):
+            raise forms.ValidationError("Страна не поддерживается локальным календарем или библиотекой holidays.")
+        return country
+
+    class Meta:
+        model = ProductionCalendarDay
+        fields = [
+            "country",
+            "date",
+            "is_weekend",
+            "is_holiday",
+            "is_working_day",
+            "is_shortened_day",
+            "working_hours",
+            "holiday_name",
+            "source",
+            "source_document",
+            "comment",
+        ]
+        widgets = {
+            "date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
+            "is_weekend": forms.CheckboxInput(attrs={"class": "form-check-input"}),
+            "is_holiday": forms.CheckboxInput(attrs={"class": "form-check-input"}),
+            "is_working_day": forms.CheckboxInput(attrs={"class": "form-check-input"}),
+            "is_shortened_day": forms.CheckboxInput(attrs={"class": "form-check-input"}),
+            "working_hours": forms.NumberInput(attrs={"class": "form-control", "step": "0.1", "min": "0"}),
+            "holiday_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Название праздника"}),
+            "source": forms.TextInput(attrs={"class": "form-control", "placeholder": "Источник"}),
+            "source_document": forms.Textarea(attrs={"class": "form-control", "placeholder": "Документ-основание", "rows": 2}),
+            "comment": forms.Textarea(attrs={"class": "form-control", "placeholder": "Комментарий", "rows": 3}),
+        }
 
 
 class LegalEntityRecordForm(forms.ModelForm):

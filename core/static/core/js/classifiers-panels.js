@@ -20,6 +20,7 @@
     'rfs-select': { target: '#rfs-table-wrap', swap: 'innerHTML', url: '/classifiers/rfs/table/', settleId: 'rfs-table-wrap' },
     'lw-select': { target: '#lw-table-wrap', swap: 'innerHTML', url: '/classifiers/lw/table/', settleId: 'lw-table-wrap' },
     'ler-select': { target: '#ler-table-wrap', swap: 'innerHTML', url: '/classifiers/ler/table/', settleId: 'ler-table-wrap' },
+    'pc-select': { target: '#pc-table-wrap', swap: 'innerHTML', url: '/classifiers/pc/table/', settleId: 'pc-table-wrap' },
   };
   const BUSINESS_REGISTRY_TABLES = [
     'ber-select',
@@ -62,7 +63,7 @@
     },
   };
 
-  const PANE_SELECTOR = '#classifiers-pane, #normatives-pane, #legal-entities-pane, #business-entities-pane, #business-entity-identifiers-pane, #business-entity-attributes-pane, #business-entity-addresses-pane, #business-entity-relations-pane';
+  const PANE_SELECTOR = '#classifiers-pane, #normatives-pane, #production-calendar-pane, #legal-entities-pane, #business-entities-pane, #business-entity-identifiers-pane, #business-entity-attributes-pane, #business-entity-addresses-pane, #business-entity-relations-pane';
   function panes() {
     return Array.from(document.querySelectorAll(PANE_SELECTOR));
   }
@@ -734,6 +735,8 @@
     var numcapCodeEl = document.getElementById('numcap-code-filter');
     var numcapRegionEl = document.getElementById('numcap-region-filter');
     var numcapPageEl = document.getElementById('numcap-page-input');
+    var pcCountryEl = document.getElementById('pc-country-filter');
+    var pcYearEl = document.getElementById('pc-year-filter');
     appendBusinessEntityFilter(parts);
     if (oksmEl) parts.push('oksm_date=' + encodeURIComponent(oksmEl.value));
     if (okvEl) parts.push('okv_date=' + encodeURIComponent(okvEl.value));
@@ -752,6 +755,8 @@
     if (beaPageEl) parts.push('bea_page=' + encodeURIComponent(beaPageEl.value));
     if (brlPageEl) parts.push('brl_page=' + encodeURIComponent(brlPageEl.value));
     if (numcapPageEl) parts.push('numcap_page=' + encodeURIComponent(numcapPageEl.value));
+    if (pcCountryEl) parts.push('pc_country=' + encodeURIComponent(pcCountryEl.value));
+    if (pcYearEl) parts.push('pc_year=' + encodeURIComponent(pcYearEl.value));
     return parts.length ? '?' + parts.join('&') : '';
   }
 
@@ -842,7 +847,7 @@
   document.addEventListener('click', async (e) => {
     const btn = e.target.closest('button[data-panel-action]');
     if (!btn || !inAnyPane(btn)) return;
-    const panel = btn.closest('#ber-actions, #bei-actions, #bat-actions, #bea-actions, #brl-actions, #oksm-actions, #okv-actions, #lei-actions, #pei-actions, #numcap-actions, #katd-actions, #rfs-actions, #lw-actions, #ler-actions');
+    const panel = btn.closest('#ber-actions, #bei-actions, #bat-actions, #bea-actions, #brl-actions, #oksm-actions, #okv-actions, #lei-actions, #pei-actions, #numcap-actions, #katd-actions, #rfs-actions, #lw-actions, #ler-actions, #pc-actions');
     if (!panel) return;
     const action = btn.dataset.panelAction;
     const name = getNameForPanel(panel);
@@ -949,6 +954,8 @@
     var beiDuplicatesEl = document.getElementById('bei-duplicates-filter-input');
     var beaEl = document.getElementById('bea-date-filter');
     var lerEl = document.getElementById('ler-date-filter');
+    var pcCountryEl = document.getElementById('pc-country-filter');
+    var pcYearEl = document.getElementById('pc-year-filter');
     var berPageEl = document.getElementById('ber-page-input');
     var beiPageEl = document.getElementById('bei-page-input');
     var lerPageEl = document.getElementById('ler-page-input');
@@ -962,6 +969,8 @@
     if (beiDuplicatesEl) e.detail.parameters['bei_duplicates'] = beiDuplicatesEl.value;
     if (beaEl) e.detail.parameters['bea_date'] = beaEl.value;
     if (lerEl) e.detail.parameters['ler_date'] = lerEl.value;
+    if (pcCountryEl) e.detail.parameters['pc_country'] = pcCountryEl.value;
+    if (pcYearEl) e.detail.parameters['pc_year'] = pcYearEl.value;
     if (berPageEl) e.detail.parameters['ber_page'] = berPageEl.value;
     if (beiPageEl) e.detail.parameters['bei_page'] = beiPageEl.value;
     if (lerPageEl) e.detail.parameters['ler_page'] = lerPageEl.value;

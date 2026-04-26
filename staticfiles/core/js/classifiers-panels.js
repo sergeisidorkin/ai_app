@@ -6,6 +6,11 @@
   window.__clTableSelLast = window.__clTableSelLast || null;
 
   const TABLE_CONFIG = {
+    'ber-select': { target: '#business-entities-table-wrap', swap: 'innerHTML', url: '/classifiers/ber/table/', settleId: 'business-entities-table-wrap' },
+    'bei-select': { target: '#business-entity-identifiers-table-wrap', swap: 'innerHTML', url: '/classifiers/bei/table/', settleId: 'business-entity-identifiers-table-wrap' },
+    'bat-select': { target: '#business-entity-attributes-table-wrap', swap: 'innerHTML', url: '/classifiers/bat/table/', settleId: 'business-entity-attributes-table-wrap' },
+    'bea-select': { target: '#business-entity-addresses-table-wrap', swap: 'innerHTML', url: '/classifiers/bea/table/', settleId: 'business-entity-addresses-table-wrap' },
+    'brl-select': { target: '#business-entity-relations-table-wrap', swap: 'innerHTML', url: '/classifiers/brl/table/', settleId: 'business-entity-relations-table-wrap' },
     'oksm-select': { target: '#oksm-table-wrap', swap: 'innerHTML', url: '/classifiers/oksm/table/', settleId: 'oksm-table-wrap' },
     'okv-select': { target: '#okv-table-wrap', swap: 'innerHTML', url: '/classifiers/okv/table/', settleId: 'okv-table-wrap' },
     'lei-select': { target: '#lei-table-wrap', swap: 'innerHTML', url: '/classifiers/lei/table/', settleId: 'lei-table-wrap' },
@@ -14,9 +19,18 @@
     'katd-select': { target: '#katd-table-wrap', swap: 'innerHTML', url: '/classifiers/katd/table/', settleId: 'katd-table-wrap' },
     'lw-select': { target: '#lw-table-wrap', swap: 'innerHTML', url: '/classifiers/lw/table/', settleId: 'lw-table-wrap' },
     'ler-select': { target: '#ler-table-wrap', swap: 'innerHTML', url: '/classifiers/ler/table/', settleId: 'ler-table-wrap' },
+    'pc-select': { target: '#pc-table-wrap', swap: 'innerHTML', url: '/classifiers/pc/table/', settleId: 'pc-table-wrap' },
+  };
+  const BUSINESS_REGISTRY_SECTION_TABLE_MAP = {
+    'business-entities': 'ber-select',
+    'business-entity-identifiers': 'bei-select',
+    'business-entity-attributes': 'bat-select',
+    'legal-entities': 'ler-select',
+    'business-entity-addresses': 'bea-select',
+    'business-entity-relations': 'brl-select',
   };
 
-  const PANE_SELECTOR = '#classifiers-pane, #normatives-pane, #legal-entities-pane';
+  const PANE_SELECTOR = '#classifiers-pane, #normatives-pane, #production-calendar-pane, #legal-entities-pane, #business-entities-pane, #business-entity-identifiers-pane, #business-entity-attributes-pane, #business-entity-addresses-pane, #business-entity-relations-pane';
   function panes() {
     return Array.from(document.querySelectorAll(PANE_SELECTOR));
   }
@@ -264,18 +278,40 @@
     var okvEl = document.getElementById('okv-date-filter');
     var katdEl = document.getElementById('katd-date-filter');
     var lwEl = document.getElementById('lw-date-filter');
+    var beiEl = document.getElementById('bei-date-filter');
+    var beiDuplicatesEl = document.getElementById('bei-duplicates-filter-input');
+    var beaEl = document.getElementById('bea-date-filter');
+    var lerEl = document.getElementById('ler-date-filter');
+    var berPageEl = document.getElementById('ber-page-input');
+    var beiPageEl = document.getElementById('bei-page-input');
+    var lerPageEl = document.getElementById('ler-page-input');
+    var beaPageEl = document.getElementById('bea-page-input');
+    var brlPageEl = document.getElementById('brl-page-input');
     var numcapQEl = document.getElementById('numcap-q-filter');
     var numcapCodeEl = document.getElementById('numcap-code-filter');
     var numcapRegionEl = document.getElementById('numcap-region-filter');
     var numcapPageEl = document.getElementById('numcap-page-input');
+    var pcCountryEl = document.getElementById('pc-country-filter');
+    var pcYearEl = document.getElementById('pc-year-filter');
     if (oksmEl) parts.push('oksm_date=' + encodeURIComponent(oksmEl.value));
     if (okvEl) parts.push('okv_date=' + encodeURIComponent(okvEl.value));
     if (katdEl) parts.push('date=' + encodeURIComponent(katdEl.value));
     if (lwEl) parts.push('lw_date=' + encodeURIComponent(lwEl.value));
+    if (beiEl) parts.push('bei_date=' + encodeURIComponent(beiEl.value));
+    if (beiDuplicatesEl) parts.push('bei_duplicates=' + encodeURIComponent(beiDuplicatesEl.value));
+    if (beaEl) parts.push('bea_date=' + encodeURIComponent(beaEl.value));
+    if (lerEl) parts.push('ler_date=' + encodeURIComponent(lerEl.value));
     if (numcapQEl && numcapQEl.value) parts.push('numcap_q=' + encodeURIComponent(numcapQEl.value));
     if (numcapCodeEl && numcapCodeEl.value) parts.push('numcap_code=' + encodeURIComponent(numcapCodeEl.value));
     if (numcapRegionEl && numcapRegionEl.value) parts.push('numcap_region=' + encodeURIComponent(numcapRegionEl.value));
+    if (berPageEl) parts.push('ber_page=' + encodeURIComponent(berPageEl.value));
+    if (beiPageEl) parts.push('bei_page=' + encodeURIComponent(beiPageEl.value));
+    if (lerPageEl) parts.push('ler_page=' + encodeURIComponent(lerPageEl.value));
+    if (beaPageEl) parts.push('bea_page=' + encodeURIComponent(beaPageEl.value));
+    if (brlPageEl) parts.push('brl_page=' + encodeURIComponent(brlPageEl.value));
     if (numcapPageEl) parts.push('numcap_page=' + encodeURIComponent(numcapPageEl.value));
+    if (pcCountryEl) parts.push('pc_country=' + encodeURIComponent(pcCountryEl.value));
+    if (pcYearEl) parts.push('pc_year=' + encodeURIComponent(pcYearEl.value));
     return parts.length ? '?' + parts.join('&') : '';
   }
 
@@ -312,7 +348,7 @@
   document.addEventListener('click', async (e) => {
     const btn = e.target.closest('button[data-panel-action]');
     if (!btn || !inAnyPane(btn)) return;
-    const panel = btn.closest('#oksm-actions, #okv-actions, #lei-actions, #pei-actions, #numcap-actions, #katd-actions, #lw-actions, #ler-actions');
+    const panel = btn.closest('#ber-actions, #bei-actions, #bat-actions, #bea-actions, #brl-actions, #oksm-actions, #okv-actions, #lei-actions, #pei-actions, #numcap-actions, #katd-actions, #lw-actions, #ler-actions, #pc-actions');
     if (!panel) return;
     const action = btn.dataset.panelAction;
     const name = getNameForPanel(panel);
@@ -366,6 +402,13 @@
     }
   });
 
+  document.body.addEventListener('classifiers:section-shown', function (e) {
+    const section = e.detail && e.detail.section;
+    const tableName = BUSINESS_REGISTRY_SECTION_TABLE_MAP[section];
+    if (!tableName) return;
+    refreshTable(tableName).catch(function () {});
+  });
+
   document.addEventListener('htmx:configRequest', function(e) {
     var modal = document.getElementById('classifiers-modal');
     if (!modal || !modal.contains(e.target)) return;
@@ -373,10 +416,32 @@
     var okvEl = document.getElementById('okv-date-filter');
     var katdEl = document.getElementById('katd-date-filter');
     var lwEl = document.getElementById('lw-date-filter');
+    var beiEl = document.getElementById('bei-date-filter');
+    var beiDuplicatesEl = document.getElementById('bei-duplicates-filter-input');
+    var beaEl = document.getElementById('bea-date-filter');
+    var lerEl = document.getElementById('ler-date-filter');
+    var berPageEl = document.getElementById('ber-page-input');
+    var beiPageEl = document.getElementById('bei-page-input');
+    var lerPageEl = document.getElementById('ler-page-input');
+    var beaPageEl = document.getElementById('bea-page-input');
+    var brlPageEl = document.getElementById('brl-page-input');
+    var pcCountryEl = document.getElementById('pc-country-filter');
+    var pcYearEl = document.getElementById('pc-year-filter');
     if (oksmEl) e.detail.parameters['oksm_date'] = oksmEl.value;
     if (okvEl) e.detail.parameters['okv_date'] = okvEl.value;
     if (katdEl) e.detail.parameters['date'] = katdEl.value;
     if (lwEl) e.detail.parameters['lw_date'] = lwEl.value;
+    if (beiEl) e.detail.parameters['bei_date'] = beiEl.value;
+    if (beiDuplicatesEl) e.detail.parameters['bei_duplicates'] = beiDuplicatesEl.value;
+    if (beaEl) e.detail.parameters['bea_date'] = beaEl.value;
+    if (lerEl) e.detail.parameters['ler_date'] = lerEl.value;
+    if (berPageEl) e.detail.parameters['ber_page'] = berPageEl.value;
+    if (beiPageEl) e.detail.parameters['bei_page'] = beiPageEl.value;
+    if (lerPageEl) e.detail.parameters['ler_page'] = lerPageEl.value;
+    if (beaPageEl) e.detail.parameters['bea_page'] = beaPageEl.value;
+    if (brlPageEl) e.detail.parameters['brl_page'] = brlPageEl.value;
+    if (pcCountryEl) e.detail.parameters['pc_country'] = pcCountryEl.value;
+    if (pcYearEl) e.detail.parameters['pc_year'] = pcYearEl.value;
   });
 
   document.addEventListener('change', (e) => {
@@ -520,7 +585,7 @@
     if (!last) return;
     const cfg = TABLE_CONFIG[last];
     const expectedId = cfg?.settleId || 'classifiers-pane';
-    if (settleId !== expectedId && settleId !== 'classifiers-pane' && settleId !== 'normatives-pane' && settleId !== 'legal-entities-pane') return;
+    if (settleId !== expectedId && settleId !== 'classifiers-pane' && settleId !== 'normatives-pane' && settleId !== 'legal-entities-pane' && settleId !== 'business-entities-table-wrap' && settleId !== 'business-entity-identifiers-table-wrap' && settleId !== 'business-entity-attributes-table-wrap' && settleId !== 'business-entity-addresses-table-wrap' && settleId !== 'business-entity-relations-table-wrap' && settleId !== 'pc-table-wrap') return;
     const ids = (window.__clTableSel && window.__clTableSel[last]) || [];
     const set = new Set(ids || []);
     getRowChecksByName(last).forEach(b => { b.checked = set.has(String(b.value)); });

@@ -19,6 +19,7 @@ class WorktimeAssignment(models.Model):
         STRATEGIC_DEVELOPMENT = "strategic_development", "Стратегическое развитие"
         DOWNTIME = "downtime", "Простой"
         TIME_OFF = "time_off", "Отгул"
+        VACATION = "vacation", "Отпуск"
 
     registration = models.ForeignKey(
         "projects_app.ProjectRegistration",
@@ -187,11 +188,13 @@ class PersonalWorktimeWeekAssignment(models.Model):
         verbose_name="Строка табеля",
     )
     week_start = models.DateField("Начало недели")
+    position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
+    is_hidden = models.BooleanField("Скрыта в личном табеле", default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ["week_start", "assignment__executor_name", "assignment__registration__id", "id"]
+        ordering = ["week_start", "position", "id"]
         verbose_name = "Недельная строка личного табеля"
         verbose_name_plural = "Недельные строки личного табеля"
         constraints = [

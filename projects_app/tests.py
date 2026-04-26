@@ -24,7 +24,7 @@ from projects_app.models import (
     SourceDataTargetFolder,
     WorkVolume,
 )
-from projects_app.forms import ProjectRegistrationForm, WorkVolumeForm
+from projects_app.forms import ContractConditionsForm, LegalEntityForm, ProjectRegistrationForm, WorkVolumeForm
 from group_app.models import GroupMember
 from users_app.models import Employee
 from unittest.mock import call, patch
@@ -253,6 +253,22 @@ class ProjectRegistrationFormTests(TestCase):
         self.assertNotIn("type", form.fields)
         self.assertTrue(bound_form.is_valid())
         self.assertEqual(bound_form.cleaned_type_ids, [self.second_product.pk, self.product.pk])
+
+    def test_projects_date_fields_use_native_date_inputs(self):
+        forms_and_fields = [
+            (ProjectRegistrationForm(), ["deadline", "registration_date"]),
+            (ContractConditionsForm(), ["contract_start", "contract_end"]),
+            (WorkVolumeForm(), ["registration_date"]),
+            (LegalEntityForm(), ["registration_date"]),
+        ]
+
+        for form, field_names in forms_and_fields:
+            for field_name in field_names:
+                widget = form.fields[field_name].widget
+                with self.subTest(form=form.__class__.__name__, field=field_name):
+                    self.assertEqual(widget.input_type, "date")
+                    self.assertEqual(widget.format, "%Y-%m-%d")
+                    self.assertNotIn("js-date", widget.attrs.get("class", ""))
 
 
 class ProjectRegistrationFormViewTests(TestCase):

@@ -1,0 +1,91 @@
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить день{% else %}Изменить день{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    style="display:flex; flex-direction:column; overflow:hidden; flex:1 1 auto; min-height:0;"
+    {% if action == "create" %}
+      hx-post="{% url 'pc_form_create' %}"
+    {% else %}
+      hx-post="{% url 'pc_form_edit' pc_item.pk %}"
+    {% endif %}
+    hx-target="#pc-table-wrap"
+    hx-swap="innerHTML">
+  <div class="modal-body" style="overflow-y:auto; flex:1 1 auto; min-height:0;">
+    {% csrf_token %}
+    <input type="hidden" name="pc_country" value="{{ pc_filter_country_id }}">
+    <input type="hidden" name="pc_year" value="{{ pc_filter_year }}">
+
+    {% if form.non_field_errors %}
+      <div class="alert alert-danger">
+        {{ form.non_field_errors }}
+      </div>
+    {% endif %}
+
+    <div class="mb-3">
+      <label class="form-label">Страна</label>
+      {{ form.country }}
+      {{ form.country.errors }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Дата</label>
+      {{ form.date }}
+      {{ form.date.errors }}
+    </div>
+    <div class="form-check mb-2">
+      {{ form.is_working_day }}
+      <label class="form-check-label" for="{{ form.is_working_day.id_for_label }}">Рабочий день</label>
+    </div>
+    <div class="form-check mb-2">
+      {{ form.is_weekend }}
+      <label class="form-check-label" for="{{ form.is_weekend.id_for_label }}">Выходной день</label>
+    </div>
+    <div class="form-check mb-3">
+      {{ form.is_holiday }}
+      <label class="form-check-label" for="{{ form.is_holiday.id_for_label }}">Официальный праздник</label>
+    </div>
+    <div class="form-check mb-3">
+      {{ form.is_shortened_day }}
+      <label class="form-check-label" for="{{ form.is_shortened_day.id_for_label }}">Сокращенный день</label>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Рабочие часы</label>
+      {{ form.working_hours }}
+      {{ form.working_hours.errors }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Название праздника</label>
+      {{ form.holiday_name }}
+      {{ form.holiday_name.errors }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Источник</label>
+      {{ form.source }}
+      {{ form.source.errors }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Документ-основание</label>
+      {{ form.source_document }}
+      {{ form.source_document.errors }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Комментарий</label>
+      {{ form.comment }}
+      {{ form.comment.errors }}
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mb-0">
+        Проверьте введённые данные.
+      </div>
+    {% endif %}
+  </div>
+  <div class="modal-footer" style="flex-shrink:0;">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>

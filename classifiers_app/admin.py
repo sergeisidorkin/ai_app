@@ -13,6 +13,7 @@ from .models import (
     BusinessEntityAttributeRecord,
     BusinessEntityReorganizationEvent,
     BusinessEntityRelationRecord,
+    ProductionCalendarDay,
 )
 
 
@@ -211,6 +212,25 @@ class BusinessEntityIdentifierRecordAdmin(admin.ModelAdmin):
 class BusinessEntityAttributeRecordAdmin(admin.ModelAdmin):
     list_display = ("id", "attribute_name", "subsection_name")
     search_fields = ("attribute_name", "subsection_name")
+
+
+@admin.register(ProductionCalendarDay)
+class ProductionCalendarDayAdmin(admin.ModelAdmin):
+    list_display = (
+        "date",
+        "country",
+        "is_working_day",
+        "is_weekend",
+        "is_holiday",
+        "is_shortened_day",
+        "working_hours",
+        "holiday_name",
+        "source",
+        "is_manual",
+    )
+    list_filter = ("country", "is_working_day", "is_weekend", "is_holiday", "is_shortened_day", "is_manual")
+    search_fields = ("country__short_name", "country__alpha2", "holiday_name", "comment", "source", "source_document")
+    date_hierarchy = "date"
 
 
 @admin.register(BusinessEntityReorganizationEvent)

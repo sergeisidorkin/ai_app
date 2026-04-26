@@ -48,6 +48,11 @@ class PersonalWorktimeWeekAssignmentForm(forms.Form):
         registration_queryset = kwargs.pop("registration_queryset", ProjectRegistration.objects.none())
         proposal_queryset = kwargs.pop("proposal_queryset", ProposalRegistration.objects.none())
         super().__init__(*args, **kwargs)
+        self.fields["record_type"].choices = [
+            choice
+            for choice in WorktimeAssignment.RecordType.choices
+            if choice[0] != WorktimeAssignment.RecordType.DOWNTIME
+        ]
         self.fields["registration"].queryset = registration_queryset
         self.fields["proposal_registration"].queryset = proposal_queryset
 

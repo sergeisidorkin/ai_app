@@ -1,0 +1,136 @@
+{% if pc_message %}
+  <div class="alert alert-success py-2 mb-3">{{ pc_message }}</div>
+{% endif %}
+{% if pc_error %}
+  <div class="alert alert-danger py-2 mb-3">{{ pc_error }}</div>
+{% endif %}
+
+{% if pc_source_status %}
+  <div class="{% if not pc_source_status.exists %}border {% endif %}rounded-3 p-3 mb-3 {% if pc_source_status.exists %}{% else %}bg-warning-subtle{% endif %}"
+       {% if pc_source_status.exists %}style="background-color: #e5f4ea;"{% endif %}>
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2">
+      <div>
+        <div class="fw-semibold">
+          Точный источник isdayoff для {{ pc_source_status.country_code }} / {{ pc_source_status.year }}
+        </div>
+        {% if pc_source_status.exists %}
+          <div class="small text-muted">
+            Локальный файл найден: {{ pc_source_status.path }}.
+            Выходных/переносов: {{ pc_source_status.dayoff_count }},
+            сокращенных дней: {{ pc_source_status.predayoff_count }},
+            праздников: {{ pc_source_status.holiday_count }}.
+          </div>
+        {% else %}
+          <div class="small text-muted">
+            Локального файла нет. При заполнении будет использован fallback <code>holidays</code>,
+            который может не учитывать переносы и сокращенные дни.
+          </div>
+        {% endif %}
+      </div>
+      {% if request.user.is_authenticated and request.user.is_staff %}
+        <button class="btn {% if pc_source_status.exists %}btn-outline-primary{% else %}btn-primary{% endif %} btn-sm text-nowrap"
+                style="width: 13rem;"
+                hx-post="{% url 'pc_load_source' %}"
+                hx-target="#pc-table-wrap"
+                hx-swap="innerHTML"
+                hx-include="#pc-filters"
+                title="{{ pc_source_status.download_url }}">
+          <i class="bi bi-cloud-download me-2"></i>
+          {% if pc_source_status.exists %}Обновить источник{% else %}Загрузить точные данные{% endif %}
+        </button>
+      {% endif %}
+    </div>
+  </div>
+{% endif %}
+
+<table class="table table-sm align-middle clf-truncated">
+  <thead>
+  <tr>
+    <th style="width:1%">
+      {% if request.user.is_authenticated and request.user.is_staff %}
+        <div class="form-check m-0">
+          <input class="form-check-input"
+                 type="checkbox"
+                 id="pc-master"
+                 data-target-name="pc-select"
+                 data-actions-id="pc-actions"
+                 aria-label="Выделить все строки">
+        </div>
+      {% endif %}
+    </th>
+    <th>Дата</th>
+    <th>День недели</th>
+    <th>Рабочий</th>
+    <th>Выходной</th>
+    <th>Праздник</th>
+    <th>Сокр.</th>
+    <th class="text-end">Часы</th>
+    <th>Название праздника</th>
+    <th>Источник</th>
+    <th>Ручная правка</th>
+    <th>Комментарий</th>
+  </tr>
+  </thead>
+  <tbody>
+  {% for day in pc_items %}
+    <tr data-edit-url="{% url 'pc_form_edit' day.pk %}"
+        data-delete-url="{% url 'pc_delete' day.pk %}">
+      <td class="text-nowrap">
+        {% if request.user.is_authenticated and request.user.is_staff %}
+          <div class="form-check">
+            <input class="form-check-input"
+                   type="checkbox"
+                   id="pc-sel-{{ day.id }}"
+                   name="pc-select"
+                   value="{{ day.id }}"
+                   aria-label="Выделить строку">
+          </div>
+        {% endif %}
+      </td>
+      <td class="text-nowrap">{{ day.date|date:"d.m.Y" }}</td>
+      <td class="text-nowrap">{{ day.date|date:"l" }}</td>
+      <td class="text-nowrap">{% if day.is_working_day %}Да{% else %}Нет{% endif %}</td>
+      <td class="text-nowrap">{% if day.is_weekend %}Да{% else %}Нет{% endif %}</td>
+      <td class="text-nowrap">{% if day.is_holiday %}Да{% else %}Нет{% endif %}</td>
+      <td class="text-nowrap">{% if day.is_shortened_day %}Да{% else %}Нет{% endif %}</td>
+      <td class="text-nowrap text-end">{% if day.working_hours is not None %}{{ day.working_hours }}{% else %}—{% endif %}</td>
+      <td>{{ day.holiday_name }}</td>
+      <td class="text-nowrap" title="{{ day.source_document }}">{{ day.source }}</td>
+      <td class="text-nowrap">{% if day.is_manual %}Да{% else %}Нет{% endif %}</td>
+      <td>{{ day.comment }}</td>
+    </tr>
+  {% empty %}
+    <tr>
+      <td colspan="12" class="text-muted">
+        {% if pc_country %}
+          Данные за {{ pc_year }} год пока не заполнены. Нажмите «Заполнить/обновить».
+        {% else %}
+              Нет стран ОКСМ, поддерживаемых локальным календарем или библиотекой holidays.
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+{% if request.user.is_authenticated and request.user.is_staff %}
+<div class="d-flex align-items-stretch gap-2 products-actions-row">
+  <button class="btn btn-primary btn-sm d-flex align-items-center"
+          hx-get="{% url 'pc_form_create' %}"
+          hx-target="#classifiers-modal .modal-content"
+          hx-swap="innerHTML"
+          hx-include="#pc-filters">
+    <i class="bi bi-plus-circle me-2"></i>Добавить строку
+  </button>
+  <div id="pc-actions" class="d-none d-flex">
+    <div class="btn-group">
+      <button type="button" id="pc-actions-edit" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+        <i class="bi bi-pencil-square"></i>
+      </button>
+      <button type="button" id="pc-actions-delete" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+        <i class="bi bi-x-square"></i>
+      </button>
+    </div>
+  </div>
+</div>
+{% endif %}

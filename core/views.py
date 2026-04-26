@@ -3,6 +3,7 @@ from datetime import date
 from django.contrib.auth.views import LoginView
 from django.shortcuts import render, redirect
 
+from group_app.models import GroupMember
 from learning_app.services import build_learning_overview
 from nextcloud_app.services import build_nextcloud_overview
 from policy_app.models import (
@@ -57,6 +58,7 @@ def home_entry(request):
         "bei_date_filter": date.today().isoformat(),
         "bei_duplicates_filter": "all",
         "bea_date_filter": date.today().isoformat(),
+        "worktime_company_filter_options": GroupMember.objects.exclude(short_name="").order_by("position", "id"),
     }
     context.update(build_learning_overview(request.user))
     context.update(build_nextcloud_overview(request.user))

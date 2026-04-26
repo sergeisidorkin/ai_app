@@ -1,7 +1,8 @@
 {% url 'worktime_partial' as default_worktime_partial_url %}
-<div class="card shadow-sm mt-3">
-  <div class="card-body">
+<div class="card shadow-sm mt-3" style="min-width:0;">
+  <div class="card-body" style="min-width:0;">
     <div class="worktime-panel"
+         style="min-width:0;"
          data-worktime-panel
          data-worktime-load-event="{{ load_event|default:'worktime-timesheet-load' }}"
          hx-get="{{ partial_url|default:default_worktime_partial_url }}"
@@ -21,10 +22,24 @@
 
         function updateWorktimePanelRequestUrl(panel) {
           if (!panel || !window.localStorage) return;
-          if (!panel.closest || !panel.closest('#worktime-content-timesheet')) return;
           var baseUrl = panel.dataset.worktimeBaseUrl || panel.getAttribute('hx-get') || '';
           if (!baseUrl) return;
           panel.dataset.worktimeBaseUrl = baseUrl;
+
+          if (panel.closest && panel.closest('#worktime-content-personal-timesheet')) {
+            var personalHistSort = (window.localStorage.getItem('worktime.personal.histSort') || '').toLowerCase();
+            personalHistSort = personalHistSort === 'asc' || personalHistSort === 'desc' ? personalHistSort : '';
+            if (!personalHistSort) {
+              panel.setAttribute('hx-get', baseUrl);
+              return;
+            }
+            var personalParams = new URLSearchParams();
+            personalParams.set('hist_sort', personalHistSort);
+            panel.setAttribute('hx-get', baseUrl + '?' + personalParams.toString());
+            return;
+          }
+
+          if (!panel.closest || !panel.closest('#worktime-content-timesheet')) return;
 
           var scale = (window.localStorage.getItem('worktime.general.scale') || '').toLowerCase() === 'year' ? 'year' : 'month';
           var breakdown = (window.localStorage.getItem('worktime.general.breakdown') || '').toLowerCase() === 'activities'
@@ -32,6 +47,7 @@
             : 'employees';
           var histSort = (window.localStorage.getItem('worktime.general.histSort') || '').toLowerCase();
           histSort = histSort === 'asc' || histSort === 'desc' ? histSort : '';
+          var companyFilter = (window.localStorage.getItem('worktime.general.companyFilter') || '').trim();
           var storedPeriod = scale === 'year'
             ? (window.localStorage.getItem('worktime.general.period.year') || '').trim()
             : (window.localStorage.getItem('worktime.general.period.month') || '').trim();
@@ -45,9 +61,14 @@
           if (histSort) {
             params.set('hist_sort', histSort);
           }
+          if (companyFilter && companyFilter !== '__all__') {
+            params.set('company', companyFilter);
+          }
 
           panel.setAttribute('hx-get', params.toString() ? (baseUrl + '?' + params.toString()) : baseUrl);
         }
+
+        window.__worktimeSyncPanelRequestUrl = updateWorktimePanelRequestUrl;
 
         function dispatchReadyEvent(name) {
           if (!name) return;
@@ -96,10 +117,14 @@
           syncPanelAndDispatchReady(personalPanel, 'load');
         });
 
-        document.body.addEventListener('worktime-updated', function () {
+        document.body.addEventListener('worktime-updated', function (event) {
+          var detail = event && event.detail ? event.detail : {};
+          var skipPanel = detail.skipPanel || null;
           syncPanelAndDispatchReady(syncGeneralPanel(), 'updated');
           var personalPanel = document.querySelector('#worktime-content-personal-timesheet [data-worktime-panel]');
-          syncPanelAndDispatchReady(personalPanel, 'updated');
+          if (personalPanel && personalPanel !== skipPanel) {
+            syncPanelAndDispatchReady(personalPanel, 'updated');
+          }
         });
       })();
     </script>

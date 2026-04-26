@@ -191,6 +191,21 @@ class CloudStorageRoutingTests(TestCase):
 
 
 class HomePagePermissionsTests(TestCase):
+    def test_staff_gets_production_calendar_subsection(self):
+        user = User.objects.create_user(
+            username="staff-home",
+            email="staff-home@example.com",
+            password="Secret123!",
+            is_staff=True,
+        )
+        self.client.force_login(user)
+
+        response = self.client.get(reverse("home"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Производственный календарь")
+        self.assertContains(response, 'data-clf-section="production-calendar"', html=False)
+
     def test_department_head_menu_hides_restricted_sections(self):
         user = User.objects.create_user(
             username="department-head-home",
