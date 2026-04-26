@@ -65,6 +65,7 @@ WORKTIME_HOURS_QUANT = Decimal("0.01")
 ZERO_DECIMAL = Decimal("0")
 HUNDRED_DECIMAL = Decimal("100")
 REGULAR_WORKDAY_HOURS = Decimal("8")
+SHORTENED_WORKDAY_HOURS = Decimal("7")
 PERSONAL_WEEK_LIMIT_WEEKS = 2
 PERSONAL_WEEK_LIMIT_ERROR = "Нельзя выбрать слишком далекую будущую неделю. Доступны текущая неделя и только две следующие."
 WORKTIME_ACCESS_ERROR = 'Табель доступен только штатным сотрудникам с правами staff. Пользователи с трудоустройством "Внештатный сотрудник" не допускаются.'
@@ -101,6 +102,12 @@ WORKTIME_COMPOSITION_CATEGORIES = (
 )
 WORKTIME_COMPOSITION_CATEGORY_BY_KEY = {
     category["key"]: category for category in WORKTIME_COMPOSITION_CATEGORIES
+}
+WORKTIME_NON_WORKING_DAY_BLOCKED_RECORD_TYPES = {
+    WorktimeAssignment.RecordType.VACATION,
+    WorktimeAssignment.RecordType.OTHER_ABSENCE,
+    WorktimeAssignment.RecordType.SICK_LEAVE,
+    WorktimeAssignment.RecordType.TIME_OFF,
 }
 WORKTIME_DAILY_HISTOGRAM_SEGMENTS = (
     {
@@ -406,7 +413,7 @@ def _production_calendar_working_hours_for_country(country, visible_days):
         elif item.is_holiday or not item.is_working_day:
             working_hours[work_day] = ZERO_DECIMAL
         elif item.is_shortened_day:
-            working_hours[work_day] = _coerce_worktime_decimal(item.working_hours or REGULAR_WORKDAY_HOURS)
+            working_hours[work_day] = _coerce_worktime_decimal(item.working_hours or SHORTENED_WORKDAY_HOURS)
         else:
             working_hours[work_day] = _coerce_worktime_decimal(item.working_hours or REGULAR_WORKDAY_HOURS)
     return working_hours
@@ -415,6 +422,13 @@ def _production_calendar_working_hours_for_country(country, visible_days):
 def _production_calendar_working_hours_for_user(user, visible_days):
     employee = getattr(user, "employee_profile", None)
     country = _production_calendar_country_for_employee(employee)
+    return _production_calendar_working_hours_for_country(country, visible_days)
+
+
+def _production_calendar_working_hours_for_employee(employee, visible_days):
+    country = _production_calendar_country_for_employee(employee)
+    if country is None:
+        return None
     return _production_calendar_working_hours_for_country(country, visible_days)
 
 
@@ -1384,6 +1398,7 @@ def _build_assignment_row(assignment, visible_days, entry_map, *, breakdown="emp
     is_calculated_downtime = bool(getattr(assignment, "_worktime_calculated_downtime", False))
     histogram_segment_key = _worktime_daily_histogram_segment_key(assignment)
     is_vacation_row = histogram_segment_key == "vacation"
+    blocks_non_working_day_input = _worktime_blocks_non_working_day_input(assignment)
     non_working_days = set(non_working_days or [])
     hidden_downtime_zero_days = set(getattr(assignment, "_worktime_hidden_downtime_zero_days", set()) or [])
     for work_day in visible_days:
@@ -1403,6 +1418,7 @@ def _build_assignment_row(assignment, visible_days, entry_map, *, breakdown="emp
                 "scheduled_hours": scheduled_hours.get(work_day),
                 "is_non_working_day": work_day in non_working_days,
                 "is_vacation_non_working_day": is_vacation_row and work_day in non_working_days,
+                "is_blocked_non_working_day": blocks_non_working_day_input and work_day in non_working_days,
                 "hide_downtime_zero": should_hide_downtime_zero,
             }
         )
@@ -1586,6 +1602,10 @@ def _worktime_daily_histogram_segment_key(assignment):
     if assignment.registration_id is not None:
         return "project"
     return WORKTIME_DAILY_HISTOGRAM_SEGMENT_KEY_BY_RECORD_TYPE.get(getattr(assignment, "record_type", ""))
+
+
+def _worktime_blocks_non_working_day_input(assignment):
+    return getattr(assignment, "record_type", "") in WORKTIME_NON_WORKING_DAY_BLOCKED_RECORD_TYPES
 
 
 def _format_worktime_percentage_value(value):
@@ -1875,7 +1895,7 @@ def _entry_map_with_calculated_downtime(user, assignments, visible_days, entry_m
     }
     display_entry_map = {assignment_id: dict(day_values) for assignment_id, day_values in entry_map.items()}
     for assignment in assignments:
-        if _worktime_daily_histogram_segment_key(assignment) != "vacation":
+        if not _worktime_blocks_non_working_day_input(assignment):
             continue
         day_values = display_entry_map.get(assignment.pk)
         if not day_values:
@@ -2153,13 +2173,13 @@ def _parse_hours_payload(request_post, assignment_ids, month_days):
     return parsed
 
 
-def _remove_personal_vacation_hours_on_non_working_days(user, assignments, visible_days, parsed_values):
-    vacation_assignment_ids = {
+def _remove_personal_blocked_hours_on_non_working_days(user, assignments, visible_days, parsed_values):
+    blocked_assignment_ids = {
         assignment.pk
         for assignment in assignments
-        if _worktime_daily_histogram_segment_key(assignment) == "vacation"
+        if _worktime_blocks_non_working_day_input(assignment)
     }
-    if not vacation_assignment_ids:
+    if not blocked_assignment_ids:
         return parsed_values
 
     working_hours = _production_calendar_working_hours_for_user(user, visible_days)
@@ -2172,10 +2192,178 @@ def _remove_personal_vacation_hours_on_non_working_days(user, assignments, visib
         return parsed_values
 
     sanitized_values = dict(parsed_values)
-    for assignment_id in vacation_assignment_ids:
+    for assignment_id in blocked_assignment_ids:
         for work_day in non_working_days:
             sanitized_values[(assignment_id, work_day)] = None
     return sanitized_values
+
+
+def _assignment_employee_key(assignment):
+    employee = _resolve_assignment_employee(assignment)
+    if employee is not None:
+        return ("employee", employee.pk)
+    executor_name = _normalize_worktime_company_text(getattr(assignment, "executor_name", ""))
+    if executor_name:
+        return ("executor", executor_name.casefold())
+    return None
+
+
+def _manual_employee_assignment(employee, executor_name, record_type):
+    normalized_name, resolved_employee = resolve_employee_and_name(
+        employee=employee,
+        executor_name=executor_name,
+    )
+    if resolved_employee is None or not normalized_name:
+        return None
+    return WorktimeAssignment.objects.filter(
+        registration__isnull=True,
+        proposal_registration__isnull=True,
+        executor_name=normalized_name,
+        source_type=WorktimeAssignment.SourceType.MANUAL_PERSONAL_WEEK,
+        record_type=record_type,
+    ).first()
+
+
+def _remove_csv_blocked_hours_on_non_working_days(assignments_by_id, visible_days, parsed_values):
+    sanitized_values = dict(parsed_values)
+    for assignment in assignments_by_id.values():
+        if not _worktime_blocks_non_working_day_input(assignment):
+            continue
+        employee = _resolve_assignment_employee(assignment)
+        working_hours = _production_calendar_working_hours_for_employee(employee, visible_days)
+        if working_hours is None:
+            continue
+        for work_day in visible_days:
+            key = (assignment.pk, work_day)
+            if key not in sanitized_values:
+                continue
+            if _coerce_worktime_decimal(working_hours.get(work_day, ZERO_DECIMAL)) <= ZERO_DECIMAL:
+                sanitized_values[key] = None
+    return sanitized_values
+
+
+def _apply_csv_calculated_downtime(assignments_by_id, visible_days, range_start, range_end, parsed_values):
+    parsed_values = dict(parsed_values)
+    assignments_by_employee = {}
+    active_days_by_employee = {}
+    for assignment in assignments_by_id.values():
+        employee_key = _assignment_employee_key(assignment)
+        if employee_key is None:
+            continue
+        assignments_by_employee.setdefault(employee_key, []).append(assignment)
+
+    for (assignment_id, work_day), hours in parsed_values.items():
+        if hours is None:
+            continue
+        assignment = assignments_by_id.get(assignment_id)
+        if assignment is None or getattr(assignment, "record_type", "") == WorktimeAssignment.RecordType.DOWNTIME:
+            continue
+        employee_key = _assignment_employee_key(assignment)
+        if employee_key is None:
+            continue
+        active_days_by_employee.setdefault(employee_key, set()).add(work_day)
+
+    if not active_days_by_employee:
+        return parsed_values, [], 0
+
+    existing_entries = {
+        (entry.assignment_id, entry.work_date): entry.hours
+        for entry in WorktimeEntry.objects.filter(
+            assignment_id__in=list(assignments_by_id),
+            work_date__range=(range_start, range_end),
+        ).only("assignment_id", "work_date", "hours")
+    }
+    extra_assignment_ids = []
+    created_assignments_count = 0
+    missing = object()
+
+    for employee_key, active_days in active_days_by_employee.items():
+        employee_assignments = assignments_by_employee.get(employee_key, [])
+        if not employee_assignments:
+            continue
+        sample_assignment = employee_assignments[0]
+        employee = _resolve_assignment_employee(sample_assignment)
+        if employee is None:
+            continue
+        working_hours = _production_calendar_working_hours_for_employee(employee, visible_days)
+        if working_hours is None:
+            continue
+
+        downtime_assignment = next(
+            (
+                assignment
+                for assignment in employee_assignments
+                if getattr(assignment, "record_type", "") == WorktimeAssignment.RecordType.DOWNTIME
+            ),
+            None,
+        )
+        if downtime_assignment is None:
+            downtime_assignment = _manual_employee_assignment(
+                employee,
+                getattr(sample_assignment, "executor_name", ""),
+                WorktimeAssignment.RecordType.DOWNTIME,
+            )
+            if downtime_assignment is not None:
+                assignments_by_id[downtime_assignment.pk] = downtime_assignment
+                employee_assignments.append(downtime_assignment)
+
+        computed_values = {}
+        for work_day in active_days:
+            scheduled_hours = _coerce_worktime_decimal(working_hours.get(work_day, ZERO_DECIMAL))
+            if scheduled_hours <= ZERO_DECIMAL:
+                computed_values[work_day] = None
+                continue
+            other_total = ZERO_DECIMAL
+            for assignment in employee_assignments:
+                if getattr(assignment, "record_type", "") == WorktimeAssignment.RecordType.DOWNTIME:
+                    continue
+                raw_value = parsed_values.get((assignment.pk, work_day), missing)
+                if raw_value is missing:
+                    raw_value = existing_entries.get((assignment.pk, work_day))
+                other_total += _coerce_worktime_decimal(raw_value)
+            downtime_value = max(scheduled_hours - other_total, ZERO_DECIMAL)
+            computed_values[work_day] = downtime_value if downtime_value > ZERO_DECIMAL else None
+
+        if downtime_assignment is None and any(value is not None for value in computed_values.values()):
+            existing_assignment = _manual_employee_assignment(
+                employee,
+                getattr(sample_assignment, "executor_name", ""),
+                WorktimeAssignment.RecordType.DOWNTIME,
+            )
+            positive_week_starts = sorted({
+                _start_of_week(work_day)
+                for work_day, value in computed_values.items()
+                if value is not None
+            })
+            for week_start in positive_week_starts:
+                downtime_assignment, _ = ensure_personal_week_assignment(
+                    registration=None,
+                    proposal_registration=None,
+                    employee=employee,
+                    week_start=week_start,
+                    record_type=WorktimeAssignment.RecordType.DOWNTIME,
+                )
+            if downtime_assignment is None:
+                continue
+            assignments_by_id[downtime_assignment.pk] = downtime_assignment
+            employee_assignments.append(downtime_assignment)
+            if existing_assignment is None:
+                created_assignments_count += 1
+        elif downtime_assignment is not None:
+            positive_week_starts = sorted({
+                _start_of_week(work_day)
+                for work_day, value in computed_values.items()
+                if value is not None
+            })
+            _ensure_worktime_csv_week_links(downtime_assignment, positive_week_starts)
+
+        if downtime_assignment is None:
+            continue
+        extra_assignment_ids.append(downtime_assignment.pk)
+        for work_day, value in computed_values.items():
+            parsed_values[(downtime_assignment.pk, work_day)] = value
+
+    return parsed_values, extra_assignment_ids, created_assignments_count
 
 
 def _remove_general_manual_hours_outside_visible_weeks(assignments, range_start, range_end, parsed_values):
@@ -2364,6 +2552,7 @@ def worktime_csv_upload(request):
         return JsonResponse({"ok": False, "error": exc.message}, status=400)
 
     assignments_by_key, duplicate_keys = _build_worktime_csv_assignment_index(assignments)
+    assignments_by_id = {assignment.pk: assignment for assignment in assignments}
     projects_by_code, projects_by_key, duplicate_project_keys = _build_worktime_csv_project_index()
     proposals_by_code, proposals_by_key, duplicate_proposal_keys = _build_worktime_csv_proposal_index()
     manual_record_types_by_label = _build_worktime_csv_manual_record_type_index()
@@ -2427,6 +2616,7 @@ def worktime_csv_upload(request):
             continue
         if assignment is None:
             continue
+        assignments_by_id[assignment.pk] = assignment
         if assignment_created:
             created_assignments_count += 1
 
@@ -2444,6 +2634,21 @@ def worktime_csv_upload(request):
         if warnings:
             payload["warnings"] = warnings[:50]
         return JsonResponse(payload, status=400)
+
+    parsed_values = _remove_csv_blocked_hours_on_non_working_days(
+        assignments_by_id,
+        month_days,
+        parsed_values,
+    )
+    parsed_values, extra_assignment_ids, extra_created_assignments_count = _apply_csv_calculated_downtime(
+        assignments_by_id,
+        month_days,
+        range_start,
+        range_end,
+        parsed_values,
+    )
+    touched_assignment_ids = sorted({*touched_assignment_ids, *extra_assignment_ids})
+    created_assignments_count += extra_created_assignments_count
 
     sync_result = _sync_worktime_entries(
         parsed_values,
@@ -2840,7 +3045,7 @@ def worktime_save(request):
             error_message=exc.message,
         )
     if personal_only:
-        parsed_values = _remove_personal_vacation_hours_on_non_working_days(
+        parsed_values = _remove_personal_blocked_hours_on_non_working_days(
             request.user,
             assignments,
             visible_days,
