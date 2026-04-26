@@ -1,5 +1,6 @@
 from policy_app.models import DEPARTMENT_HEAD_GROUP
 from projects_app.models import Performer
+from django.db.models import Max, Q
 
 from .models import PersonalWorktimeWeekAssignment, WorktimeAssignment
 
@@ -36,6 +37,37 @@ def is_worktime_eligible_employee(employee):
 
 def _should_promote_source(current_source, new_source):
     return SOURCE_PRIORITY.get(new_source, 0) > SOURCE_PRIORITY.get(current_source, 0)
+
+
+def _personal_week_link_scope_queryset(*, week_start, employee=None, executor_name=""):
+    normalized_name, resolved_employee = resolve_employee_and_name(
+        employee=employee,
+        executor_name=executor_name,
+    )
+    queryset = PersonalWorktimeWeekAssignment.objects.filter(week_start=week_start)
+    if resolved_employee is not None:
+        return queryset.filter(
+            Q(assignment__employee=resolved_employee)
+            | Q(assignment__employee__isnull=True, assignment__executor_name=normalized_name)
+        )
+    if normalized_name:
+        return queryset.filter(assignment__executor_name=normalized_name)
+    return queryset.none()
+
+
+def _next_personal_week_link_position(*, week_start, employee=None, executor_name=""):
+    max_position = (
+        _personal_week_link_scope_queryset(
+            week_start=week_start,
+            employee=employee,
+            executor_name=executor_name,
+        )
+        .filter(is_hidden=False)
+        .aggregate(max_position=Max("position"))
+        .get("max_position")
+        or 0
+    )
+    return int(max_position) + 1
 
 
 def ensure_worktime_assignment(
@@ -132,6 +164,19 @@ def ensure_personal_week_assignment(
         assignment=assignment,
         week_start=week_start,
     )
+    update_fields = []
+    if week_link.is_hidden:
+        week_link.is_hidden = False
+        update_fields.append("is_hidden")
+    if week_link.position <= 0 or "is_hidden" in update_fields:
+        week_link.position = _next_personal_week_link_position(
+            week_start=week_start,
+            employee=resolved_employee,
+            executor_name=normalized_name,
+        )
+        update_fields.append("position")
+    if update_fields:
+        week_link.save(update_fields=update_fields + ["updated_at"])
     return assignment, week_link
 
 

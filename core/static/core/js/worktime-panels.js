@@ -89,6 +89,182 @@
     return new Date(y, m - 1, d);
   }
 
+  function parseJsonObject(value) {
+    if (!value) return {};
+    try {
+      var parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function initialLoadedCalendarYears(form) {
+    var years = {};
+    String((form && form.dataset.worktimeCalendarYears) || '').split(',').forEach(function (rawYear) {
+      var year = parseInt(rawYear, 10);
+      if (year) years[year] = true;
+    });
+    return years;
+  }
+
+  function productionCalendarState(form) {
+    if (!form) return { marks: {}, loadedYears: {}, loadingYears: {} };
+    if (!form._worktimeProductionCalendarState) {
+      form._worktimeProductionCalendarState = {
+        marks: parseJsonObject(form.dataset.worktimeCalendarDays),
+        loadedYears: initialLoadedCalendarYears(form),
+        loadingYears: {},
+      };
+    }
+    return form._worktimeProductionCalendarState;
+  }
+
+  function markProductionCalendarDay(form, dayEl) {
+    if (!dayEl || !dayEl.dateObj) return;
+    qa('.worktime-production-shortened-mark', dayEl).forEach(function (markEl) {
+      markEl.remove();
+    });
+    dayEl.classList.remove(
+      'worktime-production-holiday-day',
+      'worktime-production-weekend-day',
+      'worktime-production-shortened-day',
+      'worktime-production-shortened-day-single',
+      'worktime-production-shortened-day-double',
+      'worktime-production-holiday-single',
+      'worktime-production-holiday-start',
+      'worktime-production-holiday-middle',
+      'worktime-production-holiday-end'
+    );
+    var mark = productionCalendarState(form).marks[formatIsoDate(dayEl.dateObj)];
+    if (mark === 'holiday') {
+      dayEl.classList.add('worktime-production-holiday-day');
+    } else if (mark === 'weekend') {
+      dayEl.classList.add('worktime-production-weekend-day');
+    } else if (mark === 'shortened') {
+      dayEl.classList.add('worktime-production-shortened-day');
+      var shortenedMark = document.createElement('span');
+      shortenedMark.className = 'worktime-production-shortened-mark';
+      shortenedMark.textContent = '*';
+      shortenedMark.setAttribute('aria-hidden', 'true');
+      dayEl.appendChild(shortenedMark);
+      dayEl.classList.add(dayEl.dateObj.getDate() < 10
+        ? 'worktime-production-shortened-day-single'
+        : 'worktime-production-shortened-day-double');
+    }
+  }
+
+  function markProductionCalendarDays(fp) {
+    if (!fp || !fp.daysContainer) return;
+    qa('.flatpickr-day', fp.daysContainer).forEach(function (dayEl) {
+      markProductionCalendarDay(fp._worktimeForm, dayEl);
+    });
+    syncProductionHolidayBlocks(fp);
+  }
+
+  function isCurrentMonthHolidayDay(dayEl) {
+    return dayEl
+      && dayEl.classList.contains('worktime-production-holiday-day')
+      && !dayEl.classList.contains('prevMonthDay')
+      && !dayEl.classList.contains('nextMonthDay');
+  }
+
+  function isNextCalendarDate(leftDate, rightDate) {
+    if (!leftDate || !rightDate) return false;
+    var nextDate = new Date(leftDate.getFullYear(), leftDate.getMonth(), leftDate.getDate() + 1);
+    return (
+      nextDate.getFullYear() === rightDate.getFullYear()
+      && nextDate.getMonth() === rightDate.getMonth()
+      && nextDate.getDate() === rightDate.getDate()
+    );
+  }
+
+  function syncProductionHolidayBlocks(fp) {
+    if (!fp || !fp.daysContainer) return;
+    var dayEls = qa('.flatpickr-day', fp.daysContainer);
+    dayEls.forEach(function (dayEl) {
+      dayEl.classList.remove(
+        'worktime-production-holiday-single',
+        'worktime-production-holiday-start',
+        'worktime-production-holiday-middle',
+        'worktime-production-holiday-end'
+      );
+    });
+    dayEls.forEach(function (dayEl, index) {
+      if (!isCurrentMonthHolidayDay(dayEl)) return;
+      var prevDayEl = dayEls[index - 1];
+      var nextDayEl = dayEls[index + 1];
+      var hasPrev = (
+        index % 7 !== 0
+        && isCurrentMonthHolidayDay(prevDayEl)
+        && isNextCalendarDate(prevDayEl.dateObj, dayEl.dateObj)
+      );
+      var hasNext = (
+        index % 7 !== 6
+        && isCurrentMonthHolidayDay(nextDayEl)
+        && isNextCalendarDate(dayEl.dateObj, nextDayEl.dateObj)
+      );
+      if (hasPrev && hasNext) {
+        dayEl.classList.add('worktime-production-holiday-middle');
+      } else if (hasNext) {
+        dayEl.classList.add('worktime-production-holiday-start');
+      } else if (hasPrev) {
+        dayEl.classList.add('worktime-production-holiday-end');
+      } else {
+        dayEl.classList.add('worktime-production-holiday-single');
+      }
+    });
+  }
+
+  function visibleProductionCalendarYears(fp) {
+    var years = {};
+    if (fp && fp.currentYear) years[fp.currentYear] = true;
+    if (fp && fp.daysContainer) {
+      qa('.flatpickr-day', fp.daysContainer).forEach(function (dayEl) {
+        if (dayEl.dateObj) years[dayEl.dateObj.getFullYear()] = true;
+      });
+    }
+    return Object.keys(years);
+  }
+
+  function ensureProductionCalendarYears(fp) {
+    var form = fp && fp._worktimeForm;
+    if (!form || !form.dataset.worktimeCalendarUrl || typeof window.fetch !== 'function') {
+      return Promise.resolve();
+    }
+    var state = productionCalendarState(form);
+    var requests = visibleProductionCalendarYears(fp).filter(function (year) {
+      return !state.loadedYears[year] && !state.loadingYears[year];
+    }).map(function (year) {
+      state.loadingYears[year] = true;
+      var separator = form.dataset.worktimeCalendarUrl.indexOf('?') === -1 ? '?' : '&';
+      return window.fetch(form.dataset.worktimeCalendarUrl + separator + 'year=' + encodeURIComponent(year), {
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      }).then(function (response) {
+        if (!response.ok) throw new Error('Unable to load production calendar marks');
+        return response.json();
+      }).then(function (payload) {
+        if (payload && payload.days && typeof payload.days === 'object' && !Array.isArray(payload.days)) {
+          Object.assign(state.marks, payload.days);
+        }
+        state.loadedYears[year] = true;
+      }).catch(function () {
+        delete state.loadedYears[year];
+      }).finally(function () {
+        delete state.loadingYears[year];
+      });
+    });
+    if (!requests.length) return Promise.resolve();
+    return Promise.all(requests).then(function () {});
+  }
+
+  function refreshProductionCalendarMarks(fp) {
+    markProductionCalendarDays(fp);
+    return ensureProductionCalendarYears(fp).then(function () {
+      markProductionCalendarDays(fp);
+    });
+  }
+
   function clearWeekHighlight(fp) {
     if (!fp || !fp.daysContainer) return;
     qa('.flatpickr-day', fp.daysContainer).forEach(function (dayEl) {
@@ -218,7 +394,7 @@
 
   function submitWorktimeGetForm(form) {
     if (!form) return;
-    flushVisibleWorktimeAutosave().finally(function () {
+    flushVisibleWorktimePendingState().finally(function () {
       if (form.matches && form.matches('[data-worktime-period-form]')) {
         persistWorktimeGeneralPreferences(form);
       }
@@ -227,9 +403,7 @@
         var url = form.getAttribute('hx-get') || form.getAttribute('action') || window.location.pathname;
         var params = new URLSearchParams(new FormData(form)).toString();
         var requestUrl = params ? (url + (url.indexOf('?') === -1 ? '?' : '&') + params) : url;
-        if (form.matches && form.matches('[data-worktime-period-form]')) {
-          target.setAttribute('hx-get', requestUrl);
-        }
+        target.setAttribute('hx-get', requestUrl);
         window.htmx.ajax('GET', requestUrl, {
           target: target,
           swap: form.getAttribute('hx-swap') || 'innerHTML'
@@ -253,6 +427,22 @@
     return window.__worktimeAutosave.flushVisible();
   }
 
+  function flushVisibleWorktimeRowOrder() {
+    if (!window.__queuedRowOrder || typeof window.__queuedRowOrder.flushVisible !== 'function') {
+      return Promise.resolve(true);
+    }
+    return window.__queuedRowOrder.flushVisible();
+  }
+
+  function flushVisibleWorktimePendingState() {
+    return Promise.all([
+      flushVisibleWorktimeAutosave(),
+      flushVisibleWorktimeRowOrder()
+    ]).then(function (results) {
+      return results.every(Boolean);
+    });
+  }
+
   function persistWorktimeGeneralPreferences(form) {
     if (!form || !window.localStorage) return;
     try {
@@ -260,12 +450,14 @@
       var breakdownInput = form.querySelector('[data-worktime-breakdown-value]');
       var histSortInput = form.querySelector('[data-worktime-hist-sort-value]');
       var periodInput = form.querySelector('[data-worktime-period-value]');
+      var companyInput = form.querySelector('[data-worktime-company-value]');
       if (!scaleInput || !breakdownInput || !histSortInput || !periodInput) return;
 
       var scaleValue = String(scaleInput.value || '').toLowerCase() === 'year' ? 'year' : 'month';
       var breakdownValue = String(breakdownInput.value || '').toLowerCase() === 'activities' ? 'activities' : 'employees';
       var histSortValue = String(histSortInput.value || '').toLowerCase();
       var periodValue = String(periodInput.value || '').trim();
+      var companyValue = String(companyInput && companyInput.value || '').trim();
 
       window.localStorage.setItem('worktime.general.scale', scaleValue);
       window.localStorage.setItem('worktime.general.breakdown', breakdownValue);
@@ -286,6 +478,7 @@
           window.localStorage.setItem('worktime.general.period.month', monthMatch[1] + '-' + monthMatch[2]);
         }
       }
+      window.localStorage.setItem('worktime.general.companyFilter', companyValue || '__all__');
     } catch (error) {
       // Ignore localStorage access failures.
     }
@@ -799,10 +992,9 @@
             periodInput.value = String(selectedDate.getFullYear());
             form.dataset.worktimePeriodAnchorYear = String(selectedDate.getFullYear());
           } else {
-            var monthNumber = parseInt(form.dataset.worktimeLastMonth || String(selectedDate.getMonth() + 1), 10);
-            if (!monthNumber || monthNumber < 1 || monthNumber > 12) monthNumber = 1;
-            periodInput.value = selectedDate.getFullYear() + '-' + pad2(monthNumber);
-            form.dataset.worktimePeriodAnchorYear = String(selectedDate.getFullYear());
+            var currentDate = new Date();
+            periodInput.value = currentDate.getFullYear() + '-' + pad2(currentDate.getMonth() + 1);
+            form.dataset.worktimePeriodAnchorYear = String(currentDate.getFullYear());
           }
           syncWorktimePeriodPicker(form);
           hideWorktimePeriodPanel(form);
@@ -889,12 +1081,14 @@
         bindFlatpickrWeekHover(instance);
         updateWeekLabel(form, instance.selectedDates[0] || initialDate);
         highlightSelectedWeek(instance, instance.selectedDates[0]);
+        refreshProductionCalendarMarks(instance);
         syncWorktimeFlatpickrHeader(instance);
         syncWorktimeFlatpickrWidth(instance);
         syncWorktimeFlatpickrHeight(instance);
       },
       onMonthChange: function (_, __, instance) {
         highlightSelectedWeek(instance, instance.selectedDates[0]);
+        refreshProductionCalendarMarks(instance);
         if (instance._worktimeTransitioning) return;
         if (!instance.calendarContainer || !instance.calendarContainer.classList.contains('worktime-month-panel-open')) {
           syncCommittedHeaderToVisibleMonth(instance);
@@ -904,6 +1098,7 @@
       },
       onYearChange: function (_, __, instance) {
         highlightSelectedWeek(instance, instance.selectedDates[0]);
+        refreshProductionCalendarMarks(instance);
         if (instance._worktimeTransitioning) return;
         if (!instance.calendarContainer || !instance.calendarContainer.classList.contains('worktime-month-panel-open')) {
           syncCommittedHeaderToVisibleMonth(instance);
@@ -913,6 +1108,7 @@
       },
       onValueUpdate: function (_, __, instance) {
         highlightSelectedWeek(instance, instance.selectedDates[0]);
+        refreshProductionCalendarMarks(instance);
         if (instance._worktimeTransitioning) return;
         if (!instance.calendarContainer || !instance.calendarContainer.classList.contains('worktime-month-panel-open')) {
           syncCommittedHeaderState(instance);
@@ -942,9 +1138,13 @@
       onOpen: function (_, __, instance) {
         hideWeekError(form.closest('[data-worktime-panel]'));
         ensureWorktimeFlatpickrHeader(instance);
+        refreshProductionCalendarMarks(instance);
         syncWorktimeFlatpickrHeader(instance);
         syncWorktimeFlatpickrWidth(instance);
         syncWorktimeFlatpickrHeight(instance);
+      },
+      onDayCreate: function (_, __, ___, dayElem) {
+        markProductionCalendarDay(form, dayElem);
       },
     });
     if (toggle) {

@@ -705,7 +705,33 @@
           <div class="flex-grow-1 ps-3 pe-0" style="min-width:0;">
             <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
               <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
-                <h5 class="mb-0 ps-3 fs-4 pt-2" id="worktime-section-title">Личный табель учета времени</h5>
+                <div class="d-flex align-items-center gap-3">
+                  <h5 class="mb-0 ps-3 fs-4 pt-2" id="worktime-section-title">Личный табель учета времени</h5>
+                  <div class="dropdown pt-1 d-none" id="master-worktime-company-filter-dropdown" style="transform: translateY(3px);">
+                    <button class="btn btn-primary btn-sm dropdown-toggle" type="button"
+                            id="worktime-company-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                      Компания: <span class="js-worktime-company-filter-label">Вся группа</span>
+                    </button>
+                    <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="worktime-company-filter-toggle"
+                         style="max-height: 240px; overflow-y: auto;">
+                      <div class="form-check mb-2">
+                        <input class="form-check-input js-worktime-company-filter" type="checkbox" value="__all__" id="worktime-company-filter-all" checked>
+                        <label class="form-check-label" for="worktime-company-filter-all">Вся группа</label>
+                      </div>
+                      <hr class="dropdown-divider">
+                      {% for company in worktime_company_filter_options %}
+                        <div class="form-check">
+                          <input class="form-check-input js-worktime-company-filter"
+                                 type="checkbox"
+                                 value="{{ company.id }}"
+                                 id="worktime-company-filter-{{ company.id }}"
+                                 data-summary-label="{{ company.short_name }}">
+                          <label class="form-check-label" for="worktime-company-filter-{{ company.id }}">{{ company.short_name }}</label>
+                        </div>
+                      {% endfor %}
+                    </div>
+                  </div>
+                </div>
                 <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
                    href="#notifications"
                    data-bs-toggle="tab"
@@ -904,6 +930,11 @@
                  class="list-group-item list-group-item-action"
                  data-clf-section="business-entity-attributes">
                 База юрлиц: атрибуты
+              </a>
+              <a href="#clf-production-calendar"
+                 class="list-group-item list-group-item-action"
+                 data-clf-section="production-calendar">
+                Производственный календарь
               </a>
               <a href="#clf-classifiers"
                  class="list-group-item list-group-item-action"
@@ -1183,6 +1214,14 @@
                       </div>
                     </div>
                   </div>
+                </div>
+              </div>
+              <div id="clf-content-production-calendar" class="clf-section-content d-none">
+                <div hx-get="{% url 'pc_partial' %}"
+                     hx-trigger="production-calendar:load from:body once"
+                     hx-target="this"
+                     hx-swap="innerHTML">
+                  <div class="text-muted p-3">Загрузка данных…</div>
                 </div>
               </div>
               <div id="clf-content-legal-entities" class="clf-section-content d-none">
@@ -1595,6 +1634,7 @@
             'legal-entities': 'База юрлиц',
             'business-entity-addresses': 'База юрлиц',
             'business-entity-relations': 'База юрлиц',
+            'production-calendar': 'Производственный календарь',
             'classifiers': 'Классификаторы',
             'normatives': 'Нормативы',
           };
@@ -1621,6 +1661,9 @@
             }
             if (key === 'normatives') {
               document.body.dispatchEvent(new CustomEvent('normatives:load'));
+            }
+            if (key === 'production-calendar') {
+              document.body.dispatchEvent(new CustomEvent('production-calendar:load'));
             }
             if (BUSINESS_REGISTRY_SECTIONS.includes(key)) {
               document.body.dispatchEvent(new CustomEvent('classifiers:section-shown', {
@@ -1925,6 +1968,8 @@
 
           var sidebar = document.getElementById('worktime-second-sidebar-list');
           var titleEl = document.getElementById('worktime-section-title');
+          var companyFilterDropdown = document.getElementById('master-worktime-company-filter-dropdown');
+          var WORKTIME_COMPANY_FILTER_STORAGE_KEY = 'worktime.general.companyFilter';
 
           function flushWorktimeAutosaveBeforeNavigation() {
             if (!window.__worktimeAutosave || typeof window.__worktimeAutosave.flushVisible !== 'function') {
@@ -1963,6 +2008,9 @@
             if (!window.htmx) {
               requestWorktimeSectionLoadIfVisible(key);
               return;
+            }
+            if (typeof window.__worktimeSyncPanelRequestUrl === 'function') {
+              window.__worktimeSyncPanelRequestUrl(panel);
             }
             window.htmx.ajax('GET', panel.getAttribute('hx-get'), {
               target: panel,
@@ -2017,7 +2065,135 @@
             var target = document.getElementById('worktime-content-' + key);
             if (target) target.classList.remove('d-none');
             if (titleEl) titleEl.textContent = WORKTIME_TITLES[key] || '';
+            if (companyFilterDropdown) {
+              companyFilterDropdown.classList.toggle('d-none', key !== 'timesheet');
+            }
             ensureVisibleWorktimeSectionLoad(key);
+          }
+
+          function normalizeWorktimeCompanyFilter(value) {
+            var rawValue = String(value || '').trim();
+            if (!rawValue || rawValue === '__all__') return '__all__';
+            var seen = {};
+            var ids = [];
+            rawValue.split(',').forEach(function (part) {
+              var id = String(part || '').trim();
+              if (!/^\d+$/.test(id) || seen[id]) return;
+              seen[id] = true;
+              ids.push(id);
+            });
+            return ids.length ? ids.join(',') : '__all__';
+          }
+
+          function setStoredWorktimeCompanyFilter(value) {
+            try {
+              if (!window.localStorage) return;
+              var normalized = normalizeWorktimeCompanyFilter(value);
+              window.localStorage.setItem(WORKTIME_COMPANY_FILTER_STORAGE_KEY, normalized || '__all__');
+            } catch (error) {
+              // Ignore localStorage access failures.
+            }
+          }
+
+          function initWorktimeCompanyMasterFilter() {
+            var dropdown = companyFilterDropdown;
+            if (!dropdown || dropdown.dataset.worktimeCompanyFilterBound === '1') return;
+            dropdown.dataset.worktimeCompanyFilterBound = '1';
+            if (typeof window.bindProjectFilterMenuWidth === 'function') {
+              window.bindProjectFilterMenuWidth(dropdown);
+            }
+            var checks = Array.from(dropdown.querySelectorAll('.js-worktime-company-filter'));
+            var label = dropdown.querySelector('.js-worktime-company-filter-label');
+            if (!checks.length || !label) return;
+
+            function selectedValues() {
+              var values = checks.filter(function (check) { return check.checked; }).map(function (check) { return check.value; });
+              if (!values.length || values.indexOf('__all__') !== -1) return ['__all__'];
+              return values;
+            }
+
+            function selectedValueString() {
+              var values = selectedValues();
+              return values[0] === '__all__' ? '__all__' : values.join(',');
+            }
+
+            function syncLabel(values) {
+              if (values[0] === '__all__') {
+                label.textContent = 'Вся группа';
+                return;
+              }
+              if (values.length === 1) {
+                var selected = checks.find(function (check) { return check.value === values[0]; });
+                label.textContent = selected && selected.dataset.summaryLabel ? selected.dataset.summaryLabel : '1 компания';
+                return;
+              }
+              label.textContent = values.length + ' выбрано';
+            }
+
+            function reloadGeneralPanel() {
+              var panel = document.querySelector('#worktime-content-timesheet [data-worktime-panel]');
+              var form = panel && panel.querySelector ? panel.querySelector('[data-worktime-period-form]') : null;
+              if (!panel || !form || !window.htmx) return;
+              var baseUrl = form.getAttribute('hx-get') || form.getAttribute('action') || panel.getAttribute('hx-get') || '';
+              if (!baseUrl) return;
+              var params = new URLSearchParams(new FormData(form));
+              var requestUrl = params.toString() ? (baseUrl + (baseUrl.indexOf('?') === -1 ? '?' : '&') + params.toString()) : baseUrl;
+              panel.setAttribute('hx-get', requestUrl);
+              window.htmx.ajax('GET', requestUrl, {
+                target: panel,
+                swap: panel.getAttribute('hx-swap') || 'innerHTML'
+              });
+            }
+
+            function applyFilter(options) {
+              var values = selectedValues();
+              var valueString = selectedValueString();
+              var panel = document.querySelector('#worktime-content-timesheet [data-worktime-panel]');
+              var form = panel && panel.querySelector ? panel.querySelector('[data-worktime-period-form]') : null;
+              var companyInput = form && form.querySelector ? form.querySelector('[data-worktime-company-value]') : null;
+              if (companyInput) {
+                companyInput.value = valueString;
+              }
+              setStoredWorktimeCompanyFilter(valueString);
+              syncLabel(values);
+              if (!(options && options.skipReload)) {
+                reloadGeneralPanel();
+              }
+            }
+
+            checks.forEach(function (check) {
+              check.addEventListener('change', function (event) {
+                var target = event.target;
+                if (target.value === '__all__' && target.checked) {
+                  checks.forEach(function (item) { item.checked = item.value === '__all__'; });
+                } else if (target.value === '__all__' && !target.checked) {
+                  var firstCompany = checks.find(function (item) { return item.value !== '__all__'; });
+                  if (firstCompany) firstCompany.checked = true;
+                } else {
+                  var allCheck = checks.find(function (item) { return item.value === '__all__'; });
+                  if (allCheck) allCheck.checked = false;
+                  var anyCompanyChecked = checks.some(function (item) { return item.value !== '__all__' && item.checked; });
+                  if (!anyCompanyChecked && allCheck) allCheck.checked = true;
+                }
+                applyFilter();
+              });
+            });
+
+            var savedFilter = '__all__';
+            try {
+              savedFilter = normalizeWorktimeCompanyFilter(window.localStorage && window.localStorage.getItem(WORKTIME_COMPANY_FILTER_STORAGE_KEY));
+            } catch (error) {
+              savedFilter = '__all__';
+            }
+            var savedSet = new Set(savedFilter === '__all__' ? ['__all__'] : savedFilter.split(','));
+            checks.forEach(function (check) {
+              check.checked = savedSet.has(check.value);
+            });
+            if (!checks.some(function (check) { return check.checked; })) {
+              var allCheck = checks.find(function (check) { return check.value === '__all__'; });
+              if (allCheck) allCheck.checked = true;
+            }
+            applyFilter({ skipReload: true });
           }
 
           if (sidebar) {
@@ -2035,6 +2211,7 @@
           }
 
           document.addEventListener('DOMContentLoaded', function () {
+            initWorktimeCompanyMasterFilter();
             var saved = window.UIPref ? UIPref.get('worktime:section', null) : null;
             if (saved && WORKTIME_TITLES[saved] && document.getElementById('worktime-content-' + saved)) {
               activateSidebarLink(saved);

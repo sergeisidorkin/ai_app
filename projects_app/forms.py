@@ -34,15 +34,20 @@ class BootstrapMixin:
                 need = "form-select"
             else:
                 need = "form-control"
-            # бережно добавляем класс, не перетирая существующие (например js-date)
+            # бережно добавляем класс, не перетирая существующие
             existing = w.attrs.get("class", "")
             classes = set(filter(None, existing.split()))
             classes.add(need)
             w.attrs["class"] = " ".join(classes)
 
 # ------ Форма регистрации ------
-DATE_INPUT_ATTRS = {"class": "js-date", "autocomplete": "off"}  # класс-хук для JS пикера
+DATE_INPUT_ATTRS = {"type": "date"}
 DATE_INPUT_FORMATS = ["%Y-%m-%d", "%d.%m.%Y", "%d.%m.%y"]
+DATE_WIDGET_FORMAT = "%Y-%m-%d"
+
+
+def _date_input_widget():
+    return forms.DateInput(format=DATE_WIDGET_FORMAT, attrs=DATE_INPUT_ATTRS)
 
 PROJECT_MANAGER_ROLE = "Руководитель проектов"
 
@@ -132,7 +137,7 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         ),
     )
     deadline = forms.DateField(required=True,
-                               widget=forms.TextInput(attrs=DATE_INPUT_ATTRS),
+                               widget=_date_input_widget(),
                                input_formats=DATE_INPUT_FORMATS)
     group_member = forms.ModelChoiceField(
         label="Группа",
@@ -165,7 +170,7 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
     registration_date = forms.DateField(
         label="Дата регистр.",
         required=False,
-        widget=forms.TextInput(attrs=DATE_INPUT_ATTRS),
+        widget=_date_input_widget(),
         input_formats=DATE_INPUT_FORMATS,
     )
     type_ids = forms.CharField(required=False, widget=forms.HiddenInput())
@@ -273,10 +278,10 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
 
 class ContractConditionsForm(BootstrapMixin, forms.ModelForm):
     contract_start = forms.DateField(required=False,
-                                     widget=forms.TextInput(attrs=DATE_INPUT_ATTRS),
+                                     widget=_date_input_widget(),
                                      input_formats=DATE_INPUT_FORMATS)
     contract_end = forms.DateField(required=False,
-                                   widget=forms.TextInput(attrs=DATE_INPUT_ATTRS),
+                                   widget=_date_input_widget(),
                                    input_formats=DATE_INPUT_FORMATS)
     input_data = forms.IntegerField(
         label="Исх. данные, дней",
@@ -421,7 +426,7 @@ class WorkVolumeForm(BootstrapMixin, forms.ModelForm):
     registration_date = forms.DateField(
         label="Дата",
         required=False,
-        widget=forms.TextInput(attrs={**DATE_INPUT_ATTRS}),
+        widget=_date_input_widget(),
         input_formats=DATE_INPUT_FORMATS,
     )
     manager = forms.ChoiceField(
@@ -627,7 +632,7 @@ class LegalEntityForm(BootstrapMixin, forms.ModelForm):
     registration_date = forms.DateField(
         label="Дата регистрации",
         required=False,
-        widget=forms.TextInput(attrs={**DATE_INPUT_ATTRS}),
+        widget=_date_input_widget(),
         input_formats=DATE_INPUT_FORMATS,
     )
 

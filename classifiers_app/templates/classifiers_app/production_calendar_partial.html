@@ -1,0 +1,59 @@
+<div id="production-calendar-pane">
+  <div class="card shadow-sm mt-3">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 0px;">
+        <h5 class="table-section-title">
+          <i class="bi bi-calendar3 me-2"></i>
+          Производственный календарь
+        </h5>
+        <div class="d-flex align-items-center gap-2" id="pc-filters" style="margin-right: 1rem;">
+          <label class="form-label mb-0 text-nowrap small" for="pc-country-filter">Страна:</label>
+          <select id="pc-country-filter"
+                  name="pc_country"
+                  class="form-select form-select-sm"
+                  style="width: auto;"
+                  hx-get="{% url 'pc_table_partial' %}"
+                  hx-target="#pc-table-wrap"
+                  hx-swap="innerHTML"
+                  hx-trigger="change"
+                  hx-include="#pc-filters">
+            {% for country in pc_countries %}
+              <option value="{{ country.pk }}" {% if country.pk == pc_country_id %}selected{% endif %}>
+                {{ country.short_name }} ({{ country.alpha2 }})
+              </option>
+            {% endfor %}
+          </select>
+          <label class="form-label mb-0 text-nowrap small" for="pc-year-filter">Год:</label>
+          <input type="number"
+                 class="form-control form-control-sm"
+                 id="pc-year-filter"
+                 name="pc_year"
+                 min="1900"
+                 max="2100"
+                 value="{{ pc_year }}"
+                 style="width: 6rem;"
+                 hx-get="{% url 'pc_table_partial' %}"
+                 hx-target="#pc-table-wrap"
+                 hx-swap="innerHTML"
+                 hx-trigger="change"
+                 hx-include="#pc-filters">
+          {% if request.user.is_authenticated and request.user.is_staff %}
+            <button class="btn btn-primary btn-sm text-nowrap"
+                    style="width: 13rem;"
+                    hx-post="{% url 'pc_generate' %}"
+                    hx-target="#pc-table-wrap"
+                    hx-swap="innerHTML"
+                    hx-include="#pc-filters">
+              <i class="bi bi-arrow-clockwise me-2"></i>Заполнить/обновить
+            </button>
+          {% endif %}
+        </div>
+      </div>
+      <div class="table-responsive">
+        <div id="pc-table-wrap">
+          {% include "classifiers_app/production_calendar_table_partial.html" %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

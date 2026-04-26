@@ -125,15 +125,15 @@
               </div>
             </div>
             <div class="row mb-2 align-items-center">
-              <div class="col-auto text-muted small" style="width:150px;">Фамилия</div>
-              <div class="col">
-                <input type="text" class="form-control form-control-sm" value="{{ request.user.last_name|default:"" }}" readonly tabindex="-1">
-              </div>
-            </div>
-            <div class="row mb-2 align-items-center">
               <div class="col-auto text-muted small" style="width:150px;">Отчество</div>
               <div class="col">
                 <input type="text" class="form-control form-control-sm" value="{% if employee %}{{ employee.patronymic }}{% endif %}" readonly tabindex="-1">
+              </div>
+            </div>
+            <div class="row mb-2 align-items-center">
+              <div class="col-auto text-muted small" style="width:150px;">Фамилия</div>
+              <div class="col">
+                <input type="text" class="form-control form-control-sm" value="{{ request.user.last_name|default:"" }}" readonly tabindex="-1">
               </div>
             </div>
             <div class="row mb-2 align-items-center">

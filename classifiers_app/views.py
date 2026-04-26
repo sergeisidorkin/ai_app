@@ -31,6 +31,7 @@ from .models import (
     BusinessEntityAttributeRecord,
     BusinessEntityReorganizationEvent,
     BusinessEntityRelationRecord,
+    ProductionCalendarDay,
     resolve_territorial_division_region_code,
 )
 from .forms import (
@@ -48,8 +49,18 @@ from .forms import (
     BusinessEntityAttributeRecordForm,
     BusinessEntityLegalAddressRecordForm,
     BusinessEntityRelationRecordForm,
+    ProductionCalendarDayForm,
 )
 from .numcap_official_csv import process_numcap_official_sources
+from .production_calendar import (
+    default_country as default_production_calendar_country,
+    download_isdayoff_calendar,
+    generate_calendar_year,
+    get_calendar_days,
+    isdayoff_calendar_status,
+    normalize_year,
+    supported_countries_queryset,
+)
 
 PARTIAL_TEMPLATE = "classifiers_app/classifiers_partial.html"
 OKSM_TABLE_TEMPLATE = "classifiers_app/oksm_table_partial.html"
@@ -80,6 +91,9 @@ BEA_TABLE_TEMPLATE = "classifiers_app/bea_table_partial.html"
 BEA_FORM_TEMPLATE = "classifiers_app/bea_form.html"
 BRL_TABLE_TEMPLATE = "classifiers_app/brl_table_partial.html"
 BRL_FORM_TEMPLATE = "classifiers_app/brl_form.html"
+PC_PARTIAL_TEMPLATE = "classifiers_app/production_calendar_partial.html"
+PC_TABLE_TEMPLATE = "classifiers_app/production_calendar_table_partial.html"
+PC_FORM_TEMPLATE = "classifiers_app/production_calendar_form.html"
 
 BUSINESS_REGISTRY_PAGE_SIZE = 50
 NUMCAP_TABLE_URL = "/classifiers/numcap/table/"
@@ -88,6 +102,7 @@ BEI_TABLE_URL = "/classifiers/bei/table/"
 LER_TABLE_URL = "/classifiers/ler/table/"
 BEA_TABLE_URL = "/classifiers/bea/table/"
 BRL_TABLE_URL = "/classifiers/brl/table/"
+PC_TABLE_URL = "/classifiers/pc/table/"
 BUSINESS_ENTITY_SOURCE_BER = "[База юрлиц / Реестр бизнес-сущностей]"
 BUSINESS_ENTITY_SOURCE_LER = "[База юрлиц / Реестр наименований]"
 BUSINESS_ENTITY_SOURCE_BRL = "[База юрлиц / Реестр связей]"
@@ -151,6 +166,8 @@ PAGINATION_PRESERVED_PARAMS = {
     "ler_page",
     "bea_page",
     "brl_page",
+    "pc_country",
+    "pc_year",
 }
 HX_TRIGGER_HEADER = "HX-Trigger"
 HX_EVENT = "classifiers-updated"
@@ -472,6 +489,40 @@ def _lw_context(request, param_name="lw_date"):
 
 
 # ---------------------------------------------------------------------------
+#  Production calendar queryset helpers
+# ---------------------------------------------------------------------------
+
+def _selected_pc_country(request):
+    countries = supported_countries_queryset()
+    raw_country_id = _req_param(request, "pc_country")
+    if raw_country_id:
+        try:
+            country = countries.filter(pk=int(raw_country_id)).first()
+        except (TypeError, ValueError):
+            country = None
+        if country is not None:
+            return country
+    return default_production_calendar_country()
+
+
+def _pc_context(request, *, message="", error=""):
+    country = _selected_pc_country(request)
+    year = normalize_year(_req_param(request, "pc_year"))
+    countries = supported_countries_queryset()
+    items = get_calendar_days(country, year).order_by("date", "id") if country else ProductionCalendarDay.objects.none()
+    return {
+        "pc_countries": countries,
+        "pc_country": country,
+        "pc_country_id": country.pk if country else "",
+        "pc_year": year,
+        "pc_items": items,
+        "pc_source_status": isdayoff_calendar_status(country, year) if country else None,
+        "pc_message": message,
+        "pc_error": error,
+    }
+
+
+# ---------------------------------------------------------------------------
 #  LER (База юридических лиц) queryset helpers
 # ---------------------------------------------------------------------------
 
@@ -787,6 +838,12 @@ def _next_rfs_position():
 
 def _render_lw_updated(request):
     response = render(request, LW_TABLE_TEMPLATE, _lw_context(request))
+    response[HX_TRIGGER_HEADER] = HX_EVENT
+    return response
+
+
+def _render_pc_updated(request, *, message="", error=""):
+    response = render(request, PC_TABLE_TEMPLATE, _pc_context(request, message=message, error=error))
     response[HX_TRIGGER_HEADER] = HX_EVENT
     return response
 
@@ -4109,6 +4166,127 @@ def lw_form_edit(request, pk: int):
 def lw_delete(request, pk: int):
     get_object_or_404(LivingWage, pk=pk).delete()
     return _render_lw_updated(request)
+
+
+# ---------------------------------------------------------------------------
+#  Производственный календарь
+# ---------------------------------------------------------------------------
+
+@login_required
+@require_http_methods(["GET"])
+def pc_partial(request):
+    return render(request, PC_PARTIAL_TEMPLATE, _pc_context(request))
+
+
+@login_required
+@require_http_methods(["GET"])
+def pc_table_partial(request):
+    return render(request, PC_TABLE_TEMPLATE, _pc_context(request))
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def pc_generate(request):
+    country = _selected_pc_country(request)
+    if country is None:
+        return _render_pc_updated(request, error="Нет стран ОКСМ, поддерживаемых локальным календарем или библиотекой holidays.")
+    year = normalize_year(_req_param(request, "pc_year"))
+    try:
+        result = generate_calendar_year(country, year)
+    except ValueError as exc:
+        return _render_pc_updated(request, error=str(exc))
+    message = (
+        f"Год {year} обновлен: создано {result['created']}, "
+        f"обновлено {result['updated']}, ручных корректировок сохранено {result['preserved_manual']}."
+    )
+    return _render_pc_updated(request, message=message)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def pc_load_source(request):
+    country = _selected_pc_country(request)
+    if country is None:
+        return _render_pc_updated(request, error="Страна не выбрана.")
+    year = normalize_year(_req_param(request, "pc_year"))
+    try:
+        status = download_isdayoff_calendar(country, year)
+        result = generate_calendar_year(country, year)
+    except ValueError as exc:
+        return _render_pc_updated(request, error=str(exc))
+    message = (
+        f"Точные данные isdayoff для {status['country_code']} за {year} год загружены. "
+        f"Календарь обновлен: создано {result['created']}, обновлено {result['updated']}, "
+        f"ручных корректировок сохранено {result['preserved_manual']}."
+    )
+    return _render_pc_updated(request, message=message)
+
+
+def _pc_form_context(request, form, action, item=None):
+    country = _selected_pc_country(request)
+    year = normalize_year(_req_param(request, "pc_year"))
+    return {
+        "form": form,
+        "action": action,
+        "pc_item": item,
+        "pc_filter_country_id": country.pk if country else "",
+        "pc_filter_year": year,
+    }
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def pc_form_create(request):
+    if request.method == "GET":
+        country = _selected_pc_country(request)
+        year = normalize_year(_req_param(request, "pc_year"))
+        initial = {
+            "country": country,
+            "date": date_type(year, 1, 1),
+            "source": "manual",
+            "source_document": "manual",
+        }
+        form = ProductionCalendarDayForm(initial=initial)
+        return render(request, PC_FORM_TEMPLATE, _pc_form_context(request, form, "create"))
+    form = ProductionCalendarDayForm(request.POST)
+    if not form.is_valid():
+        return render(request, PC_FORM_TEMPLATE, _pc_form_context(request, form, "create"))
+    obj = form.save(commit=False)
+    obj.is_manual = True
+    if not obj.source:
+        obj.source = "manual"
+    obj.save()
+    return _render_pc_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def pc_form_edit(request, pk: int):
+    item = get_object_or_404(ProductionCalendarDay, pk=pk)
+    if request.method == "GET":
+        form = ProductionCalendarDayForm(instance=item)
+        return render(request, PC_FORM_TEMPLATE, _pc_form_context(request, form, "edit", item))
+    form = ProductionCalendarDayForm(request.POST, instance=item)
+    if not form.is_valid():
+        return render(request, PC_FORM_TEMPLATE, _pc_form_context(request, form, "edit", item))
+    obj = form.save(commit=False)
+    obj.is_manual = True
+    if not obj.source:
+        obj.source = "manual"
+    obj.save()
+    return _render_pc_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def pc_delete(request, pk: int):
+    get_object_or_404(ProductionCalendarDay, pk=pk).delete()
+    return _render_pc_updated(request)
 
 
 def _normalize_lw_positions():

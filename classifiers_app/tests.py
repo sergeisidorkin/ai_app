@@ -1,4 +1,8 @@
 from datetime import date
+from decimal import Decimal
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 import csv
 import io
 import json
@@ -21,6 +25,7 @@ from classifiers_app.models import (
     NumcapRecord,
     OKSMCountry,
     PhysicalEntityIdentifier,
+    ProductionCalendarDay,
     RussianFederationSubjectCode,
     TerritorialDivision,
 )
@@ -28,6 +33,11 @@ from classifiers_app.forms import (
     BusinessEntityIdentifierRecordForm,
     BusinessEntityLegalAddressRecordForm,
     BusinessEntityRecordForm,
+)
+from classifiers_app.production_calendar import (
+    clear_isdayoff_calendar_caches,
+    generate_calendar_year,
+    supported_countries_queryset,
 )
 from classifiers_app.views import BUSINESS_REGISTRY_CSV_FIELDS, sync_autocomplete_registry_entry
 
@@ -81,6 +91,248 @@ class OKSMCountryTests(TestCase):
         self.assertEqual(country.short_name_genitive, "России")
         self.assertEqual(country.alpha2, "RU")
         self.assertEqual(country.alpha3, "RUS")
+
+
+class ProductionCalendarTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="pc-user",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.russia = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+        self.kazakhstan = OKSMCountry.objects.create(
+            number=398,
+            code="398",
+            short_name="Казахстан",
+            full_name="Республика Казахстан",
+            alpha2="KZ",
+            alpha3="KAZ",
+            position=2,
+        )
+        self.unsupported = OKSMCountry.objects.create(
+            number=999,
+            code="999",
+            short_name="Тестовая страна",
+            full_name="Тестовая страна",
+            alpha2="XX",
+            alpha3="XXX",
+            position=3,
+        )
+
+    def test_supported_countries_queryset_intersects_oksm_with_holidays(self):
+        codes = set(supported_countries_queryset().values_list("alpha2", flat=True))
+
+        self.assertIn("RU", codes)
+        self.assertIn("KZ", codes)
+        self.assertNotIn("XX", codes)
+
+    def test_generate_ru_year_creates_calendar_days(self):
+        result = generate_calendar_year(self.russia, 2026)
+
+        self.assertEqual(result["created"], 365)
+        self.assertEqual(ProductionCalendarDay.objects.filter(country=self.russia, date__year=2026).count(), 365)
+        new_year = ProductionCalendarDay.objects.get(country=self.russia, date=date(2026, 1, 1))
+        self.assertTrue(new_year.is_holiday)
+        self.assertFalse(new_year.is_working_day)
+        self.assertEqual(new_year.source, "isdayoff/calendars")
+        self.assertEqual(new_year.working_hours, Decimal("0.0"))
+
+    def test_generate_ru_uses_isdayoff_transfers_and_shortened_days(self):
+        generate_calendar_year(self.russia, 2026)
+
+        may_8 = ProductionCalendarDay.objects.get(country=self.russia, date=date(2026, 5, 8))
+        may_9 = ProductionCalendarDay.objects.get(country=self.russia, date=date(2026, 5, 9))
+        may_11 = ProductionCalendarDay.objects.get(country=self.russia, date=date(2026, 5, 11))
+
+        self.assertTrue(may_8.is_working_day)
+        self.assertTrue(may_8.is_shortened_day)
+        self.assertEqual(may_8.working_hours, Decimal("7.0"))
+        self.assertTrue(may_9.is_holiday)
+        self.assertFalse(may_9.is_working_day)
+        self.assertTrue(may_11.is_weekend)
+        self.assertFalse(may_11.is_working_day)
+        self.assertFalse(may_11.is_holiday)
+        self.assertEqual(may_11.source, "isdayoff/calendars")
+
+    def test_generate_falls_back_to_holidays_when_local_snapshot_absent(self):
+        usa = OKSMCountry.objects.create(
+            number=840,
+            code="840",
+            short_name="США",
+            full_name="Соединенные Штаты Америки",
+            alpha2="US",
+            alpha3="USA",
+            position=4,
+        )
+
+        generate_calendar_year(usa, 2026)
+
+        new_year = ProductionCalendarDay.objects.get(country=usa, date=date(2026, 1, 1))
+        self.assertTrue(new_year.is_holiday)
+        self.assertEqual(new_year.source, "holidays")
+
+    def test_generate_other_supported_country(self):
+        generate_calendar_year(self.kazakhstan, 2026)
+
+        self.assertEqual(
+            ProductionCalendarDay.objects.filter(country=self.kazakhstan, date__year=2026).count(),
+            365,
+        )
+
+    def test_generate_preserves_manual_override(self):
+        generate_calendar_year(self.russia, 2026)
+        day = ProductionCalendarDay.objects.get(country=self.russia, date=date(2026, 1, 3))
+        day.is_manual = True
+        day.is_working_day = True
+        day.is_weekend = True
+        day.is_holiday = False
+        day.holiday_name = ""
+        day.comment = "Перенос рабочего дня"
+        day.save()
+
+        generate_calendar_year(self.russia, 2026)
+        day.refresh_from_db()
+
+        self.assertTrue(day.is_manual)
+        self.assertTrue(day.is_working_day)
+        self.assertEqual(day.comment, "Перенос рабочего дня")
+
+    def test_table_filters_by_country_and_year(self):
+        ProductionCalendarDay.objects.create(
+            country=self.russia,
+            date=date(2026, 1, 1),
+            is_weekend=False,
+            is_holiday=True,
+            is_working_day=False,
+            holiday_name="Новый год",
+            source="test",
+        )
+        ProductionCalendarDay.objects.create(
+            country=self.kazakhstan,
+            date=date(2026, 1, 1),
+            is_weekend=False,
+            is_holiday=True,
+            is_working_day=False,
+            holiday_name="Казахстанский праздник",
+            source="test",
+        )
+
+        response = self.client.get(
+            reverse("pc_table_partial"),
+            {"pc_country": self.russia.pk, "pc_year": "2026"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Новый год")
+        self.assertNotContains(response, "Казахстанский праздник")
+
+    def test_table_shows_isdayoff_source_status(self):
+        response = self.client.get(
+            reverse("pc_table_partial"),
+            {"pc_country": self.russia.pk, "pc_year": "2027"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Точный источник isdayoff для RU / 2027")
+        self.assertContains(response, "Локального файла нет")
+        self.assertContains(response, "Загрузить точные данные")
+
+    def test_staff_can_load_isdayoff_source_and_fill_calendar(self):
+        payload = {
+            "year": 2027,
+            "countrycode": "ru",
+            "dayoff": ["0101"],
+            "predayoff": ["0104"],
+            "dayoff6": [],
+            "predayoff6": [],
+            "workday": [],
+            "covidday": [],
+            "holiday": ["0101"],
+            "author": "test",
+        }
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return json.dumps(payload).encode("utf-8")
+
+        with TemporaryDirectory() as tmpdir, patch(
+            "classifiers_app.production_calendar.ISDAYOFF_DATA_DIR",
+            Path(tmpdir),
+        ), patch("classifiers_app.production_calendar.urlopen", return_value=FakeResponse()):
+            clear_isdayoff_calendar_caches()
+            response = self.client.post(
+                reverse("pc_load_source"),
+                {"pc_country": self.russia.pk, "pc_year": "2027"},
+            )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue((Path(tmpdir) / "2027" / "ru2027.json").exists())
+            new_year = ProductionCalendarDay.objects.get(country=self.russia, date=date(2027, 1, 1))
+            self.assertEqual(new_year.source, "isdayoff/calendars")
+            self.assertTrue(new_year.is_holiday)
+            self.assertFalse(new_year.is_working_day)
+            self.assertContains(response, "Точные данные isdayoff для RU за 2027 год загружены")
+            clear_isdayoff_calendar_caches()
+
+    def test_staff_can_create_manual_day(self):
+        response = self.client.post(
+            reverse("pc_form_create"),
+            {
+                "country": str(self.russia.pk),
+                "date": "2026-05-02",
+                "is_weekend": "on",
+                "is_holiday": "",
+                "is_working_day": "",
+                "is_shortened_day": "",
+                "working_hours": "0.0",
+                "holiday_name": "",
+                "source": "manual",
+                "source_document": "ручное основание",
+                "comment": "ручная настройка",
+                "pc_country": str(self.russia.pk),
+                "pc_year": "2026",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        day = ProductionCalendarDay.objects.get(country=self.russia, date=date(2026, 5, 2))
+        self.assertTrue(day.is_manual)
+        self.assertFalse(day.is_working_day)
+        self.assertEqual(day.working_hours, Decimal("0.0"))
+        self.assertEqual(day.source_document, "ручное основание")
+        self.assertEqual(day.comment, "ручная настройка")
+
+    def test_non_staff_cannot_create_manual_day(self):
+        user = get_user_model().objects.create_user(username="pc-plain", password="secret", is_staff=False)
+        self.client.force_login(user)
+
+        response = self.client.post(
+            reverse("pc_form_create"),
+            {
+                "country": str(self.russia.pk),
+                "date": "2026-05-02",
+                "source": "manual",
+            },
+        )
+
+        self.assertNotEqual(response.status_code, 200)
+        self.assertFalse(ProductionCalendarDay.objects.exists())
 
 
 class PhysicalEntityIdentifierTests(TestCase):

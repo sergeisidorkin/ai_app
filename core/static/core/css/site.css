@@ -1718,7 +1718,7 @@ section#templates .alert.alert-info .text-muted {
   width: max-content;
   min-width: 100%;
   --bs-table-cell-padding-y: .5rem;
-  --reg-first-col-pr: .8rem;
+  --reg-first-col-pr: calc(30px - var(--bs-table-cell-padding-x, .4rem) - 1em);
 }
 #projects-pane .registration-table-wrap > table.reg-table.table-sm { --bs-table-cell-padding-y: .25rem; }
 

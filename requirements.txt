@@ -37,3 +37,4 @@ openpyxl==3.1.5
 # Работа с изображениями (ImageField)
 Pillow>=10.0.0,<11
 phonenumbers==9.0.27
+holidays==0.95
