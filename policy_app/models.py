@@ -534,7 +534,8 @@ class ServiceGoalReport(models.Model):
         blank=True,
         default="",
     )
-    report_title = models.TextField("Название отчета", blank=True, default="")
+    report_title = models.TextField("Титул отчета/ТКП", blank=True, default="")
+    product_name = models.TextField("Название продукта", blank=True, default="")
     position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
 
     created_at = models.DateTimeField(auto_now_add=True)

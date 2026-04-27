@@ -201,7 +201,9 @@ def _proposal_variable_registry():
     from core.column_registry import COLUMN_REGISTRY
 
     proposals = COLUMN_REGISTRY.get("proposals", {})
+    products = COLUMN_REGISTRY.get("products", {})
     registry = proposals.get("tables", {}).get("registry", {})
+    service_goals = products.get("tables", {}).get("service_goals_and_report_titles", {})
     return {
         "proposals": {
             "label": proposals.get("label", "ТКП"),
@@ -209,7 +211,16 @@ def _proposal_variable_registry():
                 "registry": {
                     "label": registry.get("label", "Реестр ТКП"),
                     "columns": registry.get("columns", {}),
-                }
+                },
+            },
+        },
+        "products": {
+            "label": products.get("label", "Продукты"),
+            "tables": {
+                "service_goals_and_report_titles": {
+                    "label": service_goals.get("label", "Цели услуг и названия отчетов"),
+                    "columns": service_goals.get("columns", {}),
+                },
             },
         }
     }
@@ -605,6 +616,11 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         ],
         widget=forms.HiddenInput(attrs={"id": "proposal-service-composition-mode"}),
     )
+    payment_schedule_common = forms.BooleanField(
+        label="Общий для всех этапов",
+        required=False,
+        initial=True,
+    )
 
     _decimal_text_fields = (
         "service_term_months",
@@ -788,6 +804,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
 
         self._bootstrapify()
         self.fields["asset_owner_matches_customer"].widget.attrs["class"] = "form-check-input"
+        self.fields["payment_schedule_common"].widget.attrs["class"] = "form-check-input"
 
         if self.instance and self.instance.pk and "assets_payload" not in self.data:
             self.fields["assets_payload"].initial = json.dumps(
@@ -958,6 +975,18 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         elif "service_composition_mode" not in self.data:
             self.fields["service_composition_mode"].initial = "sections"
 
+        self.payment_schedule_common_enabled = self._is_payment_schedule_common_enabled()
+        self.fields["payment_schedule_common"].initial = self.payment_schedule_common_enabled
+        if not self.payment_schedule_common_enabled:
+            for field_name in (
+                "advance_percent",
+                "advance_term_days",
+                "preliminary_report_percent",
+                "preliminary_report_term_days",
+                "final_report_term_days",
+            ):
+                self.fields[field_name].widget.attrs["disabled"] = True
+
         if not self.instance.pk and "group_member" not in self.data:
             self.fields["group_member"].initial = (
                 GroupMember.objects.filter(country_alpha2="RU").order_by("position", "id").values_list("pk", flat=True).first()
@@ -1000,6 +1029,20 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         self.stage_rows = self._build_stage_rows()
         self.summary_commercial_row = self._build_summary_commercial_row()
 
+    def _is_payment_schedule_common_enabled(self):
+        if self.is_bound:
+            if "payment_schedule_common" not in self.data:
+                return True
+            return self.fields["payment_schedule_common"].widget.value_from_datadict(
+                self.data,
+                self.files,
+                "payment_schedule_common",
+            )
+        stored_stages = list(getattr(self.instance, "stage_payloads_json", None) or [])
+        if any(isinstance(payload, dict) and payload.get("payment_schedule_common") is False for payload in stored_stages):
+            return False
+        return True
+
     def _default_stage_commercial_totals_payload(self):
         payload = {
             "discount_percent": "5",
@@ -1017,6 +1060,12 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             **self._default_stage_commercial_totals_payload(),
             **(payload or {}),
         }
+
+    @staticmethod
+    def _stage_display_value(value, default=""):
+        if value in (None, ""):
+            value = default
+        return "" if value is None else str(value)
 
     def _serialize_instance_commercial_rows(self):
         if not self.instance or not self.instance.pk:
@@ -1076,6 +1125,12 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             "preliminary_report_date": "",
             "final_report_term_weeks": "",
             "final_report_date": "",
+            "advance_percent": str(self.fields["advance_percent"].initial or ""),
+            "advance_term_days": str(self.fields["advance_term_days"].initial or ""),
+            "preliminary_report_percent": str(self.fields["preliminary_report_percent"].initial or ""),
+            "preliminary_report_term_days": str(self.fields["preliminary_report_term_days"].initial or ""),
+            "final_report_percent": str(self.initial.get("final_report_percent") or ""),
+            "final_report_term_days": str(self.fields["final_report_term_days"].initial or ""),
         }
 
     def _build_stage_rows_from_bound_data(self):
@@ -1097,6 +1152,12 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             "preliminary_report_date",
             "final_report_term_weeks",
             "final_report_date",
+            "advance_percent",
+            "advance_term_days",
+            "preliminary_report_percent",
+            "preliminary_report_term_days",
+            "final_report_percent",
+            "final_report_term_days",
         )
         rows_map = {name: _proposal_request_list(self.data, name) for name in field_names}
         product_ids = {
@@ -1181,6 +1242,28 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 "final_report_date": (
                     rows_map["final_report_date"][index] if index < len(rows_map["final_report_date"]) else ""
                 ).strip(),
+                "advance_percent": (
+                    rows_map["advance_percent"][index] if index < len(rows_map["advance_percent"]) else ""
+                ).strip(),
+                "advance_term_days": (
+                    rows_map["advance_term_days"][index] if index < len(rows_map["advance_term_days"]) else ""
+                ).strip(),
+                "preliminary_report_percent": (
+                    rows_map["preliminary_report_percent"][index]
+                    if index < len(rows_map["preliminary_report_percent"])
+                    else ""
+                ).strip(),
+                "preliminary_report_term_days": (
+                    rows_map["preliminary_report_term_days"][index]
+                    if index < len(rows_map["preliminary_report_term_days"])
+                    else ""
+                ).strip(),
+                "final_report_percent": (
+                    rows_map["final_report_percent"][index] if index < len(rows_map["final_report_percent"]) else ""
+                ).strip(),
+                "final_report_term_days": (
+                    rows_map["final_report_term_days"][index] if index < len(rows_map["final_report_term_days"]) else ""
+                ).strip(),
             }
             has_data = any(
                 row[key]
@@ -1251,6 +1334,30 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                         "preliminary_report_date": str(payload.get("preliminary_report_date") or ""),
                         "final_report_term_weeks": str(payload.get("final_report_term_weeks") or ""),
                         "final_report_date": str(payload.get("final_report_date") or ""),
+                        "advance_percent": self._stage_display_value(
+                            payload.get("advance_percent"),
+                            instance.advance_percent,
+                        ),
+                        "advance_term_days": self._stage_display_value(
+                            payload.get("advance_term_days"),
+                            instance.advance_term_days,
+                        ),
+                        "preliminary_report_percent": self._stage_display_value(
+                            payload.get("preliminary_report_percent"),
+                            instance.preliminary_report_percent,
+                        ),
+                        "preliminary_report_term_days": self._stage_display_value(
+                            payload.get("preliminary_report_term_days"),
+                            instance.preliminary_report_term_days,
+                        ),
+                        "final_report_percent": self._stage_display_value(
+                            payload.get("final_report_percent"),
+                            instance.final_report_percent,
+                        ),
+                        "final_report_term_days": self._stage_display_value(
+                            payload.get("final_report_term_days"),
+                            instance.final_report_term_days,
+                        ),
                     }
                 )
             if normalized_rows:
@@ -1287,6 +1394,30 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 "preliminary_report_date": _format_stage_date(instance.preliminary_report_date),
                 "final_report_term_weeks": str(instance.final_report_term_weeks or ""),
                 "final_report_date": _format_stage_date(instance.final_report_date),
+                "advance_percent": self._stage_display_value(
+                    instance.advance_percent,
+                    self.fields["advance_percent"].initial,
+                ),
+                "advance_term_days": self._stage_display_value(
+                    instance.advance_term_days,
+                    self.fields["advance_term_days"].initial,
+                ),
+                "preliminary_report_percent": self._stage_display_value(
+                    instance.preliminary_report_percent,
+                    self.fields["preliminary_report_percent"].initial,
+                ),
+                "preliminary_report_term_days": self._stage_display_value(
+                    instance.preliminary_report_term_days,
+                    self.fields["preliminary_report_term_days"].initial,
+                ),
+                "final_report_percent": self._stage_display_value(
+                    instance.final_report_percent,
+                    self.initial.get("final_report_percent"),
+                ),
+                "final_report_term_days": self._stage_display_value(
+                    instance.final_report_term_days,
+                    self.fields["final_report_term_days"].initial,
+                ),
             }
         ]
 
@@ -1337,6 +1468,24 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         if not raw:
             return None
         return self._parse_payload_decimal(raw, f"Этап {row_index}: поле «{field_label}» заполнено некорректно.")
+
+    def _parse_stage_percent(self, value, *, row_index, field_label):
+        parsed = self._parse_stage_decimal(value, row_index=row_index, field_label=field_label)
+        if parsed is not None and (parsed < 0 or parsed > 100):
+            raise forms.ValidationError(f"Этап {row_index}: поле «{field_label}» должно быть в диапазоне от 0% до 100%.")
+        return parsed
+
+    def _parse_stage_integer(self, value, *, row_index, field_label):
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        try:
+            parsed = int(raw)
+        except (TypeError, ValueError):
+            raise forms.ValidationError(f"Этап {row_index}: поле «{field_label}» заполнено некорректно.")
+        if parsed < 0:
+            raise forms.ValidationError(f"Этап {row_index}: поле «{field_label}» должно быть не меньше 0.")
+        return parsed
 
     def _load_stage_json(self, raw, *, row_index, field_label, expected_type, default):
         raw = str(raw or "").strip()
@@ -1841,6 +1990,47 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             if service_composition_mode not in {"sections", "customer_tz"}:
                 service_composition_mode = "sections"
             service_composition_customer_tz = str(row.get("service_composition_customer_tz") or "").strip()
+            if self.payment_schedule_common_enabled:
+                advance_percent = self.cleaned_data.get("advance_percent")
+                advance_term_days = self.cleaned_data.get("advance_term_days")
+                preliminary_report_percent = self.cleaned_data.get("preliminary_report_percent")
+                preliminary_report_term_days = self.cleaned_data.get("preliminary_report_term_days")
+                final_report_percent = self.cleaned_data.get("final_report_percent")
+                final_report_term_days = self.cleaned_data.get("final_report_term_days")
+            else:
+                advance_percent = self._parse_stage_percent(
+                    row.get("advance_percent"),
+                    row_index=rank,
+                    field_label="Размер предоплаты в процентах",
+                )
+                advance_term_days = self._parse_stage_integer(
+                    row.get("advance_term_days"),
+                    row_index=rank,
+                    field_label="Срок предоплаты в календарных днях",
+                )
+                preliminary_report_percent = self._parse_stage_percent(
+                    row.get("preliminary_report_percent"),
+                    row_index=rank,
+                    field_label="Размер оплаты Предварительного отчёта в процентах",
+                )
+                preliminary_report_term_days = self._parse_stage_integer(
+                    row.get("preliminary_report_term_days"),
+                    row_index=rank,
+                    field_label="Срок оплаты Предварительного отчёта в календарных днях",
+                )
+                final_report_percent = self._calculate_final_report_percent(
+                    advance_percent=row.get("advance_percent"),
+                    preliminary_report_percent=row.get("preliminary_report_percent"),
+                )
+                if final_report_percent < 0 or final_report_percent > 100:
+                    raise forms.ValidationError(
+                        f"Этап {rank}: рассчитанный размер оплаты Итогового отчёта должен быть в диапазоне от 0% до 100%."
+                    )
+                final_report_term_days = self._parse_stage_integer(
+                    row.get("final_report_term_days"),
+                    row_index=rank,
+                    field_label="Срок оплаты Итогового отчёта в календарных днях",
+                )
 
             stage_payloads.append(
                 {
@@ -1901,6 +2091,12 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                         row_index=rank,
                         field_label="Дата Итогового отчёта",
                     ),
+                    "advance_percent": advance_percent,
+                    "advance_term_days": advance_term_days,
+                    "preliminary_report_percent": preliminary_report_percent,
+                    "preliminary_report_term_days": preliminary_report_term_days,
+                    "final_report_percent": final_report_percent,
+                    "final_report_term_days": final_report_term_days,
                 }
             )
         self.cleaned_type_ids = cleaned_product_ids
@@ -2003,6 +2199,13 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             cleaned["preliminary_report_date"] = last_stage["preliminary_report_date"]
             cleaned["final_report_term_weeks"] = last_stage["final_report_term_weeks"]
             cleaned["final_report_date"] = last_stage["final_report_date"]
+            if not self.payment_schedule_common_enabled:
+                cleaned["advance_percent"] = last_stage["advance_percent"]
+                cleaned["advance_term_days"] = last_stage["advance_term_days"]
+                cleaned["preliminary_report_percent"] = last_stage["preliminary_report_percent"]
+                cleaned["preliminary_report_term_days"] = last_stage["preliminary_report_term_days"]
+                cleaned["final_report_percent"] = last_stage["final_report_percent"]
+                cleaned["final_report_term_days"] = last_stage["final_report_term_days"]
 
         return cleaned
 
@@ -2073,6 +2276,13 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 "preliminary_report_date": _format_stage_date(item["preliminary_report_date"]),
                 "final_report_term_weeks": str(item["final_report_term_weeks"] or ""),
                 "final_report_date": _format_stage_date(item["final_report_date"]),
+                "payment_schedule_common": self.payment_schedule_common_enabled,
+                "advance_percent": self._serialize_payload_decimal(item["advance_percent"]),
+                "advance_term_days": item["advance_term_days"],
+                "preliminary_report_percent": self._serialize_payload_decimal(item["preliminary_report_percent"]),
+                "preliminary_report_term_days": item["preliminary_report_term_days"],
+                "final_report_percent": self._serialize_payload_decimal(item["final_report_percent"]),
+                "final_report_term_days": item["final_report_term_days"],
             }
             for item in stage_payloads
         ]
@@ -2859,19 +3069,18 @@ class ProposalDispatchForm(BootstrapMixin, forms.ModelForm):
         return instance
 
 
+PROPOSAL_TEMPLATE_ALL_VALUE = "__all__"
+
+
 class ProposalTemplateForm(forms.ModelForm):
     class Meta:
         model = ProposalTemplate
         fields = [
-            "group_member",
-            "product",
             "sample_name",
             "version",
             "file",
         ]
         widgets = {
-            "group_member": forms.Select(attrs={"class": "form-select"}),
-            "product": forms.Select(attrs={"class": "form-select"}),
             "sample_name": forms.TextInput(
                 attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}
             ),
@@ -2891,26 +3100,49 @@ class ProposalTemplateForm(forms.ModelForm):
             self._orig_version = self.instance.version or ""
 
         order_map = _proposal_group_member_order_map()
-        members_qs = GroupMember.objects.all()
-        self.fields["group_member"].queryset = members_qs
-        self.fields["group_member"].label_from_instance = (
-            lambda obj: _proposal_group_member_label(obj, order_map.get(obj.pk, 0))
-        )
-        self.fields["group_member"].required = True
-
-        self.fields["product"].queryset = Product.objects.order_by("position", "id")
-        self.fields["product"].label_from_instance = lambda obj: obj.short_name
+        members_qs = list(GroupMember.objects.all())
+        products_qs = list(Product.objects.order_by("position", "id"))
         self.fields["file"].required = not (self.instance and self.instance.pk and self.instance.file)
+        self.fields["sample_name"].required = False
+        self.fields["version"].required = False
 
         self.group_alpha2_map = {str(m.pk): (m.country_alpha2 or "").strip().upper() for m in members_qs}
         self.group_short_name_map = {str(m.pk): (m.short_name or "").strip() for m in members_qs}
+        self.product_short_name_map = {str(p.pk): (p.short_name or "").strip() for p in products_qs}
 
-        existing = ProposalTemplate.objects.select_related("product", "group_member").all()
+        selected_group_ids, self.is_all_groups_selected = self._selected_ids(
+            "group_member_ids",
+            self.instance.group_members.all() if self.instance and self.instance.pk else [],
+            getattr(self.instance, "group_member_id", None) if self.instance and self.instance.pk else None,
+        )
+        selected_product_ids, self.is_all_products_selected = self._selected_ids(
+            "product_ids",
+            self.instance.products.all() if self.instance and self.instance.pk else [],
+            getattr(self.instance, "product_id", None) if self.instance and self.instance.pk else None,
+        )
+        self.selected_group_ids = {str(value) for value in selected_group_ids}
+        self.selected_product_ids = {str(value) for value in selected_product_ids}
+        self.group_options = [
+            {
+                "id": member.pk,
+                "label": _proposal_group_member_label(member, order_map.get(member.pk, 0)),
+            }
+            for member in members_qs
+        ]
+        self.product_options = [
+            {
+                "id": product.pk,
+                "label": product.short_name or str(product),
+            }
+            for product in products_qs
+        ]
+
+        existing = ProposalTemplate.objects.all()
         if self.instance and self.instance.pk:
             existing = existing.exclude(pk=self.instance.pk)
         version_map = {}
         for template in existing:
-            key = f"{template.group_member_id or ''}:{template.product_id or ''}"
+            key = template.sample_name or ""
             try:
                 version = int(template.version)
             except (ValueError, TypeError):
@@ -2918,37 +3150,82 @@ class ProposalTemplateForm(forms.ModelForm):
             version_map[key] = max(version_map.get(key, 0), version)
         self.version_map = version_map
 
-        self.current_pair = ""
+        self.current_base = ""
         self.current_version = ""
         if self.instance and self.instance.pk:
-            self.current_pair = f"{self.instance.group_member_id or ''}:{self.instance.product_id or ''}"
+            self.current_base = self.instance.sample_name or ""
             self.current_version = self.instance.version or ""
+
+    def _posted_values(self, name):
+        if not self.is_bound:
+            return None
+        if hasattr(self.data, "getlist"):
+            return self.data.getlist(name)
+        value = self.data.get(name)
+        if value is None:
+            return []
+        return value if isinstance(value, list) else [value]
+
+    def _selected_ids(self, field_name, existing_items, legacy_id):
+        posted = self._posted_values(field_name)
+        if posted is not None:
+            if PROPOSAL_TEMPLATE_ALL_VALUE in posted or not posted:
+                return [], True
+            return [int(value) for value in posted if str(value).isdigit()], False
+
+        existing_ids = [item.pk for item in existing_items]
+        if existing_ids:
+            return existing_ids, False
+        if legacy_id:
+            return [legacy_id], False
+        return [], True
+
+    def clean(self):
+        cleaned = super().clean()
+        for field_name, model, label in (
+            ("group_member_ids", GroupMember, "Группа"),
+            ("product_ids", Product, "Продукт"),
+        ):
+            values = self._posted_values(field_name) or []
+            if PROPOSAL_TEMPLATE_ALL_VALUE in values or not values:
+                cleaned[field_name] = []
+                continue
+            selected_ids = [int(value) for value in values if str(value).isdigit()]
+            existing_ids = set(model.objects.filter(pk__in=selected_ids).values_list("pk", flat=True))
+            if existing_ids != set(selected_ids):
+                raise forms.ValidationError(f"В поле «{label}» выбраны несуществующие значения.")
+            cleaned[field_name] = selected_ids
+        return cleaned
 
     def save(self, commit=True):
         import os
 
         instance = super().save(commit=False)
-        alpha2 = ""
-        short_name = ""
-        if instance.group_member_id:
-            alpha2 = (instance.group_member.country_alpha2 or "").strip().upper()
-            short_name = (instance.group_member.short_name or "").strip()
-        product_short = ""
-        if instance.product_id:
-            product_short = (instance.product.short_name or "").strip()
+        group_ids = self.cleaned_data.get("group_member_ids") or []
+        product_ids = self.cleaned_data.get("product_ids") or []
+        groups = list(GroupMember.objects.filter(pk__in=group_ids))
+        products = list(Product.objects.filter(pk__in=product_ids).order_by("position", "id"))
+        groups_by_id = {group.pk: group for group in groups}
+        groups = [groups_by_id[group_id] for group_id in group_ids if group_id in groups_by_id]
+
+        instance.group_member = groups[0] if groups else None
+        instance.product = products[0] if products else None
+
+        alpha2 = "-".join((group.country_alpha2 or "").strip().upper() for group in groups if group.country_alpha2) or "Все"
+        short_name = "-".join((group.short_name or "").strip() for group in groups if group.short_name) or "Все"
+        product_short = "-".join((product.short_name or "").strip() for product in products if product.short_name) or "Все"
 
         prefix = " ".join(part for part in [alpha2, "Шаблон ТКП"] if part)
         tail = "_".join(part for part in [short_name, product_short] if part)
         base_name = "_".join(part for part in [prefix, tail] if part)
-        pair_key = f"{instance.group_member_id or ''}:{instance.product_id or ''}"
         existing = ProposalTemplate.objects.all()
 
-        if instance.pk and pair_key == self.current_pair:
+        if instance.pk and base_name == self.current_base:
             version = self._orig_version or "1"
         else:
             if instance.pk:
                 existing = existing.exclude(pk=instance.pk)
-            version = str(self._next_version(existing, instance.group_member_id, instance.product_id))
+            version = str(self._next_version(existing, base_name))
 
         instance.sample_name = base_name
         instance.version = version
@@ -2973,13 +3250,15 @@ class ProposalTemplateForm(forms.ModelForm):
 
         if commit:
             instance.save()
+            instance.group_members.set(groups)
+            instance.products.set(products)
         return instance
 
     @staticmethod
-    def _next_version(qs, group_member_id, product_id):
+    def _next_version(qs, base_name):
         max_version = 0
         for template in qs:
-            if template.group_member_id != group_member_id or template.product_id != product_id:
+            if (template.sample_name or "") != base_name:
                 continue
             try:
                 version = int(template.version)
@@ -3098,8 +3377,12 @@ class ProposalVariableForm(forms.ModelForm):
         col = cleaned.get("source_column", "")
         if not (sec and tbl and col):
             raise forms.ValidationError("Необходимо заполнить поля Раздел, Таблица и Столбец.")
-        if sec != "proposals" or tbl != "registry":
-            raise forms.ValidationError("Для переменных ТКП доступен только раздел «ТКП» и таблица «Реестр ТКП».")
+        allowed_sources = {
+            ("proposals", "registry"),
+            ("products", "service_goals_and_report_titles"),
+        }
+        if (sec, tbl) not in allowed_sources:
+            raise forms.ValidationError("Для переменных ТКП выберите доступную таблицу.")
         from core.column_registry import validate_column_ref
 
         if not validate_column_ref(sec, tbl, col):

@@ -219,6 +219,32 @@ def _proposal_service_goal_genitive(proposal) -> str:
     return item.service_goal_genitive or ""
 
 
+def _service_goal_report_value(product_id, field_name: str) -> str:
+    if not product_id:
+        return ""
+    item = (
+        ServiceGoalReport.objects.filter(product_id=product_id)
+        .order_by("position", "id")
+        .only(field_name)
+        .first()
+    )
+    if not item:
+        return ""
+    return str(getattr(item, field_name, "") or "")
+
+
+def _proposal_service_goal(proposal) -> str:
+    return _service_goal_report_value(getattr(proposal, "type_id", None), "service_goal")
+
+
+def _proposal_report_title(proposal) -> str:
+    return _service_goal_report_value(getattr(proposal, "type_id", None), "report_title")
+
+
+def _proposal_product_name(proposal) -> str:
+    return _service_goal_report_value(getattr(proposal, "type_id", None), "product_name")
+
+
 def _proposal_tkp_preliminary(proposal) -> str:
     try:
         from proposals_app.models import ProposalRegistration
@@ -659,6 +685,134 @@ def _proposal_final_report_term_days(proposal) -> str:
     return str(proposal.final_report_term_days or "")
 
 
+def _payment_schedule_decimal(value) -> Decimal:
+    try:
+        return Decimal(str(value if value not in (None, "") else "0"))
+    except (InvalidOperation, TypeError, ValueError):
+        return Decimal("0")
+
+
+def _payment_schedule_days(value) -> str:
+    return "" if value in (None, "") else str(value)
+
+
+def _payment_schedule_product_name(product) -> str:
+    product_id = getattr(product, "pk", None)
+    name = _service_goal_report_value(product_id, "product_name")
+    if name:
+        return name
+    return (
+        str(getattr(product, "name_ru", "") or "").strip()
+        or str(getattr(product, "short_name", "") or "").strip()
+        or str(product or "").strip()
+    )
+
+
+def _payment_schedule_values(source) -> dict[str, str]:
+    advance_percent = source.get("advance_percent") if isinstance(source, dict) else getattr(source, "advance_percent", None)
+    advance_term_days = source.get("advance_term_days") if isinstance(source, dict) else getattr(source, "advance_term_days", None)
+    preliminary_percent = (
+        source.get("preliminary_report_percent")
+        if isinstance(source, dict)
+        else getattr(source, "preliminary_report_percent", None)
+    )
+    preliminary_term_days = (
+        source.get("preliminary_report_term_days")
+        if isinstance(source, dict)
+        else getattr(source, "preliminary_report_term_days", None)
+    )
+    final_percent = source.get("final_report_percent") if isinstance(source, dict) else getattr(source, "final_report_percent", None)
+    final_term_days = source.get("final_report_term_days") if isinstance(source, dict) else getattr(source, "final_report_term_days", None)
+    return {
+        "prepayment_payment_percentage": _format_percent(advance_percent, strip_trailing_zeros=True),
+        "prepayment_payment_days": _payment_schedule_days(advance_term_days),
+        "preliminary_payment_percentage": _format_percent(preliminary_percent, strip_trailing_zeros=True),
+        "preliminary_payment_days": _payment_schedule_days(preliminary_term_days),
+        "preliminary_payment_percentage_full": _format_percent(
+            _payment_schedule_decimal(advance_percent) + _payment_schedule_decimal(preliminary_percent),
+            strip_trailing_zeros=True,
+        ),
+        "final_payment_percentage": _format_percent(final_percent, strip_trailing_zeros=True),
+        "final_payment_days": _payment_schedule_days(final_term_days),
+    }
+
+
+def _payment_schedule_payment_paragraphs(source) -> list[dict[str, object]]:
+    values = _payment_schedule_values(source)
+    paragraph_format = {
+        "paragraph_style": "list_paragraph",
+        "left_indent_cm": 1.0,
+        "contextual_spacing": True,
+    }
+    return [
+        {
+            "runs": [
+                {
+                    "text": (
+                        f"{values['prepayment_payment_percentage']} — предоплата при подписании контракта — "
+                        f"в течение {values['prepayment_payment_days']} календарных дней."
+                    )
+                }
+            ],
+            **paragraph_format,
+        },
+        {
+            "runs": [
+                {
+                    "text": (
+                        f"{values['preliminary_payment_percentage']} — в течение "
+                        f"{values['preliminary_payment_days']} календарных дней после предоставления "
+                        "Предварительного отчёта и подписания Акта № 1 на "
+                        f"{values['preliminary_payment_percentage_full']} суммы договора."
+                    )
+                }
+            ],
+            **paragraph_format,
+        },
+        {
+            "runs": [
+                {
+                    "text": (
+                        f"{values['final_payment_percentage']} — после сдачи Итогового отчёта — "
+                        f"в течение {values['final_payment_days']} календарных дней после подписания "
+                        "Акта №\u00a02 на оставшуюся сумму."
+                    )
+                }
+            ],
+            **paragraph_format,
+        },
+    ]
+
+
+def _proposal_payment_schedule(proposal) -> list[dict[str, object]]:
+    products = list(proposal.ordered_products()) if getattr(proposal, "pk", None) else []
+    if not products and getattr(proposal, "type_id", None):
+        products = [proposal.type]
+    stage_payloads = [item for item in (getattr(proposal, "stage_payloads_json", None) or []) if isinstance(item, dict)]
+    is_common = not any(payload.get("payment_schedule_common") is False for payload in stage_payloads)
+    if len(products) <= 1:
+        source = stage_payloads[0] if stage_payloads and not is_common else proposal
+        return _payment_schedule_payment_paragraphs(source)
+
+    result: list[dict[str, object]] = []
+    if is_common:
+        result.append({"runs": [{"text": "общий для всех этапов:"}], "left_indent_cm": 1.0})
+        result.extend(_payment_schedule_payment_paragraphs(proposal))
+        return result
+
+    payload_by_product_id = {
+        str(payload.get("product_id") or ""): payload
+        for payload in stage_payloads
+        if str(payload.get("product_id") or "").strip()
+    }
+    for index, product in enumerate(products, start=1):
+        product_id = str(getattr(product, "pk", "") or "")
+        source = payload_by_product_id.get(product_id) or (stage_payloads[index - 1] if index - 1 < len(stage_payloads) else {})
+        result.append({"runs": [{"text": f"Этап {index} — {_payment_schedule_product_name(product)}:"}]})
+        result.extend(_payment_schedule_payment_paragraphs(source))
+    return result
+
+
 def _computed_year(_proposal) -> str:
     return str(_today().year)
 
@@ -712,6 +866,10 @@ FIELD_MAP = {
     ("proposals", "registry", "preliminary_report_term"): _proposal_preliminary_report_term_days,
     ("proposals", "registry", "final_report_percent"): _proposal_final_report_percent,
     ("proposals", "registry", "final_report_term"): _proposal_final_report_term_days,
+    ("products", "service_goals_and_report_titles", "service_goal"): _proposal_service_goal,
+    ("products", "service_goals_and_report_titles", "service_goal_genitive"): _proposal_service_goal_genitive,
+    ("products", "service_goals_and_report_titles", "report_title"): _proposal_report_title,
+    ("products", "service_goals_and_report_titles", "product_name"): _proposal_product_name,
 }
 
 
@@ -733,6 +891,7 @@ COMPUTED_MAP = {
 COMPUTED_LIST_MAP = {
     "[[actives_name]]": _proposal_actives_name_list,
     "[[scope_of_work]]": _proposal_scope_of_work,
+    "[[payment_schedule]]": _proposal_payment_schedule,
 }
 
 COMPUTED_TABLE_MAP = {

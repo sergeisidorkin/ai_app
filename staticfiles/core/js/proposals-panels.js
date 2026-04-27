@@ -112,10 +112,10 @@
     }
 
     const rootHrefAttrs = rootUrl
-      ? ' href="#proposals" data-bs-toggle="tab" hx-get="' + rootUrl + '" hx-target="#proposals-pane" hx-swap="outerHTML"'
+      ? ' href="#proposals" hx-get="' + rootUrl + '" hx-target="#proposals-pane" hx-swap="outerHTML"'
       : '';
     const currentHrefAttrs = currentUrl
-      ? ' href="#proposals" data-bs-toggle="tab" hx-get="' + currentUrl + '" hx-target="#proposals-pane" hx-swap="outerHTML"'
+      ? ' href="#proposals" hx-get="' + currentUrl + '" hx-target="#proposals-pane" hx-swap="outerHTML"'
       : '';
 
     heading.innerHTML = ''
@@ -5149,14 +5149,74 @@
       return Number.isFinite(value) ? value : 0;
     }
 
-    function syncFinalReportPercent() {
-      const advanceInput = form.querySelector('[name="advance_percent"]');
-      const preliminaryInput = form.querySelector('[name="preliminary_report_percent"]');
-      const finalInput = form.querySelector('[name="final_report_percent"]');
+    function syncFinalReportPercent(group) {
+      const scope = group || form;
+      const advanceInput = scope.querySelector('[name="advance_percent"]');
+      const preliminaryInput = scope.querySelector('[name="preliminary_report_percent"]');
+      const finalInput = scope.querySelector('[name="final_report_percent"]');
       if (!advanceInput || !preliminaryInput || !finalInput) return;
 
       const result = 100 - parsePercentValue(advanceInput) - parsePercentValue(preliminaryInput);
       finalInput.value = result.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+    }
+
+    function syncAllFinalReportPercents() {
+      const groups = qa('.js-proposal-payment-group', form);
+      if (groups.length) {
+        groups.forEach(syncFinalReportPercent);
+        return;
+      }
+      syncFinalReportPercent(form);
+    }
+
+    function copyPaymentDefaultsFromFirstStage() {
+      const stageBlocks = qa('.proposal-payment-stage-block', form);
+      const firstBlock = stageBlocks[0];
+      if (!firstBlock) return;
+      const fieldNames = [
+        'advance_percent',
+        'advance_term_days',
+        'preliminary_report_percent',
+        'preliminary_report_term_days',
+        'final_report_percent',
+        'final_report_term_days',
+      ];
+      stageBlocks.slice(1).forEach(function (block) {
+        fieldNames.forEach(function (fieldName) {
+          const target = block.querySelector('[name="' + fieldName + '"]');
+          const source = firstBlock.querySelector('[name="' + fieldName + '"]');
+          if (!target || !source || String(target.value || '').trim()) return;
+          target.value = source.value || '';
+        });
+      });
+    }
+
+    function syncPaymentScheduleMode() {
+      const toggle = form.querySelector('input[type="checkbox"][name="payment_schedule_common"]');
+      const commonFields = form.querySelector('.js-proposal-payment-common-fields');
+      const stageFields = form.querySelector('.js-proposal-payment-stage-fields');
+      const isCommon = !toggle || toggle.checked;
+      commonFields?.classList.toggle('d-none', !isCommon);
+      stageFields?.classList.toggle('d-none', isCommon);
+      if (commonFields) {
+        commonFields.querySelectorAll('input, select, textarea').forEach(function (input) {
+          if (input.name === 'final_report_percent') return;
+          input.disabled = !isCommon;
+        });
+      }
+      if (stageFields) {
+        stageFields.querySelectorAll('input, select, textarea').forEach(function (input) {
+          if (input.name === 'final_report_percent') {
+            input.disabled = true;
+            return;
+          }
+          input.disabled = isCommon;
+        });
+      }
+      if (!isCommon) {
+        copyPaymentDefaultsFromFirstStage();
+      }
+      syncAllFinalReportPercents();
     }
 
     function syncAssetOwnerFromCustomer(reason) {
@@ -5621,8 +5681,12 @@
     attachProposalCommercialTable(form, assetsApi);
     attachProposalAssetsToLegalEntitiesSync(form, assetsApi, legalEntitiesApi);
     attachProposalLegalEntitiesToObjectsSync(form, legalEntitiesApi, objectsApi);
-    form.querySelector('[name="advance_percent"]')?.addEventListener('input', syncFinalReportPercent);
-    form.querySelector('[name="preliminary_report_percent"]')?.addEventListener('input', syncFinalReportPercent);
+    form.addEventListener('input', function (event) {
+      if (!['advance_percent', 'preliminary_report_percent'].includes(event.target?.name)) return;
+      syncFinalReportPercent(event.target.closest('.js-proposal-payment-group') || form);
+    });
+    form.querySelector('input[type="checkbox"][name="payment_schedule_common"]')?.addEventListener('change', syncPaymentScheduleMode);
+    syncPaymentScheduleMode();
     qa('.js-proposal-report-terms-lock', form).forEach(function (icon) {
       icon.addEventListener('click', function () {
         proposalReportTermsEditMode = !proposalReportTermsEditMode;

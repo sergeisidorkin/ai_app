@@ -478,42 +478,109 @@
       </div>
       <div class="w-100"></div>
 
-      <div class="col-4">
-        <label class="form-label">{{ form.advance_percent.label }}</label>
-        <div class="proposal-inline-percent">
-          {{ form.advance_percent }}
-          <span class="proposal-inline-percent__suffix" aria-hidden="true">%</span>
-        </div>
-      </div>
-      <div class="col-4">
-        <label class="form-label">{{ form.advance_term_days.label }}</label>
-        {{ form.advance_term_days }}
-      </div>
-      <div class="w-100"></div>
+      <div class="col-12">
+        <label class="form-label mb-2">График оплаты</label>
+        <div class="proposal-assets-editor proposal-payment-schedule-editor">
+          <div class="form-check mb-3">
+            <input type="hidden" name="payment_schedule_common" value="false">
+            {{ form.payment_schedule_common }}
+            <label class="form-check-label" for="{{ form.payment_schedule_common.id_for_label }}">
+              {{ form.payment_schedule_common.label }}
+            </label>
+          </div>
 
-      <div class="col-4">
-        <label class="form-label">{{ form.preliminary_report_percent.label }}</label>
-        <div class="proposal-inline-percent">
-          {{ form.preliminary_report_percent }}
-          <span class="proposal-inline-percent__suffix" aria-hidden="true">%</span>
-        </div>
-      </div>
-      <div class="col-4">
-        <label class="form-label">{{ form.preliminary_report_term_days.label }}</label>
-        {{ form.preliminary_report_term_days }}
-      </div>
-      <div class="w-100"></div>
+          <div class="proposal-payment-common-fields js-proposal-payment-common-fields{% if not form.payment_schedule_common_enabled %} d-none{% endif %}">
+            <div class="row g-3 js-proposal-payment-group">
+              <div class="col-12 col-lg-4">
+                <label class="form-label">{{ form.advance_percent.label }}</label>
+                <div class="proposal-inline-percent">
+                  {{ form.advance_percent }}
+                  <span class="proposal-inline-percent__suffix" aria-hidden="true">%</span>
+                </div>
+              </div>
+              <div class="col-12 col-lg-4">
+                <label class="form-label">{{ form.advance_term_days.label }}</label>
+                {{ form.advance_term_days }}
+              </div>
+              <div class="w-100"></div>
 
-      <div class="col-4">
-        <label class="form-label">{{ form.final_report_percent.label }}</label>
-        <div class="proposal-inline-percent">
-          {{ form.final_report_percent }}
-          <span class="proposal-inline-percent__suffix" aria-hidden="true">%</span>
+              <div class="col-12 col-lg-4">
+                <label class="form-label">{{ form.preliminary_report_percent.label }}</label>
+                <div class="proposal-inline-percent">
+                  {{ form.preliminary_report_percent }}
+                  <span class="proposal-inline-percent__suffix" aria-hidden="true">%</span>
+                </div>
+              </div>
+              <div class="col-12 col-lg-4">
+                <label class="form-label">{{ form.preliminary_report_term_days.label }}</label>
+                {{ form.preliminary_report_term_days }}
+              </div>
+              <div class="w-100"></div>
+
+              <div class="col-12 col-lg-4">
+                <label class="form-label">{{ form.final_report_percent.label }}</label>
+                <div class="proposal-inline-percent">
+                  {{ form.final_report_percent }}
+                  <span class="proposal-inline-percent__suffix" aria-hidden="true">%</span>
+                </div>
+              </div>
+              <div class="col-12 col-lg-4">
+                <label class="form-label">{{ form.final_report_term_days.label }}</label>
+                {{ form.final_report_term_days }}
+              </div>
+            </div>
+          </div>
+
+          <div id="proposal-payment-stages-container" class="proposal-payment-stages-container js-proposal-payment-stage-fields{% if form.payment_schedule_common_enabled %} d-none{% endif %}">
+            {% for stage in form.stage_rows %}
+              <div class="proposal-payment-stage-block{% if not forloop.first %} mt-4{% endif %}"
+                   data-proposal-stage-root="1"
+                   data-proposal-stage-kind="payment"
+                   data-proposal-stage-key="{{ stage.rank }}">
+                <div class="form-label mb-2 proposal-payment-stage-title">Этап {{ stage.rank }}{% if stage.product_short_label %} {{ stage.product_short_label }}{% endif %}</div>
+                <div class="row g-3 js-proposal-payment-group">
+                  <div class="col-12 col-lg-4">
+                    <label class="form-label">{{ form.advance_percent.label }}</label>
+                    <div class="proposal-inline-percent">
+                      <input type="number" name="advance_percent" min="0" max="100" step="1" class="form-control" value="{{ stage.advance_percent }}"{% if form.payment_schedule_common_enabled %} disabled{% endif %}>
+                      <span class="proposal-inline-percent__suffix" aria-hidden="true">%</span>
+                    </div>
+                  </div>
+                  <div class="col-12 col-lg-4">
+                    <label class="form-label">{{ form.advance_term_days.label }}</label>
+                    <input type="number" name="advance_term_days" min="0" step="1" class="form-control" value="{{ stage.advance_term_days }}"{% if form.payment_schedule_common_enabled %} disabled{% endif %}>
+                  </div>
+                  <div class="w-100"></div>
+
+                  <div class="col-12 col-lg-4">
+                    <label class="form-label">{{ form.preliminary_report_percent.label }}</label>
+                    <div class="proposal-inline-percent">
+                      <input type="number" name="preliminary_report_percent" min="0" max="100" step="1" class="form-control" value="{{ stage.preliminary_report_percent }}"{% if form.payment_schedule_common_enabled %} disabled{% endif %}>
+                      <span class="proposal-inline-percent__suffix" aria-hidden="true">%</span>
+                    </div>
+                  </div>
+                  <div class="col-12 col-lg-4">
+                    <label class="form-label">{{ form.preliminary_report_term_days.label }}</label>
+                    <input type="number" name="preliminary_report_term_days" min="0" step="1" class="form-control" value="{{ stage.preliminary_report_term_days }}"{% if form.payment_schedule_common_enabled %} disabled{% endif %}>
+                  </div>
+                  <div class="w-100"></div>
+
+                  <div class="col-12 col-lg-4">
+                    <label class="form-label">{{ form.final_report_percent.label }}</label>
+                    <div class="proposal-inline-percent">
+                      <input type="number" name="final_report_percent" min="0" max="100" step="0.01" class="form-control readonly-field" value="{{ stage.final_report_percent }}" readonly tabindex="-1" disabled>
+                      <span class="proposal-inline-percent__suffix" aria-hidden="true">%</span>
+                    </div>
+                  </div>
+                  <div class="col-12 col-lg-4">
+                    <label class="form-label">{{ form.final_report_term_days.label }}</label>
+                    <input type="number" name="final_report_term_days" min="0" step="1" class="form-control" value="{{ stage.final_report_term_days }}"{% if form.payment_schedule_common_enabled %} disabled{% endif %}>
+                  </div>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
         </div>
-      </div>
-      <div class="col-4">
-        <label class="form-label">{{ form.final_report_term_days.label }}</label>
-        {{ form.final_report_term_days }}
       </div>
     </div>
 

@@ -119,10 +119,10 @@
     }
 
     const rootHrefAttrs = rootUrl
-      ? ' href="#proposals" data-bs-toggle="tab" hx-get="' + rootUrl + '" hx-target="#proposals-pane" hx-swap="outerHTML"'
+      ? ' href="#proposals" hx-get="' + rootUrl + '" hx-target="#proposals-pane" hx-swap="outerHTML"'
       : '';
     const currentHrefAttrs = currentUrl
-      ? ' href="#proposals" data-bs-toggle="tab" hx-get="' + currentUrl + '" hx-target="#proposals-pane" hx-swap="outerHTML"'
+      ? ' href="#proposals" hx-get="' + currentUrl + '" hx-target="#proposals-pane" hx-swap="outerHTML"'
       : '';
 
     heading.innerHTML = ''
@@ -5405,14 +5405,74 @@
       return Number.isFinite(value) ? value : 0;
     }
 
-    function syncFinalReportPercent() {
-      const advanceInput = form.querySelector('[name="advance_percent"]');
-      const preliminaryInput = form.querySelector('[name="preliminary_report_percent"]');
-      const finalInput = form.querySelector('[name="final_report_percent"]');
+    function syncFinalReportPercent(group) {
+      const scope = group || form;
+      const advanceInput = scope.querySelector('[name="advance_percent"]');
+      const preliminaryInput = scope.querySelector('[name="preliminary_report_percent"]');
+      const finalInput = scope.querySelector('[name="final_report_percent"]');
       if (!advanceInput || !preliminaryInput || !finalInput) return;
 
       const result = 100 - parsePercentValue(advanceInput) - parsePercentValue(preliminaryInput);
       finalInput.value = result.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+    }
+
+    function syncAllFinalReportPercents() {
+      const groups = qa('.js-proposal-payment-group', form);
+      if (groups.length) {
+        groups.forEach(syncFinalReportPercent);
+        return;
+      }
+      syncFinalReportPercent(form);
+    }
+
+    function copyPaymentDefaultsFromFirstStage() {
+      const stageBlocks = qa('.proposal-payment-stage-block', form);
+      const firstBlock = stageBlocks[0];
+      if (!firstBlock) return;
+      const fieldNames = [
+        'advance_percent',
+        'advance_term_days',
+        'preliminary_report_percent',
+        'preliminary_report_term_days',
+        'final_report_percent',
+        'final_report_term_days',
+      ];
+      stageBlocks.slice(1).forEach(function (block) {
+        fieldNames.forEach(function (fieldName) {
+          const target = block.querySelector('[name="' + fieldName + '"]');
+          const source = firstBlock.querySelector('[name="' + fieldName + '"]');
+          if (!target || !source || String(target.value || '').trim()) return;
+          target.value = source.value || '';
+        });
+      });
+    }
+
+    function syncPaymentScheduleMode() {
+      const toggle = form.querySelector('input[type="checkbox"][name="payment_schedule_common"]');
+      const commonFields = form.querySelector('.js-proposal-payment-common-fields');
+      const stageFields = form.querySelector('.js-proposal-payment-stage-fields');
+      const isCommon = !toggle || toggle.checked;
+      commonFields?.classList.toggle('d-none', !isCommon);
+      stageFields?.classList.toggle('d-none', isCommon);
+      if (commonFields) {
+        commonFields.querySelectorAll('input, select, textarea').forEach(function (input) {
+          if (input.name === 'final_report_percent') return;
+          input.disabled = !isCommon;
+        });
+      }
+      if (stageFields) {
+        stageFields.querySelectorAll('input, select, textarea').forEach(function (input) {
+          if (input.name === 'final_report_percent') {
+            input.disabled = true;
+            return;
+          }
+          input.disabled = isCommon;
+        });
+      }
+      if (!isCommon) {
+        copyPaymentDefaultsFromFirstStage();
+      }
+      syncAllFinalReportPercents();
     }
 
     function syncAssetOwnerFromCustomer(reason) {
@@ -5805,8 +5865,9 @@
       const metaEl = form.querySelector('#proposal-type-meta');
       const serviceStagesContainer = form.querySelector('#proposal-service-stages-container');
       const commercialStagesContainer = form.querySelector('#proposal-commercial-stages-container');
+      const paymentStagesContainer = form.querySelector('#proposal-payment-stages-container');
       const termsTbody = form.querySelector('#proposal-stage-terms-tbody');
-      if (!container || !addBtn || !metaEl || !serviceStagesContainer || !commercialStagesContainer || !termsTbody) return null;
+      if (!container || !addBtn || !metaEl || !serviceStagesContainer || !commercialStagesContainer || !paymentStagesContainer || !termsTbody) return null;
       if (form.dataset.stageProductsBound === '1') return form.__proposalStageProductsApi || null;
       form.dataset.stageProductsBound = '1';
 
@@ -5846,6 +5907,10 @@
 
       function getCommercialBlocks() {
         return Array.from(commercialStagesContainer.querySelectorAll('[data-proposal-stage-kind="commercial"]'));
+      }
+
+      function getPaymentBlocks() {
+        return Array.from(paymentStagesContainer.querySelectorAll('[data-proposal-stage-kind="payment"]'));
       }
 
       function getSummaryCommercialBlock() {
@@ -5993,6 +6058,17 @@
           commercialBlocks = getCommercialBlocks();
         }
 
+        let paymentBlocks = getPaymentBlocks();
+        while (paymentBlocks.length < getProductRows().length && paymentBlocks.length) {
+          const clone = cloneStageBlock(paymentBlocks[paymentBlocks.length - 1]);
+          paymentStagesContainer.appendChild(clone);
+          paymentBlocks = getPaymentBlocks();
+        }
+        while (paymentBlocks.length > getProductRows().length && paymentBlocks.length > 1) {
+          paymentBlocks[paymentBlocks.length - 1].remove();
+          paymentBlocks = getPaymentBlocks();
+        }
+
         let termRows = getStageTermRows();
         while (termRows.length < getProductRows().length && termRows.length) {
           termsTbody.insertBefore(cloneTermsRow(termRows[termRows.length - 1]), getTotalsRow());
@@ -6008,16 +6084,20 @@
         const productRows = getProductRows();
         const serviceBlocks = getServiceBlocks();
         const commercialBlocks = getCommercialBlocks();
+        const paymentBlocks = getPaymentBlocks();
         const termRows = getStageTermRows();
         const hasMultipleStages = productRows.length > 1;
         const summaryCommercialBlock = getSummaryCommercialBlock();
-        function buildStageTitle(baseTitle, rank, productId) {
-          if (!hasMultipleStages) return baseTitle;
+        function buildStageLabel(rank, productId) {
           const product = productById.get(String(productId || '').trim()) || null;
           const shortLabel = String(product?.short_label || '').trim();
           return shortLabel
-            ? baseTitle + ': Этап ' + rank + ' ' + shortLabel
-            : baseTitle + ': Этап ' + rank;
+            ? 'Этап ' + rank + ' ' + shortLabel
+            : 'Этап ' + rank;
+        }
+        function buildStageTitle(baseTitle, rank, productId) {
+          if (!hasMultipleStages) return baseTitle;
+          return baseTitle + ': ' + buildStageLabel(rank, productId);
         }
         productRows.forEach(function (row, index) {
           const rank = index + 1;
@@ -6027,6 +6107,7 @@
           row.querySelector('.proposal-product-badge').textContent = rank;
           const serviceBlock = serviceBlocks[index];
           const commercialBlock = commercialBlocks[index];
+          const paymentBlock = paymentBlocks[index];
           const termRow = termRows[index];
           [serviceBlock, commercialBlock].forEach(function (block) {
             if (!block) return;
@@ -6042,6 +6123,13 @@
               }
             });
           });
+          if (paymentBlock) {
+            paymentBlock.dataset.proposalStageKey = stageUid;
+            paymentBlock.querySelectorAll('.proposal-payment-stage-title').forEach(function (title) {
+              title.textContent = buildStageLabel(rank, productId);
+            });
+            paymentBlock.classList.toggle('mt-4', index > 0);
+          }
           if (termRow) {
             termRow.dataset.proposalStageKey = stageUid;
             const stageInput = termRow.querySelector('.proposal-stage-label-input');
@@ -6601,6 +6689,7 @@
         syncStageTerms();
         applyProposalReportTermsLockState();
         syncSummaryCommercialBlock();
+        syncPaymentScheduleMode();
         form.dispatchEvent(new CustomEvent('proposal-stage-products-changed'));
       }
 
@@ -6792,8 +6881,12 @@
     const objectsApi = attachProposalObjectsTable(form);
     attachProposalAssetsToLegalEntitiesSync(form, assetsApi, legalEntitiesApi);
     attachProposalLegalEntitiesToObjectsSync(form, legalEntitiesApi, objectsApi);
-    form.querySelector('[name="advance_percent"]')?.addEventListener('input', syncFinalReportPercent);
-    form.querySelector('[name="preliminary_report_percent"]')?.addEventListener('input', syncFinalReportPercent);
+    form.addEventListener('input', function (event) {
+      if (!['advance_percent', 'preliminary_report_percent'].includes(event.target?.name)) return;
+      syncFinalReportPercent(event.target.closest('.js-proposal-payment-group') || form);
+    });
+    form.querySelector('input[type="checkbox"][name="payment_schedule_common"]')?.addEventListener('change', syncPaymentScheduleMode);
+    syncPaymentScheduleMode();
     qa('.js-proposal-report-terms-lock', form).forEach(function (icon) {
       icon.addEventListener('click', function () {
         proposalReportTermsEditMode = !proposalReportTermsEditMode;

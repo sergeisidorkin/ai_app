@@ -1016,16 +1016,31 @@ def _proposals_context(request=None, user=None, *, debug_nextcloud_links=False):
         "currency",
     ).prefetch_related("product_links__product").all()
     _attach_proposal_folder_urls(proposals, user=user, request=request, debug_nextcloud_links=debug_nextcloud_links)
-    proposal_templates = list(ProposalTemplate.objects.select_related("group_member", "product").all())
+    proposal_templates = list(
+        ProposalTemplate.objects
+        .select_related("group_member", "product")
+        .prefetch_related("group_members", "products")
+        .all()
+    )
     proposal_variables = ProposalVariable.objects.all()
     order_map = _proposal_group_member_order_map()
     for template in proposal_templates:
-        if template.group_member_id:
-            template.group_display = _proposal_group_member_short(
-                template.group_member, order_map.get(template.group_member_id, 0)
-            )
-        else:
-            template.group_display = ""
+        groups = list(template.group_members.all())
+        if not groups and template.group_member_id:
+            groups = [template.group_member]
+        template.group_display = (
+            ", ".join(_proposal_group_member_short(group, order_map.get(group.pk, 0)) for group in groups)
+            if groups
+            else "Все"
+        )
+        products = list(template.products.all())
+        if not products and template.product_id:
+            products = [template.product]
+        template.products_display = (
+            ", ".join(product.short_name or str(product) for product in products)
+            if products
+            else "Все"
+        )
     has_active_smtp_connection = False
     if user:
         has_active_smtp_connection = ExternalSMTPAccount.objects.filter(
@@ -1557,15 +1572,43 @@ def _parse_proposal_sent_at(raw_value: str):
     return value.replace(second=0, microsecond=0)
 
 
+def _proposal_template_group_ids(template):
+    groups = list(template.group_members.all())
+    if groups:
+        return {group.pk for group in groups}
+    if template.group_member_id:
+        return {template.group_member_id}
+    return set()
+
+
+def _proposal_template_product_ids(template):
+    products = list(template.products.all())
+    if products:
+        return {product.pk for product in products}
+    if template.product_id:
+        return {template.product_id}
+    return set()
+
+
+def _proposal_selected_product_ids(proposal):
+    products = list(proposal.ordered_products()) if getattr(proposal, "pk", None) else []
+    if not products and getattr(proposal, "type_id", None):
+        return {proposal.type_id}
+    return {product.pk for product in products if getattr(product, "pk", None)}
+
+
 def _find_proposal_template(proposal, templates):
-    if not proposal.type_id:
+    proposal_product_ids = _proposal_selected_product_ids(proposal)
+    if not proposal_product_ids:
         return None
 
     candidates = []
     for template in templates:
-        if template.product_id != proposal.type_id:
+        template_product_ids = _proposal_template_product_ids(template)
+        if template_product_ids and not proposal_product_ids.issubset(template_product_ids):
             continue
-        if template.group_member_id and template.group_member_id != proposal.group_member_id:
+        template_group_ids = _proposal_template_group_ids(template)
+        if template_group_ids and proposal.group_member_id not in template_group_ids:
             continue
         candidates.append(template)
 
@@ -1580,7 +1623,10 @@ def _find_proposal_template(proposal, templates):
 
     candidates.sort(
         key=lambda template: (
-            1 if template.group_member_id == proposal.group_member_id else 0,
+            1 if _proposal_template_group_ids(template) else 0,
+            1 if _proposal_template_product_ids(template) else 0,
+            -len(_proposal_template_group_ids(template)),
+            -len(_proposal_template_product_ids(template)),
             _version_key(template),
             template.pk,
         ),
@@ -2149,6 +2195,7 @@ def proposal_dispatch_create_documents(request):
         ProposalRegistration.objects
         .filter(pk__in=proposal_ids)
         .select_related("group_member", "type", "country", "currency")
+        .prefetch_related("product_links__product")
         .order_by("position", "id")
     )
     if len(proposals) != len(proposal_ids):
@@ -2157,6 +2204,7 @@ def proposal_dispatch_create_documents(request):
     templates = list(
         ProposalTemplate.objects
         .select_related("group_member", "product")
+        .prefetch_related("group_members", "products")
         .filter(file__gt="")
     )
     variables = list(

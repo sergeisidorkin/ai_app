@@ -571,12 +571,27 @@ class ProposalTemplate(models.Model):
         on_delete=models.SET_NULL,
         related_name="proposal_templates",
         null=True,
+        blank=True,
     )
     product = models.ForeignKey(
         "policy_app.Product",
         verbose_name="Продукт",
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         related_name="proposal_templates",
+        null=True,
+        blank=True,
+    )
+    group_members = models.ManyToManyField(
+        "group_app.GroupMember",
+        verbose_name="Группы",
+        related_name="proposal_template_sets",
+        blank=True,
+    )
+    products = models.ManyToManyField(
+        "policy_app.Product",
+        verbose_name="Продукты",
+        related_name="proposal_template_sets",
+        blank=True,
     )
     sample_name = models.CharField("Наименование образца", max_length=512)
     version = models.CharField("Версия", max_length=128, blank=True, default="")
@@ -626,6 +641,8 @@ class ProposalVariable(models.Model):
         if not sec:
             return ""
         tbl = sec["tables"].get(self.source_table)
+        if not tbl and self.source_section == "proposals" and self.source_table == "service_goals_and_report_titles":
+            tbl = COLUMN_REGISTRY.get("products", {}).get("tables", {}).get("service_goals_and_report_titles")
         if not tbl:
             return ""
         col_label = tbl["columns"].get(self.source_column, "")

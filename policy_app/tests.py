@@ -457,6 +457,7 @@ class ServiceGoalReportViewsTests(TestCase):
             service_goal="Подготовка заключения",
             service_goal_genitive="Подготовки заключения",
             report_title="Итоговый отчет",
+            product_name="Налоговый обзор",
             position=1,
         )
 
@@ -464,8 +465,11 @@ class ServiceGoalReportViewsTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Цели услуг и названия отчетов")
+        self.assertContains(response, "Титул отчета/ТКП")
+        self.assertContains(response, "Название продукта")
         self.assertContains(response, "Подготовка заключения")
         self.assertContains(response, "Подготовки заключения")
+        self.assertContains(response, "Налоговый обзор")
         self.assertContains(response, 'id="service-goal-reports-actions"', html=False)
 
     def test_create_service_goal_report_saves_row(self):
@@ -476,6 +480,7 @@ class ServiceGoalReportViewsTests(TestCase):
                 "service_goal": "Подготовка документов",
                 "service_goal_genitive": "Подготовки документов",
                 "report_title": "Отчет по документам",
+                "product_name": "Документарная проверка",
             },
         )
 
@@ -485,6 +490,7 @@ class ServiceGoalReportViewsTests(TestCase):
         self.assertEqual(item.service_goal, "Подготовка документов")
         self.assertEqual(item.service_goal_genitive, "Подготовки документов")
         self.assertEqual(item.report_title, "Отчет по документам")
+        self.assertEqual(item.product_name, "Документарная проверка")
         self.assertEqual(item.position, 1)
 
     def test_service_goal_report_form_renders_product_picker_with_display_name(self):
@@ -495,6 +501,8 @@ class ServiceGoalReportViewsTests(TestCase):
         self.assertContains(response, "policy-product-select")
         self.assertContains(response, 'data-short-label="TAX"', html=False)
         self.assertContains(response, "TAX Tax")
+        self.assertContains(response, "Титул отчета/ТКП")
+        self.assertContains(response, "Название продукта")
 
         form = ServiceGoalReportForm()
         labels = [label for _, label in form.fields["product"].choices]

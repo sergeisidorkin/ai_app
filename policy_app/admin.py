@@ -215,6 +215,7 @@ class ServiceGoalReportAdmin(TimestampedAdmin):
         "service_goal",
         "service_goal_genitive",
         "report_title",
+        "product_name",
         "updated_at",
     )
     list_editable = ("position",)
@@ -226,6 +227,7 @@ class ServiceGoalReportAdmin(TimestampedAdmin):
         "service_goal",
         "service_goal_genitive",
         "report_title",
+        "product_name",
     )
     ordering = ("product__short_name", "position", "id")
     fieldsets = (
@@ -236,6 +238,7 @@ class ServiceGoalReportAdmin(TimestampedAdmin):
                 "service_goal",
                 "service_goal_genitive",
                 "report_title",
+                "product_name",
             ),
         }),
         ("Служебные поля", {

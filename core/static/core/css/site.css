@@ -3199,6 +3199,24 @@ html.proposal-progress-cursor * {
   margin-top: 0;
 }
 
+#proposals-pane .proposal-payment-schedule-editor {
+  padding-bottom: 2rem;
+}
+
+#proposals-pane .proposal-payment-stage-block {
+  border-top: 1px solid #dee2e6;
+  padding-top: 1.25rem;
+}
+
+#proposals-pane .proposal-payment-stage-block + .proposal-payment-stage-block {
+  margin-top: 2rem !important;
+}
+
+#proposals-pane .proposal-payment-stage-title {
+  display: block;
+  margin-top: 0;
+}
+
 #proposals-pane .proposal-terms-table .proposal-terms-stage-col {
   width: 5.5rem;
   min-width: 5.5rem;

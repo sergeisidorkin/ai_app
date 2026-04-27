@@ -92,8 +92,13 @@ def _contract_person(ep: ExpertProfile | None):
     return getattr(employee, "person_record", None) if employee else None
 
 
-def _person_short_name(ep: ExpertProfile, _p: Performer) -> str:
-    person = _contract_person(ep)
+def _performer_person(p: Performer | None):
+    employee = getattr(p, "employee", None) if p else None
+    return getattr(employee, "person_record", None) if employee else None
+
+
+def _person_short_name(ep: ExpertProfile, p: Performer) -> str:
+    person = _contract_person(ep) or _performer_person(p)
     if not person:
         return ""
     last_name = str(getattr(person, "last_name", "") or "").strip()
