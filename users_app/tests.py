@@ -1,11 +1,13 @@
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
 from django.test import TestCase
 from django.urls import reverse
 
 from contacts_app.models import CitizenshipRecord, EmailRecord, PersonRecord, PhoneRecord, PositionRecord
 from group_app.models import GroupMember
+from policy_app.models import DIRECTION_DIRECTOR_GROUP, DIRECTOR_GROUP, ROLE_GROUPS_ORDER
 
-from .forms import ExternalRegistrationForm, FREELANCER_LABEL
+from .forms import EmployeeForm, ExternalRegistrationForm, FREELANCER_LABEL
 from .models import Employee, PendingRegistration
 
 
@@ -54,6 +56,30 @@ class UsersContactsSyncTests(TestCase):
         field_names = {field.name for field in Employee._meta.get_fields()}
 
         self.assertNotIn("phone", field_names)
+
+    def test_employee_role_choices_place_direction_director_after_director(self):
+        for role_name in ROLE_GROUPS_ORDER:
+            Group.objects.get_or_create(name=role_name)
+
+        role_names = list(EmployeeForm().fields["role"].queryset.values_list("name", flat=True))
+
+        director_index = role_names.index(DIRECTOR_GROUP)
+        self.assertEqual(role_names[director_index + 1], DIRECTION_DIRECTOR_GROUP)
+
+    def test_employee_form_grants_direction_director_superuser_rights(self):
+        group, _ = Group.objects.get_or_create(name=DIRECTION_DIRECTOR_GROUP)
+        form = EmployeeForm(
+            self._employee_payload(
+                email="direction-director@example.com",
+                role=str(group.pk),
+            )
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        employee = form.save()
+
+        self.assertEqual(employee.role, DIRECTION_DIRECTOR_GROUP)
+        self.assertTrue(employee.user.is_superuser)
 
     def test_employee_create_creates_linked_contact_records(self):
         response = self.client.post(reverse("emp_form_create"), self._employee_payload())

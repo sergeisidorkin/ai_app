@@ -3625,8 +3625,39 @@ html.proposal-progress-cursor * {
 }
 
 #contract-conclusion-section .contract-conclusion-table-wrap > .performers-table {
-  width: max-content;
+  width: 100%;
   min-width: 100%;
+}
+
+#contract-conclusion-section .performers-table col:not(.col-checkbox):not(.col-number) {
+  width: auto !important;
+}
+
+#contract-conclusion-section .performers-table thead th:nth-child(1),
+#contract-conclusion-section .performers-table tbody td:nth-child(1) {
+  width: 30px !important;
+  min-width: 30px !important;
+  max-width: 30px !important;
+}
+
+#contract-conclusion-section .performers-table thead th:nth-child(2),
+#contract-conclusion-section .performers-table tbody td:nth-child(2) {
+  width: 100px !important;
+  min-width: 100px !important;
+  max-width: 100px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#contract-conclusion-section .performers-table thead th:nth-child(n+3),
+#contract-conclusion-section .performers-table tbody td:nth-child(n+3) {
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
 }
 
 #contract-conclusion-section .performers-table thead th,

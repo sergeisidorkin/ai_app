@@ -23,6 +23,8 @@ from core.cloud_storage import (
     get_primary_cloud_storage_label,
     is_nextcloud_primary,
 )
+from core.proposal_registry_columns import get_proposal_registry_ui_columns
+from core.section_labels import get_app_section_label
 from experts_app.models import ExpertProfile, ExpertProfileSpecialty
 from nextcloud_app.api import NextcloudApiClient, NextcloudApiError
 from nextcloud_app.models import NextcloudUserLink
@@ -40,7 +42,6 @@ from policy_app.models import (
 )
 from projects_app.models import ProjectRegistration, ProjectRegistrationProduct, _sync_project_registration_primary_product
 from smtp_app.models import ExternalSMTPAccount
-from core.proposal_registry_columns import get_proposal_registry_ui_columns
 from users_app.models import Employee
 
 from .cbr import get_cbr_eur_rate_for_today, get_cbr_eur_rate_text
@@ -81,6 +82,9 @@ PROPOSAL_NEXTCLOUD_TARGETS_SESSION_KEY = "proposal_nextcloud_target_paths"
 logger = logging.getLogger(__name__)
 PROPOSAL_FACSIMILE_PLACEHOLDER = "[[facsimile]]"
 PROPOSAL_FACSIMILE_ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff"}
+PROPOSAL_CONTRACT_DETAILS_SECTION_PATH = (
+    f"{get_app_section_label('experts')} -> Реквизиты для договора"
+)
 
 # CI can import this module through either `proposals_app.views` or
 # `ai_app.proposals_app.views`. Keep both names bound to the same module object
@@ -105,7 +109,8 @@ def _get_proposal_signer_expert_profile(user_id: int | None) -> ExpertProfile:
         ).get(employee__user_id=clean_user_id)
     except ExpertProfile.DoesNotExist as exc:
         raise RuntimeError(
-            "Для текущего пользователя не заполнена строка в разделе «Эксперты -> Реквизиты для договора»."
+            "Для текущего пользователя не заполнена строка "
+            f"в разделе «{PROPOSAL_CONTRACT_DETAILS_SECTION_PATH}»."
         ) from exc
 
 
@@ -114,7 +119,8 @@ def _get_proposal_signer_contract_details(user_id: int | None):
     contract_details = profile.default_contract_details(require_facsimile=True)
     if contract_details is None:
         raise RuntimeError(
-            "Для текущего пользователя не заполнена строка в разделе «Эксперты -> Реквизиты для договора»."
+            "Для текущего пользователя не заполнена строка "
+            f"в разделе «{PROPOSAL_CONTRACT_DETAILS_SECTION_PATH}»."
         )
     return contract_details
 
@@ -125,7 +131,8 @@ def _load_proposal_signer_facsimile_bytes(user_id: int | None) -> bytes:
     facsimile_name = str(getattr(facsimile, "name", "") or "").strip()
     if not facsimile_name:
         raise RuntimeError(
-            "Для текущего пользователя не заполнено поле «Факсимиле» в разделе «Эксперты -> Реквизиты для договора»."
+            "Для текущего пользователя не заполнено поле «Факсимиле» "
+            f"в разделе «{PROPOSAL_CONTRACT_DETAILS_SECTION_PATH}»."
         )
 
     file_extension = os.path.splitext(facsimile_name)[1].lower()

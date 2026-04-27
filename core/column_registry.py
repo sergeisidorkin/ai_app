@@ -8,6 +8,7 @@ to a specific column in a specific table of a specific section.
 import json
 
 from core.proposal_registry_columns import get_proposal_registry_variable_columns
+from core.section_labels import APP_SECTION_LABELS
 
 
 COLUMN_REGISTRY = {
@@ -163,7 +164,7 @@ COLUMN_REGISTRY = {
         },
     },
     "experts": {
-        "label": "Эксперты",
+        "label": APP_SECTION_LABELS["experts"],
         "tables": {
             "specialties": {
                 "label": "Специальности экспертов",
@@ -196,7 +197,7 @@ COLUMN_REGISTRY = {
                 },
             },
             "contract_details": {
-                "label": "Реквизиты для договора",
+                "label": "Реквизиты физлиц-исполнителей",
                 "columns": {
                     "full_name": "ФИО",
                     "full_name_genitive": "ФИО (полное) род. падеж",
@@ -240,6 +241,7 @@ COLUMN_REGISTRY = {
             "persons": {
                 "label": "Реестр лиц",
                 "columns": {
+                    "short_name": "Фамилия И.О.",
                     "last_name": "Фамилия",
                     "first_name": "Имя",
                     "middle_name": "Отчество",
@@ -390,6 +392,17 @@ COLUMN_REGISTRY = {
                     "approval_status": "Статус согласования",
                     "response_date": "Дата ответа",
                     "response_status": "Статус ответа",
+                },
+            },
+        },
+    },
+    "classifiers": {
+        "label": "Справочники",
+        "tables": {
+            "oksm_countries": {
+                "label": "Общероссийский классификатор стран мира (ОКСМ)",
+                "columns": {
+                    "full_name": "Наименование страны (полное)",
                 },
             },
         },

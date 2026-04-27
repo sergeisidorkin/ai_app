@@ -26,16 +26,15 @@
 
   function syncCollapseButtons() {
     var root = document.getElementById('performers-pane');
-    if (!root) return;
+    var contractRoot = contractPane();
     var pairs = [
       ['#participation-confirmation-section', '#participation-asset-toggle', window.__participationAssetCollapsed],
       ['#participation-confirmation-section', '#participation-section-toggle', window.__participationSectionCollapsed],
-      ['#contract-conclusion-section', '#contract-asset-toggle', window.__contractAssetCollapsed],
-      ['#contract-conclusion-section', '#contract-section-toggle', window.__contractSectionCollapsed],
       ['#info-request-approval-section', '#info-request-asset-toggle', window.__infoRequestAssetCollapsed],
       ['#info-request-approval-section', '#info-request-section-toggle', window.__infoRequestSectionCollapsed],
     ];
     pairs.forEach(function(p) {
+      if (!root) return;
       var section = root.querySelector(p[0]);
       if (!section) return;
       var btn = section.querySelector(p[1]);
@@ -45,9 +44,30 @@
       var icon = btn.querySelector('i');
       if (icon) icon.className = active ? 'bi bi-arrows-expand' : 'bi bi-arrows-collapse';
     });
+    [
+      ['#contract-asset-toggle', window.__contractAssetCollapsed],
+      ['#contract-section-toggle', window.__contractSectionCollapsed],
+    ].forEach(function(p) {
+      if (!contractRoot) return;
+      var section = contractRoot.querySelector('#contract-conclusion-section');
+      if (!section) return;
+      var btn = section.querySelector(p[0]);
+      if (!btn) return;
+      var active = !!p[1];
+      btn.classList.toggle('active', active);
+      var icon = btn.querySelector('i');
+      if (icon) icon.className = active ? 'bi bi-arrows-expand' : 'bi bi-arrows-collapse';
+    });
   }
 
   function pane() { return document.getElementById('performers-pane'); }
+  function contractPane() {
+    var contractsRoot = document.getElementById('contracts-pane');
+    if (contractsRoot && contractsRoot.querySelector('#contract-conclusion-section')) return contractsRoot;
+    var performersRoot = pane();
+    if (performersRoot && performersRoot.querySelector('#contract-conclusion-section')) return performersRoot;
+    return contractsRoot || performersRoot;
+  }
   const qa = (sel, root) => Array.from((root || document).querySelectorAll(sel));
   window.getProjectFilterSummaryLabel = window.getProjectFilterSummaryLabel || function(input, fallback) {
     var summary = input && input.dataset ? (input.dataset.summaryLabel || '').trim() : '';
@@ -77,8 +97,36 @@
   }
   const csrftoken = getCookie('csrftoken');
 
+  function cleanupDanglingModalState() {
+    if (document.querySelector('.modal.show, .modal.showing')) return;
+    document.querySelectorAll('.modal-backdrop').forEach((backdrop) => backdrop.remove());
+    document.body.classList.remove('modal-open');
+    document.body.style.removeProperty('padding-right');
+  }
+
+  function hideModalThen(modalEl, callback) {
+    const done = () => {
+      cleanupDanglingModalState();
+      if (typeof callback === 'function') callback();
+    };
+    if (!modalEl || !window.bootstrap) {
+      done();
+      return;
+    }
+    const modal = window.bootstrap.Modal.getInstance(modalEl) || window.bootstrap.Modal.getOrCreateInstance(modalEl);
+    if (!modalEl.classList.contains('show')) {
+      done();
+      return;
+    }
+    modalEl.addEventListener('hidden.bs.modal', done, { once: true });
+    modal.hide();
+  }
+
+  function getSelectionRoot(name) {
+    return name === 'contract-select' ? contractPane() : pane();
+  }
   function getRowChecks(name) {
-    return qa(`tbody input.form-check-input[name="${name}"]`, pane());
+    return qa(`tbody input.form-check-input[name="${name}"]`, getSelectionRoot(name));
   }
   function getChecked(name) {
     return getRowChecks(name).filter(b => b.checked);
@@ -220,25 +268,25 @@
   }
 
   function getContractMaster() {
-    return pane()?.querySelector('#contract-master');
+    return contractPane()?.querySelector('#contract-master');
   }
   function getContractRequestBtn() {
-    return pane()?.querySelector('#contract-request-btn');
+    return contractPane()?.querySelector('#contract-request-btn');
   }
   function getCreateContractBtn() {
-    return pane()?.querySelector('#create-contract-btn');
+    return contractPane()?.querySelector('#create-contract-btn');
   }
   function getContractRequestPanel() {
-    return pane()?.querySelector('#contract-request-actions');
+    return contractPane()?.querySelector('#contract-request-actions');
   }
   function getContractDeadlineControls() {
-    return pane()?.querySelector('#contract-deadline-controls');
+    return contractPane()?.querySelector('#contract-deadline-controls');
   }
   function getContractChannels() {
-    return qa('.js-contract-channel', pane());
+    return qa('.js-contract-channel', contractPane());
   }
   function getContractRows() {
-    return qa('#contract-conclusion-section tbody tr[data-project-id]', pane());
+    return qa('#contract-conclusion-section tbody tr[data-project-id]', contractPane());
   }
   function getVisibleContractChecks() {
     return getContractRows()
@@ -641,7 +689,7 @@
   }
 
   function initContractProjectFilter() {
-    const root = pane();
+    const root = contractPane();
     if (!root) return;
 
     const FILTER_ALL = '__all__';
@@ -696,6 +744,9 @@
       updateContractState();
       applyRowGrouping(root.querySelector('#contract-conclusion-section'));
       reapplyContractCollapse();
+      document.body.dispatchEvent(new CustomEvent('contract-project-filter-updated', {
+        detail: { values: window.__contractProjectFilter.slice() },
+      }));
     }
 
     function normalizeSelection() {
@@ -806,7 +857,7 @@
 
   function reapplyContractCollapse() {
     if (!window.__contractSectionCollapsed && !window.__contractAssetCollapsed) return;
-    var root = pane();
+    var root = contractPane();
     if (!root) return;
     var section = root.querySelector('#contract-conclusion-section');
     if (!section) return;
@@ -833,7 +884,7 @@
   }
 
   function toggleContractCollapse() {
-    var root = pane();
+    var root = contractPane();
     if (!root) return;
     var section = root.querySelector('#contract-conclusion-section');
     if (!section) return;
@@ -872,7 +923,7 @@
   }
 
   function toggleContractAssetCollapse() {
-    var root = pane();
+    var root = contractPane();
     if (!root) return;
     var section = root.querySelector('#contract-conclusion-section');
     if (!section) return;
@@ -1253,6 +1304,7 @@
 
   document.addEventListener('click', async (e) => {
     const root = pane(); if (!root) return;
+    const contractRoot = contractPane();
 
     var sectionToggle = e.target.closest('#participation-section-toggle');
     if (sectionToggle && root.contains(sectionToggle)) {
@@ -1267,13 +1319,13 @@
     }
 
     var contractSectionToggle = e.target.closest('#contract-section-toggle');
-    if (contractSectionToggle && root.contains(contractSectionToggle)) {
+    if (contractSectionToggle && contractRoot && contractRoot.contains(contractSectionToggle)) {
       toggleContractCollapse();
       return;
     }
 
     var contractAssetToggle = e.target.closest('#contract-asset-toggle');
-    if (contractAssetToggle && root.contains(contractAssetToggle)) {
+    if (contractAssetToggle && contractRoot && contractRoot.contains(contractAssetToggle)) {
       toggleContractAssetCollapse();
       return;
     }
@@ -1446,7 +1498,8 @@
     }
 
     const createContractConfirm = e.target.closest('#create-contract-confirm-btn');
-    if (createContractConfirm && root.contains(createContractConfirm)) {
+    if (createContractConfirm && contractRoot && contractRoot.contains(createContractConfirm)) {
+      const contractActionRoot = contractRoot;
       const checked = getVisibleContractChecks().filter((cb) => cb.checked);
       if (!checked.length) return;
 
@@ -1454,9 +1507,10 @@
       const createUrl = panel?.dataset?.createContractUrl;
       if (!createUrl) return;
 
-      const statusEl = root.querySelector('#create-contract-status');
-      const progressEl = root.querySelector('#create-contract-progress');
+      const statusEl = contractActionRoot.querySelector('#create-contract-status');
+      const progressEl = contractActionRoot.querySelector('#create-contract-progress');
       const fillEl = progressEl?.querySelector('.ws-progress-fill');
+      const modalEl = createContractConfirm.closest('.modal');
       createContractConfirm.disabled = true;
       if (statusEl) statusEl.textContent = '';
       if (fillEl) fillEl.style.width = '0%';
@@ -1519,7 +1573,18 @@
 
         window.__tableSel['contract-select'] = [];
         window.__tableSelLast = null;
-        document.body.dispatchEvent(new Event('performers-updated'));
+        const refreshAfterModal = () => {
+          document.body.dispatchEvent(new Event('performers-updated'));
+          document.body.dispatchEvent(new Event('contracts-updated'));
+        };
+        if (lastResult.warnings && lastResult.warnings.length && modalEl?.classList.contains('show')) {
+          modalEl.addEventListener('hidden.bs.modal', () => {
+            cleanupDanglingModalState();
+            refreshAfterModal();
+          }, { once: true });
+        } else {
+          hideModalThen(modalEl, refreshAfterModal);
+        }
       } catch (err) {
         if (progressEl) progressEl.classList.add('d-none');
         if (statusEl) statusEl.innerHTML = '<span class="text-danger">' + (err.message || 'Ошибка') + '</span>';
@@ -1531,14 +1596,15 @@
     }
 
     const contractBtn = e.target.closest('#contract-request-btn');
-    if (contractBtn && root.contains(contractBtn)) {
+    if (contractBtn && contractRoot && contractRoot.contains(contractBtn)) {
+      const contractActionRoot = contractRoot;
       const checked = getVisibleContractChecks().filter((cb) => cb.checked);
       if (!checked.length || contractBtn.disabled) return;
 
       const contractPanel = getContractRequestPanel();
       const requestUrl = contractPanel?.dataset?.requestUrl;
-      const hoursInput = root.querySelector('#contract-duration-hours');
-      const sentAtInput = root.querySelector('#contract-request-sent-at');
+      const hoursInput = contractActionRoot.querySelector('#contract-duration-hours');
+      const sentAtInput = contractActionRoot.querySelector('#contract-request-sent-at');
       const selectedChannels = getContractChannels().filter((cb) => cb.checked).map((cb) => cb.value);
       const durationHours = parseInt(hoursInput?.value || '', 10);
 
@@ -1575,7 +1641,7 @@
         window.__tableSel['performer-select'] = (window.__tableSel['performer-select'] || []);
         window.__tableSelLast = null;
 
-        const modalEl = root.querySelector('#contract-request-modal');
+        const modalEl = contractActionRoot.querySelector('#contract-request-modal');
         const modal = modalEl ? window.bootstrap?.Modal.getInstance(modalEl) : null;
         modal?.hide();
 
@@ -1720,6 +1786,7 @@
   // мастер-чекбокс
   document.addEventListener('change', (e) => {
     const root = pane(); if (!root) return;
+    const contractRoot = contractPane();
 
     const master = e.target.closest('input.form-check-input[data-actions-id="performers-actions"]');
     if (master && root.contains(master)) {
@@ -1768,7 +1835,7 @@
     }
 
     const contractMaster = e.target.closest('#contract-master');
-    if (contractMaster && root.contains(contractMaster)) {
+    if (contractMaster && contractRoot && contractRoot.contains(contractMaster)) {
       getContractRows().forEach((row) => {
         if (isFilterHidden(row)) return;
         const checkbox = row.querySelector('input[name="contract-select"]');
@@ -1781,14 +1848,14 @@
     }
 
     const contractRowCb = e.target.closest('tbody input.form-check-input[name="contract-select"]');
-    if (contractRowCb && root.contains(contractRowCb)) {
+    if (contractRowCb && contractRoot && contractRoot.contains(contractRowCb)) {
       propagateGroupCheck(contractRowCb, 'contract-select');
       updateContractState();
       return;
     }
 
     const contractChannelCb = e.target.closest('.js-contract-channel');
-    if (contractChannelCb && root.contains(contractChannelCb)) {
+    if (contractChannelCb && contractRoot && contractRoot.contains(contractChannelCb)) {
       const checkedChannels = getContractChannels().filter((cb) => cb.checked);
       if (!checkedChannels.length) {
         contractChannelCb.checked = true;
@@ -2081,6 +2148,22 @@
     window.__tableSelLast = null;
   }
 
+  function restoreContractConclusionPane(root) {
+    if (!root || !root.querySelector('#contract-conclusion-section')) return;
+    var contractIds = (window.__tableSel && window.__tableSel['contract-select']) || [];
+    var contractSet = new Set(contractIds || []);
+    getRowChecks('contract-select').forEach(function(b) {
+      b.checked = contractSet.has(String(b.value));
+    });
+    initContractProjectFilter();
+    updateContractState();
+    initCreateContractSettingsModal();
+    applyRowGrouping(root.querySelector('#contract-conclusion-section'));
+    reapplyContractCollapse();
+    syncCollapseButtons();
+    try { delete window.__tableSel['contract-select']; } catch(_) {}
+  }
+
   document.body.addEventListener('htmx:beforeSwap', function (e) {
     var root = pane(); if (!root) return;
     if (!(e.target === root || root.contains(e.target))) return;
@@ -2094,6 +2177,12 @@
     if (typeof window.__perfScrollY === 'number') {
       window.scrollTo(0, window.__perfScrollY);
     }
+  });
+
+  document.body.addEventListener('htmx:afterSwap', function (e) {
+    var root = contractPane(); if (!root) return;
+    if (!(e.target === root || root.contains(e.target))) return;
+    restoreContractConclusionPane(root);
   });
 
   document.body.addEventListener('htmx:afterSettle', function (e) {

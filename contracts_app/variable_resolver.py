@@ -82,6 +82,57 @@ def _contract_details(ep: ExpertProfile | None) -> "ExpertContractDetails | None
     return ep.default_contract_details()
 
 
+def _contract_person(ep: ExpertProfile | None):
+    details = _contract_details(ep)
+    citizenship = getattr(details, "citizenship_record", None) if details else None
+    person = getattr(citizenship, "person", None) if citizenship else None
+    if person:
+        return person
+    employee = getattr(ep, "employee", None) if ep else None
+    return getattr(employee, "person_record", None) if employee else None
+
+
+def _person_short_name(ep: ExpertProfile, _p: Performer) -> str:
+    person = _contract_person(ep)
+    if not person:
+        return ""
+    last_name = str(getattr(person, "last_name", "") or "").strip()
+    initials = "".join(
+        f"{part[0]}."
+        for part in (
+            str(getattr(person, "first_name", "") or "").strip(),
+            str(getattr(person, "middle_name", "") or "").strip(),
+        )
+        if part
+    )
+    return " ".join(part for part in (last_name, initials) if part).strip()
+
+
+def _contract_country_full_name(ep: ExpertProfile, _p: Performer) -> str:
+    details = _contract_details(ep)
+    citizenship = getattr(details, "citizenship_record", None) if details else None
+    country = getattr(citizenship, "country", None) if citizenship else None
+    if not country:
+        return ""
+
+    from django.db.models import Q
+    from django.utils import timezone
+    from classifiers_app.models import OKSMCountry
+
+    as_of = timezone.localdate()
+    valid_filter = (
+        Q(approval_date__isnull=True) | Q(approval_date__lte=as_of)
+    ) & (
+        Q(expiry_date__isnull=True) | Q(expiry_date__gte=as_of)
+    )
+    qs = OKSMCountry.objects.filter(valid_filter)
+    if getattr(country, "code", ""):
+        country = qs.filter(code=country.code).order_by("position", "id").first()
+    elif getattr(country, "pk", None):
+        country = qs.filter(pk=country.pk).first()
+    return str(getattr(country, "full_name", "") or "") if country else ""
+
+
 def _str_field(field_name: str):
     """Return a resolver that reads a CharField / TextField from ExpertProfile."""
     def _resolver(ep: ExpertProfile, _p: Performer) -> str:
@@ -297,9 +348,16 @@ FIELD_MAP: dict[tuple[str, str, str], callable] = {
     ("experts", "experts_base", "region"): _ep_region,
     ("experts", "experts_base", "status"): _str_field("status"),
 
+    # ---- contacts.persons ----
+    ("contacts", "persons", "short_name"): _person_short_name,
+
     # ---- experts.contract_details ----
     ("experts", "contract_details", "full_name"): _ep_full_name,
     ("experts", "contract_details", "full_name_genitive"): _contract_str_field("full_name_genitive"),
+    ("experts", "contract_details", "citizenship_country"): _contract_str_field("citizenship_country"),
+    ("experts", "contract_details", "citizenship_status"): _contract_str_field("citizenship_status"),
+    ("experts", "contract_details", "citizenship_identifier"): _contract_str_field("citizenship_identifier"),
+    ("experts", "contract_details", "citizenship_number"): _contract_str_field("citizenship_number"),
     ("experts", "contract_details", "self_employed"): _contract_date_field("self_employed", "dd.mm.yy"),
     ("experts", "contract_details", "tax_rate"): _contract_int_field("tax_rate", "%"),
     ("experts", "contract_details", "citizenship"): _contract_str_field("citizenship"),
@@ -327,6 +385,18 @@ FIELD_MAP: dict[tuple[str, str, str], callable] = {
     ("experts", "contract_details", "corr_bank_swift"): _contract_str_field("corr_bank_swift"),
     ("experts", "contract_details", "corr_bank_settlement"): _contract_str_field("corr_bank_settlement_account"),
     ("experts", "contract_details", "corr_bank_correspondent"): _contract_str_field("corr_bank_corr_account"),
+
+    # Backwards-compatible source_column aliases from the old standalone
+    # contract details table. New bindings use the registry keys above.
+    ("experts", "contract_details", "passport_expiry_date"): _contract_date_field("passport_expiry_date", "dd.mm.YYYY"),
+    ("experts", "contract_details", "bank_swift"): _contract_str_field("bank_swift"),
+    ("experts", "contract_details", "bank_bik"): _contract_str_field("bank_bik"),
+    ("experts", "contract_details", "corr_account"): _contract_str_field("corr_account"),
+    ("experts", "contract_details", "corr_bank_settlement_account"): _contract_str_field("corr_bank_settlement_account"),
+    ("experts", "contract_details", "corr_bank_corr_account"): _contract_str_field("corr_bank_corr_account"),
+
+    # ---- classifiers.oksm_countries ----
+    ("classifiers", "oksm_countries", "full_name"): _contract_country_full_name,
 
     # ---- projects.registration ----
     ("projects", "registration", "number"): lambda _ep, p: str(p.registration.number) if p.registration else "",
@@ -658,7 +728,10 @@ def resolve_variables(
             ExpertProfile.objects
             .select_related("employee__user", "country", "region",
                             "expertise_direction", "grade")
-            .prefetch_related("contract_details_records__citizenship_record")
+            .prefetch_related(
+                "contract_details_records__citizenship_record",
+                "contract_details_records__citizenship_record__person",
+            )
             .filter(employee_id=performer.employee_id)
             .first()
         )

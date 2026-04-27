@@ -2712,15 +2712,21 @@ class WorktimeAppTests(TestCase):
             },
         )
 
+        expected_downtime_entries = [
+            (work_day, REGULAR_WORKDAY_HOURS)
+            for day_number in range(1, 31)
+            for work_day in [date(2026, 4, day_number)]
+            if work_day.weekday() < 5 and work_day not in {date(2026, 4, 2), date(2026, 4, 3)}
+        ]
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.json(),
             {
                 "ok": True,
-                "created": 1,
+                "created": len(expected_downtime_entries) + 1,
                 "updated": 0,
                 "deleted": 0,
-                "created_assignments": 1,
+                "created_assignments": 2,
             },
         )
         vacation_assignment = WorktimeAssignment.objects.get(
@@ -2736,6 +2742,20 @@ class WorktimeAppTests(TestCase):
                 .values_list("work_date", "hours")
             ),
             [(date(2026, 4, 3), Decimal("8.00"))],
+        )
+        downtime_assignment = WorktimeAssignment.objects.get(
+            registration__isnull=True,
+            proposal_registration__isnull=True,
+            executor_name=self._full_name(self.employee),
+            record_type=WorktimeAssignment.RecordType.DOWNTIME,
+        )
+        self.assertEqual(
+            list(
+                WorktimeEntry.objects.filter(assignment=downtime_assignment)
+                .order_by("work_date")
+                .values_list("work_date", "hours")
+            ),
+            expected_downtime_entries,
         )
 
     def test_worktime_csv_upload_removes_absence_hours_on_non_working_days(self):
@@ -2785,15 +2805,21 @@ class WorktimeAppTests(TestCase):
             },
         )
 
+        expected_downtime_entries = [
+            (work_day, REGULAR_WORKDAY_HOURS)
+            for day_number in range(1, 31)
+            for work_day in [date(2026, 4, day_number)]
+            if work_day.weekday() < 5 and work_day not in {date(2026, 4, 2), date(2026, 4, 3)}
+        ]
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.json(),
             {
                 "ok": True,
-                "created": 1,
+                "created": len(expected_downtime_entries) + 1,
                 "updated": 0,
                 "deleted": 0,
-                "created_assignments": 1,
+                "created_assignments": 2,
             },
         )
         absence_assignment = WorktimeAssignment.objects.get(
@@ -2809,6 +2835,20 @@ class WorktimeAppTests(TestCase):
                 .values_list("work_date", "hours")
             ),
             [(date(2026, 4, 3), Decimal("8.00"))],
+        )
+        downtime_assignment = WorktimeAssignment.objects.get(
+            registration__isnull=True,
+            proposal_registration__isnull=True,
+            executor_name=self._full_name(self.employee),
+            record_type=WorktimeAssignment.RecordType.DOWNTIME,
+        )
+        self.assertEqual(
+            list(
+                WorktimeEntry.objects.filter(assignment=downtime_assignment)
+                .order_by("work_date")
+                .values_list("work_date", "hours")
+            ),
+            expected_downtime_entries,
         )
 
     def test_worktime_csv_upload_adds_calculated_downtime_for_missing_hours(self):
@@ -2859,12 +2899,25 @@ class WorktimeAppTests(TestCase):
             },
         )
 
+        expected_downtime_entries = []
+        for day_number in range(1, 31):
+            work_day = date(2026, 4, day_number)
+            if work_day.weekday() >= 5:
+                continue
+            if work_day == date(2026, 4, 6):
+                expected_hours = Decimal("3.00")
+            elif work_day == date(2026, 4, 7):
+                expected_hours = SHORTENED_WORKDAY_HOURS - Decimal("2.00")
+            else:
+                expected_hours = REGULAR_WORKDAY_HOURS
+            expected_downtime_entries.append((work_day, expected_hours))
+
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.json(),
             {
                 "ok": True,
-                "created": 4,
+                "created": len(expected_downtime_entries) + 2,
                 "updated": 0,
                 "deleted": 0,
                 "created_assignments": 1,
@@ -2888,10 +2941,82 @@ class WorktimeAppTests(TestCase):
                 .order_by("work_date")
                 .values_list("work_date", "hours")
             ),
-            [
-                (date(2026, 4, 6), Decimal("3.00")),
-                (date(2026, 4, 7), SHORTENED_WORKDAY_HOURS - Decimal("2.00")),
-            ],
+            expected_downtime_entries,
+        )
+
+    def test_worktime_csv_upload_adds_calculated_downtime_for_blank_working_days(self):
+        country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            alpha2="RU",
+            alpha3="RUS",
+        )
+        company = GroupMember.objects.create(
+            short_name="IMC Russia",
+            country_name="Россия",
+            country_code="643",
+        )
+        self.employee.employment = company.short_name
+        self.employee.save(update_fields=["employment"])
+        assignment = WorktimeAssignment.objects.create(
+            registration=self.registration,
+            employee=self.employee,
+            executor_name=self._full_name(self.employee),
+            source_type=WorktimeAssignment.SourceType.PERFORMER_CONFIRMATION,
+        )
+
+        april_days = [""] * 30
+        upload = self._make_worktime_csv_upload(
+            self._worktime_csv_header("2026-04"),
+            [[
+                self._full_name(self.employee),
+                assignment.display_project_code,
+                assignment.display_type_label,
+                assignment.display_project_name,
+                *april_days,
+            ]],
+        )
+
+        response = self.client.post(
+            reverse("worktime_csv_upload"),
+            {
+                "csv_file": upload,
+                "scale": "month",
+                "period": "2026-04",
+                "breakdown": "employees",
+            },
+        )
+
+        expected_downtime_entries = [
+            (date(2026, 4, day_number), REGULAR_WORKDAY_HOURS)
+            for day_number in range(1, 31)
+            if date(2026, 4, day_number).weekday() < 5
+        ]
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "ok": True,
+                "created": len(expected_downtime_entries),
+                "updated": 0,
+                "deleted": 0,
+                "created_assignments": 1,
+            },
+        )
+        downtime_assignment = WorktimeAssignment.objects.get(
+            registration__isnull=True,
+            proposal_registration__isnull=True,
+            executor_name=self._full_name(self.employee),
+            record_type=WorktimeAssignment.RecordType.DOWNTIME,
+        )
+        self.assertEqual(
+            list(
+                WorktimeEntry.objects.filter(assignment=downtime_assignment)
+                .order_by("work_date")
+                .values_list("work_date", "hours")
+            ),
+            expected_downtime_entries,
         )
 
     def test_worktime_csv_upload_reuses_calculated_downtime_assignment(self):

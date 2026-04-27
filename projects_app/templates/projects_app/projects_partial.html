@@ -1224,10 +1224,8 @@
 
       window.__perfProjectFilter = isAll ? [FILTER_ALL] : values.slice();
       window.__participationProjectFilter = isAll ? [FILTER_ALL] : values.slice();
-      window.__contractProjectFilter = isAll ? [FILTER_ALL] : values.slice();
       syncPerfFilter(values);
       if (typeof window.__syncParticipationProjectFilter === 'function') window.__syncParticipationProjectFilter(values);
-      if (typeof window.__syncContractProjectFilter === 'function') window.__syncContractProjectFilter(values);
     }
 
     masterChecks.forEach(function(cb) {

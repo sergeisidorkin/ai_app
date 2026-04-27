@@ -4,7 +4,7 @@ from django.http import JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
-from policy_app.models import DIRECTOR_GROUP
+from policy_app.models import DIRECTOR_GROUPS
 
 from .models import LetterTemplate
 from .services import get_effective_template
@@ -68,7 +68,7 @@ def _can_manage_shared_letter_templates(user):
     if not user.is_superuser:
         return False
     employee = getattr(user, "employee_profile", None)
-    return getattr(employee, "role", "") != DIRECTOR_GROUP
+    return getattr(employee, "role", "") not in DIRECTOR_GROUPS
 
 
 def _save_shared_letter_template(*, template_type, subject, body_html):

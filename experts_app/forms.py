@@ -7,7 +7,12 @@ from django.db.models import Q
 from classifiers_app.models import OKSMCountry, TerritorialDivision
 from contracts_app.forms import _ContractFileInput
 from group_app.models import GroupMember, OrgUnit
-from policy_app.models import ExpertiseDirection, Grade
+from policy_app.models import (
+    DEPARTMENT_HEAD_GROUP,
+    DIRECTOR_GROUPS,
+    ExpertiseDirection,
+    Grade,
+)
 from users_app.models import Employee
 from .models import ExpertContractDetails, ExpertProfile, ExpertSpecialty
 
@@ -86,7 +91,7 @@ class ExpertSpecialtyForm(forms.ModelForm):
         self.fields["expertise_dir"].required = False
 
         self.fields["head_of_direction"].queryset = Employee.objects.filter(
-            Q(role="Руководитель направления") | Q(role="Директор")
+            role__in=(DEPARTMENT_HEAD_GROUP, *DIRECTOR_GROUPS)
         )
         self.fields["head_of_direction"].label_from_instance = (
             lambda obj: obj.job_title

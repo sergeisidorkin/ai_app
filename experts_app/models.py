@@ -5,6 +5,12 @@ from django.db import models
 
 from classifiers_app.models import TerritorialDivision
 from group_app.models import GroupMember, OrgUnit
+from policy_app.models import (
+    ADMIN_GROUP,
+    DIRECTION_DIRECTOR_GROUP,
+    DIRECTOR_GROUP,
+    PROJECTS_HEAD_GROUP,
+)
 from users_app.models import Employee
 
 
@@ -71,7 +77,7 @@ class ExpertSpecialty(models.Model):
         return ", ".join(names) if names else ""
 
 
-EXCLUDED_ROLES = ("Директор", "Администратор", "Руководитель проектов")
+EXCLUDED_ROLES = (DIRECTOR_GROUP, DIRECTION_DIRECTOR_GROUP, ADMIN_GROUP, PROJECTS_HEAD_GROUP)
 
 
 class ExpertProfile(models.Model):

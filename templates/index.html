@@ -49,7 +49,7 @@
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#experts" data-bs-toggle="tab">
             <i class="bi bi-person-vcard me-2"></i>
-            <span class="link-text">Исполнители</span>
+            <span class="link-text">{{ APP_SECTION_LABELS.experts }}</span>
           </a>
         </li>
         <li class="nav-item">
@@ -115,12 +115,14 @@
           </a>
         </li>
         {% endif %}
+        {% if can_access_worktime %}
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#worktime" data-bs-toggle="tab">
             <i class="bi bi-stopwatch me-2"></i>
             <span class="link-text">Рабочее время</span>
           </a>
         </li>
+        {% endif %}
         <li class="nav-item">
           <a class="nav-link d-flex align-items-center" href="#learning" data-bs-toggle="tab">
             <i class="bi bi-mortarboard me-2"></i>
@@ -180,7 +182,7 @@
     <div class="mt-auto py-3 border-top sidebar-profile">
       {% if request.user.is_authenticated %}
       <div class="d-flex align-items-center w-100 min-w-0">
-        <a href="{% if request.user.is_superuser and employee.role != 'Директор' %}{% url 'admin:index' %}{% else %}{% url 'user_profile' %}{% endif %}" class="flex-shrink-0" title="{% if request.user.is_superuser and employee.role != 'Директор' %}Панель администратора{% else %}Профиль пользователя{% endif %}">
+        <a href="{% if request.user.is_superuser and not is_director_role %}{% url 'admin:index' %}{% else %}{% url 'user_profile' %}{% endif %}" class="flex-shrink-0" title="{% if request.user.is_superuser and not is_director_role %}Панель администратора{% else %}Профиль пользователя{% endif %}">
           {% if employee and employee.avatar %}
             <img src="{{ employee.avatar.url }}" alt="Аватар" class="sidebar-avatar-img rounded-circle" width="32" height="32" style="object-fit:cover;">
           {% elif request.user.first_name or request.user.last_name %}
@@ -189,7 +191,7 @@
             <span class="profile-icon"><i class="bi bi-person-circle"></i></span>
           {% endif %}
         </a>
-        <a href="{% if request.user.is_superuser and employee.role != 'Директор' %}{% url 'admin:index' %}{% else %}{% url 'user_profile' %}{% endif %}" class="link-text small text-truncate ms-2 me-auto min-w-0 text-decoration-none text-body">{{ request.user.get_full_name|default:request.user.email }}</a>
+        <a href="{% if request.user.is_superuser and not is_director_role %}{% url 'admin:index' %}{% else %}{% url 'user_profile' %}{% endif %}" class="link-text small text-truncate ms-2 me-auto min-w-0 text-decoration-none text-body">{{ request.user.get_full_name|default:request.user.email }}</a>
         <form method="post" action="{% url 'logout' %}" class="flex-shrink-0 link-text">
           {% csrf_token %}
           <button type="submit" class="sidebar-logout-btn" title="Выйти">
@@ -295,7 +297,7 @@
         <div class="templates-bleed">
           <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
             <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
-              <h5 class="mb-0 ps-3 fs-4 pt-2">Исполнители</h5>
+              <h5 class="mb-0 ps-3 fs-4 pt-2">{{ APP_SECTION_LABELS.experts }}</h5>
               <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
                  href="#notifications"
                  data-bs-toggle="tab"
@@ -533,11 +535,11 @@
             <div class="list-group list-group-flush p-3 m-0" id="contracts-second-sidebar-list">
               <a href="#" class="list-group-item list-group-item-action active"
                  data-contracts-section="in-development">
-                В разработке
+                Клиенты: в разработке
               </a>
               <a href="#" class="list-group-item list-group-item-action"
                  data-contracts-section="in-progress">
-                В работе
+                {{ APP_SECTION_LABELS.experts }}: в разработке
               </a>
               {% if not is_expert %}
               <a href="#" class="list-group-item list-group-item-action"
@@ -559,7 +561,24 @@
           <div class="flex-grow-1 ps-3 pe-0" style="min-width:0;">
             <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
               <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
-                <h5 class="mb-0 ps-3 fs-4 pt-2" id="contracts-section-title">В разработке</h5>
+                <div class="d-flex align-items-center gap-3">
+                  <h5 class="mb-0 ps-3 fs-4 pt-2" id="contracts-section-title">Клиенты: в разработке</h5>
+                  <div class="dropdown pt-1 d-none" id="contracts-master-project-filter-dropdown" style="transform: translateY(3px);">
+                    <button class="btn btn-primary btn-sm dropdown-toggle" type="button"
+                            id="contracts-master-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                      Проекты: <span class="js-contracts-master-filter-label">Все</span>
+                    </button>
+                    <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="contracts-master-project-filter-toggle"
+                         style="max-height: 240px; overflow-y: auto;">
+                      <div class="form-check mb-2">
+                        <input class="form-check-input js-contracts-master-filter" type="checkbox" value="__all__" id="contracts-master-filter-all" checked>
+                        <label class="form-check-label" for="contracts-master-filter-all">Все проекты</label>
+                      </div>
+                      <hr class="dropdown-divider">
+                      <div id="contracts-master-filter-projects-list"></div>
+                    </div>
+                  </div>
+                </div>
                 <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
                    href="#notifications"
                    data-bs-toggle="tab"
@@ -680,6 +699,7 @@
       </section>
       {% endif %}
 
+      {% if can_access_worktime %}
       <!-- Рабочее время -->
       <section id="worktime" class="tab-pane fade">
         <div class="d-flex templates-bleed">
@@ -759,6 +779,7 @@
           </div>
         </div>
       </section>
+      {% endif %}
 
       <!-- Обучение -->
       <section id="learning" class="tab-pane fade">
@@ -1700,8 +1721,8 @@
         <script>
         (function () {
           var CONTRACTS_TITLES = {
-            'in-development': 'В разработке',
-            'in-progress': 'В работе',
+            'in-development': 'Клиенты: в разработке',
+            'in-progress': '{{ APP_SECTION_LABELS.experts|escapejs }}: в разработке',
             'templates': 'Образцы шаблонов',
             'field-params': 'Параметры полей',
             'archive': 'Архив',
@@ -1709,6 +1730,10 @@
 
           var sidebar = document.getElementById('contracts-second-sidebar-list');
           var titleEl = document.getElementById('contracts-section-title');
+          var masterDropdown = document.getElementById('contracts-master-project-filter-dropdown');
+          var masterList = document.getElementById('contracts-master-filter-projects-list');
+          var masterLabel = masterDropdown ? masterDropdown.querySelector('.js-contracts-master-filter-label') : null;
+          var FILTER_ALL = '__all__';
 
           function activateSidebarLink(key) {
             if (!sidebar) return;
@@ -1717,11 +1742,99 @@
             if (link) link.classList.add('active');
           }
 
+          function getContractsMasterChecks() {
+            return masterDropdown ? Array.from(masterDropdown.querySelectorAll('.js-contracts-master-filter')) : [];
+          }
+
+          function syncContractsMasterLabel(values) {
+            if (!masterLabel) return;
+            if (!values.length || values[0] === FILTER_ALL) {
+              masterLabel.textContent = 'Все';
+              return;
+            }
+            if (values.length === 1) {
+              var match = getContractsMasterChecks().find(function(cb) { return cb.value === values[0]; });
+              masterLabel.textContent = (match && match.dataset.summaryLabel) || '1 проект';
+              return;
+            }
+            masterLabel.textContent = values.length + ' выбрано';
+          }
+
+          function syncContractsMasterChecks(values) {
+            var set = new Set(values && values.length ? values : [FILTER_ALL]);
+            getContractsMasterChecks().forEach(function(cb) {
+              cb.checked = set.has(cb.value);
+            });
+          }
+
+          function getContractsMasterValues() {
+            var values = getContractsMasterChecks()
+              .filter(function(cb) { return cb.checked; })
+              .map(function(cb) { return cb.value; });
+            if (!values.length || values.indexOf(FILTER_ALL) !== -1) return [FILTER_ALL];
+            return values;
+          }
+
+          function applyContractsMasterFilter(values) {
+            values = values && values.length ? values.slice() : getContractsMasterValues();
+            window.__contractProjectFilter = values[0] === FILTER_ALL ? [FILTER_ALL] : values.slice();
+            if (window.UIPref) UIPref.set('contracts:conclusionMasterFilter', window.__contractProjectFilter);
+            syncContractsMasterChecks(window.__contractProjectFilter);
+            syncContractsMasterLabel(window.__contractProjectFilter);
+            if (typeof window.__syncContractProjectFilter === 'function') {
+              window.__syncContractProjectFilter(window.__contractProjectFilter);
+            }
+          }
+
+          function refreshContractsMasterFilter() {
+            if (!masterDropdown || !masterList) return;
+            var pane = document.getElementById('contracts-pane');
+            var localChecks = pane ? Array.from(pane.querySelectorAll('.js-contract-filter')) : [];
+            var projectChecks = localChecks.filter(function(cb) { return cb.value !== FILTER_ALL; });
+            masterList.innerHTML = '';
+            projectChecks.forEach(function(localCb) {
+              var row = document.createElement('div');
+              row.className = 'form-check';
+
+              var input = document.createElement('input');
+              input.className = 'form-check-input js-contracts-master-filter';
+              input.type = 'checkbox';
+              input.value = localCb.value;
+              input.id = 'contracts-master-filter-' + localCb.value;
+              input.dataset.summaryLabel = localCb.dataset.summaryLabel || '';
+
+              var label = document.createElement('label');
+              label.className = 'form-check-label';
+              label.setAttribute('for', input.id);
+              label.textContent = localCb.dataset.fullLabel || localCb.closest('.form-check')?.textContent.trim() || localCb.value;
+
+              row.appendChild(input);
+              row.appendChild(label);
+              masterList.appendChild(row);
+            });
+
+            var saved = window.__contractProjectFilter;
+            if ((!saved || !saved.length) && window.UIPref) saved = UIPref.get('contracts:conclusionMasterFilter', null);
+            var valid = [FILTER_ALL];
+            if (Array.isArray(saved) && saved.length && saved[0] !== FILTER_ALL) {
+              var validIds = new Set(projectChecks.map(function(cb) { return cb.value; }));
+              valid = saved.filter(function(value) { return validIds.has(value); });
+              if (!valid.length) valid = [FILTER_ALL];
+            }
+            applyContractsMasterFilter(valid);
+          }
+
+          function scheduleContractsMasterRefresh() {
+            window.setTimeout(refreshContractsMasterFilter, 0);
+          }
+
           function switchContractsSection(key) {
             document.querySelectorAll('.contracts-section-content').forEach(function(el) { el.classList.add('d-none'); });
             var target = document.getElementById('contracts-content-' + key);
             if (target) target.classList.remove('d-none');
             if (titleEl) titleEl.textContent = CONTRACTS_TITLES[key] || '';
+            if (masterDropdown) masterDropdown.classList.toggle('d-none', key !== 'in-progress');
+            if (key === 'in-progress') scheduleContractsMasterRefresh();
           }
 
           if (sidebar) {
@@ -1735,6 +1848,39 @@
               if (window.UIPref) UIPref.set('contracts:section', link.dataset.contractsSection);
             });
           }
+
+          if (masterDropdown) {
+            masterDropdown.addEventListener('change', function(e) {
+              var cb = e.target.closest('.js-contracts-master-filter');
+              if (!cb) return;
+              if (cb.value === FILTER_ALL && cb.checked) {
+                syncContractsMasterChecks([FILTER_ALL]);
+                applyContractsMasterFilter([FILTER_ALL]);
+                return;
+              }
+              if (cb.value === FILTER_ALL && !cb.checked) {
+                var firstProject = getContractsMasterChecks().find(function(item) { return item.value !== FILTER_ALL; });
+                if (firstProject) firstProject.checked = true;
+              } else {
+                var allCheckbox = document.getElementById('contracts-master-filter-all');
+                if (allCheckbox) allCheckbox.checked = false;
+              }
+              applyContractsMasterFilter(getContractsMasterValues());
+            });
+          }
+
+          document.body.addEventListener('htmx:afterSwap', function(e) {
+            var pane = document.getElementById('contracts-pane');
+            if (!pane || !(e.target === pane || pane.contains(e.target))) return;
+            scheduleContractsMasterRefresh();
+          });
+
+          document.body.addEventListener('contract-project-filter-updated', function(e) {
+            var values = e.detail && e.detail.values ? e.detail.values : [FILTER_ALL];
+            if (window.UIPref) UIPref.set('contracts:conclusionMasterFilter', values);
+            syncContractsMasterChecks(values);
+            syncContractsMasterLabel(values);
+          });
 
           document.addEventListener('DOMContentLoaded', function () {
             var saved = window.UIPref ? UIPref.get('contracts:section', null) : null;
@@ -1954,6 +2100,7 @@
         })();
         </script>
 
+        {% if can_access_worktime %}
         <script>
         (function () {
           var WORKTIME_TITLES = {
@@ -2244,6 +2391,7 @@
           });
         })();
         </script>
+        {% endif %}
 
         <script>
         document.addEventListener('DOMContentLoaded', function () {
