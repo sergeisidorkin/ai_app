@@ -19,15 +19,67 @@
   <div class="modal-body modal-body-scroll">
     {% csrf_token %}
     <div class="row g-2">
-      <div class="col-12">
+      <div class="col-6">
         <label class="form-label">Группа</label>
-        {{ form.group_member }}
+        <div class="dropdown" id="pt-group-dropdown">
+          <button class="form-select text-start" type="button"
+                  id="pt-group-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
+                  style="cursor:pointer; background-color:#fff;">
+            <span class="js-pt-group-label">Все</span>
+          </button>
+          <div class="dropdown-menu p-3" aria-labelledby="pt-group-toggle"
+               style="min-width: 100%; max-height: 240px; overflow-y: auto;">
+            <div class="form-check mb-2">
+              <input class="form-check-input js-pt-group" type="checkbox"
+                     name="group_member_ids" value="__all__" id="pt-group-all"
+                     {% if form.is_all_groups_selected %}checked{% endif %}>
+              <label class="form-check-label" for="pt-group-all">Все</label>
+            </div>
+            <hr class="dropdown-divider">
+            {% for opt in form.group_options %}
+              <div class="form-check">
+                <input class="form-check-input js-pt-group" type="checkbox"
+                       name="group_member_ids" value="{{ opt.id }}" id="pt-group-{{ opt.id }}"
+                       {% if opt.id|stringformat:"s" in form.selected_group_ids %}checked{% endif %}>
+                <label class="form-check-label" for="pt-group-{{ opt.id }}">{{ opt.label }}</label>
+              </div>
+            {% empty %}
+              <div class="text-muted small">Нет групп</div>
+            {% endfor %}
+          </div>
+        </div>
       </div>
       <div class="col-6">
         <label class="form-label">Продукт</label>
-        {{ form.product }}
+        <div class="dropdown" id="pt-product-dropdown">
+          <button class="form-select text-start" type="button"
+                  id="pt-product-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
+                  style="cursor:pointer; background-color:#fff;">
+            <span class="js-pt-product-label">Все</span>
+          </button>
+          <div class="dropdown-menu p-3" aria-labelledby="pt-product-toggle"
+               style="min-width: 100%; max-height: 240px; overflow-y: auto;">
+            <div class="form-check mb-2">
+              <input class="form-check-input js-pt-product" type="checkbox"
+                     name="product_ids" value="__all__" id="pt-product-all"
+                     {% if form.is_all_products_selected %}checked{% endif %}>
+              <label class="form-check-label" for="pt-product-all">Все</label>
+            </div>
+            <hr class="dropdown-divider">
+            {% for opt in form.product_options %}
+              <div class="form-check">
+                <input class="form-check-input js-pt-product" type="checkbox"
+                       name="product_ids" value="{{ opt.id }}" id="pt-product-{{ opt.id }}"
+                       {% if opt.id|stringformat:"s" in form.selected_product_ids %}checked{% endif %}>
+                <label class="form-check-label" for="pt-product-{{ opt.id }}">{{ opt.label }}</label>
+              </div>
+            {% empty %}
+              <div class="text-muted small">Нет продуктов</div>
+            {% endfor %}
+          </div>
+        </div>
       </div>
-      <div class="col-4">
+      <div class="col-10">
         <label class="form-label">Наименование образца</label>
         {{ form.sample_name }}
       </div>
@@ -49,54 +101,90 @@
 
 {{ form.group_alpha2_map|json_script:"pt-data-group-alpha2-map" }}
 {{ form.group_short_name_map|json_script:"pt-data-group-short-name-map" }}
+{{ form.product_short_name_map|json_script:"pt-data-product-short-name-map" }}
 {{ form.version_map|json_script:"pt-data-version-map" }}
-{{ form.current_pair|json_script:"pt-data-current-pair" }}
+{{ form.current_base|json_script:"pt-data-current-base" }}
 {{ form.current_version|json_script:"pt-data-current-ver" }}
 
 <script>
 (function() {
   function _jsonEl(id) { return JSON.parse(document.getElementById(id).textContent); }
+  const ALL_VAL = "__all__";
 
   const groupAlpha2Map = _jsonEl("pt-data-group-alpha2-map");
   const groupShortNameMap = _jsonEl("pt-data-group-short-name-map");
+  const productShortNameMap = _jsonEl("pt-data-product-short-name-map");
   const versionMap = _jsonEl("pt-data-version-map");
-  const currentPair = _jsonEl("pt-data-current-pair");
+  const currentBase = _jsonEl("pt-data-current-base");
   const currentVersion = _jsonEl("pt-data-current-ver");
 
-  const groupSel = document.getElementById("id_group_member");
-  const productSel = document.getElementById("id_product");
+  const groupDropdown = document.getElementById("pt-group-dropdown");
+  const productDropdown = document.getElementById("pt-product-dropdown");
+  const groupChecks = groupDropdown ? Array.from(groupDropdown.querySelectorAll(".js-pt-group")) : [];
+  const productChecks = productDropdown ? Array.from(productDropdown.querySelectorAll(".js-pt-product")) : [];
+  const groupAll = document.getElementById("pt-group-all");
+  const productAll = document.getElementById("pt-product-all");
+  const groupLabel = groupDropdown?.querySelector(".js-pt-group-label");
+  const productLabel = productDropdown?.querySelector(".js-pt-product-label");
   const sampleInp = document.getElementById("id_sample_name");
   const versionInp = document.getElementById("id_version");
 
-  function computePair() {
-    return (groupSel?.value || "") + ":" + (productSel?.value || "");
+  function selectedSpecificValues(checks) {
+    return checks.filter(cb => cb.checked && cb.value !== ALL_VAL).map(cb => cb.value);
+  }
+
+  function selectedLabel(checks, allCb) {
+    if (allCb && allCb.checked) return "Все";
+    const selected = checks.filter(cb => cb.checked && cb.value !== ALL_VAL);
+    if (!selected.length) return "Все";
+    if (selected.length === 1) return selected[0].nextElementSibling?.textContent?.trim() || "";
+    return selected.length + " выбрано";
+  }
+
+  function syncDropdown(checks, allCb, labelEl) {
+    if (labelEl) labelEl.textContent = selectedLabel(checks, allCb);
   }
 
   function computeBase() {
-    const alpha2 = groupAlpha2Map[groupSel?.value] || "";
-    const shortName = groupShortNameMap[groupSel?.value] || "";
-    const productShort = productSel?.value ? (productSel.selectedOptions[0]?.textContent?.trim() || "") : "";
+    const groupIds = selectedSpecificValues(groupChecks);
+    const productIds = selectedSpecificValues(productChecks);
+    const alpha2 = groupIds.map(id => groupAlpha2Map[id]).filter(Boolean).join("-") || "Все";
+    const shortName = groupIds.map(id => groupShortNameMap[id]).filter(Boolean).join("-") || "Все";
+    const productShort = productIds.map(id => productShortNameMap[id]).filter(Boolean).join("-") || "Все";
     const prefix = [alpha2, "Шаблон ТКП"].filter(Boolean).join(" ");
     const tail = [shortName, productShort].filter(Boolean).join("_");
     return [prefix, tail].filter(Boolean).join("_");
   }
 
-  function getNextVersion(pair) {
-    if (pair && pair === currentPair) return currentVersion || "1";
-    return String((versionMap[pair] || 0) + 1);
+  function getNextVersion(base) {
+    if (base && base === currentBase) return currentVersion || "1";
+    return String((versionMap[base] || 0) + 1);
   }
 
   function rebuild() {
     if (!sampleInp || !versionInp) return;
-    const pair = computePair();
-    sampleInp.value = computeBase();
-    versionInp.value = getNextVersion(pair);
+    const base = computeBase();
+    sampleInp.value = base;
+    versionInp.value = getNextVersion(base);
   }
 
-  [groupSel, productSel].forEach(function(el) {
-    if (el) el.addEventListener("change", rebuild);
-  });
+  function attachDropdown(checks, allCb, labelEl) {
+    checks.forEach(cb => {
+      cb.addEventListener("change", function() {
+        if (this.value === ALL_VAL && this.checked) {
+          checks.forEach(item => { if (item.value !== ALL_VAL) item.checked = false; });
+        } else if (this.value !== ALL_VAL && this.checked && allCb) {
+          allCb.checked = false;
+        }
+        syncDropdown(checks, allCb, labelEl);
+        rebuild();
+      });
+    });
+    syncDropdown(checks, allCb, labelEl);
+  }
 
+  attachDropdown(groupChecks, groupAll, groupLabel);
+  attachDropdown(productChecks, productAll, productLabel);
   rebuild();
 })();
 </script>

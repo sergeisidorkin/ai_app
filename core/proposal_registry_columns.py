@@ -102,6 +102,7 @@ PROPOSAL_REGISTRY_UI_COLUMNS = [
         "label": "Заказчик: регион",
         "split_prefix": "Заказчик: ",
         "split_suffix": "регион",
+        "split_inline": True,
         "variable_available": True,
     },
     {
@@ -157,6 +158,7 @@ PROPOSAL_REGISTRY_UI_COLUMNS = [
         "label": "Владелец: регион",
         "split_prefix": "Владелец: ",
         "split_suffix": "регион",
+        "split_inline": True,
         "variable_available": True,
     },
     {

@@ -25,6 +25,7 @@ from docx.oxml.ns import qn
 from classifiers_app.models import BusinessEntityRecord, BusinessEntityIdentifierRecord, LegalEntityRecord, OKSMCountry, OKVCurrency
 from contacts_app.models import CitizenshipRecord, PersonRecord
 from core.models import CloudStorageSettings
+from core.proposal_registry_columns import get_proposal_registry_ui_columns
 from experts_app.models import ExpertContractDetails, ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
 from group_app.models import GroupMember, OrgUnit
 from letters_app.models import LetterTemplate
@@ -54,7 +55,13 @@ from .document_generation import (
     get_proposal_docx_source_token_payload,
     store_generated_documents,
 )
-from .forms import ProposalDispatchForm, ProposalRegistrationForm, _proposal_variable_column_choices
+from .forms import (
+    ProposalDispatchForm,
+    ProposalRegistrationForm,
+    ProposalTemplateForm,
+    _proposal_variable_column_choices,
+    _proposal_variable_table_choices,
+)
 from .forms import ProposalVariableForm
 from .models import (
     ProposalAsset,
@@ -326,6 +333,124 @@ class ProposalDocumentGenerationTests(TestCase):
         }
         self.proposal.save(update_fields=["commercial_totals_json"])
 
+    def test_proposal_template_form_saves_multiple_groups_and_products(self):
+        second_group = GroupMember.objects.create(
+            short_name="KAP",
+            country_name="Казахстан",
+            country_code="398",
+            country_alpha2="KZ",
+            position=2,
+        )
+        second_product = Product.objects.create(
+            short_name="JORC",
+            name_en="JORC Report",
+            name_ru="JORC",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Отчётность",
+            position=2,
+        )
+        form = ProposalTemplateForm(
+            data={
+                "group_member_ids": [str(self.group_member.pk), str(second_group.pk)],
+                "product_ids": [str(self.product.pk), str(second_product.pk)],
+                "sample_name": "",
+                "version": "",
+            },
+            files={
+                "file": SimpleUploadedFile(
+                    "proposal-template.docx",
+                    b"template-bytes",
+                    content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        template = form.save()
+
+        self.assertEqual(
+            set(template.group_members.values_list("pk", flat=True)),
+            {self.group_member.pk, second_group.pk},
+        )
+        self.assertEqual(
+            set(template.products.values_list("pk", flat=True)),
+            {self.product.pk, second_product.pk},
+        )
+        self.assertEqual(template.group_member_id, self.group_member.pk)
+        self.assertEqual(template.product_id, self.product.pk)
+
+    def test_find_proposal_template_matches_multistage_products_by_subset(self):
+        from .views import _find_proposal_template
+
+        second_product = Product.objects.create(
+            short_name="JORC",
+            name_en="JORC Report",
+            name_ru="JORC",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Отчётность",
+            position=2,
+        )
+        third_product = Product.objects.create(
+            short_name="VAL",
+            name_en="Valuation",
+            name_ru="Оценка",
+            consulting_type="Горный",
+            service_category="Оценка",
+            service_subtype="Оценка активов",
+            position=3,
+        )
+        self.proposal.type = second_product
+        self.proposal.save(update_fields=["type"])
+        ProposalRegistrationProduct.objects.create(proposal=self.proposal, product=self.product, rank=1)
+        ProposalRegistrationProduct.objects.create(proposal=self.proposal, product=second_product, rank=2)
+
+        too_narrow = ProposalTemplate.objects.create(
+            group_member=self.group_member,
+            product=self.product,
+            sample_name="Узкий шаблон",
+            version="1",
+        )
+        too_narrow.group_members.set([self.group_member])
+        too_narrow.products.set([self.product])
+        matching = ProposalTemplate.objects.create(
+            group_member=self.group_member,
+            product=self.product,
+            sample_name="Многоэтапный шаблон",
+            version="2",
+        )
+        matching.group_members.set([self.group_member])
+        matching.products.set([self.product, second_product, third_product])
+
+        found = _find_proposal_template(
+            self.proposal,
+            [too_narrow, matching],
+        )
+
+        self.assertEqual(found, matching)
+
+    def test_find_proposal_template_all_group_and_products_match_any_proposal(self):
+        from .views import _find_proposal_template
+
+        all_template = ProposalTemplate.objects.create(
+            group_member=None,
+            product=None,
+            sample_name="Все Шаблон ТКП_Все_Все",
+            version="1",
+        )
+
+        found = _find_proposal_template(self.proposal, [all_template])
+
+        self.assertEqual(found, all_template)
+
+    def test_find_proposal_template_keeps_legacy_single_product_fallback(self):
+        from .views import _find_proposal_template
+
+        found = _find_proposal_template(self.proposal, [self.template])
+
+        self.assertEqual(found, self.template)
+
     @patch("ai_app.proposals_app.document_generation._get_cloud_upload_user")
     @patch("ai_app.proposals_app.document_generation.cloud_upload_file", return_value=True)
     def test_create_documents_generates_docx_and_uploads_it_to_workspace_folder(
@@ -523,6 +648,43 @@ class ProposalDocumentGenerationTests(TestCase):
             self.assertNotIn("w:numPr", paragraph._element.xml)
             self.assertNotIn("w:pStyle", paragraph._element.xml)
             self.assertIn('w:lang w:val="ru-RU"', paragraph._element.xml)
+
+    def test_process_template_inserts_payment_schedule_with_indented_payment_lines(self):
+        template_doc = Document()
+        template_doc.add_paragraph("[[payment_schedule]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+
+        generated_bytes = process_template(
+            buffer.getvalue(),
+            {},
+            list_replacements={
+                "[[payment_schedule]]": [
+                    {"runs": [{"text": "общий для всех этапов:"}]},
+                    {
+                        "runs": [{"text": "40% — предоплата при подписании контракта."}],
+                        "paragraph_style": "list_paragraph",
+                        "left_indent_cm": 1.0,
+                        "contextual_spacing": True,
+                    },
+                ]
+            },
+            default_language_code="ru-RU",
+        )
+
+        generated_doc = Document(BytesIO(generated_bytes))
+        heading = generated_doc.paragraphs[0]
+        payment_line = generated_doc.paragraphs[1]
+
+        self.assertEqual(heading.text, "общий для всех этапов:")
+        self.assertEqual(payment_line.text, "40% — предоплата при подписании контракта.")
+        self.assertNotIn("w:numPr", payment_line._element.xml)
+        self.assertNotIn("w:ind", heading._element.xml)
+        self.assertIn("w:pStyle", payment_line._element.xml)
+        self.assertIn("PaymentScheduleParagraph", payment_line._element.xml)
+        self.assertIn("w:ind", payment_line._element.xml)
+        self.assertIn("w:left", payment_line._element.xml)
+        self.assertIn("w:contextualSpacing", payment_line._element.xml)
 
     def test_process_template_applies_default_language_to_scalar_replacements(self):
         template_doc = Document()
@@ -2297,6 +2459,71 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(form.fields["final_report_term_days"].initial, 15)
         self.assertEqual(form.fields["advance_percent"].widget.attrs["step"], "1")
         self.assertEqual(form.fields["preliminary_report_percent"].widget.attrs["step"], "1")
+        self.assertTrue(form.fields["payment_schedule_common"].initial)
+        self.assertTrue(form.payment_schedule_common_enabled)
+
+    def test_form_saves_per_stage_payment_schedule_when_not_common(self):
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        first_product = Product.objects.create(
+            short_name="TDD",
+            name_en="Technical Due Diligence",
+            name_ru="ТДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        second_product = Product.objects.create(
+            short_name="JORC",
+            name_en="JORC Report",
+            name_ru="JORC",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Оптимизация",
+            position=2,
+        )
+        payload = QueryDict("", mutable=True)
+        payload.update(
+            {
+                "number": "3333",
+                "group_member": str(group_member.pk),
+                "name": "Мультиэтапное ТКП",
+                "kind": ProposalRegistration.ProposalKind.REGULAR,
+                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "year": "2026",
+                "payment_schedule_common": "false",
+            }
+        )
+        payload.setlist("type", [str(first_product.pk), str(second_product.pk)])
+        payload.setlist("advance_percent", ["30", "50"])
+        payload.setlist("advance_term_days", ["5", "10"])
+        payload.setlist("preliminary_report_percent", ["20", "30"])
+        payload.setlist("preliminary_report_term_days", ["6", "7"])
+        payload.setlist("final_report_term_days", ["14", "21"])
+
+        form = ProposalRegistrationForm(data=payload)
+
+        self.assertFalse(form.payment_schedule_common_enabled)
+        self.assertTrue(form.is_valid(), form.errors)
+        proposal = form.save(commit=False)
+
+        self.assertEqual(proposal.advance_percent, Decimal("50"))
+        self.assertEqual(proposal.advance_term_days, 10)
+        self.assertEqual(proposal.preliminary_report_percent, Decimal("30"))
+        self.assertEqual(proposal.preliminary_report_term_days, 7)
+        self.assertEqual(proposal.final_report_percent, Decimal("20.00"))
+        self.assertEqual(proposal.final_report_term_days, 21)
+        self.assertFalse(proposal.stage_payloads_json[0]["payment_schedule_common"])
+        self.assertEqual(proposal.stage_payloads_json[0]["advance_percent"], "30")
+        self.assertEqual(proposal.stage_payloads_json[0]["final_report_percent"], "50.00")
+        self.assertEqual(proposal.stage_payloads_json[1]["advance_percent"], "50")
+        self.assertEqual(proposal.stage_payloads_json[1]["final_report_percent"], "20.00")
 
     def test_form_includes_final_report_term_weeks_decimal_field(self):
         form = ProposalRegistrationForm()
@@ -2404,6 +2631,49 @@ class ProposalRegistrationFormTests(TestCase):
             ("country_full_name", "Наименование страны (полное)"),
             _proposal_variable_column_choices("proposals", "registry"),
         )
+
+    def test_proposal_variable_form_accepts_service_goal_report_binding(self):
+        form = ProposalVariableForm(
+            data={
+                "key": "{{product_name}}",
+                "description": "Название продукта",
+                "source_section": "products",
+                "source_table": "service_goals_and_report_titles",
+                "source_column": "product_name",
+            }
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertIn(
+            ("service_goals_and_report_titles", "Цели услуг и названия отчетов"),
+            _proposal_variable_table_choices("products"),
+        )
+        self.assertIn(
+            ("product_name", "Название продукта"),
+            _proposal_variable_column_choices("products", "service_goals_and_report_titles"),
+        )
+
+        variable = ProposalVariable(
+            key="{{product_name}}",
+            source_section="products",
+            source_table="service_goals_and_report_titles",
+            source_column="product_name",
+        )
+        self.assertEqual(
+            variable.binding_display,
+            "Значения столбца «Название продукта» из таблицы «Цели услуг и названия отчетов» раздела «Продукты»",
+        )
+
+    def test_proposal_region_headers_render_inline(self):
+        columns = {
+            column["source_column"]: column
+            for column in get_proposal_registry_ui_columns()
+        }
+
+        self.assertTrue(columns["registration_region"]["split_inline"])
+        self.assertEqual(columns["registration_region"]["label"], "Заказчик: регион")
+        self.assertTrue(columns["asset_owner_region"]["split_inline"])
+        self.assertEqual(columns["asset_owner_region"]["label"], "Владелец: регион")
 
     def test_proposal_variable_form_locks_computed_variable_fields(self):
         variable = ProposalVariable.objects.create(
@@ -2977,6 +3247,193 @@ class ProposalRegistrationFormTests(TestCase):
             [ProposalVariable(key="{{preliminary_payment_percentage_full}}", is_computed=True)],
         )
         self.assertEqual(replacements["{{preliminary_payment_percentage_full}}"], "70%")
+
+    def test_resolve_payment_schedule_for_single_product_has_no_header_or_indent(self):
+        product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        proposal = ProposalRegistration(
+            type=product,
+            advance_percent="40",
+            advance_term_days=10,
+            preliminary_report_percent="40",
+            preliminary_report_term_days=7,
+            final_report_percent="20",
+            final_report_term_days=15,
+        )
+
+        _, lists, _ = resolve_variables(
+            proposal,
+            [ProposalVariable(key="[[payment_schedule]]", is_computed=True)],
+        )
+        items = lists["[[payment_schedule]]"]
+        texts = [item["runs"][0]["text"] for item in items]
+
+        self.assertEqual(len(items), 3)
+        self.assertEqual(items[0]["left_indent_cm"], 1.0)
+        self.assertEqual(items[0]["paragraph_style"], "list_paragraph")
+        self.assertTrue(items[0]["contextual_spacing"])
+        self.assertEqual(
+            texts,
+            [
+                "40% — предоплата при подписании контракта — в течение 10 календарных дней.",
+                "40% — в течение 7 календарных дней после предоставления Предварительного отчёта "
+                "и подписания Акта № 1 на 80% суммы договора.",
+                "20% — после сдачи Итогового отчёта — в течение 15 календарных дней после подписания "
+                "Акта №\u00a02 на оставшуюся сумму.",
+            ],
+        )
+
+    def test_resolve_payment_schedule_for_common_multistage_schedule(self):
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        first_product = Product.objects.create(
+            short_name="A",
+            name_en="Alpha",
+            name_ru="Альфа",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        second_product = Product.objects.create(
+            short_name="B",
+            name_en="Beta",
+            name_ru="Бета",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Оптимизация",
+            position=2,
+        )
+        proposal = ProposalRegistration.objects.create(
+            number=3333,
+            group_member=group_member,
+            type=second_product,
+            name="Общий график",
+            year=2026,
+            advance_percent="40",
+            advance_term_days=10,
+            preliminary_report_percent="40",
+            preliminary_report_term_days=7,
+            final_report_percent="20",
+            final_report_term_days=15,
+        )
+        ProposalRegistrationProduct.objects.bulk_create(
+            [
+                ProposalRegistrationProduct(proposal=proposal, product=first_product, rank=1),
+                ProposalRegistrationProduct(proposal=proposal, product=second_product, rank=2),
+            ]
+        )
+
+        _, lists, _ = resolve_variables(
+            proposal,
+            [ProposalVariable(key="[[payment_schedule]]", is_computed=True)],
+        )
+        items = lists["[[payment_schedule]]"]
+
+        self.assertEqual(items[0]["runs"][0]["text"], "общий для всех этапов:")
+        self.assertEqual(items[0]["left_indent_cm"], 1.0)
+        self.assertNotIn("paragraph_style", items[0])
+        self.assertEqual(items[1]["left_indent_cm"], 1.0)
+        self.assertEqual(items[1]["paragraph_style"], "list_paragraph")
+        self.assertTrue(items[1]["contextual_spacing"])
+        self.assertEqual(
+            items[1]["runs"][0]["text"],
+            "40% — предоплата при подписании контракта — в течение 10 календарных дней.",
+        )
+
+    def test_resolve_payment_schedule_for_per_stage_schedule_uses_stage_payloads(self):
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        first_product = Product.objects.create(
+            short_name="TDD",
+            name_en="Technical Due Diligence",
+            name_ru="ТДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        second_product = Product.objects.create(
+            short_name="JORC",
+            name_en="JORC Report",
+            name_ru="JORC",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Оптимизация",
+            position=2,
+        )
+        ServiceGoalReport.objects.create(product=first_product, product_name="Технический аудит", position=1)
+        ServiceGoalReport.objects.create(product=second_product, product_name="Отчёт JORC", position=1)
+        proposal = ProposalRegistration.objects.create(
+            number=3333,
+            group_member=group_member,
+            type=second_product,
+            name="Поэтапный график",
+            year=2026,
+            stage_payloads_json=[
+                {
+                    "rank": 1,
+                    "product_id": first_product.pk,
+                    "payment_schedule_common": False,
+                    "advance_percent": "30",
+                    "advance_term_days": 5,
+                    "preliminary_report_percent": "20",
+                    "preliminary_report_term_days": 6,
+                    "final_report_percent": "50",
+                    "final_report_term_days": 14,
+                },
+                {
+                    "rank": 2,
+                    "product_id": second_product.pk,
+                    "payment_schedule_common": False,
+                    "advance_percent": "50",
+                    "advance_term_days": 10,
+                    "preliminary_report_percent": "30",
+                    "preliminary_report_term_days": 7,
+                    "final_report_percent": "20",
+                    "final_report_term_days": 21,
+                },
+            ],
+        )
+        ProposalRegistrationProduct.objects.bulk_create(
+            [
+                ProposalRegistrationProduct(proposal=proposal, product=first_product, rank=1),
+                ProposalRegistrationProduct(proposal=proposal, product=second_product, rank=2),
+            ]
+        )
+
+        _, lists, _ = resolve_variables(
+            proposal,
+            [ProposalVariable(key="[[payment_schedule]]", is_computed=True)],
+        )
+        texts = [item["runs"][0]["text"] for item in lists["[[payment_schedule]]"]]
+
+        self.assertEqual(texts[0], "Этап 1 — Технический аудит:")
+        self.assertEqual(texts[1], "30% — предоплата при подписании контракта — в течение 5 календарных дней.")
+        self.assertIn("на 50% суммы договора", texts[2])
+        self.assertEqual(texts[4], "Этап 2 — Отчёт JORC:")
+        self.assertEqual(texts[5], "50% — предоплата при подписании контракта — в течение 10 календарных дней.")
+        self.assertEqual(lists["[[payment_schedule]]"][1]["left_indent_cm"], 1.0)
+        self.assertEqual(lists["[[payment_schedule]]"][1]["paragraph_style"], "list_paragraph")
+        self.assertTrue(lists["[[payment_schedule]]"][1]["contextual_spacing"])
+        self.assertNotIn("left_indent_cm", lists["[[payment_schedule]]"][4])
 
     def test_resolve_preliminary_report_term_month_uses_month_declension(self):
         cases = [
@@ -4662,6 +5119,9 @@ class ProposalFormContextTests(TestCase):
         self.assertContains(response, 'id="proposal-service-stages-container"', html=False)
         self.assertContains(response, 'id="proposal-commercial-stages-container"', html=False)
         self.assertContains(response, 'id="proposal-stage-terms-tbody"', html=False)
+        self.assertContains(response, "График оплаты", html=False)
+        self.assertContains(response, "Общий для всех этапов", html=False)
+        self.assertContains(response, 'name="payment_schedule_common"', html=False)
         self.assertContains(response, "Состав услуг / техническое задание", html=False)
         self.assertContains(response, "Коммерческое предложение", html=False)
         self.assertNotContains(response, "Состав услуг / техническое задание: Этап 1", html=False)

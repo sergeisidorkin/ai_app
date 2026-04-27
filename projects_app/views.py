@@ -84,8 +84,13 @@ def staff_required(user):
 
 def _confirmed_project_ids_for_expert(user):
     employee = getattr(user, "employee_profile", None)
-    if getattr(employee, "role", "") != EXPERT_GROUP:
+    is_expert = getattr(employee, "role", "") == EXPERT_GROUP
+    if not is_expert and user and getattr(user, "is_authenticated", False):
+        is_expert = user.groups.filter(name=EXPERT_GROUP).exists()
+    if not is_expert:
         return None
+    if not employee:
+        return []
     return list(
         Performer.objects
         .filter(

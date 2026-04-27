@@ -541,7 +541,7 @@ class ServiceGoalReportForm(forms.ModelForm):
 
     class Meta:
         model = ServiceGoalReport
-        fields = ["product", "service_goal", "service_goal_genitive", "report_title"]
+        fields = ["product", "service_goal", "service_goal_genitive", "report_title", "product_name"]
         widgets = {
             "service_goal": forms.Textarea(attrs={
                 "class": "form-control",
@@ -555,8 +555,12 @@ class ServiceGoalReportForm(forms.ModelForm):
             }),
             "report_title": forms.Textarea(attrs={
                 "class": "form-control",
-                "placeholder": "Название отчета",
+                "placeholder": "Титул отчета/ТКП",
                 "rows": 4,
+            }),
+            "product_name": forms.TextInput(attrs={
+                "class": "form-control",
+                "placeholder": "Название продукта",
             }),
         }
 

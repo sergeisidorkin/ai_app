@@ -876,6 +876,24 @@ class ExpertProjectVisibilityTests(TestCase):
         self.assertNotContains(response, self.declined_project.short_uid)
         self.assertNotContains(response, "Отклоненный актив")
 
+    def test_group_expert_with_empty_employee_role_is_still_filtered(self):
+        self.employee.role = ""
+        self.employee.save(update_fields=["role"])
+        expert_group, _ = Group.objects.get_or_create(name=EXPERT_GROUP)
+        self.user.groups.add(expert_group)
+
+        projects_response = self.client.get(reverse("projects_partial"))
+        performers_response = self.client.get(reverse("performers_partial"))
+
+        self.assertEqual(projects_response.status_code, 200)
+        self.assertContains(projects_response, self.confirmed_project.name)
+        self.assertNotContains(projects_response, self.declined_project.name)
+        self.assertNotContains(projects_response, "Отклоненный актив")
+        self.assertEqual(performers_response.status_code, 200)
+        self.assertContains(performers_response, self.confirmed_project.name)
+        self.assertNotContains(performers_response, self.declined_project.name)
+        self.assertNotContains(performers_response, "Отклоненный актив")
+
 
 class CloudStorageProjectRoutingTests(TestCase):
     def setUp(self):

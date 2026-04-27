@@ -391,3 +391,48 @@ class ContractVariableResolverTests(TestCase):
         self.assertEqual(replacements["{{corr_account}}"], "30101810400000000225")
         self.assertEqual(replacements["{{corr_bank_settlement_account}}"], "30101810945250000225")
         self.assertEqual(replacements["{{legacy_bank_swift}}"], "SABRRUMM")
+
+    def test_contacts_short_name_falls_back_to_performer_employee_person_record(self):
+        user = get_user_model().objects.create_user(
+            username="resolver-performer-person",
+            password="secret",
+        )
+        person = PersonRecord.objects.create(
+            last_name="Петров",
+            first_name="Петр",
+            middle_name="Петрович",
+            position=1,
+        )
+        employee = Employee.objects.create(user=user, person_record=person)
+        product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        project = ProjectRegistration.objects.create(
+            number=7003,
+            type=product,
+            name="Проект без профиля эксперта",
+            year=2026,
+        )
+        performer = Performer.objects.create(
+            registration=project,
+            employee=employee,
+            executor="Петров Петр Петрович",
+        )
+        variables = [
+            ContractVariable(
+                key="{{short_name}}",
+                source_section="contacts",
+                source_table="persons",
+                source_column="short_name",
+            ),
+        ]
+
+        replacements, lists = resolve_variables(performer, variables)
+
+        self.assertEqual(lists, {})
+        self.assertEqual(replacements["{{short_name}}"], "Петров П.П.")

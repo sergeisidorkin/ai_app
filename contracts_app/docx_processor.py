@@ -344,6 +344,44 @@ def _apply_paragraph_alignment(p_pr, alignment: str | None) -> None:
     p_pr.append(jc)
 
 
+def _apply_paragraph_style(p_pr, style_id: str | None) -> None:
+    style_id = str(style_id or "").strip()
+    if not style_id:
+        return
+    from docx.oxml import OxmlElement
+
+    p_style = p_pr.find(qn("w:pStyle"))
+    if p_style is None:
+        p_style = OxmlElement("w:pStyle")
+        p_pr.insert(0, p_style)
+    p_style.set(qn("w:val"), style_id)
+
+
+def _apply_paragraph_left_indent(p_pr, left_indent_cm) -> None:
+    if left_indent_cm in (None, ""):
+        return
+    try:
+        left_twips = int(round(Cm(float(left_indent_cm)).twips))
+    except (TypeError, ValueError):
+        return
+    from docx.oxml import OxmlElement
+
+    indent = p_pr.find(qn("w:ind"))
+    if indent is None:
+        indent = OxmlElement("w:ind")
+        p_pr.append(indent)
+    indent.set(qn("w:left"), str(max(0, left_twips)))
+
+
+def _apply_contextual_spacing(p_pr, enabled) -> None:
+    if not enabled:
+        return
+    from docx.oxml import OxmlElement
+
+    if p_pr.find(qn("w:contextualSpacing")) is None:
+        p_pr.append(OxmlElement("w:contextualSpacing"))
+
+
 def _insert_rich_paragraphs(
     anchor,
     parent,
@@ -352,6 +390,7 @@ def _insert_rich_paragraphs(
     bullet_num_id: str,
     multilevel_num_id: str,
     bullet_style_id: str,
+    list_paragraph_style_id: str,
     source_rPr,
     render_plain: bool = False,
     language_code: str | None = None,
@@ -387,7 +426,14 @@ def _insert_rich_paragraphs(
             num_pr.append(ilvl)
             num_pr.append(num_id)
             p_pr.append(num_pr)
+        paragraph_style = str(item.get("paragraph_style") or "").strip()
+        paragraph_style_id = str(item.get("paragraph_style_id") or "").strip()
+        if paragraph_style == "list_paragraph" and not paragraph_style_id:
+            paragraph_style_id = list_paragraph_style_id
+        _apply_paragraph_style(p_pr, paragraph_style_id)
         _apply_paragraph_alignment(p_pr, item.get("alignment"))
+        _apply_paragraph_left_indent(p_pr, item.get("left_indent_cm"))
+        _apply_contextual_spacing(p_pr, item.get("contextual_spacing"))
         if len(p_pr):
             new_p.append(p_pr)
         runs = item.get("runs") if isinstance(item.get("runs"), list) else []
@@ -492,6 +538,7 @@ def _replace_list_in_paragraph(
     bullet_num_id: str,
     multilevel_num_id: str,
     bullet_style_id: str,
+    list_paragraph_style_id: str = "",
     plain_list_keys: set[str] | None = None,
     default_language_code: str | None = None,
 ) -> bool:
@@ -574,6 +621,7 @@ def _replace_list_in_paragraph(
             bullet_num_id=bullet_num_id,
             multilevel_num_id=multilevel_num_id,
             bullet_style_id=bullet_style_id,
+            list_paragraph_style_id=list_paragraph_style_id,
             source_rPr=source_rPr,
             render_plain=is_plain_list,
             language_code=language_code,
@@ -1149,6 +1197,34 @@ def _find_bullet_style_id(doc) -> str:
         return ""
 
 
+def _find_list_paragraph_style_id(doc) -> str:
+    style_name = "Payment Schedule Paragraph"
+    for style in doc.styles:
+        if style.name == style_name:
+            try:
+                p_pr = style.element.get_or_add_pPr()
+                num_pr = p_pr.find(qn("w:numPr"))
+                if num_pr is not None:
+                    p_pr.remove(num_pr)
+            except Exception:
+                pass
+            return style.style_id
+    try:
+        from docx.enum.style import WD_STYLE_TYPE
+        style = doc.styles.add_style(style_name, WD_STYLE_TYPE.PARAGRAPH)
+        style.base_style = doc.styles["Normal"]
+        try:
+            p_pr = style.element.get_or_add_pPr()
+            num_pr = p_pr.find(qn("w:numPr"))
+            if num_pr is not None:
+                p_pr.remove(num_pr)
+        except Exception:
+            pass
+        return style.style_id
+    except Exception:
+        return "PaymentScheduleParagraph"
+
+
 # ---------------------------------------------------------------------------
 
 def _process_paragraphs(
@@ -1167,6 +1243,7 @@ def _process_list_paragraphs(
     bullet_num_id: str,
     multilevel_num_id: str,
     bullet_style_id: str,
+    list_paragraph_style_id: str = "",
     plain_list_keys: set[str] | None = None,
     default_language_code: str | None = None,
 ) -> None:
@@ -1174,7 +1251,7 @@ def _process_list_paragraphs(
         _replace_list_in_paragraph(
             para, list_replacements,
             bullet_num_id, multilevel_num_id, bullet_style_id,
-            plain_list_keys, default_language_code,
+            list_paragraph_style_id, plain_list_keys, default_language_code,
         )
 
 
@@ -1186,6 +1263,7 @@ def _process_tables(
     bullet_num_id: str = "",
     multilevel_num_id: str = "",
     bullet_style_id: str = "",
+    list_paragraph_style_id: str = "",
     plain_list_keys: set[str] | None = None,
     default_language_code: str | None = None,
 ) -> None:
@@ -1202,12 +1280,12 @@ def _process_tables(
                     _process_list_paragraphs(
                         cell.paragraphs, list_replacements,
                         bullet_num_id, multilevel_num_id, bullet_style_id,
-                        plain_list_keys, default_language_code,
+                        list_paragraph_style_id, plain_list_keys, default_language_code,
                     )
                 _process_paragraphs(cell.paragraphs, replacements, language_code=default_language_code)
                 _process_tables(
                     cell.tables, replacements, table_replacements, list_replacements,
-                    bullet_num_id, multilevel_num_id, bullet_style_id,
+                    bullet_num_id, multilevel_num_id, bullet_style_id, list_paragraph_style_id,
                     plain_list_keys, default_language_code,
                 )
 
@@ -1481,6 +1559,7 @@ def process_template(
     bullet_num_id = ""
     multilevel_num_id = ""
     bullet_style_id = ""
+    list_paragraph_style_id = ""
 
     if table_replacements:
         _process_table_placeholders(
@@ -1499,16 +1578,18 @@ def process_template(
         except Exception:
             pass
         bullet_style_id = _find_bullet_style_id(doc)
+        list_paragraph_style_id = _find_list_paragraph_style_id(doc)
         _process_list_paragraphs(
             doc.paragraphs, list_replacements,
-            bullet_num_id, multilevel_num_id, bullet_style_id,
+            bullet_num_id, multilevel_num_id, bullet_style_id, list_paragraph_style_id,
             plain_list_keys, default_language_code,
         )
 
     _process_paragraphs(doc.paragraphs, replacements, language_code=default_language_code)
     _process_tables(
         doc.tables, replacements, table_replacements, list_replacements,
-        bullet_num_id, multilevel_num_id, bullet_style_id, plain_list_keys, default_language_code,
+        bullet_num_id, multilevel_num_id, bullet_style_id, list_paragraph_style_id,
+        plain_list_keys, default_language_code,
     )
 
     for section in doc.sections:
@@ -1527,7 +1608,7 @@ def process_template(
                 if list_replacements:
                     _process_list_paragraphs(
                         header_footer.paragraphs, list_replacements,
-                        bullet_num_id, multilevel_num_id, bullet_style_id,
+                        bullet_num_id, multilevel_num_id, bullet_style_id, list_paragraph_style_id,
                         plain_list_keys, default_language_code,
                     )
                 _process_paragraphs(
@@ -1537,7 +1618,7 @@ def process_template(
                 )
                 _process_tables(
                     header_footer.tables, replacements, table_replacements, list_replacements,
-                    bullet_num_id, multilevel_num_id, bullet_style_id,
+                    bullet_num_id, multilevel_num_id, bullet_style_id, list_paragraph_style_id,
                     plain_list_keys, default_language_code,
                 )
 

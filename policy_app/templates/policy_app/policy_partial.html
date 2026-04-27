@@ -318,7 +318,8 @@
                 <th>Продукт</th>
                 <th>Цели оказания услуг</th>
                 <th>Цели оказания услуг в родительном падеже</th>
-                <th>Название отчета</th>
+                <th>Титул отчета/ТКП</th>
+                <th>Название продукта</th>
             </tr>
             </thead>
             <tbody>
@@ -343,9 +344,10 @@
                     <td>{{ item.service_goal }}</td>
                     <td>{{ item.service_goal_genitive }}</td>
                     <td>{{ item.report_title }}</td>
+                    <td>{{ item.product_name }}</td>
                 </tr>
             {% empty %}
-                <tr><td colspan="5" class="text-muted">Пока нет данных.</td></tr>
+                <tr><td colspan="6" class="text-muted">Пока нет данных.</td></tr>
             {% endfor %}
             </tbody>
         </table>

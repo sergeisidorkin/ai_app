@@ -99,7 +99,8 @@ COLUMN_REGISTRY = {
                     "product": "Продукт",
                     "service_goal": "Цели оказания услуг",
                     "service_goal_genitive": "Цели оказания услуг в родительном падеже",
-                    "report_title": "Название отчета",
+                    "report_title": "Титул отчета/ТКП",
+                    "product_name": "Название продукта",
                 },
             },
             "section_structure": {
