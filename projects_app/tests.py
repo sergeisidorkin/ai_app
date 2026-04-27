@@ -13,7 +13,7 @@ from core.models import CloudStorageSettings
 from contracts_app.models import ContractTemplate
 from nextcloud_app.models import NextcloudUserLink
 from notifications_app.models import Notification
-from policy_app.models import LAWYER_GROUP, Product
+from policy_app.models import EXPERT_GROUP, LAWYER_GROUP, Product
 from projects_app.models import (
     ContractProjectTargetFolder,
     LegalEntity,
@@ -794,6 +794,89 @@ class ProjectProductLinkSyncTests(TestCase):
         self.assertNotContains(response, '<td class="text-nowrap">DD</td>', html=False)
 
 
+class ExpertProjectVisibilityTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="projects-expert",
+            password="secret",
+            is_staff=True,
+            first_name="Иван",
+            last_name="Эксперт",
+        )
+        self.employee = Employee.objects.create(
+            user=self.user,
+            patronymic="Иванович",
+            role=EXPERT_GROUP,
+        )
+        self.client.force_login(self.user)
+        self.product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        self.confirmed_project = ProjectRegistration.objects.create(
+            number=7001,
+            type=self.product,
+            name="Подтвержденный проект",
+            year=2026,
+        )
+        self.declined_project = ProjectRegistration.objects.create(
+            number=7002,
+            type=self.product,
+            name="Отклоненный проект",
+            year=2026,
+        )
+        WorkVolume.objects.create(
+            project=self.confirmed_project,
+            name="Подтвержденный актив",
+            asset_name="Подтвержденный актив",
+            manager="Менеджер",
+        )
+        WorkVolume.objects.create(
+            project=self.declined_project,
+            name="Отклоненный актив",
+            asset_name="Отклоненный актив",
+            manager="Менеджер",
+        )
+        Performer.objects.create(
+            registration=self.confirmed_project,
+            asset_name="Подтвержденный актив",
+            executor=Performer.employee_full_name(self.employee),
+            employee=self.employee,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+        )
+        Performer.objects.create(
+            registration=self.declined_project,
+            asset_name="Отклоненный актив",
+            executor=Performer.employee_full_name(self.employee),
+            employee=self.employee,
+            participation_response=Performer.ParticipationResponse.DECLINED,
+        )
+
+    def test_projects_partial_for_expert_shows_only_confirmed_participation_projects(self):
+        response = self.client.get(reverse("projects_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, self.confirmed_project.name)
+        self.assertContains(response, self.confirmed_project.short_uid)
+        self.assertNotContains(response, self.declined_project.name)
+        self.assertNotContains(response, self.declined_project.short_uid)
+        self.assertNotContains(response, "Отклоненный актив")
+
+    def test_performers_partial_for_expert_shows_only_confirmed_participation_projects(self):
+        response = self.client.get(reverse("performers_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, self.confirmed_project.name)
+        self.assertContains(response, self.confirmed_project.short_uid)
+        self.assertNotContains(response, self.declined_project.name)
+        self.assertNotContains(response, self.declined_project.short_uid)
+        self.assertNotContains(response, "Отклоненный актив")
+
+
 class CloudStorageProjectRoutingTests(TestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user(
@@ -852,7 +935,7 @@ class CloudStorageProjectRoutingTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["storage_label"], "Nextcloud")
 
-    def test_performers_partial_uses_current_primary_cloud_label_in_contract_modal(self):
+    def test_performers_partial_no_longer_renders_contract_conclusion_table(self):
         settings_obj = CloudStorageSettings.get_solo()
         settings_obj.primary_storage = CloudStorageSettings.PrimaryStorage.NEXTCLOUD
         settings_obj.save()
@@ -860,11 +943,8 @@ class CloudStorageProjectRoutingTests(TestCase):
         response = self.client.get(reverse("performers_partial"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(
-            response,
-            "На Nextcloud в целевой папке будут созданы папки исполнителей с проектами договоров.",
-            html=False,
-        )
+        self.assertNotContains(response, "Заключение договора")
+        self.assertNotContains(response, "create-contract-progress-modal")
 
     def test_performers_partial_uses_current_primary_cloud_label_in_source_data_modal(self):
         settings_obj = CloudStorageSettings.get_solo()

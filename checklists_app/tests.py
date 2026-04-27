@@ -2,8 +2,9 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 
-from policy_app.models import Product, TypicalSection
+from policy_app.models import EXPERT_GROUP, Product, TypicalSection
 from projects_app.models import Performer, ProjectRegistration
+from users_app.models import Employee
 
 from checklists_app.models import SharedChecklistLink
 from checklists_app.views import _project_options
@@ -78,6 +79,43 @@ class ChecklistFilterTests(TestCase):
         self.assertGreaterEqual(len(options), 2)
         self.assertEqual(options[0]["id"], self.project_high.id)
         self.assertEqual(options[1]["id"], self.project_low.id)
+
+    def test_expert_panel_project_options_show_only_confirmed_participation_projects(self):
+        expert_user = get_user_model().objects.create_user(
+            username="checklists-expert",
+            password="secret",
+            is_staff=True,
+            first_name="Иван",
+            last_name="Эксперт",
+        )
+        expert_employee = Employee.objects.create(
+            user=expert_user,
+            patronymic="Иванович",
+            role=EXPERT_GROUP,
+        )
+        Performer.objects.create(
+            registration=self.project_high,
+            asset_name="Asset B",
+            executor=Performer.employee_full_name(expert_employee),
+            employee=expert_employee,
+            typical_section=self.section_accounting,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+        )
+        Performer.objects.create(
+            registration=self.project_low,
+            asset_name="Asset C",
+            executor=Performer.employee_full_name(expert_employee),
+            employee=expert_employee,
+            typical_section=self.section_accounting,
+            participation_response=Performer.ParticipationResponse.DECLINED,
+        )
+        self.client.force_login(expert_user)
+
+        response = self.client.get(reverse("checklists_app:panel_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, self.project_high.name)
+        self.assertNotContains(response, self.project_low.name)
 
     def test_internal_project_meta_sections_show_only_accounting_type_section_rows(self):
         response = self.client.get(

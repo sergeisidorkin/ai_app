@@ -3,7 +3,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from letters_app.models import LetterTemplate
-from policy_app.models import ADMIN_GROUP, DIRECTOR_GROUP
+from policy_app.models import ADMIN_GROUP, DIRECTION_DIRECTOR_GROUP, DIRECTOR_GROUP
 from users_app.models import Employee
 
 from .services import render_subject, render_template
@@ -41,6 +41,16 @@ class LetterTemplatePermissionTests(TestCase):
             is_staff=True,
         )
         Employee.objects.create(user=self.director, role=DIRECTOR_GROUP)
+
+        self.direction_director = user_model.objects.create_user(
+            username="direction-director",
+            password="testpass123",
+            first_name="Олег",
+            last_name="Директор",
+            is_superuser=True,
+            is_staff=True,
+        )
+        Employee.objects.create(user=self.direction_director, role=DIRECTION_DIRECTOR_GROUP)
 
         self.admin = user_model.objects.create_user(
             username="admin",
@@ -102,6 +112,29 @@ class LetterTemplatePermissionTests(TestCase):
         personal_template = LetterTemplate.objects.get(template_type=self.template_type, user=self.director)
         self.assertEqual(personal_template.subject_template, "Тема директора")
         self.assertEqual(personal_template.body_html, "<p>Личный шаблон директора</p>")
+        self.assertContains(response, "Ваш шаблон")
+
+    def test_direction_director_save_creates_personal_template_instead_of_overwriting_shared(self):
+        self.client.force_login(self.direction_director)
+
+        response = self.client.post(
+            reverse("letter_template_save", args=[self.template_type]),
+            {
+                "subject_template": "Тема директора направления",
+                "body_html": "<p>Личный шаблон директора направления</p>",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.default_template.refresh_from_db()
+        self.assertEqual(self.default_template.subject_template, "Общая тема")
+        self.assertEqual(self.default_template.body_html, "<p>Общий шаблон</p>")
+        personal_template = LetterTemplate.objects.get(
+            template_type=self.template_type,
+            user=self.direction_director,
+        )
+        self.assertEqual(personal_template.subject_template, "Тема директора направления")
+        self.assertEqual(personal_template.body_html, "<p>Личный шаблон директора направления</p>")
         self.assertContains(response, "Ваш шаблон")
 
     def test_admin_save_still_updates_shared_template(self):

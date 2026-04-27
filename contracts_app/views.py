@@ -2,7 +2,9 @@ import logging
 import os
 
 from django.contrib.auth.decorators import login_required, user_passes_test
+from django.db import models
 from django.db.models import Max, Sum, Q
+from django.db.models.functions import Trim
 from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.shortcuts import render, get_object_or_404
 from django.utils import timezone
@@ -20,7 +22,8 @@ from core.cloud_storage import (
 from nextcloud_app.api import NextcloudApiClient, NextcloudApiError
 from nextcloud_app.models import NextcloudUserLink
 from notifications_app.models import Notification, NotificationPerformerLink
-from projects_app.models import Performer, ProjectRegistration
+from projects_app.models import Performer, ProjectRegistration, ProjectRegistrationProduct
+from users_app.forms import FREELANCER_LABEL
 from .forms import (
     ContractEditForm,
     ContractProjectRegistrationForm,
@@ -47,6 +50,58 @@ CT_HX_EVENT = "contract-templates-updated"
 
 
 def _contracts_context(user=None):
+    active_participation_statuses = ["Не начат", "В работе"]
+    registration_products_prefetch = models.Prefetch(
+        "registration__product_links",
+        queryset=(
+            ProjectRegistrationProduct.objects
+            .select_related("product")
+            .order_by("rank", "id")
+        ),
+    )
+    project_products_prefetch = models.Prefetch(
+        "product_links",
+        queryset=(
+            ProjectRegistrationProduct.objects
+            .select_related("product")
+            .order_by("rank", "id")
+        ),
+    )
+    contract_conclusion_performers = (
+        Performer.objects
+        .select_related(
+            "registration",
+            "registration__type",
+            "typical_section",
+            "typical_section__product",
+            "employee",
+            "employee__user",
+            "currency",
+        )
+        .prefetch_related(registration_products_prefetch)
+        .annotate(executor_trim=Trim("executor"))
+        .filter(
+            registration__status__in=active_participation_statuses,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+            employee__employment=FREELANCER_LABEL,
+        )
+        .exclude(executor_trim="")
+        .order_by("registration_id", "executor", "asset_name", "position", "id")
+    )
+    contract_conclusion_project_ids = (
+        contract_conclusion_performers
+        .values_list("registration_id", flat=True)
+        .distinct()
+    )
+    contract_conclusion_projects = (
+        ProjectRegistration.objects
+        .select_related("type")
+        .prefetch_related(project_products_prefetch)
+        .filter(id__in=contract_conclusion_project_ids)
+        .order_by("-number", "-id")
+    )
+    contract_request_sent_initial = timezone.localtime().replace(second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M")
+
     all_performers = (
         Performer.objects
         .select_related(
@@ -137,6 +192,9 @@ def _contracts_context(user=None):
     return {
         "contracts": contracts,
         "contract_projects": contract_projects,
+        "contract_conclusion_performers": contract_conclusion_performers,
+        "contract_conclusion_projects": contract_conclusion_projects,
+        "contract_request_sent_initial": contract_request_sent_initial,
         "batch_badge_map": batch_badge_map,
         "lawyer_badge_map": lawyer_badge_map,
         "is_expert": is_expert,

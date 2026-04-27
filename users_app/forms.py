@@ -1,10 +1,11 @@
 from django import forms
 from django.contrib.auth.models import User, Group
 from django.contrib.auth.password_validation import validate_password
+from django.db.models import Case, IntegerField, Value, When
 
 from contacts_app.models import PersonRecord
 from group_app.models import GroupMember, OrgUnit
-from policy_app.models import SUPERUSER_GROUPS
+from policy_app.models import ROLE_GROUPS_ORDER, SUPERUSER_GROUPS
 from .models import Employee, PendingRegistration
 
 FREELANCER_LABEL = "Внештатный сотрудник"
@@ -16,6 +17,15 @@ def _employment_choices():
         choices.append((gm.short_name, gm.short_name))
     choices.append((FREELANCER_LABEL, FREELANCER_LABEL))
     return choices
+
+
+def _role_queryset():
+    order_expr = Case(
+        *[When(name=name, then=Value(index)) for index, name in enumerate(ROLE_GROUPS_ORDER)],
+        default=Value(len(ROLE_GROUPS_ORDER)),
+        output_field=IntegerField(),
+    )
+    return Group.objects.annotate(_role_order=order_expr).order_by("_role_order", "name")
 
 
 class EmployeeForm(forms.Form):
@@ -85,7 +95,7 @@ class EmployeeForm(forms.Form):
     )
     role = forms.ModelChoiceField(
         label="Роль",
-        queryset=Group.objects.all(),
+        queryset=Group.objects.none(),
         required=False,
         empty_label="---------",
         widget=forms.Select(attrs={"class": "form-select"}),
@@ -98,6 +108,7 @@ class EmployeeForm(forms.Form):
         self.fields["employment"].choices = _employment_choices()
         self.fields["department"].queryset = OrgUnit.objects.select_related("company").all()
         self.fields["department"].label_from_instance = lambda obj: obj.department_name
+        self.fields["role"].queryset = _role_queryset()
         if instance:
             self.fields["password"].help_text = "Оставьте пустым, чтобы не менять"
             user = instance.user

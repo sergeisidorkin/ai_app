@@ -49,6 +49,7 @@ from core.cloud_storage import (
     upload_file as cloud_upload_file,
 )
 from policy_app.models import (
+    EXPERT_GROUP,
     LAWYER_GROUP,
     Product,
     TypicalSection,
@@ -80,7 +81,24 @@ HX_PROJECTS_UPDATED_EVENT = "projects-updated"
 def staff_required(user):
     return user.is_authenticated and user.is_staff
 
-def _projects_context():
+
+def _confirmed_project_ids_for_expert(user):
+    employee = getattr(user, "employee_profile", None)
+    if getattr(employee, "role", "") != EXPERT_GROUP:
+        return None
+    return list(
+        Performer.objects
+        .filter(
+            employee=employee,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+        )
+        .values_list("registration_id", flat=True)
+        .distinct()
+    )
+
+
+def _projects_context(user=None):
+    expert_project_ids = _confirmed_project_ids_for_expert(user)
     product_prefetch = models.Prefetch(
         "product_links",
         queryset=ProjectRegistrationProduct.objects.select_related("product").order_by("rank", "id"),
@@ -91,6 +109,8 @@ def _projects_context():
         .prefetch_related(product_prefetch)
         .all()
     )
+    if expert_project_ids is not None:
+        registrations = registrations.filter(id__in=expert_project_ids)
     work_items = (
         WorkVolume.objects
         .select_related("project", "project__group_member", "project__type", "country")
@@ -102,6 +122,8 @@ def _projects_context():
         )
         .all()
     )
+    if expert_project_ids is not None:
+        work_items = work_items.filter(project_id__in=expert_project_ids)
     legal_entities = (
         LegalEntity.objects
         .select_related(
@@ -125,6 +147,8 @@ def _projects_context():
         )
         .all()
     )
+    if expert_project_ids is not None:
+        legal_entities = legal_entities.filter(project_id__in=expert_project_ids)
     legal_projects = (
         ProjectRegistration.objects
         .select_related("type")
@@ -133,6 +157,8 @@ def _projects_context():
         .distinct()
         .order_by("-number", "-id")
     )
+    if expert_project_ids is not None:
+        legal_projects = legal_projects.filter(id__in=expert_project_ids)
     work_projects = (
         ProjectRegistration.objects
         .select_related("type")
@@ -141,12 +167,16 @@ def _projects_context():
         .distinct()
         .order_by("-number", "-id")
     )
+    if expert_project_ids is not None:
+        work_projects = work_projects.filter(id__in=expert_project_ids)
     reg_filter_projects = (
         ProjectRegistration.objects
         .select_related("type")
         .prefetch_related(product_prefetch)
         .order_by("-number", "-id")
     )
+    if expert_project_ids is not None:
+        reg_filter_projects = reg_filter_projects.filter(id__in=expert_project_ids)
     return {
         "registrations": registrations,
         "reg_filter_projects": reg_filter_projects,
@@ -317,7 +347,7 @@ def _save_ranked_registration_products(registration, product_ids):
     _sync_project_registration_primary_product(registration.pk)
 
 def _render_projects_updated(request):
-    resp = render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context())
+    resp = render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
     resp[HX_TRIGGER_HEADER] = HX_PROJECTS_UPDATED_EVENT
     return resp
 
@@ -366,7 +396,7 @@ def _sync_selection_kwargs(request, prefix):
 @login_required
 @require_http_methods(["GET"])
 def projects_partial(request):
-    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context())
+    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
 
 # --- Регистрация проекта ---
 
@@ -769,7 +799,7 @@ def work_move_up(request, pk: int):
         _normalize_work_positions(pid)
 
     # ВОЗВРАЩАЕМ ТОЛЬКО ФРАГМЕНТ БЕЗ HX-Trigger — чтобы не было двойной перерисовки
-    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context())
+    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
 
 @require_http_methods(["POST", "GET"])
 @login_required
@@ -792,7 +822,7 @@ def work_move_down(request, pk: int):
         _normalize_work_positions(pid)
 
     # ВОЗВРАЩАЕМ ТОЛЬКО ФРАГМЕНТ БЕЗ HX-Trigger — чтобы не было двойной перерисовки
-    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context())
+    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
 
 @login_required
 @user_passes_test(staff_required)
@@ -867,7 +897,7 @@ def legal_entity_move_up(request, pk: int):
         LegalEntity.objects.filter(pk=prev.id).update(position=cur.position)
         _normalize_legal_positions(pid)
 
-    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context())
+    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
 
 @require_http_methods(["POST", "GET"])
 @login_required
@@ -889,7 +919,7 @@ def legal_entity_move_down(request, pk: int):
         LegalEntity.objects.filter(pk=nxt.id).update(position=cur.position)
         _normalize_legal_positions(pid)
 
-    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context())
+    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
 
 def _bind_dynamic_performer_fields(form, *, data=None, instance=None):
     """
@@ -958,6 +988,7 @@ def _bind_dynamic_performer_fields(form, *, data=None, instance=None):
             pass
 
 def _performers_context(user=None):
+    expert_project_ids = _confirmed_project_ids_for_expert(user)
     active_participation_statuses = ["Не начат", "В работе"]
     registration_products_prefetch = models.Prefetch(
         "registration__product_links",
@@ -982,6 +1013,8 @@ def _performers_context(user=None):
         .prefetch_related(registration_products_prefetch)
         .order_by("position", "id")
     )
+    if expert_project_ids is not None:
+        performers = performers.filter(registration_id__in=expert_project_ids)
     participation_performers = (
         Performer.objects
         .select_related(
@@ -999,6 +1032,8 @@ def _performers_context(user=None):
         .exclude(executor_trim="")
         .order_by("registration_id", "executor", "asset_name", "position", "id")
     )
+    if expert_project_ids is not None:
+        participation_performers = participation_performers.filter(registration_id__in=expert_project_ids)
     participation_project_ids = participation_performers.values_list("registration_id", flat=True).distinct()
     participation_projects = (
         ProjectRegistration.objects
@@ -1026,6 +1061,8 @@ def _performers_context(user=None):
         .exclude(executor_trim="")
         .order_by("registration_id", "executor", "asset_name", "position", "id")
     )
+    if expert_project_ids is not None:
+        info_request_performers = info_request_performers.filter(registration_id__in=expert_project_ids)
     info_request_project_ids = info_request_performers.values_list("registration_id", flat=True).distinct()
     info_request_projects = (
         ProjectRegistration.objects
@@ -1055,6 +1092,8 @@ def _performers_context(user=None):
         .exclude(executor_trim="")
         .order_by("registration_id", "executor", "asset_name", "position", "id")
     )
+    if expert_project_ids is not None:
+        contract_performers = contract_performers.filter(registration_id__in=expert_project_ids)
     contract_project_ids = contract_performers.values_list("registration_id", flat=True).distinct()
     contract_projects = (
         ProjectRegistration.objects

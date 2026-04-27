@@ -1,6 +1,8 @@
 {% load projects_extras %}
 
-<div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
+{% include "contracts_app/contract_conclusion_section.html" with contract_performers=contract_conclusion_performers contract_projects=contract_conclusion_projects %}
+
+<div class="d-flex align-items-center gap-3 mb-3 mt-4 table-section-header flex-wrap">
   <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
     <i class="bi bi-table"></i> Проекты договоров
   </h5>

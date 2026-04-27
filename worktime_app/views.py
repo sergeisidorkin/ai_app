@@ -2252,9 +2252,7 @@ def _apply_csv_calculated_downtime(assignments_by_id, visible_days, range_start,
             continue
         assignments_by_employee.setdefault(employee_key, []).append(assignment)
 
-    for (assignment_id, work_day), hours in parsed_values.items():
-        if hours is None:
-            continue
+    for assignment_id, work_day in parsed_values:
         assignment = assignments_by_id.get(assignment_id)
         if assignment is None or getattr(assignment, "record_type", "") == WorktimeAssignment.RecordType.DOWNTIME:
             continue

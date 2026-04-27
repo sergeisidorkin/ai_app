@@ -16,8 +16,8 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
 from core.cloud_storage import get_user_cloud_launch_url
+from policy_app.models import EXPERT_GROUP, TypicalSection
 from projects_app.models import LegalEntity, Performer, ProjectRegistration
-from policy_app.models import TypicalSection
 from requests_app.models import RequestItem, RequestTable
 
 from .models import (
@@ -236,8 +236,15 @@ def _code_cell_class(status_cells):
     return ""
 
 
-def _project_options():
-    regs = ProjectRegistration.objects.select_related("type", "group_member").order_by("-number", "-id")
+def _project_options(user=None):
+    regs = ProjectRegistration.objects.select_related("type", "group_member")
+    employee = getattr(user, "employee_profile", None)
+    if getattr(employee, "role", "") == EXPERT_GROUP:
+        regs = regs.filter(
+            performers__employee=employee,
+            performers__participation_response=Performer.ParticipationResponse.CONFIRMED,
+        ).distinct()
+    regs = regs.order_by("-number", "-id")
     options = []
     for reg in regs:
         short_uid = (reg.short_uid or "").strip()
@@ -1348,7 +1355,7 @@ def _text_update_payload(item: ChecklistItem) -> dict:
 
 @require_GET
 def panel(request):
-    project_options = _project_options()
+    project_options = _project_options(request.user)
     selected_project_uid = project_options[0]["short_uid"] if project_options else None
     selected_project = (
         ProjectRegistration.objects.select_related("type").filter(short_uid=selected_project_uid).first()

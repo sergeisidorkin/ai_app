@@ -191,6 +191,8 @@ class CloudStorageRoutingTests(TestCase):
 
 
 class HomePagePermissionsTests(TestCase):
+    FREELANCER_LABEL = "Внештатный сотрудник"
+
     def test_staff_gets_production_calendar_subsection(self):
         user = User.objects.create_user(
             username="staff-home",
@@ -226,6 +228,22 @@ class HomePagePermissionsTests(TestCase):
         self.assertNotContains(response, '<span class="link-text">Логи</span>', html=False)
         self.assertNotContains(response, 'section id="templates"', html=False)
         self.assertNotContains(response, 'section id="debugger"', html=False)
+
+    def test_freelancer_employee_does_not_get_worktime_section(self):
+        user = User.objects.create_user(
+            username="freelancer-home",
+            email="freelancer-home@example.com",
+            password="Secret123!",
+            is_staff=True,
+        )
+        Employee.objects.create(user=user, employment=self.FREELANCER_LABEL)
+        self.client.force_login(user)
+
+        response = self.client.get(reverse("home"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'href="#worktime"', html=False)
+        self.assertNotContains(response, 'section id="worktime"', html=False)
 
     def test_expert_does_not_get_classifiers_section_markup(self):
         user = User.objects.create_user(

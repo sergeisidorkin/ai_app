@@ -24,7 +24,7 @@ from .models import (
     SpecialtyTariff,
     Tariff,
     DEPARTMENT_HEAD_GROUP,
-    DIRECTOR_GROUP,
+    DIRECTOR_GROUPS,
 )
 
 OWNER_GROUP_VALUE = "__group__"
@@ -752,7 +752,7 @@ class GradeForm(forms.ModelForm):
     owner = forms.ModelChoiceField(
         label="Руководитель",
         queryset=User.objects.filter(
-            Q(groups__name=DEPARTMENT_HEAD_GROUP) | Q(groups__name=DIRECTOR_GROUP)
+            Q(groups__name__in=(DEPARTMENT_HEAD_GROUP, *DIRECTOR_GROUPS))
         ),
         required=False,
         widget=forms.Select(attrs={"class": "form-select"}),
@@ -805,7 +805,7 @@ class GradeForm(forms.ModelForm):
         self.fields["base_rate_share"].required = False
         self.fields["hourly_rate"].required = False
         self.fields["owner"].queryset = User.objects.filter(
-            Q(groups__name=DEPARTMENT_HEAD_GROUP) | Q(groups__name=DIRECTOR_GROUP)
+            Q(groups__name__in=(DEPARTMENT_HEAD_GROUP, *DIRECTOR_GROUPS))
         ).distinct().order_by("last_name", "first_name", "username")
         self.fields["owner"].label_from_instance = lambda u: (
             f"{u.last_name} {u.first_name}".strip() or u.username
@@ -846,7 +846,7 @@ class SpecialtyTariffForm(forms.ModelForm):
     owner = forms.ModelChoiceField(
         label="Руководитель",
         queryset=User.objects.filter(
-            Q(groups__name=DEPARTMENT_HEAD_GROUP) | Q(groups__name=DIRECTOR_GROUP)
+            Q(groups__name__in=(DEPARTMENT_HEAD_GROUP, *DIRECTOR_GROUPS))
         ),
         required=False,
         widget=forms.Select(attrs={"class": "form-select"}),
@@ -927,7 +927,7 @@ class SpecialtyTariffForm(forms.ModelForm):
         self.initial["expertise_direction_display"] = self._get_expertise_direction_display()
 
         self.fields["owner"].queryset = User.objects.filter(
-            Q(groups__name=DEPARTMENT_HEAD_GROUP) | Q(groups__name=DIRECTOR_GROUP)
+            Q(groups__name__in=(DEPARTMENT_HEAD_GROUP, *DIRECTOR_GROUPS))
         ).distinct().order_by("last_name", "first_name", "username")
         self.fields["owner"].label_from_instance = lambda u: (
             f"{u.last_name} {u.first_name}".strip() or u.username
@@ -989,7 +989,7 @@ class TariffForm(forms.ModelForm):
     owner = forms.ModelChoiceField(
         label="Руководитель",
         queryset=User.objects.filter(
-            Q(groups__name=DEPARTMENT_HEAD_GROUP) | Q(groups__name=DIRECTOR_GROUP)
+            Q(groups__name__in=(DEPARTMENT_HEAD_GROUP, *DIRECTOR_GROUPS))
         ),
         required=False,
         widget=forms.Select(attrs={"class": "form-select"}),
@@ -1031,7 +1031,7 @@ class TariffForm(forms.ModelForm):
             lambda obj: f"{obj.code}: {obj.name_ru or obj.name_en}"
         )
         self.fields["owner"].queryset = User.objects.filter(
-            Q(groups__name=DEPARTMENT_HEAD_GROUP) | Q(groups__name=DIRECTOR_GROUP)
+            Q(groups__name__in=(DEPARTMENT_HEAD_GROUP, *DIRECTOR_GROUPS))
         ).distinct().order_by("last_name", "first_name", "username")
         self.fields["owner"].label_from_instance = lambda u: (
             f"{u.last_name} {u.first_name}".strip() or u.username
