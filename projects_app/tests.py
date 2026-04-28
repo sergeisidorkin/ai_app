@@ -13,7 +13,13 @@ from core.models import CloudStorageSettings
 from contracts_app.models import ContractTemplate
 from nextcloud_app.models import NextcloudUserLink
 from notifications_app.models import Notification
-from policy_app.models import EXPERT_GROUP, LAWYER_GROUP, Product
+from policy_app.models import (
+    DIRECTION_DIRECTOR_GROUP,
+    EXPERT_GROUP,
+    LAWYER_GROUP,
+    PROJECTS_HEAD_GROUP,
+    Product,
+)
 from projects_app.models import (
     ContractProjectTargetFolder,
     LegalEntity,
@@ -25,7 +31,7 @@ from projects_app.models import (
     WorkVolume,
 )
 from projects_app.forms import ContractConditionsForm, LegalEntityForm, ProjectRegistrationForm, WorkVolumeForm
-from group_app.models import GroupMember
+from group_app.models import GroupMember, OrgUnit
 from users_app.models import Employee
 from unittest.mock import call, patch
 
@@ -269,6 +275,49 @@ class ProjectRegistrationFormTests(TestCase):
                     self.assertEqual(widget.input_type, "date")
                     self.assertEqual(widget.format, "%Y-%m-%d")
                     self.assertNotIn("js-date", widget.attrs.get("class", ""))
+
+    def test_project_manager_choices_include_direction_directors(self):
+        project_manager_user = get_user_model().objects.create_user(
+            username="project-manager-choice",
+            first_name="Иван",
+            last_name="Проектов",
+            is_staff=True,
+        )
+        direction_director_user = get_user_model().objects.create_user(
+            username="direction-director-choice",
+            first_name="Дарья",
+            last_name="Директорова",
+            is_staff=True,
+        )
+        expert_user = get_user_model().objects.create_user(
+            username="expert-choice",
+            first_name="Егор",
+            last_name="Экспертов",
+            is_staff=True,
+        )
+        Employee.objects.create(
+            user=project_manager_user,
+            patronymic="Иванович",
+            role=PROJECTS_HEAD_GROUP,
+        )
+        Employee.objects.create(
+            user=direction_director_user,
+            patronymic="Дмитриевна",
+            role=DIRECTION_DIRECTOR_GROUP,
+        )
+        Employee.objects.create(
+            user=expert_user,
+            patronymic="Егорович",
+            role=EXPERT_GROUP,
+        )
+
+        registration_choices = [value for value, _label in ProjectRegistrationForm().fields["project_manager"].choices]
+        work_choices = [value for value, _label in WorkVolumeForm().fields["manager"].choices]
+
+        for choices in (registration_choices, work_choices):
+            self.assertIn("Проектов Иван Иванович", choices)
+            self.assertIn("Директорова Дарья Дмитриевна", choices)
+            self.assertNotIn("Экспертов Егор Егорович", choices)
 
 
 class ProjectRegistrationFormViewTests(TestCase):
@@ -722,6 +771,44 @@ class WorkVolumePerformerCreationTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "<th class=\"text-nowrap\">Продукт</th>", html=False)
         self.assertContains(response, self.second_product.short_name)
+
+    def test_direction_director_uses_project_manager_executor_locking(self):
+        Employee.objects.create(user=self.user, role=DIRECTION_DIRECTOR_GROUP)
+        company = GroupMember.objects.create(
+            short_name="IMC",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=10,
+        )
+        direction = OrgUnit.objects.create(
+            company=company,
+            level=2,
+            department_name="Налоговое направление",
+            short_name="TAX",
+            unit_type="expertise",
+        )
+        section = self.product.sections.create(
+            code="TAX",
+            short_name="Tax",
+            short_name_ru="Налоги",
+            name_en="Tax",
+            name_ru="Налоги",
+            accounting_type="Раздел",
+            expertise_direction=direction,
+            position=4,
+        )
+        Performer.objects.create(
+            registration=self.project,
+            asset_name="Актив с направлением",
+            executor="Эксперт",
+            typical_section=section,
+        )
+
+        response = self.client.get(reverse("performers_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "performer-locked-icon")
 
 
 class ProjectProductLinkSyncTests(TestCase):

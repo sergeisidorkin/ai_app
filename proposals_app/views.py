@@ -1623,10 +1623,10 @@ def _find_proposal_template(proposal, templates):
 
     candidates.sort(
         key=lambda template: (
-            1 if _proposal_template_group_ids(template) else 0,
             1 if _proposal_template_product_ids(template) else 0,
-            -len(_proposal_template_group_ids(template)),
             -len(_proposal_template_product_ids(template)),
+            1 if _proposal_template_group_ids(template) else 0,
+            -len(_proposal_template_group_ids(template)),
             _version_key(template),
             template.pk,
         ),
