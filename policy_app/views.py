@@ -6,7 +6,7 @@ from collections import defaultdict
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.db.models import IntegerField, Max, Q, Value
 from django.db.models.functions import Coalesce
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST
 
@@ -60,6 +60,19 @@ SPECIALTY_TARIFF_FORM_TEMPLATE = "policy_app/specialty_tariff_form.html"
 TARIFF_FORM_TEMPLATE = "policy_app/tariff_form.html"
 HX_TRIGGER_HEADER = "HX-Trigger"
 HX_POLICY_UPDATED_EVENT = "policy-updated"
+SECTION_CSV_HEADERS = [
+    "Продукт",
+    "Код",
+    "Краткое имя EN",
+    "Краткое имя RU",
+    "Наименование раздела (услуги) EN",
+    "Наименование раздела (услуги) RU",
+    "Тип учета",
+    "Исполнитель",
+    "Экспертиза",
+    "Подразделение",
+    "ТКП",
+]
 
 
 def _render_form_with_errors(request, template, context):
@@ -117,6 +130,41 @@ def _get_specialty_tariffs_for_user(user):
 
 def staff_required(user):
     return user.is_authenticated and user.is_staff
+
+
+def _csv_lookup_key(value):
+    return str(value or "").strip().lower()
+
+
+def _split_csv_list_value(value, lookup=None):
+    raw = str(value or "").strip()
+    if not raw or raw in {"—", "-"}:
+        return []
+    lookup = lookup or {}
+    if _csv_lookup_key(raw) in lookup:
+        return [raw]
+
+    values = []
+    for line in raw.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        parts = [line]
+        for separator in (",", ";", "|"):
+            parts = [
+                chunk
+                for part in parts
+                for chunk in (
+                    [part] if _csv_lookup_key(part) in lookup else part.split(separator)
+                )
+            ]
+        values.extend(
+            item.strip()
+            for item in parts
+            if item.strip() and item.strip() not in {"—", "-"}
+        )
+    return values
+
+
+def _csv_truthy(value):
+    return _csv_lookup_key(value) in {"1", "true", "yes", "y", "да", "д", "on", "checked", "истина", "+", "x", "✓"}
 
 # Вспомогательные функции для устранения дублирования
 def _policy_context(request):
@@ -711,10 +759,22 @@ def section_csv_upload(request):
     if len(rows) < 2:
         return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
 
-    products_by_name = {p.short_name.strip().lower(): p for p in Product.objects.all()}
+    products_by_name = {_csv_lookup_key(p.short_name): p for p in Product.objects.all()}
+    expertise_dirs = {}
+    for direction in ExpertiseDirection.objects.all():
+        for label in (direction.short_name, direction.name):
+            key = _csv_lookup_key(label)
+            if key:
+                expertise_dirs[key] = direction
     expertise_units = {
-        u.department_name.strip().lower(): u
+        key: u
         for u in OrgUnit.objects.filter(Q(unit_type="expertise") | Q(unit_type="administrative", level=1))
+        for key in {_csv_lookup_key(u.department_name), _csv_lookup_key(u.short_name)}
+        if key
+    }
+    specialties_by_name = {
+        _csv_lookup_key(s.specialty): s
+        for s in ExpertSpecialty.objects.exclude(specialty="").all()
     }
     data_rows = rows[1:]
     created = 0
@@ -734,12 +794,21 @@ def section_csv_upload(request):
         name_en = row[4].strip() if len(row) > 4 else ""
         name_ru = row[5].strip() if len(row) > 5 else ""
         accounting_type = row[6].strip() if len(row) > 6 else "Раздел"
-        if len(row) > 8:
+        executor_raw = ""
+        expertise_dir_name = ""
+        tkp_raw = ""
+        if len(row) >= len(SECTION_CSV_HEADERS):
+            executor_raw = row[7].strip()
+            expertise_dir_name = row[8].strip()
+            expertise_name = row[9].strip()
+            tkp_raw = row[10].strip()
+        elif len(row) > 8:
+            executor_raw = row[7].strip()
             expertise_name = row[8].strip()
         else:
             expertise_name = row[7].strip() if len(row) > 7 else ""
 
-        product = products_by_name.get(product_name.lower())
+        product = products_by_name.get(_csv_lookup_key(product_name))
         if not product:
             warnings.append(f"Строка {i}: продукт «{product_name}» не найден. Доступные: {', '.join(products_by_name.keys())}.")
             continue
@@ -763,15 +832,21 @@ def section_csv_upload(request):
             warnings.append(f"Строка {i}: неизвестный тип учета «{accounting_type}». Допустимые: {', '.join(dict(TypicalSection.ACCOUNTING_TYPE_CHOICES).keys())}. Установлено «Раздел».")
             accounting_type = "Раздел"
 
+        expertise_dir = None
+        if expertise_dir_name:
+            expertise_dir = expertise_dirs.get(_csv_lookup_key(expertise_dir_name))
+            if not expertise_dir:
+                warnings.append(f"Строка {i}: экспертиза «{expertise_dir_name}» не найдена. Поле оставлено пустым.")
+
         expertise_direction = None
         if expertise_name:
-            expertise_direction = expertise_units.get(expertise_name.lower())
+            expertise_direction = expertise_units.get(_csv_lookup_key(expertise_name))
             if not expertise_direction:
-                warnings.append(f"Строка {i}: направление экспертизы «{expertise_name}» не найдено. Поле оставлено пустым.")
+                warnings.append(f"Строка {i}: подразделение «{expertise_name}» не найдено. Поле оставлено пустым.")
 
         position = _next_position(TypicalSection, {"product": product})
         try:
-            TypicalSection.objects.create(
+            section = TypicalSection.objects.create(
                 product=product,
                 code=code,
                 short_name=short_name,
@@ -779,14 +854,66 @@ def section_csv_upload(request):
                 name_en=name_en,
                 name_ru=name_ru,
                 accounting_type=accounting_type,
+                expertise_dir=expertise_dir,
                 expertise_direction=expertise_direction,
+                exclude_from_tkp_autofill=_csv_truthy(tkp_raw),
                 position=position,
             )
+            missing_specialties = []
+            for rank, specialty_name in enumerate(_split_csv_list_value(executor_raw, specialties_by_name), start=1):
+                specialty = specialties_by_name.get(_csv_lookup_key(specialty_name))
+                if not specialty:
+                    missing_specialties.append(specialty_name)
+                    continue
+                TypicalSectionSpecialty.objects.create(section=section, specialty=specialty, rank=rank)
+            if missing_specialties:
+                warnings.append(f"Строка {i}: исполнители не найдены: {', '.join(missing_specialties)}.")
             created += 1
         except Exception as exc:
             warnings.append(f"Строка {i}: ошибка сохранения — {exc}")
 
     return JsonResponse({"ok": True, "created": created, "warnings": warnings})
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def section_csv_download(request):
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=";", lineterminator="\n")
+    writer.writerow(SECTION_CSV_HEADERS)
+
+    sections = (
+        TypicalSection.objects.select_related("product", "expertise_dir", "expertise_direction")
+        .prefetch_related("ranked_specialties", "ranked_specialties__specialty")
+        .all()
+    )
+    for section in sections:
+        executor = "\n".join(
+            rs.specialty.specialty
+            for rs in section.ranked_specialties.all()
+            if rs.specialty and rs.specialty.specialty
+        )
+        writer.writerow(
+            [
+                section.product.short_name,
+                section.code,
+                section.short_name,
+                section.short_name_ru,
+                section.name_en,
+                section.name_ru,
+                section.accounting_type,
+                executor,
+                section.expertise_dir.short_name if section.expertise_dir else "",
+                section.expertise_direction.department_name if section.expertise_direction else "",
+                "Да" if section.exclude_from_tkp_autofill else "Нет",
+            ]
+        )
+
+    response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="typical_sections.csv"'
+    return response
 
 
 # --- Типовая структура раздела ---

@@ -1,3 +1,5 @@
+import csv
+import io
 import json
 from decimal import Decimal
 
@@ -24,6 +26,7 @@ from policy_app.models import (
     SpecialtyTariff,
     Tariff,
     TypicalSection,
+    TypicalSectionSpecialty,
     TypicalServiceComposition,
     TypicalServiceTerm,
 )
@@ -354,6 +357,7 @@ class TypicalSectionViewsTests(TestCase):
         self.assertContains(response, "Типовые разделы (услуги)")
         self.assertContains(response, '<th><i class="bi bi-ban me-1"></i>ТКП</th>', html=False)
         self.assertContains(response, 'aria-label="Исключить из автозаполнения в ТКП"', html=False)
+        self.assertContains(response, 'id="sections-csv-download-btn"', html=False)
 
     def test_create_section_saves_tkp_exclusion_flag(self):
         response = self.client.post(
@@ -399,6 +403,145 @@ class TypicalSectionViewsTests(TestCase):
         self.assertEqual(response.json()["created"], 1)
         self.assertEqual(response.json()["warnings"], [])
         self.assertTrue(TypicalSection.objects.filter(code="SEC-3").exists())
+
+    def test_section_csv_download_exports_current_table_columns(self):
+        owner = GroupMember.objects.create(
+            short_name="IMC",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        department = OrgUnit.objects.create(
+            company=owner,
+            level=1,
+            department_name="Налоговый департамент",
+            short_name="TAX-DEPT",
+            unit_type="expertise",
+            position=1,
+        )
+        expertise = ExpertiseDirection.objects.create(
+            name="Налоги",
+            short_name="TAX",
+            position=1,
+        )
+        specialty = ExpertSpecialty.objects.create(
+            expertise_direction=department,
+            expertise_dir=expertise,
+            specialty="Налоговый due diligence",
+            position=1,
+        )
+        section = TypicalSection.objects.create(
+            product=self.product,
+            code="SEC-4",
+            short_name="tax-dd",
+            short_name_ru="нал-dd",
+            name_en="Tax DD",
+            name_ru="Налоговый ДД",
+            accounting_type="Услуги",
+            expertise_dir=expertise,
+            expertise_direction=department,
+            exclude_from_tkp_autofill=True,
+            position=1,
+        )
+        TypicalSectionSpecialty.objects.create(section=section, specialty=specialty, rank=1)
+
+        response = self.client.get(reverse("section_csv_download"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("typical_sections.csv", response["Content-Disposition"])
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(
+            rows[0],
+            [
+                "Продукт",
+                "Код",
+                "Краткое имя EN",
+                "Краткое имя RU",
+                "Наименование раздела (услуги) EN",
+                "Наименование раздела (услуги) RU",
+                "Тип учета",
+                "Исполнитель",
+                "Экспертиза",
+                "Подразделение",
+                "ТКП",
+            ],
+        )
+        self.assertEqual(
+            rows[1],
+            [
+                "SEC",
+                "SEC-4",
+                "tax-dd",
+                "нал-dd",
+                "Tax DD",
+                "Налоговый ДД",
+                "Услуги",
+                "Налоговый due diligence",
+                "TAX",
+                "Налоговый департамент",
+                "Да",
+            ],
+        )
+
+    def test_section_csv_upload_accepts_current_table_export_columns(self):
+        owner = GroupMember.objects.create(
+            short_name="IMC",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        department = OrgUnit.objects.create(
+            company=owner,
+            level=1,
+            department_name="Налоговый департамент",
+            short_name="TAX-DEPT",
+            unit_type="expertise",
+            position=1,
+        )
+        expertise = ExpertiseDirection.objects.create(
+            name="Налоги",
+            short_name="TAX",
+            position=1,
+        )
+        first_specialty = ExpertSpecialty.objects.create(
+            expertise_direction=department,
+            expertise_dir=expertise,
+            specialty="Налоговый due diligence",
+            position=1,
+        )
+        second_specialty = ExpertSpecialty.objects.create(
+            expertise_direction=department,
+            expertise_dir=expertise,
+            specialty="Трансфертное ценообразование",
+            position=2,
+        )
+        csv_file = SimpleUploadedFile(
+            "sections.csv",
+            (
+                "Продукт;Код;Краткое имя EN;Краткое имя RU;"
+                "Наименование раздела (услуги) EN;Наименование раздела (услуги) RU;"
+                "Тип учета;Исполнитель;Экспертиза;Подразделение;ТКП\n"
+                "SEC;SEC-5;tax-dd;нал-dd;Tax DD;Налоговый ДД;Услуги;"
+                "Налоговый due diligence, Трансфертное ценообразование;TAX;Налоговый департамент;Да\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("section_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        self.assertEqual(response.json()["warnings"], [])
+        section = TypicalSection.objects.get(code="SEC-5")
+        self.assertEqual(section.expertise_dir, expertise)
+        self.assertEqual(section.expertise_direction, department)
+        self.assertTrue(section.exclude_from_tkp_autofill)
+        self.assertEqual(
+            list(section.ranked_specialties.values_list("specialty", flat=True)),
+            [first_specialty.pk, second_specialty.pk],
+        )
 
 
 class SectionStructureViewsTests(TestCase):

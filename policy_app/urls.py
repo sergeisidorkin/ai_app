@@ -20,6 +20,7 @@ urlpatterns = [
     path("sections/<int:pk>/move-up/", views.section_move_up, name="section_move_up"),
     path("sections/<int:pk>/move-down/", views.section_move_down, name="section_move_down"),
     path("policy/section/csv-upload/", views.section_csv_upload, name="section_csv_upload"),
+    path("policy/section/csv-download/", views.section_csv_download, name="section_csv_download"),
     path("policy/structure/create/", views.structure_form_create, name="structure_form_create"),
     path("policy/structure/<int:pk>/edit/", views.structure_form_edit, name="structure_form_edit"),
     path("policy/structure/<int:pk>/delete/", views.structure_delete, name="structure_delete"),
