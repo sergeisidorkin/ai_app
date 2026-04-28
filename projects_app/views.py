@@ -49,9 +49,12 @@ from core.cloud_storage import (
     upload_file as cloud_upload_file,
 )
 from policy_app.models import (
+    DEPARTMENT_HEAD_GROUP,
+    DIRECTION_DIRECTOR_GROUP,
     EXPERT_GROUP,
     LAWYER_GROUP,
     Product,
+    PROJECTS_HEAD_GROUP,
     TypicalSection,
     build_consulting_catalog_meta,
 )
@@ -1119,7 +1122,6 @@ def _performers_context(user=None):
     has_active_smtp_connection = False
     if user:
         try:
-            from policy_app.models import DEPARTMENT_HEAD_GROUP
             user_is_direction_head = getattr(user.employee_profile, "role", "") == DEPARTMENT_HEAD_GROUP
         except Exception:
             pass
@@ -1415,7 +1417,7 @@ def _effective_direction_id(typical_section):
 
 def _is_executor_locked(user, performer):
     """Исполнитель заблокирован:
-    - «Руководитель проектов»: если раздел привязан к (не-директорскому) направлению экспертизы.
+    - проектный руководитель: если раздел привязан к (не-директорскому) направлению экспертизы.
     - «Руководитель направления»: если раздел НЕ относится к его направлению,
       или если запрос подтверждения отправлен и эксперт ещё не отклонил.
     Директорские направления (OrgUnit.level == 1) считаются отсутствующими.
@@ -1425,14 +1427,14 @@ def _is_executor_locked(user, performer):
     except Exception:
         return False
     ts_direction_id = _effective_direction_id(performer.typical_section)
-    if emp.role == "Руководитель проектов":
+    if emp.role in (PROJECTS_HEAD_GROUP, DIRECTION_DIRECTOR_GROUP):
         if ts_direction_id:
             return True
         if (performer.participation_request_sent_at
                 and performer.participation_response != Performer.ParticipationResponse.DECLINED):
             return True
         return False
-    if emp.role == "Руководитель направления":
+    if emp.role == DEPARTMENT_HEAD_GROUP:
         if not ts_direction_id:
             return True
         if ts_direction_id != emp.department_id:

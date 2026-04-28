@@ -3090,6 +3090,21 @@ class ProposalTemplateForm(forms.ModelForm):
             "file": _ProposalFileInput(attrs={"class": "form-control"}),
         }
 
+    @staticmethod
+    def _scope_key(group_ids, product_ids):
+        def _part(values):
+            cleaned = sorted({int(value) for value in values if str(value).isdigit() or isinstance(value, int)})
+            return ",".join(str(value) for value in cleaned) if cleaned else "*"
+
+        return f"g:{_part(group_ids)}|p:{_part(product_ids)}"
+
+    @staticmethod
+    def _template_scope_ids(template, relation_name, legacy_id):
+        ids = list(getattr(template, relation_name).values_list("pk", flat=True))
+        if ids:
+            return ids
+        return [legacy_id] if legacy_id else []
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -3142,7 +3157,10 @@ class ProposalTemplateForm(forms.ModelForm):
             existing = existing.exclude(pk=self.instance.pk)
         version_map = {}
         for template in existing:
-            key = template.sample_name or ""
+            key = self._scope_key(
+                self._template_scope_ids(template, "group_members", template.group_member_id),
+                self._template_scope_ids(template, "products", template.product_id),
+            )
             try:
                 version = int(template.version)
             except (ValueError, TypeError):
@@ -3151,6 +3169,7 @@ class ProposalTemplateForm(forms.ModelForm):
         self.version_map = version_map
 
         self.current_base = ""
+        self.current_scope_key = self._scope_key(selected_group_ids, selected_product_ids)
         self.current_version = ""
         if self.instance and self.instance.pk:
             self.current_base = self.instance.sample_name or ""
@@ -3218,14 +3237,15 @@ class ProposalTemplateForm(forms.ModelForm):
         prefix = " ".join(part for part in [alpha2, "Шаблон ТКП"] if part)
         tail = "_".join(part for part in [short_name, product_short] if part)
         base_name = "_".join(part for part in [prefix, tail] if part)
+        scope_key = self._scope_key(group_ids, product_ids)
         existing = ProposalTemplate.objects.all()
 
-        if instance.pk and base_name == self.current_base:
+        if instance.pk and scope_key == self.current_scope_key:
             version = self._orig_version or "1"
         else:
             if instance.pk:
                 existing = existing.exclude(pk=instance.pk)
-            version = str(self._next_version(existing, base_name))
+            version = str(self._next_version(existing, scope_key))
 
         instance.sample_name = base_name
         instance.version = version
@@ -3255,10 +3275,14 @@ class ProposalTemplateForm(forms.ModelForm):
         return instance
 
     @staticmethod
-    def _next_version(qs, base_name):
+    def _next_version(qs, scope_key):
         max_version = 0
         for template in qs:
-            if (template.sample_name or "") != base_name:
+            template_scope_key = ProposalTemplateForm._scope_key(
+                ProposalTemplateForm._template_scope_ids(template, "group_members", template.group_member_id),
+                ProposalTemplateForm._template_scope_ids(template, "products", template.product_id),
+            )
+            if template_scope_key != scope_key:
                 continue
             try:
                 version = int(template.version)

@@ -5,7 +5,12 @@ from django.utils import timezone
 
 from classifiers_app.models import OKSMCountry, OKVCurrency, LegalEntityIdentifier
 from group_app.models import GroupMember
-from policy_app.models import Product, TypicalSection
+from policy_app.models import (
+    DIRECTION_DIRECTOR_GROUP,
+    PROJECTS_HEAD_GROUP,
+    Product,
+    TypicalSection,
+)
 from users_app.models import Employee
 
 from .models import LegalEntity, Performer, ProjectRegistration, WorkVolume
@@ -49,7 +54,7 @@ DATE_WIDGET_FORMAT = "%Y-%m-%d"
 def _date_input_widget():
     return forms.DateInput(format=DATE_WIDGET_FORMAT, attrs=DATE_INPUT_ATTRS)
 
-PROJECT_MANAGER_ROLE = "Руководитель проектов"
+PROJECT_MANAGER_ROLES = (PROJECTS_HEAD_GROUP, DIRECTION_DIRECTOR_GROUP)
 
 
 def _employee_full_name(employee):
@@ -65,7 +70,7 @@ def _project_manager_queryset():
     return (
         Employee.objects
         .select_related("user")
-        .filter(role=PROJECT_MANAGER_ROLE)
+        .filter(role__in=PROJECT_MANAGER_ROLES)
         .order_by("user__last_name", "user__first_name", "patronymic", "position", "id")
     )
 

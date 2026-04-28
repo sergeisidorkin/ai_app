@@ -104,6 +104,7 @@
 {{ form.product_short_name_map|json_script:"pt-data-product-short-name-map" }}
 {{ form.version_map|json_script:"pt-data-version-map" }}
 {{ form.current_base|json_script:"pt-data-current-base" }}
+{{ form.current_scope_key|json_script:"pt-data-current-scope-key" }}
 {{ form.current_version|json_script:"pt-data-current-ver" }}
 
 <script>
@@ -116,6 +117,7 @@
   const productShortNameMap = _jsonEl("pt-data-product-short-name-map");
   const versionMap = _jsonEl("pt-data-version-map");
   const currentBase = _jsonEl("pt-data-current-base");
+  const currentScopeKey = _jsonEl("pt-data-current-scope-key");
   const currentVersion = _jsonEl("pt-data-current-ver");
 
   const groupDropdown = document.getElementById("pt-group-dropdown");
@@ -156,16 +158,27 @@
     return [prefix, tail].filter(Boolean).join("_");
   }
 
-  function getNextVersion(base) {
-    if (base && base === currentBase) return currentVersion || "1";
-    return String((versionMap[base] || 0) + 1);
+  function scopeKeyPart(values) {
+    if (!values.length) return "*";
+    return values.map(value => parseInt(value, 10)).filter(value => !Number.isNaN(value)).sort((a, b) => a - b).join(",");
+  }
+
+  function computeScopeKey() {
+    return "g:" + scopeKeyPart(selectedSpecificValues(groupChecks)) +
+      "|p:" + scopeKeyPart(selectedSpecificValues(productChecks));
+  }
+
+  function getNextVersion(scopeKey) {
+    if (scopeKey && scopeKey === currentScopeKey) return currentVersion || "1";
+    return String((versionMap[scopeKey] || 0) + 1);
   }
 
   function rebuild() {
     if (!sampleInp || !versionInp) return;
     const base = computeBase();
+    const scopeKey = computeScopeKey();
     sampleInp.value = base;
-    versionInp.value = getNextVersion(base);
+    versionInp.value = getNextVersion(scopeKey);
   }
 
   function attachDropdown(checks, allCb, labelEl) {

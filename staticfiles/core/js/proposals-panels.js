@@ -1524,8 +1524,9 @@
     const raw = String(value || '').trim();
     if (!input) return;
     if (!raw) {
+      if (!input.value) return;
       input.value = '';
-      if (input._flatpickr) input._flatpickr.clear();
+      if (input._flatpickr) input._flatpickr.clear(false);
       if (window.$ && $.fn && $.fn.datepicker) $(input).datepicker('update', '');
       return;
     }
@@ -1535,18 +1536,22 @@
     const displayValue = normalizeDisplayDate(raw);
 
     if (input._flatpickr) {
-      input._flatpickr.setDate(isoValue, true, 'Y-m-d');
+      if (normalizeDisplayDate(input.value) !== displayValue) {
+        input._flatpickr.setDate(isoValue, false, 'Y-m-d');
+      }
       return;
     }
     if (window.$ && $.fn && $.fn.datepicker && input.dataset.hasPicker === '1') {
-      $(input).datepicker('update', displayValue);
+      if (normalizeDisplayDate(input.value) !== displayValue) {
+        $(input).datepicker('update', displayValue);
+      }
       return;
     }
     if (input.type === 'date') {
-      input.value = isoValue;
+      if (input.value !== isoValue) input.value = isoValue;
       return;
     }
-    input.value = displayValue;
+    if (input.value !== displayValue) input.value = displayValue;
   }
 
   function createProposalTableCell(className) {

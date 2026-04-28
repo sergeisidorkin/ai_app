@@ -444,12 +444,87 @@ class ProposalDocumentGenerationTests(TestCase):
 
         self.assertEqual(found, all_template)
 
+    def test_find_proposal_template_prefers_product_specific_over_group_only(self):
+        from .views import _find_proposal_template
+
+        second_product = Product.objects.create(
+            short_name="JORC",
+            name_en="JORC Report",
+            name_ru="JORC",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Отчётность",
+            position=2,
+        )
+        self.proposal.type = second_product
+        self.proposal.save(update_fields=["type"])
+        ProposalRegistrationProduct.objects.create(proposal=self.proposal, product=self.product, rank=1)
+        ProposalRegistrationProduct.objects.create(proposal=self.proposal, product=second_product, rank=2)
+
+        group_only = ProposalTemplate.objects.create(
+            group_member=self.group_member,
+            product=None,
+            sample_name="Групповой общий шаблон",
+            version="9",
+        )
+        group_only.group_members.set([self.group_member])
+        product_specific = ProposalTemplate.objects.create(
+            group_member=None,
+            product=self.product,
+            sample_name="Продуктовый шаблон",
+            version="1",
+        )
+        product_specific.products.set([self.product, second_product])
+
+        found = _find_proposal_template(self.proposal, [group_only, product_specific])
+
+        self.assertEqual(found, product_specific)
+
     def test_find_proposal_template_keeps_legacy_single_product_fallback(self):
         from .views import _find_proposal_template
 
         found = _find_proposal_template(self.proposal, [self.template])
 
         self.assertEqual(found, self.template)
+
+    def test_proposal_template_versioning_uses_scope_ids_not_sample_name(self):
+        colliding_group = GroupMember.objects.create(
+            short_name=self.group_member.short_name,
+            country_name=self.group_member.country_name,
+            country_code=self.group_member.country_code,
+            country_alpha2=self.group_member.country_alpha2,
+            position=2,
+        )
+        colliding_template = ProposalTemplate.objects.create(
+            group_member=colliding_group,
+            product=self.product,
+            sample_name="RU Шаблон ТКП_IMC Montan_DD",
+            version="9",
+        )
+        colliding_template.group_members.set([colliding_group])
+        colliding_template.products.set([self.product])
+
+        scope_key = ProposalTemplateForm._scope_key([self.group_member.pk], [self.product.pk])
+        form = ProposalTemplateForm(
+            data={
+                "group_member_ids": [str(self.group_member.pk)],
+                "product_ids": [str(self.product.pk)],
+                "sample_name": "",
+                "version": "",
+            },
+            files={
+                "file": SimpleUploadedFile(
+                    "proposal-template.docx",
+                    b"template-bytes",
+                    content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.version_map[scope_key], 2)
+        template = form.save()
+        self.assertEqual(template.version, "3")
 
     @patch("ai_app.proposals_app.document_generation._get_cloud_upload_user")
     @patch("ai_app.proposals_app.document_generation.cloud_upload_file", return_value=True)
