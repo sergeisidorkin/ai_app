@@ -3125,6 +3125,17 @@ class ProposalTemplateForm(forms.ModelForm):
         self.group_short_name_map = {str(m.pk): (m.short_name or "").strip() for m in members_qs}
         self.product_short_name_map = {str(p.pk): (p.short_name or "").strip() for p in products_qs}
 
+        original_group_ids = (
+            self._template_scope_ids(self.instance, "group_members", self.instance.group_member_id)
+            if self.instance and self.instance.pk
+            else []
+        )
+        original_product_ids = (
+            self._template_scope_ids(self.instance, "products", self.instance.product_id)
+            if self.instance and self.instance.pk
+            else []
+        )
+
         selected_group_ids, self.is_all_groups_selected = self._selected_ids(
             "group_member_ids",
             self.instance.group_members.all() if self.instance and self.instance.pk else [],
@@ -3169,7 +3180,10 @@ class ProposalTemplateForm(forms.ModelForm):
         self.version_map = version_map
 
         self.current_base = ""
-        self.current_scope_key = self._scope_key(selected_group_ids, selected_product_ids)
+        self.current_scope_key = self._scope_key(
+            original_group_ids if self.instance and self.instance.pk else selected_group_ids,
+            original_product_ids if self.instance and self.instance.pk else selected_product_ids,
+        )
         self.current_version = ""
         if self.instance and self.instance.pk:
             self.current_base = self.instance.sample_name or ""

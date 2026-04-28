@@ -526,6 +526,43 @@ class ProposalDocumentGenerationTests(TestCase):
         template = form.save()
         self.assertEqual(template.version, "3")
 
+    def test_proposal_template_edit_allocates_next_version_when_scope_changes(self):
+        second_group = GroupMember.objects.create(
+            short_name="KAP",
+            country_name="Казахстан",
+            country_code="398",
+            country_alpha2="KZ",
+            position=2,
+        )
+        target_template = ProposalTemplate.objects.create(
+            group_member=second_group,
+            product=self.product,
+            sample_name="KZ Шаблон ТКП_KAP_DD",
+            version="4",
+            file="proposal_templates/target.docx",
+        )
+        target_template.group_members.set([second_group])
+        target_template.products.set([self.product])
+        self.template.version = "2"
+        self.template.file = "proposal_templates/original.docx"
+        self.template.save(update_fields=["version", "file"])
+
+        form = ProposalTemplateForm(
+            data={
+                "group_member_ids": [str(second_group.pk)],
+                "product_ids": [str(self.product.pk)],
+                "sample_name": self.template.sample_name,
+                "version": self.template.version,
+            },
+            instance=self.template,
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        template = form.save()
+
+        self.assertEqual(template.version, "5")
+        self.assertEqual(set(template.group_members.values_list("pk", flat=True)), {second_group.pk})
+
     @patch("ai_app.proposals_app.document_generation._get_cloud_upload_user")
     @patch("ai_app.proposals_app.document_generation.cloud_upload_file", return_value=True)
     def test_create_documents_generates_docx_and_uploads_it_to_workspace_folder(
