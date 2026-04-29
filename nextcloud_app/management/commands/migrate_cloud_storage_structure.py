@@ -115,24 +115,25 @@ class Command(BaseCommand):
                     old_value = str(raw_value or "").strip()
                     if not old_value:
                         continue
-                    new_value = self._transform_path(old_value, old_root, new_root)
+                    new_value = self._transform_path(old_value, old_root, new_root, field=field)
                     if new_value != normalize_cloud_path(old_value):
                         changes.append(PathChange(model_label, pk, field, old_value, new_value))
         return changes
 
-    def _transform_path(self, path: str, old_root: str, new_root: str) -> str:
+    def _transform_path(self, path: str, old_root: str, new_root: str, *, field: str = "") -> str:
         normalized = normalize_cloud_path(path)
         if normalized == old_root:
             return new_root
 
-        rootless_legacy_tkp = join_cloud_path("/", LEGACY_PROPOSALS_SECTION_FOLDER)
-        transformed = replace_cloud_path_prefix(
-            normalized,
-            rootless_legacy_tkp,
-            join_cloud_path("/", PROPOSALS_SECTION_FOLDER),
-        )
-        if transformed != normalized:
-            return transformed
+        if field == "proposal_workspace_target_path":
+            rootless_legacy_tkp = join_cloud_path("/", LEGACY_PROPOSALS_SECTION_FOLDER)
+            transformed = replace_cloud_path_prefix(
+                normalized,
+                rootless_legacy_tkp,
+                join_cloud_path("/", PROPOSALS_SECTION_FOLDER),
+            )
+            if transformed != normalized:
+                return transformed
 
         legacy_tkp = join_cloud_path(old_root, LEGACY_PROPOSALS_SECTION_FOLDER)
         target_tkp = join_cloud_path(new_root, PROPOSALS_SECTION_FOLDER)
@@ -149,10 +150,10 @@ class Command(BaseCommand):
             if transformed != normalized:
                 return transformed
 
-        if not normalized.startswith(f"{old_root}/"):
+        relative = self._relative_to_root(normalized, old_root)
+        if relative is None:
             return normalized
 
-        relative = normalized[len(old_root):].lstrip("/")
         first_part = relative.split("/", 1)[0]
         if self._is_project_year_segment(first_part):
             return join_cloud_path(new_root, PROJECTS_SECTION_FOLDER, relative)
@@ -183,10 +184,10 @@ class Command(BaseCommand):
             if normalized == section_root or normalized.startswith(f"{section_root}/"):
                 return MoveOperation(section_root, join_cloud_path(new_root, section))
 
-        if not normalized.startswith(f"{old_root}/"):
+        relative = self._relative_to_root(normalized, old_root)
+        if relative is None:
             return None
 
-        relative = normalized[len(old_root):].lstrip("/")
         first_part = relative.split("/", 1)[0]
         if self._is_project_year_segment(first_part):
             return MoveOperation(
@@ -249,3 +250,15 @@ class Command(BaseCommand):
     @staticmethod
     def _is_project_year_segment(value: str) -> bool:
         return value == "Без года" or value.isdigit()
+
+    @staticmethod
+    def _relative_to_root(path: str, root: str) -> str | None:
+        normalized_path = normalize_cloud_path(path)
+        normalized_root = normalize_cloud_path(root)
+        if normalized_path == normalized_root:
+            return ""
+        if normalized_root == "/":
+            return normalized_path.lstrip("/")
+        if normalized_path.startswith(f"{normalized_root}/"):
+            return normalized_path[len(normalized_root):].lstrip("/")
+        return None

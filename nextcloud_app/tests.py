@@ -792,6 +792,55 @@ class CloudStorageStructureMigrationTests(TestCase):
             "/Corporate Root/ТКП/2026/333300RU DD Миграция ТКП",
         )
 
+    def test_migrate_cloud_storage_structure_handles_slash_old_root(self):
+        self.proposal.proposal_workspace_disk_path = "/ТКП/2026/333300RU DD Миграция ТКП"
+        self.proposal.proposal_workspace_target_path = "/ТКП/2026/333300RU DD Миграция ТКП"
+        self.proposal.docx_file_link = "/ТКП/2026/333300RU DD Миграция ТКП/offer.docx"
+        self.proposal.save(
+            update_fields=[
+                "proposal_workspace_disk_path",
+                "proposal_workspace_target_path",
+                "docx_file_link",
+            ]
+        )
+        ProjectWorkspace.objects.filter(project=self.project).update(
+            disk_path=f"/2026/{self.project_folder}"
+        )
+        SourceDataWorkspace.objects.filter(project=self.project).update(
+            disk_path=f"/2026/{self.project_folder}/05 Исходные данные"
+        )
+        Performer.objects.filter(pk=self.performer.pk).update(
+            contract_project_disk_folder=f"/2026/{self.project_folder}/09 Договоры/000 Иванов ИИ"
+        )
+        out = StringIO()
+
+        call_command(
+            "migrate_cloud_storage_structure",
+            "--old-root",
+            "/",
+            "--new-root",
+            "/",
+            stdout=out,
+        )
+
+        output = out.getvalue()
+        self.assertIn("MOVE /2026 -> /02 Проекты/2026", output)
+        self.assertIn("MOVE /ТКП -> /01 ТКП", output)
+        self.assertIn(
+            "proposals_app.ProposalRegistration"
+            f"#{self.proposal.pk}.proposal_workspace_disk_path: "
+            "/ТКП/2026/333300RU DD Миграция ТКП -> "
+            "/01 ТКП/2026/333300RU DD Миграция ТКП",
+            output,
+        )
+        self.assertIn(
+            "checklists_app.ProjectWorkspace"
+            f"#{self.project.yadisk_workspace.pk}.disk_path: "
+            f"/2026/{self.project_folder} -> "
+            f"/02 Проекты/2026/{self.project_folder}",
+            output,
+        )
+
     @patch("nextcloud_app.api.NextcloudApiClient.move_resource")
     def test_migrate_cloud_storage_structure_apply_moves_folders_and_updates_database(self, mocked_move):
         call_command(
