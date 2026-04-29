@@ -129,6 +129,7 @@ class ProjectRegistration(models.Model):
     registration_number = models.CharField("Регистрационный номер", max_length=100, blank=True)
     registration_date = models.DateField("Дата регистрации", null=True, blank=True)
     project_manager = models.CharField("Руководитель проекта", max_length=255, blank=True)
+    project_manager_prs_id = models.CharField("ID-PRS руководителя проекта", max_length=32, blank=True, default="")
     contract_subject = models.TextField("Предмет договора", blank=True)
 
     class Meta:

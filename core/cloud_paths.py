@@ -2,8 +2,11 @@ from __future__ import annotations
 
 
 PROPOSALS_SECTION_FOLDER = "01 ТКП"
-PROJECTS_SECTION_FOLDER = "02 Проекты"
+CONTRACTS_SECTION_FOLDER = "02 Договоры"
+PROJECTS_SECTION_FOLDER = "03 Проекты"
+CONTRACTS_PERFORMERS_FOLDER = "02 Исполнители"
 LEGACY_PROPOSALS_SECTION_FOLDER = "ТКП"
+LEGACY_PROJECTS_SECTION_FOLDER = "02 Проекты"
 
 
 def normalize_cloud_path(path: str) -> str:

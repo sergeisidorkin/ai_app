@@ -6,6 +6,7 @@ from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.test import Client, TestCase, override_settings
 
+from contacts_app.models import PersonRecord
 from core.models import CloudStorageSettings
 from group_app.models import GroupMember
 from policy_app.models import Product
@@ -454,7 +455,18 @@ class NextcloudWorkspaceTests(TestCase):
             is_staff=True,
             is_active=True,
         )
-        Employee.objects.create(user=self.manager, patronymic="Иванович", role="Руководитель проектов")
+        self.manager_person = PersonRecord.objects.create(
+            last_name="Иванов",
+            first_name="Иван",
+            middle_name="Иванович",
+            position=1,
+        )
+        self.manager_employee = Employee.objects.create(
+            user=self.manager,
+            person_record=self.manager_person,
+            patronymic="Иванович",
+            role="Руководитель проектов",
+        )
         NextcloudUserLink.objects.create(
             user=self.manager,
             nextcloud_user_id=f"ncstaff-{self.manager.pk}",
@@ -481,11 +493,12 @@ class NextcloudWorkspaceTests(TestCase):
             name="Проект Nextcloud",
             year=2026,
             project_manager="Иванов Иван Иванович",
+            project_manager_prs_id=self.manager_person.formatted_id,
         )
 
     def test_create_basic_project_workspace_creates_folders_and_grants_editor_access(self):
         project_folder = _build_project_folder_name(self.project)
-        project_path = f"/Corporate Root/02 Проекты/2026/{project_folder}"
+        project_path = f"/Corporate Root/03 Проекты/2026/{project_folder}"
         client = Mock()
         client.is_configured = True
         client.username = "cloud-admin"
@@ -503,8 +516,8 @@ class NextcloudWorkspaceTests(TestCase):
         self.assertEqual(
             client.ensure_folder.call_args_list,
             [
-                call("cloud-admin", "/Corporate Root/02 Проекты"),
-                call("cloud-admin", "/Corporate Root/02 Проекты/2026"),
+                call("cloud-admin", "/Corporate Root/03 Проекты"),
+                call("cloud-admin", "/Corporate Root/03 Проекты/2026"),
                 call("cloud-admin", project_path),
                 call("cloud-admin", f"{project_path}/01 Документы"),
                 call("cloud-admin", f"{project_path}/01 Документы/02 Письма"),
@@ -526,7 +539,7 @@ class NextcloudWorkspaceTests(TestCase):
         settings_obj.save()
 
         project_folder = _build_project_folder_name(self.project)
-        project_path = f"/02 Проекты/2026/{project_folder}"
+        project_path = f"/03 Проекты/2026/{project_folder}"
         client = Mock()
         client.is_configured = True
         client.username = "cloud-admin"
@@ -545,12 +558,86 @@ class NextcloudWorkspaceTests(TestCase):
         self.assertEqual(
             client.ensure_folder.call_args_list,
             [
-                call("cloud-admin", "/02 Проекты"),
-                call("cloud-admin", "/02 Проекты/2026"),
+                call("cloud-admin", "/03 Проекты"),
+                call("cloud-admin", "/03 Проекты/2026"),
                 call("cloud-admin", project_path),
                 call("cloud-admin", f"{project_path}/01 Документы"),
                 call("cloud-admin", f"{project_path}/01 Документы/02 Письма"),
             ],
+        )
+
+    def test_create_basic_project_workspace_resolves_short_manager_label(self):
+        self.project.project_manager = "Иванов И.И."
+        self.project.project_manager_prs_id = ""
+        self.project.save(update_fields=["project_manager", "project_manager_prs_id"])
+        project_folder = _build_project_folder_name(self.project)
+        project_path = f"/Corporate Root/03 Проекты/2026/{project_folder}"
+        client = Mock()
+        client.is_configured = True
+        client.username = "cloud-admin"
+        client.ensure_folder.side_effect = lambda _owner, path: "/" + "/".join(
+            part for part in str(path).replace("\\", "/").split("/") if part
+        )
+        client.enable_user.return_value = None
+        client.set_user_email.return_value = None
+        client.set_user_display_name.return_value = None
+        client.ensure_user_share.return_value = Mock()
+        client.build_files_url.return_value = f"https://cloud.example.com/apps/files/files?dir={project_path}"
+
+        items = list(create_basic_project_workspace_stream(self.creator, self.project, client=client))
+
+        self.assertTrue(items[-1].ok)
+        client.ensure_user_share.assert_called_once_with(
+            "cloud-admin",
+            project_path,
+            f"ncstaff-{self.manager.pk}",
+            permissions=15,
+        )
+
+    def test_create_basic_project_workspace_uses_manager_prs_id_not_duplicate_name(self):
+        duplicate_user = User.objects.create_user(
+            username="duplicate-admin@example.com",
+            email="duplicate-admin@example.com",
+            password="Secret123!",
+            first_name="Иван",
+            last_name="Иванов",
+            is_staff=True,
+            is_active=True,
+        )
+        Employee.objects.create(
+            user=duplicate_user,
+            person_record=self.manager_person,
+            patronymic="Иванович",
+            role="Администратор",
+        )
+        NextcloudUserLink.objects.create(
+            user=duplicate_user,
+            nextcloud_user_id=f"ncstaff-{duplicate_user.pk}",
+            nextcloud_username=f"ncstaff-{duplicate_user.pk}",
+            nextcloud_email="duplicate-admin@example.com",
+        )
+        project_folder = _build_project_folder_name(self.project)
+        project_path = f"/Corporate Root/03 Проекты/2026/{project_folder}"
+        client = Mock()
+        client.is_configured = True
+        client.username = "cloud-admin"
+        client.ensure_folder.side_effect = lambda _owner, path: "/" + "/".join(
+            part for part in str(path).replace("\\", "/").split("/") if part
+        )
+        client.enable_user.return_value = None
+        client.set_user_email.return_value = None
+        client.set_user_display_name.return_value = None
+        client.ensure_user_share.return_value = Mock()
+        client.build_files_url.return_value = f"https://cloud.example.com/apps/files/files?dir={project_path}"
+
+        items = list(create_basic_project_workspace_stream(self.creator, self.project, client=client))
+
+        self.assertTrue(items[-1].ok)
+        client.ensure_user_share.assert_called_once_with(
+            "cloud-admin",
+            project_path,
+            f"ncstaff-{self.manager.pk}",
+            permissions=15,
         )
 
     def test_create_basic_project_workspace_returns_workspace_error_when_manager_sync_api_fails(self):
@@ -580,11 +667,11 @@ class NextcloudWorkspaceTests(TestCase):
             return "/" + "/".join(part for part in str(path).replace("\\", "/").split("/") if part)
         client.ensure_folder.side_effect = [
             NextcloudApiError("429 rate limit"),
-            "/Corporate Root/02 Проекты",
-            "/Corporate Root/02 Проекты/2026",
-            "/Corporate Root/02 Проекты/2026/Проект 6001 DD Проект Nextcloud",
-            "/Corporate Root/02 Проекты/2026/Проект 6001 DD Проект Nextcloud/01 Документы",
-            "/Corporate Root/02 Проекты/2026/Проект 6001 DD Проект Nextcloud/01 Документы/02 Письма",
+            "/Corporate Root/03 Проекты",
+            "/Corporate Root/03 Проекты/2026",
+            "/Corporate Root/03 Проекты/2026/Проект 6001 DD Проект Nextcloud",
+            "/Corporate Root/03 Проекты/2026/Проект 6001 DD Проект Nextcloud/01 Документы",
+            "/Corporate Root/03 Проекты/2026/Проект 6001 DD Проект Nextcloud/01 Документы/02 Письма",
         ]
         client.ensure_user_share.return_value = Mock()
         client.build_files_url.return_value = "https://cloud.example.com/apps/files/files?dir=/test"
@@ -784,8 +871,21 @@ class CloudStorageStructureMigrationTests(TestCase):
 
         output = out.getvalue()
         self.assertIn("DRY-RUN", output)
-        self.assertIn("MOVE /Corporate Root/ТКП -> /Corporate Root/01 ТКП", output)
-        self.assertIn("MOVE /Corporate Root/2026 -> /Corporate Root/02 Проекты/2026", output)
+        self.assertIn(
+            "MOVE /Corporate Root/ТКП/2026/333300RU DD Миграция ТКП -> "
+            "/Corporate Root/01 ТКП/2026/333300RU DD Миграция ТКП",
+            output,
+        )
+        self.assertIn(
+            f"MOVE /Corporate Root/2026/{self.project_folder} -> "
+            f"/Corporate Root/03 Проекты/2026/{self.project_folder}",
+            output,
+        )
+        self.assertIn(
+            f"MOVE /Corporate Root/2026/{self.project_folder}/09 Договоры/000 Иванов ИИ -> "
+            f"/Corporate Root/02 Договоры/2026/{self.project_folder}/02 Исполнители/000 Иванов ИИ",
+            output,
+        )
         self.proposal.refresh_from_db()
         self.assertEqual(
             self.proposal.proposal_workspace_disk_path,
@@ -824,8 +924,21 @@ class CloudStorageStructureMigrationTests(TestCase):
         )
 
         output = out.getvalue()
-        self.assertIn("MOVE /2026 -> /02 Проекты/2026", output)
-        self.assertIn("MOVE /ТКП -> /01 ТКП", output)
+        self.assertIn(
+            "MOVE /ТКП/2026/333300RU DD Миграция ТКП -> "
+            "/01 ТКП/2026/333300RU DD Миграция ТКП",
+            output,
+        )
+        self.assertIn(
+            f"MOVE /2026/{self.project_folder} -> "
+            f"/03 Проекты/2026/{self.project_folder}",
+            output,
+        )
+        self.assertIn(
+            f"MOVE /2026/{self.project_folder}/09 Договоры/000 Иванов ИИ -> "
+            f"/02 Договоры/2026/{self.project_folder}/02 Исполнители/000 Иванов ИИ",
+            output,
+        )
         self.assertIn(
             "proposals_app.ProposalRegistration"
             f"#{self.proposal.pk}.proposal_workspace_disk_path: "
@@ -837,7 +950,7 @@ class CloudStorageStructureMigrationTests(TestCase):
             "checklists_app.ProjectWorkspace"
             f"#{self.project.yadisk_workspace.pk}.disk_path: "
             f"/2026/{self.project_folder} -> "
-            f"/02 Проекты/2026/{self.project_folder}",
+            f"/03 Проекты/2026/{self.project_folder}",
             output,
         )
 
@@ -855,11 +968,28 @@ class CloudStorageStructureMigrationTests(TestCase):
 
         mocked_move.assert_has_calls(
             [
-                call("cloud-admin", "/Corporate Root/2026", "/Corporate Root/02 Проекты/2026", overwrite=False),
-                call("cloud-admin", "/Corporate Root/ТКП", "/Corporate Root/01 ТКП", overwrite=False),
+                call(
+                    "cloud-admin",
+                    f"/Corporate Root/2026/{self.project_folder}",
+                    f"/Corporate Root/03 Проекты/2026/{self.project_folder}",
+                    overwrite=False,
+                ),
+                call(
+                    "cloud-admin",
+                    "/Corporate Root/ТКП/2026/333300RU DD Миграция ТКП",
+                    "/Corporate Root/01 ТКП/2026/333300RU DD Миграция ТКП",
+                    overwrite=False,
+                ),
+                call(
+                    "cloud-admin",
+                    f"/Corporate Root/2026/{self.project_folder}/09 Договоры/000 Иванов ИИ",
+                    f"/Corporate Root/02 Договоры/2026/{self.project_folder}/02 Исполнители/000 Иванов ИИ",
+                    overwrite=False,
+                ),
             ],
             any_order=True,
         )
+        self.assertEqual(mocked_move.call_count, 3)
         self.proposal.refresh_from_db()
         self.assertEqual(
             self.proposal.proposal_workspace_disk_path,
@@ -872,12 +1002,12 @@ class CloudStorageStructureMigrationTests(TestCase):
         workspace = ProjectWorkspace.objects.get(project=self.project)
         self.assertEqual(
             workspace.disk_path,
-            f"/Corporate Root/02 Проекты/2026/{self.project_folder}",
+            f"/Corporate Root/03 Проекты/2026/{self.project_folder}",
         )
         self.performer.refresh_from_db()
         self.assertEqual(
             self.performer.contract_project_disk_folder,
-            f"/Corporate Root/02 Проекты/2026/{self.project_folder}/09 Договоры/000 Иванов ИИ",
+            f"/Corporate Root/02 Договоры/2026/{self.project_folder}/02 Исполнители/000 Иванов ИИ",
         )
 
 

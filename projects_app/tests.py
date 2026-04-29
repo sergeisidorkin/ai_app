@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from checklists_app.models import ChecklistItem, SourceDataItemFolder, SourceDataSectionFolder, SourceDataWorkspace
 from classifiers_app.models import BusinessEntityIdentifierRecord, BusinessEntityRecord, LegalEntityRecord, OKSMCountry
+from contacts_app.models import PersonRecord
 from core.models import CloudStorageSettings
 from contracts_app.models import ContractTemplate
 from nextcloud_app.models import NextcloudUserLink
@@ -23,7 +24,6 @@ from policy_app.models import (
 )
 from experts_app.models import ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
 from projects_app.models import (
-    ContractProjectTargetFolder,
     LegalEntity,
     Performer,
     ProjectRegistration,
@@ -313,13 +313,66 @@ class ProjectRegistrationFormTests(TestCase):
             role=EXPERT_GROUP,
         )
 
-        registration_choices = [value for value, _label in ProjectRegistrationForm().fields["project_manager"].choices]
-        work_choices = [value for value, _label in WorkVolumeForm().fields["manager"].choices]
+        registration_choices = [label for _value, label in ProjectRegistrationForm().fields["project_manager"].choices]
+        work_choices = [label for _value, label in WorkVolumeForm().fields["manager"].choices]
 
         for choices in (registration_choices, work_choices):
-            self.assertIn("Проектов Иван Иванович", choices)
-            self.assertIn("Директорова Дарья Дмитриевна", choices)
-            self.assertNotIn("Экспертов Егор Егорович", choices)
+            self.assertTrue(any(label.startswith("Проектов Иван Иванович") for label in choices))
+            self.assertTrue(any(label.startswith("Директорова Дарья Дмитриевна") for label in choices))
+            self.assertFalse(any(label.startswith("Экспертов Егор Егорович") for label in choices))
+
+    def test_project_manager_form_saves_selected_prs_id(self):
+        person = PersonRecord.objects.create(
+            last_name="Иванов",
+            first_name="Иван",
+            middle_name="Иванович",
+            position=1,
+        )
+        user = get_user_model().objects.create_user(
+            username="project-manager-prs",
+            first_name="Иван",
+            last_name="Иванов",
+            is_staff=True,
+        )
+        Employee.objects.create(
+            user=user,
+            person_record=person,
+            patronymic="Иванович",
+            role=PROJECTS_HEAD_GROUP,
+        )
+        group_member = GroupMember.objects.create(
+            short_name="IMCM",
+            country_name="Россия",
+            country_alpha2="RU",
+        )
+        product = Product.objects.create(short_name="PRS-DD", name_en="Due Diligence PRS", name_ru="ДД PRS")
+
+        choices = dict(ProjectRegistrationForm().fields["project_manager"].choices)
+        self.assertEqual(choices[person.formatted_id], f"Иванов Иван Иванович ({person.formatted_id})")
+
+        form = ProjectRegistrationForm(
+            data={
+                "number": "6201",
+                "group_member": str(group_member.pk),
+                "agreement_type": ProjectRegistration.AgreementType.MAIN,
+                "name": "Проект с руководителем",
+                "status": "Не начат",
+                "deadline": "2026-05-01",
+                "year": "2026",
+                "country": "",
+                "customer": "",
+                "identifier": "",
+                "registration_number": "",
+                "registration_date": "",
+                "project_manager": person.formatted_id,
+                "type_id": str(product.pk),
+            }
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        obj = form.save(commit=False)
+        self.assertEqual(obj.project_manager, "Иванов Иван Иванович")
+        self.assertEqual(obj.project_manager_prs_id, person.formatted_id)
 
 
 class PerformerFormExecutorFilteringTests(TestCase):
@@ -1212,7 +1265,7 @@ class NextcloudSourceDataWorkspaceFlowTests(TestCase):
         mocked_public_share,
     ):
         expected_project_folder = f"{self.project.short_uid} DD Исходные данные"
-        base_path = f"/Corporate Root/02 Проекты/2026/{expected_project_folder}/05 Исходные данные/01 Запросы"
+        base_path = f"/Corporate Root/03 Проекты/2026/{expected_project_folder}/05 Исходные данные/01 Запросы"
         section_path = f"{base_path}/01 FIN Финансы"
         item_path = f"{section_path}/REQ-01 ОСВ"
         mocked_ensure_folder.side_effect = [section_path, item_path]
@@ -1313,7 +1366,6 @@ class NextcloudContractProjectFlowTests(TestCase):
             employee=self.employee,
             executor="Иванов Иван Иванович",
         )
-        ContractProjectTargetFolder.objects.create(user=self.user, folder_name="09 Договоры")
         self.template = ContractTemplate.objects.create(
             product=self.product,
             contract_type="gph",
@@ -1346,7 +1398,7 @@ class NextcloudContractProjectFlowTests(TestCase):
     @patch("nextcloud_app.api.NextcloudApiClient.ensure_user_share")
     @patch("nextcloud_app.api.NextcloudApiClient.ensure_public_link_share", return_value="https://cloud.example.com/s/public-doc")
     @patch("nextcloud_app.api.NextcloudApiClient.upload_file", return_value=True)
-    @patch("nextcloud_app.api.NextcloudApiClient.ensure_folder", return_value="/Corporate Root/02 Проекты/2026/5002 DD Контрактный проект/09 Договоры/000 Иванов ИИ")
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_folder", return_value="/Corporate Root/02 Договоры/2026/5002 DD Контрактный проект/02 Исполнители/000 Иванов ИИ")
     @patch("nextcloud_app.api.NextcloudApiClient.list_resources", return_value=[])
     def test_create_contract_project_uses_nextcloud_and_stores_public_link(
         self,
@@ -1372,12 +1424,21 @@ class NextcloudContractProjectFlowTests(TestCase):
 
         self.performer.refresh_from_db()
         expected_project_folder = f"{self.project.short_uid} DD Контрактный проект"
-        expected_base_path = f"/Corporate Root/02 Проекты/2026/{expected_project_folder}/09 Договоры"
+        expected_base_path = f"/Corporate Root/02 Договоры/2026/{expected_project_folder}/02 Исполнители"
         expected_folder_path = f"{expected_base_path}/000 Иванов ИИ"
         expected_upload_path = f"{expected_folder_path}/Договор 5002_Иванов ИИ.docx"
 
         mocked_list_resources.assert_called_once_with("cloud-admin", expected_base_path, limit=1000)
-        mocked_ensure_folder.assert_called_once_with("cloud-admin", expected_folder_path)
+        mocked_ensure_folder.assert_has_calls(
+            [
+                call("cloud-admin", "/Corporate Root"),
+                call("cloud-admin", "/Corporate Root/02 Договоры"),
+                call("cloud-admin", "/Corporate Root/02 Договоры/2026"),
+                call("cloud-admin", f"/Corporate Root/02 Договоры/2026/{expected_project_folder}"),
+                call("cloud-admin", expected_base_path),
+                call("cloud-admin", expected_folder_path),
+            ]
+        )
         mocked_upload_file.assert_called_once()
         self.assertEqual(mocked_upload_file.call_args.args[0], "cloud-admin")
         self.assertEqual(mocked_upload_file.call_args.args[1], expected_upload_path)

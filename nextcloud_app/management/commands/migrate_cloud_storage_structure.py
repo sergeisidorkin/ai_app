@@ -14,6 +14,9 @@ from checklists_app.models import (
     SourceDataWorkspace,
 )
 from core.cloud_paths import (
+    CONTRACTS_PERFORMERS_FOLDER,
+    CONTRACTS_SECTION_FOLDER,
+    LEGACY_PROJECTS_SECTION_FOLDER,
     LEGACY_PROPOSALS_SECTION_FOLDER,
     PROJECTS_SECTION_FOLDER,
     PROPOSALS_SECTION_FOLDER,
@@ -56,7 +59,7 @@ PATH_FIELDS = (
 
 
 class Command(BaseCommand):
-    help = "Migrates cloud folder paths to the 01 ТКП / 02 Проекты structure."
+    help = "Migrates cloud folder paths to the 01 ТКП / 02 Договоры / 03 Проекты structure."
 
     def add_arguments(self, parser):
         parser.add_argument("--old-root", required=True, help="Current/legacy root path, for example /Projects.")
@@ -135,13 +138,24 @@ class Command(BaseCommand):
             if transformed != normalized:
                 return transformed
 
+        if field == "contract_project_disk_folder":
+            transformed = self._transform_contract_project_path(normalized, old_root, new_root)
+            if transformed != normalized:
+                return transformed
+
         legacy_tkp = join_cloud_path(old_root, LEGACY_PROPOSALS_SECTION_FOLDER)
         target_tkp = join_cloud_path(new_root, PROPOSALS_SECTION_FOLDER)
         transformed = replace_cloud_path_prefix(normalized, legacy_tkp, target_tkp)
         if transformed != normalized:
             return transformed
 
-        for section in (PROPOSALS_SECTION_FOLDER, PROJECTS_SECTION_FOLDER):
+        legacy_projects = join_cloud_path(old_root, LEGACY_PROJECTS_SECTION_FOLDER)
+        target_projects = join_cloud_path(new_root, PROJECTS_SECTION_FOLDER)
+        transformed = replace_cloud_path_prefix(normalized, legacy_projects, target_projects)
+        if transformed != normalized:
+            return transformed
+
+        for section in (PROPOSALS_SECTION_FOLDER, PROJECTS_SECTION_FOLDER, CONTRACTS_SECTION_FOLDER):
             transformed = replace_cloud_path_prefix(
                 normalized,
                 join_cloud_path(old_root, section),
@@ -159,6 +173,31 @@ class Command(BaseCommand):
             return join_cloud_path(new_root, PROJECTS_SECTION_FOLDER, relative)
         return normalized
 
+    def _transform_contract_project_path(self, normalized: str, old_root: str, new_root: str) -> str:
+        relative = self._relative_to_root(normalized, old_root)
+        if relative is None:
+            return normalized
+
+        parts = [part for part in relative.split("/") if part]
+        if parts and parts[0] in {LEGACY_PROJECTS_SECTION_FOLDER, PROJECTS_SECTION_FOLDER, CONTRACTS_SECTION_FOLDER}:
+            parts = parts[1:]
+
+        if len(parts) < 4:
+            return normalized
+
+        year, project_folder, _legacy_target_folder = parts[:3]
+        if not self._is_project_year_segment(year):
+            return normalized
+
+        return join_cloud_path(
+            new_root,
+            CONTRACTS_SECTION_FOLDER,
+            year,
+            project_folder,
+            CONTRACTS_PERFORMERS_FOLDER,
+            *parts[3:],
+        )
+
     def _collect_move_operations(
         self,
         changes: list[PathChange],
@@ -167,11 +206,16 @@ class Command(BaseCommand):
     ) -> list[MoveOperation]:
         operations: dict[tuple[str, str], MoveOperation] = {}
         for change in changes:
-            operation = self._move_operation_for_path(change.old_path, old_root, new_root)
-            if operation is None:
+            if not self._is_physical_path_field(change.field):
+                continue
+            operation = MoveOperation(
+                normalize_cloud_path(change.old_path),
+                normalize_cloud_path(change.new_path),
+            )
+            if operation.source_path == operation.target_path:
                 continue
             operations[(operation.source_path, operation.target_path)] = operation
-        return sorted(operations.values(), key=lambda item: item.source_path)
+        return self._prune_nested_move_operations(operations.values())
 
     def _move_operation_for_path(self, path: str, old_root: str, new_root: str) -> MoveOperation | None:
         normalized = normalize_cloud_path(path)
@@ -179,10 +223,14 @@ class Command(BaseCommand):
         if normalized == legacy_tkp or normalized.startswith(f"{legacy_tkp}/"):
             return MoveOperation(legacy_tkp, join_cloud_path(new_root, PROPOSALS_SECTION_FOLDER))
 
-        for section in (PROPOSALS_SECTION_FOLDER, PROJECTS_SECTION_FOLDER):
+        for section in (PROPOSALS_SECTION_FOLDER, PROJECTS_SECTION_FOLDER, CONTRACTS_SECTION_FOLDER):
             section_root = join_cloud_path(old_root, section)
             if normalized == section_root or normalized.startswith(f"{section_root}/"):
                 return MoveOperation(section_root, join_cloud_path(new_root, section))
+
+        legacy_projects = join_cloud_path(old_root, LEGACY_PROJECTS_SECTION_FOLDER)
+        if normalized == legacy_projects or normalized.startswith(f"{legacy_projects}/"):
+            return MoveOperation(legacy_projects, join_cloud_path(new_root, PROJECTS_SECTION_FOLDER))
 
         relative = self._relative_to_root(normalized, old_root)
         if relative is None:
@@ -250,6 +298,34 @@ class Command(BaseCommand):
     @staticmethod
     def _is_project_year_segment(value: str) -> bool:
         return value == "Без года" or value.isdigit()
+
+    @staticmethod
+    def _is_physical_path_field(field: str) -> bool:
+        return field != "proposal_workspace_target_path"
+
+    def _prune_nested_move_operations(self, operations) -> list[MoveOperation]:
+        selected: list[MoveOperation] = []
+        for operation in sorted(
+            operations,
+            key=lambda item: (self._path_depth(item.source_path), item.source_path),
+        ):
+            if any(self._operation_covers(parent, operation) for parent in selected):
+                continue
+            selected.append(operation)
+        return selected
+
+    @staticmethod
+    def _operation_covers(parent: MoveOperation, child: MoveOperation) -> bool:
+        if parent.source_path == child.source_path:
+            return True
+        if not child.source_path.startswith(f"{parent.source_path.rstrip('/')}/"):
+            return False
+        suffix = child.source_path[len(parent.source_path.rstrip("/")):]
+        return child.target_path == f"{parent.target_path.rstrip('/')}{suffix}"
+
+    @staticmethod
+    def _path_depth(path: str) -> int:
+        return len(normalize_cloud_path(path).strip("/").split("/"))
 
     @staticmethod
     def _relative_to_root(path: str, root: str) -> str | None:
