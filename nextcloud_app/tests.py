@@ -1,6 +1,7 @@
+from io import StringIO
 from unittest.mock import Mock, call, patch
 
-from checklists_app.models import ProjectWorkspace
+from checklists_app.models import ProjectWorkspace, SourceDataWorkspace
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.test import Client, TestCase, override_settings
@@ -9,7 +10,7 @@ from core.models import CloudStorageSettings
 from group_app.models import GroupMember
 from policy_app.models import Product
 from proposals_app.models import ProposalRegistration
-from projects_app.models import ProjectRegistration, RegistrationWorkspaceFolder
+from projects_app.models import Performer, ProjectRegistration, RegistrationWorkspaceFolder
 from users_app.models import Employee
 from yandexdisk_app.workspace import _build_project_folder_name, WorkspaceResult
 from nextcloud_app.api import NextcloudApiError
@@ -484,7 +485,7 @@ class NextcloudWorkspaceTests(TestCase):
 
     def test_create_basic_project_workspace_creates_folders_and_grants_editor_access(self):
         project_folder = _build_project_folder_name(self.project)
-        project_path = f"/Corporate Root/2026/{project_folder}"
+        project_path = f"/Corporate Root/02 Проекты/2026/{project_folder}"
         client = Mock()
         client.is_configured = True
         client.username = "cloud-admin"
@@ -502,7 +503,8 @@ class NextcloudWorkspaceTests(TestCase):
         self.assertEqual(
             client.ensure_folder.call_args_list,
             [
-                call("cloud-admin", "/Corporate Root/2026"),
+                call("cloud-admin", "/Corporate Root/02 Проекты"),
+                call("cloud-admin", "/Corporate Root/02 Проекты/2026"),
                 call("cloud-admin", project_path),
                 call("cloud-admin", f"{project_path}/01 Документы"),
                 call("cloud-admin", f"{project_path}/01 Документы/02 Письма"),
@@ -524,7 +526,7 @@ class NextcloudWorkspaceTests(TestCase):
         settings_obj.save()
 
         project_folder = _build_project_folder_name(self.project)
-        project_path = f"/2026/{project_folder}"
+        project_path = f"/02 Проекты/2026/{project_folder}"
         client = Mock()
         client.is_configured = True
         client.username = "cloud-admin"
@@ -543,7 +545,8 @@ class NextcloudWorkspaceTests(TestCase):
         self.assertEqual(
             client.ensure_folder.call_args_list,
             [
-                call("cloud-admin", "/2026"),
+                call("cloud-admin", "/02 Проекты"),
+                call("cloud-admin", "/02 Проекты/2026"),
                 call("cloud-admin", project_path),
                 call("cloud-admin", f"{project_path}/01 Документы"),
                 call("cloud-admin", f"{project_path}/01 Документы/02 Письма"),
@@ -577,10 +580,11 @@ class NextcloudWorkspaceTests(TestCase):
             return "/" + "/".join(part for part in str(path).replace("\\", "/").split("/") if part)
         client.ensure_folder.side_effect = [
             NextcloudApiError("429 rate limit"),
-            "/Corporate Root/2026",
-            "/Corporate Root/2026/Проект 6001 DD Проект Nextcloud",
-            "/Corporate Root/2026/Проект 6001 DD Проект Nextcloud/01 Документы",
-            "/Corporate Root/2026/Проект 6001 DD Проект Nextcloud/01 Документы/02 Письма",
+            "/Corporate Root/02 Проекты",
+            "/Corporate Root/02 Проекты/2026",
+            "/Corporate Root/02 Проекты/2026/Проект 6001 DD Проект Nextcloud",
+            "/Corporate Root/02 Проекты/2026/Проект 6001 DD Проект Nextcloud/01 Документы",
+            "/Corporate Root/02 Проекты/2026/Проект 6001 DD Проект Nextcloud/01 Документы/02 Письма",
         ]
         client.ensure_user_share.return_value = Mock()
         client.build_files_url.return_value = "https://cloud.example.com/apps/files/files?dir=/test"
@@ -651,18 +655,18 @@ class NextcloudProposalWorkspaceTests(TestCase):
         folder_name = f"{self.proposal.short_uid} {self.product.short_name} Сделка _ Восток"
         workspace_path = create_proposal_workspace(self.author, self.proposal, client=client)
 
-        self.assertEqual(workspace_path, f"/Corporate Root/ТКП/2026/{folder_name}")
+        self.assertEqual(workspace_path, f"/Corporate Root/01 ТКП/2026/{folder_name}")
         self.assertEqual(
             client.ensure_folder.call_args_list,
             [
-                call("cloud-admin", "/Corporate Root/ТКП"),
-                call("cloud-admin", "/Corporate Root/ТКП/2026"),
-                call("cloud-admin", f"/Corporate Root/ТКП/2026/{folder_name}"),
+                call("cloud-admin", "/Corporate Root/01 ТКП"),
+                call("cloud-admin", "/Corporate Root/01 ТКП/2026"),
+                call("cloud-admin", f"/Corporate Root/01 ТКП/2026/{folder_name}"),
             ],
         )
         client.ensure_user_share.assert_called_once_with(
             "cloud-admin",
-            f"/Corporate Root/ТКП/2026/{folder_name}",
+            f"/Corporate Root/01 ТКП/2026/{folder_name}",
             f"ncstaff-{self.author.pk}",
             permissions=15,
         )
@@ -694,13 +698,186 @@ class NextcloudProposalWorkspaceTests(TestCase):
         folder_name = f"{self.proposal.short_uid} {self.product.short_name} Сделка _ Восток"
         workspace_path = create_proposal_workspace(self.author, self.proposal, client=client)
 
-        self.assertEqual(workspace_path, f"/Corporate Root/ТКП/2026/{folder_name}")
+        self.assertEqual(workspace_path, f"/Corporate Root/01 ТКП/2026/{folder_name}")
         mocked_ensure_account.assert_called_once()
         client.ensure_user_share.assert_called_once_with(
             "cloud-admin",
-            f"/Corporate Root/ТКП/2026/{folder_name}",
+            f"/Corporate Root/01 ТКП/2026/{folder_name}",
             f"ncstaff-{self.author.pk}",
             permissions=15,
+        )
+
+
+@override_settings(
+    NEXTCLOUD_PROVISIONING_BASE_URL="https://cloud.example.com",
+    NEXTCLOUD_PROVISIONING_USERNAME="cloud-admin",
+    NEXTCLOUD_PROVISIONING_TOKEN="token",
+    NEXTCLOUD_OIDC_PROVIDER_ID=1,
+)
+class CloudStorageStructureMigrationTests(TestCase):
+    def setUp(self):
+        settings_obj = CloudStorageSettings.get_solo()
+        settings_obj.primary_storage = CloudStorageSettings.PrimaryStorage.NEXTCLOUD
+        settings_obj.nextcloud_root_path = "/Corporate Root"
+        settings_obj.save()
+
+        self.user = User.objects.create_user(username="migration-user")
+        self.group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        self.product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        self.proposal = ProposalRegistration.objects.create(
+            number=3333,
+            group_member=self.group_member,
+            type=self.product,
+            name="Миграция ТКП",
+            year=2026,
+            proposal_workspace_disk_path="/Corporate Root/ТКП/2026/333300RU DD Миграция ТКП",
+            proposal_workspace_target_path="/ТКП/2026/333300RU DD Миграция ТКП",
+            docx_file_link="/Corporate Root/ТКП/2026/333300RU DD Миграция ТКП/offer.docx",
+        )
+        self.project = ProjectRegistration.objects.create(
+            number=6001,
+            type=self.product,
+            name="Миграция проекта",
+            year=2026,
+        )
+        self.project_folder = f"{self.project.short_uid} DD Миграция проекта"
+        ProjectWorkspace.objects.create(
+            project=self.project,
+            disk_path=f"/Corporate Root/2026/{self.project_folder}",
+            created_by=self.user,
+        )
+        SourceDataWorkspace.objects.create(
+            project=self.project,
+            disk_path=f"/Corporate Root/2026/{self.project_folder}/05 Исходные данные",
+            created_by=self.user,
+        )
+        self.performer = Performer.objects.create(
+            registration=self.project,
+            executor="Иванов Иван Иванович",
+            contract_project_disk_folder=f"/Corporate Root/2026/{self.project_folder}/09 Договоры/000 Иванов ИИ",
+        )
+
+    def test_migrate_cloud_storage_structure_dry_run_does_not_update_database(self):
+        out = StringIO()
+
+        call_command(
+            "migrate_cloud_storage_structure",
+            "--old-root",
+            "/Corporate Root",
+            "--new-root",
+            "/Corporate Root",
+            stdout=out,
+        )
+
+        output = out.getvalue()
+        self.assertIn("DRY-RUN", output)
+        self.assertIn("MOVE /Corporate Root/ТКП -> /Corporate Root/01 ТКП", output)
+        self.assertIn("MOVE /Corporate Root/2026 -> /Corporate Root/02 Проекты/2026", output)
+        self.proposal.refresh_from_db()
+        self.assertEqual(
+            self.proposal.proposal_workspace_disk_path,
+            "/Corporate Root/ТКП/2026/333300RU DD Миграция ТКП",
+        )
+
+    def test_migrate_cloud_storage_structure_handles_slash_old_root(self):
+        self.proposal.proposal_workspace_disk_path = "/ТКП/2026/333300RU DD Миграция ТКП"
+        self.proposal.proposal_workspace_target_path = "/ТКП/2026/333300RU DD Миграция ТКП"
+        self.proposal.docx_file_link = "/ТКП/2026/333300RU DD Миграция ТКП/offer.docx"
+        self.proposal.save(
+            update_fields=[
+                "proposal_workspace_disk_path",
+                "proposal_workspace_target_path",
+                "docx_file_link",
+            ]
+        )
+        ProjectWorkspace.objects.filter(project=self.project).update(
+            disk_path=f"/2026/{self.project_folder}"
+        )
+        SourceDataWorkspace.objects.filter(project=self.project).update(
+            disk_path=f"/2026/{self.project_folder}/05 Исходные данные"
+        )
+        Performer.objects.filter(pk=self.performer.pk).update(
+            contract_project_disk_folder=f"/2026/{self.project_folder}/09 Договоры/000 Иванов ИИ"
+        )
+        out = StringIO()
+
+        call_command(
+            "migrate_cloud_storage_structure",
+            "--old-root",
+            "/",
+            "--new-root",
+            "/",
+            stdout=out,
+        )
+
+        output = out.getvalue()
+        self.assertIn("MOVE /2026 -> /02 Проекты/2026", output)
+        self.assertIn("MOVE /ТКП -> /01 ТКП", output)
+        self.assertIn(
+            "proposals_app.ProposalRegistration"
+            f"#{self.proposal.pk}.proposal_workspace_disk_path: "
+            "/ТКП/2026/333300RU DD Миграция ТКП -> "
+            "/01 ТКП/2026/333300RU DD Миграция ТКП",
+            output,
+        )
+        self.assertIn(
+            "checklists_app.ProjectWorkspace"
+            f"#{self.project.yadisk_workspace.pk}.disk_path: "
+            f"/2026/{self.project_folder} -> "
+            f"/02 Проекты/2026/{self.project_folder}",
+            output,
+        )
+
+    @patch("nextcloud_app.api.NextcloudApiClient.move_resource")
+    def test_migrate_cloud_storage_structure_apply_moves_folders_and_updates_database(self, mocked_move):
+        call_command(
+            "migrate_cloud_storage_structure",
+            "--old-root",
+            "/Corporate Root",
+            "--new-root",
+            "/Corporate Root",
+            "--apply",
+            stdout=StringIO(),
+        )
+
+        mocked_move.assert_has_calls(
+            [
+                call("cloud-admin", "/Corporate Root/2026", "/Corporate Root/02 Проекты/2026", overwrite=False),
+                call("cloud-admin", "/Corporate Root/ТКП", "/Corporate Root/01 ТКП", overwrite=False),
+            ],
+            any_order=True,
+        )
+        self.proposal.refresh_from_db()
+        self.assertEqual(
+            self.proposal.proposal_workspace_disk_path,
+            "/Corporate Root/01 ТКП/2026/333300RU DD Миграция ТКП",
+        )
+        self.assertEqual(
+            self.proposal.proposal_workspace_target_path,
+            "/01 ТКП/2026/333300RU DD Миграция ТКП",
+        )
+        workspace = ProjectWorkspace.objects.get(project=self.project)
+        self.assertEqual(
+            workspace.disk_path,
+            f"/Corporate Root/02 Проекты/2026/{self.project_folder}",
+        )
+        self.performer.refresh_from_db()
+        self.assertEqual(
+            self.performer.contract_project_disk_folder,
+            f"/Corporate Root/02 Проекты/2026/{self.project_folder}/09 Договоры/000 Иванов ИИ",
         )
 
 

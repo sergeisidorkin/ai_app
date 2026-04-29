@@ -4,6 +4,7 @@ import json
 from collections import defaultdict
 
 from django.contrib.auth.decorators import login_required, user_passes_test
+from django.db import transaction
 from django.db.models import IntegerField, Max, Q, Value
 from django.db.models.functions import Coalesce
 from django.http import HttpResponse, JsonResponse
@@ -846,26 +847,27 @@ def section_csv_upload(request):
 
         position = _next_position(TypicalSection, {"product": product})
         try:
-            section = TypicalSection.objects.create(
-                product=product,
-                code=code,
-                short_name=short_name,
-                short_name_ru=short_name_ru,
-                name_en=name_en,
-                name_ru=name_ru,
-                accounting_type=accounting_type,
-                expertise_dir=expertise_dir,
-                expertise_direction=expertise_direction,
-                exclude_from_tkp_autofill=_csv_truthy(tkp_raw),
-                position=position,
-            )
-            missing_specialties = []
-            for rank, specialty_name in enumerate(_split_csv_list_value(executor_raw, specialties_by_name), start=1):
-                specialty = specialties_by_name.get(_csv_lookup_key(specialty_name))
-                if not specialty:
-                    missing_specialties.append(specialty_name)
-                    continue
-                TypicalSectionSpecialty.objects.create(section=section, specialty=specialty, rank=rank)
+            with transaction.atomic():
+                section = TypicalSection.objects.create(
+                    product=product,
+                    code=code,
+                    short_name=short_name,
+                    short_name_ru=short_name_ru,
+                    name_en=name_en,
+                    name_ru=name_ru,
+                    accounting_type=accounting_type,
+                    expertise_dir=expertise_dir,
+                    expertise_direction=expertise_direction,
+                    exclude_from_tkp_autofill=_csv_truthy(tkp_raw),
+                    position=position,
+                )
+                missing_specialties = []
+                for rank, specialty_name in enumerate(_split_csv_list_value(executor_raw, specialties_by_name), start=1):
+                    specialty = specialties_by_name.get(_csv_lookup_key(specialty_name))
+                    if not specialty:
+                        missing_specialties.append(specialty_name)
+                        continue
+                    TypicalSectionSpecialty.objects.create(section=section, specialty=specialty, rank=rank)
             if missing_specialties:
                 warnings.append(f"Строка {i}: исполнители не найдены: {', '.join(missing_specialties)}.")
             created += 1

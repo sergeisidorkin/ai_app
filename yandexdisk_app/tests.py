@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import call, patch
 from datetime import datetime, timezone as dt_timezone
 
 from django.contrib.auth import get_user_model
@@ -98,7 +98,7 @@ class WorkspacePublishingTests(TestCase):
 
     @patch("yandexdisk_app.workspace.publish_resource")
     @patch("yandexdisk_app.workspace.create_folder", return_value=True)
-    def test_basic_workspace_creation_does_not_publish_project_folder(self, _create_folder, publish_resource):
+    def test_basic_workspace_creation_does_not_publish_project_folder(self, create_folder, publish_resource):
         items = list(create_basic_project_workspace_stream(self.user, self.project))
 
         self.assertIsInstance(items[-1], WorkspaceResult)
@@ -107,6 +107,15 @@ class WorkspacePublishingTests(TestCase):
 
         workspace = ProjectWorkspace.objects.get(project=self.project)
         self.assertEqual(workspace.public_url, "")
+        expected_project_path = f"/Root/02 Проекты/2026/{self.project.short_uid} DD Проект Альфа"
+        self.assertEqual(workspace.disk_path, expected_project_path)
+        create_folder.assert_has_calls(
+            [
+                call(self.user, "/Root/02 Проекты"),
+                call(self.user, "/Root/02 Проекты/2026"),
+                call(self.user, expected_project_path),
+            ]
+        )
 
 
 class FolderSyncTests(TestCase):

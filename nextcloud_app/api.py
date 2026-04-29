@@ -140,6 +140,42 @@ class NextcloudApiClient:
                 )
         return normalized
 
+    def move_resource(
+        self,
+        owner_user_id: str,
+        source_path: str,
+        target_path: str,
+        *,
+        overwrite: bool = False,
+    ) -> str:
+        source = self._normalize_folder_path(source_path)
+        target = self._normalize_folder_path(target_path)
+        if source == "/" or target == "/":
+            raise NextcloudApiError("Nextcloud root folder cannot be moved.")
+        if source == target:
+            return target
+
+        parent = "/" + "/".join(target.strip("/").split("/")[:-1])
+        if parent and parent != "/":
+            self.ensure_folder(owner_user_id, parent)
+
+        response = self._dav_request(
+            "MOVE",
+            self._webdav_path(owner_user_id, source),
+            headers={
+                "Destination": self._webdav_path(owner_user_id, target),
+                "Overwrite": "T" if overwrite else "F",
+            },
+            allow_statuses={201, 204, 404, 412},
+        )
+        if response.status_code in (201, 204):
+            return target
+        if response.status_code == 404:
+            raise NextcloudApiError(f"Nextcloud DAV error 404: исходная папка не найдена `{source}`.")
+        if response.status_code == 412:
+            raise NextcloudApiError(f"Nextcloud DAV error 412: целевая папка уже существует `{target}`.")
+        raise NextcloudApiError(f"Nextcloud DAV error {response.status_code}: не удалось переместить `{source}`.")
+
     def ensure_user_share(
         self,
         owner_user_id: str,

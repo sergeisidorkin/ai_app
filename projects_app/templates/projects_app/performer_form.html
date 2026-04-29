@@ -131,6 +131,7 @@
 <script id="perf-reg-map" type="application/json">{{ reg_map_json|safe }}</script>
 <script id="perf-assets-map" type="application/json">{{ assets_map_json|safe }}</script>
 <script id="perf-sections-map" type="application/json">{{ sections_map_json|safe }}</script>
+<script id="perf-executor-options" type="application/json">{{ executor_options_json|safe }}</script>
 <script id="perf-executor-grade-map" type="application/json">{{ executor_grade_json|safe }}</script>
 <script id="perf-living-wage-map" type="application/json">{{ living_wage_json|safe }}</script>
 <script id="perf-tariff-map" type="application/json">{{ tariff_json|safe }}</script>
@@ -145,10 +146,16 @@
   const nameEl  = formEl.querySelector('#perf-name');
   const assetSel= formEl.querySelector('select[name="asset_name"]');
   const sectSel = formEl.querySelector('select[name="typical_section"]');
+  var execSel = formEl.querySelector('select[name="executor"]');
+  var gradeNameDisplay = formEl.querySelector('#perf-grade-name-display');
+  var gradeNameHidden  = formEl.querySelector('#perf-grade-name');
+  var gradeStarsEl     = formEl.querySelector('#perf-grade-stars');
+  var gradeHidden      = formEl.querySelector('#perf-grade-value');
 
   const regMap   = JSON.parse(document.getElementById('perf-reg-map').textContent || '{}');
   const assetsMap= JSON.parse(document.getElementById('perf-assets-map').textContent || '{}');
   const sectMap  = JSON.parse(document.getElementById('perf-sections-map').textContent || '{}');
+  const executorOptions = JSON.parse(document.getElementById('perf-executor-options').textContent || '[]');
   const execGradeMap = JSON.parse(document.getElementById('perf-executor-grade-map').textContent || '{}');
   const lwMap    = JSON.parse(document.getElementById('perf-living-wage-map').textContent || '{}');
   const tariffMap= JSON.parse(document.getElementById('perf-tariff-map').textContent || '{}');
@@ -189,6 +196,53 @@
       sectSel.appendChild(o);
     });
     if (current) sectSel.value = current;
+    refillExecutors();
+  }
+
+  function getSelectedSectionInfo() {
+    var sectionId = sectSel ? sectSel.value : '';
+    if (!sectionId) return null;
+    var regId = regSel ? regSel.value : '';
+    var sectList = sectMap[regId] || [];
+    for (var i = 0; i < sectList.length; i++) {
+      if (String(sectList[i].id) === String(sectionId)) return sectList[i];
+    }
+    return {specialty_ids: []};
+  }
+
+  function filteredExecutorOptions() {
+    var sectionInfo = getSelectedSectionInfo();
+    if (!sectionInfo) return executorOptions;
+    var specialtyIds = (sectionInfo.specialty_ids || []).map(String).filter(Boolean);
+    if (!specialtyIds.length) return [];
+    var specialtySet = new Set(specialtyIds);
+    return executorOptions.filter(function(opt) {
+      return (opt.specialty_ids || []).map(String).some(function(id) {
+        return specialtySet.has(id);
+      });
+    });
+  }
+
+  function refillExecutors() {
+    if (!execSel) return;
+    var current = execSel.value;
+    var list = filteredExecutorOptions();
+    execSel.innerHTML = '';
+    var opt0 = document.createElement('option');
+    opt0.value = '';
+    opt0.textContent = '— Не выбрано —';
+    execSel.appendChild(opt0);
+    list.forEach(function(opt) {
+      var o = document.createElement('option');
+      o.value = opt.value;
+      o.textContent = opt.label || opt.value;
+      execSel.appendChild(o);
+    });
+    var currentAllowed = current && list.some(function(opt) {
+      return opt.value === current;
+    });
+    execSel.value = currentAllowed ? current : '';
+    if (!currentAllowed) applyExecutorGrade('');
   }
 
   function applyReg(regId) {
@@ -198,14 +252,6 @@
     refillAssets(regId);
     refillSections(regId);
   }
-
-  if (regSel?.value) applyReg(regSel.value);
-
-  var execSel = formEl.querySelector('select[name="executor"]');
-  var gradeNameDisplay = formEl.querySelector('#perf-grade-name-display');
-  var gradeNameHidden  = formEl.querySelector('#perf-grade-name');
-  var gradeStarsEl     = formEl.querySelector('#perf-grade-stars');
-  var gradeHidden      = formEl.querySelector('#perf-grade-value');
 
   function renderStars(container, qual, levels) {
     container.innerHTML = '';
@@ -308,11 +354,16 @@
     actualCostsEl.addEventListener('change', calcAgreed);
   }
 
+  if (regSel?.value) applyReg(regSel.value);
+
   if (regSel) regSel.addEventListener('change', function() {
     applyReg(regSel.value);
     calcEstimated();
   });
-  if (sectSel) sectSel.addEventListener('change', calcEstimated);
+  if (sectSel) sectSel.addEventListener('change', function() {
+    refillExecutors();
+    calcEstimated();
+  });
 
   const prepEl = formEl.querySelector('[name="prepayment"]');
   const finalEl = formEl.querySelector('[name="final_payment"]');

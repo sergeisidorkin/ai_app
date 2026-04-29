@@ -19,7 +19,9 @@ from policy_app.models import (
     LAWYER_GROUP,
     PROJECTS_HEAD_GROUP,
     Product,
+    TypicalSectionSpecialty,
 )
+from experts_app.models import ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
 from projects_app.models import (
     ContractProjectTargetFolder,
     LegalEntity,
@@ -30,7 +32,7 @@ from projects_app.models import (
     SourceDataTargetFolder,
     WorkVolume,
 )
-from projects_app.forms import ContractConditionsForm, LegalEntityForm, ProjectRegistrationForm, WorkVolumeForm
+from projects_app.forms import ContractConditionsForm, LegalEntityForm, PerformerForm, ProjectRegistrationForm, WorkVolumeForm
 from group_app.models import GroupMember, OrgUnit
 from users_app.models import Employee
 from unittest.mock import call, patch
@@ -318,6 +320,84 @@ class ProjectRegistrationFormTests(TestCase):
             self.assertIn("Проектов Иван Иванович", choices)
             self.assertIn("Директорова Дарья Дмитриевна", choices)
             self.assertNotIn("Экспертов Егор Егорович", choices)
+
+
+class PerformerFormExecutorFilteringTests(TestCase):
+    def setUp(self):
+        self.product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+        )
+        self.project = ProjectRegistration.objects.create(
+            number=6101,
+            type=self.product,
+            name="Проект исполнителей",
+            year=2026,
+        )
+        self.section = self.product.sections.create(
+            code="TAX",
+            short_name="Tax",
+            short_name_ru="Налоги",
+            name_en="Tax",
+            name_ru="Налоги",
+            accounting_type="Раздел",
+        )
+        self.matching_specialty = ExpertSpecialty.objects.create(specialty="Налоги")
+        self.other_specialty = ExpertSpecialty.objects.create(specialty="Геология")
+        TypicalSectionSpecialty.objects.create(
+            section=self.section,
+            specialty=self.matching_specialty,
+            rank=1,
+        )
+        self.matching_name = "Иванов Иван Иванович"
+        self.other_name = "Петров Петр Петрович"
+        self.matching_employee = self._create_employee(
+            username="tax.executor",
+            first_name="Иван",
+            last_name="Иванов",
+            patronymic="Иванович",
+            specialty=self.matching_specialty,
+        )
+        self.other_employee = self._create_employee(
+            username="geo.executor",
+            first_name="Петр",
+            last_name="Петров",
+            patronymic="Петрович",
+            specialty=self.other_specialty,
+        )
+
+    def _create_employee(self, *, username, first_name, last_name, patronymic, specialty):
+        user = get_user_model().objects.create_user(
+            username=username,
+            password="secret",
+            first_name=first_name,
+            last_name=last_name,
+            is_staff=True,
+        )
+        employee = Employee.objects.create(user=user, patronymic=patronymic)
+        profile = ExpertProfile.objects.create(employee=employee)
+        ExpertProfileSpecialty.objects.create(profile=profile, specialty=specialty, rank=1)
+        return employee
+
+    def test_executor_choices_are_filtered_by_typical_section_specialties(self):
+        form = PerformerForm(data={
+            "registration": self.project.pk,
+            "typical_section": self.section.pk,
+        })
+
+        choices = [value for value, _label in form.fields["executor"].choices]
+
+        self.assertIn(self.matching_name, choices)
+        self.assertNotIn(self.other_name, choices)
+
+    def test_executor_choices_are_unfiltered_until_typical_section_is_selected(self):
+        form = PerformerForm()
+
+        choices = [value for value, _label in form.fields["executor"].choices]
+
+        self.assertIn(self.matching_name, choices)
+        self.assertIn(self.other_name, choices)
 
 
 class ProjectRegistrationFormViewTests(TestCase):
@@ -1132,7 +1212,7 @@ class NextcloudSourceDataWorkspaceFlowTests(TestCase):
         mocked_public_share,
     ):
         expected_project_folder = f"{self.project.short_uid} DD Исходные данные"
-        base_path = f"/Corporate Root/2026/{expected_project_folder}/05 Исходные данные/01 Запросы"
+        base_path = f"/Corporate Root/02 Проекты/2026/{expected_project_folder}/05 Исходные данные/01 Запросы"
         section_path = f"{base_path}/01 FIN Финансы"
         item_path = f"{section_path}/REQ-01 ОСВ"
         mocked_ensure_folder.side_effect = [section_path, item_path]
@@ -1266,7 +1346,7 @@ class NextcloudContractProjectFlowTests(TestCase):
     @patch("nextcloud_app.api.NextcloudApiClient.ensure_user_share")
     @patch("nextcloud_app.api.NextcloudApiClient.ensure_public_link_share", return_value="https://cloud.example.com/s/public-doc")
     @patch("nextcloud_app.api.NextcloudApiClient.upload_file", return_value=True)
-    @patch("nextcloud_app.api.NextcloudApiClient.ensure_folder", return_value="/Corporate Root/2026/5002 DD Контрактный проект/09 Договоры/000 Иванов ИИ")
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_folder", return_value="/Corporate Root/02 Проекты/2026/5002 DD Контрактный проект/09 Договоры/000 Иванов ИИ")
     @patch("nextcloud_app.api.NextcloudApiClient.list_resources", return_value=[])
     def test_create_contract_project_uses_nextcloud_and_stores_public_link(
         self,
@@ -1292,7 +1372,7 @@ class NextcloudContractProjectFlowTests(TestCase):
 
         self.performer.refresh_from_db()
         expected_project_folder = f"{self.project.short_uid} DD Контрактный проект"
-        expected_base_path = f"/Corporate Root/2026/{expected_project_folder}/09 Договоры"
+        expected_base_path = f"/Corporate Root/02 Проекты/2026/{expected_project_folder}/09 Договоры"
         expected_folder_path = f"{expected_base_path}/000 Иванов ИИ"
         expected_upload_path = f"{expected_folder_path}/Договор 5002_Иванов ИИ.docx"
 

@@ -8,6 +8,7 @@ from typing import Optional
 from django.db import transaction
 
 from checklists_app.models import ChecklistItem, ChecklistItemFolder, ProjectWorkspace
+from core.cloud_paths import PROJECTS_SECTION_FOLDER, cloud_year_folder, join_cloud_path
 from projects_app.models import Performer, ProjectRegistration
 from yandexdisk_app.models import YandexDiskSelection
 from yandexdisk_app.service import create_folder, get_resource_info, publish_resource
@@ -72,6 +73,18 @@ def _build_project_folder_name(project: ProjectRegistration) -> str:
     return _resolve_workspace_folder_name(_build_project_label(project))
 
 
+def _build_projects_root_path(base: str) -> str:
+    return join_cloud_path(base, _sanitize(PROJECTS_SECTION_FOLDER))
+
+
+def _build_project_year_path(base: str, project: ProjectRegistration) -> str:
+    return join_cloud_path(_build_projects_root_path(base), _sanitize(cloud_year_folder(project.year)))
+
+
+def _build_project_workspace_path(base: str, project: ProjectRegistration) -> str:
+    return join_cloud_path(_build_project_year_path(base, project), _build_project_folder_name(project))
+
+
 def _build_section_folder_name(section) -> str:
     code = getattr(section, "code", "") or ""
     short_name = getattr(section, "short_name_ru", "") or getattr(section, "short_name", "")
@@ -100,13 +113,15 @@ def create_project_workspace(user, project: ProjectRegistration) -> WorkspaceRes
 
     base = selection.resource_path.rstrip("/")
 
-    year_str = str(project.year) if project.year else "Без года"
-    year_path = f"{base}/{_sanitize(year_str)}"
+    projects_root = _build_projects_root_path(base)
+    if not create_folder(user, projects_root):
+        return WorkspaceResult(False, f"Не удалось создать папку проектов: {projects_root}")
+
+    year_path = _build_project_year_path(base, project)
     if not create_folder(user, year_path):
         return WorkspaceResult(False, f"Не удалось создать папку года: {year_path}")
 
-    project_folder = _build_project_folder_name(project)
-    project_path = f"{year_path}/{project_folder}"
+    project_path = _build_project_workspace_path(base, project)
 
     info = get_resource_info(user, project_path)
     existing_ws = ProjectWorkspace.objects.filter(project=project).first()
@@ -269,19 +284,24 @@ def create_basic_project_workspace_stream(user, project: ProjectRegistration):
         else [_sanitize(n) for n in REGISTRATION_STANDARD_FOLDERS]
     )
 
-    total = 2 + len(folder_paths)  # year + project + sub-folders
+    total = 3 + len(folder_paths)  # section + year + project + sub-folders
     current = 0
 
-    year_str = str(project.year) if project.year else "Без года"
-    year_path = f"{base}/{_sanitize(year_str)}"
+    projects_root = _build_projects_root_path(base)
+    if not create_folder(user, projects_root):
+        yield WorkspaceResult(False, f"Не удалось создать папку проектов: {projects_root}")
+        return
+    current += 1
+    yield {"current": current, "total": total}
+
+    year_path = _build_project_year_path(base, project)
     if not create_folder(user, year_path):
         yield WorkspaceResult(False, f"Не удалось создать папку года: {year_path}")
         return
     current += 1
     yield {"current": current, "total": total}
 
-    project_folder = _build_project_folder_name(project)
-    project_path = f"{year_path}/{project_folder}"
+    project_path = _build_project_workspace_path(base, project)
 
     if not create_folder(user, project_path):
         yield WorkspaceResult(False, f"Не удалось создать папку проекта: {project_path}")
@@ -329,15 +349,14 @@ def _resolve_source_data_base(user, project: ProjectRegistration):
             False, "Не выбрана папка на Яндекс.Диске. Подключите Яндекс.Диск и выберите папку.")
 
     disk_root = selection.resource_path.rstrip("/")
-    year_str = str(project.year) if project.year else "Без года"
-    project_folder = _build_project_folder_name(project)
+    project_path = _build_project_workspace_path(disk_root, project)
 
     target_obj = SourceDataTargetFolder.objects.filter(user=user).first()
     target_folder = _sanitize_relative_path(
         target_obj.folder_name if target_obj else DEFAULT_SOURCE_DATA_FOLDER
     )
 
-    base_path = f"{disk_root}/{_sanitize(year_str)}/{project_folder}/{target_folder}"
+    base_path = join_cloud_path(project_path, target_folder)
     return base_path, None
 
 

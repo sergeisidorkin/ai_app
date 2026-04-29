@@ -136,6 +136,50 @@ def create_folder(user, path: str) -> bool:
         return False
 
 
+def ensure_folder_path(user, path: str) -> bool:
+    """Create every folder segment in an absolute Yandex.Disk path."""
+    clean = "/" + "/".join(part.strip() for part in str(path or "").replace("\\", "/").split("/") if part.strip())
+    if clean == "/":
+        return True
+
+    current = ""
+    for part in clean.strip("/").split("/"):
+        current = f"{current}/{part}" if current else f"/{part}"
+        if not create_folder(user, current):
+            return False
+    return True
+
+
+def move_resource(user, source_path: str, target_path: str, overwrite: bool = False) -> bool:
+    """Move a file or folder on Yandex.Disk, creating the target parent first."""
+    token = _get_token(user)
+    if not token:
+        return False
+
+    source = "/" + "/".join(part.strip() for part in str(source_path or "").replace("\\", "/").split("/") if part.strip())
+    target = "/" + "/".join(part.strip() for part in str(target_path or "").replace("\\", "/").split("/") if part.strip())
+    if source in {"", "/"} or target in {"", "/"}:
+        return False
+    if source == target:
+        return True
+
+    parent = target.rsplit("/", 1)[0] or "/"
+    if parent != "/" and not ensure_folder_path(user, parent):
+        return False
+
+    headers = {"Authorization": f"OAuth {token}"}
+    try:
+        resp = requests.post(
+            f"{YANDEX_DISK_API}/resources/move",
+            headers=headers,
+            params={"from": source, "path": target, "overwrite": str(overwrite).lower()},
+            timeout=30,
+        )
+        return resp.status_code in (201, 202)
+    except Exception:
+        return False
+
+
 def publish_resource(user, path: str) -> str:
     """Опубликовать ресурс и вернуть public_url (или пустую строку при ошибке)."""
     token = _get_token(user)

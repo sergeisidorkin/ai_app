@@ -83,7 +83,7 @@ def _employee_queryset():
     )
 
 
-def _employee_choices(queryset, current_value=""):
+def _employee_choices(queryset, current_value="", *, include_missing_current=True):
     choices = [("", "— Не выбрано —")]
     current_value = (current_value or "").strip()
     current_in_choices = False
@@ -96,7 +96,7 @@ def _employee_choices(queryset, current_value=""):
         if full_name == current_value:
             current_in_choices = True
 
-    if current_value and not current_in_choices:
+    if include_missing_current and current_value and not current_in_choices:
         choices.insert(1, (current_value, current_value))
 
     return choices
@@ -106,8 +106,39 @@ def _project_manager_choices(current_value=""):
     return _employee_choices(_project_manager_queryset(), current_value)
 
 
-def _all_employee_choices(current_value=""):
-    return _employee_choices(_employee_queryset(), current_value)
+def _typical_section_specialty_ids(typical_section_id):
+    if not typical_section_id:
+        return []
+    try:
+        typical_section_pk = int(typical_section_id)
+    except (TypeError, ValueError):
+        return []
+    return list(
+        TypicalSection.objects
+        .filter(pk=typical_section_pk)
+        .values_list("specialties__pk", flat=True)
+        .exclude(specialties__pk__isnull=True)
+        .distinct()
+    )
+
+
+def _all_employee_choices(current_value="", typical_section_id=None):
+    queryset = _employee_queryset()
+    include_missing_current = True
+
+    if typical_section_id:
+        specialty_ids = _typical_section_specialty_ids(typical_section_id)
+        if specialty_ids:
+            queryset = queryset.filter(expert_profile__specialties__pk__in=specialty_ids).distinct()
+        else:
+            queryset = queryset.none()
+        include_missing_current = False
+
+    return _employee_choices(
+        queryset,
+        current_value,
+        include_missing_current=include_missing_current,
+    )
 
 
 def _next_project_number():
@@ -563,7 +594,14 @@ class PerformerForm(forms.ModelForm):
                     data[fn] = str(v).replace("\u00a0", "").replace(" ", "").replace(",", ".")
             self.data = data
         current_executor = self.data.get("executor") or (self.instance.executor if self.instance else "")
-        self.fields["executor"].choices = _all_employee_choices(current_executor)
+        current_typical_section_id = (
+            self.data.get("typical_section")
+            or (self.instance.typical_section_id if self.instance else None)
+        )
+        self.fields["executor"].choices = _all_employee_choices(
+            current_executor,
+            typical_section_id=current_typical_section_id,
+        )
 
         today = timezone.now().date()
         currency_qs = OKVCurrency.objects.filter(

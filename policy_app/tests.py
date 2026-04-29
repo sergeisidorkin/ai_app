@@ -543,6 +543,54 @@ class TypicalSectionViewsTests(TestCase):
             [first_specialty.pk, second_specialty.pk],
         )
 
+    def test_section_csv_upload_rolls_back_row_when_specialty_insert_fails(self):
+        owner = GroupMember.objects.create(
+            short_name="IMC",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        department = OrgUnit.objects.create(
+            company=owner,
+            level=1,
+            department_name="Налоговый департамент",
+            short_name="TAX-DEPT",
+            unit_type="expertise",
+            position=1,
+        )
+        expertise = ExpertiseDirection.objects.create(
+            name="Налоги",
+            short_name="TAX",
+            position=1,
+        )
+        specialty = ExpertSpecialty.objects.create(
+            expertise_direction=department,
+            expertise_dir=expertise,
+            specialty="Налоговый due diligence",
+            position=1,
+        )
+        csv_file = SimpleUploadedFile(
+            "sections.csv",
+            (
+                "Продукт;Код;Краткое имя EN;Краткое имя RU;"
+                "Наименование раздела (услуги) EN;Наименование раздела (услуги) RU;"
+                "Тип учета;Исполнитель;Экспертиза;Подразделение;ТКП\n"
+                "SEC;SEC-6;tax-dd;нал-dd;Tax DD;Налоговый ДД;Услуги;"
+                "Налоговый due diligence, Налоговый due diligence;TAX;Налоговый департамент;Да\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("section_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 0)
+        self.assertEqual(len(response.json()["warnings"]), 1)
+        self.assertIn("ошибка сохранения", response.json()["warnings"][0])
+        self.assertFalse(TypicalSection.objects.filter(code="SEC-6").exists())
+        self.assertFalse(TypicalSectionSpecialty.objects.filter(specialty=specialty).exists())
+
 
 class SectionStructureViewsTests(TestCase):
     def setUp(self):
