@@ -6,6 +6,11 @@ import time
 from django.db import transaction
 
 from checklists_app.models import ProjectWorkspace
+from core.cloud_paths import (
+    PROJECTS_SECTION_FOLDER,
+    PROPOSALS_SECTION_FOLDER,
+    cloud_year_folder,
+)
 from core.cloud_storage import get_nextcloud_root_path, get_primary_cloud_storage_label
 from users_app.models import Employee
 from yandexdisk_app.workspace import (
@@ -16,6 +21,7 @@ from yandexdisk_app.workspace import (
     _build_numbered_section_folder_name,
     _build_folder_tree,
     _build_project_folder_name,
+    _build_project_workspace_path,
     _sanitize,
     _sanitize_relative_path,
 )
@@ -115,7 +121,8 @@ def create_proposal_workspace(
     owner_user_id = client.username
 
     proposal_path = build_proposal_workspace_path(proposal, base_root=base_root)
-    tkp_root_path = client.ensure_folder(owner_user_id, _join_path("/" if base_root == "/" else base_root.rstrip("/"), _sanitize("ТКП")))
+    base = "/" if base_root == "/" else base_root.rstrip("/")
+    tkp_root_path = client.ensure_folder(owner_user_id, _join_path(base, _sanitize(PROPOSALS_SECTION_FOLDER)))
     year_path = client.ensure_folder(owner_user_id, _join_path(tkp_root_path, _sanitize(str(proposal.year))))
     proposal_path = client.ensure_folder(owner_user_id, proposal_path)
 
@@ -173,7 +180,7 @@ def create_basic_project_workspace_stream(
         else [_sanitize(name) for name in REGISTRATION_STANDARD_FOLDERS]
     )
 
-    total = 3 + len(folder_paths)
+    total = 4 + len(folder_paths)
     current = 0
     owner_user_id = client.username
 
@@ -183,9 +190,15 @@ def create_basic_project_workspace_stream(
             yield WorkspaceResult(False, "Не удалось определить Nextcloud-пользователя руководителя проекта.")
             return
 
-        year_str = str(project.year) if project.year else "Без года"
+        projects_root_path = yield from _ensure_folder_with_heartbeat(
+            client, owner_user_id, _join_path(base, _sanitize(PROJECTS_SECTION_FOLDER)), current, total,
+        )
+        current += 1
+        yield {"current": current, "total": total}
+
+        year_str = cloud_year_folder(project.year)
         year_path = yield from _ensure_folder_with_heartbeat(
-            client, owner_user_id, _join_path(base, _sanitize(year_str)), current, total,
+            client, owner_user_id, _join_path(projects_root_path, _sanitize(year_str)), current, total,
         )
         current += 1
         yield {"current": current, "total": total}
@@ -450,14 +463,13 @@ def _resolve_nextcloud_source_data_base(user, project):
         return None, WorkspaceResult(False, "Не задан корневой каталог Nextcloud в разделе «Подключения».")
 
     base = "/" if base_root == "/" else base_root.rstrip("/")
-    year_str = str(project.year) if project.year else "Без года"
-    project_folder = _build_project_folder_name(project)
+    project_path = _build_project_workspace_path(base, project)
 
     target_obj = SourceDataTargetFolder.objects.filter(user=user).first()
     target_folder = _sanitize_relative_path(
         target_obj.folder_name if target_obj else DEFAULT_SOURCE_DATA_FOLDER
     )
-    return _join_path(_join_path(_join_path(base, _sanitize(year_str)), project_folder), target_folder), None
+    return _join_path(project_path, target_folder), None
 
 
 def _join_path(base: str, child: str) -> str:
@@ -486,6 +498,6 @@ def build_proposal_workspace_path(proposal, *, base_root: str | None = None) -> 
         return ""
 
     base = "/" if root_path == "/" else root_path.rstrip("/")
-    tkp_root_path = _join_path(base, _sanitize("ТКП"))
+    tkp_root_path = _join_path(base, _sanitize(PROPOSALS_SECTION_FOLDER))
     year_path = _join_path(tkp_root_path, _sanitize(str(proposal.year)))
     return _join_path(year_path, _build_proposal_workspace_folder_name(proposal))

@@ -4331,7 +4331,7 @@
           refreshBtn.setAttribute('aria-label', 'Обновить курс Банка России на текущую дату');
           refreshBtn.innerHTML = '<i class="bi bi-arrow-clockwise" aria-hidden="true"></i>';
           refreshBtn.addEventListener('click', async function () {
-            const refreshUrl = form.dataset.cbrRateRefreshUrl || '';
+            const refreshUrl = formRoot.dataset.cbrRateRefreshUrl || '';
             if (!refreshUrl || refreshBtn.disabled) return;
             document.documentElement.classList.add('proposal-progress-cursor');
             refreshBtn.classList.add('is-loading');

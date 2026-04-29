@@ -48,6 +48,7 @@ from core.cloud_storage import (
     sanitize_folder_name,
     upload_file as cloud_upload_file,
 )
+from core.cloud_paths import PROJECTS_SECTION_FOLDER, join_cloud_path
 from policy_app.models import (
     DEPARTMENT_HEAD_GROUP,
     DIRECTION_DIRECTOR_GROUP,
@@ -626,6 +627,7 @@ def _ordered_registration_sections(registration):
         TypicalSection.objects
         .filter(product_id__in=product_ids)
         .select_related("product", "expertise_dir")
+        .prefetch_related("ranked_specialties", "ranked_specialties__specialty")
         .order_by("position", "id")
     )
     sections.sort(
@@ -1260,6 +1262,34 @@ def _build_executor_grade_map():
     return result
 
 
+def _build_executor_options_payload():
+    employees = (
+        Employee.objects
+        .select_related("user", "expert_profile")
+        .prefetch_related("expert_profile__specialties")
+        .order_by("user__last_name", "user__first_name", "patronymic", "position", "id")
+    )
+    result = []
+    for employee in employees:
+        full_name = _employee_full_name(employee)
+        if not full_name:
+            continue
+        try:
+            profile = employee.expert_profile
+        except ExpertProfile.DoesNotExist:
+            profile = None
+        result.append({
+            "value": full_name,
+            "label": full_name,
+            "specialty_ids": [
+                specialty.pk
+                for specialty in profile.specialties.all()
+                if specialty.pk
+            ] if profile else [],
+        })
+    return result
+
+
 def _build_living_wage_map():
     from classifiers_app.models import LivingWage
     today = timezone.now().date()
@@ -1364,11 +1394,17 @@ def _performer_form_ctx(form, action: str, performer=None):
                 "product_id": s.product_id,
                 "pricing_method": (s.expertise_dir.pricing_method or "") if s.expertise_dir_id else "",
                 "direction_id": s.expertise_direction_id,
+                "specialty_ids": [
+                    link.specialty_id
+                    for link in s.ranked_specialties.all()
+                    if link.specialty_id
+                ],
             }
             for s in ordered_sections
         ]
 
     executor_grade_map = _build_executor_grade_map()
+    executor_options = _build_executor_options_payload()
     living_wage_map = _build_living_wage_map()
     tariff_map = _build_tariff_map()
     tariff_hours_map = _build_tariff_hours_map()
@@ -1381,6 +1417,7 @@ def _performer_form_ctx(form, action: str, performer=None):
         "reg_map_json": json.dumps(reg_map, ensure_ascii=False),
         "assets_map_json": json.dumps(assets_map, ensure_ascii=False),
         "sections_map_json": json.dumps(sections_map, ensure_ascii=False),
+        "executor_options_json": json.dumps(executor_options, ensure_ascii=False),
         "executor_grade_json": json.dumps(executor_grade_map, ensure_ascii=False),
         "living_wage_json": json.dumps(living_wage_map, ensure_ascii=False),
         "tariff_json": json.dumps(tariff_map, ensure_ascii=False),
@@ -2401,7 +2438,13 @@ def create_contract_project(request):
                 year_str = sanitize_folder_name(str(project.year) if project.year else "Без года")
                 project_folder = build_project_folder_name(project)
                 target_folder = sanitize_folder_name(target_obj.folder_name)
-                base_path = f"{disk_root}/{year_str}/{project_folder}/{target_folder}"
+                base_path = join_cloud_path(
+                    disk_root,
+                    PROJECTS_SECTION_FOLDER,
+                    year_str,
+                    project_folder,
+                    target_folder,
+                )
 
                 existing = list_folder_resources(request.user, base_path, limit=1000)
                 next_number = 0
