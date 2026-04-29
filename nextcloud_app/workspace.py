@@ -12,6 +12,7 @@ from core.cloud_paths import (
     cloud_year_folder,
 )
 from core.cloud_storage import get_nextcloud_root_path, get_primary_cloud_storage_label
+from policy_app.models import DIRECTION_DIRECTOR_GROUP, PROJECTS_HEAD_GROUP
 from users_app.models import Employee
 from yandexdisk_app.workspace import (
     DEFAULT_SOURCE_DATA_FOLDER,
@@ -41,6 +42,7 @@ _LINK_RETRY_WAIT_BASE = 30.0
 _LINK_RETRY_WAIT_MAX = 35.0
 
 _HEARTBEAT_INTERVAL = 2.0
+_PROJECT_MANAGER_ROLES = (PROJECTS_HEAD_GROUP, DIRECTION_DIRECTOR_GROUP)
 
 
 def _heartbeat_sleep(seconds, progress, total):
@@ -416,20 +418,29 @@ def _resolve_project_manager_nextcloud_link(
     *,
     client: NextcloudApiClient,
 ) -> NextcloudUserLink | None:
-    manager_name = (project.project_manager or "").strip()
-    if not manager_name:
+    manager_prs_id = _normalize_person_lookup(getattr(project, "project_manager_prs_id", "") or "")
+    manager_name = _normalize_person_lookup(getattr(project, "project_manager", "") or "")
+    if not manager_prs_id and not manager_name:
         return None
 
     match = None
-    for employee in (
+    employees = (
         Employee.objects
-        .select_related("user")
-        .filter(user__is_active=True, user__is_staff=True)
+        .select_related("user", "person_record")
+        .filter(user__is_active=True, user__is_staff=True, role__in=_PROJECT_MANAGER_ROLES)
         .order_by("user__last_name", "user__first_name", "patronymic", "id")
-    ):
-        if _employee_full_name(employee) == manager_name:
-            match = employee
-            break
+    )
+    if manager_prs_id:
+        for employee in employees:
+            if manager_prs_id == _normalize_person_lookup(_employee_prs_id(employee)):
+                match = employee
+                break
+
+    if match is None and manager_name:
+        for employee in employees:
+            if manager_name in _employee_lookup_values(employee):
+                match = employee
+                break
     if match is None:
         return None
 
@@ -453,6 +464,35 @@ def _employee_full_name(employee: Employee) -> str:
         (employee.patronymic or "").strip(),
     ]
     return " ".join(part for part in parts if part).strip()
+
+
+def _employee_short_name(employee: Employee, *, dots: bool = True) -> str:
+    last_name = (employee.user.last_name or "").strip()
+    initials = []
+    for value in ((employee.user.first_name or "").strip(), (employee.patronymic or "").strip()):
+        if value:
+            initials.append(f"{value[0]}." if dots else value[0])
+    return " ".join(part for part in (last_name, "".join(initials)) if part).strip()
+
+
+def _employee_prs_id(employee: Employee) -> str:
+    return (getattr(employee, "formatted_prs_id", "") or "").strip()
+
+
+def _employee_lookup_values(employee: Employee) -> set[str]:
+    values = {
+        _employee_prs_id(employee),
+        _employee_full_name(employee),
+        _employee_short_name(employee),
+        _employee_short_name(employee, dots=False),
+        (employee.user.email or "").strip(),
+        (employee.user.username or "").strip(),
+    }
+    return {_normalize_person_lookup(value) for value in values if value}
+
+
+def _normalize_person_lookup(value: str) -> str:
+    return " ".join(str(value or "").replace("\xa0", " ").split()).casefold()
 
 
 def _resolve_nextcloud_source_data_base(user, project):

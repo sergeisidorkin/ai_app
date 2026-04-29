@@ -48,7 +48,12 @@ from core.cloud_storage import (
     sanitize_folder_name,
     upload_file as cloud_upload_file,
 )
-from core.cloud_paths import PROJECTS_SECTION_FOLDER, join_cloud_path
+from core.cloud_paths import (
+    CONTRACTS_PERFORMERS_FOLDER,
+    CONTRACTS_SECTION_FOLDER,
+    join_cloud_path,
+    normalize_cloud_path,
+)
 from policy_app.models import (
     DEPARTMENT_HEAD_GROUP,
     DIRECTION_DIRECTOR_GROUP,
@@ -540,7 +545,7 @@ def work_deps(request):
         "type": reg.type_short_display,
         "type_short": reg.type_short_display,
         "name": reg.name or "",
-        "project_manager": reg.project_manager or "",
+        "project_manager": reg.project_manager_prs_id or reg.project_manager or "",
         "country_id": reg.country_id or "",
     })
 
@@ -2244,7 +2249,6 @@ def create_contract_project(request):
     progress updates.
     """
     import re
-    from .models import ContractProjectTargetFolder
     from contracts_app.models import ContractTemplate, ContractVariable
     from contracts_app.variable_resolver import resolve_variables
     from contracts_app.docx_processor import process_template
@@ -2277,10 +2281,6 @@ def create_contract_project(request):
         return JsonResponse({"ok": False, "error": str(exc)}, status=400)
     if not disk_root:
         return JsonResponse({"ok": False, "error": "Не выбрана папка в основном облачном хранилище."}, status=400)
-
-    target_obj = ContractProjectTargetFolder.objects.filter(user=request.user).first()
-    if not target_obj or not target_obj.folder_name:
-        return JsonResponse({"ok": False, "error": "Не выбрана целевая папка в настройках."}, status=400)
 
     all_templates = list(
         ContractTemplate.objects
@@ -2325,6 +2325,17 @@ def create_contract_project(request):
         executor_name = _executor_short(perf.executor)
         ext = os.path.splitext(original_name or "")[1] or ".docx"
         return sanitize_folder_name(f"Договор {project_prefix}_{executor_name}{ext}")
+
+    def _ensure_cloud_folder_path(path):
+        normalized = normalize_cloud_path(path)
+        if normalized == "/":
+            return True
+        current = ""
+        for part in normalized.strip("/").split("/"):
+            current = f"{current}/{part}" if current else f"/{part}"
+            if not cloud_create_folder(request.user, current):
+                return False
+        return True
 
     def _find_template(perf):
         """Find the best matching ContractTemplate for a Performer row."""
@@ -2437,14 +2448,19 @@ def create_contract_project(request):
                 project = perf.registration
                 year_str = sanitize_folder_name(str(project.year) if project.year else "Без года")
                 project_folder = build_project_folder_name(project)
-                target_folder = sanitize_folder_name(target_obj.folder_name)
                 base_path = join_cloud_path(
                     disk_root,
-                    PROJECTS_SECTION_FOLDER,
+                    CONTRACTS_SECTION_FOLDER,
                     year_str,
                     project_folder,
-                    target_folder,
+                    CONTRACTS_PERFORMERS_FOLDER,
                 )
+
+                if not _ensure_cloud_folder_path(base_path):
+                    errors.append(base_path)
+                    current += 1
+                    yield _padded(json.dumps({"current": current, "total": total}) + "\n")
+                    continue
 
                 existing = list_folder_resources(request.user, base_path, limit=1000)
                 next_number = 0

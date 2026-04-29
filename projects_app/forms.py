@@ -66,10 +66,14 @@ def _employee_full_name(employee):
     return " ".join(part for part in parts if part).strip()
 
 
+def _employee_prs_id(employee):
+    return (getattr(employee, "formatted_prs_id", "") or "").strip()
+
+
 def _project_manager_queryset():
     return (
         Employee.objects
-        .select_related("user")
+        .select_related("user", "person_record")
         .filter(role__in=PROJECT_MANAGER_ROLES)
         .order_by("user__last_name", "user__first_name", "patronymic", "position", "id")
     )
@@ -83,7 +87,7 @@ def _employee_queryset():
     )
 
 
-def _employee_choices(queryset, current_value="", *, include_missing_current=True):
+def _employee_choices(queryset, current_value="", *, include_missing_current=True, use_prs_value=False, show_prs_label=False):
     choices = [("", "— Не выбрано —")]
     current_value = (current_value or "").strip()
     current_in_choices = False
@@ -92,8 +96,11 @@ def _employee_choices(queryset, current_value="", *, include_missing_current=Tru
         full_name = _employee_full_name(employee)
         if not full_name:
             continue
-        choices.append((full_name, full_name))
-        if full_name == current_value:
+        prs_id = _employee_prs_id(employee)
+        value = (prs_id if use_prs_value else "") or full_name
+        label = f"{full_name} ({prs_id})" if show_prs_label and prs_id else full_name
+        choices.append((value, label))
+        if current_value in {value, full_name, prs_id}:
             current_in_choices = True
 
     if include_missing_current and current_value and not current_in_choices:
@@ -103,7 +110,28 @@ def _employee_choices(queryset, current_value="", *, include_missing_current=Tru
 
 
 def _project_manager_choices(current_value=""):
-    return _employee_choices(_project_manager_queryset(), current_value)
+    return _employee_choices(
+        _project_manager_queryset(),
+        current_value,
+        use_prs_value=True,
+        show_prs_label=True,
+    )
+
+
+def _resolve_project_manager_choice(value):
+    raw = (value or "").strip()
+    if not raw:
+        return "", ""
+
+    employees = list(_project_manager_queryset())
+    normalized = " ".join(raw.replace("\xa0", " ").split()).casefold()
+    for employee in employees:
+        if _employee_prs_id(employee).casefold() == normalized:
+            return _employee_full_name(employee), _employee_prs_id(employee)
+    for employee in employees:
+        if _employee_full_name(employee).casefold() == normalized:
+            return _employee_full_name(employee), _employee_prs_id(employee)
+    return raw, ""
 
 
 def _typical_section_specialty_ids(typical_section_id):
@@ -227,11 +255,22 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         current_group_member = self.data.get("group_member") or (self.instance.group_member_id if self.instance else "")
-        current_manager = self.data.get("project_manager") or (self.instance.project_manager if self.instance else "")
+        if self.data:
+            current_manager = self.data.get("project_manager") or ""
+        else:
+            instance_manager = self.instance.project_manager if self.instance else ""
+            _manager_name, resolved_manager_prs_id = _resolve_project_manager_choice(instance_manager)
+            current_manager = (
+                (self.instance.project_manager_prs_id if self.instance else "")
+                or resolved_manager_prs_id
+                or instance_manager
+            )
         self.fields["group_member"].queryset = _group_choices(current_group_member)
         self.fields["group_member"].label_from_instance = lambda obj: obj.group_display_label
         self.fields["group_member"].empty_label = "— Не выбрано —"
         self.fields["project_manager"].choices = _project_manager_choices(current_manager)
+        if not self.data:
+            self.fields["project_manager"].initial = current_manager
 
         today = timezone.now().date()
         country_qs = OKSMCountry.objects.filter(
@@ -273,7 +312,17 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         return member
 
     def clean_project_manager(self):
-        return (self.cleaned_data.get("project_manager") or "").strip()
+        manager_name, manager_prs_id = _resolve_project_manager_choice(self.cleaned_data.get("project_manager"))
+        self._cleaned_project_manager_prs_id = manager_prs_id
+        return manager_name
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        instance.project_manager_prs_id = getattr(self, "_cleaned_project_manager_prs_id", "") or ""
+        if commit:
+            instance.save()
+            self.save_m2m()
+        return instance
 
     def clean(self):
         cleaned_data = super().clean()
@@ -486,7 +535,12 @@ class WorkVolumeForm(BootstrapMixin, forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        current_manager = self.data.get("manager") or (self.instance.manager if self.instance else "")
+        if self.data:
+            current_manager = self.data.get("manager") or ""
+        else:
+            instance_manager = self.instance.manager if self.instance else ""
+            _manager_name, resolved_manager_prs_id = _resolve_project_manager_choice(instance_manager)
+            current_manager = resolved_manager_prs_id or instance_manager
         self.fields["manager"].choices = _project_manager_choices(current_manager)
 
         today = timezone.now().date()
@@ -498,11 +552,20 @@ class WorkVolumeForm(BootstrapMixin, forms.ModelForm):
         self.fields["country"].queryset = country_qs
         self.fields["country"].label_from_instance = lambda obj: obj.short_name
         if not self.data and not current_manager and getattr(self.instance, "project_id", None):
-            self.fields["manager"].initial = self.instance.project.project_manager or ""
+            _project_manager_name, project_manager_prs_id = _resolve_project_manager_choice(
+                self.instance.project.project_manager or ""
+            )
+            self.fields["manager"].initial = project_manager_prs_id or self.instance.project.project_manager or ""
+        elif not self.data and current_manager:
+            self.fields["manager"].initial = current_manager
         if not self.data and getattr(self.instance, "project_id", None):
             self.fields["type"].initial = getattr(self.instance.project, "type_short_display", "") or ""
             self.fields["name"].initial = self.instance.project.name or ""
         self._bootstrapify()
+
+    def clean_manager(self):
+        manager_name, _manager_prs_id = _resolve_project_manager_choice(self.cleaned_data.get("manager"))
+        return manager_name
 
     def save(self, commit=True):
         instance = super().save(commit=False)

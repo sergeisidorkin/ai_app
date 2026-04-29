@@ -107,12 +107,12 @@ class WorkspacePublishingTests(TestCase):
 
         workspace = ProjectWorkspace.objects.get(project=self.project)
         self.assertEqual(workspace.public_url, "")
-        expected_project_path = f"/Root/02 Проекты/2026/{self.project.short_uid} DD Проект Альфа"
+        expected_project_path = f"/Root/03 Проекты/2026/{self.project.short_uid} DD Проект Альфа"
         self.assertEqual(workspace.disk_path, expected_project_path)
         create_folder.assert_has_calls(
             [
-                call(self.user, "/Root/02 Проекты"),
-                call(self.user, "/Root/02 Проекты/2026"),
+                call(self.user, "/Root/03 Проекты"),
+                call(self.user, "/Root/03 Проекты/2026"),
                 call(self.user, expected_project_path),
             ]
         )

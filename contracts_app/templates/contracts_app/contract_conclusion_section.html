@@ -165,9 +165,7 @@
       <div id="contract-request-actions"
            class="d-flex align-items-stretch gap-2 products-actions-row"
            data-request-url="{% url 'contract_request' %}"
-           data-create-contract-url="{% url 'create_contract_project' %}"
-           data-contract-target-url="{% url 'contract_project_target_folder_load' %}"
-           data-contract-target-save-url="{% url 'contract_project_target_folder_save' %}">
+           data-create-contract-url="{% url 'create_contract_project' %}">
         <div class="btn-group">
           <button type="button"
                   id="create-contract-btn"
@@ -212,14 +210,13 @@
               <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
             </div>
             <div class="modal-body">
-              <label for="create-contract-target-select" class="form-label">
-                Выбор целевой папки:
-              </label>
-              <select id="create-contract-target-select" class="form-select"></select>
+              <p class="mb-0 text-muted">
+                Папки проектов договоров создаются автоматически в структуре
+                «02 Договоры / год проекта / проект / 02 Исполнители / исполнитель».
+              </p>
             </div>
             <div class="modal-footer">
-              <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Отмена</button>
-              <button type="button" id="create-contract-target-save-btn" class="btn btn-primary btn-sm">Сохранить</button>
+              <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Закрыть</button>
             </div>
           </div>
         </div>
@@ -233,7 +230,10 @@
               <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
             </div>
             <div class="modal-body">
-              <p class="mb-3">На {{ primary_cloud_storage_label }} в целевой папке будут созданы папки исполнителей с проектами договоров.</p>
+              <p class="mb-3">
+                На {{ primary_cloud_storage_label }} будут созданы папки договоров в структуре
+                «02 Договоры / год проекта / проект / 02 Исполнители / исполнитель».
+              </p>
               <div id="create-contract-progress" class="d-none">
                 <div class="ws-progress-track">
                   <div class="ws-progress-fill" style="width:0%"></div>

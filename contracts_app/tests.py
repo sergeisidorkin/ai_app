@@ -108,7 +108,7 @@ class ContractsCloudLabelTests(TestCase):
         self.assertContains(response, "Отправить проект договора")
         self.assertContains(
             response,
-            "На Nextcloud в целевой папке будут созданы папки исполнителей с проектами договоров.",
+            "На Nextcloud будут созданы папки договоров в структуре",
             html=False,
         )
         self.assertContains(response, 'id="contract-project-filter-toggle"', html=False)
