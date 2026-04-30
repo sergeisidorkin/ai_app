@@ -79,6 +79,9 @@ def _ep_region(ep: ExpertProfile, _p: Performer) -> str:
 def _contract_details(ep: ExpertProfile | None) -> "ExpertContractDetails | None":
     if not ep:
         return None
+    override = getattr(ep, "_contract_details_override", None)
+    if override is not None:
+        return override
     return ep.default_contract_details()
 
 
@@ -583,20 +586,23 @@ def _computed_deadline_ru(_ep, p, _all_performers) -> str:
     return format_date_ru(p.registration.deadline, "j E Y") + " г."
 
 
-def _computed_year(_ep, _p, _all_performers) -> str:
-    from datetime import date
-    return str(date.today().year)
+def _performer_contract_date(performer):
+    from django.utils import timezone
+
+    return getattr(performer, "contract_date", None) or timezone.localdate()
 
 
-def _computed_day(_ep, _p, _all_performers) -> str:
-    from datetime import date
-    return f"{date.today().day:02d}"
+def _computed_year(_ep, performer, _all_performers) -> str:
+    return str(_performer_contract_date(performer).year)
 
 
-def _computed_month(_ep, _p, _all_performers) -> str:
+def _computed_day(_ep, performer, _all_performers) -> str:
+    return f"{_performer_contract_date(performer).day:02d}"
+
+
+def _computed_month(_ep, performer, _all_performers) -> str:
     from core.dates import MONTHS_RU_GENITIVE
-    from datetime import date
-    return MONTHS_RU_GENITIVE[date.today().month]
+    return MONTHS_RU_GENITIVE[_performer_contract_date(performer).month]
 
 
 def _computed_named(ep, _p, _all_performers) -> str:
@@ -712,7 +718,7 @@ COMPUTED_MAP: dict[str, callable] = {
 
 
 def resolve_variables(
-    performer, variables, all_performers=None,
+    performer, variables, all_performers=None, contract_details=None,
 ) -> tuple[dict[str, str], dict[str, list[str]]]:
     """Build resolved values for every bound variable.
 
@@ -740,6 +746,8 @@ def resolve_variables(
             .filter(employee_id=performer.employee_id)
             .first()
         )
+    if expert is not None and contract_details is not None:
+        expert._contract_details_override = contract_details
 
     if all_performers is None:
         all_performers = [performer]

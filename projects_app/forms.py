@@ -70,6 +70,17 @@ def _employee_prs_id(employee):
     return (getattr(employee, "formatted_prs_id", "") or "").strip()
 
 
+def _strip_prs_suffix(label):
+    label = (label or "").strip()
+    if not label.endswith(")"):
+        return label
+    name, separator, suffix = label.rpartition(" (")
+    prs_suffix = suffix[:-1].strip()
+    if separator and (prs_suffix.startswith("ID-PRS-") or prs_suffix.endswith("-PRS")):
+        return name.strip()
+    return label
+
+
 def _project_manager_queryset():
     return (
         Employee.objects
@@ -104,17 +115,18 @@ def _employee_choices(queryset, current_value="", *, include_missing_current=Tru
             current_in_choices = True
 
     if include_missing_current and current_value and not current_in_choices:
-        choices.insert(1, (current_value, current_value))
+        missing_label = current_value if show_prs_label else _strip_prs_suffix(current_value)
+        choices.insert(1, (current_value, missing_label))
 
     return choices
 
 
-def _project_manager_choices(current_value=""):
+def _project_manager_choices(current_value="", *, show_prs_label=True):
     return _employee_choices(
         _project_manager_queryset(),
         current_value,
         use_prs_value=True,
-        show_prs_label=True,
+        show_prs_label=show_prs_label,
     )
 
 
@@ -268,7 +280,7 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         self.fields["group_member"].queryset = _group_choices(current_group_member)
         self.fields["group_member"].label_from_instance = lambda obj: obj.group_display_label
         self.fields["group_member"].empty_label = "— Не выбрано —"
-        self.fields["project_manager"].choices = _project_manager_choices(current_manager)
+        self.fields["project_manager"].choices = _project_manager_choices(current_manager, show_prs_label=False)
         if not self.data:
             self.fields["project_manager"].initial = current_manager
 

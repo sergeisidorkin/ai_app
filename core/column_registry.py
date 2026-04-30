@@ -362,7 +362,7 @@ COLUMN_REGISTRY = {
                 },
             },
             "contract_conclusion": {
-                "label": "Заключение договора",
+                "label": "Составление проекта договора",
                 "columns": {
                     "project": "Проект",
                     "type": "Тип",

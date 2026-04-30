@@ -1,4 +1,5 @@
 import json
+from datetime import date
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.contrib.auth import get_user_model
@@ -9,7 +10,7 @@ from django.utils import timezone
 
 from checklists_app.models import ChecklistItem, SourceDataItemFolder, SourceDataSectionFolder, SourceDataWorkspace
 from classifiers_app.models import BusinessEntityIdentifierRecord, BusinessEntityRecord, LegalEntityRecord, OKSMCountry
-from contacts_app.models import PersonRecord
+from contacts_app.models import CitizenshipRecord, PersonRecord
 from core.models import CloudStorageSettings
 from contracts_app.models import ContractTemplate
 from nextcloud_app.models import NextcloudUserLink
@@ -22,7 +23,7 @@ from policy_app.models import (
     Product,
     TypicalSectionSpecialty,
 )
-from experts_app.models import ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
+from experts_app.models import ExpertContractDetails, ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
 from projects_app.models import (
     LegalEntity,
     Performer,
@@ -348,7 +349,15 @@ class ProjectRegistrationFormTests(TestCase):
         product = Product.objects.create(short_name="PRS-DD", name_en="Due Diligence PRS", name_ru="ДД PRS")
 
         choices = dict(ProjectRegistrationForm().fields["project_manager"].choices)
-        self.assertEqual(choices[person.formatted_id], f"Иванов Иван Иванович ({person.formatted_id})")
+        self.assertEqual(choices[person.formatted_id], "Иванов Иван Иванович")
+        legacy_value = f"Иванов Иван Иванович ({person.formatted_id})"
+        legacy_form = ProjectRegistrationForm(
+            instance=ProjectRegistration(project_manager=legacy_value)
+        )
+        self.assertEqual(
+            dict(legacy_form.fields["project_manager"].choices)[legacy_value],
+            "Иванов Иван Иванович",
+        )
 
         form = ProjectRegistrationForm(
             data={
@@ -1420,7 +1429,7 @@ class NextcloudContractProjectFlowTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         chunks = [json.loads(chunk.decode("utf-8").strip()) for chunk in response.streaming_content]
-        self.assertEqual(chunks[-1]["ok"], True)
+        self.assertEqual(chunks[-1]["ok"], True, chunks)
 
         self.performer.refresh_from_db()
         expected_project_folder = f"{self.project.short_uid} DD Контрактный проект"
@@ -1428,7 +1437,7 @@ class NextcloudContractProjectFlowTests(TestCase):
         expected_folder_path = f"{expected_base_path}/000 Иванов ИИ"
         expected_upload_path = f"{expected_folder_path}/Договор 5002_Иванов ИИ.docx"
 
-        mocked_list_resources.assert_called_once_with("cloud-admin", expected_base_path, limit=1000)
+        mocked_list_resources.assert_any_call("cloud-admin", expected_base_path, limit=1000)
         mocked_ensure_folder.assert_has_calls(
             [
                 call("cloud-admin", "/Corporate Root"),
@@ -1442,19 +1451,419 @@ class NextcloudContractProjectFlowTests(TestCase):
         mocked_upload_file.assert_called_once()
         self.assertEqual(mocked_upload_file.call_args.args[0], "cloud-admin")
         self.assertEqual(mocked_upload_file.call_args.args[1], expected_upload_path)
-        mocked_public_share.assert_called_once_with("cloud-admin", expected_upload_path)
+        mocked_public_share.assert_has_calls(
+            [
+                call("cloud-admin", expected_folder_path),
+                call("cloud-admin", expected_upload_path),
+            ]
+        )
         mocked_ensure_user_share.assert_has_calls(
             [
                 call("cloud-admin", expected_folder_path, self.executor_link.nextcloud_user_id, permissions=1),
-                call("cloud-admin", expected_folder_path, self.lawyer_link.nextcloud_user_id, permissions=1),
+                call("cloud-admin", expected_folder_path, self.lawyer_link.nextcloud_user_id, permissions=15),
             ],
             any_order=True,
         )
         self.assertTrue(self.performer.contract_project_created)
         self.assertEqual(self.performer.contract_project_link, "https://cloud.example.com/s/public-doc")
+        self.assertEqual(self.performer.contract_project_folder_link, "https://cloud.example.com/s/public-doc")
         self.assertEqual(self.performer.contract_project_disk_folder, expected_folder_path)
+        self.assertEqual(self.performer.contract_file, "Договор 5002_Иванов ИИ.docx")
         self.assertIsNotNone(self.performer.contract_project_created_at)
         self.assertIsNotNone(self.performer.contract_date)
+
+    @patch("nextcloud_app.provisioning.ensure_nextcloud_account")
+    @patch("contracts_app.variable_resolver.resolve_variables", return_value=({}, {}))
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_user_share")
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_public_link_share", return_value="https://cloud.example.com/s/public-doc")
+    @patch("nextcloud_app.api.NextcloudApiClient.upload_file", return_value=True)
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_folder", return_value="/Corporate Root/02 Договоры/2026/5002 DD Контрактный проект/02 Исполнители/000 Иванов ИИ")
+    @patch("nextcloud_app.api.NextcloudApiClient.list_resources", return_value=[])
+    def test_create_contract_project_uses_saved_contract_number_and_date(
+        self,
+        mocked_list_resources,
+        mocked_ensure_folder,
+        mocked_upload_file,
+        mocked_public_share,
+        mocked_ensure_user_share,
+        mocked_resolve_variables,
+        mocked_ensure_nextcloud_account,
+    ):
+        self.performer.contract_number = "CUSTOM-42"
+        self.performer.contract_date = date(2026, 4, 15)
+        self.performer.save(update_fields=["contract_number", "contract_date"])
+        mocked_ensure_nextcloud_account.side_effect = lambda user, client=None: (
+            self.executor_link if user.pk == self.recipient_user.pk else self.lawyer_link
+        )
+
+        response = self.client.post(
+            reverse("create_contract_project"),
+            {"performer_ids[]": [self.performer.pk]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        chunks = [json.loads(chunk.decode("utf-8").strip()) for chunk in response.streaming_content]
+        self.assertEqual(chunks[-1]["ok"], True, chunks)
+        mocked_resolve_variables.assert_called()
+        resolved_performer = mocked_resolve_variables.call_args.args[0]
+        self.assertEqual(resolved_performer.contract_number, "CUSTOM-42")
+        self.assertEqual(resolved_performer.contract_date, date(2026, 4, 15))
+        self.performer.refresh_from_db()
+        self.assertEqual(self.performer.contract_number, "CUSTOM-42")
+        self.assertEqual(self.performer.contract_date, date(2026, 4, 15))
+
+    @patch("nextcloud_app.provisioning.ensure_nextcloud_account")
+    @patch("contracts_app.variable_resolver.resolve_variables", return_value=({}, {}))
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_user_share")
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_public_link_share", return_value="https://cloud.example.com/s/smz-doc")
+    @patch("nextcloud_app.api.NextcloudApiClient.upload_file", return_value=True)
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_folder", return_value="/Corporate Root/02 Договоры/2026/5002 DD Контрактный проект/02 Исполнители/000 Иванов ИИ")
+    @patch("nextcloud_app.api.NextcloudApiClient.list_resources", return_value=[])
+    def test_create_contract_project_matches_smz_template_by_contract_details_country(
+        self,
+        mocked_list_resources,
+        mocked_ensure_folder,
+        mocked_upload_file,
+        mocked_public_share,
+        mocked_ensure_user_share,
+        mocked_resolve_variables,
+        mocked_ensure_nextcloud_account,
+    ):
+        kz_member = GroupMember.objects.create(
+            short_name="KZ",
+            country_name="Казахстан",
+            country_code="398",
+            country_alpha2="KZ",
+        )
+        self.project.group_member = kz_member
+        self.project.save()
+        person = PersonRecord.objects.create(
+            last_name="Смирнова",
+            first_name="Элина",
+            middle_name="Юрьевна",
+            position=1,
+        )
+        self.employee.person_record = person
+        self.employee.save(update_fields=["person_record"])
+        ru = OKSMCountry.objects.create(number=643, code="643", short_name="Россия", alpha2="RU", alpha3="RUS")
+        kz = OKSMCountry.objects.create(number=398, code="398", short_name="Казахстан", alpha2="KZ", alpha3="KAZ")
+        kz_citizenship = CitizenshipRecord.objects.create(person=person, country=kz, position=1)
+        ru_citizenship = CitizenshipRecord.objects.create(person=person, country=ru, position=2)
+        profile = ExpertProfile.objects.create(employee=self.employee, position=1)
+        ExpertContractDetails.objects.create(
+            expert_profile=profile,
+            citizenship_record=kz_citizenship,
+        )
+        ru_details = ExpertContractDetails.objects.create(
+            expert_profile=profile,
+            citizenship_record=ru_citizenship,
+            self_employed=date(2026, 1, 1),
+        )
+        smz_template = ContractTemplate.objects.create(
+            group_member=kz_member,
+            product=self.product,
+            contract_type="smz",
+            party="individual",
+            country_name="Россия",
+            country_code="643",
+            sample_name="KZ Шаблон договора ФЗЛ СМЗ RUS_TDD-Общий_v1",
+            version="1",
+            file=SimpleUploadedFile(
+                "smz-contract.docx",
+                b"fake-smz-docx-content",
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+            is_all_sections=True,
+        )
+        smz_template.group_members.set([kz_member])
+        mocked_ensure_nextcloud_account.side_effect = lambda user, client=None: (
+            self.executor_link if user.pk == self.recipient_user.pk else self.lawyer_link
+        )
+
+        response = self.client.post(
+            reverse("create_contract_project"),
+            {"performer_ids[]": [self.performer.pk]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        chunks = [json.loads(chunk.decode("utf-8").strip()) for chunk in response.streaming_content]
+        self.assertEqual(chunks[-1]["ok"], True, chunks)
+        self.assertNotIn("warnings", chunks[-1])
+        mocked_resolve_variables.assert_called()
+        self.assertEqual(mocked_resolve_variables.call_args.kwargs["contract_details"], ru_details)
+        self.assertEqual(mocked_upload_file.call_args.args[2], b"fake-smz-docx-content")
+        self.performer.refresh_from_db()
+        self.assertEqual(self.performer.contract_project_link, "https://cloud.example.com/s/smz-doc")
+
+    @patch("nextcloud_app.provisioning.ensure_nextcloud_account")
+    @patch("contracts_app.variable_resolver.resolve_variables", return_value=({}, {}))
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_user_share")
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_public_link_share", return_value="https://cloud.example.com/s/smz-all-doc")
+    @patch("nextcloud_app.api.NextcloudApiClient.upload_file", return_value=True)
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_folder", return_value="/Corporate Root/02 Договоры/2026/5002 DD Контрактный проект/02 Исполнители/000 Иванов ИИ")
+    @patch("nextcloud_app.api.NextcloudApiClient.list_resources", return_value=[])
+    def test_create_contract_project_matches_smz_template_with_all_group_and_all_product(
+        self,
+        mocked_list_resources,
+        mocked_ensure_folder,
+        mocked_upload_file,
+        mocked_public_share,
+        mocked_ensure_user_share,
+        mocked_resolve_variables,
+        mocked_ensure_nextcloud_account,
+    ):
+        person = PersonRecord.objects.create(
+            last_name="Смирнова",
+            first_name="Элина",
+            middle_name="Юрьевна",
+            position=1,
+        )
+        self.employee.person_record = person
+        self.employee.save(update_fields=["person_record"])
+        ru = OKSMCountry.objects.create(number=643, code="643", short_name="Россия", alpha2="RU", alpha3="RUS")
+        ru_citizenship = CitizenshipRecord.objects.create(person=person, country=ru, position=1)
+        profile = ExpertProfile.objects.create(employee=self.employee, position=1)
+        ru_details = ExpertContractDetails.objects.create(
+            expert_profile=profile,
+            citizenship_record=ru_citizenship,
+            self_employed=date(2026, 1, 1),
+        )
+        ContractTemplate.objects.create(
+            group_member=None,
+            product=None,
+            contract_type="smz",
+            party="individual",
+            country_name="Россия",
+            country_code="643",
+            sample_name="Все Шаблон договора ФЗЛ СМЗ RUS_Все-Общий_v1",
+            version="1",
+            file=SimpleUploadedFile(
+                "smz-all-contract.docx",
+                b"fake-smz-all-docx-content",
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+            is_all_sections=True,
+        )
+        mocked_ensure_nextcloud_account.side_effect = lambda user, client=None: (
+            self.executor_link if user.pk == self.recipient_user.pk else self.lawyer_link
+        )
+
+        response = self.client.post(
+            reverse("create_contract_project"),
+            {"performer_ids[]": [self.performer.pk]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        chunks = [json.loads(chunk.decode("utf-8").strip()) for chunk in response.streaming_content]
+        self.assertEqual(chunks[-1]["ok"], True)
+        self.assertNotIn("warnings", chunks[-1])
+        self.assertEqual(mocked_resolve_variables.call_args.kwargs["contract_details"], ru_details)
+        self.assertEqual(mocked_upload_file.call_args.args[2], b"fake-smz-all-docx-content")
+
+    @patch("nextcloud_app.provisioning.ensure_nextcloud_account")
+    @patch("contracts_app.variable_resolver.resolve_variables", return_value=({}, {}))
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_user_share")
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_public_link_share", return_value="https://cloud.example.com/s/smz-edited-all-doc")
+    @patch("nextcloud_app.api.NextcloudApiClient.upload_file", return_value=True)
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_folder", return_value="/Corporate Root/02 Договоры/2026/5002 DD Контрактный проект/02 Исполнители/000 Иванов ИИ")
+    @patch("nextcloud_app.api.NextcloudApiClient.list_resources", return_value=[])
+    def test_create_contract_project_matches_template_edited_to_all_group_and_all_product(
+        self,
+        mocked_list_resources,
+        mocked_ensure_folder,
+        mocked_upload_file,
+        mocked_public_share,
+        mocked_ensure_user_share,
+        mocked_resolve_variables,
+        mocked_ensure_nextcloud_account,
+    ):
+        from contracts_app.forms import ContractTemplateForm
+
+        person = PersonRecord.objects.create(
+            last_name="Смирнова",
+            first_name="Элина",
+            middle_name="Юрьевна",
+            position=1,
+        )
+        self.employee.person_record = person
+        self.employee.save(update_fields=["person_record"])
+        ru = OKSMCountry.objects.create(number=643, code="643", short_name="Россия", alpha2="RU", alpha3="RUS")
+        ru_citizenship = CitizenshipRecord.objects.create(person=person, country=ru, position=1)
+        profile = ExpertProfile.objects.create(employee=self.employee, position=1)
+        ru_details = ExpertContractDetails.objects.create(
+            expert_profile=profile,
+            citizenship_record=ru_citizenship,
+            self_employed=date(2026, 1, 1),
+        )
+        smz_template = ContractTemplate.objects.create(
+            group_member=self.project.group_member,
+            product=self.product,
+            contract_type="smz",
+            party="individual",
+            country_name="Россия",
+            country_code="643",
+            sample_name="RU Шаблон договора ФЗЛ СМЗ RUS_DD-Общий_v1",
+            version="1",
+            file=SimpleUploadedFile(
+                "smz-specific-contract.docx",
+                b"fake-edited-smz-docx-content",
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+            is_all_sections=True,
+        )
+        smz_template.products.set([self.product])
+        form = ContractTemplateForm(
+            data={
+                "group_member_ids": ["__all__"],
+                "product_ids": ["__all__"],
+                "contract_type": "smz",
+                "party": "individual",
+                "country": str(ru.pk),
+                "sample_name": smz_template.sample_name,
+                "version": smz_template.version,
+                "section_ids": ["__all__"],
+            },
+            instance=smz_template,
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        form.save()
+        smz_template.refresh_from_db()
+        self.assertIsNone(smz_template.group_member_id)
+        self.assertFalse(smz_template.group_members.exists())
+        self.assertIsNone(smz_template.product_id)
+        self.assertFalse(smz_template.products.exists())
+        mocked_ensure_nextcloud_account.side_effect = lambda user, client=None: (
+            self.executor_link if user.pk == self.recipient_user.pk else self.lawyer_link
+        )
+
+        response = self.client.post(
+            reverse("create_contract_project"),
+            {"performer_ids[]": [self.performer.pk]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        chunks = [json.loads(chunk.decode("utf-8").strip()) for chunk in response.streaming_content]
+        self.assertEqual(chunks[-1]["ok"], True, chunks)
+        self.assertNotIn("warnings", chunks[-1])
+        self.assertEqual(mocked_resolve_variables.call_args.kwargs["contract_details"], ru_details)
+        self.assertEqual(mocked_upload_file.call_args.args[2], b"fake-edited-smz-docx-content")
+
+    @patch("nextcloud_app.provisioning.ensure_nextcloud_account")
+    @patch("contracts_app.variable_resolver.resolve_variables", return_value=({}, {}))
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_user_share")
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_public_link_share", return_value="https://cloud.example.com/s/group-specific")
+    @patch("nextcloud_app.api.NextcloudApiClient.upload_file", return_value=True)
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_folder", return_value="/Corporate Root/02 Договоры/2026/5002 DD Контрактный проект/02 Исполнители/000 Иванов ИИ")
+    @patch("nextcloud_app.api.NextcloudApiClient.list_resources", return_value=[])
+    def test_create_contract_project_prefers_specific_group_over_all_group_template(
+        self,
+        mocked_list_resources,
+        mocked_ensure_folder,
+        mocked_upload_file,
+        mocked_public_share,
+        mocked_ensure_user_share,
+        mocked_resolve_variables,
+        mocked_ensure_nextcloud_account,
+    ):
+        project_group = GroupMember.objects.create(
+            short_name="RU",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+        )
+        self.project.group_member = project_group
+        self.project.save(update_fields=["group_member"])
+        group_specific_template = ContractTemplate.objects.create(
+            group_member=project_group,
+            product=self.product,
+            contract_type="gph",
+            party="individual",
+            country_name="",
+            sample_name="RU Шаблон договора ФЗЛ ГПХ RUS_DD-Общий_v1",
+            version="1",
+            file=SimpleUploadedFile(
+                "specific-contract.docx",
+                b"group-specific-docx-content",
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+            is_all_sections=True,
+        )
+        group_specific_template.group_members.set([project_group])
+        ContractTemplate.objects.create(
+            group_member=None,
+            product=self.product,
+            contract_type="gph",
+            party="individual",
+            country_name="",
+            sample_name="Все Шаблон договора ФЗЛ ГПХ RUS_DD-Общий_v99",
+            version="99",
+            file=SimpleUploadedFile(
+                "all-contract.docx",
+                b"all-group-docx-content",
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+            is_all_sections=True,
+        )
+        mocked_ensure_nextcloud_account.side_effect = lambda user, client=None: (
+            self.executor_link if user.pk == self.recipient_user.pk else self.lawyer_link
+        )
+
+        response = self.client.post(
+            reverse("create_contract_project"),
+            {"performer_ids[]": [self.performer.pk]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        chunks = [json.loads(chunk.decode("utf-8").strip()) for chunk in response.streaming_content]
+        self.assertEqual(chunks[-1]["ok"], True)
+        self.assertEqual(mocked_upload_file.call_args.args[2], b"group-specific-docx-content")
+
+    @patch("nextcloud_app.provisioning.ensure_nextcloud_account")
+    @patch("contracts_app.variable_resolver.resolve_variables", return_value=({}, {}))
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_user_share")
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_public_link_share", return_value="https://cloud.example.com/s/product-specific")
+    @patch("nextcloud_app.api.NextcloudApiClient.upload_file", return_value=True)
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_folder", return_value="/Corporate Root/02 Договоры/2026/5002 DD Контрактный проект/02 Исполнители/000 Иванов ИИ")
+    @patch("nextcloud_app.api.NextcloudApiClient.list_resources", return_value=[])
+    def test_create_contract_project_prefers_specific_product_over_all_product_template(
+        self,
+        mocked_list_resources,
+        mocked_ensure_folder,
+        mocked_upload_file,
+        mocked_public_share,
+        mocked_ensure_user_share,
+        mocked_resolve_variables,
+        mocked_ensure_nextcloud_account,
+    ):
+        ContractTemplate.objects.create(
+            group_member=None,
+            product=None,
+            contract_type="gph",
+            party="individual",
+            country_name="",
+            sample_name="Все Шаблон договора ФЗЛ ГПХ RUS_Все-Общий_v99",
+            version="99",
+            file=SimpleUploadedFile(
+                "all-product-contract.docx",
+                b"all-product-docx-content",
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+            is_all_sections=True,
+        )
+        self.template.products.set([self.product])
+        mocked_ensure_nextcloud_account.side_effect = lambda user, client=None: (
+            self.executor_link if user.pk == self.recipient_user.pk else self.lawyer_link
+        )
+
+        response = self.client.post(
+            reverse("create_contract_project"),
+            {"performer_ids[]": [self.performer.pk]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        chunks = [json.loads(chunk.decode("utf-8").strip()) for chunk in response.streaming_content]
+        self.assertEqual(chunks[-1]["ok"], True)
+        self.assertEqual(mocked_upload_file.call_args.args[2], b"fake-docx-content")
 
     def test_contract_request_notification_uses_existing_nextcloud_link(self):
         self.performer.contract_project_link = "https://cloud.example.com/s/public-doc"

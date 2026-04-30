@@ -4577,7 +4577,10 @@ body.proposal-service-text-modal-open {
 
 #proposals-pane .proposal-file-name-link,
 #proposals-pane .proposal-docx-file-name,
-#proposals-pane .proposal-pdf-file-name {
+#proposals-pane .proposal-pdf-file-name,
+#contracts-pane .proposal-file-name-link,
+#contracts-pane .proposal-docx-file-name,
+#contracts-pane .proposal-pdf-file-name {
   display: inline-flex;
   align-items: center;
   max-width: 100%;
@@ -4585,17 +4588,23 @@ body.proposal-service-text-modal-open {
   text-decoration: none;
   vertical-align: middle;
 }
-#proposals-pane .proposal-file-name-text {
+#proposals-pane .proposal-file-name-text,
+#contracts-pane .proposal-file-name-text {
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-#proposals-pane a.proposal-file-name-link:hover {
+#proposals-pane a.proposal-file-name-link:hover,
+#contracts-pane a.proposal-file-name-link:hover {
   color: #495057;
 }
-#proposals-pane a.proposal-file-name-link:hover .proposal-file-name-text {
+#proposals-pane a.proposal-file-name-link:hover .proposal-file-name-text,
+#contracts-pane a.proposal-file-name-link:hover .proposal-file-name-text {
   text-decoration: underline;
+}
+#contracts-pane a.proposal-file-name-link:hover .proposal-file-name-text {
+  text-decoration-skip-ink: none;
 }
 .ct-upload-link {
   display: inline-flex;

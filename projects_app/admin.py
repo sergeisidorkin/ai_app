@@ -79,7 +79,7 @@ class PerformerAdmin(admin.ModelAdmin):
                 ("info_approval_status", "info_approval_at"),
             ),
         }),
-        ("Заключение договора", {
+        ("Составление проекта договора", {
             "fields": (
                 ("contract_number", "contract_batch_id"),
                 ("contract_is_addendum", "contract_addendum_number"),
@@ -88,7 +88,8 @@ class PerformerAdmin(admin.ModelAdmin):
                 ("contract_conclusion_status", "contract_signing_note"),
                 "contract_term",
                 ("contract_project_created", "contract_project_created_at"),
-                ("contract_project_link", "contract_project_disk_folder"),
+                ("contract_project_link", "contract_project_folder_link"),
+                "contract_project_disk_folder",
                 "contract_file",
             ),
         }),

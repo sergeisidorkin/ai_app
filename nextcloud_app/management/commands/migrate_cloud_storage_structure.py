@@ -312,7 +312,10 @@ class Command(BaseCommand):
             if any(self._operation_covers(parent, operation) for parent in selected):
                 continue
             selected.append(operation)
-        return selected
+        return sorted(
+            selected,
+            key=lambda item: (-self._path_depth(item.source_path), item.source_path),
+        )
 
     @staticmethod
     def _operation_covers(parent: MoveOperation, child: MoveOperation) -> bool:

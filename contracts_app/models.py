@@ -23,11 +23,25 @@ class ContractTemplate(models.Model):
         related_name="contract_templates",
         null=True,
     )
+    group_members = models.ManyToManyField(
+        "group_app.GroupMember",
+        verbose_name="Группы",
+        related_name="contract_template_sets",
+        blank=True,
+    )
     product = models.ForeignKey(
         "policy_app.Product",
         verbose_name="Продукт",
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         related_name="contract_templates",
+        null=True,
+        blank=True,
+    )
+    products = models.ManyToManyField(
+        "policy_app.Product",
+        verbose_name="Продукты",
+        related_name="contract_template_sets",
+        blank=True,
     )
     contract_type = models.CharField(
         "Вид", max_length=16, choices=CONTRACT_TYPE_CHOICES,
