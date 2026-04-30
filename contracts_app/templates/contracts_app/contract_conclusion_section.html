@@ -4,7 +4,7 @@
   <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
     <div class="d-flex align-items-center gap-3 flex-wrap">
       <h5 class="table-section-title mb-0">
-        <i class="bi bi-table me-2"></i> Заключение договора
+        <i class="bi bi-table me-2"></i> Составление проекта договора
       </h5>
       <div class="dropdown">
         <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
@@ -67,6 +67,7 @@
         <col>
         <col>
         <col>
+        <col>
       </colgroup>
       <thead>
       <tr>
@@ -97,7 +98,8 @@
             <i class="bi bi-arrows-collapse"></i>
           </button>
         </th>
-        <th class="text-nowrap text-end">Ссылка</th>
+        <th class="text-nowrap">Облако</th>
+        <th class="text-nowrap">Наименование файла DOCX</th>
         <th class="text-nowrap">Создание проекта</th>
         <th class="text-nowrap">Дата отправки</th>
         <th class="text-nowrap">Срок</th>
@@ -139,13 +141,34 @@
           <td class="text-nowrap cell-typical-val">
             {% if p.typical_section %}{{ p.typical_section|typical_section_short }}{% else %}&mdash;{% endif %}
           </td>
-          <td class="text-nowrap text-end cell-detail-val">
-            {% if p.contract_project_link %}
-              <a href="{{ p.contract_project_link }}" target="_blank" rel="noopener" title="Открыть проект договора">
-                <i class="bi bi-link-45deg" style="color: var(--bs-primary, #075D94);"></i>
+          <td class="text-nowrap cell-detail-val">
+            {% with folder_url=p.contract_project_folder_url %}
+            {% if folder_url %}
+              <a href="{{ folder_url }}" target="_blank" rel="noopener" title="Открыть папку на {{ primary_cloud_storage_label }}">
+                <i class="bi bi-cloud cloud-link-icon" style="color: var(--bs-primary, #075D94);"></i>
               </a>
             {% else %}
-              <i class="bi bi-link-45deg" style="color: #ccc;"></i>
+              <i class="bi bi-cloud cloud-link-icon" style="color: #ccc;"></i>
+            {% endif %}
+            {% endwith %}
+          </td>
+          <td class="proposal-docx-cell cell-detail-val">
+            {% if p.contract_project_link or p.contract_file %}
+              {% if p.contract_project_docx_file_url %}
+                <a href="{{ p.contract_project_docx_file_url }}"
+                   target="_blank"
+                   rel="noopener"
+                   class="proposal-file-name-link proposal-docx-file-name d-inline-flex align-items-center gap-1"
+                   title="Открыть файл DOCX на {{ primary_cloud_storage_label }}">
+                  <i class="bi bi-file-word-fill" style="color: var(--bs-primary, #075D94);"></i>
+                  <span class="proposal-file-name-text">{{ p.contract_file|default:'DOCX файл' }}</span>
+                </a>
+              {% else %}
+                <span class="proposal-file-name-link proposal-docx-file-name d-inline-flex align-items-center gap-1">
+                  <i class="bi bi-file-word-fill" style="color: var(--bs-primary, #075D94);"></i>
+                  <span class="proposal-file-name-text">{{ p.contract_file }}</span>
+                </span>
+              {% endif %}
             {% endif %}
           </td>
           <td class="text-nowrap cell-detail-val">{% if p.contract_project_created %}Создан{% else %}Не создан{% endif %}</td>
@@ -156,7 +179,7 @@
           <td class="cell-detail-val">{{ p.contract_signing_note|default:"—" }}</td>
         </tr>
       {% empty %}
-        <tr><td colspan="15" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="16" class="text-muted">Пока нет данных.</td></tr>
       {% endfor %}
       </tbody>
     </table>

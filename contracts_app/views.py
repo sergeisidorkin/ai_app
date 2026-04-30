@@ -1,5 +1,6 @@
 import logging
 import os
+from urllib.parse import quote
 
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.db import models
@@ -14,6 +15,7 @@ from core.cloud_storage import (
     build_folder_url,
     CloudStorageNotReadyError,
     get_any_connected_service_user,
+    get_nextcloud_root_path,
     get_primary_cloud_storage_label,
     is_nextcloud_primary,
     publish_resource as cloud_publish_resource,
@@ -22,6 +24,7 @@ from core.cloud_storage import (
 from nextcloud_app.api import NextcloudApiClient, NextcloudApiError
 from nextcloud_app.models import NextcloudUserLink
 from notifications_app.models import Notification, NotificationPerformerLink
+from policy_app.models import LAWYER_GROUP
 from projects_app.models import Performer, ProjectRegistration, ProjectRegistrationProduct
 from users_app.forms import FREELANCER_LABEL
 from .forms import (
@@ -187,7 +190,8 @@ def _contracts_context(user=None):
         .order_by("-number", "-id")
     )
 
-    _attach_contract_folder_urls(contracts, user)
+    contract_conclusion_performers = list(contract_conclusion_performers)
+    _attach_contract_folder_urls([*contract_conclusion_performers, *contracts], user)
 
     return {
         "contracts": contracts,
@@ -203,11 +207,187 @@ def _contracts_context(user=None):
     }
 
 
+def _normalize_contract_nextcloud_path(path: str) -> str:
+    raw_path = str(path or "").strip()
+    if not raw_path:
+        return ""
+    if raw_path == "/":
+        return "/"
+    return f"/{raw_path.strip('/')}"
+
+
+def _contract_nextcloud_path_parts(path: str) -> list[str]:
+    normalized = _normalize_contract_nextcloud_path(path)
+    if normalized in {"", "/"}:
+        return []
+    return [part for part in normalized.strip("/").split("/") if part]
+
+
+def _normalize_contract_viewer_target_path(path: str, *, root_path: str = "") -> str:
+    normalized_path = _normalize_contract_nextcloud_path(path)
+    if not normalized_path:
+        return ""
+    if not root_path or root_path == "/":
+        return normalized_path
+    if normalized_path == root_path:
+        return "/"
+    if normalized_path.startswith(f"{root_path}/"):
+        stripped_path = _normalize_contract_nextcloud_path(normalized_path[len(root_path):])
+        if stripped_path:
+            return stripped_path
+    return normalized_path
+
+
+def _build_contract_shared_target_candidate(
+    normalized_path: str,
+    shared_path: str,
+    target_path: str,
+) -> tuple[int, int, int, int, str, str] | None:
+    normalized_shared_path = _normalize_contract_nextcloud_path(shared_path)
+    clean_target_path = str(target_path or "").strip()
+    if not normalized_shared_path or not clean_target_path:
+        return None
+
+    shared_parts = _contract_nextcloud_path_parts(normalized_shared_path)
+    if normalized_path == normalized_shared_path or normalized_path.startswith(f"{normalized_shared_path}/"):
+        suffix = normalized_path[len(normalized_shared_path):].strip("/")
+        if not suffix:
+            return (2, len(shared_parts), 0, len(normalized_shared_path), normalized_shared_path, clean_target_path)
+        return (
+            2,
+            len(shared_parts),
+            0,
+            len(normalized_shared_path),
+            normalized_shared_path,
+            f"{clean_target_path.rstrip('/')}/{suffix}",
+        )
+
+    path_parts = _contract_nextcloud_path_parts(normalized_path)
+    if not path_parts or not shared_parts or len(shared_parts) > len(path_parts):
+        return None
+
+    for start_index in range(len(path_parts) - len(shared_parts) + 1):
+        if path_parts[start_index:start_index + len(shared_parts)] != shared_parts:
+            continue
+        suffix_parts = path_parts[start_index + len(shared_parts):]
+        if not suffix_parts:
+            return (
+                1,
+                len(shared_parts),
+                -start_index,
+                len(normalized_shared_path),
+                normalized_shared_path,
+                clean_target_path,
+            )
+        return (
+            1,
+            len(shared_parts),
+            -start_index,
+            len(normalized_shared_path),
+            normalized_shared_path,
+            f"{clean_target_path.rstrip('/')}/{'/'.join(suffix_parts)}",
+        )
+    return None
+
+
+def _resolve_contract_shared_target_path(path: str, share_map: dict[str, object], *, root_path: str = "") -> str:
+    normalized_path = _normalize_contract_nextcloud_path(path)
+    if not normalized_path:
+        return ""
+
+    candidates = []
+    for shared_path, share in share_map.items():
+        target_path = _normalize_contract_viewer_target_path(
+            getattr(share, "target_path", "") or "",
+            root_path=root_path,
+        )
+        candidate = _build_contract_shared_target_candidate(normalized_path, shared_path, target_path)
+        if candidate is not None:
+            candidates.append(candidate)
+    if not candidates:
+        return ""
+    return max(candidates, key=lambda item: item[:5])[-1]
+
+
+def _resolve_contract_target_path_via_user_share_lookup(
+    client,
+    owner_user_id: str,
+    path: str,
+    share_with_user_id: str,
+    *,
+    root_path: str = "",
+) -> str:
+    normalized_path = _normalize_contract_nextcloud_path(path)
+    if not normalized_path or normalized_path == "/":
+        return ""
+
+    current_path = normalized_path
+    while current_path and current_path != "/":
+        share = client.get_user_share(owner_user_id, current_path, share_with_user_id)
+        if share is not None:
+            target_path = _normalize_contract_viewer_target_path(
+                getattr(share, "target_path", "") or "",
+                root_path=root_path,
+            )
+            if target_path:
+                candidate = _build_contract_shared_target_candidate(normalized_path, current_path, target_path)
+                if candidate is not None:
+                    return candidate[-1]
+        current_path = current_path.rsplit("/", 1)[0] or "/"
+    return ""
+
+
+def _contract_nextcloud_parent_path(path: str) -> str:
+    normalized_path = _normalize_contract_nextcloud_path(path)
+    if not normalized_path or normalized_path == "/":
+        return ""
+    parent = normalized_path.rsplit("/", 1)[0]
+    return parent or "/"
+
+
+def _resolve_contract_nextcloud_file_id(client, owner_user_id: str, path: str, *, resource_cache=None) -> str:
+    normalized_path = _normalize_contract_nextcloud_path(path)
+    parent_path = _contract_nextcloud_parent_path(normalized_path)
+    if not normalized_path or not parent_path:
+        return ""
+    if resource_cache is None:
+        resource_cache = {}
+    if parent_path not in resource_cache:
+        items = client.list_resources(owner_user_id, parent_path, limit=500)
+        resource_cache[parent_path] = {
+            _normalize_contract_nextcloud_path(item.get("path") or ""): str(item.get("file_id") or "").strip()
+            for item in items
+        }
+    return str(resource_cache.get(parent_path, {}).get(normalized_path) or "")
+
+
+def _build_contract_child_url(client, parent_path: str, child_name: str) -> str:
+    normalized_parent = _normalize_contract_nextcloud_path(parent_path)
+    clean_child_name = str(child_name or "").strip().strip("/")
+    if not normalized_parent or not clean_child_name:
+        return ""
+    if normalized_parent == "/":
+        return client.build_files_url(f"/{clean_child_name}")
+    return client.build_files_url(f"{normalized_parent.rstrip('/')}/{clean_child_name}")
+
+
+def _build_contract_file_redirect_url(client, file_id: str) -> str:
+    clean_file_id = str(file_id or "").strip()
+    base_url = str(getattr(client, "base_url", "") or "").strip().rstrip("/")
+    if not clean_file_id or not base_url:
+        return ""
+    return f"{base_url}/f/{quote(clean_file_id, safe='')}"
+
+
 def _attach_contract_folder_urls(contracts, user=None):
     folder_cache = {}
     for performer in contracts:
         path = getattr(performer, "contract_project_disk_folder", "") or ""
-        performer.contract_project_folder_url = build_folder_url(path)
+        public_url = (getattr(performer, "contract_project_folder_link", "") or "").strip()
+        performer.contract_project_folder_url = public_url or build_folder_url(path)
+        performer.contract_project_docx_file_url = (
+            getattr(performer, "contract_project_link", "") or ""
+        ).strip()
         if path:
             folder_cache.setdefault(path, performer.contract_project_folder_url)
 
@@ -219,6 +399,7 @@ def _attach_contract_folder_urls(contracts, user=None):
     client = NextcloudApiClient()
     if not client.is_configured:
         return
+    is_lawyer = user.groups.filter(name=LAWYER_GROUP).exists()
 
     link = NextcloudUserLink.objects.filter(user=user).first()
     if not link or not link.nextcloud_user_id or link.nextcloud_user_id == client.username:
@@ -230,16 +411,99 @@ def _attach_contract_folder_urls(contracts, user=None):
         logger.warning("Could not resolve Nextcloud share targets for contracts table: %s", exc)
         return
 
+    normalized_root_path = _normalize_contract_nextcloud_path(get_nextcloud_root_path())
     resolved_cache = dict(folder_cache)
+    resolved_target_cache = {}
     for path in list(resolved_cache.keys()):
-        share = share_map.get(path)
-        if share and share.target_path:
-            resolved_cache[path] = client.build_files_url(share.target_path)
+        target_path = _resolve_contract_shared_target_path(path, share_map, root_path=normalized_root_path)
+        if not target_path:
+            try:
+                target_path = _resolve_contract_target_path_via_user_share_lookup(
+                    client,
+                    client.username,
+                    path,
+                    link.nextcloud_user_id,
+                    root_path=normalized_root_path,
+                )
+            except NextcloudApiError as exc:
+                logger.warning("Could not resolve Nextcloud share target for contract path %s: %s", path, exc)
+        if target_path:
+            resolved_target_cache[path] = target_path
+            resolved_cache[path] = client.build_files_url(target_path)
+
+    resource_cache = {}
 
     for performer in contracts:
         path = getattr(performer, "contract_project_disk_folder", "") or ""
-        if path:
+        public_url = (getattr(performer, "contract_project_folder_link", "") or "").strip()
+        target_path = resolved_target_cache.get(path, "")
+        stored_folder_file_id = str(getattr(performer, "contract_project_folder_file_id", "") or "").strip()
+        if path and not public_url:
             performer.contract_project_folder_url = resolved_cache.get(path, performer.contract_project_folder_url)
+        if is_lawyer and path and not stored_folder_file_id:
+            try:
+                stored_folder_file_id = _resolve_contract_nextcloud_file_id(
+                    client,
+                    client.username,
+                    path,
+                    resource_cache=resource_cache,
+                )
+            except NextcloudApiError as exc:
+                logger.warning("Could not resolve Nextcloud contract folder file id for performer %s: %s", performer.pk, exc)
+                stored_folder_file_id = ""
+            if stored_folder_file_id:
+                performer.contract_project_folder_file_id = stored_folder_file_id
+                Performer.objects.filter(pk=performer.pk).update(
+                    contract_project_folder_file_id=stored_folder_file_id
+                )
+        if is_lawyer and stored_folder_file_id:
+            performer.contract_project_folder_url = _build_contract_file_redirect_url(client, stored_folder_file_id)
+        if is_lawyer and path and not target_path:
+            try:
+                share = client.ensure_user_share(
+                    client.username,
+                    path,
+                    link.nextcloud_user_id,
+                    permissions=NextcloudApiClient.EDITOR_PERMISSIONS,
+                )
+            except NextcloudApiError as exc:
+                logger.warning("Could not ensure Nextcloud contract folder share for performer %s: %s", performer.pk, exc)
+            else:
+                target_path = _normalize_contract_viewer_target_path(
+                    getattr(share, "target_path", "") or "",
+                    root_path=normalized_root_path,
+                )
+                if target_path:
+                    resolved_target_cache[path] = target_path
+                    resolved_cache[path] = client.build_files_url(target_path)
+        if is_lawyer:
+            contract_file = getattr(performer, "contract_file", "") or ""
+            editor_url = ""
+            if contract_file:
+                contract_file_path = f"{path.rstrip('/')}/{contract_file}" if path else ""
+                file_id = str(getattr(performer, "contract_project_file_id", "") or "").strip()
+                if not file_id:
+                    try:
+                        file_id = _resolve_contract_nextcloud_file_id(
+                            client,
+                            client.username,
+                            contract_file_path,
+                            resource_cache=resource_cache,
+                        )
+                    except NextcloudApiError as exc:
+                        logger.warning("Could not resolve Nextcloud contract DOCX file id for performer %s: %s", performer.pk, exc)
+                        file_id = ""
+                    if file_id:
+                        performer.contract_project_file_id = file_id
+                        Performer.objects.filter(pk=performer.pk).update(contract_project_file_id=file_id)
+                if file_id and target_path:
+                    editor_url = client.build_files_open_url(file_id, target_path)
+                if not editor_url and file_id:
+                    editor_url = _build_contract_file_redirect_url(client, file_id)
+                if not editor_url:
+                    editor_url = _build_contract_child_url(client, target_path, contract_file)
+            if editor_url:
+                performer.contract_project_docx_file_url = editor_url
 
 
 def _contracts_development_context():
@@ -777,6 +1041,7 @@ def contract_form_edit(request, pk):
                     contract_batch_id=obj.contract_batch_id,
                 ).exclude(pk=obj.pk).update(
                     contract_number=obj.contract_number,
+                    contract_date=obj.contract_date,
                     contract_file=obj.contract_file,
                 )
             resp = render(request, CONTRACTS_PARTIAL_TEMPLATE, _contracts_context(request.user))
@@ -813,13 +1078,28 @@ CTV_FORM_TEMPLATE = "contracts_app/contract_variable_form.html"
 
 def _ct_context():
     from .forms import _group_member_order_map, _group_member_short
-    templates = list(ContractTemplate.objects.select_related("product", "group_member").all())
+    templates = list(
+        ContractTemplate.objects
+        .select_related("product", "group_member")
+        .prefetch_related("group_members", "products")
+        .all()
+    )
     order_map = _group_member_order_map()
     for t in templates:
-        if t.group_member_id:
+        groups = list(t.group_members.all())
+        if groups:
+            t.group_display = ", ".join(_group_member_short(group, order_map.get(group.pk, 0)) for group in groups)
+        elif t.group_member_id:
             t.group_display = _group_member_short(t.group_member, order_map.get(t.group_member_id, 0))
         else:
-            t.group_display = ""
+            t.group_display = "Все"
+        products = list(t.products.all())
+        if products:
+            t.product_display = ", ".join((product.short_name or str(product)).strip() for product in products)
+        elif t.product_id:
+            t.product_display = t.product.short_name or str(t.product)
+        else:
+            t.product_display = "Все"
     return {
         "templates": templates,
         "ct_variables": ContractVariable.objects.all(),

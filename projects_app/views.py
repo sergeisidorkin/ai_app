@@ -1529,7 +1529,7 @@ def _share_contract_folder_for_nextcloud(performer, folder_path: str) -> list[st
 
     executor_user = getattr(getattr(performer, "employee", None), "user", None)
     if executor_user and executor_user.is_active and executor_user.is_staff and executor_user.pk not in seen_ids:
-        recipients.append(executor_user)
+        recipients.append((executor_user, 1))
         seen_ids.add(executor_user.pk)
 
     for lawyer in (
@@ -1540,11 +1540,11 @@ def _share_contract_folder_for_nextcloud(performer, folder_path: str) -> list[st
     ):
         if lawyer.pk in seen_ids:
             continue
-        recipients.append(lawyer)
+        recipients.append((lawyer, 15))
         seen_ids.add(lawyer.pk)
 
     warnings = []
-    for recipient in recipients:
+    for recipient, permissions in recipients:
         try:
             link = ensure_nextcloud_account(recipient, client=client)
             if not link or not link.nextcloud_user_id:
@@ -1556,13 +1556,58 @@ def _share_contract_folder_for_nextcloud(performer, folder_path: str) -> list[st
                 client.username,
                 folder_path,
                 link.nextcloud_user_id,
-                permissions=1,
+                permissions=permissions,
             )
         except NextcloudApiError as exc:
             warnings.append(
                 f"Не удалось выдать доступ к папке проекта договора пользователю {recipient.get_username()}: {exc}"
             )
     return warnings
+
+
+def _normalize_nextcloud_contract_resource_path(path: str) -> str:
+    raw_path = str(path or "").strip()
+    if not raw_path:
+        return ""
+    if raw_path == "/":
+        return "/"
+    return f"/{raw_path.strip('/')}"
+
+
+def _contract_resource_parent_path(path: str) -> str:
+    normalized_path = _normalize_nextcloud_contract_resource_path(path)
+    if not normalized_path or normalized_path == "/":
+        return ""
+    parent = normalized_path.rsplit("/", 1)[0]
+    return parent or "/"
+
+
+def _resolve_contract_project_nextcloud_file_id(path: str) -> str:
+    if not is_nextcloud_primary() or not path:
+        return ""
+
+    from nextcloud_app.api import NextcloudApiClient, NextcloudApiError
+
+    normalized_path = _normalize_nextcloud_contract_resource_path(path)
+    parent_path = _contract_resource_parent_path(normalized_path)
+    if not normalized_path or not parent_path:
+        return ""
+
+    client = NextcloudApiClient()
+    if not client.is_configured:
+        return ""
+
+    try:
+        items = client.list_resources(client.username, parent_path, limit=1000)
+    except NextcloudApiError:
+        return ""
+
+    for item in items:
+        item_path = _normalize_nextcloud_contract_resource_path(item.get("path") or "")
+        if item_path == normalized_path:
+            return str(item.get("file_id") or "").strip()
+    return ""
+
 
 @login_required
 @require_http_methods(["GET", "POST"])
@@ -2284,9 +2329,13 @@ def create_contract_project(request):
 
     all_templates = list(
         ContractTemplate.objects
-        .select_related("product")
+        .select_related("product", "group_member")
+        .prefetch_related("group_members", "products")
         .filter(file__gt="")
     )
+    for template in all_templates:
+        template._contract_group_member_ids = {group.pk for group in template.group_members.all()}
+        template._contract_product_ids = {product.pk for product in template.products.all()}
 
     all_variables = list(
         ContractVariable.objects.filter(
@@ -2337,6 +2386,30 @@ def create_contract_project(request):
                 return False
         return True
 
+    def _contract_detail_matches_template_country(details, template):
+        template_country_name = (getattr(template, "country_name", "") or "").strip()
+        template_country_code = (getattr(template, "country_code", "") or "").strip()
+        if not template_country_name and not template_country_code:
+            return True
+        if not details:
+            return False
+
+        citizenship = getattr(details, "citizenship_record", None)
+        country = getattr(citizenship, "country", None) if citizenship else None
+        values = {
+            (getattr(country, "short_name", "") or "").strip(),
+            (getattr(country, "full_name", "") or "").strip(),
+            (getattr(country, "code", "") or "").strip(),
+            (getattr(country, "alpha2", "") or "").strip(),
+            (getattr(country, "alpha3", "") or "").strip(),
+            (getattr(details, "citizenship_country", "") or "").strip(),
+        }
+        normalized_values = {" ".join(value.split()).casefold() for value in values if value}
+        return (
+            " ".join(template_country_name.split()).casefold() in normalized_values
+            or template_country_code.casefold() in normalized_values
+        )
+
     def _find_template(perf):
         """Find the best matching ContractTemplate for a Performer row."""
         project = perf.registration
@@ -2344,23 +2417,14 @@ def create_contract_project(request):
         if not product:
             return None
 
-        group_member_ids = {project.group_member_id} if project.group_member_id else set()
+        project_group_id = project.group_member_id
 
         expert = expert_cache.get(perf.employee_id) if perf.employee_id else None
-        contract_details = expert.default_contract_details() if expert else None
-
-        is_self_employed = bool(contract_details and contract_details.self_employed)
-        expected_contract_type = "smz" if is_self_employed else "gph"
+        contract_details_options = expert.ordered_contract_details() if expert else []
+        if not contract_details_options:
+            contract_details_options = [None]
 
         expected_party = "individual"
-
-        expert_country_name = ""
-        if contract_details and contract_details.citizenship_country:
-            expert_country_name = contract_details.citizenship_country
-        elif contract_details and contract_details.citizenship:
-            expert_country_name = contract_details.citizenship
-        elif expert and expert.country:
-            expert_country_name = expert.country.short_name
 
         section_code = ""
         if perf.typical_section:
@@ -2368,15 +2432,26 @@ def create_contract_project(request):
 
         candidates = []
         for t in all_templates:
-            if t.group_member_id and t.group_member_id not in group_member_ids:
+            template_group_ids = set(getattr(t, "_contract_group_member_ids", set()))
+            if not template_group_ids and t.group_member_id:
+                template_group_ids = {t.group_member_id}
+            group_specific = bool(template_group_ids)
+            if group_specific and project_group_id not in template_group_ids:
                 continue
-            if t.product_id != product.pk:
-                continue
-            if t.contract_type != expected_contract_type:
+            template_product_ids = set(getattr(t, "_contract_product_ids", set()))
+            if not template_product_ids and t.product_id:
+                template_product_ids = {t.product_id}
+            product_specific = bool(template_product_ids)
+            if product_specific and product.pk not in template_product_ids:
                 continue
             if t.party != expected_party:
                 continue
-            if expert_country_name and t.country_name != expert_country_name:
+
+            matching_details = [
+                details for details in contract_details_options
+                if _contract_detail_matches_template_country(details, t)
+            ]
+            if not matching_details:
                 continue
 
             section_match_exact = False
@@ -2395,24 +2470,37 @@ def create_contract_project(request):
             if not section_match:
                 continue
 
-            candidates.append((t, section_match_exact))
+            for details in matching_details:
+                expected_contract_type = "smz" if bool(details and details.self_employed) else "gph"
+                if t.contract_type == expected_contract_type:
+                    candidates.append(
+                        (
+                            t,
+                            section_match_exact,
+                            details,
+                            group_specific,
+                            product_specific,
+                            bool((t.country_name or "").strip() or (t.country_code or "").strip()),
+                        )
+                    )
 
         if not candidates:
             return None
 
-        exact = [t for t, exact in candidates if exact]
+        exact = [item for item in candidates if item[1]]
         if exact:
-            candidates = [(t, True) for t in exact]
+            candidates = exact
 
         def _version_key(item):
             t = item[0]
             try:
-                return int(t.version)
+                version = int(t.version)
             except (ValueError, TypeError):
-                return 0
+                version = 0
+            return (1 if item[3] else 0, 1 if item[4] else 0, 1 if item[5] else 0, version)
 
         candidates.sort(key=_version_key, reverse=True)
-        return candidates[0][0]
+        return candidates[0][0], candidates[0][2]
 
     seen_executors = set()
     unique_entries = []
@@ -2481,6 +2569,12 @@ def create_contract_project(request):
                     continue
 
                 warnings.extend(_share_contract_folder_for_nextcloud(perf, folder_path))
+                folder_file_id = _resolve_contract_project_nextcloud_file_id(folder_path)
+                folder_public_url = ""
+                try:
+                    folder_public_url = cloud_publish_resource(request.user, folder_path)
+                except Exception:
+                    folder_public_url = ""
 
                 created_ids.extend(executor_to_ids[key])
 
@@ -2520,7 +2614,17 @@ def create_contract_project(request):
                 else:
                     base_date = now_dt
 
-                pre_contract_number = _build_contract_number(perf, base_date, addendum_number)
+                existing_contract_number = (perf.contract_number or "").strip()
+                generated_contract_number = _build_contract_number(perf, base_date, addendum_number)
+                if is_addendum and existing_contract_number:
+                    generated_base_number = _build_contract_number(perf, base_date)
+                    pre_contract_number = (
+                        existing_contract_number
+                        if existing_contract_number != generated_base_number
+                        else generated_contract_number
+                    )
+                else:
+                    pre_contract_number = existing_contract_number or generated_contract_number
                 perf.contract_number = pre_contract_number
 
                 seen_templates = set()
@@ -2532,17 +2636,19 @@ def create_contract_project(request):
                         unique_section_perfs[sec_id] = p
 
                 for p in unique_section_perfs.values():
-                    tmpl = _find_template(p)
-                    if not tmpl:
+                    template_match = _find_template(p)
+                    if not template_match:
                         warnings.append(
                             f"Образец шаблона не найден: {executor_name}"
                             + (f" ({p.typical_section.code})" if p.typical_section else "")
                         )
                         continue
+                    tmpl, contract_details = template_match
 
                     if tmpl.pk in seen_templates:
                         continue
                     seen_templates.add(tmpl.pk)
+                    upload_name = ""
 
                     try:
                         tmpl.file.open("rb")
@@ -2555,6 +2661,7 @@ def create_contract_project(request):
                             scalars, lists = resolve_variables(
                                 perf, all_variables,
                                 all_performers=all_perfs_for_executor,
+                                contract_details=contract_details,
                             )
                             if scalars or lists:
                                 file_data = process_template(
@@ -2568,14 +2675,19 @@ def create_contract_project(request):
                         if not cloud_upload_file(request.user, upload_path, file_data):
                             errors.append(f"Загрузка файла: {upload_name} → {folder_name}")
                         else:
+                            file_update_kwargs = {"contract_file": upload_name}
+                            file_id = _resolve_contract_project_nextcloud_file_id(upload_path)
+                            if file_id:
+                                file_update_kwargs["contract_project_file_id"] = file_id
                             try:
                                 public_url = cloud_publish_resource(request.user, upload_path)
                                 if public_url:
-                                    Performer.objects.filter(
-                                        pk__in=executor_to_ids[key],
-                                    ).update(contract_project_link=public_url)
+                                    file_update_kwargs["contract_project_link"] = public_url
                             except Exception:
                                 pass
+                            Performer.objects.filter(
+                                pk__in=executor_to_ids[key],
+                            ).update(**file_update_kwargs)
                     except Exception:
                         errors.append(f"Чтение файла: {tmpl.sample_name}")
 
@@ -2585,7 +2697,10 @@ def create_contract_project(request):
                     contract_is_addendum=is_addendum,
                     contract_addendum_number=addendum_number,
                     contract_project_disk_folder=folder_path,
+                    contract_project_folder_link=folder_public_url,
                 )
+                if folder_file_id:
+                    update_kwargs["contract_project_folder_file_id"] = folder_file_id
                 if pre_contract_number:
                     update_kwargs["contract_number"] = pre_contract_number
                 Performer.objects.filter(pk__in=executor_to_ids[key]).update(**update_kwargs)
@@ -2595,9 +2710,12 @@ def create_contract_project(request):
 
             if created_ids:
                 created_set = set(created_ids)
-                Performer.objects.filter(pk__in=created_set).update(
+                created_qs = Performer.objects.filter(pk__in=created_set)
+                created_qs.update(
                     contract_project_created=True,
                     contract_project_created_at=timezone.now(),
+                )
+                created_qs.filter(contract_date__isnull=True).update(
                     contract_date=timezone.now().date(),
                 )
 

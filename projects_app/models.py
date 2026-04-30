@@ -1005,7 +1005,10 @@ class Performer(models.Model):
     contract_project_created = models.BooleanField("Проект договора создан", default=False)
     contract_project_created_at = models.DateTimeField("Дата создания проекта договора", null=True, blank=True)
     contract_project_link = models.URLField("Ссылка на проект договора", blank=True, default="")
+    contract_project_folder_link = models.URLField("Ссылка на папку проекта договора", blank=True, default="")
     contract_project_disk_folder = models.CharField("Папка проекта на Яндекс.Диске", max_length=500, blank=True, default="")
+    contract_project_file_id = models.CharField("Идентификатор проекта договора в Nextcloud", max_length=64, blank=True, default="")
+    contract_project_folder_file_id = models.CharField("Идентификатор папки проекта договора в Nextcloud", max_length=64, blank=True, default="")
     contract_date = models.DateField("Дата договора", null=True, blank=True)
 
     contract_employee_scan = models.FileField("Скан с подписью сотрудника", upload_to="contract_employee_scans/", blank=True, default="")

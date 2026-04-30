@@ -3,6 +3,7 @@ import shutil
 import tempfile
 import uuid
 from datetime import date
+from urllib.parse import quote
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -15,14 +16,16 @@ from django.urls import reverse
 from classifiers_app.models import OKSMCountry
 from contacts_app.models import CitizenshipRecord, PersonRecord
 from core.models import CloudStorageSettings
-from contracts_app.models import ContractVariable
+from contracts_app.forms import ContractTemplateForm
+from contracts_app.models import ContractTemplate, ContractVariable
 from contracts_app.variable_resolver import resolve_variables
 from experts_app.models import ExpertContractDetails, ExpertProfile
 from group_app.models import GroupMember
 from nextcloud_app.api import NextcloudApiError, NextcloudShare
 from nextcloud_app.models import NextcloudUserLink
-from policy_app.models import EXPERT_GROUP, Product
+from policy_app.models import EXPERT_GROUP, LAWYER_GROUP, Product
 from projects_app.models import Performer, ProjectRegistration
+from users_app.forms import FREELANCER_LABEL
 from users_app.models import Employee
 
 
@@ -80,7 +83,7 @@ class ContractsCloudLabelTests(TestCase):
         self.employee = Employee.objects.create(
             user=self.employee_user,
             patronymic="Иванович",
-            employment="Фрилансер",
+            employment=FREELANCER_LABEL,
         )
         expert_group, _ = Group.objects.get_or_create(name=EXPERT_GROUP)
         self.employee_user.groups.add(expert_group)
@@ -96,6 +99,8 @@ class ContractsCloudLabelTests(TestCase):
             executor="Иванов Иван Иванович",
             participation_response=Performer.ParticipationResponse.CONFIRMED,
             contract_batch_id=uuid.uuid4(),
+            contract_file="Договор 7001_Иванов ИИ.docx",
+            contract_project_link="https://cloud.example.com/s/contract-docx",
             contract_project_disk_folder="/Corporate Root/2026/Project/09 Договоры/000 Иванов ИИ",
         )
 
@@ -103,7 +108,11 @@ class ContractsCloudLabelTests(TestCase):
         response = self.client.get(reverse("contracts_partial"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Заключение договора")
+        self.assertContains(response, "Составление проекта договора")
+        self.assertContains(response, "Облако")
+        self.assertContains(response, "Наименование файла DOCX")
+        self.assertContains(response, "Договор 7001_Иванов ИИ.docx")
+        self.assertContains(response, "https://cloud.example.com/s/contract-docx")
         self.assertContains(response, "Создать проект договора")
         self.assertContains(response, "Отправить проект договора")
         self.assertContains(
@@ -126,11 +135,367 @@ class ContractsCloudLabelTests(TestCase):
             content.index('id="contracts-project-filter-toggle"'),
         )
 
+    def test_contract_edit_updates_contract_date_for_batch_rows(self):
+        sibling = Performer.objects.create(
+            registration=self.project,
+            employee=self.employee,
+            executor="Иванов Иван Иванович",
+            contract_batch_id=self.performer.contract_batch_id,
+        )
+
+        response = self.client.post(
+            reverse("contracts_edit", args=[self.performer.pk]),
+            {
+                "contract_number": "CUSTOM-42",
+                "contract_date": "2026-05-07",
+                "contract_file": "custom.docx",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        sibling.refresh_from_db()
+        self.assertEqual(sibling.contract_number, "CUSTOM-42")
+        self.assertEqual(sibling.contract_date, date(2026, 5, 7))
+        self.assertEqual(sibling.contract_file, "custom.docx")
+
     def test_contracts_partial_uses_current_primary_cloud_label_in_disk_tooltip(self):
         response = self.client.get(reverse("contracts_partial"))
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'title="Открыть папку на Nextcloud"', html=False)
+
+    def test_contracts_partial_uses_public_folder_link_for_cloud_icon(self):
+        self.performer.contract_project_folder_link = "https://cloud.example.com/s/contract-folder"
+        self.performer.save(update_fields=["contract_project_folder_link"])
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'href="https://cloud.example.com/s/contract-folder"', html=False)
+        content = response.content.decode("utf-8")
+        section = content[
+            content.index('id="contract-conclusion-section"'):
+            content.index('id="contracts-project-filter-toggle"')
+        ]
+        self.assertIn('href="https://cloud.example.com/s/contract-folder"', section)
+
+    @patch("nextcloud_app.api.NextcloudApiClient.list_resources")
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
+    def test_contracts_partial_uses_editor_docx_link_for_lawyer(
+        self,
+        mocked_list_user_shares,
+        mocked_list_resources,
+    ):
+        lawyer_user = get_user_model().objects.create_user(
+            username="lawyer-docx@example.com",
+            email="lawyer-docx@example.com",
+            password="secret",
+            is_staff=True,
+        )
+        lawyer_group, _ = Group.objects.get_or_create(name=LAWYER_GROUP)
+        lawyer_user.groups.add(lawyer_group)
+        NextcloudUserLink.objects.create(
+            user=lawyer_user,
+            nextcloud_user_id="nc-lawyer",
+            nextcloud_username="nc-lawyer",
+            nextcloud_email=lawyer_user.email,
+        )
+        mocked_list_user_shares.return_value = {
+            self.performer.contract_project_disk_folder: NextcloudShare(
+                share_id="56",
+                path=self.performer.contract_project_disk_folder,
+                share_with="nc-lawyer",
+                permissions=15,
+                target_path="/Shared/000 Иванов ИИ",
+            )
+        }
+        mocked_list_resources.return_value = [
+            {
+                "name": self.performer.contract_file,
+                "path": f"{self.performer.contract_project_disk_folder}/{self.performer.contract_file}",
+                "type": "file",
+                "file_id": "4474",
+            }
+        ]
+        self.client.force_login(lawyer_user)
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        expected_url = (
+            "https://cloud.example.com/apps/files/files/4474?dir="
+            + quote("/Shared/000 Иванов ИИ", safe="/")
+            + "&amp;openfile=true"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, expected_url, html=False)
+        content = response.content.decode("utf-8")
+        section = content[
+            content.index('id="contract-conclusion-section"'):
+            content.index('id="contracts-project-filter-toggle"')
+        ]
+        self.assertIn(expected_url, section)
+        self.assertNotIn('href="https://cloud.example.com/s/contract-docx"', section)
+
+    @patch("nextcloud_app.api.NextcloudApiClient.list_resources")
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
+    def test_contracts_partial_resolves_lawyer_docx_link_from_parent_share(
+        self,
+        mocked_list_user_shares,
+        mocked_list_resources,
+    ):
+        lawyer_user = get_user_model().objects.create_user(
+            username="lawyer-parent-share@example.com",
+            email="lawyer-parent-share@example.com",
+            password="secret",
+            is_staff=True,
+        )
+        lawyer_group, _ = Group.objects.get_or_create(name=LAWYER_GROUP)
+        lawyer_user.groups.add(lawyer_group)
+        NextcloudUserLink.objects.create(
+            user=lawyer_user,
+            nextcloud_user_id="nc-lawyer-parent",
+            nextcloud_username="nc-lawyer-parent",
+            nextcloud_email=lawyer_user.email,
+        )
+        parent_path = "/Corporate Root/2026/Project"
+        mocked_list_user_shares.return_value = {
+            parent_path: NextcloudShare(
+                share_id="57",
+                path=parent_path,
+                share_with="nc-lawyer-parent",
+                permissions=15,
+                target_path="/Shared/Project",
+            )
+        }
+        mocked_list_resources.return_value = [
+            {
+                "name": self.performer.contract_file,
+                "path": f"{self.performer.contract_project_disk_folder}/{self.performer.contract_file}",
+                "type": "file",
+                "file_id": "4475",
+            }
+        ]
+        self.client.force_login(lawyer_user)
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        expected_target_dir = "/Shared/Project/09 Договоры/000 Иванов ИИ"
+        expected_url = (
+            "https://cloud.example.com/apps/files/files/4475?dir="
+            + quote(expected_target_dir, safe="/")
+            + "&amp;openfile=true"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, expected_url, html=False)
+
+    @patch("nextcloud_app.api.NextcloudApiClient.list_resources")
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_user_share")
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share")
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
+    def test_contracts_partial_repairs_missing_lawyer_share_for_docx_link(
+        self,
+        mocked_list_user_shares,
+        mocked_get_user_share,
+        mocked_ensure_user_share,
+        mocked_list_resources,
+    ):
+        lawyer_user = get_user_model().objects.create_user(
+            username="lawyer-repair-share@example.com",
+            email="lawyer-repair-share@example.com",
+            password="secret",
+            is_staff=True,
+        )
+        lawyer_group, _ = Group.objects.get_or_create(name=LAWYER_GROUP)
+        lawyer_user.groups.add(lawyer_group)
+        NextcloudUserLink.objects.create(
+            user=lawyer_user,
+            nextcloud_user_id="nc-lawyer-repair",
+            nextcloud_username="nc-lawyer-repair",
+            nextcloud_email=lawyer_user.email,
+        )
+        mocked_list_user_shares.return_value = {}
+        mocked_get_user_share.return_value = None
+        mocked_ensure_user_share.return_value = NextcloudShare(
+            share_id="58",
+            path=self.performer.contract_project_disk_folder,
+            share_with="nc-lawyer-repair",
+            permissions=15,
+            target_path="/Shared/000 Иванов ИИ",
+        )
+        mocked_list_resources.return_value = [
+            {
+                "name": self.performer.contract_file,
+                "path": f"{self.performer.contract_project_disk_folder}/{self.performer.contract_file}",
+                "type": "file",
+                "file_id": "4476",
+            }
+        ]
+        self.client.force_login(lawyer_user)
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        expected_url = (
+            "https://cloud.example.com/apps/files/files/4476?dir="
+            + quote("/Shared/000 Иванов ИИ", safe="/")
+            + "&amp;openfile=true"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, expected_url, html=False)
+        mocked_ensure_user_share.assert_called_once_with(
+            "cloud-admin",
+            self.performer.contract_project_disk_folder,
+            "nc-lawyer-repair",
+            permissions=15,
+        )
+
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_user_share", side_effect=NextcloudApiError("silent"))
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_resources")
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_contracts_partial_falls_back_to_file_redirect_when_target_unknown(
+        self,
+        _mocked_list_user_shares,
+        mocked_list_resources,
+        _mocked_get_user_share,
+        _mocked_ensure_user_share,
+    ):
+        lawyer_user = get_user_model().objects.create_user(
+            username="lawyer-file-id@example.com",
+            email="lawyer-file-id@example.com",
+            password="secret",
+            is_staff=True,
+        )
+        lawyer_group, _ = Group.objects.get_or_create(name=LAWYER_GROUP)
+        lawyer_user.groups.add(lawyer_group)
+        NextcloudUserLink.objects.create(
+            user=lawyer_user,
+            nextcloud_user_id="nc-lawyer-file-id",
+            nextcloud_username="nc-lawyer-file-id",
+            nextcloud_email=lawyer_user.email,
+        )
+        self.performer.contract_project_file_id = "4477"
+        self.performer.contract_project_folder_file_id = "4478"
+        self.performer.save(update_fields=["contract_project_file_id", "contract_project_folder_file_id"])
+        self.client.force_login(lawyer_user)
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'href="https://cloud.example.com/f/4477"', html=False)
+        self.assertContains(response, 'href="https://cloud.example.com/f/4478"', html=False)
+        mocked_list_resources.assert_not_called()
+
+    def test_contract_template_form_saves_multiple_groups_and_products(self):
+        second_group = GroupMember.objects.create(
+            short_name="Казахстан",
+            country_name="Казахстан",
+            country_code="398",
+            country_alpha2="KZ",
+            position=2,
+        )
+        country = OKSMCountry.objects.create(
+            number=398,
+            code="398",
+            short_name="Казахстан",
+            alpha2="KZ",
+            alpha3="KAZ",
+        )
+        product = Product.objects.create(
+            short_name="CT-TDD",
+            name_en="TDD",
+            name_ru="TDD",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        second_product = Product.objects.create(
+            short_name="CT-OVR",
+            name_en="OVR",
+            name_ru="OVR",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Обзор",
+        )
+        form = ContractTemplateForm(
+            data={
+                "group_member_ids": [str(self.group_member.pk), str(second_group.pk)],
+                "product_ids": [str(product.pk), str(second_product.pk)],
+                "contract_type": "smz",
+                "party": "individual",
+                "country": str(country.pk),
+                "sample_name": "",
+                "version": "",
+                "section_ids": ["__all__"],
+            },
+            files={
+                "file": SimpleUploadedFile(
+                    "template.docx",
+                    b"docx",
+                    content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ),
+            },
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        template = form.save()
+
+        self.assertEqual(
+            set(template.group_members.values_list("pk", flat=True)),
+            {self.group_member.pk, second_group.pk},
+        )
+        self.assertEqual(template.group_member_id, self.group_member.pk)
+        self.assertEqual(
+            set(template.products.values_list("pk", flat=True)),
+            {product.pk, second_product.pk},
+        )
+        self.assertEqual(template.product_id, product.pk)
+        self.assertTrue(template.sample_name.startswith("RU-KZ Шаблон договора ФЗЛ СМЗ KAZ_CT-TDD-CT-OVR-Общий_v"))
+
+    def test_contract_template_table_renders_all_group_for_unscoped_template(self):
+        ContractTemplate.objects.create(
+            group_member=None,
+            product=self.product,
+            contract_type="gph",
+            party="individual",
+            country_name="Россия",
+            country_code="643",
+            sample_name="Все Шаблон договора ФЗЛ ГПХ RUS_DD-Общий_v1",
+            version="1",
+            file=SimpleUploadedFile(
+                "template.docx",
+                b"docx",
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+            is_all_sections=True,
+        )
+
+        response = self.client.get(reverse("ct_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "<td class=\"text-nowrap\">Все</td>", html=False)
+
+    def test_contract_template_table_renders_all_product_for_unscoped_template(self):
+        ContractTemplate.objects.create(
+            group_member=self.group_member,
+            product=None,
+            contract_type="gph",
+            party="individual",
+            country_name="Россия",
+            country_code="643",
+            sample_name="RU Шаблон договора ФЗЛ ГПХ RUS_Все-Общий_v1",
+            version="1",
+            file=SimpleUploadedFile(
+                "template.docx",
+                b"docx",
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+            is_all_sections=True,
+        )
+
+        response = self.client.get(reverse("ct_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "<td class=\"text-nowrap\">Все</td>", html=False)
 
     def test_contracts_development_partial_renders_client_contract_projects_table(self):
         response = self.client.get(reverse("contracts_development_partial"))
@@ -391,6 +756,39 @@ class ContractVariableResolverTests(TestCase):
         self.assertEqual(replacements["{{corr_account}}"], "30101810400000000225")
         self.assertEqual(replacements["{{corr_bank_settlement_account}}"], "30101810945250000225")
         self.assertEqual(replacements["{{legacy_bank_swift}}"], "SABRRUMM")
+
+    def test_date_variables_use_saved_performer_contract_date(self):
+        product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        project = ProjectRegistration.objects.create(
+            number=7004,
+            type=product,
+            name="Проект с датой договора",
+            year=2026,
+        )
+        performer = Performer.objects.create(
+            registration=project,
+            executor="Иванов Иван Иванович",
+            contract_date=date(2026, 5, 7),
+        )
+        variables = [
+            ContractVariable(key="{{year}}", is_computed=True),
+            ContractVariable(key="{{day}}", is_computed=True),
+            ContractVariable(key="{{month}}", is_computed=True),
+        ]
+
+        replacements, lists = resolve_variables(performer, variables)
+
+        self.assertEqual(lists, {})
+        self.assertEqual(replacements["{{year}}"], "2026")
+        self.assertEqual(replacements["{{day}}"], "07")
+        self.assertEqual(replacements["{{month}}"], "мая")
 
     def test_contacts_short_name_falls_back_to_performer_employee_person_record(self):
         user = get_user_model().objects.create_user(

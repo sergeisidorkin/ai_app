@@ -990,6 +990,11 @@ class CloudStorageStructureMigrationTests(TestCase):
             any_order=True,
         )
         self.assertEqual(mocked_move.call_count, 3)
+        move_sources = [args[1] for args, _kwargs in mocked_move.call_args_list]
+        self.assertLess(
+            move_sources.index(f"/Corporate Root/2026/{self.project_folder}/09 Договоры/000 Иванов ИИ"),
+            move_sources.index(f"/Corporate Root/2026/{self.project_folder}"),
+        )
         self.proposal.refresh_from_db()
         self.assertEqual(
             self.proposal.proposal_workspace_disk_path,

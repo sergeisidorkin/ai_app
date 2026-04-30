@@ -2,6 +2,7 @@ from datetime import date as date_type
 from types import SimpleNamespace
 
 from django import forms
+from django.core.files.uploadedfile import UploadedFile
 from django.db.models import Q
 
 from classifiers_app.models import OKSMCountry
@@ -12,6 +13,7 @@ from projects_app.models import Performer
 from .models import ContractSubject, ContractTemplate, ContractVariable
 
 SECTION_ALL_VALUE = "__all__"
+GROUP_ALL_VALUE = "__all__"
 
 
 class _ContractFileInput(forms.ClearableFileInput):
@@ -134,12 +136,10 @@ class ContractTemplateForm(forms.ModelForm):
     class Meta:
         model = ContractTemplate
         fields = [
-            "group_member", "product", "contract_type", "party",
+            "contract_type", "party",
             "sample_name", "version", "file",
         ]
         widgets = {
-            "group_member": forms.Select(attrs={"class": "form-select"}),
-            "product": forms.Select(attrs={"class": "form-select"}),
             "contract_type": forms.Select(attrs={"class": "form-select"}),
             "party": forms.Select(attrs={"class": "form-select"}),
             "sample_name": forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
@@ -157,19 +157,38 @@ class ContractTemplateForm(forms.ModelForm):
             self._orig_version = self.instance.version or ""
 
         order_map = _group_member_order_map()
-        members_qs = GroupMember.objects.all()
-        self.fields["group_member"].queryset = members_qs
-        self.fields["group_member"].label_from_instance = lambda obj: _group_member_label(obj, order_map.get(obj.pk, 0))
-        self.fields["group_member"].required = True
+        members_qs = list(GroupMember.objects.all())
+        products_qs = list(Product.objects.order_by("position", "id"))
 
         self.fields["file"].required = not (self.instance and self.instance.pk and self.instance.file)
+        self.fields["sample_name"].required = False
+        self.fields["version"].required = False
 
         self.group_short_map = {
             str(m.pk): _group_member_short(m, order_map.get(m.pk, 0)) for m in members_qs
         }
-
-        self.fields["product"].queryset = Product.objects.order_by("position", "id")
-        self.fields["product"].label_from_instance = lambda obj: obj.short_name
+        self.group_options = [
+            {
+                "id": member.pk,
+                "label": _group_member_label(member, order_map.get(member.pk, 0)),
+            }
+            for member in members_qs
+        ]
+        selected_group_ids, self.is_all_groups_selected = self._selected_group_ids()
+        self.selected_group_ids = {str(value) for value in selected_group_ids}
+        self.product_short_map = {
+            str(product.pk): (product.short_name or "").strip()
+            for product in products_qs
+        }
+        self.product_options = [
+            {
+                "id": product.pk,
+                "label": product.short_name or str(product),
+            }
+            for product in products_qs
+        ]
+        selected_product_ids, self.is_all_products_selected = self._selected_product_ids()
+        self.selected_product_ids = {str(value) for value in selected_product_ids}
 
         qs = _active_countries_qs()
         if self.instance and self.instance.pk and self.instance.country_code:
@@ -236,8 +255,83 @@ class ContractTemplateForm(forms.ModelForm):
             self.current_base = self.instance.sample_name.rsplit("_v", 1)[0]
             self.current_version = self.instance.version or ""
 
+    def _posted_values(self, name):
+        if not self.is_bound:
+            return None
+        if hasattr(self.data, "getlist"):
+            return self.data.getlist(name)
+        value = self.data.get(name)
+        if value is None:
+            return []
+        return value if isinstance(value, list) else [value]
+
+    def _selected_group_ids(self):
+        posted = self._posted_values("group_member_ids")
+        if posted is not None:
+            if GROUP_ALL_VALUE in posted or not posted:
+                return [], True
+            return [int(value) for value in posted if str(value).isdigit()], False
+
+        try:
+            existing_ids = list(self.instance.group_members.values_list("pk", flat=True))
+        except ValueError:
+            existing_ids = []
+        if self.instance and self.instance.pk:
+            if existing_ids:
+                return existing_ids, False
+            if self.instance.group_member_id:
+                return [self.instance.group_member_id], False
+        return [], True
+
+    def _selected_product_ids(self):
+        posted = self._posted_values("product_ids")
+        if posted is not None:
+            if GROUP_ALL_VALUE in posted or not posted:
+                return [], True
+            return [int(value) for value in posted if str(value).isdigit()], False
+
+        try:
+            existing_ids = list(self.instance.products.values_list("pk", flat=True))
+        except ValueError:
+            existing_ids = []
+        if self.instance and self.instance.pk:
+            if existing_ids:
+                return existing_ids, False
+            if self.instance.product_id:
+                return [self.instance.product_id], False
+        return [], True
+
+    def clean(self):
+        cleaned = super().clean()
+        for field_name, model, label in (
+            ("group_member_ids", GroupMember, "Группа"),
+            ("product_ids", Product, "Продукт"),
+        ):
+            values = self._posted_values(field_name) or []
+            if GROUP_ALL_VALUE in values or not values:
+                cleaned[field_name] = []
+                continue
+
+            selected_ids = [int(value) for value in values if str(value).isdigit()]
+            existing_ids = set(model.objects.filter(pk__in=selected_ids).values_list("pk", flat=True))
+            if existing_ids != set(selected_ids):
+                raise forms.ValidationError(f"В поле «{label}» выбраны несуществующие значения.")
+            cleaned[field_name] = selected_ids
+        return cleaned
+
     def save(self, commit=True):
         instance = super().save(commit=False)
+        group_ids = self.cleaned_data.get("group_member_ids") or []
+        product_ids = self.cleaned_data.get("product_ids") or []
+        groups = list(GroupMember.objects.filter(pk__in=group_ids))
+        products = list(Product.objects.filter(pk__in=product_ids).order_by("position", "id"))
+        groups_by_id = {group.pk: group for group in groups}
+        products_by_id = {product.pk: product for product in products}
+        groups = [groups_by_id[group_id] for group_id in group_ids if group_id in groups_by_id]
+        products = [products_by_id[product_id] for product_id in product_ids if product_id in products_by_id]
+        instance.group_member = groups[0] if groups else None
+        instance.product = products[0] if products else None
+
         country = self.cleaned_data.get("country")
         if country:
             instance.country_name = country.short_name
@@ -246,7 +340,7 @@ class ContractTemplateForm(forms.ModelForm):
             instance.country_name = ""
             instance.country_code = ""
 
-        section_values = self.data.getlist("section_ids")
+        section_values = self._posted_values("section_ids") or []
         if SECTION_ALL_VALUE in section_values or not section_values:
             instance.is_all_sections = True
             instance.typical_sections_json = []
@@ -266,18 +360,22 @@ class ContractTemplateForm(forms.ModelForm):
         party_short = PARTY_SHORT.get(instance.party, "")
         type_short = TYPE_SHORT.get(instance.contract_type, "")
         alpha3 = country.alpha3 if country else ""
-        product_name = ""
-        if instance.product_id:
-            product_name = instance.product.short_name
+        product_name = "-".join(
+            (product.short_name or "").strip()
+            for product in products
+            if product.short_name
+        ) or "Все"
         if instance.is_all_sections:
             sections_part = "Общий"
         else:
             codes = [e.get("code", "") for e in instance.typical_sections_json or [] if e.get("code")]
             sections_part = "-".join(codes) if codes else "Общий"
-        group_prefix = ""
-        if instance.group_member_id:
-            order_map = _group_member_order_map()
-            group_prefix = _group_member_short(instance.group_member, order_map.get(instance.group_member_id, 0)) + " "
+        order_map = _group_member_order_map()
+        group_prefix = "-".join(
+            _group_member_short(group, order_map.get(group.pk, 0))
+            for group in groups
+        ) or "Все"
+        group_prefix = f"{group_prefix} "
         base_name = (
             f"{group_prefix}Шаблон договора {party_short} {type_short} "
             f"{alpha3}_{product_name}-{sections_part}"
@@ -299,7 +397,7 @@ class ContractTemplateForm(forms.ModelForm):
 
         import os
         uploaded = self.cleaned_data.get("file")
-        if uploaded:
+        if isinstance(uploaded, UploadedFile):
             ext = os.path.splitext(uploaded.name)[1]
             instance.file.name = instance.sample_name + ext
         elif instance.pk and instance.file:
@@ -313,10 +411,12 @@ class ContractTemplateForm(forms.ModelForm):
                     new_full = storage.path(new_name)
                     os.makedirs(os.path.dirname(new_full), exist_ok=True)
                     os.rename(old_full, new_full)
-                instance.file.name = new_name
+                    instance.file.name = new_name
 
         if commit:
             instance.save()
+            instance.group_members.set(groups)
+            instance.products.set(products)
         return instance
 
     @staticmethod
