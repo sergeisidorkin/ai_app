@@ -3075,7 +3075,12 @@ def create_contract_project(request):
                         if not cloud_upload_file(request.user, upload_path, file_data):
                             errors.append(f"Загрузка файла: {upload_name} → {folder_name}")
                         else:
-                            file_update_kwargs = {"contract_file": upload_name}
+                            file_update_kwargs = {
+                                "contract_file": upload_name,
+                                "contract_pdf_file": "",
+                                "contract_pdf_link": "",
+                                "contract_pdf_file_id": "",
+                            }
                             file_id = _resolve_contract_project_nextcloud_file_id(upload_path)
                             if file_id:
                                 file_update_kwargs["contract_project_file_id"] = file_id

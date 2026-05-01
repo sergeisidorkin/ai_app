@@ -219,6 +219,7 @@ ENFORCE_LOGIN_EXEMPT = (
     "/checklists/shared/",
     "/media/",
     "/proposals/docx-source/",
+    "/projects/performers/contract-docx-source/",
     "/o/authorize/",
     "/o/token/",
     "/o/revoke_token/",

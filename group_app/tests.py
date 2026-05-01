@@ -1,6 +1,7 @@
 import os
 import shutil
 import tempfile
+from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.core.files.base import ContentFile
@@ -129,5 +130,19 @@ class GroupMemberSealTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("attachment;", response["Content-Disposition"])
+        self.assertIn("seal.png", response["Content-Disposition"])
+        self.assertEqual(b"".join(response.streaming_content), b"seal-data")
+
+    def test_member_seal_download_uses_storage_open_without_filesystem_path(self):
+        self.member.seal_file = "group/seals/1/seal.png"
+        self.member.save(update_fields=["seal_file"])
+        file_obj = MagicMock()
+        file_obj.read.side_effect = [b"seal-data", b""]
+        file_obj.close = MagicMock()
+        with patch.object(self.member.seal_file.storage, "open", return_value=file_obj) as mocked_open:
+            response = self.client.get(reverse("gm_seal_download", args=[self.member.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        mocked_open.assert_called_once_with(self.member.seal_file.name, "rb")
         self.assertIn("seal.png", response["Content-Disposition"])
         self.assertEqual(b"".join(response.streaming_content), b"seal-data")
