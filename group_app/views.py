@@ -1,7 +1,9 @@
 import json
+import os
 
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.db.models import Max
+from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_http_methods, require_POST
 
@@ -44,6 +46,14 @@ def _country_next_order_map(exclude_member_pk=None):
 
 def _member_country_order_number(member):
     return int(getattr(member, "country_order_number", 0) or 0)
+
+
+def _delete_member_seal_file(member, file_name):
+    if not file_name:
+        return
+    storage = member._meta.get_field("seal_file").storage
+    if storage.exists(file_name):
+        storage.delete(file_name)
 
 
 def _member_form_context(form, action, member=None):
@@ -114,12 +124,18 @@ def member_form_create(request):
     if request.method == "GET":
         form = GroupMemberForm(current_order_number=0)
         return render(request, FORM_TEMPLATE, _member_form_context(form, "create"))
-    form = GroupMemberForm(request.POST, current_order_number=0)
+    form = GroupMemberForm(request.POST, request.FILES, current_order_number=0)
     if not form.is_valid():
         return render(request, FORM_TEMPLATE, _member_form_context(form, "create"))
     obj = form.save(commit=False)
+    uploaded_seal = obj.seal_file
+    if uploaded_seal:
+        obj.seal_file = ""
     obj.position = _next_position()
     obj.save()
+    if uploaded_seal:
+        obj.seal_file = uploaded_seal
+        obj.save(update_fields=["seal_file"])
     resequence_group_members()
     return _render_updated(request)
 
@@ -133,10 +149,16 @@ def member_form_edit(request, pk: int):
     if request.method == "GET":
         form = GroupMemberForm(instance=member, current_order_number=current_order_number)
         return render(request, FORM_TEMPLATE, _member_form_context(form, "edit", member))
-    form = GroupMemberForm(request.POST, instance=member, current_order_number=current_order_number)
+    old_seal_name = member.seal_file.name if member.seal_file else ""
+    has_new_seal = "seal_file" in request.FILES
+    clear_seal = bool(request.POST.get("seal_file-clear")) and not has_new_seal
+    form = GroupMemberForm(request.POST, request.FILES, instance=member, current_order_number=current_order_number)
     if not form.is_valid():
         return render(request, FORM_TEMPLATE, _member_form_context(form, "edit", member))
-    form.save()
+    saved_member = form.save()
+    new_seal_name = saved_member.seal_file.name if saved_member.seal_file else ""
+    if old_seal_name and (clear_seal or (has_new_seal and old_seal_name != new_seal_name)):
+        _delete_member_seal_file(saved_member, old_seal_name)
     resequence_group_members()
     return _render_updated(request)
 
@@ -145,9 +167,30 @@ def member_form_edit(request, pk: int):
 @user_passes_test(staff_required)
 @require_POST
 def member_delete(request, pk: int):
-    get_object_or_404(GroupMember, pk=pk).delete()
+    member = get_object_or_404(GroupMember, pk=pk)
+    old_seal_name = member.seal_file.name if member.seal_file else ""
+    member.delete()
+    _delete_member_seal_file(member, old_seal_name)
     _normalize_positions()
     return _render_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def member_seal_download(request, pk: int):
+    member = get_object_or_404(GroupMember, pk=pk)
+    if not member.seal_file:
+        raise Http404("Файл не найден")
+    file_path = member.seal_file.path
+    if not os.path.isfile(file_path):
+        raise Http404("Файл не найден на диске")
+    from urllib.parse import quote
+
+    basename = os.path.basename(file_path)
+    response = FileResponse(open(file_path, "rb"), content_type="application/octet-stream")
+    response["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(basename)}"
+    return response
 
 
 # ---------------------------------------------------------------------------

@@ -623,24 +623,12 @@ class PerformerForm(forms.ModelForm):
         widget=forms.Select(attrs={"class": "form-select"}),
     )
 
-    final_payment = forms.DecimalField(
-        label="Окон. платеж",
-        required=False,
-        disabled=True,
-        widget=forms.NumberInput(attrs={
-            "class": "form-control readonly-field",
-            "readonly": True,
-            "step": "1",
-        }),
-    )
-
     class Meta:
         model = Performer
         fields = [
             "registration", "asset_name", "executor", "grade", "grade_name",
             "currency", "typical_section",
             "actual_costs", "estimated_costs", "agreed_amount",
-            "prepayment", "final_payment", "contract_number",
         ]
         widgets = {
             "grade": forms.HiddenInput(),
@@ -648,13 +636,6 @@ class PerformerForm(forms.ModelForm):
             "actual_costs": forms.TextInput(attrs={"class": "form-control js-money-input", "inputmode": "decimal"}),
             "estimated_costs": forms.HiddenInput(),
             "agreed_amount": forms.HiddenInput(),
-            "prepayment": forms.NumberInput(attrs={
-                "class": "form-control",
-                "step": "1",
-                "min": "0",
-                "max": "100",
-            }),
-            "contract_number": forms.TextInput(attrs={"class": "form-control"}),
         }
 
     _money_fields = ("actual_costs", "estimated_costs", "agreed_amount")
@@ -691,13 +672,6 @@ class PerformerForm(forms.ModelForm):
             rub = currency_qs.filter(code_alpha="RUB").first()
             if rub:
                 self.initial["currency"] = rub.pk
-            self.initial["prepayment"] = 50
-            self.initial["final_payment"] = 50
-        else:
-            for fn in ("prepayment", "final_payment"):
-                v = self.initial.get(fn)
-                if v is not None:
-                    self.initial[fn] = int(v)
 
     @staticmethod
     def _clean_money(value):

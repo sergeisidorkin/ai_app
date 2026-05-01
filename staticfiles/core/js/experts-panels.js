@@ -3,6 +3,7 @@
   window.__expertsPanelBound = true;
 
   window.__espTableSel = window.__espTableSel || {};
+  window.__expertsPaneDirty = window.__expertsPaneDirty || false;
 
   function pane() { return document.getElementById('experts-pane'); }
   const qa = (sel, root) => Array.from((root || document).querySelectorAll(sel));
@@ -97,6 +98,26 @@
       if (btn.closest('#' + panelId)) return config;
     }
     return null;
+  }
+
+  function expertsTabIsActive() {
+    return !!document.querySelector('#experts.tab-pane.show.active, #experts.tab-pane.active.show');
+  }
+
+  function expertsModalIsOpen() {
+    return !!document.querySelector('#experts-modal.show, #experts-profile-modal.show, #experts-contract-details-modal.show');
+  }
+
+  async function refreshExpertsPane() {
+    const root = pane();
+    const url = root?.getAttribute('hx-get');
+    if (!root || !url || !window.htmx) return;
+    if (expertsModalIsOpen()) {
+      window.__expertsPaneDirty = true;
+      return;
+    }
+    await htmx.ajax('GET', url, { target: '#experts-pane', swap: 'outerHTML' });
+    window.__expertsPaneDirty = false;
   }
 
   async function doEdit(name, config) {
@@ -244,6 +265,20 @@
     updateContractDetailsEditBtn();
     window.__espTableSel = {};
     initWrapToggle();
+  });
+
+  document.body.addEventListener('contacts-updated', function () {
+    window.__expertsPaneDirty = true;
+    if (expertsTabIsActive()) {
+      refreshExpertsPane().catch(() => {});
+    }
+  });
+
+  document.addEventListener('shown.bs.tab', function (e) {
+    const trigger = e.target;
+    if (!trigger || trigger.getAttribute('href') !== '#experts') return;
+    if (!window.__expertsPaneDirty) return;
+    refreshExpertsPane().catch(() => {});
   });
 
   var P = window.UIPref;

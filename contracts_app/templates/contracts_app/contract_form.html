@@ -22,11 +22,18 @@
                value="{% if performer.registration %}{{ performer.registration.short_uid }}{% endif %}">
       </div>
       <div class="col-md-3">
+        <label class="form-label">Группа</label>
+        <div class="group-select-shell">
+          {{ form.contract_group_member }}
+          <div class="group-select-display" id="contracts-group-display" aria-hidden="true"></div>
+        </div>
+      </div>
+      <div class="col-md-3">
         <label class="form-label">Тип</label>
         <input type="text" class="form-control readonly-field" readonly tabindex="-1"
                value="{{ performer.registration.type_short_display }}">
       </div>
-      <div class="col-md-6">
+      <div class="col-md-3">
         <label class="form-label">Название</label>
         <input type="text" class="form-control readonly-field" readonly tabindex="-1"
                value="{{ performer.registration.name }}">
@@ -38,17 +45,29 @@
                value="{{ performer.executor }}">
       </div>
       <div class="col-md-6">
+        <label class="form-label">Ответственный</label>
+        <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+               value="{{ performer.responsible_name|default:'—' }}">
+      </div>
+      <div class="col-md-6">
         <label class="form-label">Номер договора</label>
         {{ form.contract_number }}
       </div>
 
+      <div class="col-md-3">
+        <label class="form-label">Цена договора</label>
+        <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+               value="{% if performer.total_price != None %}{{ performer.total_price|money_fmt }}{% if performer.currency %} {{ performer.currency.code_alpha }}{% endif %}{% else %}—{% endif %}">
+      </div>
       <div class="col-md-3">
         <label class="form-label">Дата договора</label>
         {{ form.contract_date }}
       </div>
       <div class="col-md-3">
         <label class="form-label">Срок</label>
-        <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+        <input type="text" class="form-control readonly-field" id="contracts-term-days-field"
+               readonly tabindex="-1"
+               data-deadline="{% if performer.registration.deadline %}{{ performer.registration.deadline|date:'Y-m-d' }}{% endif %}"
                value="{% if performer.contract_term_days != None %}{{ performer.contract_term_days }} дн.{% else %}—{% endif %}">
       </div>
       <div class="col-md-3">
@@ -56,21 +75,20 @@
         <input type="text" class="form-control readonly-field" readonly tabindex="-1"
                value="{% if performer.registration.deadline %}{{ performer.registration.deadline|date:'d.m.Y' }}{% else %}—{% endif %}">
       </div>
-      <div class="col-md-3">
-        <label class="form-label">Цена договора</label>
-        <input type="text" class="form-control readonly-field" readonly tabindex="-1"
-               value="{% if performer.total_price != None %}{{ performer.total_price|money_fmt }}{% if performer.currency %} {{ performer.currency.code_alpha }}{% endif %}{% else %}—{% endif %}">
-      </div>
 
       <div class="col-md-3">
         <label class="form-label">Аванс</label>
-        <input type="text" class="form-control readonly-field" readonly tabindex="-1"
-               value="{% if performer.prepayment != None %}{{ performer.prepayment|floatformat:'0' }}%{% else %}—{% endif %}">
+        <div class="input-group">
+          {{ form.prepayment }}
+          <span class="input-group-text">%</span>
+        </div>
       </div>
       <div class="col-md-3">
         <label class="form-label">Окончательный платёж</label>
-        <input type="text" class="form-control readonly-field" readonly tabindex="-1"
-               value="{% if performer.final_payment != None %}{{ performer.final_payment|floatformat:'0' }}%{% else %}—{% endif %}">
+        <div class="input-group">
+          {{ form.final_payment }}
+          <span class="input-group-text">%</span>
+        </div>
       </div>
       <div class="col-md-6">
         <label class="form-label">Файл</label>
@@ -80,8 +98,13 @@
   </div>
 
   <div class="modal-footer">
-    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
-    <button type="submit" class="btn btn-primary">Сохранить</button>
+    <button type="button"
+            class="btn btn-outline-secondary"
+            data-bs-dismiss="modal"
+            data-contract-form-cancel-btn="1">Отмена</button>
+    <button type="submit"
+            class="btn btn-primary"
+            data-contract-form-save-btn="1">Сохранить</button>
   </div>
 </form>
 
@@ -91,4 +114,127 @@
     color: #6c757d;
     pointer-events: none;
   }
+  #contracts-modal .group-select-shell {
+    position: relative;
+  }
+  #contracts-modal .group-select-shell select {
+    position: relative;
+    z-index: 2;
+    opacity: 0.01;
+  }
+  #contracts-modal .group-select-shell select option {
+    white-space: nowrap;
+  }
+  #contracts-modal .group-select-display {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    padding: .25rem 2.25rem .25rem .75rem;
+    font: inherit;
+    line-height: inherit;
+    color: #212529;
+    background-color: #fff;
+    border: 1px solid #ced4da;
+    border-radius: .375rem;
+    pointer-events: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #contracts-modal .group-select-display::after {
+    content: "";
+    position: absolute;
+    right: .75rem;
+    top: 50%;
+    width: 16px;
+    height: 16px;
+    transform: translateY(-50%);
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 16px 12px;
+    opacity: .7;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M2 5l6 6 6-6'/%3e%3c/svg%3e");
+  }
 </style>
+<script>
+  (function() {
+    const modal = document.querySelector("#contracts-modal");
+    const form = modal?.querySelector("form");
+    const select = modal?.querySelector("#contracts-group-select");
+    const display = modal?.querySelector("#contracts-group-display");
+    if (!select || !display || select.dataset.displayBound === "1") return;
+    select.dataset.displayBound = "1";
+
+    const syncDisplay = () => {
+      const selected = select.options[select.selectedIndex];
+      const label = selected && selected.value ? selected.textContent.trim() : "";
+      display.textContent = label ? label.split(/\s+/, 1)[0] : "";
+    };
+
+    select.addEventListener("change", syncDisplay);
+    syncDisplay();
+
+    const prepEl = modal?.querySelector('[name="prepayment"]');
+    const finalEl = modal?.querySelector('[name="final_payment"]');
+    const syncFinalPayment = () => {
+      const value = parseFloat(prepEl?.value) || 0;
+      if (finalEl) finalEl.value = Math.max(0, 100 - value);
+    };
+    prepEl?.addEventListener("input", syncFinalPayment);
+    syncFinalPayment();
+
+    const dateEl = modal?.querySelector('[name="contract_date"]');
+    const termEl = modal?.querySelector("#contracts-term-days-field");
+    const parseIsoDate = (value) => {
+      const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || "");
+      if (!match) return null;
+      return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+    };
+    const syncContractTerm = () => {
+      const contractDate = parseIsoDate(dateEl?.value);
+      const deadlineDate = parseIsoDate(termEl?.dataset.deadline);
+      if (!termEl) return;
+      if (!contractDate || !deadlineDate) {
+        termEl.value = "—";
+        return;
+      }
+      const dayMs = 24 * 60 * 60 * 1000;
+      termEl.value = Math.round((deadlineDate - contractDate) / dayMs) + " дн.";
+    };
+    dateEl?.addEventListener("input", syncContractTerm);
+    dateEl?.addEventListener("change", syncContractTerm);
+    syncContractTerm();
+
+    const setButtonLoading = (button, label) => {
+      if (!(button instanceof HTMLButtonElement) || button.dataset.loading === "1") return;
+      button.dataset.loading = "1";
+      button.dataset.originalHtml = button.innerHTML;
+      button.innerHTML = '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>' + label;
+      button.disabled = true;
+    };
+    const resetButtonLoading = (button) => {
+      if (!(button instanceof HTMLButtonElement)) return;
+      if (button.dataset.originalHtml) button.innerHTML = button.dataset.originalHtml;
+      button.disabled = false;
+      delete button.dataset.loading;
+    };
+    const saveBtn = form?.querySelector("[data-contract-form-save-btn]");
+    const cancelBtn = form?.querySelector("[data-contract-form-cancel-btn]");
+
+    form?.addEventListener("submit", () => {
+      setButtonLoading(saveBtn, "Сохранение...");
+    });
+    cancelBtn?.addEventListener("click", () => {
+      setButtonLoading(cancelBtn, "Отмена");
+    });
+    form?.addEventListener("htmx:afterRequest", (event) => {
+      if (event.detail?.successful) return;
+      resetButtonLoading(saveBtn);
+    });
+    form?.addEventListener("htmx:sendError", () => {
+      resetButtonLoading(saveBtn);
+    });
+  })();
+</script>

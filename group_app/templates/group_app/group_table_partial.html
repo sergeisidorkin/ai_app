@@ -21,6 +21,7 @@
         <th>Идент.</th>
         <th>Регистр. номер</th>
         <th>Дата регистр.</th>
+        <th class="text-nowrap text-center">Печать</th>
     </tr>
     </thead>
     <tbody>
@@ -50,9 +51,18 @@
             <td class="text-nowrap">{{ m.identifier }}</td>
             <td class="text-nowrap">{{ m.registration_number }}</td>
             <td class="text-nowrap">{% if m.registration_date %}{{ m.registration_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>
+            <td class="text-nowrap text-center">
+                {% if m.seal_file %}
+                  <a href="{% url 'gm_seal_download' m.pk %}" title="Скачать печать">
+                    <i class="bi bi-link-45deg file-link-icon" style="color: var(--bs-primary, #075D94);"></i>
+                  </a>
+                {% else %}
+                  <i class="bi bi-link-45deg" style="color: #d6d9dd;"></i>
+                {% endif %}
+            </td>
         </tr>
     {% empty %}
-        <tr><td colspan="9" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="10" class="text-muted">Пока нет данных.</td></tr>
     {% endfor %}
     </tbody>
 </table>

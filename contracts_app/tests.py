@@ -20,10 +20,10 @@ from contracts_app.forms import ContractTemplateForm
 from contracts_app.models import ContractTemplate, ContractVariable
 from contracts_app.variable_resolver import resolve_variables
 from experts_app.models import ExpertContractDetails, ExpertProfile
-from group_app.models import GroupMember
+from group_app.models import GroupMember, OrgUnit
 from nextcloud_app.api import NextcloudApiError, NextcloudShare
 from nextcloud_app.models import NextcloudUserLink
-from policy_app.models import EXPERT_GROUP, LAWYER_GROUP, Product
+from policy_app.models import DEPARTMENT_HEAD_GROUP, EXPERT_GROUP, LAWYER_GROUP, Product
 from projects_app.models import Performer, ProjectRegistration
 from users_app.forms import FREELANCER_LABEL
 from users_app.models import Employee
@@ -104,16 +104,20 @@ class ContractsCloudLabelTests(TestCase):
             contract_project_disk_folder="/Corporate Root/2026/Project/09 Договоры/000 Иванов ИИ",
         )
 
-    def test_contracts_partial_renders_contract_conclusion_before_contract_projects(self):
+    def test_contracts_partial_renders_contract_projects_before_contract_conclusion(self):
         response = self.client.get(reverse("contracts_partial"))
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Составление проекта договора")
+        self.assertContains(response, "Отправка проекта договора")
+        self.assertContains(response, 'id="contract-dispatch-table"', html=False)
         self.assertContains(response, "Облако")
         self.assertContains(response, "Наименование файла DOCX")
+        self.assertContains(response, "Наименование файла PDF")
         self.assertContains(response, "Договор 7001_Иванов ИИ.docx")
         self.assertContains(response, "https://cloud.example.com/s/contract-docx")
         self.assertContains(response, "Создать проект договора")
+        self.assertContains(response, "Подписать проект договора")
         self.assertContains(response, "Отправить проект договора")
         self.assertContains(
             response,
@@ -121,21 +125,266 @@ class ContractsCloudLabelTests(TestCase):
             html=False,
         )
         self.assertContains(response, 'id="contract-project-filter-toggle"', html=False)
+        self.assertContains(response, 'id="signing-project-filter-toggle"', html=False)
+        self.assertContains(response, 'class="form-check-input js-signing-filter"', html=False)
         self.assertContains(response, 'data-request-url="%s"' % reverse("contract_request"), html=False)
         self.assertContains(
             response,
             'data-create-contract-url="%s"' % reverse("create_contract_project"),
             html=False,
         )
+        self.assertContains(
+            response,
+            'data-sign-contract-url="%s"' % reverse("sign_contract_documents"),
+            html=False,
+        )
         self.assertContains(response, "Договорный проект")
 
         content = response.content.decode("utf-8")
+        contract_drafting_table = content[
+            content.index('id="contract-drafting-table"'):
+            content.index('id="contract-dispatch-table"')
+        ]
+        self.assertNotIn("<th>Грейд</th>", contract_drafting_table)
+        self.assertNotIn("col-grade", contract_drafting_table)
         self.assertLess(
-            content.index('id="contract-conclusion-section"'),
             content.index('id="contracts-project-filter-toggle"'),
+            content.index('id="contract-conclusion-section"'),
+        )
+        contracts_table = content[
+            content.index('class="table table-sm align-middle contracts-table mb-0"'):
+            content.index('id="contracts-edit-btn"')
+        ]
+        self.assertNotIn('<th class="text-nowrap">Ссылка</th>', contracts_table)
+        self.assertLess(
+            contracts_table.index('<th class="text-nowrap">Номер договора</th>'),
+            contracts_table.index('>Цена</th>'),
+        )
+        self.assertLess(
+            contracts_table.index('>Цена</th>'),
+            contracts_table.index('<th class="text-nowrap">Дата договора</th>'),
+        )
+        self.assertLess(
+            content.index("Составление проекта договора"),
+            content.index("Отправка проекта договора"),
+        )
+        self.assertLess(
+            content.index("Отправка проекта договора"),
+            content.index("Подписание договора"),
         )
 
+    def test_contract_conclusion_column_registry_excludes_grade(self):
+        from core.column_registry import get_column_choices
+
+        choices = get_column_choices("projects", "contract_conclusion")
+
+        self.assertNotIn(("grade", "Грейд"), choices)
+
+    def test_contracts_partial_renders_contract_pdf_file_like_proposal_pdf(self):
+        self.performer.contract_pdf_file = "Договор 7001_Иванов ИИ.pdf"
+        self.performer.contract_pdf_link = "https://cloud.example.com/s/contract-pdf"
+        self.performer.save(update_fields=["contract_pdf_file", "contract_pdf_link"])
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '<th class="text-nowrap">Наименование файла PDF</th>', html=False)
+        self.assertContains(response, "https://cloud.example.com/s/contract-pdf")
+        self.assertContains(response, "Договор 7001_Иванов ИИ.pdf")
+        self.assertContains(response, "bi-file-pdf-fill")
+        content = response.content.decode("utf-8")
+        signing_section = content[content.index("Подписание договора"):]
+        self.assertIn("https://cloud.example.com/s/contract-pdf", signing_section)
+        self.assertIn("Договор 7001_Иванов ИИ.pdf", signing_section)
+
+    @override_settings(ONLYOFFICE_DOCUMENT_SERVER_URL="https://docs.example.com")
+    def test_sign_contract_documents_generates_pdf_and_public_link(self):
+        with (
+            patch("projects_app.views.convert_docx_source_to_pdf", return_value=b"%PDF-1.4") as mocked_convert,
+            patch("projects_app.views.cloud_upload_file", return_value=True) as mocked_upload,
+            patch("projects_app.views.cloud_publish_resource", return_value="https://cloud.example.com/s/contract-pdf") as mocked_publish,
+            patch("projects_app.views._resolve_contract_project_nextcloud_file_id", return_value="pdf-file-id"),
+        ):
+            response = self.client.post(
+                reverse("sign_contract_documents"),
+                {"performer_ids[]": [self.performer.pk]},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["generated"], 1)
+        self.assertEqual(data["updates"][0]["contract_pdf_file"], "Договор 7001_Иванов ИИ.pdf")
+
+        source_url = mocked_convert.call_args.kwargs["source_url"]
+        self.assertIn(
+            reverse("contract_onlyoffice_docx_source", args=[self.performer.pk]),
+            source_url,
+        )
+        expected_pdf_path = (
+            f"{self.performer.contract_project_disk_folder}/"
+            "Договор 7001_Иванов ИИ.pdf"
+        )
+        mocked_upload.assert_called_once_with(self.user, expected_pdf_path, b"%PDF-1.4")
+        mocked_publish.assert_called_once_with(self.user, expected_pdf_path)
+
+        self.performer.refresh_from_db()
+        self.assertEqual(self.performer.contract_pdf_file, "Договор 7001_Иванов ИИ.pdf")
+        self.assertEqual(self.performer.contract_pdf_link, "https://cloud.example.com/s/contract-pdf")
+        self.assertEqual(self.performer.contract_pdf_file_id, "pdf-file-id")
+
     def test_contract_edit_updates_contract_date_for_batch_rows(self):
+        self.project.deadline = date(2026, 5, 27)
+        self.project.save(update_fields=["deadline"])
+        self.performer.contract_date = date(2026, 5, 7)
+        self.performer.save(update_fields=["contract_date"])
+        sibling = Performer.objects.create(
+            registration=self.project,
+            employee=self.employee,
+            executor="Иванов Иван Иванович",
+            contract_batch_id=self.performer.contract_batch_id,
+        )
+
+        form_response = self.client.get(reverse("contracts_edit", args=[self.performer.pk]))
+        form_content = form_response.content.decode("utf-8")
+
+        self.assertEqual(form_response.status_code, 200)
+        self.assertLess(
+            form_content.index("Цена договора"),
+            form_content.index("Дата договора"),
+        )
+        self.assertContains(form_response, 'name="prepayment"', html=False)
+        self.assertContains(form_response, 'name="final_payment"', html=False)
+        self.assertContains(form_response, 'id="contracts-term-days-field"', html=False)
+        self.assertContains(form_response, 'data-deadline="2026-05-27"', html=False)
+        self.assertContains(form_response, 'value="20 дн."', html=False)
+        self.assertContains(form_response, 'data-contract-form-cancel-btn="1"', html=False)
+        self.assertContains(form_response, 'data-contract-form-save-btn="1"', html=False)
+        self.assertContains(form_response, "Сохранение...", html=False)
+        self.assertContains(form_response, "spinner-border spinner-border-sm me-2", html=False)
+
+        response = self.client.post(
+            reverse("contracts_edit", args=[self.performer.pk]),
+            {
+                "contract_number": "CUSTOM-42",
+                "contract_date": "2026-05-07",
+                "prepayment": "30",
+                "contract_file": "custom.docx",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        sibling.refresh_from_db()
+        self.assertEqual(sibling.contract_number, "CUSTOM-42")
+        self.assertEqual(sibling.contract_date, date(2026, 5, 7))
+        self.assertEqual(sibling.prepayment, 30)
+        self.assertEqual(sibling.final_payment, 70)
+        self.assertEqual(sibling.contract_file, "custom.docx")
+
+    def test_contracts_partial_uses_direction_head_as_responsible(self):
+        direction = OrgUnit.objects.create(
+            company=self.group_member,
+            level=2,
+            department_name="Геология",
+            unit_type="expertise",
+        )
+        head_user = get_user_model().objects.create_user(
+            username="direction-head@example.com",
+            password="secret",
+            first_name="Петр",
+            last_name="Петров",
+            is_staff=True,
+        )
+        Employee.objects.create(
+            user=head_user,
+            patronymic="Петрович",
+            department=direction,
+            role=DEPARTMENT_HEAD_GROUP,
+        )
+        ExpertProfile.objects.create(
+            employee=self.employee,
+            expertise_direction=direction,
+        )
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Ответственный")
+        self.assertContains(response, "Петров П.П.")
+
+        form_response = self.client.get(reverse("contracts_edit", args=[self.performer.pk]))
+
+        self.assertEqual(form_response.status_code, 200)
+        self.assertContains(form_response, "Ответственный")
+        self.assertContains(form_response, 'value="Петров Петр Петрович"', html=False)
+
+    def test_contracts_partial_uses_project_manager_as_responsible_without_direction(self):
+        self.project.project_manager = "Сидоров Сидор Сидорович"
+        self.project.save(update_fields=["project_manager"])
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Ответственный")
+        self.assertContains(response, "Сидоров С.С.")
+
+        form_response = self.client.get(reverse("contracts_edit", args=[self.performer.pk]))
+
+        self.assertEqual(form_response.status_code, 200)
+        self.assertContains(form_response, 'value="Сидоров Сидор Сидорович"', html=False)
+
+    def test_contracts_partial_uses_active_citizenship_country_as_default_group(self):
+        kazakhstan = OKSMCountry.objects.create(
+            number=398,
+            code="398",
+            short_name="Казахстан",
+            alpha2="KZ",
+            alpha3="KAZ",
+        )
+        GroupMember.objects.create(
+            short_name="Казахстан",
+            country_name="Казахстан",
+            country_code="398",
+            country_alpha2="KZ",
+            position=2,
+        )
+        person = PersonRecord.objects.create(
+            last_name="Иванов",
+            first_name="Иван",
+            middle_name="Иванович",
+        )
+        self.employee.person_record = person
+        self.employee.save(update_fields=["person_record"])
+        CitizenshipRecord.objects.create(
+            person=person,
+            country=kazakhstan,
+            valid_to=None,
+        )
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Группа")
+        content = response.content.decode("utf-8")
+        contracts_table = content[
+            content.index('class="table table-sm align-middle contracts-table mb-0"'):
+            content.index('id="contracts-edit-btn"')
+        ]
+        self.assertLess(
+            contracts_table.index(
+                f'<span class="clf-id-droid-mono">{self.project.short_uid}</span>'
+            ),
+            contracts_table.index('<td class="text-nowrap">KZ</td>'),
+        )
+
+        form_response = self.client.get(reverse("contracts_edit", args=[self.performer.pk]))
+
+        self.assertEqual(form_response.status_code, 200)
+        self.assertContains(form_response, "contracts-group-select")
+        self.assertContains(form_response, ">KZ Казахстан</option>", html=False)
+        self.assertContains(form_response, "contracts-group-display")
+
+    def test_contract_edit_saves_group_for_batch_rows(self):
         sibling = Performer.objects.create(
             registration=self.project,
             employee=self.employee,
@@ -146,6 +395,7 @@ class ContractsCloudLabelTests(TestCase):
         response = self.client.post(
             reverse("contracts_edit", args=[self.performer.pk]),
             {
+                "contract_group_member": str(self.group_member.pk),
                 "contract_number": "CUSTOM-42",
                 "contract_date": "2026-05-07",
                 "contract_file": "custom.docx",
@@ -153,10 +403,10 @@ class ContractsCloudLabelTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
+        self.performer.refresh_from_db()
         sibling.refresh_from_db()
-        self.assertEqual(sibling.contract_number, "CUSTOM-42")
-        self.assertEqual(sibling.contract_date, date(2026, 5, 7))
-        self.assertEqual(sibling.contract_file, "custom.docx")
+        self.assertEqual(self.performer.contract_group_member_id, self.group_member.pk)
+        self.assertEqual(sibling.contract_group_member_id, self.group_member.pk)
 
     def test_contracts_partial_uses_current_primary_cloud_label_in_disk_tooltip(self):
         response = self.client.get(reverse("contracts_partial"))
@@ -175,7 +425,7 @@ class ContractsCloudLabelTests(TestCase):
         content = response.content.decode("utf-8")
         section = content[
             content.index('id="contract-conclusion-section"'):
-            content.index('id="contracts-project-filter-toggle"')
+            content.index("Подписание договора")
         ]
         self.assertIn('href="https://cloud.example.com/s/contract-folder"', section)
 
@@ -231,7 +481,7 @@ class ContractsCloudLabelTests(TestCase):
         content = response.content.decode("utf-8")
         section = content[
             content.index('id="contract-conclusion-section"'):
-            content.index('id="contracts-project-filter-toggle"')
+            content.index("Подписание договора")
         ]
         self.assertIn(expected_url, section)
         self.assertNotIn('href="https://cloud.example.com/s/contract-docx"', section)

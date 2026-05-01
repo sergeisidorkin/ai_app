@@ -3642,6 +3642,40 @@ html.proposal-progress-cursor * {
   width: 100%;
 }
 
+#contracts-pane {
+  --contract-table-row-gap: 34.5px;
+  --contract-table-heading-gap: calc(1.5rem + 14px);
+  --contract-table-scroll-offset-top: 0px;
+  --contract-table-margin-to-scroll: 10px;
+  --contract-table-action-gap: 30px;
+  --contract-table-scroll-action-gap: 11.75px;
+}
+
+#contracts-pane .contracts-action-table-wrap,
+#contract-conclusion-section .contract-conclusion-table-wrap {
+  padding-bottom: var(--contract-table-scroll-offset-top);
+}
+
+#contracts-pane .contracts-action-table-wrap > table,
+#contract-conclusion-section .contract-conclusion-table-wrap > .performers-table {
+  margin-bottom: 0 !important;
+}
+
+#contracts-pane .contracts-action-table-wrap.has-horizontal-scroll > table,
+#contract-conclusion-section .contract-conclusion-table-wrap.has-horizontal-scroll > .performers-table {
+  margin-bottom: var(--contract-table-margin-to-scroll) !important;
+}
+
+#contracts-pane .contracts-action-table-wrap + .products-actions-row,
+#contract-conclusion-section .contract-conclusion-table-wrap + .products-actions-row {
+  margin-top: var(--contract-table-action-gap) !important;
+}
+
+#contracts-pane .contracts-action-table-wrap.has-horizontal-scroll + .products-actions-row,
+#contract-conclusion-section .contract-conclusion-table-wrap.has-horizontal-scroll + .products-actions-row {
+  margin-top: var(--contract-table-scroll-action-gap) !important;
+}
+
 #contract-conclusion-section .contract-conclusion-table-wrap > .performers-table {
   width: 100%;
   min-width: 100%;
@@ -3689,6 +3723,129 @@ html.proposal-progress-cursor * {
   white-space: nowrap !important;
   overflow: visible !important;
   text-overflow: clip !important;
+}
+
+#contract-conclusion-section #contract-dispatch-table tbody tr {
+  height: 34.5px !important;
+}
+
+#contract-conclusion-section #contract-dispatch-table tbody td {
+  height: 34.5px !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  padding-top: var(--bs-table-cell-padding-y, .25rem) !important;
+  padding-bottom: var(--bs-table-cell-padding-y, .25rem) !important;
+  line-height: 1.2 !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  vertical-align: middle !important;
+}
+
+#contract-conclusion-section #contract-dispatch-table tbody td > *,
+#contract-conclusion-section #contract-dispatch-table tbody td .proposal-file-name-link,
+#contract-conclusion-section #contract-dispatch-table tbody td .proposal-file-name-text {
+  max-height: 1.2em !important;
+  line-height: 1.2 !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#contract-conclusion-section #contract-dispatch-table tbody td:first-child .form-check {
+  min-height: 0 !important;
+}
+
+#contract-conclusion-section #contract-dispatch-table tbody td:nth-child(2) {
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
+
+#contract-conclusion-section #contract-dispatch-table tbody td:nth-child(2) > .clf-id-droid-mono {
+  display: inline-flex !important;
+  align-items: center !important;
+  height: 34.5px !important;
+  max-height: none !important;
+  line-height: 1 !important;
+  vertical-align: middle !important;
+  overflow: visible !important;
+}
+
+#contract-conclusion-section .performers-table thead th:first-child,
+#contract-conclusion-section .performers-table tbody td:first-child,
+#contracts-pane table.contracts-table thead th:first-child,
+#contracts-pane table.contracts-table tbody td:first-child,
+#contracts-pane table.signing-table thead th:first-child,
+#contracts-pane table.signing-table tbody td:first-child {
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+#contract-conclusion-section .performers-table thead th:first-child .form-check,
+#contract-conclusion-section .performers-table tbody td:first-child .form-check,
+#contracts-pane table.contracts-table thead th:first-child .form-check,
+#contracts-pane table.contracts-table tbody td:first-child .form-check,
+#contracts-pane table.signing-table thead th:first-child .form-check,
+#contracts-pane table.signing-table tbody td:first-child .form-check {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100%;
+  height: 100%;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+#contract-conclusion-section .performers-table thead th:first-child .form-check-input,
+#contract-conclusion-section .performers-table tbody td:first-child .form-check-input,
+#contracts-pane table.contracts-table thead th:first-child .form-check-input,
+#contracts-pane table.contracts-table tbody td:first-child .form-check-input,
+#contracts-pane table.signing-table thead th:first-child .form-check-input,
+#contracts-pane table.signing-table tbody td:first-child .form-check-input {
+  float: none !important;
+  margin: 0 !important;
+  position: static !important;
+  transform: none !important;
+}
+
+#contracts-pane table.contracts-table col:first-child,
+#contracts-pane table.signing-table col:first-child,
+#contracts-pane table.contracts-table thead th:first-child,
+#contracts-pane table.contracts-table tbody td:first-child,
+#contracts-pane table.signing-table thead th:first-child,
+#contracts-pane table.signing-table tbody td:first-child {
+  width: 30px !important;
+  min-width: 30px !important;
+  max-width: 30px !important;
+}
+
+#contracts-pane table.contracts-table thead th:first-child .form-check,
+#contracts-pane table.contracts-table tbody td:first-child .form-check,
+#contracts-pane table.signing-table thead th:first-child .form-check,
+#contracts-pane table.signing-table tbody td:first-child .form-check {
+  display: inline-flex !important;
+  width: auto !important;
+  height: auto !important;
+}
+
+#contracts-pane table.contracts-table col:nth-child(2),
+#contracts-pane table.signing-table col:nth-child(2),
+#contracts-pane table.contracts-table thead th:nth-child(2),
+#contracts-pane table.contracts-table tbody td:nth-child(2),
+#contracts-pane table.signing-table thead th:nth-child(2),
+#contracts-pane table.signing-table tbody td:nth-child(2) {
+  width: 100px !important;
+  min-width: 100px !important;
+  max-width: 100px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#contract-conclusion-section > .table-section-header:first-child,
+#contracts-pane .products-actions-row + .table-section-header,
+#contract-conclusion-section + .table-section-header {
+  margin-top: var(--contract-table-heading-gap) !important;
 }
 
 #info-request-approval-section .info-request-table-wrap {

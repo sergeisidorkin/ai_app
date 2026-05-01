@@ -1,8 +1,14 @@
+import os
+
 from django.db import models, transaction
 
 
 def _country_key(member) -> str:
     return (member.country_code or member.country_name or "").strip()
+
+
+def group_member_seal_upload_to(instance, filename):
+    return f"group/seals/{instance.pk or 'new'}/{os.path.basename(filename)}"
 
 
 class GroupMember(models.Model):
@@ -16,6 +22,12 @@ class GroupMember(models.Model):
     identifier = models.CharField("Идентификатор", max_length=255, blank=True, default="")
     registration_number = models.CharField("Регистрационный номер", max_length=255, blank=True, default="")
     registration_date = models.DateField("Дата регистрации", blank=True, null=True)
+    seal_file = models.FileField(
+        "Печать",
+        upload_to=group_member_seal_upload_to,
+        blank=True,
+        default="",
+    )
     position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
 
     created_at = models.DateTimeField(auto_now_add=True)

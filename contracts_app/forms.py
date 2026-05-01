@@ -50,18 +50,73 @@ TYPE_SHORT = {"gph": "ГПХ", "smz": "СМЗ"}
 
 
 class ContractEditForm(forms.ModelForm):
+    final_payment = forms.DecimalField(
+        label="Окон. платеж",
+        required=False,
+        disabled=True,
+        widget=forms.NumberInput(attrs={
+            "class": "form-control readonly-field",
+            "readonly": True,
+            "step": "1",
+        }),
+    )
+
+    def __init__(self, *args, group_member_initial=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["contract_group_member"].queryset = (
+            GroupMember.objects
+            .exclude(country_alpha2="")
+            .order_by("position", "id")
+        )
+        self.fields["contract_group_member"].label_from_instance = lambda obj: obj.group_display_label
+        self.fields["contract_group_member"].empty_label = "— Не выбрано —"
+        if (
+            not self.is_bound
+            and self.instance
+            and not self.instance.contract_group_member_id
+            and group_member_initial
+        ):
+            self.fields["contract_group_member"].initial = group_member_initial.pk
+        if not self.is_bound:
+            if self.instance and self.instance.prepayment is not None:
+                self.initial["prepayment"] = int(self.instance.prepayment)
+            else:
+                self.initial["prepayment"] = 50
+            if self.instance and self.instance.final_payment is not None:
+                self.initial["final_payment"] = int(self.instance.final_payment)
+            else:
+                self.initial["final_payment"] = 50
+
     class Meta:
         model = Performer
         fields = [
+            "contract_group_member",
             "contract_number",
             "contract_date",
+            "prepayment",
+            "final_payment",
             "contract_file",
         ]
         widgets = {
+            "contract_group_member": forms.Select(attrs={"class": "form-select", "id": "contracts-group-select"}),
             "contract_number": forms.TextInput(attrs={"class": "form-control"}),
             "contract_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
+            "prepayment": forms.NumberInput(attrs={
+                "class": "form-control",
+                "step": "1",
+                "min": "0",
+                "max": "100",
+            }),
             "contract_file": forms.TextInput(attrs={"class": "form-control"}),
         }
+
+    def clean_prepayment(self):
+        value = self.cleaned_data.get("prepayment")
+        if value is None:
+            if self.instance and self.instance.prepayment is not None:
+                return self.instance.prepayment
+            return 50
+        return value
 
 
 class ContractSigningForm(forms.ModelForm):
