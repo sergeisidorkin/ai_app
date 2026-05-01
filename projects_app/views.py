@@ -1,6 +1,8 @@
 from django.contrib.auth.decorators import login_required, user_passes_test
-from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
+from django.core import signing
+from django.http import Http404, HttpResponse, HttpResponseForbidden, JsonResponse, StreamingHttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
+from django.urls import reverse
 from django.views.decorators.http import require_http_methods, require_POST, require_GET
 from django.db import models, transaction
 from django.db.models import Max, Q
@@ -27,6 +29,8 @@ import os
 import uuid
 from collections import defaultdict
 from datetime import datetime, timedelta
+from types import SimpleNamespace
+from urllib.parse import quote
 
 from experts_app.models import ExpertProfile
 from core.cloud_storage import (
@@ -38,6 +42,8 @@ from core.cloud_storage import (
     create_folder as cloud_create_folder,
     create_project_workspace as routed_create_project_workspace,
     create_source_data_workspace_stream as routed_create_source_data_workspace_stream,
+    download_file as cloud_download_file,
+    get_any_connected_service_user,
     get_primary_cloud_storage_label,
     get_registration_standard_folders,
     get_selected_root_path,
@@ -56,6 +62,7 @@ from core.cloud_paths import (
 )
 from policy_app.models import (
     DEPARTMENT_HEAD_GROUP,
+    DIRECTOR_GROUP,
     DIRECTION_DIRECTOR_GROUP,
     EXPERT_GROUP,
     LAWYER_GROUP,
@@ -73,6 +80,11 @@ from notifications_app.services import (
     create_participation_notifications,
     normalize_delivery_channels,
 )
+from proposals_app.document_generation import (
+    DOCX_CONTENT_TYPE,
+    convert_docx_source_to_pdf,
+    is_onlyoffice_conversion_configured,
+)
 
 PROJECTS_PARTIAL_TEMPLATE = "projects_app/projects_partial.html"
 REG_FORM_TEMPLATE       = "projects_app/registration_form.html"
@@ -86,6 +98,7 @@ PERFORMERS_PARTIAL_TEMPLATE = "projects_app/performers_partial.html"
 HX_TRIGGER_HEADER = "HX-Trigger"
 HX_PERFORMERS_UPDATED_EVENT = "performers-updated"
 HX_PROJECTS_UPDATED_EVENT = "projects-updated"
+CONTRACT_DOCX_SOURCE_TOKEN_SALT = "projects_app.contract_docx_source"
 
 def staff_required(user):
     return user.is_authenticated and user.is_staff
@@ -1609,6 +1622,138 @@ def _resolve_contract_project_nextcloud_file_id(path: str) -> str:
     return ""
 
 
+def _contract_docx_cloud_path(performer: Performer) -> str:
+    folder = normalize_cloud_path(getattr(performer, "contract_project_disk_folder", "") or "")
+    file_name = str(getattr(performer, "contract_file", "") or "").strip().strip("/")
+    if not folder or not file_name:
+        return ""
+    return join_cloud_path(folder, file_name)
+
+
+def _get_contract_cloud_user(user):
+    if is_nextcloud_primary():
+        return user or SimpleNamespace(username="nextcloud-system")
+    if user is not None and getattr(user, "is_authenticated", False):
+        return user
+    try:
+        return get_any_connected_service_user()
+    except CloudStorageNotReadyError as exc:
+        raise RuntimeError(str(exc)) from exc
+
+
+def _load_existing_contract_docx_bytes(user, performer: Performer) -> bytes:
+    if not str(getattr(performer, "contract_file", "") or "").strip():
+        raise RuntimeError("Для договора не указан DOCX-файл.")
+    docx_path = _contract_docx_cloud_path(performer)
+    if not docx_path:
+        raise RuntimeError("Для договора не задан путь к DOCX-файлу.")
+
+    cloud_user = _get_contract_cloud_user(user)
+    if not cloud_user:
+        raise RuntimeError("Не найден пользователь с подключенным облачным хранилищем для чтения DOCX.")
+
+    _mime_type, docx_bytes = cloud_download_file(cloud_user, docx_path)
+    if docx_bytes:
+        return docx_bytes
+    raise RuntimeError("Не удалось получить DOCX проекта договора.")
+
+
+def _build_contract_docx_source_token(performer: Performer) -> str:
+    payload = {
+        "performer_id": int(performer.pk),
+        "contract_file": str(getattr(performer, "contract_file", "") or "").strip(),
+        "contract_project_disk_folder": str(getattr(performer, "contract_project_disk_folder", "") or "").strip(),
+    }
+    return signing.dumps(payload, salt=CONTRACT_DOCX_SOURCE_TOKEN_SALT, compress=True)
+
+
+def _get_contract_docx_source_token_payload(performer: Performer, token: str) -> dict[str, object] | None:
+    try:
+        payload = signing.loads(
+            str(token or "").strip(),
+            salt=CONTRACT_DOCX_SOURCE_TOKEN_SALT,
+            max_age=300,
+        )
+    except signing.BadSignature:
+        return None
+
+    if not (
+        payload.get("performer_id") == performer.pk
+        and payload.get("contract_file") == str(getattr(performer, "contract_file", "") or "").strip()
+        and payload.get("contract_project_disk_folder")
+        == str(getattr(performer, "contract_project_disk_folder", "") or "").strip()
+    ):
+        return None
+    return payload
+
+
+def _build_contract_docx_source_url(request, performer: Performer) -> str:
+    token = _build_contract_docx_source_token(performer)
+    path = reverse("contract_onlyoffice_docx_source", args=[performer.pk])
+    return request.build_absolute_uri(f"{path}?token={quote(token, safe='')}")
+
+
+def _build_contract_pdf_paths(performer: Performer) -> dict[str, str]:
+    folder = normalize_cloud_path(getattr(performer, "contract_project_disk_folder", "") or "")
+    docx_name = str(getattr(performer, "contract_file", "") or "").strip()
+    if not folder:
+        raise RuntimeError("Для договора не задана папка в облачном хранилище.")
+    if not docx_name:
+        raise RuntimeError("Для договора не указан DOCX-файл.")
+    pdf_stem = os.path.splitext(docx_name)[0] or "Договор"
+    pdf_name = f"{pdf_stem}.pdf"
+    return {
+        "pdf_name": pdf_name,
+        "pdf_path": join_cloud_path(folder, pdf_name),
+    }
+
+
+def _store_generated_contract_pdf(user, performer: Performer, pdf_bytes: bytes) -> dict[str, str]:
+    paths = _build_contract_pdf_paths(performer)
+    cloud_user = _get_contract_cloud_user(user)
+    if not cloud_user:
+        raise RuntimeError("Не найден пользователь с подключенным облачным хранилищем для загрузки PDF.")
+    if not cloud_upload_file(cloud_user, paths["pdf_path"], pdf_bytes):
+        raise RuntimeError("Не удалось загрузить PDF в папку проекта договора.")
+
+    public_url = ""
+    try:
+        public_url = cloud_publish_resource(cloud_user, paths["pdf_path"]) or ""
+    except Exception:
+        public_url = ""
+    if not public_url:
+        raise RuntimeError("Не удалось создать публичную ссылку на PDF договора.")
+
+    return {
+        "pdf_name": paths["pdf_name"],
+        "pdf_path": paths["pdf_path"],
+        "pdf_url": public_url,
+        "pdf_file_id": _resolve_contract_project_nextcloud_file_id(paths["pdf_path"]),
+    }
+
+
+@require_GET
+def contract_onlyoffice_docx_source(request, pk: int):
+    performer = get_object_or_404(Performer, pk=pk)
+    token = str(request.GET.get("token") or "").strip()
+    if _get_contract_docx_source_token_payload(performer, token) is None:
+        return HttpResponseForbidden("Недействительная ссылка на DOCX-файл договора.")
+
+    try:
+        docx_bytes = _load_existing_contract_docx_bytes(
+            request.user if getattr(request.user, "is_authenticated", False) else None,
+            performer,
+        )
+    except RuntimeError as exc:
+        raise Http404(str(exc))
+
+    file_name = str(getattr(performer, "contract_file", "") or "").strip() or "contract.docx"
+    response = HttpResponse(docx_bytes, content_type=DOCX_CONTENT_TYPE)
+    response["Content-Disposition"] = f"inline; filename*=UTF-8''{quote(file_name)}"
+    response["Cache-Control"] = "no-store"
+    return response
+
+
 @login_required
 @require_http_methods(["GET", "POST"])
 def performer_form_create(request):
@@ -2285,6 +2430,110 @@ def contract_project_target_folder_save(request):
 @login_required
 @user_passes_test(staff_required)
 @require_POST
+def sign_contract_documents(request):
+    raw_ids = request.POST.getlist("performer_ids[]") or request.POST.getlist("performer_ids")
+    if not raw_ids:
+        return JsonResponse({"ok": False, "error": "Не выбраны строки для подписи договора."}, status=400)
+
+    try:
+        performer_ids = sorted({int(value) for value in raw_ids if str(value).strip()})
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Передан некорректный список строк."}, status=400)
+
+    performers = list(
+        Performer.objects
+        .filter(pk__in=performer_ids)
+        .select_related("registration")
+        .order_by("registration_id", "executor", "position", "id")
+    )
+    if len(performers) != len(performer_ids):
+        return JsonResponse({"ok": False, "error": "Часть выбранных строк не найдена."}, status=400)
+
+    if not is_onlyoffice_conversion_configured():
+        return JsonResponse(
+            {"ok": False, "error": "Не настроен ONLYOFFICE Document Server для генерации PDF."},
+            status=400,
+        )
+
+    grouped: dict[tuple[object, str, str, str], list[Performer]] = {}
+    errors = []
+    for performer in performers:
+        docx_name = str(getattr(performer, "contract_file", "") or "").strip()
+        folder = str(getattr(performer, "contract_project_disk_folder", "") or "").strip()
+        label = getattr(getattr(performer, "registration", None), "short_uid", "") or f"#{performer.pk}"
+        if not docx_name:
+            errors.append(f"Для {label} сначала создайте DOCX-файл договора.")
+            continue
+        if not folder:
+            errors.append(f"Для {label} не задана папка проекта договора.")
+            continue
+        key = (performer.registration_id, performer.executor, normalize_cloud_path(folder), docx_name)
+        grouped.setdefault(key, []).append(performer)
+
+    updated_ids: set[int] = set()
+    generated_groups = 0
+    for group_performers in grouped.values():
+        performer = group_performers[0]
+        label = getattr(getattr(performer, "registration", None), "short_uid", "") or f"#{performer.pk}"
+        try:
+            pdf_bytes = convert_docx_source_to_pdf(
+                source_url=_build_contract_docx_source_url(request, performer),
+                source_name=str(getattr(performer, "contract_file", "") or "").strip() or "contract.docx",
+            )
+            stored_pdf = _store_generated_contract_pdf(request.user, performer, pdf_bytes)
+        except Exception as exc:
+            errors.append(f"{label}: {exc}")
+            continue
+
+        group_ids = [item.pk for item in group_performers]
+        update_kwargs = {
+            "contract_pdf_file": stored_pdf["pdf_name"],
+            "contract_pdf_link": stored_pdf["pdf_url"],
+        }
+        if stored_pdf.get("pdf_file_id"):
+            update_kwargs["contract_pdf_file_id"] = stored_pdf["pdf_file_id"]
+        Performer.objects.filter(pk__in=group_ids).update(**update_kwargs)
+        updated_ids.update(group_ids)
+        generated_groups += 1
+
+    if errors and not updated_ids:
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "; ".join(errors),
+                "generated": 0,
+                "warnings": [],
+            },
+            status=400,
+        )
+
+    updates = list(
+        Performer.objects
+        .filter(pk__in=updated_ids)
+        .order_by("registration_id", "executor", "position", "id")
+        .values("id", "contract_pdf_file", "contract_pdf_link")
+    )
+    return JsonResponse(
+        {
+            "ok": True,
+            "message": "PDF для договора успешно сформирован.",
+            "generated": generated_groups,
+            "warnings": errors,
+            "updates": [
+                {
+                    "id": item["id"],
+                    "contract_pdf_file": item["contract_pdf_file"],
+                    "contract_project_pdf_file_url": item["contract_pdf_link"],
+                }
+                for item in updates
+            ],
+        }
+    )
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
 def create_contract_project(request):
     """Create folders on Yandex.Disk for selected contract performers and
     populate them with .docx files from matching contract templates.
@@ -2296,7 +2545,11 @@ def create_contract_project(request):
     import re
     from contracts_app.models import ContractTemplate, ContractVariable
     from contracts_app.variable_resolver import resolve_variables
-    from contracts_app.docx_processor import process_template
+    from contracts_app.docx_processor import (
+        document_contains_literal,
+        insert_floating_image_at_placeholder,
+        process_template,
+    )
     from experts_app.models import ExpertProfile
     from group_app.models import GroupMember
     raw_ids = request.POST.getlist("performer_ids[]") or request.POST.getlist("performer_ids")
@@ -2313,7 +2566,7 @@ def create_contract_project(request):
         .filter(pk__in=ids)
         .select_related(
             "registration", "registration__type", "registration__country",
-            "typical_section", "employee",
+            "typical_section", "employee", "contract_group_member",
         )
         .order_by("position", "id")
     )
@@ -2369,8 +2622,8 @@ def create_contract_project(request):
         return f"{last_name} {initials}".strip()
 
     def _contract_project_file_name(perf, original_name):
-        project_number = str(getattr(getattr(perf, "registration", None), "number", "") or "")
-        project_prefix = "".join(ch for ch in project_number if ch.isdigit())[:4] or project_number[:4] or "Unknown"
+        project_id = str(getattr(getattr(perf, "registration", None), "short_uid", "") or "")
+        project_prefix = project_id or "Unknown"
         executor_name = _executor_short(perf.executor)
         ext = os.path.splitext(original_name or "")[1] or ".docx"
         return sanitize_folder_name(f"Договор {project_prefix}_{executor_name}{ext}")
@@ -2386,6 +2639,124 @@ def create_contract_project(request):
                 return False
         return True
 
+    image_cache = {}
+    image_warning_keys = set()
+
+    def _contract_group_member_for_performer(perf):
+        return getattr(perf, "contract_group_member", None) or getattr(perf.registration, "group_member", None)
+
+    def _read_contract_image_file(file_field, *, label):
+        file_name = str(getattr(file_field, "name", "") or "").strip()
+        if not file_name:
+            return None
+        try:
+            file_field.open("rb")
+            try:
+                data = file_field.read()
+            finally:
+                file_field.close()
+        except Exception as exc:
+            raise RuntimeError(f"Не удалось прочитать файл «{label}».") from exc
+        return data or None
+
+    def _load_group_seal_bytes(group_member):
+        if not group_member:
+            return None
+        return _read_contract_image_file(getattr(group_member, "seal_file", None), label="Печать")
+
+    def _load_director_facsimile_bytes(group_member):
+        if not group_member:
+            return None
+        director_employee = (
+            Employee.objects
+            .select_related("user", "department", "department__company")
+            .filter(role=DIRECTOR_GROUP, department__company_id=group_member.pk)
+            .order_by("position", "id")
+            .first()
+        )
+        if not director_employee:
+            return None
+        director_profile = (
+            ExpertProfile.objects
+            .prefetch_related("contract_details_records__citizenship_record")
+            .filter(employee_id=director_employee.pk)
+            .first()
+        )
+        if not director_profile:
+            return None
+        director_details = director_profile.default_contract_details(require_facsimile=True)
+        if not director_details:
+            return None
+        return _read_contract_image_file(
+            getattr(director_details, "facsimile_file", None),
+            label="Факсимиле",
+        )
+
+    def _cached_contract_image_bytes(placeholder, group_member):
+        group_id = getattr(group_member, "pk", None)
+        cache_key = (placeholder, group_id)
+        if cache_key in image_cache:
+            return image_cache[cache_key]
+        if placeholder == "[[seal]]":
+            data = _load_group_seal_bytes(group_member)
+        elif placeholder == "[[facsimile_imcm]]":
+            data = _load_director_facsimile_bytes(group_member)
+        else:
+            data = None
+        image_cache[cache_key] = data
+        return data
+
+    def _insert_contract_image_placeholders(file_data, perf, warnings, context_label):
+        group_member = _contract_group_member_for_performer(perf)
+        image_specs = [
+            ("[[seal]]", "Печать организации"),
+            ("[[facsimile_imcm]]", "Подпись руководителя организации"),
+        ]
+        for placeholder, description in image_specs:
+            try:
+                if not document_contains_literal(file_data, placeholder):
+                    continue
+                image_bytes = _cached_contract_image_bytes(placeholder, group_member)
+                if not image_bytes:
+                    warning_key = (placeholder, getattr(group_member, "pk", None))
+                    if warning_key not in image_warning_keys:
+                        image_warning_keys.add(warning_key)
+                        warnings.append(f"{description} не найдена: {context_label}")
+                    continue
+                file_data = insert_floating_image_at_placeholder(
+                    file_data,
+                    image_bytes,
+                    placeholder=placeholder,
+                )
+            except Exception as exc:
+                warnings.append(f"{description}: {exc}")
+        return file_data
+
+    def _country_values(country):
+        if not country:
+            return set()
+        return {
+            (getattr(country, "short_name", "") or "").strip(),
+            (getattr(country, "full_name", "") or "").strip(),
+            (getattr(country, "code", "") or "").strip(),
+            (getattr(country, "alpha2", "") or "").strip(),
+            (getattr(country, "alpha3", "") or "").strip(),
+        }
+
+    def _country_values_match_template(values, template):
+        template_country_name = (getattr(template, "country_name", "") or "").strip()
+        template_country_code = (getattr(template, "country_code", "") or "").strip()
+        if not template_country_name and not template_country_code:
+            return True
+        normalized_values = {" ".join(value.split()).casefold() for value in values if value}
+        return (
+            " ".join(template_country_name.split()).casefold() in normalized_values
+            or template_country_code.casefold() in normalized_values
+        )
+
+    def _profile_matches_template_country(expert, template):
+        return _country_values_match_template(_country_values(getattr(expert, "country", None)), template)
+
     def _contract_detail_matches_template_country(details, template):
         template_country_name = (getattr(template, "country_name", "") or "").strip()
         template_country_code = (getattr(template, "country_code", "") or "").strip()
@@ -2396,19 +2767,10 @@ def create_contract_project(request):
 
         citizenship = getattr(details, "citizenship_record", None)
         country = getattr(citizenship, "country", None) if citizenship else None
-        values = {
-            (getattr(country, "short_name", "") or "").strip(),
-            (getattr(country, "full_name", "") or "").strip(),
-            (getattr(country, "code", "") or "").strip(),
-            (getattr(country, "alpha2", "") or "").strip(),
-            (getattr(country, "alpha3", "") or "").strip(),
+        values = _country_values(country) | {
             (getattr(details, "citizenship_country", "") or "").strip(),
         }
-        normalized_values = {" ".join(value.split()).casefold() for value in values if value}
-        return (
-            " ".join(template_country_name.split()).casefold() in normalized_values
-            or template_country_code.casefold() in normalized_values
-        )
+        return _country_values_match_template(values, template)
 
     def _find_template(perf):
         """Find the best matching ContractTemplate for a Performer row."""
@@ -2417,10 +2779,11 @@ def create_contract_project(request):
         if not product:
             return None
 
-        project_group_id = project.group_member_id
+        contract_group_id = perf.contract_group_member_id or project.group_member_id
 
         expert = expert_cache.get(perf.employee_id) if perf.employee_id else None
         contract_details_options = expert.ordered_contract_details() if expert else []
+        use_profile_country_fallback = bool(expert) and not contract_details_options
         if not contract_details_options:
             contract_details_options = [None]
 
@@ -2436,7 +2799,7 @@ def create_contract_project(request):
             if not template_group_ids and t.group_member_id:
                 template_group_ids = {t.group_member_id}
             group_specific = bool(template_group_ids)
-            if group_specific and project_group_id not in template_group_ids:
+            if group_specific and contract_group_id not in template_group_ids:
                 continue
             template_product_ids = set(getattr(t, "_contract_product_ids", set()))
             if not template_product_ids and t.product_id:
@@ -2451,6 +2814,8 @@ def create_contract_project(request):
                 details for details in contract_details_options
                 if _contract_detail_matches_template_country(details, t)
             ]
+            if not matching_details and use_profile_country_fallback:
+                matching_details = [None] if _profile_matches_template_country(expert, t) else []
             if not matching_details:
                 continue
 
@@ -2534,6 +2899,16 @@ def create_contract_project(request):
 
             for perf in unique_entries:
                 project = perf.registration
+                key = (perf.registration_id, perf.executor)
+                all_perfs_for_executor = executor_to_perfs[key]
+                existing_folder_performer = next(
+                    (
+                        item for item in all_perfs_for_executor
+                        if (item.contract_project_disk_folder or "").strip()
+                    ),
+                    None,
+                )
+                reuse_existing_folder = existing_folder_performer is not None
                 year_str = sanitize_folder_name(str(project.year) if project.year else "Без года")
                 project_folder = build_project_folder_name(project)
                 base_path = join_cloud_path(
@@ -2544,55 +2919,75 @@ def create_contract_project(request):
                     CONTRACTS_PERFORMERS_FOLDER,
                 )
 
-                if not _ensure_cloud_folder_path(base_path):
-                    errors.append(base_path)
-                    current += 1
-                    yield _padded(json.dumps({"current": current, "total": total}) + "\n")
-                    continue
-
-                existing = list_folder_resources(request.user, base_path, limit=1000)
-                next_number = 0
-                for item in existing:
-                    match = re.match(r"^(\d{3})\s", item.get("name", ""))
-                    if match:
-                        next_number = max(next_number, int(match.group(1)) + 1)
-
                 executor_name = _executor_short(perf.executor)
-                folder_name = sanitize_folder_name(f"{next_number:03d} {executor_name}")
-                folder_path = f"{base_path}/{folder_name}"
+                if reuse_existing_folder:
+                    folder_path = normalize_cloud_path(existing_folder_performer.contract_project_disk_folder)
+                    folder_name = os.path.basename(folder_path.rstrip("/")) or executor_name
+                    if not _ensure_cloud_folder_path(folder_path):
+                        errors.append(folder_path)
+                        current += 1
+                        yield _padded(json.dumps({"current": current, "total": total}) + "\n")
+                        continue
+                else:
+                    if not _ensure_cloud_folder_path(base_path):
+                        errors.append(base_path)
+                        current += 1
+                        yield _padded(json.dumps({"current": current, "total": total}) + "\n")
+                        continue
 
-                key = (perf.registration_id, perf.executor)
-                if not cloud_create_folder(request.user, folder_path):
-                    errors.append(folder_name)
-                    current += 1
-                    yield _padded(json.dumps({"current": current, "total": total}) + "\n")
-                    continue
+                    existing = list_folder_resources(request.user, base_path, limit=1000)
+                    next_number = 0
+                    for item in existing:
+                        match = re.match(r"^(\d{3})\s", item.get("name", ""))
+                        if match:
+                            next_number = max(next_number, int(match.group(1)) + 1)
+
+                    folder_name = sanitize_folder_name(f"{next_number:03d} {executor_name}")
+                    folder_path = f"{base_path}/{folder_name}"
+
+                    if not cloud_create_folder(request.user, folder_path):
+                        errors.append(folder_name)
+                        current += 1
+                        yield _padded(json.dumps({"current": current, "total": total}) + "\n")
+                        continue
 
                 warnings.extend(_share_contract_folder_for_nextcloud(perf, folder_path))
-                folder_file_id = _resolve_contract_project_nextcloud_file_id(folder_path)
-                folder_public_url = ""
+                existing_folder_file_id = ""
+                existing_folder_public_url = ""
+                if existing_folder_performer:
+                    existing_folder_file_id = existing_folder_performer.contract_project_folder_file_id or ""
+                    existing_folder_public_url = existing_folder_performer.contract_project_folder_link or ""
+                folder_file_id = existing_folder_file_id or _resolve_contract_project_nextcloud_file_id(folder_path)
+                folder_public_url = existing_folder_public_url
                 try:
-                    folder_public_url = cloud_publish_resource(request.user, folder_path)
+                    published_folder_url = cloud_publish_resource(request.user, folder_path)
+                    if published_folder_url:
+                        folder_public_url = published_folder_url
                 except Exception:
-                    folder_public_url = ""
+                    pass
 
                 created_ids.extend(executor_to_ids[key])
 
                 now_dt = timezone.now()
                 reg_id, executor_val = key
-                existing_batch_count = (
-                    Performer.objects
-                    .filter(
-                        registration_id=reg_id,
-                        executor=executor_val,
-                        contract_batch_id__isnull=False,
+                if reuse_existing_folder:
+                    is_addendum = bool(existing_folder_performer.contract_is_addendum)
+                    addendum_number = existing_folder_performer.contract_addendum_number
+                else:
+                    existing_batch_count = (
+                        Performer.objects
+                        .filter(
+                            registration_id=reg_id,
+                            executor=executor_val,
+                            contract_batch_id__isnull=False,
+                        )
+                        .filter(Q(contract_project_created=True) | ~Q(contract_project_disk_folder=""))
+                        .values("contract_batch_id")
+                        .distinct()
+                        .count()
                     )
-                    .values("contract_batch_id")
-                    .distinct()
-                    .count()
-                )
-                is_addendum = existing_batch_count > 0
-                addendum_number = existing_batch_count if is_addendum else None
+                    is_addendum = existing_batch_count > 0
+                    addendum_number = existing_batch_count if is_addendum else None
 
                 if is_addendum:
                     first_performer = (
@@ -2628,7 +3023,6 @@ def create_contract_project(request):
                 perf.contract_number = pre_contract_number
 
                 seen_templates = set()
-                all_perfs_for_executor = executor_to_perfs[key]
                 unique_section_perfs = {}
                 for p in all_perfs_for_executor:
                     sec_id = p.typical_section_id
@@ -2668,6 +3062,12 @@ def create_contract_project(request):
                                     file_data, scalars,
                                     list_replacements=lists or None,
                                 )
+                        file_data = _insert_contract_image_placeholders(
+                            file_data,
+                            p,
+                            warnings,
+                            executor_name,
+                        )
 
                         original_name = tmpl.file.name.split("/")[-1]
                         upload_name = _contract_project_file_name(perf, original_name)
@@ -2691,7 +3091,11 @@ def create_contract_project(request):
                     except Exception:
                         errors.append(f"Чтение файла: {tmpl.sample_name}")
 
-                batch_id = uuid.uuid4()
+                batch_id = (
+                    existing_folder_performer.contract_batch_id
+                    if reuse_existing_folder and existing_folder_performer.contract_batch_id
+                    else perf.contract_batch_id or uuid.uuid4()
+                )
                 update_kwargs = dict(
                     contract_batch_id=batch_id,
                     contract_is_addendum=is_addendum,

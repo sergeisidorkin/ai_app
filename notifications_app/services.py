@@ -519,8 +519,10 @@ def process_participation_notification(notification, actor, action_choice):
                 participation_response=Performer.ParticipationResponse.CONFIRMED,
                 participation_response_at=now,
             )
+            from contracts_app.services import prefill_contract_adjustment_fields
             from worktime_app.services import ensure_confirmed_assignments_for_performers
 
+            prefill_contract_adjustment_fields(self_performer_ids, confirmed_at=now)
             ensure_confirmed_assignments_for_performers(self_performer_ids)
         all_confirmed = not Performer.objects.filter(
             pk__in=all_performer_ids,
@@ -537,8 +539,10 @@ def process_participation_notification(notification, actor, action_choice):
             participation_response_at=now,
         )
         if action_choice == Notification.ActionChoice.CONFIRMED:
+            from contracts_app.services import prefill_contract_adjustment_fields
             from worktime_app.services import ensure_confirmed_assignments_for_performers
 
+            prefill_contract_adjustment_fields(all_performer_ids, confirmed_at=now)
             ensure_confirmed_assignments_for_performers(all_performer_ids)
         is_fully_processed = True
 

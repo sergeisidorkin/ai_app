@@ -64,9 +64,6 @@
       <col class="perf-spacer">
       <col>                       <!-- Согласованная -->
       <col class="perf-spacer">
-      <col>                       <!-- Аванс -->
-      <col>                       <!-- Окон. платёж -->
-      <col>                       <!-- № договора -->
     </colgroup>
     <thead>
     <tr>
@@ -96,9 +93,6 @@
       <th class="perf-spacer"></th>
       <th class="text-end">Согласовано</th>
       <th class="perf-spacer"></th>
-      <th>Аванс</th>
-      <th>Окон. платёж</th>
-      <th>№ договора</th>
     </tr>
     </thead>
     <tbody>
@@ -151,12 +145,9 @@
         <td class="perf-spacer"></td>
         <td class="text-nowrap text-end" data-sum-agreed="{{ p.agreed_amount|default_if_none:'' }}" data-currency="{% if p.currency %}{{ p.currency.code_alpha }}{% endif %}">{% if p.agreed_amount != None %}{{ p.agreed_amount|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% endif %}</td>
         <td class="perf-spacer"></td>
-        <td class="text-nowrap">{% if p.prepayment != None %}{{ p.prepayment|floatformat:"0" }}%{% endif %}</td>
-        <td class="text-nowrap">{% if p.final_payment != None %}{{ p.final_payment|floatformat:"0" }}%{% endif %}</td>
-        <td class="text-nowrap">{{ p.contract_number }}</td>
       </tr>
     {% empty %}
-      <tr><td colspan="18" class="text-muted">Пока нет данных.</td></tr>
+      <tr><td colspan="15" class="text-muted">Пока нет данных.</td></tr>
     {% endfor %}
     </tbody>
     <tfoot>
@@ -167,7 +158,7 @@
         <td class="text-nowrap text-end" id="perf-total-estimated" style="border-bottom:none; padding-bottom:0;"></td>
         <td class="perf-spacer" style="border-bottom:none; padding-bottom:0;"></td>
         <td class="text-nowrap text-end" id="perf-total-agreed" style="border-bottom:none; padding-bottom:0;"></td>
-        <td colspan="4" style="border-bottom:none; padding-bottom:0;"></td>
+        <td colspan="1" style="border-bottom:none; padding-bottom:0;"></td>
       </tr>
     </tfoot>
   </table>

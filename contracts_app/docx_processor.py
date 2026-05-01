@@ -1533,6 +1533,16 @@ def insert_floating_image_at_placeholder(
     return out.getvalue()
 
 
+def document_contains_literal(file_bytes: bytes, literal: str) -> bool:
+    if not file_bytes or not str(literal or "").strip():
+        return False
+    try:
+        doc = Document(BytesIO(file_bytes))
+    except Exception:
+        return False
+    return any(str(literal) in paragraph.text for paragraph in _iter_document_paragraphs(doc))
+
+
 def process_template(
     file_bytes: bytes,
     replacements: dict[str, str],

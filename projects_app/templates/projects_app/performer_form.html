@@ -92,25 +92,6 @@
         <input type="hidden" name="agreed_amount" id="perf-agreed-value"
                value="{{ form.agreed_amount.value|default:'' }}">
       </div>
-      <div class="w-100"></div>
-      <div class="col-md-3">
-        <label class="form-label">Аванс</label>
-        <div class="input-group">
-          {{ form.prepayment }}
-          <span class="input-group-text">%</span>
-        </div>
-      </div>
-      <div class="col-md-3">
-        <label class="form-label">Окон. платёж</label>
-        <div class="input-group">
-          {{ form.final_payment }}
-          <span class="input-group-text">%</span>
-        </div>
-      </div>
-      <div class="col-md-6">
-        <label class="form-label">Номер договора</label>
-        {{ form.contract_number }}
-      </div>
     </div>
   </div>
 
@@ -364,15 +345,6 @@
     refillExecutors();
     calcEstimated();
   });
-
-  const prepEl = formEl.querySelector('[name="prepayment"]');
-  const finalEl = formEl.querySelector('[name="final_payment"]');
-  function calcFinal() {
-    const v = parseFloat(prepEl?.value) || 0;
-    if (finalEl) finalEl.value = Math.max(0, 100 - v);
-  }
-  prepEl?.addEventListener('input', calcFinal);
-  calcFinal();
 
   function setupShortSelect(sel) {
     if (!sel) return;

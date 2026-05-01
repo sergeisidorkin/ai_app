@@ -969,6 +969,14 @@ class Performer(models.Model):
     prepayment = models.DecimalField("Аванс", max_digits=12, decimal_places=2, null=True, blank=True)
     final_payment = models.DecimalField("Окон. платеж", max_digits=12, decimal_places=2, null=True, blank=True)
 
+    contract_group_member = models.ForeignKey(
+        GroupMember,
+        verbose_name="Группа договора",
+        on_delete=models.SET_NULL,
+        related_name="contract_performers",
+        null=True,
+        blank=True,
+    )
     contract_number = models.CharField("Номер договора", max_length=100, blank=True, default="")
     participation_request_sent_at = models.DateTimeField("Дата отправки запроса", null=True, blank=True)
     participation_deadline_at = models.DateTimeField("Срок подтверждения", null=True, blank=True)
@@ -1009,6 +1017,9 @@ class Performer(models.Model):
     contract_project_disk_folder = models.CharField("Папка проекта на Яндекс.Диске", max_length=500, blank=True, default="")
     contract_project_file_id = models.CharField("Идентификатор проекта договора в Nextcloud", max_length=64, blank=True, default="")
     contract_project_folder_file_id = models.CharField("Идентификатор папки проекта договора в Nextcloud", max_length=64, blank=True, default="")
+    contract_pdf_file = models.CharField("Файл договора PDF", max_length=500, blank=True, default="")
+    contract_pdf_link = models.URLField("Ссылка на PDF договора", max_length=500, blank=True, default="")
+    contract_pdf_file_id = models.CharField("Идентификатор PDF договора в Nextcloud", max_length=64, blank=True, default="")
     contract_date = models.DateField("Дата договора", null=True, blank=True)
 
     contract_employee_scan = models.FileField("Скан с подписью сотрудника", upload_to="contract_employee_scans/", blank=True, default="")

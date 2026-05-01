@@ -21,12 +21,15 @@ from core.cloud_storage import (
     publish_resource as cloud_publish_resource,
     upload_file as cloud_upload_file,
 )
+from contacts_app.models import CitizenshipRecord
+from group_app.models import GroupMember
 from nextcloud_app.api import NextcloudApiClient, NextcloudApiError
 from nextcloud_app.models import NextcloudUserLink
 from notifications_app.models import Notification, NotificationPerformerLink
-from policy_app.models import LAWYER_GROUP
+from policy_app.models import DEPARTMENT_HEAD_GROUP, LAWYER_GROUP
 from projects_app.models import Performer, ProjectRegistration, ProjectRegistrationProduct
 from users_app.forms import FREELANCER_LABEL
+from users_app.models import Employee
 from .forms import (
     ContractEditForm,
     ContractProjectRegistrationForm,
@@ -50,6 +53,152 @@ CONTRACTS_PROJECT_REG_FORM_TEMPLATE = "contracts_app/contracts_project_registrat
 CT_PARTIAL_TEMPLATE = "contracts_app/contract_templates_partial.html"
 CT_FORM_TEMPLATE = "contracts_app/contract_template_form.html"
 CT_HX_EVENT = "contract-templates-updated"
+
+
+def _normalize_contract_person_name(value):
+    return " ".join(str(value or "").split()).strip()
+
+
+def _effective_contract_employee_ids(performers):
+    performer_list = list(performers)
+
+    executor_names_without_employee = {
+        _normalize_contract_person_name(p.executor)
+        for p in performer_list
+        if not p.employee_id and _normalize_contract_person_name(p.executor)
+    }
+    employee_id_by_name = {}
+    if executor_names_without_employee:
+        for employee in Employee.objects.select_related("user", "person_record").all():
+            full_name = _normalize_contract_person_name(Performer.employee_full_name(employee))
+            if full_name in executor_names_without_employee and full_name not in employee_id_by_name:
+                employee_id_by_name[full_name] = employee.pk
+
+    performer_employee_ids = set()
+    performer_effective_employee_id = {}
+    for performer in performer_list:
+        employee_id = performer.employee_id
+        if not employee_id:
+            employee_id = employee_id_by_name.get(_normalize_contract_person_name(performer.executor))
+        performer_effective_employee_id[id(performer)] = employee_id
+        if employee_id:
+            performer_employee_ids.add(employee_id)
+    return performer_effective_employee_id, performer_employee_ids
+
+
+def _attach_contract_responsible_names(performers):
+    performer_list = list(performers)
+    if not performer_list:
+        return performer_list
+
+    performer_effective_employee_id, performer_employee_ids = _effective_contract_employee_ids(performer_list)
+
+    profile_direction_by_employee = {}
+    if performer_employee_ids:
+        from experts_app.models import ExpertProfile
+
+        profile_direction_by_employee = dict(
+            ExpertProfile.objects
+            .filter(
+                employee_id__in=performer_employee_ids,
+                expertise_direction_id__isnull=False,
+            )
+            .values_list("employee_id", "expertise_direction_id")
+        )
+
+    direction_head_by_department = {}
+    direction_ids = set(profile_direction_by_employee.values())
+    if direction_ids:
+        heads = (
+            Employee.objects
+            .select_related("user")
+            .filter(department_id__in=direction_ids, role=DEPARTMENT_HEAD_GROUP)
+            .order_by("position", "id")
+        )
+        for head in heads:
+            direction_head_by_department.setdefault(head.department_id, head)
+
+    for performer in performer_list:
+        employee_id = performer_effective_employee_id.get(id(performer))
+        direction_id = profile_direction_by_employee.get(employee_id)
+        if direction_id:
+            head = direction_head_by_department.get(direction_id)
+            performer.responsible_name = Performer.employee_full_name(head) if head else ""
+        else:
+            performer.responsible_name = getattr(performer.registration, "project_manager", "") or ""
+
+    return performer_list
+
+
+def _group_member_for_country(country):
+    if not country:
+        return None
+    code = (getattr(country, "code", "") or "").strip()
+    name = (getattr(country, "short_name", "") or "").strip()
+    alpha2 = (getattr(country, "alpha2", "") or "").strip()
+    filters = models.Q()
+    if code:
+        filters |= models.Q(country_code=code)
+    if name:
+        filters |= models.Q(country_name=name)
+    if alpha2:
+        filters |= models.Q(country_alpha2__iexact=alpha2)
+    if not filters:
+        return None
+    return (
+        GroupMember.objects
+        .exclude(country_alpha2="")
+        .filter(filters)
+        .order_by("position", "id")
+        .first()
+    )
+
+
+def _attach_contract_group_members(performers):
+    performer_list = list(performers)
+    if not performer_list:
+        return performer_list
+
+    performer_effective_employee_id, performer_employee_ids = _effective_contract_employee_ids(performer_list)
+    employee_person_ids = {}
+    if performer_employee_ids:
+        employee_person_ids = dict(
+            Employee.objects
+            .filter(pk__in=performer_employee_ids, person_record_id__isnull=False)
+            .values_list("pk", "person_record_id")
+        )
+
+    person_ids = set(employee_person_ids.values())
+    country_by_person_id = {}
+    if person_ids:
+        citizenships = (
+            CitizenshipRecord.objects
+            .select_related("country")
+            .filter(person_id__in=person_ids, is_active=True, country_id__isnull=False)
+            .order_by("position", "id")
+        )
+        for citizenship in citizenships:
+            country_by_person_id.setdefault(citizenship.person_id, citizenship.country)
+
+    group_by_country_id = {}
+    for country in country_by_person_id.values():
+        if country and country.pk not in group_by_country_id:
+            group_by_country_id[country.pk] = _group_member_for_country(country)
+
+    for performer in performer_list:
+        selected_group = getattr(performer, "contract_group_member", None)
+        employee_id = performer_effective_employee_id.get(id(performer))
+        person_id = employee_person_ids.get(employee_id)
+        citizenship_country = country_by_person_id.get(person_id)
+        default_group = group_by_country_id.get(getattr(citizenship_country, "pk", None))
+        effective_group = selected_group or default_group
+        performer.contract_group_member_default = default_group
+        performer.contract_group_member_effective = effective_group
+        performer.contract_group_display = (
+            effective_group.group_code_label if effective_group else ""
+        )
+
+    return performer_list
 
 
 def _contracts_context(user=None):
@@ -109,7 +258,8 @@ def _contracts_context(user=None):
         Performer.objects
         .select_related(
             "registration", "registration__type", "typical_section",
-            "employee", "employee__user", "currency",
+            "employee", "employee__user", "employee__person_record",
+            "currency", "contract_group_member",
         )
         .filter(contract_batch_id__isnull=False)
         .order_by("contract_batch_id", "position", "id")
@@ -133,6 +283,8 @@ def _contracts_context(user=None):
 
     for p in contracts:
         p.total_price = price_map.get(p.contract_batch_id)
+    _attach_contract_group_members(contracts)
+    _attach_contract_responsible_names(contracts)
 
     is_expert = False
     is_lawyer = False
@@ -387,6 +539,9 @@ def _attach_contract_folder_urls(contracts, user=None):
         performer.contract_project_folder_url = public_url or build_folder_url(path)
         performer.contract_project_docx_file_url = (
             getattr(performer, "contract_project_link", "") or ""
+        ).strip()
+        performer.contract_project_pdf_file_url = (
+            getattr(performer, "contract_pdf_link", "") or ""
         ).strip()
         if path:
             folder_cache.setdefault(path, performer.contract_project_folder_url)
@@ -1028,10 +1183,13 @@ def contract_form_edit(request, pk):
     performer = get_object_or_404(
         Performer.objects.select_related(
             "registration", "registration__type", "currency",
+            "employee", "employee__user", "employee__person_record",
+            "contract_group_member",
         ),
         pk=pk,
         contract_batch_id__isnull=False,
     )
+    _attach_contract_group_members([performer])
     if request.method == "POST":
         form = ContractEditForm(request.POST, instance=performer)
         if form.is_valid():
@@ -1040,15 +1198,21 @@ def contract_form_edit(request, pk):
                 Performer.objects.filter(
                     contract_batch_id=obj.contract_batch_id,
                 ).exclude(pk=obj.pk).update(
+                    contract_group_member_id=obj.contract_group_member_id,
                     contract_number=obj.contract_number,
                     contract_date=obj.contract_date,
+                    prepayment=obj.prepayment,
+                    final_payment=obj.final_payment,
                     contract_file=obj.contract_file,
                 )
             resp = render(request, CONTRACTS_PARTIAL_TEMPLATE, _contracts_context(request.user))
             resp["HX-Trigger"] = "contracts-updated"
             return resp
     else:
-        form = ContractEditForm(instance=performer)
+        form = ContractEditForm(
+            instance=performer,
+            group_member_initial=getattr(performer, "contract_group_member_default", None),
+        )
 
     batch_filter = (
         Q(contract_batch_id=performer.contract_batch_id)
@@ -1062,6 +1226,8 @@ def contract_form_edit(request, pk):
         .get("total")
     )
     performer.total_price = total_price
+    _attach_contract_group_members([performer])
+    _attach_contract_responsible_names([performer])
 
     return render(request, "contracts_app/contract_form.html", {
         "form": form,

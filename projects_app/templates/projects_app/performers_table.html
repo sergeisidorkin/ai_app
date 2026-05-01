@@ -21,9 +21,6 @@
         <th class="text-end">Факт</th>
         <th class="text-end">Расчёт</th>
         <th class="text-end">Соглас.</th>
-        <th class="text-end">Аванс</th>
-        <th class="text-end">Окон. плат.</th>
-        <th>№ договора</th>
       </tr>
     </thead>
     <tbody>
@@ -56,15 +53,12 @@
             <td class="text-end">{{ it.actual_costs }}</td>
             <td class="text-end">{{ it.estimated_costs }}</td>
             <td class="text-end">{{ it.agreed_amount }}</td>
-            <td class="text-end">{{ it.prepayment }}</td>
-            <td class="text-end">{{ it.final_payment }}</td>
-            <td class="text-nowrap">{{ it.contract_number }}</td>
           </tr>
           {% endwith %}
         {% endfor %}
       {% else %}
         <tr>
-          <td colspan="15" class="text-muted ps-5">Пока здесь пусто.</td>
+          <td colspan="12" class="text-muted ps-5">Пока здесь пусто.</td>
         </tr>
       {% endif %}
     </tbody>

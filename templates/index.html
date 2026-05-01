@@ -535,11 +535,11 @@
             <div class="list-group list-group-flush p-3 m-0" id="contracts-second-sidebar-list">
               <a href="#" class="list-group-item list-group-item-action active"
                  data-contracts-section="in-development">
-                Клиенты: в разработке
+                Клиенты: заключение договора
               </a>
               <a href="#" class="list-group-item list-group-item-action"
                  data-contracts-section="in-progress">
-                {{ APP_SECTION_LABELS.experts }}: в разработке
+                {{ APP_SECTION_LABELS.experts }}: заключение договора
               </a>
               {% if not is_expert %}
               <a href="#" class="list-group-item list-group-item-action"
@@ -562,7 +562,7 @@
             <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
               <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
                 <div class="d-flex align-items-center gap-3">
-                  <h5 class="mb-0 ps-3 fs-4 pt-2" id="contracts-section-title">Клиенты: в разработке</h5>
+                  <h5 class="mb-0 ps-3 fs-4 pt-2" id="contracts-section-title">Клиенты: заключение договора</h5>
                   <div class="dropdown pt-1 d-none" id="contracts-master-project-filter-dropdown" style="transform: translateY(3px);">
                     <button class="btn btn-primary btn-sm dropdown-toggle" type="button"
                             id="contracts-master-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
@@ -1721,8 +1721,8 @@
         <script>
         (function () {
           var CONTRACTS_TITLES = {
-            'in-development': 'Клиенты: в разработке',
-            'in-progress': '{{ APP_SECTION_LABELS.experts|escapejs }}: в разработке',
+            'in-development': 'Клиенты: заключение договора',
+            'in-progress': '{{ APP_SECTION_LABELS.experts|escapejs }}: заключение договора',
             'templates': 'Образцы шаблонов',
             'field-params': 'Параметры полей',
             'archive': 'Архив',
@@ -1783,6 +1783,9 @@
             syncContractsMasterLabel(window.__contractProjectFilter);
             if (typeof window.__syncContractProjectFilter === 'function') {
               window.__syncContractProjectFilter(window.__contractProjectFilter);
+            }
+            if (typeof window.__syncContractsProjectFilter === 'function') {
+              window.__syncContractsProjectFilter(window.__contractProjectFilter);
             }
           }
 

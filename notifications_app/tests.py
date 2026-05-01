@@ -1,16 +1,24 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from django.contrib.auth import get_user_model
 from django.core import mail
-from django.test import SimpleTestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 
+from classifiers_app.models import OKSMCountry
+from contacts_app.models import CitizenshipRecord, PersonRecord
 from core.email_backend import DomainSMTPEmailBackend
+from group_app.models import GroupMember
 from notifications_app.email_delivery import (
     EmailDeliveryError,
     build_plain_text_body,
     send_notification_email,
 )
-from notifications_app.services import normalize_delivery_channels
+from notifications_app.models import Notification, NotificationPerformerLink
+from notifications_app.services import normalize_delivery_channels, process_participation_notification
+from projects_app.models import Performer, ProjectRegistration
+from users_app.forms import FREELANCER_LABEL
+from users_app.models import Employee
 
 
 class DeliveryChannelTests(SimpleTestCase):
@@ -104,3 +112,92 @@ class DomainSMTPEmailBackendTests(SimpleTestCase):
             local_hostname="imcmontanai.ru",
             timeout=10,
         )
+
+
+class ParticipationNotificationContractPrefillTests(TestCase):
+    def setUp(self):
+        self.actor = get_user_model().objects.create_user(
+            username="actor@example.com",
+            password="secret",
+            is_staff=True,
+        )
+        self.expert_user = get_user_model().objects.create_user(
+            username="expert@example.com",
+            password="secret",
+            first_name="Иван",
+            last_name="Иванов",
+        )
+        self.country = OKSMCountry.objects.create(
+            number=398,
+            code="398",
+            short_name="Казахстан",
+            alpha2="KZ",
+            alpha3="KAZ",
+        )
+        self.group_member = GroupMember.objects.create(
+            short_name="Казахстан",
+            country_name="Казахстан",
+            country_code="398",
+            country_alpha2="KZ",
+        )
+        self.project_group = GroupMember.objects.create(
+            short_name="Россия",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        self.person = PersonRecord.objects.create(
+            last_name="Иванов",
+            first_name="Иван",
+            middle_name="Иванович",
+        )
+        CitizenshipRecord.objects.create(
+            person=self.person,
+            country=self.country,
+            valid_to=None,
+        )
+        self.employee = Employee.objects.create(
+            user=self.expert_user,
+            person_record=self.person,
+            patronymic="Иванович",
+            employment=FREELANCER_LABEL,
+        )
+        self.project = ProjectRegistration.objects.create(
+            number=7001,
+            group_member=self.project_group,
+            name="Договорный проект",
+            year=2026,
+        )
+        self.performer = Performer.objects.create(
+            registration=self.project,
+            employee=self.employee,
+            executor="Иванов Иван Иванович",
+        )
+        self.notification = Notification.objects.create(
+            notification_type=Notification.NotificationType.PROJECT_PARTICIPATION_CONFIRMATION,
+            recipient=self.expert_user,
+            sender=self.actor,
+            project=self.project,
+            title_text="Подтвердите участие",
+        )
+        NotificationPerformerLink.objects.create(
+            notification=self.notification,
+            performer=self.performer,
+        )
+
+    @patch("worktime_app.services.ensure_confirmed_assignments_for_performers")
+    def test_confirming_participation_prefills_contract_adjustment_fields(self, mocked_assignments):
+        process_participation_notification(
+            self.notification,
+            self.expert_user,
+            Notification.ActionChoice.CONFIRMED,
+        )
+
+        self.performer.refresh_from_db()
+        self.assertEqual(self.performer.participation_response, Performer.ParticipationResponse.CONFIRMED)
+        self.assertIsNotNone(self.performer.contract_batch_id)
+        self.assertEqual(self.performer.contract_group_member_id, self.group_member.pk)
+        self.assertTrue(self.performer.contract_number.startswith("IMCM/7001-ИИ/"))
+        self.assertEqual(self.performer.contract_date, self.notification.action_at.date())
+        mocked_assignments.assert_called_once_with([self.performer.pk])

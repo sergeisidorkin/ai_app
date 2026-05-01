@@ -26,16 +26,15 @@
 
   function syncCollapseButtons() {
     var root = document.getElementById('performers-pane');
-    if (!root) return;
+    var contractRoot = contractPane();
     var pairs = [
       ['#participation-confirmation-section', '#participation-asset-toggle', window.__participationAssetCollapsed],
       ['#participation-confirmation-section', '#participation-section-toggle', window.__participationSectionCollapsed],
-      ['#contract-conclusion-section', '#contract-asset-toggle', window.__contractAssetCollapsed],
-      ['#contract-conclusion-section', '#contract-section-toggle', window.__contractSectionCollapsed],
       ['#info-request-approval-section', '#info-request-asset-toggle', window.__infoRequestAssetCollapsed],
       ['#info-request-approval-section', '#info-request-section-toggle', window.__infoRequestSectionCollapsed],
     ];
     pairs.forEach(function(p) {
+      if (!root) return;
       var section = root.querySelector(p[0]);
       if (!section) return;
       var btn = section.querySelector(p[1]);
@@ -45,10 +44,52 @@
       var icon = btn.querySelector('i');
       if (icon) icon.className = active ? 'bi bi-arrows-expand' : 'bi bi-arrows-collapse';
     });
+    [
+      ['#contract-asset-toggle', window.__contractAssetCollapsed],
+      ['#contract-section-toggle', window.__contractSectionCollapsed],
+    ].forEach(function(p) {
+      if (!contractRoot) return;
+      var section = contractRoot.querySelector('#contract-conclusion-section');
+      if (!section) return;
+      var btn = section.querySelector(p[0]);
+      if (!btn) return;
+      var active = !!p[1];
+      btn.classList.toggle('active', active);
+      var icon = btn.querySelector('i');
+      if (icon) icon.className = active ? 'bi bi-arrows-expand' : 'bi bi-arrows-collapse';
+    });
   }
 
   function pane() { return document.getElementById('performers-pane'); }
+  function contractPane() {
+    var contractsRoot = document.getElementById('contracts-pane');
+    if (contractsRoot && contractsRoot.querySelector('#contract-conclusion-section')) return contractsRoot;
+    var performersRoot = pane();
+    if (performersRoot && performersRoot.querySelector('#contract-conclusion-section')) return performersRoot;
+    return contractsRoot || performersRoot;
+  }
   const qa = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+  window.getProjectFilterSummaryLabel = window.getProjectFilterSummaryLabel || function(input, fallback) {
+    var summary = input && input.dataset ? (input.dataset.summaryLabel || '').trim() : '';
+    return summary || fallback;
+  };
+  window.bindProjectFilterMenuWidth = window.bindProjectFilterMenuWidth || function(dropdown) {
+    if (!dropdown || dropdown.dataset.projectMenuWidthBound === '1') return;
+    dropdown.dataset.projectMenuWidthBound = '1';
+    var menu = dropdown.querySelector('.project-filter-menu');
+    if (!menu) return;
+    dropdown.addEventListener('shown.bs.dropdown', function() {
+      var labels = qa('.form-check-label', menu);
+      var widestLabel = labels.reduce(function(maxWidth, item) {
+        return Math.max(maxWidth, Math.ceil(item.scrollWidth));
+      }, 0);
+      if (!widestLabel) return;
+      var controlWidth = Math.ceil(dropdown.querySelector('.dropdown-toggle')?.offsetWidth || 200);
+      var checkboxWidth = Math.ceil(menu.querySelector('.form-check-input')?.offsetWidth || 18);
+      var contentWidth = widestLabel + checkboxWidth + 64;
+      menu.style.minWidth = Math.max(controlWidth, 200, contentWidth) + 'px';
+    });
+  };
 
   function getCookie(name) {
     const m = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
@@ -56,8 +97,36 @@
   }
   const csrftoken = getCookie('csrftoken');
 
+  function cleanupDanglingModalState() {
+    if (document.querySelector('.modal.show, .modal.showing')) return;
+    document.querySelectorAll('.modal-backdrop').forEach((backdrop) => backdrop.remove());
+    document.body.classList.remove('modal-open');
+    document.body.style.removeProperty('padding-right');
+  }
+
+  function hideModalThen(modalEl, callback) {
+    const done = () => {
+      cleanupDanglingModalState();
+      if (typeof callback === 'function') callback();
+    };
+    if (!modalEl || !window.bootstrap) {
+      done();
+      return;
+    }
+    const modal = window.bootstrap.Modal.getInstance(modalEl) || window.bootstrap.Modal.getOrCreateInstance(modalEl);
+    if (!modalEl.classList.contains('show')) {
+      done();
+      return;
+    }
+    modalEl.addEventListener('hidden.bs.modal', done, { once: true });
+    modal.hide();
+  }
+
+  function getSelectionRoot(name) {
+    return (name === 'contract-select' || name === 'contract-dispatch-select') ? contractPane() : pane();
+  }
   function getRowChecks(name) {
-    return qa(`tbody input.form-check-input[name="${name}"]`, pane());
+    return qa(`tbody input.form-check-input[name="${name}"]`, getSelectionRoot(name));
   }
   function getChecked(name) {
     return getRowChecks(name).filter(b => b.checked);
@@ -69,7 +138,7 @@
     });
   }
   function updatePerformerMasterState() {
-    const boxes = getRowChecks('performer-select');
+    const boxes = getVisiblePerformerChecks();
     const master = pane()?.querySelector('input.form-check-input[data-actions-id="performers-actions"]');
     if (!master) return;
     const checkedCount = boxes.filter(b => b.checked).length;
@@ -79,9 +148,15 @@
   function ensurePerformerActionsVisibility() {
     const panel = pane()?.querySelector('#performers-actions');
     if (!panel) return;
-    const any = getRowChecks('performer-select').some(b => b.checked);
+    const any = getVisiblePerformerChecks().some(b => b.checked);
     panel.classList.toggle('d-none', !any);
     panel.classList.toggle('d-flex', any);
+  }
+  function getVisiblePerformerChecks() {
+    return getRowChecks('performer-select').filter((checkbox) => {
+      const row = checkbox.closest('tr');
+      return row && !row.classList.contains('d-none');
+    });
   }
 
   function getParticipationMaster() {
@@ -193,33 +268,101 @@
   }
 
   function getContractMaster() {
-    return pane()?.querySelector('#contract-master');
+    return contractPane()?.querySelector('#contract-master');
+  }
+  function getContractDispatchMaster() {
+    return contractPane()?.querySelector('#contract-dispatch-master');
   }
   function getContractRequestBtn() {
-    return pane()?.querySelector('#contract-request-btn');
+    return contractPane()?.querySelector('#contract-request-btn');
+  }
+  function getCreateContractBtn() {
+    return contractPane()?.querySelector('#create-contract-btn');
+  }
+  function getContractSignBtn() {
+    return contractPane()?.querySelector('#contract-sign-btn');
   }
   function getContractRequestPanel() {
-    return pane()?.querySelector('#contract-request-actions');
+    return contractPane()?.querySelector('#contract-request-actions');
   }
   function getContractDeadlineControls() {
-    return pane()?.querySelector('#contract-deadline-controls');
+    return contractPane()?.querySelector('#contract-deadline-controls');
   }
   function getContractChannels() {
-    return qa('.js-contract-channel', pane());
+    return qa('.js-contract-channel', contractPane());
   }
   function getContractRows() {
-    return qa('#contract-conclusion-section tbody tr[data-project-id]', pane());
+    return qa('#contract-conclusion-section tbody tr[data-project-id]', contractPane());
+  }
+  function getContractDraftRows() {
+    return qa('#contract-drafting-table tbody tr[data-project-id]', contractPane());
+  }
+  function getContractDispatchRows() {
+    return qa('#contract-dispatch-table tbody tr[data-project-id]', contractPane());
   }
   function getVisibleContractChecks() {
-    return getContractRows()
+    return getContractDraftRows()
       .filter((row) => !isFilterHidden(row))
       .map((row) => row.querySelector('input[name="contract-select"]'))
       .filter((checkbox) => checkbox && !checkbox.disabled);
   }
+  function getVisibleContractDispatchChecks() {
+    return getContractDispatchRows()
+      .filter((row) => !isFilterHidden(row))
+      .map((row) => row.querySelector('input[name="contract-dispatch-select"]'))
+      .filter((checkbox) => checkbox && !checkbox.disabled);
+  }
+  function getContractGroupKey(row) {
+    return (row?.dataset?.projectId || '') + '||' + (row?.dataset?.executor || '');
+  }
+  function getSelectedContractDispatchIds() {
+    const selectedGroups = new Set();
+    getVisibleContractDispatchChecks()
+      .filter((checkbox) => checkbox.checked)
+      .forEach((checkbox) => selectedGroups.add(getContractGroupKey(checkbox.closest('tr'))));
+
+    const ids = new Set();
+    getContractDispatchRows().forEach((row) => {
+      if (!selectedGroups.has(getContractGroupKey(row))) return;
+      const checkbox = row.querySelector('input[name="contract-dispatch-select"]');
+      if (checkbox && !checkbox.disabled) ids.add(checkbox.value);
+    });
+    return Array.from(ids);
+  }
+  function refreshPerformersSelectionState() {
+    getRowChecks('performer-select').forEach((checkbox) => {
+      const row = checkbox.closest('tr');
+      if (row && row.classList.contains('d-none')) checkbox.checked = false;
+    });
+    getRowChecks('participation-select').forEach((checkbox) => {
+      const row = checkbox.closest('tr');
+      if (row && isFilterHidden(row)) checkbox.checked = false;
+    });
+    getRowChecks('contract-select').forEach((checkbox) => {
+      const row = checkbox.closest('tr');
+      if (row && isFilterHidden(row)) checkbox.checked = false;
+    });
+    getRowChecks('contract-dispatch-select').forEach((checkbox) => {
+      const row = checkbox.closest('tr');
+      if (row && isFilterHidden(row)) checkbox.checked = false;
+    });
+    getRowChecks('info-request-select').forEach((checkbox) => {
+      const row = checkbox.closest('tr');
+      if (row && isFilterHidden(row)) checkbox.checked = false;
+    });
+    updatePerformerMasterState();
+    updateRowHighlight('performer-select');
+    ensurePerformerActionsVisibility();
+    updateParticipationState();
+    updateContractState();
+    updateInfoRequestState();
+  }
+  window.__refreshPerformersSelectionState = refreshPerformersSelectionState;
 
   function updateContractState() {
     const boxes = getVisibleContractChecks();
-    const checkedCount = boxes.filter(b => b.checked).length;
+    const checked = boxes.filter(b => b.checked);
+    const checkedCount = checked.length;
     const master = getContractMaster();
     if (master) {
       master.checked = boxes.length > 0 && checkedCount === boxes.length;
@@ -227,12 +370,33 @@
     }
     updateRowHighlight('contract-select');
 
+    const dispatchBoxes = getVisibleContractDispatchChecks();
+    const dispatchCheckedCount = dispatchBoxes.filter(b => b.checked).length;
+    const dispatchMaster = getContractDispatchMaster();
+    if (dispatchMaster) {
+      dispatchMaster.checked = dispatchBoxes.length > 0 && dispatchCheckedCount === dispatchBoxes.length;
+      dispatchMaster.indeterminate = dispatchCheckedCount > 0 && dispatchCheckedCount < dispatchBoxes.length;
+    }
+    updateRowHighlight('contract-dispatch-select');
+
     const requestBtn = getContractRequestBtn();
-    if (requestBtn) requestBtn.disabled = checkedCount === 0;
+    if (requestBtn) requestBtn.disabled = dispatchCheckedCount === 0;
+
+    const createBtn = getCreateContractBtn();
+    if (createBtn) createBtn.disabled = checkedCount === 0;
+
+    const signBtn = getContractSignBtn();
+    if (signBtn) {
+      const allReadyToSign = checkedCount > 0 && checked.every((box) => {
+        const row = box.closest('tr');
+        return row?.dataset?.contractSignReady === '1';
+      });
+      signBtn.disabled = !allReadyToSign;
+    }
 
     const controls = getContractDeadlineControls();
     if (controls) {
-      const show = checkedCount > 0;
+      const show = dispatchCheckedCount > 0;
       controls.classList.toggle('invisible', !show);
       controls.classList.toggle('pe-none', !show);
     }
@@ -240,47 +404,63 @@
 
   function applyRowGrouping(sectionEl) {
     if (!sectionEl) return;
-    var tbody = sectionEl.querySelector('table.performers-table tbody');
-    if (!tbody) return;
-    var rows = Array.from(tbody.querySelectorAll('tr[data-project-id]'));
-    var prevGroupKey = null;
-    var prevAssetKey = null;
-    var prevDetailTexts = null;
-    rows.forEach(function(row) {
-      row.classList.remove('group-first', 'group-cont', 'asset-cont');
-      var detailCells = row.querySelectorAll('.cell-detail-val');
-      detailCells.forEach(function(c) { c.classList.remove('cell-repeated'); });
-      if (isFilterHidden(row)) return;
-      var groupKey = (row.dataset.projectId || '') + '||' + (row.dataset.executor || '');
-      var assetKey = groupKey + '||' + (row.dataset.assetName || '');
-      if (groupKey !== prevGroupKey) {
-        row.classList.add('group-first');
-        prevDetailTexts = null;
-      } else {
-        row.classList.add('group-cont');
-        if (assetKey === prevAssetKey) {
-          row.classList.add('asset-cont');
-        }
+    var bodies = Array.from(sectionEl.querySelectorAll('table.performers-table tbody'));
+    bodies.forEach(function(tbody) {
+      var rows = Array.from(tbody.querySelectorAll('tr[data-project-id]'));
+      var isContractDispatchTable = tbody.closest('table')?.id === 'contract-dispatch-table';
+      if (isContractDispatchTable) {
+        rows.forEach(function(row) {
+          if (row.classList.contains('contract-dispatch-collapsed')) {
+            row.classList.remove('d-none', 'contract-dispatch-collapsed');
+          }
+        });
       }
-      var curDetailTexts = [];
-      detailCells.forEach(function(c, i) {
-        var txt = c.textContent.trim();
-        curDetailTexts.push(txt);
-        if (prevDetailTexts && prevDetailTexts[i] === txt) {
-          c.classList.add('cell-repeated');
+      var prevGroupKey = null;
+      var prevAssetKey = null;
+      var prevDetailTexts = null;
+      rows.forEach(function(row) {
+        row.classList.remove('group-first', 'group-cont', 'asset-cont');
+        var detailCells = row.querySelectorAll('.cell-detail-val');
+        detailCells.forEach(function(c) { c.classList.remove('cell-repeated'); });
+        if (isFilterHidden(row)) return;
+        var groupKey = (row.dataset.projectId || '') + '||' + (row.dataset.executor || '');
+        var assetKey = groupKey + '||' + (row.dataset.assetName || '');
+        if (groupKey !== prevGroupKey) {
+          row.classList.add('group-first');
+          prevDetailTexts = null;
+        } else {
+          row.classList.add('group-cont');
+          if (assetKey === prevAssetKey) {
+            row.classList.add('asset-cont');
+          }
         }
+        var curDetailTexts = [];
+        detailCells.forEach(function(c, i) {
+          var txt = c.textContent.trim();
+          curDetailTexts.push(txt);
+          if (prevDetailTexts && prevDetailTexts[i] === txt) {
+            c.classList.add('cell-repeated');
+          }
+        });
+        prevGroupKey = groupKey;
+        prevAssetKey = assetKey;
+        prevDetailTexts = curDetailTexts;
       });
-      prevGroupKey = groupKey;
-      prevAssetKey = assetKey;
-      prevDetailTexts = curDetailTexts;
-    });
 
-    var lastVisible = null;
-    rows.forEach(function(row) {
-      row.classList.remove('last-visible-row');
-      if (!row.classList.contains('d-none')) lastVisible = row;
+      if (isContractDispatchTable) {
+        rows.forEach(function(row) {
+          if (!row.classList.contains('group-cont') || isFilterHidden(row)) return;
+          row.classList.add('d-none', 'contract-dispatch-collapsed');
+        });
+      }
+
+      var lastVisible = null;
+      rows.forEach(function(row) {
+        row.classList.remove('last-visible-row');
+        if (!row.classList.contains('d-none')) lastVisible = row;
+      });
+      if (lastVisible) lastVisible.classList.add('last-visible-row');
     });
-    if (lastVisible) lastVisible.classList.add('last-visible-row');
   }
 
   function propagateGroupCheck(checkbox, name) {
@@ -583,7 +763,7 @@
   }
 
   function initContractProjectFilter() {
-    const root = pane();
+    const root = contractPane();
     if (!root) return;
 
     const FILTER_ALL = '__all__';
@@ -596,6 +776,7 @@
 
     if (!dropdown || !checks.length || !label || dropdown.dataset.bound === '1') return;
     dropdown.dataset.bound = '1';
+    window.bindProjectFilterMenuWidth(dropdown);
 
     function syncCheckboxes(values) {
       const set = new Set(values);
@@ -611,7 +792,7 @@
       }
       if (values.length === 1) {
         const input = Array.from(checks).find((cb) => cb.value === values[0]);
-        label.textContent = input?.nextElementSibling?.textContent?.trim() || '1 проект';
+        label.textContent = window.getProjectFilterSummaryLabel(input, '1 проект');
         return;
       }
       label.textContent = `${values.length} выбрано`;
@@ -621,12 +802,15 @@
       window.__contractProjectFilter = values.slice();
       const showAll = values.includes(FILTER_ALL) || !values.length;
       getContractRows().forEach((row) => {
+        row.classList.remove('contract-dispatch-collapsed');
         const pid = row.dataset.projectId || '';
         const visible = showAll || values.includes(pid);
         row.classList.toggle('d-none', !visible);
         if (!visible) {
-          const checkbox = row.querySelector('input[name="contract-select"]');
-          if (checkbox) checkbox.checked = false;
+          ['contract-select', 'contract-dispatch-select'].forEach((name) => {
+            const checkbox = row.querySelector('input[name="' + name + '"]');
+            if (checkbox) checkbox.checked = false;
+          });
         }
       });
       if (master && !showAll && !getContractRows().some((row) => !row.classList.contains('d-none'))) {
@@ -637,6 +821,9 @@
       updateContractState();
       applyRowGrouping(root.querySelector('#contract-conclusion-section'));
       reapplyContractCollapse();
+      document.body.dispatchEvent(new CustomEvent('contract-project-filter-updated', {
+        detail: { values: window.__contractProjectFilter.slice() },
+      }));
     }
 
     function normalizeSelection() {
@@ -747,7 +934,7 @@
 
   function reapplyContractCollapse() {
     if (!window.__contractSectionCollapsed && !window.__contractAssetCollapsed) return;
-    var root = pane();
+    var root = contractPane();
     if (!root) return;
     var section = root.querySelector('#contract-conclusion-section');
     if (!section) return;
@@ -774,7 +961,7 @@
   }
 
   function toggleContractCollapse() {
-    var root = pane();
+    var root = contractPane();
     if (!root) return;
     var section = root.querySelector('#contract-conclusion-section');
     if (!section) return;
@@ -813,7 +1000,7 @@
   }
 
   function toggleContractAssetCollapse() {
-    var root = pane();
+    var root = contractPane();
     if (!root) return;
     var section = root.querySelector('#contract-conclusion-section');
     if (!section) return;
@@ -1028,6 +1215,7 @@
 
     if (!dropdown || !checks.length || !label || dropdown.dataset.bound === '1') return;
     dropdown.dataset.bound = '1';
+    window.bindProjectFilterMenuWidth(dropdown);
 
     function syncCheckboxes(values) {
       const set = new Set(values);
@@ -1043,7 +1231,7 @@
       }
       if (values.length === 1) {
         const input = Array.from(checks).find((cb) => cb.value === values[0]);
-        label.textContent = input?.nextElementSibling?.textContent?.trim() || '1 проект';
+        label.textContent = window.getProjectFilterSummaryLabel(input, '1 проект');
         return;
       }
       label.textContent = `${values.length} выбрано`;
@@ -1140,6 +1328,7 @@
 
     if (!dropdown || !radios.length || !label || dropdown.dataset.bound === '1') return;
     dropdown.dataset.bound = '1';
+    window.bindProjectFilterMenuWidth(dropdown);
 
     function applyFilter(projectId) {
       window.__infoRequestProjectFilter = projectId ? [projectId] : [];
@@ -1158,7 +1347,7 @@
       }
       const selected = Array.from(radios).find((r) => r.checked);
       label.textContent = (selected && selected.value)
-        ? (selected.nextElementSibling?.textContent?.trim() || '—')
+        ? window.getProjectFilterSummaryLabel(selected, '—')
         : 'Не выбран';
       updateInfoRequestState();
       applyRowGrouping(root.querySelector('#info-request-approval-section'));
@@ -1192,6 +1381,7 @@
 
   document.addEventListener('click', async (e) => {
     const root = pane(); if (!root) return;
+    const contractRoot = contractPane();
 
     var sectionToggle = e.target.closest('#participation-section-toggle');
     if (sectionToggle && root.contains(sectionToggle)) {
@@ -1206,13 +1396,13 @@
     }
 
     var contractSectionToggle = e.target.closest('#contract-section-toggle');
-    if (contractSectionToggle && root.contains(contractSectionToggle)) {
+    if (contractSectionToggle && contractRoot && contractRoot.contains(contractSectionToggle)) {
       toggleContractCollapse();
       return;
     }
 
     var contractAssetToggle = e.target.closest('#contract-asset-toggle');
-    if (contractAssetToggle && root.contains(contractAssetToggle)) {
+    if (contractAssetToggle && contractRoot && contractRoot.contains(contractAssetToggle)) {
       toggleContractAssetCollapse();
       return;
     }
@@ -1384,15 +1574,158 @@
       return;
     }
 
-    const contractBtn = e.target.closest('#contract-request-btn');
-    if (contractBtn && root.contains(contractBtn)) {
+    const createContractConfirm = e.target.closest('#create-contract-confirm-btn');
+    if (createContractConfirm && contractRoot && contractRoot.contains(createContractConfirm)) {
+      const contractActionRoot = contractRoot;
       const checked = getVisibleContractChecks().filter((cb) => cb.checked);
+      if (!checked.length) return;
+
+      const panel = getContractRequestPanel();
+      const createUrl = panel?.dataset?.createContractUrl;
+      if (!createUrl) return;
+
+      const statusEl = contractActionRoot.querySelector('#create-contract-status');
+      const progressEl = contractActionRoot.querySelector('#create-contract-progress');
+      const fillEl = progressEl?.querySelector('.ws-progress-fill');
+      const modalEl = createContractConfirm.closest('.modal');
+      createContractConfirm.disabled = true;
+      if (statusEl) statusEl.textContent = '';
+      if (fillEl) fillEl.style.width = '0%';
+      if (progressEl) progressEl.classList.remove('d-none');
+
+      const formData = new FormData();
+      checked.forEach((cb) => formData.append('performer_ids[]', cb.value));
+
+      try {
+        const response = await fetch(createUrl, {
+          method: 'POST',
+          headers: { 'X-CSRFToken': csrftoken },
+          body: formData,
+        });
+
+        if (!response.ok && !response.body) {
+          throw new Error('Не удалось создать проект договора.');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let lastResult = null;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop();
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            const msg = JSON.parse(line);
+            if (msg.current !== undefined && msg.total) {
+              const pct = Math.round((msg.current / msg.total) * 100);
+              if (fillEl) fillEl.style.width = pct + '%';
+            }
+            if (msg.ok !== undefined) lastResult = msg;
+          }
+        }
+        if (buffer.trim()) {
+          const msg = JSON.parse(buffer);
+          if (msg.ok !== undefined) lastResult = msg;
+        }
+
+        if (!lastResult || !lastResult.ok) {
+          throw new Error(lastResult?.error || 'Не удалось создать проект договора.');
+        }
+
+        if (fillEl) fillEl.style.width = '100%';
+        var resultHtml = '<span class="text-success">' + (lastResult.message || 'Готово!') + '</span>';
+        if (lastResult.warnings && lastResult.warnings.length) {
+          resultHtml += '<ul class="text-warning small mt-2 mb-0">';
+          lastResult.warnings.forEach(function(w) {
+            resultHtml += '<li>' + w.replace(/</g, '&lt;') + '</li>';
+          });
+          resultHtml += '</ul>';
+        }
+        if (statusEl) statusEl.innerHTML = resultHtml;
+
+        window.__tableSel['contract-select'] = [];
+        window.__tableSelLast = null;
+        const refreshAfterModal = () => {
+          document.body.dispatchEvent(new Event('performers-updated'));
+          document.body.dispatchEvent(new Event('contracts-updated'));
+        };
+        if (lastResult.warnings && lastResult.warnings.length && modalEl?.classList.contains('show')) {
+          modalEl.addEventListener('hidden.bs.modal', () => {
+            cleanupDanglingModalState();
+            refreshAfterModal();
+          }, { once: true });
+        } else {
+          hideModalThen(modalEl, refreshAfterModal);
+        }
+      } catch (err) {
+        if (progressEl) progressEl.classList.add('d-none');
+        if (statusEl) statusEl.innerHTML = '<span class="text-danger">' + (err.message || 'Ошибка') + '</span>';
+        else alert(err.message || 'Не удалось создать проект договора.');
+      } finally {
+        createContractConfirm.disabled = false;
+      }
+      return;
+    }
+
+    const contractSignBtn = e.target.closest('#contract-sign-btn');
+    if (contractSignBtn && contractRoot && contractRoot.contains(contractSignBtn)) {
+      const checked = getVisibleContractChecks().filter((cb) => cb.checked);
+      if (!checked.length || contractSignBtn.disabled) return;
+
+      const contractPanel = getContractRequestPanel();
+      const signUrl = contractPanel?.dataset?.signContractUrl;
+      if (!signUrl) return;
+
+      const formData = new FormData();
+      checked.forEach((cb) => formData.append('performer_ids[]', cb.value));
+
+      const originalHtml = contractSignBtn.innerHTML;
+      contractSignBtn.disabled = true;
+      contractSignBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Подписание...';
+      try {
+        const response = await fetch(signUrl, {
+          method: 'POST',
+          headers: { 'X-CSRFToken': csrftoken },
+          body: formData,
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+          throw new Error(data?.error || 'Не удалось сформировать PDF для договора.');
+        }
+
+        checked.forEach((cb) => { cb.checked = false; });
+        window.__tableSel['contract-select'] = [];
+        window.__tableSelLast = null;
+
+        document.body.dispatchEvent(new Event('contracts-updated'));
+        if (data.warnings && data.warnings.length) {
+          alert((data.message || 'PDF для договора сформирован.') + '\n\n' + data.warnings.join('\n'));
+        }
+      } catch (err) {
+        alert(err.message || 'Не удалось сформировать PDF для договора.');
+        updateContractState();
+      } finally {
+        contractSignBtn.innerHTML = originalHtml;
+      }
+      return;
+    }
+
+    const contractBtn = e.target.closest('#contract-request-btn');
+    if (contractBtn && contractRoot && contractRoot.contains(contractBtn)) {
+      const contractActionRoot = contractRoot;
+      const checked = getVisibleContractDispatchChecks().filter((cb) => cb.checked);
+      const performerIds = getSelectedContractDispatchIds();
       if (!checked.length || contractBtn.disabled) return;
 
       const contractPanel = getContractRequestPanel();
       const requestUrl = contractPanel?.dataset?.requestUrl;
-      const hoursInput = root.querySelector('#contract-duration-hours');
-      const sentAtInput = root.querySelector('#contract-request-sent-at');
+      const hoursInput = contractActionRoot.querySelector('#contract-duration-hours');
+      const sentAtInput = contractActionRoot.querySelector('#contract-request-sent-at');
       const selectedChannels = getContractChannels().filter((cb) => cb.checked).map((cb) => cb.value);
       const durationHours = parseInt(hoursInput?.value || '', 10);
 
@@ -1408,7 +1741,7 @@
       if (!requestUrl) return;
 
       const formData = new FormData();
-      checked.forEach((cb) => formData.append('performer_ids[]', cb.value));
+      performerIds.forEach((id) => formData.append('performer_ids[]', id));
       formData.append('duration_hours', String(durationHours));
       formData.append('request_sent_at', sentAtInput?.value || '');
       selectedChannels.forEach((value) => formData.append('delivery_channels[]', value));
@@ -1426,10 +1759,11 @@
         }
 
         window.__tableSel['contract-select'] = [];
+        window.__tableSel['contract-dispatch-select'] = [];
         window.__tableSel['performer-select'] = (window.__tableSel['performer-select'] || []);
         window.__tableSelLast = null;
 
-        const modalEl = root.querySelector('#contract-request-modal');
+        const modalEl = contractActionRoot.querySelector('#contract-request-modal');
         const modal = modalEl ? window.bootstrap?.Modal.getInstance(modalEl) : null;
         modal?.hide();
 
@@ -1491,6 +1825,25 @@
         const modalEl = root.querySelector('#participation-request-modal');
         const modal = modalEl ? window.bootstrap?.Modal.getInstance(modalEl) : null;
         modal?.hide();
+
+        const emailDelivery = data?.email_delivery;
+        if (emailDelivery?.requested && emailDelivery?.failed > 0) {
+          const errorLines = (emailDelivery.errors || [])
+            .slice(0, 5)
+            .map((item) => {
+              const channelPrefix = item.channel_label ? `[${item.channel_label}] ` : '';
+              return `- ${channelPrefix}${item.recipient}: ${item.error}`;
+            });
+          const moreCount = Math.max((emailDelivery.errors || []).length - errorLines.length, 0);
+          const details = [
+            `Не удалось отправить ${emailDelivery.failed} из ${emailDelivery.attempted} email-писем.`,
+            ...errorLines,
+          ];
+          if (moreCount > 0) {
+            details.push(`- И еще ${moreCount} ошибок.`);
+          }
+          alert(details.join('\n'));
+        }
 
         document.body.dispatchEvent(new Event('performers-updated'));
         document.body.dispatchEvent(new Event('notifications-updated'));
@@ -1555,10 +1908,11 @@
   // мастер-чекбокс
   document.addEventListener('change', (e) => {
     const root = pane(); if (!root) return;
+    const contractRoot = contractPane();
 
     const master = e.target.closest('input.form-check-input[data-actions-id="performers-actions"]');
     if (master && root.contains(master)) {
-      getRowChecks('performer-select').forEach(b => { b.checked = master.checked; });
+      getVisiblePerformerChecks().forEach(b => { b.checked = master.checked; });
       master.indeterminate = false;
       updatePerformerMasterState();
       updateRowHighlight('performer-select');
@@ -1603,8 +1957,8 @@
     }
 
     const contractMaster = e.target.closest('#contract-master');
-    if (contractMaster && root.contains(contractMaster)) {
-      getContractRows().forEach((row) => {
+    if (contractMaster && contractRoot && contractRoot.contains(contractMaster)) {
+      getContractDraftRows().forEach((row) => {
         if (isFilterHidden(row)) return;
         const checkbox = row.querySelector('input[name="contract-select"]');
         if (!checkbox || checkbox.disabled) return;
@@ -1615,15 +1969,35 @@
       return;
     }
 
+    const contractDispatchMaster = e.target.closest('#contract-dispatch-master');
+    if (contractDispatchMaster && contractRoot && contractRoot.contains(contractDispatchMaster)) {
+      getContractDispatchRows().forEach((row) => {
+        if (isFilterHidden(row)) return;
+        const checkbox = row.querySelector('input[name="contract-dispatch-select"]');
+        if (!checkbox || checkbox.disabled) return;
+        checkbox.checked = contractDispatchMaster.checked;
+      });
+      contractDispatchMaster.indeterminate = false;
+      updateContractState();
+      return;
+    }
+
     const contractRowCb = e.target.closest('tbody input.form-check-input[name="contract-select"]');
-    if (contractRowCb && root.contains(contractRowCb)) {
+    if (contractRowCb && contractRoot && contractRoot.contains(contractRowCb)) {
       propagateGroupCheck(contractRowCb, 'contract-select');
       updateContractState();
       return;
     }
 
+    const contractDispatchRowCb = e.target.closest('tbody input.form-check-input[name="contract-dispatch-select"]');
+    if (contractDispatchRowCb && contractRoot && contractRoot.contains(contractDispatchRowCb)) {
+      propagateGroupCheck(contractDispatchRowCb, 'contract-dispatch-select');
+      updateContractState();
+      return;
+    }
+
     const contractChannelCb = e.target.closest('.js-contract-channel');
-    if (contractChannelCb && root.contains(contractChannelCb)) {
+    if (contractChannelCb && contractRoot && contractRoot.contains(contractChannelCb)) {
       const checkedChannels = getContractChannels().filter((cb) => cb.checked);
       if (!checkedChannels.length) {
         contractChannelCb.checked = true;
@@ -1720,6 +2094,77 @@
   }
   initSourceDataSettingsModal();
 
+  // ── Create-contract settings modal (gear) ──
+
+  function initCreateContractSettingsModal() {
+    const modalEl = document.getElementById('create-contract-modal');
+    if (!modalEl || modalEl.dataset.ccBound === '1') return;
+    modalEl.dataset.ccBound = '1';
+
+    modalEl.addEventListener('show.bs.modal', async () => {
+      const panel = document.getElementById('contract-request-actions');
+      const url = panel?.dataset?.contractTargetUrl;
+      if (!url) return;
+
+      const select = modalEl.querySelector('#create-contract-target-select');
+      if (!select) return;
+
+      try {
+        const resp = await fetch(url, { headers: { 'X-CSRFToken': csrftoken } });
+        const data = await resp.json();
+        select.innerHTML = '';
+        (data.options || []).forEach((name) => {
+          const opt = document.createElement('option');
+          opt.value = name;
+          opt.textContent = name;
+          if (name === data.folder_name) opt.selected = true;
+          select.appendChild(opt);
+        });
+      } catch (_) { /* ignore */ }
+    });
+
+    const saveBtn = modalEl.querySelector('#create-contract-target-save-btn');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', async () => {
+        const panel = document.getElementById('contract-request-actions');
+        const saveUrl = panel?.dataset?.contractTargetSaveUrl;
+        if (!saveUrl) return;
+
+        const select = modalEl.querySelector('#create-contract-target-select');
+        const folderName = select?.value;
+        if (!folderName) return;
+
+        saveBtn.disabled = true;
+        try {
+          const resp = await fetch(saveUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken },
+            body: JSON.stringify({ folder_name: folderName }),
+          });
+          const data = await resp.json();
+          if (!data.ok) throw new Error(data.error || 'Ошибка сохранения');
+          const modal = window.bootstrap?.Modal.getInstance(modalEl);
+          modal?.hide();
+        } catch (err) {
+          alert(err.message || 'Не удалось сохранить.');
+        } finally {
+          saveBtn.disabled = false;
+        }
+      });
+    }
+  }
+  initCreateContractSettingsModal();
+
+  document.addEventListener('show.bs.modal', (e) => {
+    if (!e.target.matches('#create-contract-progress-modal')) return;
+    const progressEl = e.target.querySelector('#create-contract-progress');
+    const fillEl = progressEl?.querySelector('.ws-progress-fill');
+    const statusEl = e.target.querySelector('#create-contract-status');
+    if (progressEl) progressEl.classList.add('d-none');
+    if (fillEl) fillEl.style.width = '0%';
+    if (statusEl) statusEl.textContent = '';
+  });
+
   function restorePerformersPane(root) {
     // Re-apply main performers filter, labels and totals before the browser
     // paints to avoid a visible flash of unfiltered / empty-totals state.
@@ -1750,8 +2195,7 @@
           projLabel.textContent = 'Все';
         } else if (pf.length === 1) {
           var cb = root.querySelector('.js-perf-filter[value="' + CSS.escape(pf[0]) + '"]');
-          projLabel.textContent = cb && cb.nextElementSibling
-            ? cb.nextElementSibling.textContent.trim() : '1 проект';
+          projLabel.textContent = window.getProjectFilterSummaryLabel(cb, '1 проект');
         } else {
           projLabel.textContent = pf.length + ' выбрано';
         }
@@ -1821,9 +2265,13 @@
     var contractIds = (window.__tableSel && window.__tableSel['contract-select']) || [];
     var contractSet = new Set(contractIds || []);
     getRowChecks('contract-select').forEach(function(b) { b.checked = contractSet.has(String(b.value)); });
+    var contractDispatchIds = (window.__tableSel && window.__tableSel['contract-dispatch-select']) || [];
+    var contractDispatchSet = new Set(contractDispatchIds || []);
+    getRowChecks('contract-dispatch-select').forEach(function(b) { b.checked = contractDispatchSet.has(String(b.value)); });
     initContractProjectFilter();
     updateContractState();
     try { delete window.__tableSel['contract-select']; } catch(_) {}
+    try { delete window.__tableSel['contract-dispatch-select']; } catch(_) {}
 
     var infoRequestIds = (window.__tableSel && window.__tableSel['info-request-select']) || [];
     var infoRequestSet = new Set(infoRequestIds || []);
@@ -1831,6 +2279,7 @@
     initInfoRequestProjectFilter();
     updateInfoRequestState();
     initSourceDataSettingsModal();
+    initCreateContractSettingsModal();
     try { delete window.__tableSel['info-request-select']; } catch(_) {}
 
     applyRowGrouping(root.querySelector('#participation-confirmation-section'));
@@ -1843,6 +2292,28 @@
     syncCollapseButtons();
 
     window.__tableSelLast = null;
+  }
+
+  function restoreContractConclusionPane(root) {
+    if (!root || !root.querySelector('#contract-conclusion-section')) return;
+    var contractIds = (window.__tableSel && window.__tableSel['contract-select']) || [];
+    var contractSet = new Set(contractIds || []);
+    getRowChecks('contract-select').forEach(function(b) {
+      b.checked = contractSet.has(String(b.value));
+    });
+    var contractDispatchIds = (window.__tableSel && window.__tableSel['contract-dispatch-select']) || [];
+    var contractDispatchSet = new Set(contractDispatchIds || []);
+    getRowChecks('contract-dispatch-select').forEach(function(b) {
+      b.checked = contractDispatchSet.has(String(b.value));
+    });
+    initContractProjectFilter();
+    updateContractState();
+    initCreateContractSettingsModal();
+    applyRowGrouping(root.querySelector('#contract-conclusion-section'));
+    reapplyContractCollapse();
+    syncCollapseButtons();
+    try { delete window.__tableSel['contract-select']; } catch(_) {}
+    try { delete window.__tableSel['contract-dispatch-select']; } catch(_) {}
   }
 
   document.body.addEventListener('htmx:beforeSwap', function (e) {
@@ -1858,6 +2329,12 @@
     if (typeof window.__perfScrollY === 'number') {
       window.scrollTo(0, window.__perfScrollY);
     }
+  });
+
+  document.body.addEventListener('htmx:afterSwap', function (e) {
+    var root = contractPane(); if (!root) return;
+    if (!(e.target === root || root.contains(e.target))) return;
+    restoreContractConclusionPane(root);
   });
 
   document.body.addEventListener('htmx:afterSettle', function (e) {

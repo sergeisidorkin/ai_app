@@ -6,6 +6,7 @@ urlpatterns = [
     path("create/", views.member_form_create, name="gm_form_create"),
     path("<int:pk>/edit/", views.member_form_edit, name="gm_form_edit"),
     path("<int:pk>/delete/", views.member_delete, name="gm_delete"),
+    path("<int:pk>/seal/download/", views.member_seal_download, name="gm_seal_download"),
     path("<int:pk>/move-up/", views.member_move_up, name="gm_move_up"),
     path("<int:pk>/move-down/", views.member_move_down, name="gm_move_down"),
     path("org/create/", views.org_form_create, name="org_form_create"),

@@ -91,6 +91,7 @@ class PerformerAdmin(admin.ModelAdmin):
                 ("contract_project_link", "contract_project_folder_link"),
                 "contract_project_disk_folder",
                 "contract_file",
+                ("contract_pdf_file", "contract_pdf_link"),
             ),
         }),
         ("Подписание договора — скан сотрудника", {

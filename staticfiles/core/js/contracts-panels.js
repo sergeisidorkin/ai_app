@@ -8,8 +8,14 @@
   function getRowChecks() {
     return qa('tbody input.form-check-input[name="contract-row-select"]', pane());
   }
+  function getVisibleRowChecks() {
+    return getRowChecks().filter(function(b) {
+      var tr = b.closest('tr');
+      return tr && !tr.classList.contains('d-none') && !b.disabled;
+    });
+  }
   function getChecked() {
-    return getRowChecks().filter(function(b) { return b.checked; });
+    return getVisibleRowChecks().filter(function(b) { return b.checked; });
   }
   function updateRowHighlight() {
     getRowChecks().forEach(function(b) {
@@ -18,7 +24,7 @@
     });
   }
   function updateMasterState() {
-    var boxes = getRowChecks();
+    var boxes = getVisibleRowChecks();
     var master = pane() && pane().querySelector('#contracts-master');
     if (!master) return;
     var checkedCount = boxes.filter(function(b) { return b.checked; }).length;
@@ -28,7 +34,7 @@
   function ensureActionsVisibility() {
     var panel = pane() && pane().querySelector('#contracts-actions');
     if (!panel) return;
-    var any = getRowChecks().some(function(b) { return b.checked; });
+    var any = getChecked().length > 0;
     panel.classList.toggle('d-none', !any);
   }
   function updateEditBtn() {
@@ -36,8 +42,20 @@
     if (!root) return;
     var btn = root.querySelector('#contracts-edit-btn');
     if (!btn) return;
-    var anyChecked = getRowChecks().some(function(b) { return b.checked; });
+    var anyChecked = getChecked().length > 0;
     btn.disabled = !anyChecked;
+  }
+
+  function updateTableScrollGaps() {
+    var root = pane();
+    if (!root) return;
+    qa('.contracts-action-table-wrap, #contract-conclusion-section .contract-conclusion-table-wrap', root).forEach(function(wrap) {
+      wrap.classList.toggle('has-horizontal-scroll', wrap.scrollWidth > wrap.clientWidth + 1);
+    });
+  }
+
+  function scheduleTableScrollGapsUpdate() {
+    window.requestAnimationFrame(updateTableScrollGaps);
   }
 
   function showContractsModal() {
@@ -77,7 +95,7 @@
 
     var master = e.target.closest('#contracts-master');
     if (master && root.contains(master)) {
-      getRowChecks().forEach(function(b) { b.checked = master.checked; });
+      getVisibleRowChecks().forEach(function(b) { b.checked = master.checked; });
       master.indeterminate = false;
       updateMasterState();
       updateRowHighlight();
@@ -103,6 +121,15 @@
     updateRowHighlight();
     ensureActionsVisibility();
     updateEditBtn();
+    scheduleTableScrollGapsUpdate();
+  });
+
+  document.body.addEventListener('contracts-project-filter-applied', function() {
+    updateMasterState();
+    updateRowHighlight();
+    ensureActionsVisibility();
+    updateEditBtn();
+    scheduleTableScrollGapsUpdate();
   });
 
   document.addEventListener('DOMContentLoaded', function() {
@@ -110,7 +137,11 @@
     updateRowHighlight();
     ensureActionsVisibility();
     updateEditBtn();
+    scheduleTableScrollGapsUpdate();
   });
+
+  window.addEventListener('resize', scheduleTableScrollGapsUpdate);
+  window.addEventListener('load', scheduleTableScrollGapsUpdate);
 })();
 
 
@@ -316,7 +347,10 @@
     return qa('tbody input.form-check-input[name="signing-row-select"]', pane());
   }
   function getSigningActiveChecks() {
-    return getSigningChecks().filter(function(b) { return !b.disabled; });
+    return getSigningChecks().filter(function(b) {
+      var tr = b.closest('tr');
+      return tr && !tr.classList.contains('d-none') && !b.disabled;
+    });
   }
   function getSigningChecked() {
     return getSigningActiveChecks().filter(function(b) { return b.checked; });
@@ -563,6 +597,10 @@
   document.body.addEventListener('htmx:afterSettle', function(e) {
     var root = pane(); if (!root) return;
     if (!(e.target === root || root.contains(e.target))) return;
+    refreshSigning();
+  });
+
+  document.body.addEventListener('contracts-project-filter-applied', function() {
     refreshSigning();
   });
 

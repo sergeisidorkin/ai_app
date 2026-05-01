@@ -4,6 +4,7 @@ from django import forms
 from django.db.models import Q
 
 from classifiers_app.models import LegalEntityIdentifier, OKSMCountry
+from contracts_app.forms import _ContractFileInput
 from policy_app.models import ExpertiseDirection
 from .models import GroupMember, OrgUnit
 
@@ -74,6 +75,7 @@ class GroupMemberForm(forms.ModelForm):
         fields = [
             "short_name", "full_name", "name_en",
             "identifier", "registration_number", "registration_date",
+            "seal_file",
         ]
         widgets = {
             "short_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Краткое наименование"}),
@@ -82,6 +84,7 @@ class GroupMemberForm(forms.ModelForm):
             "identifier": forms.TextInput(attrs={"class": "form-control", "placeholder": "Идентификатор"}),
             "registration_number": forms.TextInput(attrs={"class": "form-control", "placeholder": "Регистрационный номер"}),
             "registration_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
+            "seal_file": _ContractFileInput(attrs={"class": "form-control"}),
         }
 
     def save(self, commit=True):
