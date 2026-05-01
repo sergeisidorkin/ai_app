@@ -197,6 +197,31 @@ class ContractsCloudLabelTests(TestCase):
         self.assertIn("https://cloud.example.com/s/contract-pdf", signing_section)
         self.assertIn("Договор 7001_Иванов ИИ.pdf", signing_section)
 
+    def test_contract_docx_source_is_available_to_onlyoffice_without_session(self):
+        from projects_app.views import _build_contract_docx_source_token
+
+        self.client.logout()
+        token = _build_contract_docx_source_token(self.performer)
+
+        with patch(
+            "projects_app.views.cloud_download_file",
+            return_value=(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                b"docx-bytes",
+            ),
+        ):
+            response = self.client.get(
+                reverse("contract_onlyoffice_docx_source", args=[self.performer.pk]),
+                {"token": token},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"docx-bytes")
+        self.assertEqual(
+            response["Content-Type"],
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+
     @override_settings(ONLYOFFICE_DOCUMENT_SERVER_URL="https://docs.example.com")
     def test_sign_contract_documents_generates_pdf_and_public_link(self):
         with (

@@ -182,13 +182,14 @@ def member_seal_download(request, pk: int):
     member = get_object_or_404(GroupMember, pk=pk)
     if not member.seal_file:
         raise Http404("Файл не найден")
-    file_path = member.seal_file.path
-    if not os.path.isfile(file_path):
-        raise Http404("Файл не найден на диске")
     from urllib.parse import quote
 
-    basename = os.path.basename(file_path)
-    response = FileResponse(open(file_path, "rb"), content_type="application/octet-stream")
+    basename = os.path.basename(member.seal_file.name)
+    try:
+        file_handle = member.seal_file.open("rb")
+    except Exception as exc:
+        raise Http404("Файл не найден") from exc
+    response = FileResponse(file_handle, content_type="application/octet-stream")
     response["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(basename)}"
     return response
 

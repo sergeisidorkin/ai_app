@@ -1569,12 +1569,18 @@ class NextcloudContractProjectFlowTests(TestCase):
         self.performer.contract_project_disk_folder = existing_folder_path
         self.performer.contract_project_folder_link = "https://cloud.example.com/s/existing-folder"
         self.performer.contract_project_folder_file_id = "folder-file-id"
+        self.performer.contract_pdf_file = "old-contract.pdf"
+        self.performer.contract_pdf_link = "https://cloud.example.com/s/old-pdf"
+        self.performer.contract_pdf_file_id = "old-pdf-id"
         self.performer.save(update_fields=[
             "contract_batch_id",
             "contract_project_created",
             "contract_project_disk_folder",
             "contract_project_folder_link",
             "contract_project_folder_file_id",
+            "contract_pdf_file",
+            "contract_pdf_link",
+            "contract_pdf_file_id",
         ])
         mocked_ensure_nextcloud_account.side_effect = lambda user, client=None: (
             self.executor_link if user.pk == self.recipient_user.pk else self.lawyer_link
@@ -1600,6 +1606,9 @@ class NextcloudContractProjectFlowTests(TestCase):
         self.performer.refresh_from_db()
         self.assertEqual(self.performer.contract_batch_id, existing_batch_id)
         self.assertEqual(self.performer.contract_project_disk_folder, existing_folder_path)
+        self.assertEqual(self.performer.contract_pdf_file, "")
+        self.assertEqual(self.performer.contract_pdf_link, "")
+        self.assertEqual(self.performer.contract_pdf_file_id, "")
 
     @patch("nextcloud_app.provisioning.ensure_nextcloud_account")
     @patch("contracts_app.variable_resolver.resolve_variables", return_value=({}, {}))
