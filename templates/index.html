@@ -533,14 +533,22 @@
             <div class="second-sidebar-header-spacer"></div>
             <hr class="my-0">
             <div class="list-group list-group-flush p-3 m-0" id="contracts-second-sidebar-list">
+              {% if not is_expert %}
               <a href="#" class="list-group-item list-group-item-action active"
                  data-contracts-section="in-development">
                 Клиенты: заключение договора
               </a>
-              <a href="#" class="list-group-item list-group-item-action"
+              {% endif %}
+              <a href="#" class="list-group-item list-group-item-action{% if is_expert %} active{% endif %}"
                  data-contracts-section="in-progress">
                 {{ APP_SECTION_LABELS.experts }}: заключение договора
               </a>
+              {% if can_access_contract_requisites %}
+              <a href="#" class="list-group-item list-group-item-action"
+                 data-contracts-section="performer-requisites">
+                {{ APP_SECTION_LABELS.experts }}: реквизиты
+              </a>
+              {% endif %}
               {% if not is_expert %}
               <a href="#" class="list-group-item list-group-item-action"
                  data-contracts-section="templates">
@@ -562,7 +570,7 @@
             <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
               <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
                 <div class="d-flex align-items-center gap-3">
-                  <h5 class="mb-0 ps-3 fs-4 pt-2" id="contracts-section-title">Клиенты: заключение договора</h5>
+                  <h5 class="mb-0 ps-3 fs-4 pt-2" id="contracts-section-title">{% if is_expert %}{{ APP_SECTION_LABELS.experts }}: заключение договора{% else %}Клиенты: заключение договора{% endif %}</h5>
                   <div class="dropdown pt-1 d-none" id="contracts-master-project-filter-dropdown" style="transform: translateY(3px);">
                     <button class="btn btn-primary btn-sm dropdown-toggle" type="button"
                             id="contracts-master-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
@@ -578,6 +586,21 @@
                       <div id="contracts-master-filter-projects-list"></div>
                     </div>
                   </div>
+                  <div class="dropdown pt-1 d-none" id="contracts-master-status-filter-dropdown" style="transform: translateY(3px);">
+                    <button class="btn btn-primary btn-sm dropdown-toggle" type="button"
+                            id="contracts-master-status-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                      Статус: <span class="js-contracts-master-status-filter-label">Все</span>
+                    </button>
+                    <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="contracts-master-status-filter-toggle"
+                         style="max-height: 240px; overflow-y: auto;">
+                      <div class="form-check mb-2">
+                        <input class="form-check-input js-contracts-master-status-filter" type="checkbox" value="__all__" id="contracts-master-status-filter-all" checked>
+                        <label class="form-check-label" for="contracts-master-status-filter-all">Все статусы</label>
+                      </div>
+                      <hr class="dropdown-divider">
+                      <div id="contracts-master-filter-statuses-list"></div>
+                    </div>
+                  </div>
                 </div>
                 <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
                    href="#notifications"
@@ -591,12 +614,19 @@
             </div>
 
             <div class="ps-3">
+              {% if not is_expert %}
               <div id="contracts-content-in-development" class="contracts-section-content">
                 {% include "contracts_app/contracts_development_panel.html" %}
               </div>
-              <div id="contracts-content-in-progress" class="contracts-section-content d-none">
+              {% endif %}
+              <div id="contracts-content-in-progress" class="contracts-section-content{% if not is_expert %} d-none{% endif %}">
                 {% include "contracts_app/panel.html" %}
               </div>
+              {% if can_access_contract_requisites %}
+              <div id="contracts-content-performer-requisites" class="contracts-section-content d-none">
+                {% include "contracts_app/contract_requisites_panel.html" %}
+              </div>
+              {% endif %}
               {% if not is_expert %}
               <div id="contracts-content-templates" class="contracts-section-content d-none">
                 {% include "contracts_app/templates_panel.html" %}
@@ -1723,17 +1753,24 @@
           var CONTRACTS_TITLES = {
             'in-development': 'Клиенты: заключение договора',
             'in-progress': '{{ APP_SECTION_LABELS.experts|escapejs }}: заключение договора',
+            'performer-requisites': '{{ APP_SECTION_LABELS.experts|escapejs }}: реквизиты',
             'templates': 'Образцы шаблонов',
             'field-params': 'Параметры полей',
             'archive': 'Архив',
           };
+          var DEFAULT_CONTRACTS_SECTION = '{% if is_expert %}in-progress{% else %}in-development{% endif %}';
 
           var sidebar = document.getElementById('contracts-second-sidebar-list');
           var titleEl = document.getElementById('contracts-section-title');
           var masterDropdown = document.getElementById('contracts-master-project-filter-dropdown');
           var masterList = document.getElementById('contracts-master-filter-projects-list');
           var masterLabel = masterDropdown ? masterDropdown.querySelector('.js-contracts-master-filter-label') : null;
+          var statusDropdown = document.getElementById('contracts-master-status-filter-dropdown');
+          var statusList = document.getElementById('contracts-master-filter-statuses-list');
+          var statusLabel = statusDropdown ? statusDropdown.querySelector('.js-contracts-master-status-filter-label') : null;
           var FILTER_ALL = '__all__';
+          var PROJECT_FILTER_PREF_KEY = 'contracts:conclusionMasterFilter';
+          var STATUS_FILTER_PREF_KEY = 'contracts:conclusionStatusMasterFilter';
 
           function activateSidebarLink(key) {
             if (!sidebar) return;
@@ -1744,6 +1781,31 @@
 
           function getContractsMasterChecks() {
             return masterDropdown ? Array.from(masterDropdown.querySelectorAll('.js-contracts-master-filter')) : [];
+          }
+
+          function getContractsStatusChecks() {
+            return statusDropdown ? Array.from(statusDropdown.querySelectorAll('.js-contracts-master-status-filter')) : [];
+          }
+
+          function normalizeFilterValues(values) {
+            values = Array.isArray(values) && values.length ? values.slice() : [FILTER_ALL];
+            return values.indexOf(FILTER_ALL) !== -1 ? [FILTER_ALL] : values;
+          }
+
+          function getSavedFilter(prefKey, currentValues) {
+            var current = normalizeFilterValues(currentValues || [FILTER_ALL]);
+            if (current[0] !== FILTER_ALL) return current;
+            if (!window.UIPref) return current;
+            var saved = UIPref.get(prefKey, null);
+            return Array.isArray(saved) && saved.length ? normalizeFilterValues(saved) : current;
+          }
+
+          function sameValues(a, b) {
+            a = normalizeFilterValues(a);
+            b = normalizeFilterValues(b);
+            if (a.length !== b.length) return false;
+            var set = new Set(a);
+            return b.every(function(value) { return set.has(value); });
           }
 
           function syncContractsMasterLabel(values) {
@@ -1760,9 +1822,29 @@
             masterLabel.textContent = values.length + ' выбрано';
           }
 
+          function syncContractsStatusLabel(values) {
+            if (!statusLabel) return;
+            if (!values.length || values[0] === FILTER_ALL) {
+              statusLabel.textContent = 'Все';
+              return;
+            }
+            if (values.length === 1) {
+              statusLabel.textContent = values[0];
+              return;
+            }
+            statusLabel.textContent = values.length + ' выбрано';
+          }
+
           function syncContractsMasterChecks(values) {
             var set = new Set(values && values.length ? values : [FILTER_ALL]);
             getContractsMasterChecks().forEach(function(cb) {
+              cb.checked = set.has(cb.value);
+            });
+          }
+
+          function syncContractsStatusChecks(values) {
+            var set = new Set(values && values.length ? values : [FILTER_ALL]);
+            getContractsStatusChecks().forEach(function(cb) {
               cb.checked = set.has(cb.value);
             });
           }
@@ -1775,10 +1857,109 @@
             return values;
           }
 
-          function applyContractsMasterFilter(values) {
-            values = values && values.length ? values.slice() : getContractsMasterValues();
+          function getContractsStatusValues() {
+            var values = getContractsStatusChecks()
+              .filter(function(cb) { return cb.checked; })
+              .map(function(cb) { return cb.value; });
+            if (!values.length || values.indexOf(FILTER_ALL) !== -1) return [FILTER_ALL];
+            return values;
+          }
+
+          function getSigningRows() {
+            var pane = document.getElementById('contracts-pane');
+            return pane ? Array.from(pane.querySelectorAll('table.signing-table tbody tr[data-project-id]')) : [];
+          }
+
+          function collectContractsFilterData() {
+            var pane = document.getElementById('contracts-pane');
+            var data = {
+              projectIds: new Set(),
+              statuses: [],
+              statusSet: new Set(),
+              projectToStatuses: {},
+              statusToProjects: {},
+            };
+            if (pane) {
+              Array.from(pane.querySelectorAll('.js-contract-filter, .js-signing-filter, .js-contracts-filter')).forEach(function(cb) {
+                if (cb.value && cb.value !== FILTER_ALL) data.projectIds.add(cb.value);
+              });
+            }
+            getSigningRows().forEach(function(row) {
+              var projectId = row.dataset.projectId || '';
+              var status = row.dataset.contractStatus || '—';
+              if (!projectId) return;
+              data.projectIds.add(projectId);
+              if (!data.statusSet.has(status)) {
+                data.statusSet.add(status);
+                data.statuses.push(status);
+              }
+              if (!data.projectToStatuses[projectId]) data.projectToStatuses[projectId] = new Set();
+              if (!data.statusToProjects[status]) data.statusToProjects[status] = new Set();
+              data.projectToStatuses[projectId].add(status);
+              data.statusToProjects[status].add(projectId);
+            });
+            return data;
+          }
+
+          function availableStatusesFor(projectValues, data) {
+            projectValues = normalizeFilterValues(projectValues);
+            data = data || collectContractsFilterData();
+            if (projectValues[0] === FILTER_ALL) return new Set(data.statuses);
+            var available = new Set();
+            projectValues.forEach(function(projectId) {
+              (data.projectToStatuses[projectId] || new Set()).forEach(function(status) {
+                available.add(status);
+              });
+            });
+            return available;
+          }
+
+          function availableProjectsFor(statusValues, data) {
+            statusValues = normalizeFilterValues(statusValues);
+            data = data || collectContractsFilterData();
+            if (statusValues[0] === FILTER_ALL) return new Set(data.projectIds);
+            var available = new Set();
+            statusValues.forEach(function(status) {
+              (data.statusToProjects[status] || new Set()).forEach(function(projectId) {
+                available.add(projectId);
+              });
+            });
+            return available;
+          }
+
+          function pruneFilterValues(values, availableSet) {
+            values = normalizeFilterValues(values);
+            if (values[0] === FILTER_ALL) return [FILTER_ALL];
+            var valid = values.filter(function(value) { return availableSet.has(value); });
+            return valid.length ? valid : [FILTER_ALL];
+          }
+
+          function updateContractsFilterAvailability() {
+            var data = collectContractsFilterData();
+            var projectValues = normalizeFilterValues(window.__contractProjectFilter || [FILTER_ALL]);
+            var statusValues = normalizeFilterValues(window.__contractStatusFilter || [FILTER_ALL]);
+            var availableProjects = availableProjectsFor(statusValues, data);
+            var availableStatuses = availableStatusesFor(projectValues, data);
+
+            getContractsMasterChecks().forEach(function(cb) {
+              var hidden = cb.value !== FILTER_ALL && !availableProjects.has(cb.value);
+              cb.disabled = false;
+              var row = cb.closest('.form-check');
+              if (row) row.classList.toggle('d-none', hidden);
+            });
+            getContractsStatusChecks().forEach(function(cb) {
+              var hidden = cb.value !== FILTER_ALL && !availableStatuses.has(cb.value);
+              cb.disabled = false;
+              var row = cb.closest('.form-check');
+              if (row) row.classList.toggle('d-none', hidden);
+            });
+          }
+
+          function applyContractsMasterFilter(values, options) {
+            options = options || {};
+            values = normalizeFilterValues(values && values.length ? values : getContractsMasterValues());
             window.__contractProjectFilter = values[0] === FILTER_ALL ? [FILTER_ALL] : values.slice();
-            if (window.UIPref) UIPref.set('contracts:conclusionMasterFilter', window.__contractProjectFilter);
+            if (window.UIPref) UIPref.set(PROJECT_FILTER_PREF_KEY, window.__contractProjectFilter);
             syncContractsMasterChecks(window.__contractProjectFilter);
             syncContractsMasterLabel(window.__contractProjectFilter);
             if (typeof window.__syncContractProjectFilter === 'function') {
@@ -1787,13 +1968,51 @@
             if (typeof window.__syncContractsProjectFilter === 'function') {
               window.__syncContractsProjectFilter(window.__contractProjectFilter);
             }
+            if (!options.skipMutual) {
+              var data = collectContractsFilterData();
+              var statusValues = normalizeFilterValues(window.__contractStatusFilter || [FILTER_ALL]);
+              var prunedStatusValues = pruneFilterValues(statusValues, availableStatusesFor(window.__contractProjectFilter, data));
+              if (!sameValues(statusValues, prunedStatusValues)) {
+                applyContractsStatusFilter(prunedStatusValues, { skipMutual: true, skipAvailability: true });
+              }
+            }
+            if (!options.skipAvailability) updateContractsFilterAvailability();
+          }
+
+          function applyContractsStatusFilter(values, options) {
+            options = options || {};
+            values = normalizeFilterValues(values && values.length ? values : getContractsStatusValues());
+            window.__contractStatusFilter = values[0] === FILTER_ALL ? [FILTER_ALL] : values.slice();
+            if (window.UIPref) UIPref.set(STATUS_FILTER_PREF_KEY, window.__contractStatusFilter);
+            syncContractsStatusChecks(window.__contractStatusFilter);
+            syncContractsStatusLabel(window.__contractStatusFilter);
+            if (typeof window.__syncContractStatusFilter === 'function') {
+              window.__syncContractStatusFilter(window.__contractStatusFilter);
+            }
+            if (typeof window.__syncContractsStatusFilter === 'function') {
+              window.__syncContractsStatusFilter(window.__contractStatusFilter);
+            }
+            document.body.dispatchEvent(new CustomEvent('contract-status-filter-updated', {
+              detail: { values: window.__contractStatusFilter.slice() },
+            }));
+            if (!options.skipMutual) {
+              var data = collectContractsFilterData();
+              var projectValues = normalizeFilterValues(window.__contractProjectFilter || [FILTER_ALL]);
+              var prunedProjectValues = pruneFilterValues(projectValues, availableProjectsFor(window.__contractStatusFilter, data));
+              if (!sameValues(projectValues, prunedProjectValues)) {
+                applyContractsMasterFilter(prunedProjectValues, { skipMutual: true, skipAvailability: true });
+              }
+            }
+            if (!options.skipAvailability) updateContractsFilterAvailability();
           }
 
           function refreshContractsMasterFilter() {
-            if (!masterDropdown || !masterList) return;
+            if (!masterDropdown || !masterList || !statusDropdown || !statusList) return;
             var pane = document.getElementById('contracts-pane');
             var localChecks = pane ? Array.from(pane.querySelectorAll('.js-contract-filter')) : [];
+            if (!localChecks.length && pane) localChecks = Array.from(pane.querySelectorAll('.js-signing-filter'));
             var projectChecks = localChecks.filter(function(cb) { return cb.value !== FILTER_ALL; });
+            var data = collectContractsFilterData();
             masterList.innerHTML = '';
             projectChecks.forEach(function(localCb) {
               var row = document.createElement('div');
@@ -1816,15 +2035,47 @@
               masterList.appendChild(row);
             });
 
-            var saved = window.__contractProjectFilter;
-            if ((!saved || !saved.length) && window.UIPref) saved = UIPref.get('contracts:conclusionMasterFilter', null);
+            statusList.innerHTML = '';
+            data.statuses.forEach(function(status, index) {
+              var row = document.createElement('div');
+              row.className = 'form-check';
+
+              var input = document.createElement('input');
+              input.className = 'form-check-input js-contracts-master-status-filter';
+              input.type = 'checkbox';
+              input.value = status;
+              input.id = 'contracts-master-status-filter-' + index;
+
+              var label = document.createElement('label');
+              label.className = 'form-check-label';
+              label.setAttribute('for', input.id);
+              label.textContent = status;
+
+              row.appendChild(input);
+              row.appendChild(label);
+              statusList.appendChild(row);
+            });
+
+            var saved = getSavedFilter(PROJECT_FILTER_PREF_KEY, window.__contractProjectFilter);
             var valid = [FILTER_ALL];
             if (Array.isArray(saved) && saved.length && saved[0] !== FILTER_ALL) {
               var validIds = new Set(projectChecks.map(function(cb) { return cb.value; }));
               valid = saved.filter(function(value) { return validIds.has(value); });
               if (!valid.length) valid = [FILTER_ALL];
             }
-            applyContractsMasterFilter(valid);
+
+            var savedStatuses = getSavedFilter(STATUS_FILTER_PREF_KEY, window.__contractStatusFilter);
+            var validStatuses = [FILTER_ALL];
+            if (Array.isArray(savedStatuses) && savedStatuses.length && savedStatuses[0] !== FILTER_ALL) {
+              validStatuses = savedStatuses.filter(function(value) { return data.statusSet.has(value); });
+              if (!validStatuses.length) validStatuses = [FILTER_ALL];
+            }
+
+            valid = pruneFilterValues(valid, availableProjectsFor(validStatuses, data));
+            validStatuses = pruneFilterValues(validStatuses, availableStatusesFor(valid, data));
+            applyContractsMasterFilter(valid, { skipMutual: true, skipAvailability: true });
+            applyContractsStatusFilter(validStatuses, { skipMutual: true, skipAvailability: true });
+            updateContractsFilterAvailability();
           }
 
           function scheduleContractsMasterRefresh() {
@@ -1837,7 +2088,9 @@
             if (target) target.classList.remove('d-none');
             if (titleEl) titleEl.textContent = CONTRACTS_TITLES[key] || '';
             if (masterDropdown) masterDropdown.classList.toggle('d-none', key !== 'in-progress');
+            if (statusDropdown) statusDropdown.classList.toggle('d-none', key !== 'in-progress');
             if (key === 'in-progress') scheduleContractsMasterRefresh();
+            window.dispatchEvent(new CustomEvent('contracts:section-shown', { detail: { section: key } }));
           }
 
           if (sidebar) {
@@ -1862,13 +2115,39 @@
                 return;
               }
               if (cb.value === FILTER_ALL && !cb.checked) {
-                var firstProject = getContractsMasterChecks().find(function(item) { return item.value !== FILTER_ALL; });
+                var firstProject = getContractsMasterChecks().find(function(item) {
+                  var row = item.closest('.form-check');
+                  return item.value !== FILTER_ALL && !(row && row.classList.contains('d-none'));
+                });
                 if (firstProject) firstProject.checked = true;
               } else {
                 var allCheckbox = document.getElementById('contracts-master-filter-all');
                 if (allCheckbox) allCheckbox.checked = false;
               }
               applyContractsMasterFilter(getContractsMasterValues());
+            });
+          }
+
+          if (statusDropdown) {
+            statusDropdown.addEventListener('change', function(e) {
+              var cb = e.target.closest('.js-contracts-master-status-filter');
+              if (!cb) return;
+              if (cb.value === FILTER_ALL && cb.checked) {
+                syncContractsStatusChecks([FILTER_ALL]);
+                applyContractsStatusFilter([FILTER_ALL]);
+                return;
+              }
+              if (cb.value === FILTER_ALL && !cb.checked) {
+                var firstStatus = getContractsStatusChecks().find(function(item) {
+                  var row = item.closest('.form-check');
+                  return item.value !== FILTER_ALL && !(row && row.classList.contains('d-none'));
+                });
+                if (firstStatus) firstStatus.checked = true;
+              } else {
+                var allStatusCheckbox = document.getElementById('contracts-master-status-filter-all');
+                if (allStatusCheckbox) allStatusCheckbox.checked = false;
+              }
+              applyContractsStatusFilter(getContractsStatusValues());
             });
           }
 
@@ -1880,9 +2159,20 @@
 
           document.body.addEventListener('contract-project-filter-updated', function(e) {
             var values = e.detail && e.detail.values ? e.detail.values : [FILTER_ALL];
-            if (window.UIPref) UIPref.set('contracts:conclusionMasterFilter', values);
-            syncContractsMasterChecks(values);
-            syncContractsMasterLabel(values);
+            window.__contractProjectFilter = normalizeFilterValues(values);
+            if (window.UIPref) UIPref.set(PROJECT_FILTER_PREF_KEY, window.__contractProjectFilter);
+            syncContractsMasterChecks(window.__contractProjectFilter);
+            syncContractsMasterLabel(window.__contractProjectFilter);
+            updateContractsFilterAvailability();
+          });
+
+          document.body.addEventListener('contract-status-filter-updated', function(e) {
+            var values = e.detail && e.detail.values ? e.detail.values : [FILTER_ALL];
+            window.__contractStatusFilter = normalizeFilterValues(values);
+            if (window.UIPref) UIPref.set(STATUS_FILTER_PREF_KEY, window.__contractStatusFilter);
+            syncContractsStatusChecks(window.__contractStatusFilter);
+            syncContractsStatusLabel(window.__contractStatusFilter);
+            updateContractsFilterAvailability();
           });
 
           document.addEventListener('DOMContentLoaded', function () {
@@ -1890,7 +2180,10 @@
             if (saved && CONTRACTS_TITLES[saved] && document.getElementById('contracts-content-' + saved)) {
               activateSidebarLink(saved);
               switchContractsSection(saved);
+              return;
             }
+            activateSidebarLink(DEFAULT_CONTRACTS_SECTION);
+            switchContractsSection(DEFAULT_CONTRACTS_SECTION);
           });
         })();
         </script>
@@ -3270,7 +3563,9 @@
 
           // ---- утилиты -------------------------------------------------------------
           function cleanupBackdrops(){
-            const anyShown = !!document.querySelector('.modal.show');
+            const anyShown = !!document.querySelector('.modal.show, .modal.showing, .modal[style*="display: block"]')
+              || document.body.classList.contains('contracts-modal-open')
+              || document.body.classList.contains('contract-templates-modal-open');
             if (anyShown) return;
             document.querySelectorAll('.modal-backdrop').forEach(b=>b.remove());
             document.body.classList.remove('modal-open');
@@ -3449,7 +3744,9 @@
               clearTimeout(watchdog);
               watchdog = setTimeout(() => {
                 const hasBackdrop = !!document.querySelector('.modal-backdrop.show');
-                const anyShown = !!document.querySelector('.modal.show');
+                const anyShown = !!document.querySelector('.modal.show, .modal.showing, .modal[style*="display: block"]')
+                  || document.body.classList.contains('contracts-modal-open')
+                  || document.body.classList.contains('contract-templates-modal-open');
                 if (hasBackdrop && !anyShown) cleanupBackdrops();
               }, 400);
             });
@@ -3485,6 +3782,41 @@
   </div>
 </div>
 <script>
+  (function () {
+    var el = document.getElementById('contracts-modal');
+    if (!el) return;
+
+    function resetContractsModalBody() {
+      document.body.style.removeProperty('padding-right');
+    }
+
+    function lockContractsModalLayout() {
+      document.body.classList.add('contracts-modal-open');
+      resetContractsModalBody();
+      window.requestAnimationFrame(resetContractsModalBody);
+    }
+
+    function unlockContractsModalLayout() {
+      document.body.classList.remove('contracts-modal-open');
+      resetContractsModalBody();
+    }
+
+    function restoreContractsBackdropIfMissing() {
+      if (!el.classList.contains('show')) return;
+      if (document.querySelector('.modal-backdrop')) return;
+      var backdrop = document.createElement('div');
+      backdrop.className = 'modal-backdrop fade show';
+      document.body.appendChild(backdrop);
+    }
+
+    el.addEventListener('show.bs.modal', lockContractsModalLayout);
+    el.addEventListener('shown.bs.modal', function () {
+      lockContractsModalLayout();
+      restoreContractsBackdropIfMissing();
+    });
+    el.addEventListener('hidden.bs.modal', unlockContractsModalLayout);
+  })();
+
   document.body.addEventListener('contracts-updated', function () {
     var el = document.getElementById('contracts-modal');
     if (!el) return;

@@ -1,0 +1,199 @@
+<style>
+  .epr-colpicker { position: relative; min-width: 14rem; }
+  .epr-colpicker-btn {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    padding-right: 2rem !important;
+  }
+  .epr-colpicker-menu {
+    display: none; position: absolute; top: 100%; right: 0;
+    z-index: 1055; background: #fff; border: 1px solid #ced4da;
+    border-radius: .25rem; max-height: 22rem; overflow-y: auto;
+    min-width: 100%; padding: .25rem 0;
+    box-shadow: 0 .25rem .5rem rgba(0,0,0,.15); margin-top: 2px;
+  }
+  .epr-colpicker-menu.show { display: block; }
+  .epr-colpicker-item {
+    display: flex; align-items: center; padding: .2rem .75rem;
+    white-space: nowrap; margin: 0; font-size: .875em; color: #212529;
+  }
+  .epr-colpicker-item:hover { background: #f8f9fa; }
+  .epr-colpicker-item .form-check { margin: 0; min-height: auto; }
+  .epr-colpicker-item .form-check-label { cursor: pointer; user-select: none; }
+  #contract-requisites-pane #ecd-table col:first-child,
+  #contract-requisites-pane #ecd-table > thead tr > th:first-child,
+  #contract-requisites-pane #ecd-table > tbody tr > td:first-child {
+    width: 30px !important;
+    min-width: 30px !important;
+    max-width: 30px !important;
+  }
+  #contract-requisites-pane #ecd-table > thead tr > th:first-child,
+  #contract-requisites-pane #ecd-table > tbody tr > td:first-child {
+    text-align: center !important;
+    vertical-align: middle !important;
+  }
+  #contract-requisites-pane #ecd-table > thead tr > th:first-child .form-check,
+  #contract-requisites-pane #ecd-table > tbody tr > td:first-child .form-check {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding-left: 0 !important;
+    width: auto !important;
+  }
+  #contract-requisites-pane #ecd-table > thead tr > th:first-child .form-check-input,
+  #contract-requisites-pane #ecd-table > tbody tr > td:first-child .form-check-input {
+    margin-left: 0 !important;
+  }
+  #contract-requisites-pane #ecd-table > thead tr > th:not(:first-child),
+  #contract-requisites-pane #ecd-table > tbody tr > td:not(:first-child) {
+    padding-left: .5rem !important;
+  }
+</style>
+
+<div class="card shadow-sm mt-3 mb-3">
+  <div class="card-body">
+    <div id="contract-requisites-pane"
+         hx-get="{% url 'contract_requisites_partial' %}"
+         hx-trigger="load"
+         hx-target="#contract-requisites-pane"
+         hx-swap="outerHTML">
+      <div class="text-muted htmx-indicator d-inline-flex align-items-center gap-2">
+        <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+        <span>Загрузка реквизитов исполнителей…</span>
+      </div>
+    </div>
+
+    <div class="modal fade" id="contract-requisites-modal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  var P = window.UIPref;
+  var cfg = {
+    prefKey: 'experts:ecdHiddenCols',
+    wrapId: 'ecd-colpicker-wrap',
+    btnId: 'ecd-colpicker-btn',
+    menuId: 'ecd-colpicker-menu',
+    allId: 'ecd-col-all',
+    tableId: 'ecd-table',
+    hidden: P ? P.get('experts:ecdHiddenCols', {}) : {},
+  };
+
+  function updateBtnLabel(btn, menu) {
+    var cbs = menu.querySelectorAll('input.form-check-input:not([value="all"])');
+    var checked = 0;
+    cbs.forEach(function(c) { if (c.checked) checked++; });
+    btn.textContent = checked === cbs.length ? 'Все поля' : checked + ' из ' + cbs.length;
+  }
+
+  function applyVisibility() {
+    var table = document.getElementById(cfg.tableId);
+    if (!table) return;
+    var hidden = Object.keys(cfg.hidden || {});
+    table.querySelectorAll('[data-col]').forEach(function(cell) {
+      cell.style.display = hidden.indexOf(cell.getAttribute('data-col')) !== -1 ? 'none' : '';
+    });
+  }
+
+  function syncPickerState() {
+    var pane = document.getElementById('contract-requisites-pane');
+    var wrap = pane && pane.querySelector('#' + cfg.wrapId);
+    var btn = pane && pane.querySelector('#' + cfg.btnId);
+    var menu = pane && pane.querySelector('#' + cfg.menuId);
+    if (!wrap || !btn || !menu) return;
+    cfg.hidden = P ? P.get(cfg.prefKey, {}) : {};
+
+    var cbs = menu.querySelectorAll('input.form-check-input:not([value="all"])');
+    cbs.forEach(function(cb) {
+      cb.checked = !cfg.hidden[cb.value];
+    });
+    var allCb = pane.querySelector('#' + cfg.allId);
+    if (allCb) {
+      var allChecked = true;
+      cbs.forEach(function(c) { if (!c.checked) allChecked = false; });
+      allCb.checked = allChecked;
+    }
+    updateBtnLabel(btn, menu);
+    applyVisibility();
+  }
+
+  function initPicker() {
+    syncPickerState();
+  }
+
+  document.addEventListener('click', function(e) {
+    var pane = document.getElementById('contract-requisites-pane');
+    var btn = e.target.closest('#' + cfg.btnId);
+    if (btn && pane && pane.contains(btn)) {
+      e.preventDefault();
+      var paneMenu = pane.querySelector('#' + cfg.menuId);
+      if (paneMenu) paneMenu.classList.toggle('show');
+      return;
+    }
+
+    var wrap = pane && pane.querySelector('#' + cfg.wrapId);
+    var menu = pane && pane.querySelector('#' + cfg.menuId);
+    if (wrap && menu && !wrap.contains(e.target)) menu.classList.remove('show');
+  });
+
+  document.addEventListener('change', function(e) {
+    var pane = document.getElementById('contract-requisites-pane');
+    var menu = pane && pane.querySelector('#' + cfg.menuId);
+    var cb = e.target.closest('#' + cfg.menuId + ' input.form-check-input');
+    if (!pane || !menu || !cb || !pane.contains(cb)) return;
+    var items = menu.querySelectorAll('input.form-check-input:not([value="all"])');
+    if (cb.value === 'all') {
+      items.forEach(function(c) { c.checked = cb.checked; });
+    } else {
+      var ac = pane.querySelector('#' + cfg.allId);
+      var all = true;
+      items.forEach(function(c) { if (!c.checked) all = false; });
+      if (ac) ac.checked = all;
+    }
+    cfg.hidden = {};
+    items.forEach(function(c) { if (!c.checked) cfg.hidden[c.value] = true; });
+    if (P) P.set(cfg.prefKey, cfg.hidden);
+    var btn = pane.querySelector('#' + cfg.btnId);
+    if (btn) updateBtnLabel(btn, menu);
+    applyVisibility();
+  });
+
+  function eventTouchesPane(e) {
+    var pane = document.getElementById('contract-requisites-pane');
+    var target = e.target;
+    return !!(
+      pane
+      && target
+      && (
+        target.id === 'contract-requisites-pane'
+        || target === pane
+        || pane.contains(target)
+      )
+    );
+  }
+
+  document.body.addEventListener('htmx:afterSettle', function(e) {
+    if (eventTouchesPane(e)) initPicker();
+  });
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initPicker);
+  } else {
+    initPicker();
+  }
+
+  document.body.addEventListener('contract-requisites-updated', function() {
+    var el = document.getElementById('contract-requisites-modal');
+    if (!el || !window.bootstrap) return;
+    var modal = bootstrap.Modal.getInstance(el) || bootstrap.Modal.getOrCreateInstance(el);
+    modal.hide();
+  });
+})();
+</script>

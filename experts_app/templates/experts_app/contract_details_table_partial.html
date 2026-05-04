@@ -1,8 +1,12 @@
 {% load ui %}
+<div class="table-responsive contract-requisites-table-wrap" id="ecd-table-wrap">
 <table class="table table-sm align-top" id="ecd-table">
+    <colgroup>
+        <col style="width:30px">
+    </colgroup>
     <thead>
     <tr>
-        <th style="width:1%">
+        <th>
             {% if request.user.is_authenticated and request.user.is_staff %}
                 <div class="form-check m-0">
                     <input class="form-check-input"
@@ -57,7 +61,7 @@
 
             <td class="text-nowrap">
                 {% if request.user.is_authenticated and request.user.is_staff %}
-                    <div class="form-check">
+                    <div class="form-check m-0">
                         <input class="form-check-input"
                                type="checkbox"
                                id="ecd-sel-{{ item.id }}"
@@ -114,6 +118,7 @@
     {% endfor %}
     </tbody>
 </table>
+</div>
 
 {% if request.user.is_authenticated and request.user.is_staff %}
 <div class="d-flex align-items-stretch gap-2 products-actions-row mb-3">

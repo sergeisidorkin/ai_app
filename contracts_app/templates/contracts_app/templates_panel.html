@@ -22,6 +22,41 @@
 </div>
 
 <script>
+  (function () {
+    var el = document.getElementById('contract-templates-modal');
+    if (!el) return;
+
+    function resetContractTemplatesModalBody() {
+      document.body.style.removeProperty('padding-right');
+    }
+
+    function lockContractTemplatesModalLayout() {
+      document.body.classList.add('contract-templates-modal-open');
+      resetContractTemplatesModalBody();
+      window.requestAnimationFrame(resetContractTemplatesModalBody);
+    }
+
+    function unlockContractTemplatesModalLayout() {
+      document.body.classList.remove('contract-templates-modal-open');
+      resetContractTemplatesModalBody();
+    }
+
+    function restoreContractTemplatesBackdropIfMissing() {
+      if (!el.classList.contains('show')) return;
+      if (document.querySelector('.modal-backdrop')) return;
+      var backdrop = document.createElement('div');
+      backdrop.className = 'modal-backdrop fade show';
+      document.body.appendChild(backdrop);
+    }
+
+    el.addEventListener('show.bs.modal', lockContractTemplatesModalLayout);
+    el.addEventListener('shown.bs.modal', function () {
+      lockContractTemplatesModalLayout();
+      restoreContractTemplatesBackdropIfMissing();
+    });
+    el.addEventListener('hidden.bs.modal', unlockContractTemplatesModalLayout);
+  })();
+
   document.body.addEventListener('contract-templates-updated', function () {
     var el = document.getElementById('contract-templates-modal');
     if (!el) return;

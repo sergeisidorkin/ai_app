@@ -457,6 +457,12 @@ FIELD_MAP: dict[tuple[str, str, str], callable] = {
     ("projects", "performers", "contract_number"): lambda _ep, p: p.contract_number or "",
 }
 
+FIELD_MAP.update({
+    ("contracts", table, column): resolver
+    for (section, table, column), resolver in list(FIELD_MAP.items())
+    if section == "experts" and table == "contract_details"
+})
+
 
 # ---------------------------------------------------------------------------
 #  Computed variable resolvers  (is_computed=True)

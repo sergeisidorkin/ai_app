@@ -2,7 +2,8 @@ import os
 import shutil
 import tempfile
 import uuid
-from datetime import date
+from datetime import date, datetime, timedelta
+from io import BytesIO
 from urllib.parse import quote
 from unittest.mock import patch
 
@@ -12,18 +13,23 @@ from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
+from docx import Document
+from docx.enum.style import WD_STYLE_TYPE
 
 from classifiers_app.models import OKSMCountry
 from contacts_app.models import CitizenshipRecord, PersonRecord
 from core.models import CloudStorageSettings
+from contracts_app.docx_processor import process_template
 from contracts_app.forms import ContractTemplateForm
-from contracts_app.models import ContractTemplate, ContractVariable
+from contracts_app.models import ContractReturnComment, ContractTemplate, ContractVariable
 from contracts_app.variable_resolver import resolve_variables
 from experts_app.models import ExpertContractDetails, ExpertProfile
 from group_app.models import GroupMember, OrgUnit
 from nextcloud_app.api import NextcloudApiError, NextcloudShare
 from nextcloud_app.models import NextcloudUserLink
-from policy_app.models import DEPARTMENT_HEAD_GROUP, EXPERT_GROUP, LAWYER_GROUP, Product
+from notifications_app.models import Notification, NotificationPerformerLink
+from policy_app.models import ADMIN_GROUP, DEPARTMENT_HEAD_GROUP, EXPERT_GROUP, LAWYER_GROUP, Product
 from projects_app.models import Performer, ProjectRegistration
 from users_app.forms import FREELANCER_LABEL
 from users_app.models import Employee
@@ -45,6 +51,8 @@ class ContractsCloudLabelTests(TestCase):
             password="secret",
             is_staff=True,
         )
+        admin_group, _ = Group.objects.get_or_create(name=ADMIN_GROUP)
+        self.user.groups.add(admin_group)
         self.client.force_login(self.user)
 
         settings_obj = CloudStorageSettings.get_solo()
@@ -105,6 +113,9 @@ class ContractsCloudLabelTests(TestCase):
         )
 
     def test_contracts_partial_renders_contract_projects_before_contract_conclusion(self):
+        self.performer.contract_signing_note = "Скрытая заметка отправки договора"
+        self.performer.save(update_fields=["contract_signing_note"])
+
         response = self.client.get(reverse("contracts_partial"))
 
         self.assertEqual(response.status_code, 200)
@@ -119,6 +130,8 @@ class ContractsCloudLabelTests(TestCase):
         self.assertContains(response, "Создать проект договора")
         self.assertContains(response, "Подписать проект договора")
         self.assertContains(response, "Отправить проект договора")
+        self.assertContains(response, "Системная электронная почта")
+        self.assertContains(response, "Подключенная электронная почта")
         self.assertContains(
             response,
             "На Nextcloud будут созданы папки договоров в структуре",
@@ -127,6 +140,7 @@ class ContractsCloudLabelTests(TestCase):
         self.assertContains(response, 'id="contract-project-filter-toggle"', html=False)
         self.assertContains(response, 'id="signing-project-filter-toggle"', html=False)
         self.assertContains(response, 'class="form-check-input js-signing-filter"', html=False)
+        self.assertContains(response, 'data-contract-status=', html=False)
         self.assertContains(response, 'data-request-url="%s"' % reverse("contract_request"), html=False)
         self.assertContains(
             response,
@@ -147,6 +161,17 @@ class ContractsCloudLabelTests(TestCase):
         ]
         self.assertNotIn("<th>Грейд</th>", contract_drafting_table)
         self.assertNotIn("col-grade", contract_drafting_table)
+        contract_dispatch_table_start = content.index('id="contract-dispatch-table"')
+        contract_dispatch_table = content[
+            contract_dispatch_table_start:
+            content.index("</table>", contract_dispatch_table_start)
+        ]
+        self.assertIn('data-contract-dispatch-ready="0"', contract_dispatch_table)
+        self.assertNotIn("<th>Подписание</th>", contract_dispatch_table)
+        self.assertNotIn(
+            '<td class="cell-detail-val">Скрытая заметка отправки договора</td>',
+            contract_dispatch_table,
+        )
         self.assertLess(
             content.index('id="contracts-project-filter-toggle"'),
             content.index('id="contract-conclusion-section"'),
@@ -172,6 +197,14 @@ class ContractsCloudLabelTests(TestCase):
             content.index("Отправка проекта договора"),
             content.index("Подписание договора"),
         )
+        contract_request_modal = content[
+            content.index('id="contract-request-modal"'):
+            content.index('class="modal-footer"', content.index('id="contract-request-modal"'))
+        ]
+        self.assertIn('value="system_email"', contract_request_modal)
+        self.assertIn('value="connected_email"', contract_request_modal)
+        self.assertNotIn("Дата отправки запроса", contract_request_modal)
+        self.assertNotIn('id="contract-request-sent-at"', contract_request_modal)
 
     def test_contract_conclusion_column_registry_excludes_grade(self):
         from core.column_registry import get_column_choices
@@ -180,34 +213,736 @@ class ContractsCloudLabelTests(TestCase):
 
         self.assertNotIn(("grade", "Грейд"), choices)
 
-    def test_contracts_partial_renders_contract_pdf_file_like_proposal_pdf(self):
-        self.performer.contract_pdf_file = "Договор 7001_Иванов ИИ.pdf"
-        self.performer.contract_pdf_link = "https://cloud.example.com/s/contract-pdf"
-        self.performer.save(update_fields=["contract_pdf_file", "contract_pdf_link"])
+    def test_contract_conclusion_lists_unsent_addendum_batch_before_sent_contract(self):
+        self.performer.contract_sent_at = timezone.now()
+        self.performer.contract_signing_date = timezone.now()
+        self.performer.contract_project_folder_link = "https://cloud.example.com/s/existing-contract-folder"
+        self.performer.save(update_fields=[
+            "contract_sent_at",
+            "contract_signing_date",
+            "contract_project_folder_link",
+        ])
+        addendum_batch_id = uuid.uuid4()
+        addendum = Performer.objects.create(
+            registration=self.project,
+            employee=self.employee,
+            executor=self.performer.executor,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+            contract_batch_id=addendum_batch_id,
+            contract_is_addendum=True,
+            contract_addendum_number=1,
+            contract_number="IMCM/7001-ИИ/05-26 ДС1",
+        )
 
         response = self.client.get(reverse("contracts_partial"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, '<th class="text-nowrap">Наименование файла PDF</th>', html=False)
+        content = response.content.decode("utf-8")
+        drafting_table = content[
+            content.index('id="contract-drafting-table"'):
+            content.index('id="contract-dispatch-table"')
+        ]
+        dispatch_table = content[
+            content.index('id="contract-dispatch-table"'):
+            content.index("</table>", content.index('id="contract-dispatch-table"'))
+        ]
+        self.assertLess(
+            drafting_table.index(f'id="contract-drafting-sel-{addendum.pk}"'),
+            drafting_table.index(f'id="contract-drafting-sel-{self.performer.pk}"'),
+        )
+        self.assertLess(
+            dispatch_table.index(f'id="contract-dispatch-sel-{addendum.pk}"'),
+            dispatch_table.index(f'id="contract-dispatch-sel-{self.performer.pk}"'),
+        )
+        addendum_checkbox = drafting_table[
+            drafting_table.index(f'id="contract-drafting-sel-{addendum.pk}"'):
+            drafting_table.index("aria-label", drafting_table.index(f'id="contract-drafting-sel-{addendum.pk}"'))
+        ]
+        self.assertIn('data-contract-sent="0"', addendum_checkbox)
+        self.assertNotIn("disabled", addendum_checkbox)
+        self.assertIn('data-contract-batch-id="%s"' % addendum_batch_id, drafting_table)
+        self.assertIn("ДС1", drafting_table)
+        self.assertIn("IMCM/7001-ИИ/05-26 ДС1", drafting_table)
+        addendum_row = drafting_table[
+            drafting_table.rindex("<tr", 0, drafting_table.index(f'id="contract-drafting-sel-{addendum.pk}"')):
+            drafting_table.index("</tr>", drafting_table.index(f'id="contract-drafting-sel-{addendum.pk}"'))
+        ]
+        self.assertIn('href="https://cloud.example.com/s/existing-contract-folder"', addendum_row)
+
+    def test_contract_dispatch_marks_ready_only_when_docx_and_pdf_exist(self):
+        self.performer.contract_pdf_file = "Договор 7001_Иванов ИИ.pdf"
+        self.performer.save(update_fields=["contract_pdf_file"])
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        dispatch_table = content[
+            content.index('id="contract-dispatch-table"'):
+            content.index("</table>", content.index('id="contract-dispatch-table"'))
+        ]
+        self.assertIn('data-contract-dispatch-ready="1"', dispatch_table)
+
+    def test_contract_adjustment_prefills_addendum_file_name_with_kind_suffix(self):
+        from contracts_app.services import prefill_contract_adjustment_fields
+
+        self.performer.contract_project_created = True
+        self.performer.save(update_fields=["contract_project_created"])
+        addendum = Performer.objects.create(
+            registration=self.project,
+            employee=self.employee,
+            executor=self.performer.executor,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+        )
+
+        prefill_contract_adjustment_fields([addendum.pk], confirmed_at=timezone.now())
+
+        addendum.refresh_from_db()
+        self.assertTrue(addendum.contract_is_addendum)
+        self.assertEqual(addendum.contract_addendum_number, 1)
+        self.assertEqual(
+            addendum.contract_file,
+            f"Договор {self.project.short_uid}_Иванов ИИ_ДС1.docx",
+        )
+
+    def test_contract_dispatch_column_registry_excludes_signing_note(self):
+        from core.column_registry import get_column_choices
+
+        choices = get_column_choices("projects", "contract_dispatch")
+
+        self.assertNotIn(("signing", "Подписание"), choices)
+
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_contracts_partial_shows_only_current_expert_signing_rows(
+        self,
+        _mocked_list_user_shares,
+        _mocked_get_user_share,
+    ):
+        other_project = ProjectRegistration.objects.create(
+            number=7002,
+            group_member=self.group_member,
+            type=self.product,
+            name="Чужой договорный проект",
+            year=2026,
+        )
+        other_user = get_user_model().objects.create_user(
+            username="other-expert@example.com",
+            email="other-expert@example.com",
+            password="secret",
+            is_staff=True,
+        )
+        other_employee = Employee.objects.create(user=other_user)
+        Performer.objects.create(
+            registration=other_project,
+            employee=other_employee,
+            executor="Петров Петр Петрович",
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+            contract_batch_id=uuid.uuid4(),
+            contract_file="Договор 7002_Петров ПП.docx",
+            contract_project_disk_folder="/Corporate Root/2026/Project/09 Договоры/000 Петров ПП",
+        )
+        self.client.force_login(self.employee_user)
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="signing-sign-contract-btn"', html=False)
+        self.assertContains(response, 'data-expert-requires-contract-sent="1"', html=False)
+        self.assertNotContains(response, 'data-expert-has-contract-sent="1"', html=False)
+        self.assertContains(response, 'class="btn btn-primary btn-sm d-none align-items-center"', html=False)
+        self.assertContains(response, 'data-contract-sent="0"', html=False)
+        self.assertContains(response, "Подписать договор")
+        self.assertNotContains(response, 'id="signing-edit-btn"', html=False)
+        self.assertNotContains(response, 'id="signing-send-scan-btn"', html=False)
+        self.assertContains(response, "Подписание договора")
+        self.assertContains(response, 'id="signing-project-filter-toggle"', html=False)
+        self.assertNotContains(response, "Корректировка условий договора")
+        self.assertNotContains(response, "Составление проекта договора")
+        self.assertNotContains(response, "Отправка проекта договора")
+        self.assertNotContains(response, 'class="table table-sm align-middle contracts-table mb-0"', html=False)
+        self.assertNotContains(response, 'id="contract-conclusion-section"', html=False)
+        self.assertNotContains(response, 'id="contract-drafting-table"', html=False)
+        self.assertNotContains(response, 'id="contract-dispatch-table"', html=False)
+        self.assertContains(response, "Договорный проект")
+        self.assertContains(response, "Иванов И.И.")
+        self.assertNotContains(response, "Чужой договорный проект")
+        self.assertNotContains(response, "Петров П.П.")
+        content = response.content.decode("utf-8")
+        signing_header = content[
+            content.rindex("<div", 0, content.index("Подписание договора")):
+            content.index("Подписание договора")
+        ]
+        self.assertIn("table-section-header", signing_header)
+        self.assertNotIn("mt-4", signing_header)
+
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_contracts_partial_marks_expert_signing_row_after_contract_is_sent(
+        self,
+        _mocked_list_user_shares,
+        _mocked_get_user_share,
+    ):
+        self.performer.contract_sent_at = timezone.now()
+        self.performer.contract_signing_note = "Отправлен проект договора"
+        self.performer.save(update_fields=["contract_sent_at", "contract_signing_note"])
+        self.client.force_login(self.employee_user)
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-expert-requires-contract-sent="1"', html=False)
+        self.assertContains(response, 'data-expert-has-contract-sent="1"', html=False)
+        self.assertContains(response, 'class="btn btn-primary btn-sm d-flex align-items-center"', html=False)
+        self.assertContains(response, 'data-contract-sent="1"', html=False)
+        self.assertContains(response, "Отправлен проект договора")
+
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_contracts_partial_adds_return_column_and_hides_signing_kind(
+        self,
+        _mocked_list_user_shares,
+        _mocked_get_user_share,
+    ):
+        self.performer.contract_sent_at = timezone.now()
+        self.performer.contract_signing_note = "Отправлен проект договора"
+        self.performer.save(update_fields=["contract_sent_at", "contract_signing_note"])
+        self.client.force_login(self.employee_user)
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        signing_table_start = content.index('class="table table-sm align-middle signing-table"')
+        signing_table = content[
+            signing_table_start:
+            content.index("</table>", signing_table_start)
+        ]
+        self.assertNotIn('<th class="text-nowrap">Вид</th>', signing_table)
+        self.assertIn('<th class="text-nowrap">Возврат</th>', signing_table)
+        self.assertLess(
+            signing_table.index('<th class="text-nowrap">Проект договора</th>'),
+            signing_table.index('<th class="text-nowrap">Возврат</th>'),
+        )
+        self.assertLess(
+            signing_table.index('<th class="text-nowrap">Возврат</th>'),
+            signing_table.index('<th class="text-nowrap">Подписанный договор</th>'),
+        )
+        self.assertIn('data-contract-return-comment-trigger="1"', signing_table)
+
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_contracts_partial_shows_return_button_only_for_expert(
+        self,
+        _mocked_list_user_shares,
+        _mocked_get_user_share,
+    ):
+        self.performer.contract_sent_at = timezone.now()
+        self.performer.contract_signing_note = "Отправлен проект договора"
+        self.performer.save(update_fields=["contract_sent_at", "contract_signing_note"])
+        self.client.force_login(self.employee_user)
+
+        expert_response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(expert_response.status_code, 200)
+        self.assertContains(expert_response, 'id="signing-return-contract-btn"', html=False)
+        self.assertContains(expert_response, "Вернуть договор")
+
+        self.client.force_login(self.user)
+        admin_response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(admin_response.status_code, 200)
+        self.assertNotContains(admin_response, 'id="signing-return-contract-btn"', html=False)
+
+    def test_contract_return_comment_modal_uses_contract_title_without_asset_tabs(self):
+        self.performer.contract_number = "IMCM/7001-ИИ/05-26"
+        self.performer.contract_sent_at = timezone.now()
+        self.performer.save(update_fields=["contract_number", "contract_sent_at"])
+        self.client.force_login(self.employee_user)
+
+        response = self.client.get(reverse("contracts_return_comment_modal", args=[self.performer.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Комментарии к проекту договора IMCM/7001-ИИ/05-26")
+        self.assertNotContains(response, "Договорный проект")
+        self.assertNotContains(response, "Все активы")
+        self.assertNotContains(response, "data-comment-tab", html=False)
+        self.assertContains(response, "Добавить комментарий")
+        self.assertContains(response, "Вернуть договор")
+
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_contract_return_comment_counts_lawyer_and_expert_roles(
+        self,
+        _mocked_list_user_shares,
+        _mocked_get_user_share,
+    ):
+        lawyer_user = get_user_model().objects.create_user(
+            username="return-lawyer@example.com",
+            email="return-lawyer@example.com",
+            password="secret",
+            is_staff=True,
+        )
+        lawyer_group, _ = Group.objects.get_or_create(name=LAWYER_GROUP)
+        lawyer_user.groups.add(lawyer_group)
+        ContractReturnComment.objects.create(
+            performer=self.performer,
+            contract_batch_id=self.performer.contract_batch_id,
+            text="Комментарий юриста",
+            author=lawyer_user,
+            author_role=ContractReturnComment.AuthorRole.LAWYER,
+        )
+        ContractReturnComment.objects.create(
+            performer=self.performer,
+            contract_batch_id=self.performer.contract_batch_id,
+            text="Комментарий эксперта",
+            author=self.employee_user,
+            author_role=ContractReturnComment.AuthorRole.EXPERT,
+        )
+        self.client.force_login(self.employee_user)
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        return_cell_start = content.index(f'id="contract-return-comment-{self.performer.pk}"')
+        return_cell = content[return_cell_start:content.index("</div>", return_cell_start)]
+        self.assertIn('chk-comment-counter--lawyer has-comments', return_cell)
+        self.assertIn('>1</span>', return_cell)
+        self.assertIn('chk-comment-counter--expert has-comments', return_cell)
+        self.assertIn('contract-return-icon--expert', return_cell)
+
+    def test_contract_return_endpoint_requires_expert_role(self):
+        self.performer.contract_sent_at = timezone.now()
+        self.performer.contract_signing_note = "Отправлен проект договора"
+        self.performer.save(update_fields=["contract_sent_at", "contract_signing_note"])
+
+        response = self.client.post(reverse("contracts_return_performer_contract", args=[self.performer.pk]))
+
+        self.assertEqual(response.status_code, 403)
+        self.performer.refresh_from_db()
+        self.assertIsNotNone(self.performer.contract_sent_at)
+        self.assertEqual(self.performer.contract_signing_note, "Отправлен проект договора")
+
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_expert_contract_return_moves_batch_back_to_project_drafting(
+        self,
+        _mocked_list_user_shares,
+        _mocked_get_user_share,
+    ):
+        sent_at = timezone.now()
+        deadline_at = sent_at + timedelta(hours=96)
+        self.performer.contract_sent_at = sent_at
+        self.performer.contract_deadline_at = deadline_at
+        self.performer.contract_conclusion_status = "В срок"
+        self.performer.contract_signing_note = "Отправлен проект договора"
+        self.performer.save(update_fields=[
+            "contract_sent_at",
+            "contract_deadline_at",
+            "contract_conclusion_status",
+            "contract_signing_note",
+        ])
+        self.client.force_login(self.employee_user)
+
+        response = self.client.post(reverse("contracts_return_performer_contract", args=[self.performer.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.performer.refresh_from_db()
+        self.assertIsNone(self.performer.contract_sent_at)
+        self.assertIsNone(self.performer.contract_deadline_at)
+        self.assertEqual(self.performer.contract_conclusion_status, "")
+        self.assertEqual(self.performer.contract_signing_note, "Разрабатывается проект договора")
+
+        expert_response = self.client.get(reverse("contracts_partial"))
+        self.assertEqual(expert_response.status_code, 200)
+        expert_content = expert_response.content.decode("utf-8")
+        signing_checkbox_start = expert_content.index(f'id="signing-sel-{self.performer.pk}"')
+        signing_checkbox = expert_content[
+            signing_checkbox_start:
+            expert_content.index("aria-label", signing_checkbox_start)
+        ]
+        self.assertIn("disabled", signing_checkbox)
+        self.assertIn("договор возвращён на составление проекта", signing_checkbox)
+
+        self.client.force_login(self.user)
+        admin_response = self.client.get(reverse("contracts_partial"))
+        self.assertEqual(admin_response.status_code, 200)
+        admin_content = admin_response.content.decode("utf-8")
+        drafting_checkbox_start = admin_content.index(f'id="contract-drafting-sel-{self.performer.pk}"')
+        drafting_checkbox = admin_content[
+            drafting_checkbox_start:
+            admin_content.index("aria-label", drafting_checkbox_start)
+        ]
+        self.assertIn('data-contract-sent="0"', drafting_checkbox)
+        self.assertNotIn("disabled", drafting_checkbox)
+
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_contract_return_completes_expert_contract_notification(
+        self,
+        _mocked_list_user_shares,
+        _mocked_get_user_share,
+    ):
+        sent_at = timezone.now()
+        self.performer.contract_sent_at = sent_at
+        self.performer.contract_deadline_at = sent_at + timedelta(hours=96)
+        self.performer.contract_signing_note = "Отправлен проект договора"
+        self.performer.save(update_fields=[
+            "contract_sent_at",
+            "contract_deadline_at",
+            "contract_signing_note",
+        ])
+        notification = Notification.objects.create(
+            notification_type=Notification.NotificationType.PROJECT_CONTRACT_CONCLUSION,
+            related_section=Notification.RelatedSection.CONTRACTS,
+            recipient=self.employee_user,
+            sender=self.user,
+            project=self.project,
+            title_text="Отправлен проект договора",
+            content_text="Подписать договор",
+            sent_at=sent_at,
+            deadline_at=self.performer.contract_deadline_at,
+            is_read=False,
+            is_processed=False,
+        )
+        NotificationPerformerLink.objects.create(notification=notification, performer=self.performer)
+        self.client.force_login(self.employee_user)
+
+        counters_before = self.client.get(reverse("notifications_counters")).json()
+        self.assertEqual(counters_before["sections"].get("contracts"), 1)
+        response_before = self.client.get(reverse("contracts_partial"))
+        self.assertContains(response_before, '<span class="badge rounded-pill text-bg-danger ms-1">1</span>', html=False)
+
+        response = self.client.post(reverse("contracts_return_performer_contract", args=[self.performer.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["completed_notifications"], 1)
+        notification.refresh_from_db()
+        self.assertTrue(notification.is_read)
+        self.assertTrue(notification.is_processed)
+        self.assertEqual(notification.action_by, self.employee_user)
+
+        counters_after = self.client.get(reverse("notifications_counters")).json()
+        self.assertEqual(counters_after["sections"].get("contracts", 0), 0)
+        response_after = self.client.get(reverse("contracts_partial"))
+        self.assertNotContains(response_after, '<span class="badge rounded-pill text-bg-danger ms-1">1</span>', html=False)
+
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_contracts_partial_disables_expert_signing_checkbox_after_facsimile_signature(
+        self,
+        _mocked_list_user_shares,
+        _mocked_get_user_share,
+    ):
+        self.performer.contract_sent_at = timezone.now()
+        self.performer.contract_signing_date = timezone.now()
+        self.performer.contract_signed_pdf_file = "Договор 7001_Иванов ИИ_п.pdf"
+        self.performer.contract_signing_note = "Договор подписан факсимиле"
+        self.performer.save(update_fields=[
+            "contract_sent_at",
+            "contract_signing_date",
+            "contract_signed_pdf_file",
+            "contract_signing_note",
+        ])
+        self.client.force_login(self.employee_user)
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        checkbox_start = content.index(f'id="signing-sel-{self.performer.pk}"')
+        checkbox_html = content[checkbox_start:content.index("aria-label", checkbox_start)]
+        self.assertIn("disabled", checkbox_html)
+        self.assertIn("Строка недоступна: договор уже подписан факсимиле", checkbox_html)
+        self.assertContains(response, "Договор подписан факсимиле")
+
+    def test_contracts_partial_shows_all_signing_rows_for_admin(self):
+        other_project = ProjectRegistration.objects.create(
+            number=7002,
+            group_member=self.group_member,
+            type=self.product,
+            name="Чужой договорный проект",
+            year=2026,
+        )
+        Performer.objects.create(
+            registration=other_project,
+            executor="Петров Петр Петрович",
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+            contract_batch_id=uuid.uuid4(),
+            contract_file="Договор 7002_Петров ПП.docx",
+        )
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Договорный проект")
+        self.assertContains(response, "Чужой договорный проект")
+        self.assertContains(response, "Иванов И.И.")
+        self.assertContains(response, "Петров П.П.")
+
+    def test_contracts_partial_uses_non_empty_signing_note_for_batch_representative(self):
+        self.performer.contract_signing_note = "Разрабатывается проект договора"
+        self.performer.save(update_fields=["contract_signing_note"])
+        Performer.objects.create(
+            registration=self.project,
+            executor="Иванов Иван Иванович",
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+            contract_batch_id=self.performer.contract_batch_id,
+            contract_file=self.performer.contract_file,
+            position=0,
+        )
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        signing_table_start = content.index('class="table table-sm align-middle signing-table"')
+        signing_table = content[
+            signing_table_start:
+            content.index("</table>", signing_table_start)
+        ]
+        self.assertIn("Разрабатывается проект договора", signing_table)
+
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_contracts_partial_hides_sign_contract_button_for_lawyer(
+        self,
+        _mocked_list_user_shares,
+        _mocked_get_user_share,
+    ):
+        lawyer_user = get_user_model().objects.create_user(
+            username="lawyer-sign-hidden@example.com",
+            email="lawyer-sign-hidden@example.com",
+            password="secret",
+            is_staff=True,
+        )
+        lawyer_group, _ = Group.objects.get_or_create(name=LAWYER_GROUP)
+        lawyer_user.groups.add(lawyer_group)
+        self.client.force_login(lawyer_user)
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'id="signing-sign-contract-btn"', html=False)
+        self.assertNotContains(response, 'id="signing-edit-btn"', html=False)
+        self.assertNotContains(response, 'id="signing-send-scan-btn"', html=False)
+        content = response.content.decode("utf-8")
+        checkbox_start = content.index(f'id="signing-sel-{self.performer.pk}"')
+        checkbox_html = content[checkbox_start:content.index("aria-label", checkbox_start)]
+        self.assertIn("disabled", checkbox_html)
+        self.assertIn("signing-table-wrap", content)
+
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_contracts_partial_hides_signing_management_buttons_for_employee_lawyer_role(
+        self,
+        _mocked_list_user_shares,
+        _mocked_get_user_share,
+    ):
+        lawyer_user = get_user_model().objects.create_user(
+            username="employee-lawyer-sign-hidden@example.com",
+            email="employee-lawyer-sign-hidden@example.com",
+            password="secret",
+            is_staff=True,
+        )
+        Employee.objects.create(user=lawyer_user, role=LAWYER_GROUP)
+        self.client.force_login(lawyer_user)
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'id="signing-edit-btn"', html=False)
+        self.assertNotContains(response, 'id="signing-send-scan-btn"', html=False)
+        content = response.content.decode("utf-8")
+        checkbox_start = content.index(f'id="signing-sel-{self.performer.pk}"')
+        checkbox_html = content[checkbox_start:content.index("aria-label", checkbox_start)]
+        self.assertIn("disabled", checkbox_html)
+
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_contracts_partial_hides_signing_management_buttons_for_superuser_lawyer_role(
+        self,
+        _mocked_list_user_shares,
+        _mocked_get_user_share,
+    ):
+        lawyer_user = get_user_model().objects.create_user(
+            username="lawyer-superuser-sign-hidden@example.com",
+            email="lawyer-superuser-sign-hidden@example.com",
+            password="secret",
+            is_staff=True,
+            is_superuser=True,
+        )
+        Employee.objects.create(user=lawyer_user, role=LAWYER_GROUP)
+        lawyer_group, _ = Group.objects.get_or_create(name=LAWYER_GROUP)
+        lawyer_user.groups.add(lawyer_group)
+        self.client.force_login(lawyer_user)
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'id="signing-sign-contract-btn"', html=False)
+        self.assertNotContains(response, 'id="signing-edit-btn"', html=False)
+        self.assertNotContains(response, 'id="signing-send-scan-btn"', html=False)
+
+    def test_contracts_partial_shows_signing_management_buttons_for_admin(self):
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="signing-edit-btn"', html=False)
+        self.assertContains(response, 'id="signing-send-scan-btn"', html=False)
+
+    def test_contracts_partial_shows_signing_management_buttons_for_employee_admin_role(self):
+        admin_user = get_user_model().objects.create_user(
+            username="employee-admin@example.com",
+            email="employee-admin@example.com",
+            password="secret",
+        )
+        Employee.objects.create(user=admin_user, role=ADMIN_GROUP)
+        self.client.force_login(admin_user)
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="signing-edit-btn"', html=False)
+        self.assertContains(response, 'id="signing-send-scan-btn"', html=False)
+        self.assertContains(response, 'id="signing-master"', html=False)
+
+    def test_contracts_partial_shows_signing_management_buttons_for_superuser(self):
+        superuser = get_user_model().objects.create_user(
+            username="contracts-superuser@example.com",
+            email="contracts-superuser@example.com",
+            password="secret",
+            is_superuser=True,
+        )
+        self.client.force_login(superuser)
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="signing-edit-btn"', html=False)
+        self.assertContains(response, 'id="signing-send-scan-btn"', html=False)
+        self.assertContains(response, 'id="signing-master"', html=False)
+
+    def test_contract_signing_management_actions_reject_non_admin_staff_user(self):
+        staff_user = get_user_model().objects.create_user(
+            username="contracts-staff@example.com",
+            email="contracts-staff@example.com",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(staff_user)
+
+        edit_response = self.client.get(reverse("contracts_signing_edit", args=[self.performer.pk]))
+        send_scan_response = self.client.post(
+            reverse("signing_send_scan"),
+            {"performer_ids[]": [self.performer.pk]},
+        )
+
+        self.assertEqual(edit_response.status_code, 302)
+        self.assertEqual(send_scan_response.status_code, 302)
+
+    def test_contracts_partial_renders_contract_pdf_file_like_proposal_pdf(self):
+        signed_at = timezone.make_aware(datetime(2026, 5, 2, 13, 45))
+        self.performer.contract_pdf_file = "Договор 7001_Иванов ИИ.pdf"
+        self.performer.contract_pdf_link = "https://cloud.example.com/s/contract-pdf"
+        self.performer.contract_signed_pdf_file = "Договор 7001_Иванов ИИ подписанный.pdf"
+        self.performer.contract_signed_pdf_link = "https://cloud.example.com/s/signed-contract-pdf"
+        self.performer.contract_signing_date = signed_at
+        self.performer.contract_deadline_at = signed_at + timedelta(days=1)
+        self.performer.contract_signing_note = "Отправлен проект договора"
+        self.performer.save(update_fields=[
+            "contract_pdf_file",
+            "contract_pdf_link",
+            "contract_signed_pdf_file",
+            "contract_signed_pdf_link",
+            "contract_signing_date",
+            "contract_deadline_at",
+            "contract_signing_note",
+        ])
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '<th class="text-nowrap">Проект договора</th>', html=False)
+        self.assertContains(response, '<th class="text-nowrap">Дата подписания</th>', html=False)
+        self.assertContains(response, '<th class="text-nowrap">Статус</th>', html=False)
+        self.assertContains(response, '<th class="text-nowrap">Заключение договора</th>', html=False)
+        self.assertContains(response, '<th class="text-nowrap">Подписанный договор</th>', html=False)
+        self.assertContains(response, '<td class="text-nowrap">Отправлен проект договора</td>', html=False)
         self.assertContains(response, "https://cloud.example.com/s/contract-pdf")
         self.assertContains(response, "Договор 7001_Иванов ИИ.pdf")
+        self.assertContains(response, "https://cloud.example.com/s/signed-contract-pdf")
+        self.assertContains(response, "Договор 7001_Иванов ИИ подписанный.pdf")
         self.assertContains(response, "bi-file-pdf-fill")
         content = response.content.decode("utf-8")
         signing_section = content[content.index("Подписание договора"):]
+        self.assertLess(
+            signing_section.index('<th class="text-nowrap">Проект договора</th>'),
+            signing_section.index('<th class="text-nowrap">Подписанный договор</th>'),
+        )
+        self.assertLess(
+            signing_section.index('<th class="text-nowrap">Подписанный договор</th>'),
+            signing_section.index('<th class="text-nowrap">Дата подписания</th>'),
+        )
+        self.assertLess(
+            signing_section.index('<th class="text-nowrap">Дата подписания</th>'),
+            signing_section.index('<th class="text-nowrap">Статус</th>'),
+        )
+        self.assertLess(
+            signing_section.index('<th class="text-nowrap">Статус</th>'),
+            signing_section.index('<th class="text-nowrap">Заключение договора</th>'),
+        )
+        self.assertNotIn('<th class="text-nowrap">Скан с подписью сотрудника</th>', signing_section)
+        self.assertNotIn('<th class="text-nowrap">Облако</th>', signing_section)
+        self.assertNotIn('<th class="text-nowrap">Дата загрузки</th>', signing_section)
+        self.assertNotIn('<th class="text-nowrap">Дата отправки</th>', signing_section)
+        self.assertNotIn('<th class="text-nowrap">Скан подписанного договора</th>', signing_section)
         self.assertIn("https://cloud.example.com/s/contract-pdf", signing_section)
         self.assertIn("Договор 7001_Иванов ИИ.pdf", signing_section)
+        self.assertIn(timezone.localtime(signed_at).strftime("%d.%m.%Y %H:%M"), signing_section)
+        self.assertIn("В срок", signing_section)
+        self.assertIn("https://cloud.example.com/s/signed-contract-pdf", signing_section)
+        self.assertIn("Договор 7001_Иванов ИИ подписанный.pdf", signing_section)
+
+    def test_contract_request_sets_signing_note_for_signing_table(self):
+        response = self.client.post(
+            reverse("contract_request"),
+            {
+                "performer_ids[]": [self.performer.pk],
+                "duration_hours": "24",
+                "delivery_channels[]": ["system"],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.performer.refresh_from_db()
+        self.assertEqual(self.performer.contract_signing_note, "Отправлен проект договора")
+
+        partial_response = self.client.get(reverse("contracts_partial"))
+        self.assertContains(
+            partial_response,
+            '<td class="text-nowrap">Отправлен проект договора</td>',
+            html=False,
+        )
 
     def test_contract_docx_source_is_available_to_onlyoffice_without_session(self):
         from projects_app.views import _build_contract_docx_source_token
 
         self.client.logout()
         token = _build_contract_docx_source_token(self.performer)
+        doc = Document()
+        doc.add_paragraph("contract body")
+        buffer = BytesIO()
+        doc.save(buffer)
 
         with patch(
             "projects_app.views.cloud_download_file",
             return_value=(
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                b"docx-bytes",
+                buffer.getvalue(),
             ),
         ):
             response = self.client.get(
@@ -216,11 +951,38 @@ class ContractsCloudLabelTests(TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.content, b"docx-bytes")
+        response_doc = Document(BytesIO(response.content))
+        self.assertEqual(response_doc.paragraphs[0].text, "contract body")
         self.assertEqual(
             response["Content-Type"],
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
+
+    def test_contract_actives_name_uses_russian_bullet_list_style(self):
+        template_doc = Document()
+        template_doc.styles.add_style("Маркированный список", WD_STYLE_TYPE.PARAGRAPH)
+        template_doc.add_paragraph("[[actives_name]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+
+        generated_bytes = process_template(
+            buffer.getvalue(),
+            {},
+            list_replacements={"[[actives_name]]": ["Актив 1", "Актив 2"]},
+            default_language_code="ru-RU",
+        )
+
+        generated_doc = Document(BytesIO(generated_bytes))
+        active_paragraphs = [
+            paragraph
+            for paragraph in generated_doc.paragraphs
+            if paragraph.text in {"Актив 1", "Актив 2"}
+        ]
+
+        self.assertEqual(len(active_paragraphs), 2)
+        for paragraph in active_paragraphs:
+            self.assertEqual(paragraph.style.name, "Маркированный список")
+            self.assertIn('w:lang w:val="ru-RU"', paragraph._element.xml)
 
     @override_settings(ONLYOFFICE_DOCUMENT_SERVER_URL="https://docs.example.com")
     def test_sign_contract_documents_generates_pdf_and_public_link(self):
@@ -257,6 +1019,129 @@ class ContractsCloudLabelTests(TestCase):
         self.assertEqual(self.performer.contract_pdf_file, "Договор 7001_Иванов ИИ.pdf")
         self.assertEqual(self.performer.contract_pdf_link, "https://cloud.example.com/s/contract-pdf")
         self.assertEqual(self.performer.contract_pdf_file_id, "pdf-file-id")
+
+    @override_settings(ONLYOFFICE_DOCUMENT_SERVER_URL="https://docs.example.com")
+    def test_sign_performer_contract_documents_generates_signed_pdf_and_public_link(self):
+        signed_at = timezone.now().replace(microsecond=0)
+        self.performer.contract_deadline_at = signed_at + timedelta(days=1)
+        self.performer.save(update_fields=["contract_deadline_at"])
+
+        with (
+            patch("projects_app.views.timezone.now", return_value=signed_at),
+            patch("projects_app.views._load_performer_facsimile_bytes", return_value=b"facsimile"),
+            patch("projects_app.views.convert_docx_source_to_pdf", return_value=b"%PDF-1.4") as mocked_convert,
+            patch("projects_app.views.cloud_upload_file", return_value=True) as mocked_upload,
+            patch("projects_app.views.cloud_publish_resource", return_value="https://cloud.example.com/s/signed-contract-pdf") as mocked_publish,
+            patch("projects_app.views._resolve_contract_project_nextcloud_file_id", return_value="signed-pdf-file-id"),
+        ):
+            response = self.client.post(
+                reverse("sign_performer_contract_documents"),
+                {"performer_ids[]": [self.performer.pk]},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["generated"], 1)
+        self.assertEqual(
+            data["updates"][0]["contract_signed_pdf_file"],
+            "Договор 7001_Иванов ИИ_п.pdf",
+        )
+
+        source_url = mocked_convert.call_args.kwargs["source_url"]
+        self.assertIn(
+            reverse("contract_onlyoffice_docx_source", args=[self.performer.pk]),
+            source_url,
+        )
+        expected_pdf_path = (
+            f"{self.performer.contract_project_disk_folder}/"
+            "Договор 7001_Иванов ИИ_п.pdf"
+        )
+        mocked_upload.assert_called_once_with(self.user, expected_pdf_path, b"%PDF-1.4")
+        mocked_publish.assert_called_once_with(self.user, expected_pdf_path)
+
+        self.performer.refresh_from_db()
+        self.assertEqual(self.performer.contract_signed_pdf_file, "Договор 7001_Иванов ИИ_п.pdf")
+        self.assertEqual(self.performer.contract_signed_pdf_link, "https://cloud.example.com/s/signed-contract-pdf")
+        self.assertEqual(self.performer.contract_signed_pdf_file_id, "signed-pdf-file-id")
+        self.assertEqual(self.performer.contract_signing_date, signed_at)
+        self.assertEqual(self.performer.contract_conclusion_status, "В срок")
+        self.assertEqual(self.performer.contract_signing_note, "Договор подписан факсимиле")
+
+    @override_settings(ONLYOFFICE_DOCUMENT_SERVER_URL="https://docs.example.com")
+    def test_sign_performer_contract_documents_returns_clear_error_without_facsimile(self):
+        with (
+            patch("projects_app.views._load_performer_facsimile_bytes", return_value=None),
+            patch("projects_app.views.convert_docx_source_to_pdf") as mocked_convert,
+        ):
+            response = self.client.post(
+                reverse("sign_performer_contract_documents"),
+                {"performer_ids[]": [self.performer.pk]},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        data = response.json()
+        self.assertFalse(data["ok"])
+        self.assertIn("факсимильная подпись исполнителя", data["error"])
+        self.assertNotIn("Загрузите файл", data["error"])
+        mocked_convert.assert_not_called()
+
+    @override_settings(ONLYOFFICE_DOCUMENT_SERVER_URL="https://docs.example.com")
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_sign_performer_contract_documents_completes_expert_contract_notification(
+        self,
+        _mocked_list_user_shares,
+        _mocked_get_user_share,
+    ):
+        self.performer.contract_deadline_at = timezone.now() + timedelta(days=1)
+        self.performer.save(update_fields=["contract_deadline_at"])
+        notification = Notification.objects.create(
+            notification_type=Notification.NotificationType.PROJECT_CONTRACT_CONCLUSION,
+            related_section=Notification.RelatedSection.CONTRACTS,
+            recipient=self.employee_user,
+            sender=self.user,
+            project=self.project,
+            title_text="Отправлен проект договора",
+            content_text="Подписать договор",
+            sent_at=timezone.now(),
+            deadline_at=self.performer.contract_deadline_at,
+            is_read=False,
+            is_processed=False,
+        )
+        NotificationPerformerLink.objects.create(notification=notification, performer=self.performer)
+        self.client.force_login(self.employee_user)
+
+        counters_before = self.client.get(reverse("notifications_counters")).json()
+        self.assertEqual(counters_before["sections"].get("contracts"), 1)
+        response_before = self.client.get(reverse("contracts_partial"))
+        self.assertContains(response_before, '<span class="badge rounded-pill text-bg-danger ms-1">1</span>', html=False)
+
+        with (
+            patch("projects_app.views.convert_docx_source_to_pdf", return_value=b"%PDF-1.4"),
+            patch("projects_app.views._load_performer_facsimile_bytes", return_value=b"facsimile"),
+            patch("projects_app.views.cloud_upload_file", return_value=True),
+            patch("projects_app.views.cloud_publish_resource", return_value="https://cloud.example.com/s/signed-contract-pdf"),
+            patch("projects_app.views._resolve_contract_project_nextcloud_file_id", return_value="signed-pdf-file-id"),
+        ):
+            response = self.client.post(
+                reverse("sign_performer_contract_documents"),
+                {"performer_ids[]": [self.performer.pk]},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["completed_notifications"], 1)
+        notification.refresh_from_db()
+        self.assertTrue(notification.is_read)
+        self.assertTrue(notification.is_processed)
+        self.assertEqual(notification.action_by, self.employee_user)
+
+        counters_after = self.client.get(reverse("notifications_counters")).json()
+        self.assertEqual(counters_after["sections"].get("contracts", 0), 0)
+        response_after = self.client.get(reverse("contracts_partial"))
+        self.assertNotContains(response_after, '<span class="badge rounded-pill text-bg-danger ms-1">1</span>', html=False)
 
     def test_contract_edit_updates_contract_date_for_batch_rows(self):
         self.project.deadline = date(2026, 5, 27)
@@ -832,16 +1717,21 @@ class ContractsCloudLabelTests(TestCase):
 
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
     def test_contracts_partial_builds_nextcloud_disk_link_from_user_share_target(self, mocked_list_user_shares):
+        admin_link = NextcloudUserLink.objects.create(
+            user=self.user,
+            nextcloud_user_id="nc-admin",
+            nextcloud_username="nc-admin",
+            nextcloud_email=self.user.email,
+        )
         mocked_list_user_shares.return_value = {
             self.performer.contract_project_disk_folder: NextcloudShare(
                 share_id="55",
                 path=self.performer.contract_project_disk_folder,
-                share_with=self.employee_link.nextcloud_user_id,
+                share_with=admin_link.nextcloud_user_id,
                 permissions=1,
                 target_path="/Shared/000 Иванов ИИ",
             )
         }
-        self.client.force_login(self.employee_user)
 
         response = self.client.get(reverse("contracts_partial"))
 
@@ -854,7 +1744,12 @@ class ContractsCloudLabelTests(TestCase):
 
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", side_effect=NextcloudApiError("temporary outage"))
     def test_contracts_partial_falls_back_to_generic_folder_url_when_share_resolution_fails(self, _mocked_list_user_shares):
-        self.client.force_login(self.employee_user)
+        NextcloudUserLink.objects.create(
+            user=self.user,
+            nextcloud_user_id="nc-admin",
+            nextcloud_username="nc-admin",
+            nextcloud_email=self.user.email,
+        )
 
         response = self.client.get(reverse("contracts_partial"))
 
@@ -917,7 +1812,7 @@ class ContractsCloudLabelTests(TestCase):
 class ContractVariableBindingDisplayTests(TestCase):
     def test_binding_display_uses_current_app_section_label(self):
         variable = ContractVariable(
-            source_section="experts",
+            source_section="contracts",
             source_table="contract_details",
             source_column="full_name",
         )
@@ -926,8 +1821,29 @@ class ContractVariableBindingDisplayTests(TestCase):
             variable.binding_display,
             "Значения столбца «ФИО» "
             "из таблицы «Реквизиты физлиц-исполнителей» "
-            "раздела «Исполнители»",
+            "раздела «Договоры»",
         )
+
+    def test_binding_display_handles_contract_details_inn(self):
+        variable = ContractVariable(
+            source_section="contracts",
+            source_table="contract_details",
+            source_column="inn",
+        )
+
+        self.assertEqual(
+            variable.binding_display,
+            "Значения столбца «ИНН» "
+            "из таблицы «Реквизиты физлиц-исполнителей» "
+            "раздела «Договоры»",
+        )
+
+    def test_performer_facsimile_variable_is_seeded_as_computed_field(self):
+        variable = ContractVariable.objects.get(key="[[facsimile_prfrm]]")
+
+        self.assertEqual(variable.description, "Подпись исполнителя")
+        self.assertTrue(variable.is_computed)
+        self.assertEqual(variable.binding_display, "Расчётное поле")
 
 
 class ContractVariableResolverTests(TestCase):
@@ -1007,13 +1923,13 @@ class ContractVariableResolverTests(TestCase):
             ContractVariable(key="{{short_name}}", source_section="contacts", source_table="persons", source_column="short_name"),
             ContractVariable(key="{{name}}", source_section="projects", source_table="registration", source_column="customer"),
             ContractVariable(key="{{country}}", source_section="classifiers", source_table="oksm_countries", source_column="full_name"),
-            ContractVariable(key="{{full_name_genitive}}", source_section="experts", source_table="contract_details", source_column="full_name_genitive"),
-            ContractVariable(key="{{citizenship_country}}", source_section="experts", source_table="contract_details", source_column="citizenship_country"),
-            ContractVariable(key="{{citizenship_identifier}}", source_section="experts", source_table="contract_details", source_column="citizenship_identifier"),
-            ContractVariable(key="{{passport_expiry_date}}", source_section="experts", source_table="contract_details", source_column="passport_expiry"),
-            ContractVariable(key="{{bank_swift}}", source_section="experts", source_table="contract_details", source_column="swift"),
-            ContractVariable(key="{{corr_account}}", source_section="experts", source_table="contract_details", source_column="correspondent_account"),
-            ContractVariable(key="{{corr_bank_settlement_account}}", source_section="experts", source_table="contract_details", source_column="corr_bank_settlement"),
+            ContractVariable(key="{{full_name_genitive}}", source_section="contracts", source_table="contract_details", source_column="full_name_genitive"),
+            ContractVariable(key="{{citizenship_country}}", source_section="contracts", source_table="contract_details", source_column="citizenship_country"),
+            ContractVariable(key="{{citizenship_identifier}}", source_section="contracts", source_table="contract_details", source_column="citizenship_identifier"),
+            ContractVariable(key="{{passport_expiry_date}}", source_section="contracts", source_table="contract_details", source_column="passport_expiry"),
+            ContractVariable(key="{{bank_swift}}", source_section="contracts", source_table="contract_details", source_column="swift"),
+            ContractVariable(key="{{corr_account}}", source_section="contracts", source_table="contract_details", source_column="correspondent_account"),
+            ContractVariable(key="{{corr_bank_settlement_account}}", source_section="contracts", source_table="contract_details", source_column="corr_bank_settlement"),
             ContractVariable(key="{{legacy_bank_swift}}", source_section="experts", source_table="contract_details", source_column="bank_swift"),
         ]
 

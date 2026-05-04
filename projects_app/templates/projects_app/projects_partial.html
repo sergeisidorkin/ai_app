@@ -66,6 +66,7 @@
                        id="registrations-master"
                        data-target-name="registration-select"
                        data-actions-id="registrations-actions"
+                       {% if is_expert %}disabled{% endif %}
                        aria-label="Выделить все строки регистрации">
             </div>
           {% endif %}
@@ -103,6 +104,7 @@
                            id="reg-sel-{{ r.id }}"
                            name="registration-select"
                            value="{{ r.id }}"
+                           {% if is_expert %}disabled{% endif %}
                            aria-label="Выделить строку регистрации">
               </div>
             {% endif %}
@@ -129,7 +131,7 @@
       </tbody>
     </table>
 
-    {% if request.user.is_authenticated and request.user.is_staff %}
+    {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
       <div class="d-flex align-items-stretch gap-2 products-actions-row"
            data-create-workspace-url="{% url 'create_registration_workspace' %}"
            data-workspace-folders-url="{% url 'workspace_folders_list' %}"
@@ -326,6 +328,7 @@
                        id="contract-conditions-master"
                        data-target-name="contract-select"
                        data-actions-id="contract-conditions-actions"
+                       {% if is_expert %}disabled{% endif %}
                        aria-label="Выделить все строки условий контракта">
             </div>
           {% endif %}
@@ -359,6 +362,7 @@
                            id="contract-sel-{{ r.id }}"
                            name="contract-select"
                            value="{{ r.id }}"
+                           {% if is_expert %}disabled{% endif %}
                            aria-label="Выделить строку условий контракта">
               </div>
             {% endif %}
@@ -386,7 +390,7 @@
       </tbody>
     </table>
 
-    {% if request.user.is_authenticated and request.user.is_staff %}
+    {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
       <div class="d-flex align-items-stretch gap-2 products-actions-row">
         <button
           type="button"
@@ -457,6 +461,7 @@
                      id="work-master"
                      data-target-name="work-select"
                      data-actions-id="work-actions"
+                     {% if is_expert %}disabled{% endif %}
                      aria-label="Выделить все строки объема работ">
             </div>
           {% endif %}
@@ -488,6 +493,7 @@
                        id="work-sel-{{ w.id }}"
                        name="work-select"
                        value="{{ w.id }}"
+                       {% if is_expert %}disabled{% endif %}
                        aria-label="Выделить строку объема работ">
               </div>
             {% endif %}
@@ -508,7 +514,7 @@
       </tbody>
     </table>
 
-    {% if request.user.is_authenticated and request.user.is_staff %}
+    {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
       <div class="d-flex align-items-stretch gap-2 products-actions-row">
         <button
           class="btn btn-primary btn-sm d-flex align-items-center"
@@ -594,6 +600,7 @@
                       id="legal-entities-master"
                       data-target-name="legal-select"
                       data-actions-id="legal-entities-actions"
+                      {% if is_expert %}disabled{% endif %}
                       aria-label="Выделить все строки юридических лиц">
             </div>
           {% endif %}
@@ -625,6 +632,7 @@
                         id="legal-sel-{{ entity.id }}"
                         name="legal-select"
                         value="{{ entity.id }}"
+                        {% if is_expert %}disabled{% endif %}
                         aria-label="Выделить строку юридического лица">
               </div>
             {% endif %}
@@ -645,7 +653,7 @@
       </tbody>
     </table>
 
-    {% if request.user.is_authenticated and request.user.is_staff %}
+    {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
       <div class="d-flex align-items-stretch gap-2 products-actions-row">
         <button
           class="btn btn-primary btn-sm d-flex align-items-center"

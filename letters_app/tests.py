@@ -27,6 +27,15 @@ class LetterTemplateRenderTests(TestCase):
         self.assertEqual(rendered, "ТКП 333300RU DD Приморское")
 
 
+class LetterTemplateVariablesTests(TestCase):
+    def test_contract_sending_variables_use_docx_and_pdf_links(self):
+        variables = [key for key, _desc in LetterTemplate.TEMPLATE_VARIABLES["contract_sending"]]
+
+        self.assertIn("{document_docx_link}", variables)
+        self.assertIn("{document_pdf_link}", variables)
+        self.assertNotIn("{document_link}", variables)
+
+
 class LetterTemplatePermissionTests(TestCase):
     template_type = "participation_confirmation"
 

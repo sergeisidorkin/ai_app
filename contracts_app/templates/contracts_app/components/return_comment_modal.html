@@ -1,0 +1,99 @@
+<div class="modal-header contract-return-comment-header" data-modal-size="xl">
+  <div class="d-flex flex-column flex-grow-1 min-width-0">
+    <div class="d-flex align-items-center gap-1 flex-wrap chk-comment-title-group">
+      <h5 class="modal-title mb-0 me-2">Комментарии к проекту договора {{ performer.contract_number|default:"—" }}</h5>
+      <span class="contract-return-counter contract-return-counter--lawyer{% if lawyer_count %} has-comments{% endif %}"
+            data-contract-return-total-lawyer>{{ lawyer_count|default:"" }}</span>
+      <span class="contract-return-counter contract-return-counter--expert{% if expert_count %} has-comments{% endif %}"
+            data-contract-return-total-expert>{{ expert_count|default:"" }}</span>
+    </div>
+  </div>
+  <button type="button" class="btn-close ms-2 align-self-start" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+</div>
+
+<div class="modal-body contract-return-comment-body"
+     data-contract-return-modal-root
+     data-performer-id="{{ performer.id }}"
+     data-return-url="{% url 'contracts_return_performer_contract' performer.id %}">
+  {% include "contracts_app/components/return_comment_thread.html" with performer=performer comments=comments oob=False %}
+
+  <form
+    class="contract-return-comment-compose"
+    hx-post="{% url 'contracts_return_comment_add' performer.id %}"
+    hx-target="this"
+    hx-swap="none">
+    {% csrf_token %}
+    <div class="chk-comment-compose-row contract-return-compose-row">
+      <textarea
+        class="form-control"
+        name="value"
+        rows="3"
+        placeholder="Введите текст комментария"></textarea>
+      <div class="text-end d-flex justify-content-end gap-2 flex-wrap contract-return-compose-actions">
+        <button type="submit" class="btn btn-primary btn-sm">Добавить комментарий</button>
+        {% if can_return_contract %}
+          <button type="button"
+                  class="btn btn-primary btn-sm"
+                  data-contract-return-submit>
+            Вернуть договор
+          </button>
+        {% endif %}
+      </div>
+    </div>
+  </form>
+</div>
+
+<style>
+  #contracts-modal .contract-return-comment-body {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  #contracts-modal .contract-return-comment-thread {
+    max-height: 420px;
+    overflow-y: auto;
+  }
+  #contracts-modal .contract-return-comment-row--expert {
+    justify-content: flex-end;
+  }
+  #contracts-modal .contract-return-comment-bubble {
+    border-color: #b8d4e6;
+  }
+  #contracts-modal .contract-return-counter {
+    width: 18px;
+    height: 18px;
+    min-width: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: #1c1d2012;
+    color: #ced4da;
+    font-size: 10px;
+    line-height: 1;
+    font-weight: 600;
+  }
+  #contracts-modal .contract-return-counter--lawyer.has-comments {
+    background: #075d94;
+    color: #fff;
+  }
+  #contracts-modal .contract-return-counter--expert.has-comments {
+    background: #8ecae6;
+    color: #fff;
+  }
+  #contracts-modal .contract-return-comment-bubble--lawyer {
+    background: rgba(var(--bs-primary-rgb, 7, 93, 148), .13);
+  }
+  #contracts-modal .contract-return-comment-bubble--expert {
+    background: rgba(142, 202, 230, .22);
+  }
+  #contracts-modal .contract-return-compose-row {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  #contracts-modal .contract-return-compose-actions {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+</style>

@@ -131,6 +131,7 @@
       await postJson(url, { action: action });
       document.body.dispatchEvent(new Event("notifications-updated"));
       document.body.dispatchEvent(new Event("performers-updated"));
+      document.body.dispatchEvent(new Event("contracts-updated"));
     } catch (err) {
       alert(err.message || "Не удалось обработать уведомление.");
       actionBtn.disabled = false;

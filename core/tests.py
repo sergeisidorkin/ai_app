@@ -23,7 +23,7 @@ from core.cloud_storage import (
 from core.oidc import IMCOAuth2Validator
 from core.oidc_settings import oidc_pkce_required
 from core.models import CloudStorageSettings
-from policy_app.models import DEPARTMENT_HEAD_GROUP, EXPERT_GROUP
+from policy_app.models import DEPARTMENT_HEAD_GROUP, EXPERT_GROUP, LAWYER_GROUP
 from users_app.models import Employee
 
 User = get_user_model()
@@ -261,3 +261,70 @@ class HomePagePermissionsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, '<span class="link-text">Справочники</span>', html=False)
         self.assertNotContains(response, 'section id="classifiers"', html=False)
+
+    def test_expert_contracts_section_starts_with_performers_only(self):
+        user = User.objects.create_user(
+            username="expert-contracts-home",
+            email="expert-contracts-home@example.com",
+            password="Secret123!",
+            is_staff=True,
+        )
+        expert_group, _ = Group.objects.get_or_create(name=EXPERT_GROUP)
+        user.groups.add(expert_group)
+        self.client.force_login(user)
+
+        response = self.client.get(reverse("home"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'data-contracts-section="in-development"', html=False)
+        self.assertNotContains(response, 'data-contracts-section="performer-requisites"', html=False)
+        self.assertNotContains(response, 'id="contracts-content-performer-requisites"', html=False)
+        self.assertNotContains(response, 'id="contracts-content-in-development"', html=False)
+        self.assertNotContains(response, 'id="contracts-section-title">Клиенты: заключение договора', html=False)
+        self.assertContains(response, 'id="contracts-master-status-filter-dropdown"', html=False)
+        self.assertContains(
+            response,
+            'class="list-group-item list-group-item-action active"\n'
+            '                 data-contracts-section="in-progress"',
+            html=False,
+        )
+        self.assertContains(
+            response,
+            'id="contracts-content-in-progress" class="contracts-section-content"',
+            html=False,
+        )
+
+    def test_staff_gets_contract_requisites_subsection_after_conclusion(self):
+        user = User.objects.create_user(
+            username="staff-contract-requisites-home",
+            email="staff-contract-requisites-home@example.com",
+            password="Secret123!",
+            is_staff=True,
+        )
+        self.client.force_login(user)
+
+        response = self.client.get(reverse("home"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-contracts-section="performer-requisites"', html=False)
+        self.assertContains(response, 'id="contracts-content-performer-requisites"', html=False)
+        self.assertLess(
+            response.content.decode().index('data-contracts-section="in-progress"'),
+            response.content.decode().index('data-contracts-section="performer-requisites"'),
+        )
+
+    def test_lawyer_gets_contract_requisites_subsection(self):
+        user = User.objects.create_user(
+            username="lawyer-contract-requisites-home",
+            email="lawyer-contract-requisites-home@example.com",
+            password="Secret123!",
+            is_staff=True,
+        )
+        lawyer_group, _ = Group.objects.get_or_create(name=LAWYER_GROUP)
+        user.groups.add(lawyer_group)
+        self.client.force_login(user)
+
+        response = self.client.get(reverse("home"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-contracts-section="performer-requisites"', html=False)

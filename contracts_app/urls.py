@@ -33,6 +33,9 @@ urlpatterns = [
     path("signing/<int:pk>/edit/", views.contract_signing_edit, name="contracts_signing_edit"),
     path("signing/<int:pk>/upload-scan/", views.contract_scan_upload, name="contract_scan_upload"),
     path("signing/<int:pk>/upload-signed-scan/", views.contract_signed_scan_upload, name="contract_signed_scan_upload"),
+    path("signing/<int:pk>/return-comments/", views.contract_return_comment_modal, name="contracts_return_comment_modal"),
+    path("signing/<int:pk>/return-comments/add/", views.contract_return_comment_add, name="contracts_return_comment_add"),
+    path("signing/<int:pk>/return/", views.contract_return_performer_contract, name="contracts_return_performer_contract"),
     path("signing/send-scan/", views.send_scan, name="signing_send_scan"),
 
     # Contract templates ("Образцы шаблонов")

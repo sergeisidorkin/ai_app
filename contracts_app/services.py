@@ -3,6 +3,7 @@ import uuid
 from django.db import models
 from django.utils import timezone
 
+from core.cloud_storage import sanitize_folder_name
 from contacts_app.models import CitizenshipRecord
 from group_app.models import GroupMember
 from projects_app.models import Performer
@@ -27,6 +28,37 @@ def build_contract_number(performer, sent_at, addendum_number=None):
     if addendum_number is not None:
         base = f"{base} ДС{addendum_number}"
     return base
+
+
+def contract_executor_short_name(executor_full_name):
+    raw = " ".join(str(executor_full_name or "").split())
+    if not raw:
+        return "Unknown"
+    parts = raw.split(" ")
+    last_name = parts[0]
+    initials = "".join(part[0] for part in parts[1:3] if part)
+    return f"{last_name} {initials}".strip()
+
+
+def contract_kind_label(*, is_addendum=False, addendum_number=None):
+    if is_addendum:
+        return f"ДС{addendum_number or ''}".strip()
+    return "Договор"
+
+
+def build_contract_file_name(performer, *, extension=".docx", is_addendum=None, addendum_number=None):
+    project = getattr(performer, "registration", None)
+    project_id = str(getattr(project, "short_uid", "") or "") if project else ""
+    project_prefix = project_id or "Unknown"
+    executor_name = contract_executor_short_name(getattr(performer, "executor", ""))
+    ext = extension if str(extension or "").startswith(".") else f".{extension or 'docx'}"
+    if is_addendum is None:
+        is_addendum = bool(getattr(performer, "contract_is_addendum", False))
+    if addendum_number is None:
+        addendum_number = getattr(performer, "contract_addendum_number", None)
+    kind = contract_kind_label(is_addendum=is_addendum, addendum_number=addendum_number)
+    suffix = f"_{kind}" if is_addendum and kind else ""
+    return sanitize_folder_name(f"Договор {project_prefix}_{executor_name}{suffix}{ext}")
 
 
 def effective_contract_employee_ids(performers):
@@ -221,6 +253,11 @@ def prefill_contract_adjustment_fields(performer_ids, *, confirmed_at=None):
 
         representative = group_performers[0]
         generated_number = build_contract_number(representative, base_date, addendum_number)
+        generated_file = build_contract_file_name(
+            representative,
+            is_addendum=is_addendum,
+            addendum_number=addendum_number,
+        )
         contract_date = timezone.localtime(confirmed_at).date()
 
         for performer in group_performers:
@@ -237,6 +274,8 @@ def prefill_contract_adjustment_fields(performer_ids, *, confirmed_at=None):
                     update_fields["contract_group_member_id"] = default_group.pk
             if not (performer.contract_number or "").strip() and generated_number:
                 update_fields["contract_number"] = generated_number
+            if not (performer.contract_file or "").strip() and generated_file:
+                update_fields["contract_file"] = generated_file
             if performer.contract_date is None:
                 update_fields["contract_date"] = contract_date
             if update_fields:

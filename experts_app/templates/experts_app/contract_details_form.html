@@ -6,15 +6,17 @@
 <form
     method="post"
     enctype="multipart/form-data"
+    data-contract-details-form="1"
     data-ecd-regions-url="{% url 'ler_regions_for_country' %}"
     data-ecd-regions-date="{% now 'Y-m-d' %}"
     hx-post="{% url 'epr_contract_details_edit' contract_detail.pk %}"
     hx-encoding="multipart/form-data"
-    hx-target="#experts-pane"
+    hx-target="{{ contract_details_hx_target|default:'#experts-pane' }}"
     hx-swap="outerHTML"
     style="display:flex; flex-direction:column; overflow:hidden; flex:1 1 auto; min-height:0;">
   <div class="modal-body">
     {% csrf_token %}
+    <input type="hidden" name="target_context" value="{{ contract_details_context|default:'experts' }}">
 
     <div class="row mb-3">
       <div class="col-6">
@@ -254,7 +256,11 @@
 
 <script>
 (function() {
-  var form = document.querySelector('#experts-contract-details-modal form');
+  var script = document.currentScript;
+  var container = script ? script.closest('.modal-content') : null;
+  var form = container
+    ? container.querySelector('form[data-contract-details-form="1"]')
+    : document.querySelector('form[data-contract-details-form="1"]');
   if (!form) return;
   var countryField = form.querySelector('[name="citizenship_country"]');
   var regionSelect = form.querySelector('#ecd-registration-region-select');

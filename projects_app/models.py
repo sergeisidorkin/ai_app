@@ -1002,7 +1002,7 @@ class Performer(models.Model):
 
     contract_sent_at = models.DateTimeField("Дата отправки проекта договора", null=True, blank=True)
     contract_deadline_at = models.DateTimeField("Срок подписания договора", null=True, blank=True)
-    contract_signing_date = models.DateField("Дата подписания", null=True, blank=True)
+    contract_signing_date = models.DateTimeField("Дата подписания", null=True, blank=True)
     contract_conclusion_status = models.CharField("Статус заключения договора", max_length=100, blank=True, default="")
     contract_signing_note = models.CharField("Подписание", max_length=255, blank=True, default="")
     contract_term = models.CharField("Срок договора", max_length=255, blank=True, default="")
@@ -1020,6 +1020,9 @@ class Performer(models.Model):
     contract_pdf_file = models.CharField("Файл договора PDF", max_length=500, blank=True, default="")
     contract_pdf_link = models.URLField("Ссылка на PDF договора", max_length=500, blank=True, default="")
     contract_pdf_file_id = models.CharField("Идентификатор PDF договора в Nextcloud", max_length=64, blank=True, default="")
+    contract_signed_pdf_file = models.CharField("Подписанный договор", max_length=500, blank=True, default="")
+    contract_signed_pdf_link = models.URLField("Ссылка на подписанный договор", max_length=500, blank=True, default="")
+    contract_signed_pdf_file_id = models.CharField("Идентификатор подписанного договора в Nextcloud", max_length=64, blank=True, default="")
     contract_date = models.DateField("Дата договора", null=True, blank=True)
 
     contract_employee_scan = models.FileField("Скан с подписью сотрудника", upload_to="contract_employee_scans/", blank=True, default="")
@@ -1144,7 +1147,11 @@ class Performer(models.Model):
     def contract_response_status(self):
         if not self.contract_deadline_at:
             return ""
-        return "Просрочено" if timezone.now() > self.contract_deadline_at else "В срок"
+        if self.contract_signing_date:
+            return "Просрочено" if self.contract_signing_date > self.contract_deadline_at else "В срок"
+        if timezone.now() > self.contract_deadline_at:
+            return "Просрочено"
+        return ""
 
 
 class PerformerParticipationSnapshot(models.Model):

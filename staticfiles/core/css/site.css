@@ -22,6 +22,12 @@
   --second-sidebar-header-offset: 75px;
 }
 
+body.contracts-modal-open,
+body.contract-templates-modal-open {
+  overflow-y: scroll !important;
+  padding-right: 0 !important;
+}
+
 /* Сайдбар: базовая раскладка */
 .sidebar {
   width: 260px;
@@ -932,6 +938,10 @@ body .second-sidebar + .flex-grow-1 {
 #participation-confirmation-section .form-check-input:disabled,
 #contract-conclusion-section .form-check-input:disabled,
 #info-request-approval-section .form-check-input:disabled,
+.registration-table-wrap .form-check-input:disabled,
+.contract-table-wrap .form-check-input:disabled,
+.work-table-wrap .form-check-input:disabled,
+.legal-table-wrap .form-check-input:disabled,
 .signing-table .form-check-input:disabled,
 #checklists-table-wrap .form-check-input:disabled,
 #policy-pane .consulting-directions-table .form-check-input:disabled {
@@ -1230,6 +1240,10 @@ body .second-sidebar + .flex-grow-1 {
 
 #contract-conclusion-section .contract-conclusion-table-wrap .products-actions-row {
   margin-bottom: 14px !important;
+}
+
+#contracts-pane .signing-table-wrap {
+  padding-bottom: 40px !important;
 }
 
 #info-request-approval-section .info-request-table-wrap .products-actions-row {
@@ -3636,7 +3650,8 @@ html.proposal-progress-cursor * {
   text-overflow: clip !important;
 }
 
-#contract-conclusion-section .contract-conclusion-table-wrap {
+#contract-conclusion-section .contract-conclusion-table-wrap,
+#contract-details-section .contract-requisites-table-wrap {
   overflow-x: auto;
   overflow-y: visible;
   width: 100%;
@@ -3651,28 +3666,40 @@ html.proposal-progress-cursor * {
   --contract-table-scroll-action-gap: 11.75px;
 }
 
+#contract-details-section {
+  --contract-table-scroll-offset-top: 0px;
+  --contract-table-margin-to-scroll: 10px;
+  --contract-table-action-gap: 30px;
+  --contract-table-scroll-action-gap: 11.75px;
+}
+
 #contracts-pane .contracts-action-table-wrap,
-#contract-conclusion-section .contract-conclusion-table-wrap {
+#contract-conclusion-section .contract-conclusion-table-wrap,
+#contract-details-section .contract-requisites-table-wrap {
   padding-bottom: var(--contract-table-scroll-offset-top);
 }
 
 #contracts-pane .contracts-action-table-wrap > table,
-#contract-conclusion-section .contract-conclusion-table-wrap > .performers-table {
+#contract-conclusion-section .contract-conclusion-table-wrap > .performers-table,
+#contract-details-section .contract-requisites-table-wrap > #ecd-table {
   margin-bottom: 0 !important;
 }
 
 #contracts-pane .contracts-action-table-wrap.has-horizontal-scroll > table,
-#contract-conclusion-section .contract-conclusion-table-wrap.has-horizontal-scroll > .performers-table {
+#contract-conclusion-section .contract-conclusion-table-wrap.has-horizontal-scroll > .performers-table,
+#contract-details-section .contract-requisites-table-wrap.has-horizontal-scroll > #ecd-table {
   margin-bottom: var(--contract-table-margin-to-scroll) !important;
 }
 
 #contracts-pane .contracts-action-table-wrap + .products-actions-row,
-#contract-conclusion-section .contract-conclusion-table-wrap + .products-actions-row {
+#contract-conclusion-section .contract-conclusion-table-wrap + .products-actions-row,
+#contract-details-section .contract-requisites-table-wrap + .products-actions-row {
   margin-top: var(--contract-table-action-gap) !important;
 }
 
 #contracts-pane .contracts-action-table-wrap.has-horizontal-scroll + .products-actions-row,
-#contract-conclusion-section .contract-conclusion-table-wrap.has-horizontal-scroll + .products-actions-row {
+#contract-conclusion-section .contract-conclusion-table-wrap.has-horizontal-scroll + .products-actions-row,
+#contract-details-section .contract-requisites-table-wrap.has-horizontal-scroll + .products-actions-row {
   margin-top: var(--contract-table-scroll-action-gap) !important;
 }
 

@@ -75,6 +75,7 @@ from smtp_app.models import ExternalSMTPAccount
 from users_app.models import Employee
 from users_app.forms import FREELANCER_LABEL
 from notifications_app.services import (
+    complete_contract_notifications_for_performers,
     create_contract_notifications,
     create_info_request_notifications,
     create_participation_notifications,
@@ -85,6 +86,13 @@ from proposals_app.document_generation import (
     convert_docx_source_to_pdf,
     is_onlyoffice_conversion_configured,
 )
+from contracts_app.docx_processor import (
+    clear_text_highlighting,
+    document_contains_literal,
+    insert_floating_image_at_placeholder,
+    remove_literal_placeholders,
+)
+from contracts_app.services import build_contract_file_name, contract_executor_short_name
 
 PROJECTS_PARTIAL_TEMPLATE = "projects_app/projects_partial.html"
 REG_FORM_TEMPLATE       = "projects_app/registration_form.html"
@@ -99,6 +107,11 @@ HX_TRIGGER_HEADER = "HX-Trigger"
 HX_PERFORMERS_UPDATED_EVENT = "performers-updated"
 HX_PROJECTS_UPDATED_EVENT = "projects-updated"
 CONTRACT_DOCX_SOURCE_TOKEN_SALT = "projects_app.contract_docx_source"
+CONTRACT_PERFORMER_FACSIMILE_PLACEHOLDER = "[[facsimile_prfrm]]"
+CONTRACT_IMAGE_PLACEHOLDER_SPECS = (
+    ("[[seal]]", "Печать организации"),
+    ("[[facsimile_imcm]]", "Подпись руководителя организации"),
+)
 
 def staff_required(user):
     return user.is_authenticated and user.is_staff
@@ -117,8 +130,12 @@ def _confirmed_project_ids_for_expert(user):
         Performer.objects
         .filter(
             employee=employee,
-            participation_response=Performer.ParticipationResponse.CONFIRMED,
         )
+        .filter(
+            Q(participation_response=Performer.ParticipationResponse.CONFIRMED)
+            | Q(participation_request_sent_at__isnull=False)
+        )
+        .exclude(participation_response=Performer.ParticipationResponse.DECLINED)
         .values_list("registration_id", flat=True)
         .distinct()
     )
@@ -126,6 +143,7 @@ def _confirmed_project_ids_for_expert(user):
 
 def _projects_context(user=None):
     expert_project_ids = _confirmed_project_ids_for_expert(user)
+    is_expert = expert_project_ids is not None
     product_prefetch = models.Prefetch(
         "product_links",
         queryset=ProjectRegistrationProduct.objects.select_related("product").order_by("rank", "id"),
@@ -212,6 +230,7 @@ def _projects_context(user=None):
         "work_projects": work_projects,
         "legal_entities": legal_entities,
         "legal_projects": legal_projects,
+        "is_expert": is_expert,
     }
 
 
@@ -1017,6 +1036,7 @@ def _bind_dynamic_performer_fields(form, *, data=None, instance=None):
 
 def _performers_context(user=None):
     expert_project_ids = _confirmed_project_ids_for_expert(user)
+    is_expert = expert_project_ids is not None
     active_participation_statuses = ["Не начат", "В работе"]
     registration_products_prefetch = models.Prefetch(
         "registration__product_links",
@@ -1155,6 +1175,8 @@ def _performers_context(user=None):
         performers = list(performers)
         for p in performers:
             p.executor_locked = _is_executor_locked(user, p)
+            if is_expert:
+                p.executor_locked = True
 
     if user_is_direction_head:
         from notifications_app.models import NotificationPerformerLink as NPL
@@ -1244,6 +1266,7 @@ def _performers_context(user=None):
         "contract_request_sent_initial": request_sent_initial,
         "primary_cloud_storage_label": get_primary_cloud_storage_label(),
         "user_is_direction_head": user_is_direction_head,
+        "is_expert": is_expert,
         "has_active_smtp_connection": has_active_smtp_connection,
     }
 
@@ -1641,6 +1664,166 @@ def _get_contract_cloud_user(user):
         raise RuntimeError(str(exc)) from exc
 
 
+def _contract_group_member_for_performer(performer: Performer):
+    return getattr(performer, "contract_group_member", None) or getattr(performer.registration, "group_member", None)
+
+
+def _read_contract_image_file(file_field, *, label: str) -> bytes | None:
+    file_name = str(getattr(file_field, "name", "") or "").strip()
+    if not file_name:
+        return None
+    try:
+        file_field.open("rb")
+        try:
+            data = file_field.read()
+        finally:
+            file_field.close()
+    except Exception as exc:
+        raise RuntimeError(f"Не удалось прочитать файл «{label}».") from exc
+    return data or None
+
+
+def _load_group_seal_bytes(group_member) -> bytes | None:
+    if not group_member:
+        return None
+    return _read_contract_image_file(getattr(group_member, "seal_file", None), label="Печать")
+
+
+def _load_director_facsimile_bytes(group_member) -> bytes | None:
+    if not group_member:
+        return None
+    director_employee = (
+        Employee.objects
+        .select_related("user", "department", "department__company")
+        .filter(role=DIRECTOR_GROUP, department__company_id=group_member.pk)
+        .order_by("position", "id")
+        .first()
+    )
+    if not director_employee:
+        return None
+    director_profile = (
+        ExpertProfile.objects
+        .prefetch_related("contract_details_records__citizenship_record")
+        .filter(employee_id=director_employee.pk)
+        .first()
+    )
+    if not director_profile:
+        return None
+    director_details = director_profile.default_contract_details(require_facsimile=True)
+    if not director_details:
+        return None
+    return _read_contract_image_file(
+        getattr(director_details, "facsimile_file", None),
+        label="Факсимиле",
+    )
+
+
+def _load_performer_facsimile_bytes(performer: Performer) -> bytes | None:
+    employee_id = getattr(performer, "employee_id", None)
+    if not employee_id:
+        employee = Performer.resolve_employee_from_executor(getattr(performer, "executor", "") or "")
+        employee_id = getattr(employee, "pk", None)
+    if not employee_id:
+        return None
+
+    expert_profile = (
+        ExpertProfile.objects
+        .prefetch_related("contract_details_records__citizenship_record")
+        .filter(employee_id=employee_id)
+        .first()
+    )
+    if not expert_profile:
+        return None
+    contract_details = expert_profile.default_contract_details(require_facsimile=True)
+    if not contract_details:
+        return None
+    return _read_contract_image_file(
+        getattr(contract_details, "facsimile_file", None),
+        label="Факсимиле исполнителя",
+    )
+
+
+def _contract_performer_facsimile_missing_message(label: str, performer: Performer) -> str:
+    executor_name = str(getattr(performer, "executor", "") or "").strip()
+    details = f" ({executor_name})" if executor_name and executor_name != label else ""
+    return f"Для {label}{details} не найдена факсимильная подпись исполнителя."
+
+
+def _contract_image_bytes_for_placeholder(
+    placeholder: str,
+    group_member,
+    *,
+    performer: Performer | None = None,
+) -> bytes | None:
+    if placeholder == "[[seal]]":
+        return _load_group_seal_bytes(group_member)
+    if placeholder == "[[facsimile_imcm]]":
+        return _load_director_facsimile_bytes(group_member)
+    if placeholder == CONTRACT_PERFORMER_FACSIMILE_PLACEHOLDER and performer is not None:
+        return _load_performer_facsimile_bytes(performer)
+    return None
+
+
+def _insert_contract_image_placeholders(
+    file_data: bytes,
+    performer: Performer,
+    *,
+    require_images: bool = False,
+    include_performer_facsimile: bool = False,
+) -> bytes:
+    group_member = _contract_group_member_for_performer(performer)
+    image_specs = CONTRACT_IMAGE_PLACEHOLDER_SPECS
+    if include_performer_facsimile:
+        image_specs = image_specs + (
+            (CONTRACT_PERFORMER_FACSIMILE_PLACEHOLDER, "Подпись исполнителя"),
+        )
+    for placeholder, description in image_specs:
+        if not document_contains_literal(file_data, placeholder):
+            continue
+        image_bytes = _contract_image_bytes_for_placeholder(
+            placeholder,
+            group_member,
+            performer=performer,
+        )
+        if not image_bytes:
+            if require_images:
+                raise RuntimeError(f"{description} не найдена.")
+            continue
+        file_data = insert_floating_image_at_placeholder(
+            file_data,
+            image_bytes,
+            placeholder=placeholder,
+            x_relative_from=(
+                "column"
+                if placeholder in ("[[seal]]", CONTRACT_PERFORMER_FACSIMILE_PLACEHOLDER)
+                else "page"
+            ),
+            x_align="center",
+            relative_height=0 if placeholder == "[[seal]]" else 1,
+        )
+    return file_data
+
+
+def _prepare_contract_docx_for_pdf(
+    file_data: bytes,
+    performer: Performer,
+    *,
+    include_performer_facsimile: bool = False,
+) -> bytes:
+    file_data = _insert_contract_image_placeholders(
+        file_data,
+        performer,
+        require_images=True,
+        include_performer_facsimile=include_performer_facsimile,
+    )
+    if not include_performer_facsimile:
+        file_data = remove_literal_placeholders(
+            file_data,
+            (CONTRACT_PERFORMER_FACSIMILE_PLACEHOLDER,),
+        )
+    return clear_text_highlighting(file_data)
+
+
 def _load_existing_contract_docx_bytes(user, performer: Performer) -> bytes:
     if not str(getattr(performer, "contract_file", "") or "").strip():
         raise RuntimeError("Для договора не указан DOCX-файл.")
@@ -1658,11 +1841,16 @@ def _load_existing_contract_docx_bytes(user, performer: Performer) -> bytes:
     raise RuntimeError("Не удалось получить DOCX проекта договора.")
 
 
-def _build_contract_docx_source_token(performer: Performer) -> str:
+def _build_contract_docx_source_token(
+    performer: Performer,
+    *,
+    include_performer_facsimile: bool = False,
+) -> str:
     payload = {
         "performer_id": int(performer.pk),
         "contract_file": str(getattr(performer, "contract_file", "") or "").strip(),
         "contract_project_disk_folder": str(getattr(performer, "contract_project_disk_folder", "") or "").strip(),
+        "include_performer_facsimile": bool(include_performer_facsimile),
     }
     return signing.dumps(payload, salt=CONTRACT_DOCX_SOURCE_TOKEN_SALT, compress=True)
 
@@ -1687,13 +1875,21 @@ def _get_contract_docx_source_token_payload(performer: Performer, token: str) ->
     return payload
 
 
-def _build_contract_docx_source_url(request, performer: Performer) -> str:
-    token = _build_contract_docx_source_token(performer)
+def _build_contract_docx_source_url(
+    request,
+    performer: Performer,
+    *,
+    include_performer_facsimile: bool = False,
+) -> str:
+    token = _build_contract_docx_source_token(
+        performer,
+        include_performer_facsimile=include_performer_facsimile,
+    )
     path = reverse("contract_onlyoffice_docx_source", args=[performer.pk])
     return request.build_absolute_uri(f"{path}?token={quote(token, safe='')}")
 
 
-def _build_contract_pdf_paths(performer: Performer) -> dict[str, str]:
+def _build_contract_pdf_paths(performer: Performer, *, signed: bool = False) -> dict[str, str]:
     folder = normalize_cloud_path(getattr(performer, "contract_project_disk_folder", "") or "")
     docx_name = str(getattr(performer, "contract_file", "") or "").strip()
     if not folder:
@@ -1701,15 +1897,21 @@ def _build_contract_pdf_paths(performer: Performer) -> dict[str, str]:
     if not docx_name:
         raise RuntimeError("Для договора не указан DOCX-файл.")
     pdf_stem = os.path.splitext(docx_name)[0] or "Договор"
-    pdf_name = f"{pdf_stem}.pdf"
+    pdf_name = f"{pdf_stem}_п.pdf" if signed else f"{pdf_stem}.pdf"
     return {
         "pdf_name": pdf_name,
         "pdf_path": join_cloud_path(folder, pdf_name),
     }
 
 
-def _store_generated_contract_pdf(user, performer: Performer, pdf_bytes: bytes) -> dict[str, str]:
-    paths = _build_contract_pdf_paths(performer)
+def _store_generated_contract_pdf(
+    user,
+    performer: Performer,
+    pdf_bytes: bytes,
+    *,
+    signed: bool = False,
+) -> dict[str, str]:
+    paths = _build_contract_pdf_paths(performer, signed=signed)
     cloud_user = _get_contract_cloud_user(user)
     if not cloud_user:
         raise RuntimeError("Не найден пользователь с подключенным облачным хранилищем для загрузки PDF.")
@@ -1736,13 +1938,19 @@ def _store_generated_contract_pdf(user, performer: Performer, pdf_bytes: bytes) 
 def contract_onlyoffice_docx_source(request, pk: int):
     performer = get_object_or_404(Performer, pk=pk)
     token = str(request.GET.get("token") or "").strip()
-    if _get_contract_docx_source_token_payload(performer, token) is None:
+    token_payload = _get_contract_docx_source_token_payload(performer, token)
+    if token_payload is None:
         return HttpResponseForbidden("Недействительная ссылка на DOCX-файл договора.")
 
     try:
         docx_bytes = _load_existing_contract_docx_bytes(
             request.user if getattr(request.user, "is_authenticated", False) else None,
             performer,
+        )
+        docx_bytes = _prepare_contract_docx_for_pdf(
+            docx_bytes,
+            performer,
+            include_performer_facsimile=bool(token_payload.get("include_performer_facsimile")),
         )
     except RuntimeError as exc:
         raise Http404(str(exc))
@@ -1949,6 +2157,12 @@ def contract_request(request):
     except forms.ValidationError as exc:
         return JsonResponse({"ok": False, "error": exc.message}, status=400)
 
+    raw_channels = request.POST.getlist("delivery_channels[]") or request.POST.getlist("delivery_channels")
+    try:
+        delivery_channels = normalize_delivery_channels(raw_channels)
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+
     deadline_at = _round_up_to_hour(request_sent_at + timedelta(hours=duration_hours))
     selected_performers = list(
         Performer.objects
@@ -1968,17 +2182,19 @@ def contract_request(request):
 
     try:
         with transaction.atomic():
-            create_contract_notifications(
+            notification_result = create_contract_notifications(
                 performers=selected_performers,
                 sender=request.user,
                 request_sent_at=request_sent_at,
                 deadline_at=deadline_at,
                 duration_hours=duration_hours,
+                delivery_channels=delivery_channels,
             )
             all_ids = [p.pk for p in selected_performers]
             updated = Performer.objects.filter(pk__in=all_ids).update(
                 contract_sent_at=request_sent_at,
                 contract_deadline_at=deadline_at,
+                contract_signing_note="Отправлен проект договора",
             )
     except ValueError as exc:
         return JsonResponse({"ok": False, "error": str(exc)}, status=400)
@@ -1989,6 +2205,8 @@ def contract_request(request):
             "updated": updated,
             "request_sent_at": timezone.localtime(request_sent_at).strftime("%d.%m.%Y %H:%M"),
             "deadline_at": timezone.localtime(deadline_at).strftime("%d.%m.%Y %H:%M"),
+            "delivery_channels": list(notification_result["delivery_channels"]),
+            "email_delivery": notification_result["email_delivery"],
         }
     )
 
@@ -2534,6 +2752,136 @@ def sign_contract_documents(request):
 @login_required
 @user_passes_test(staff_required)
 @require_POST
+def sign_performer_contract_documents(request):
+    raw_ids = request.POST.getlist("performer_ids[]") or request.POST.getlist("performer_ids")
+    if not raw_ids:
+        return JsonResponse({"ok": False, "error": "Не выбрана строка для подписания договора."}, status=400)
+
+    try:
+        performer_ids = sorted({int(value) for value in raw_ids if str(value).strip()})
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Передан некорректный список строк."}, status=400)
+
+    performers = list(
+        Performer.objects
+        .filter(pk__in=performer_ids)
+        .select_related("registration", "employee")
+        .order_by("registration_id", "executor", "position", "id")
+    )
+    if len(performers) != len(performer_ids):
+        return JsonResponse({"ok": False, "error": "Часть выбранных строк не найдена."}, status=400)
+
+    if not is_onlyoffice_conversion_configured():
+        return JsonResponse(
+            {"ok": False, "error": "Не настроен ONLYOFFICE Document Server для генерации PDF."},
+            status=400,
+        )
+
+    grouped: dict[tuple[object, str, str, str], list[Performer]] = {}
+    errors = []
+    for performer in performers:
+        docx_name = str(getattr(performer, "contract_file", "") or "").strip()
+        folder = str(getattr(performer, "contract_project_disk_folder", "") or "").strip()
+        label = getattr(getattr(performer, "registration", None), "short_uid", "") or f"#{performer.pk}"
+        if not docx_name:
+            errors.append(f"Для {label} сначала создайте DOCX-файл договора.")
+            continue
+        if not folder:
+            errors.append(f"Для {label} не задана папка проекта договора.")
+            continue
+        try:
+            has_performer_facsimile = bool(_load_performer_facsimile_bytes(performer))
+        except RuntimeError as exc:
+            errors.append(f"{label}: {exc}")
+            continue
+        if not has_performer_facsimile:
+            errors.append(_contract_performer_facsimile_missing_message(label, performer))
+            continue
+        key = (performer.registration_id, performer.executor, normalize_cloud_path(folder), docx_name)
+        grouped.setdefault(key, []).append(performer)
+
+    updated_ids: set[int] = set()
+    generated_groups = 0
+    for group_performers in grouped.values():
+        performer = group_performers[0]
+        label = getattr(getattr(performer, "registration", None), "short_uid", "") or f"#{performer.pk}"
+        try:
+            pdf_bytes = convert_docx_source_to_pdf(
+                source_url=_build_contract_docx_source_url(
+                    request,
+                    performer,
+                    include_performer_facsimile=True,
+                ),
+                source_name=str(getattr(performer, "contract_file", "") or "").strip() or "contract.docx",
+            )
+            stored_pdf = _store_generated_contract_pdf(request.user, performer, pdf_bytes, signed=True)
+        except Exception as exc:
+            errors.append(f"{label}: {exc}")
+            continue
+
+        signed_at = timezone.now()
+        group_ids = [item.pk for item in group_performers]
+        update_kwargs = {
+            "contract_signed_pdf_file": stored_pdf["pdf_name"],
+            "contract_signed_pdf_link": stored_pdf["pdf_url"],
+            "contract_signing_date": signed_at,
+        }
+        if stored_pdf.get("pdf_file_id"):
+            update_kwargs["contract_signed_pdf_file_id"] = stored_pdf["pdf_file_id"]
+        for item in group_performers:
+            item.contract_signing_date = signed_at
+            item.contract_conclusion_status = item.contract_response_status
+            Performer.objects.filter(pk=item.pk).update(
+                **update_kwargs,
+                contract_conclusion_status=item.contract_conclusion_status,
+                contract_signing_note="Договор подписан факсимиле",
+            )
+        updated_ids.update(group_ids)
+        generated_groups += 1
+
+    if errors and not updated_ids:
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "; ".join(errors),
+                "generated": 0,
+                "warnings": [],
+            },
+            status=400,
+        )
+
+    updates = list(
+        Performer.objects
+        .filter(pk__in=updated_ids)
+        .order_by("registration_id", "executor", "position", "id")
+        .values("id", "contract_signed_pdf_file", "contract_signed_pdf_link")
+    )
+    completed_notifications = complete_contract_notifications_for_performers(
+        performer_ids=updated_ids,
+        actor=request.user,
+    )
+    return JsonResponse(
+        {
+            "ok": True,
+            "message": "Подписанный договор успешно сформирован.",
+            "generated": generated_groups,
+            "completed_notifications": completed_notifications,
+            "warnings": errors,
+            "updates": [
+                {
+                    "id": item["id"],
+                    "contract_signed_pdf_file": item["contract_signed_pdf_file"],
+                    "contract_signed_pdf_file_url": item["contract_signed_pdf_link"],
+                }
+                for item in updates
+            ],
+        }
+    )
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
 def create_contract_project(request):
     """Create folders on Yandex.Disk for selected contract performers and
     populate them with .docx files from matching contract templates.
@@ -2545,13 +2893,8 @@ def create_contract_project(request):
     import re
     from contracts_app.models import ContractTemplate, ContractVariable
     from contracts_app.variable_resolver import resolve_variables
-    from contracts_app.docx_processor import (
-        document_contains_literal,
-        insert_floating_image_at_placeholder,
-        process_template,
-    )
+    from contracts_app.docx_processor import process_template
     from experts_app.models import ExpertProfile
-    from group_app.models import GroupMember
     raw_ids = request.POST.getlist("performer_ids[]") or request.POST.getlist("performer_ids")
     if not raw_ids:
         return JsonResponse({"ok": False, "error": "Не выбраны строки."}, status=400)
@@ -2563,7 +2906,7 @@ def create_contract_project(request):
 
     performers = list(
         Performer.objects
-        .filter(pk__in=ids)
+        .filter(pk__in=ids, contract_sent_at__isnull=True)
         .select_related(
             "registration", "registration__type", "registration__country",
             "typical_section", "employee", "contract_group_member",
@@ -2571,7 +2914,7 @@ def create_contract_project(request):
         .order_by("position", "id")
     )
     if not performers:
-        return JsonResponse({"ok": False, "error": "Исполнители не найдены."}, status=404)
+        return JsonResponse({"ok": False, "error": "Нет доступных строк для создания проекта договора."}, status=400)
 
     try:
         disk_root = get_selected_root_path(request.user)
@@ -2612,21 +2955,9 @@ def create_contract_project(request):
         ):
             expert_cache[ep.employee_id] = ep
 
-    def _executor_short(executor_full_name):
-        raw = " ".join(str(executor_full_name or "").split())
-        if not raw:
-            return "Unknown"
-        parts = raw.split(" ")
-        last_name = parts[0]
-        initials = "".join(part[0] for part in parts[1:3] if part)
-        return f"{last_name} {initials}".strip()
-
     def _contract_project_file_name(perf, original_name):
-        project_id = str(getattr(getattr(perf, "registration", None), "short_uid", "") or "")
-        project_prefix = project_id or "Unknown"
-        executor_name = _executor_short(perf.executor)
         ext = os.path.splitext(original_name or "")[1] or ".docx"
-        return sanitize_folder_name(f"Договор {project_prefix}_{executor_name}{ext}")
+        return build_contract_file_name(perf, extension=ext)
 
     def _ensure_cloud_folder_path(path):
         normalized = normalize_cloud_path(path)
@@ -2638,99 +2969,6 @@ def create_contract_project(request):
             if not cloud_create_folder(request.user, current):
                 return False
         return True
-
-    image_cache = {}
-    image_warning_keys = set()
-
-    def _contract_group_member_for_performer(perf):
-        return getattr(perf, "contract_group_member", None) or getattr(perf.registration, "group_member", None)
-
-    def _read_contract_image_file(file_field, *, label):
-        file_name = str(getattr(file_field, "name", "") or "").strip()
-        if not file_name:
-            return None
-        try:
-            file_field.open("rb")
-            try:
-                data = file_field.read()
-            finally:
-                file_field.close()
-        except Exception as exc:
-            raise RuntimeError(f"Не удалось прочитать файл «{label}».") from exc
-        return data or None
-
-    def _load_group_seal_bytes(group_member):
-        if not group_member:
-            return None
-        return _read_contract_image_file(getattr(group_member, "seal_file", None), label="Печать")
-
-    def _load_director_facsimile_bytes(group_member):
-        if not group_member:
-            return None
-        director_employee = (
-            Employee.objects
-            .select_related("user", "department", "department__company")
-            .filter(role=DIRECTOR_GROUP, department__company_id=group_member.pk)
-            .order_by("position", "id")
-            .first()
-        )
-        if not director_employee:
-            return None
-        director_profile = (
-            ExpertProfile.objects
-            .prefetch_related("contract_details_records__citizenship_record")
-            .filter(employee_id=director_employee.pk)
-            .first()
-        )
-        if not director_profile:
-            return None
-        director_details = director_profile.default_contract_details(require_facsimile=True)
-        if not director_details:
-            return None
-        return _read_contract_image_file(
-            getattr(director_details, "facsimile_file", None),
-            label="Факсимиле",
-        )
-
-    def _cached_contract_image_bytes(placeholder, group_member):
-        group_id = getattr(group_member, "pk", None)
-        cache_key = (placeholder, group_id)
-        if cache_key in image_cache:
-            return image_cache[cache_key]
-        if placeholder == "[[seal]]":
-            data = _load_group_seal_bytes(group_member)
-        elif placeholder == "[[facsimile_imcm]]":
-            data = _load_director_facsimile_bytes(group_member)
-        else:
-            data = None
-        image_cache[cache_key] = data
-        return data
-
-    def _insert_contract_image_placeholders(file_data, perf, warnings, context_label):
-        group_member = _contract_group_member_for_performer(perf)
-        image_specs = [
-            ("[[seal]]", "Печать организации"),
-            ("[[facsimile_imcm]]", "Подпись руководителя организации"),
-        ]
-        for placeholder, description in image_specs:
-            try:
-                if not document_contains_literal(file_data, placeholder):
-                    continue
-                image_bytes = _cached_contract_image_bytes(placeholder, group_member)
-                if not image_bytes:
-                    warning_key = (placeholder, getattr(group_member, "pk", None))
-                    if warning_key not in image_warning_keys:
-                        image_warning_keys.add(warning_key)
-                        warnings.append(f"{description} не найдена: {context_label}")
-                    continue
-                file_data = insert_floating_image_at_placeholder(
-                    file_data,
-                    image_bytes,
-                    placeholder=placeholder,
-                )
-            except Exception as exc:
-                warnings.append(f"{description}: {exc}")
-        return file_data
 
     def _country_values(country):
         if not country:
@@ -2901,14 +3139,27 @@ def create_contract_project(request):
                 project = perf.registration
                 key = (perf.registration_id, perf.executor)
                 all_perfs_for_executor = executor_to_perfs[key]
-                existing_folder_performer = next(
+                selected_folder_performer = next(
                     (
                         item for item in all_perfs_for_executor
                         if (item.contract_project_disk_folder or "").strip()
                     ),
                     None,
                 )
+                existing_folder_performer = selected_folder_performer
+                if existing_folder_performer is None:
+                    existing_folder_performer = (
+                        Performer.objects
+                        .filter(
+                            registration_id=perf.registration_id,
+                            executor=perf.executor,
+                        )
+                        .exclude(contract_project_disk_folder="")
+                        .order_by("contract_sent_at", "contract_project_created_at", "id")
+                        .first()
+                    )
                 reuse_existing_folder = existing_folder_performer is not None
+                selected_batch_id = next((item.contract_batch_id for item in all_perfs_for_executor if item.contract_batch_id), None)
                 year_str = sanitize_folder_name(str(project.year) if project.year else "Без года")
                 project_folder = build_project_folder_name(project)
                 base_path = join_cloud_path(
@@ -2919,7 +3170,7 @@ def create_contract_project(request):
                     CONTRACTS_PERFORMERS_FOLDER,
                 )
 
-                executor_name = _executor_short(perf.executor)
+                executor_name = contract_executor_short_name(perf.executor)
                 if reuse_existing_folder:
                     folder_path = normalize_cloud_path(existing_folder_performer.contract_project_disk_folder)
                     folder_name = os.path.basename(folder_path.rstrip("/")) or executor_name
@@ -2959,18 +3210,19 @@ def create_contract_project(request):
                     existing_folder_public_url = existing_folder_performer.contract_project_folder_link or ""
                 folder_file_id = existing_folder_file_id or _resolve_contract_project_nextcloud_file_id(folder_path)
                 folder_public_url = existing_folder_public_url
-                try:
-                    published_folder_url = cloud_publish_resource(request.user, folder_path)
-                    if published_folder_url:
-                        folder_public_url = published_folder_url
-                except Exception:
-                    pass
+                if not folder_public_url:
+                    try:
+                        published_folder_url = cloud_publish_resource(request.user, folder_path)
+                        if published_folder_url:
+                            folder_public_url = published_folder_url
+                    except Exception:
+                        pass
 
                 created_ids.extend(executor_to_ids[key])
 
                 now_dt = timezone.now()
                 reg_id, executor_val = key
-                if reuse_existing_folder:
+                if selected_folder_performer is not None:
                     is_addendum = bool(existing_folder_performer.contract_is_addendum)
                     addendum_number = existing_folder_performer.contract_addendum_number
                 else:
@@ -2998,6 +3250,7 @@ def create_contract_project(request):
                             contract_batch_id__isnull=False,
                             contract_is_addendum=False,
                         )
+                        .filter(Q(contract_project_created=True) | ~Q(contract_project_disk_folder=""))
                         .order_by("contract_sent_at", "id")
                         .first()
                     )
@@ -3009,6 +3262,8 @@ def create_contract_project(request):
                 else:
                     base_date = now_dt
 
+                perf.contract_is_addendum = is_addendum
+                perf.contract_addendum_number = addendum_number
                 existing_contract_number = (perf.contract_number or "").strip()
                 generated_contract_number = _build_contract_number(perf, base_date, addendum_number)
                 if is_addendum and existing_contract_number:
@@ -3061,13 +3316,8 @@ def create_contract_project(request):
                                 file_data = process_template(
                                     file_data, scalars,
                                     list_replacements=lists or None,
+                                    default_language_code="ru-RU",
                                 )
-                        file_data = _insert_contract_image_placeholders(
-                            file_data,
-                            p,
-                            warnings,
-                            executor_name,
-                        )
 
                         original_name = tmpl.file.name.split("/")[-1]
                         upload_name = _contract_project_file_name(perf, original_name)
@@ -3080,6 +3330,9 @@ def create_contract_project(request):
                                 "contract_pdf_file": "",
                                 "contract_pdf_link": "",
                                 "contract_pdf_file_id": "",
+                                "contract_signed_pdf_file": "",
+                                "contract_signed_pdf_link": "",
+                                "contract_signed_pdf_file_id": "",
                             }
                             file_id = _resolve_contract_project_nextcloud_file_id(upload_path)
                             if file_id:
@@ -3097,9 +3350,9 @@ def create_contract_project(request):
                         errors.append(f"Чтение файла: {tmpl.sample_name}")
 
                 batch_id = (
-                    existing_folder_performer.contract_batch_id
-                    if reuse_existing_folder and existing_folder_performer.contract_batch_id
-                    else perf.contract_batch_id or uuid.uuid4()
+                    selected_batch_id
+                    or perf.contract_batch_id
+                    or uuid.uuid4()
                 )
                 update_kwargs = dict(
                     contract_batch_id=batch_id,

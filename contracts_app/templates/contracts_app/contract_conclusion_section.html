@@ -89,6 +89,8 @@
       <tbody>
       {% for p in contract_performers %}
         <tr data-project-id="{{ p.registration_id }}"
+            data-contract-status="{{ p.contract_signing_note|default:'—' }}"
+            data-contract-batch-id="{{ p.contract_batch_id|default:'' }}"
             data-executor="{{ p.executor }}"
             data-executor-short="{{ p.executor|short_fio_no_dots }}"
             data-asset-name="{{ p.asset_name }}"
@@ -101,6 +103,7 @@
                        id="contract-drafting-sel-{{ p.id }}"
                        name="contract-select"
                        value="{{ p.id }}"
+                       data-contract-sent="{% if p.contract_sent_at %}1{% else %}0{% endif %}"
                        {% if p.contract_sent_at %}
                          disabled
                          title="Строка недоступна: проект договора уже отправлен"
@@ -115,8 +118,8 @@
           </td>
           <td class="text-truncate cell-group-val">{{ p.registration.name }}</td>
           <td class="text-nowrap cell-group-val">{{ p.executor|short_fio }}</td>
-          <td class="text-nowrap cell-group-val">{% if p.contract_is_addendum %}ДС{{ p.contract_addendum_number }}{% else %}Договор{% endif %}</td>
-          <td class="text-nowrap cell-group-val">{{ p.contract_number|default:"—" }}</td>
+          <td class="text-nowrap cell-detail-val">{% if p.contract_is_addendum %}ДС{{ p.contract_addendum_number }}{% else %}Договор{% endif %}</td>
+          <td class="text-nowrap cell-detail-val">{{ p.contract_number|default:"—" }}</td>
           <td class="text-nowrap cell-asset-val">{{ p.asset_name }}</td>
           <td class="text-nowrap cell-typical-val">
             {% if p.typical_section %}{{ p.typical_section|typical_section_short }}{% else %}&mdash;{% endif %}
@@ -247,7 +250,6 @@
         <col class="col-deadline">
         <col>
         <col>
-        <col>
       </colgroup>
       <thead>
       <tr>
@@ -271,15 +273,17 @@
         <th class="text-nowrap">Срок</th>
         <th class="text-nowrap">Дата подписания</th>
         <th>Статус</th>
-        <th>Подписание</th>
       </tr>
       </thead>
       <tbody>
       {% for p in contract_performers %}
         <tr data-project-id="{{ p.registration_id }}"
+            data-contract-status="{{ p.contract_signing_note|default:'—' }}"
+            data-contract-batch-id="{{ p.contract_batch_id|default:'' }}"
             data-executor="{{ p.executor }}"
             data-executor-short="{{ p.executor|short_fio_no_dots }}"
-            data-asset-name="{{ p.asset_name }}">
+            data-asset-name="{{ p.asset_name }}"
+            data-contract-dispatch-ready="{% if p.contract_file and p.contract_pdf_file %}1{% else %}0{% endif %}">
           <td class="text-nowrap cell-group-val">
             {% if request.user.is_authenticated and request.user.is_staff %}
               <div class="form-check m-0">
@@ -288,6 +292,7 @@
                        id="contract-dispatch-sel-{{ p.id }}"
                        name="contract-dispatch-select"
                        value="{{ p.id }}"
+                       data-contract-sent="{% if p.contract_sent_at %}1{% else %}0{% endif %}"
                        {% if p.contract_sent_at %}
                          disabled
                          title="Строка недоступна: проект договора уже отправлен"
@@ -302,16 +307,15 @@
           </td>
           <td class="text-truncate cell-group-val">{{ p.registration.name }}</td>
           <td class="text-nowrap cell-group-val">{{ p.executor|short_fio }}</td>
-          <td class="text-nowrap cell-group-val">{% if p.contract_is_addendum %}ДС{{ p.contract_addendum_number }}{% else %}Договор{% endif %}</td>
-          <td class="text-nowrap cell-group-val">{{ p.contract_number|default:"—" }}</td>
+          <td class="text-nowrap cell-detail-val">{% if p.contract_is_addendum %}ДС{{ p.contract_addendum_number }}{% else %}Договор{% endif %}</td>
+          <td class="text-nowrap cell-detail-val">{{ p.contract_number|default:"—" }}</td>
           <td class="text-nowrap cell-detail-val">{{ p.contract_sent_at|date:"d.m.Y H:i"|default:"—" }}</td>
           <td class="text-nowrap cell-detail-val">{{ p.contract_deadline_at|date:"d.m.Y H:i"|default:"—" }}</td>
-          <td class="text-nowrap cell-detail-val">{{ p.contract_signing_date|date:"d.m.Y"|default:"—" }}</td>
-          <td class="cell-detail-val">{{ p.contract_conclusion_status|default:"—" }}</td>
-          <td class="cell-detail-val">{{ p.contract_signing_note|default:"—" }}</td>
+          <td class="text-nowrap cell-detail-val">{{ p.contract_signing_date|date:"d.m.Y H:i"|default:"—" }}</td>
+          <td class="cell-detail-val">{{ p.contract_response_status|default:"—" }}</td>
         </tr>
       {% empty %}
-        <tr><td colspan="12" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="11" class="text-muted">Пока нет данных.</td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -409,19 +413,27 @@
                 <div class="form-check">
                   <input class="form-check-input js-contract-channel"
                          type="checkbox"
-                         id="contract-channel-email"
-                         value="email">
-                  <label class="form-check-label" for="contract-channel-email">
-                    Электронная почта
+                         id="contract-channel-system-email"
+                         value="system_email">
+                  <label class="form-check-label" for="contract-channel-system-email">
+                    Системная электронная почта
                   </label>
                 </div>
-              </div>
-              <div class="mb-0">
-                <label for="contract-request-sent-at" class="form-label">Дата отправки</label>
-                <input type="datetime-local"
-                       id="contract-request-sent-at"
-                       class="form-control"
-                       value="{{ contract_request_sent_initial }}">
+                <div class="form-check">
+                  <input class="form-check-input js-contract-channel"
+                         type="checkbox"
+                         id="contract-channel-connected-email"
+                         value="connected_email"
+                         {% if not has_active_smtp_connection %}disabled{% endif %}>
+                  <label class="form-check-label" for="contract-channel-connected-email">
+                    Подключенная электронная почта
+                  </label>
+                </div>
+                {% if not has_active_smtp_connection %}
+                  <div class="form-text mt-1">
+                    Сначала настройте активное внешнее SMTP-подключение в разделе «Подключения».
+                  </div>
+                {% endif %}
               </div>
             </div>
             <div class="modal-footer">

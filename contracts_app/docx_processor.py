@@ -1185,9 +1185,10 @@ def _find_bullet_style_id(doc) -> str:
     If absent, creates the style so paragraphs display as
     "Маркированный список" / "List Bullet".
     """
-    for style in doc.styles:
-        if style.name == "List Bullet":
-            return style.style_id
+    for preferred_name in ("Маркированный список", "List Bullet"):
+        for style in doc.styles:
+            if style.name == preferred_name:
+                return style.style_id
     try:
         from docx.enum.style import WD_STYLE_TYPE
         style = doc.styles.add_style("List Bullet", WD_STYLE_TYPE.PARAGRAPH)
@@ -1378,6 +1379,7 @@ def _build_anchor_from_inline(
     y_offset_emu: int = 0,
     x_relative_from: str = "column",
     x_align: str | None = None,
+    relative_height: int | str = 0,
 ):
     from docx.oxml import OxmlElement
 
@@ -1388,7 +1390,7 @@ def _build_anchor_from_inline(
     anchor.set("distL", "0")
     anchor.set("distR", "0")
     anchor.set("simplePos", "0")
-    anchor.set("relativeHeight", "0")
+    anchor.set("relativeHeight", str(relative_height))
     anchor.set("locked", "0")
     anchor.set("layoutInCell", "1")
     anchor.set("allowOverlap", "1")
@@ -1463,6 +1465,7 @@ def _append_floating_image_run(
     y_offset_cm: float = 0,
     x_relative_from: str = "page",
     x_align: str | None = "center",
+    relative_height: int | str = 0,
 ) -> None:
     from docx.image.exceptions import UnexpectedEndOfFileError, UnrecognizedImageError
 
@@ -1488,6 +1491,7 @@ def _append_floating_image_run(
         y_offset_emu=int(Cm(y_offset_cm).emu),
         x_relative_from=x_relative_from,
         x_align=x_align,
+        relative_height=relative_height,
     )
     drawing.remove(inline)
     drawing.append(anchor)
@@ -1503,6 +1507,7 @@ def insert_floating_image_at_placeholder(
     y_offset_cm: float = 0,
     x_relative_from: str = "page",
     x_align: str | None = "center",
+    relative_height: int | str = 0,
 ) -> bytes:
     if not file_bytes or not image_bytes or not str(placeholder or "").strip():
         return file_bytes
@@ -1522,10 +1527,30 @@ def insert_floating_image_at_placeholder(
                 y_offset_cm=y_offset_cm,
                 x_relative_from=x_relative_from,
                 x_align=x_align,
+                relative_height=relative_height,
             )
         inserted = True
 
     if not inserted:
+        return file_bytes
+
+    out = BytesIO()
+    doc.save(out)
+    return out.getvalue()
+
+
+def remove_literal_placeholders(file_bytes: bytes, literals: list[str] | tuple[str, ...] | set[str]) -> bytes:
+    if not file_bytes or not literals:
+        return file_bytes
+
+    doc = Document(BytesIO(file_bytes))
+    changed = False
+    for paragraph in _iter_document_paragraphs(doc):
+        for literal in literals:
+            if _replace_literal_in_paragraph(paragraph, literal, ""):
+                changed = True
+
+    if not changed:
         return file_bytes
 
     out = BytesIO()
@@ -1541,6 +1566,32 @@ def document_contains_literal(file_bytes: bytes, literal: str) -> bool:
     except Exception:
         return False
     return any(str(literal) in paragraph.text for paragraph in _iter_document_paragraphs(doc))
+
+
+def clear_text_highlighting(file_bytes: bytes) -> bytes:
+    """Remove marker/background highlighting from text runs without changing text."""
+    if not file_bytes:
+        return file_bytes
+
+    doc = Document(BytesIO(file_bytes))
+    changed = False
+    for paragraph in _iter_document_paragraphs(doc):
+        for run in paragraph.runs:
+            r_pr = run._r.rPr
+            if r_pr is None:
+                continue
+            for tag_name in ("highlight", "shd"):
+                element = r_pr.find(qn(f"w:{tag_name}"))
+                if element is not None:
+                    r_pr.remove(element)
+                    changed = True
+
+    if not changed:
+        return file_bytes
+
+    out = BytesIO()
+    doc.save(out)
+    return out.getvalue()
 
 
 def process_template(

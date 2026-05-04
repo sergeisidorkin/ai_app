@@ -104,6 +104,8 @@ class PerformerAdmin(admin.ModelAdmin):
         }),
         ("Подписание договора — подписанный договор", {
             "fields": (
+                "contract_signed_pdf_file",
+                "contract_signed_pdf_link",
                 "contract_signed_scan_file",
                 "contract_signed_scan",
                 "contract_signed_scan_link",

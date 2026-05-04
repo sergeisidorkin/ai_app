@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 
 from projects_app.models import Performer
@@ -143,6 +144,46 @@ class ContractSubject(models.Model):
 
     def __str__(self):
         return self.subject_text or f"Предмет #{self.pk}"
+
+
+class ContractReturnComment(models.Model):
+    class AuthorRole(models.TextChoices):
+        LAWYER = "lawyer", "Юрист"
+        EXPERT = "expert", "Эксперт"
+        OTHER = "other", "Другое"
+
+    performer = models.ForeignKey(
+        Performer,
+        verbose_name="Исполнитель договора",
+        on_delete=models.CASCADE,
+        related_name="contract_return_comments",
+    )
+    contract_batch_id = models.UUIDField("ID батча договора", null=True, blank=True, db_index=True)
+    text = models.TextField("Комментарий")
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="Автор",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="contract_return_comments",
+    )
+    author_role = models.CharField(
+        "Роль автора",
+        max_length=16,
+        choices=AuthorRole.choices,
+        default=AuthorRole.OTHER,
+        db_index=True,
+    )
+    created_at = models.DateTimeField("Дата создания", auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+        verbose_name = "Комментарий возврата договора"
+        verbose_name_plural = "Комментарии возврата договоров"
+
+    def __str__(self):
+        return f"{self.performer_id}:{self.get_author_role_display()}"
 
 
 class ContractProjectWork(Performer):
