@@ -60,3 +60,35 @@
     <button type="submit" class="btn btn-primary">Сохранить</button>
   </div>
 </form>
+
+<script>
+(function() {
+  var productSelect = document.getElementById('id_product');
+  var sectionSelect = document.getElementById('id_section');
+  var sectionsByProduct = {{ sections_by_product_json|safe }};
+  if (!productSelect || !sectionSelect) return;
+
+  function rebuildSections() {
+    var productId = productSelect.value || '';
+    var previous = sectionSelect.value || '';
+    var options = sectionsByProduct[productId] || [];
+    sectionSelect.innerHTML = '';
+    var placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = productId ? '---------' : '— выберите продукт —';
+    sectionSelect.appendChild(placeholder);
+    options.forEach(function(item) {
+      var option = document.createElement('option');
+      option.value = String(item.id);
+      option.textContent = item.label;
+      sectionSelect.appendChild(option);
+    });
+    if (Array.from(sectionSelect.options).some(function(option) { return option.value === previous; })) {
+      sectionSelect.value = previous;
+    }
+  }
+
+  productSelect.addEventListener('change', rebuildSections);
+  rebuildSections();
+})();
+</script>

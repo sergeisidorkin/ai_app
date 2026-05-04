@@ -510,7 +510,7 @@ def _contracts_context(user=None):
         "batch_badge_map": batch_badge_map,
         "lawyer_badge_map": lawyer_badge_map,
         "can_sign_performer_contracts": is_admin_role or is_expert,
-        "can_manage_contract_signing_actions": bool(is_admin_role or (getattr(user, "is_superuser", False) and not is_lawyer)),
+        "can_manage_contract_signing_actions": contract_signing_manager_required(user),
         "has_contracts_sent_for_signing": has_contracts_sent_for_signing,
         "is_expert": is_expert,
         "is_lawyer": is_lawyer,

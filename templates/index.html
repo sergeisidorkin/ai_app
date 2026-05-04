@@ -276,7 +276,73 @@
         <div class="templates-bleed">
           <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
             <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
-              <h5 class="mb-0 ps-3 fs-4 pt-2">Продукты</h5>
+              <div class="d-flex align-items-center gap-3">
+                <h5 class="mb-0 ps-3 fs-4 pt-2">Продукты</h5>
+                <div class="dropdown pt-1" id="master-policy-consulting-filter-dropdown" style="transform: translateY(3px);">
+                  <button class="btn btn-primary btn-sm dropdown-toggle" type="button"
+                          id="policy-consulting-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                    Вид консалтинга: <span class="js-policy-consulting-filter-label">Все</span>
+                  </button>
+                  <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="policy-consulting-filter-toggle"
+                       style="max-height: 240px; overflow-y: auto;">
+                    <div class="form-check mb-2">
+                      <input class="form-check-input js-policy-master-filter" type="checkbox"
+                             value="__all__" id="policy-consulting-filter-all" data-filter-key="consulting" checked>
+                      <label class="form-check-label" for="policy-consulting-filter-all">Все виды</label>
+                    </div>
+                    <hr class="dropdown-divider">
+                    <div id="policy-consulting-filter-list"></div>
+                  </div>
+                </div>
+                <div class="dropdown pt-1" id="master-policy-category-filter-dropdown" style="transform: translateY(3px);">
+                  <button class="btn btn-primary btn-sm dropdown-toggle" type="button"
+                          id="policy-category-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                    Тип услуги: <span class="js-policy-category-filter-label">Все</span>
+                  </button>
+                  <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="policy-category-filter-toggle"
+                       style="max-height: 240px; overflow-y: auto;">
+                    <div class="form-check mb-2">
+                      <input class="form-check-input js-policy-master-filter" type="checkbox"
+                             value="__all__" id="policy-category-filter-all" data-filter-key="category" checked>
+                      <label class="form-check-label" for="policy-category-filter-all">Все типы</label>
+                    </div>
+                    <hr class="dropdown-divider">
+                    <div id="policy-category-filter-list"></div>
+                  </div>
+                </div>
+                <div class="dropdown pt-1" id="master-policy-subtype-filter-dropdown" style="transform: translateY(3px);">
+                  <button class="btn btn-primary btn-sm dropdown-toggle" type="button"
+                          id="policy-subtype-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                    Подтип услуги: <span class="js-policy-subtype-filter-label">Все</span>
+                  </button>
+                  <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="policy-subtype-filter-toggle"
+                       style="max-height: 240px; overflow-y: auto;">
+                    <div class="form-check mb-2">
+                      <input class="form-check-input js-policy-master-filter" type="checkbox"
+                             value="__all__" id="policy-subtype-filter-all" data-filter-key="subtype" checked>
+                      <label class="form-check-label" for="policy-subtype-filter-all">Все подтипы</label>
+                    </div>
+                    <hr class="dropdown-divider">
+                    <div id="policy-subtype-filter-list"></div>
+                  </div>
+                </div>
+                <div class="dropdown pt-1" id="master-policy-product-filter-dropdown" style="transform: translateY(3px);">
+                  <button class="btn btn-primary btn-sm dropdown-toggle" type="button"
+                          id="policy-product-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                    Продукт: <span class="js-policy-product-filter-label">Все</span>
+                  </button>
+                  <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="policy-product-filter-toggle"
+                       style="max-height: 240px; overflow-y: auto;">
+                    <div class="form-check mb-2">
+                      <input class="form-check-input js-policy-master-filter" type="checkbox"
+                             value="__all__" id="policy-product-filter-all" data-filter-key="product" checked>
+                      <label class="form-check-label" for="policy-product-filter-all">Все продукты</label>
+                    </div>
+                    <hr class="dropdown-divider">
+                    <div id="policy-product-filter-list"></div>
+                  </div>
+                </div>
+              </div>
               <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
                  href="#notifications"
                  data-bs-toggle="tab"
@@ -3565,7 +3631,8 @@
           function cleanupBackdrops(){
             const anyShown = !!document.querySelector('.modal.show, .modal.showing, .modal[style*="display: block"]')
               || document.body.classList.contains('contracts-modal-open')
-              || document.body.classList.contains('contract-templates-modal-open');
+              || document.body.classList.contains('contract-templates-modal-open')
+              || document.body.classList.contains('contract-requisites-modal-open');
             if (anyShown) return;
             document.querySelectorAll('.modal-backdrop').forEach(b=>b.remove());
             document.body.classList.remove('modal-open');
@@ -3746,7 +3813,8 @@
                 const hasBackdrop = !!document.querySelector('.modal-backdrop.show');
                 const anyShown = !!document.querySelector('.modal.show, .modal.showing, .modal[style*="display: block"]')
                   || document.body.classList.contains('contracts-modal-open')
-                  || document.body.classList.contains('contract-templates-modal-open');
+                  || document.body.classList.contains('contract-templates-modal-open')
+                  || document.body.classList.contains('contract-requisites-modal-open');
                 if (hasBackdrop && !anyShown) cleanupBackdrops();
               }, 400);
             });

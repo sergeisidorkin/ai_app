@@ -2,7 +2,9 @@ import csv
 import io
 import json
 from collections import defaultdict
+from decimal import Decimal, InvalidOperation
 
+from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.db import transaction
 from django.db.models import IntegerField, Max, Q, Value
@@ -61,6 +63,47 @@ SPECIALTY_TARIFF_FORM_TEMPLATE = "policy_app/specialty_tariff_form.html"
 TARIFF_FORM_TEMPLATE = "policy_app/tariff_form.html"
 HX_TRIGGER_HEADER = "HX-Trigger"
 HX_POLICY_UPDATED_EVENT = "policy-updated"
+PRODUCT_CSV_HEADERS = [
+    "Краткое имя",
+    "Наименование на английском языке",
+    "Наименование на русском языке",
+    "Отображаемое в системе имя",
+    "Вид консалтинга",
+    "Тип услуг",
+    "Код",
+    "Подтип услуги",
+    "Владелец",
+]
+SERVICE_GOAL_REPORT_CSV_HEADERS = [
+    "Продукт",
+    "Цели оказания услуг",
+    "Цели оказания услуг в родительном падеже",
+    "Титул отчета/ТКП",
+    "Название продукта",
+]
+STRUCTURE_CSV_HEADERS = [
+    "Продукт",
+    "Раздел (услуга)",
+    "Подразделы",
+]
+TYPICAL_SERVICE_COMPOSITION_CSV_HEADERS = [
+    "Продукт",
+    "Раздел (услуга)",
+    "Состав услуг",
+]
+TYPICAL_SERVICE_TERM_CSV_HEADERS = [
+    "Продукт",
+    "Срок подготовки Предварительного отчёта, мес.",
+    "Срок подготовки Итогового отчёта, нед.",
+]
+TARIFF_CSV_HEADERS = [
+    "Продукт",
+    "Раздел (услуга)",
+    "Базовая ставка в ВПМ",
+    "Объем услуг в часах",
+    "Объем услуг в днях для ТКП",
+    "Руководитель направления",
+]
 SECTION_CSV_HEADERS = [
     "Продукт",
     "Код",
@@ -98,7 +141,13 @@ def _get_grades_for_user(user):
 
 def _get_tariffs_for_user(user):
     qs = Tariff.objects.select_related(
-        "product", "section", "created_by", "created_by__employee_profile"
+        "product",
+        "product__consulting_type_ref",
+        "product__service_category_ref",
+        "product__service_subtype_ref",
+        "section",
+        "created_by",
+        "created_by__employee_profile",
     ).annotate(
         owner_group_position=Coalesce(
             "created_by__employee_profile__position",
@@ -172,13 +221,42 @@ def _policy_context(request):
     products = Product.objects.select_related(
         "consulting_type_ref", "service_category_ref", "service_subtype_ref"
     ).prefetch_related("owners").all()
-    sections = TypicalSection.objects.select_related("product", "expertise_dir", "expertise_direction").prefetch_related(
+    sections = TypicalSection.objects.select_related(
+        "product",
+        "product__consulting_type_ref",
+        "product__service_category_ref",
+        "product__service_subtype_ref",
+        "expertise_dir",
+        "expertise_direction",
+    ).prefetch_related(
         "ranked_specialties", "ranked_specialties__specialty"
     ).all()
-    structures = SectionStructure.objects.select_related("product", "section").all()
-    service_goal_reports = ServiceGoalReport.objects.select_related("product").all()
-    typical_service_compositions = TypicalServiceComposition.objects.select_related("product", "section").all()
-    typical_service_terms = TypicalServiceTerm.objects.select_related("product").all()
+    structures = SectionStructure.objects.select_related(
+        "product",
+        "product__consulting_type_ref",
+        "product__service_category_ref",
+        "product__service_subtype_ref",
+        "section",
+    ).all()
+    service_goal_reports = ServiceGoalReport.objects.select_related(
+        "product",
+        "product__consulting_type_ref",
+        "product__service_category_ref",
+        "product__service_subtype_ref",
+    ).all()
+    typical_service_compositions = TypicalServiceComposition.objects.select_related(
+        "product",
+        "product__consulting_type_ref",
+        "product__service_category_ref",
+        "product__service_subtype_ref",
+        "section",
+    ).all()
+    typical_service_terms = TypicalServiceTerm.objects.select_related(
+        "product",
+        "product__consulting_type_ref",
+        "product__service_category_ref",
+        "product__service_subtype_ref",
+    ).all()
     consulting_directions = ConsultingDirection.objects.prefetch_related(
         "consulting_types",
         "service_types__consulting_type",
@@ -256,6 +334,49 @@ def _product_form_page_context(extra: dict) -> dict:
     return ctx
 
 
+def _positive_int(value):
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _prefill_product_from_request(request):
+    product_id = _positive_int(request.GET.get("product"))
+    if not product_id:
+        return None
+    return (
+        Product.objects.select_related(
+            "consulting_type_ref",
+            "service_category_ref",
+            "service_subtype_ref",
+        )
+        .filter(pk=product_id)
+        .first()
+    )
+
+
+def _product_field_initial_from_request(request):
+    product = _prefill_product_from_request(request)
+    return {"product": product.pk} if product else {}
+
+
+def _product_ref_initial_from_request(request):
+    product = _prefill_product_from_request(request)
+    if product:
+        return {
+            "consulting_type_ref": product.consulting_type_ref_id,
+            "service_category_ref": product.service_category_ref_id,
+            "service_subtype_ref": product.service_subtype_ref_id,
+        }
+    return {
+        key: value
+        for key in ("consulting_type_ref", "service_category_ref", "service_subtype_ref")
+        if (value := _positive_int(request.GET.get(key)))
+    }
+
+
 def _next_position(model, filters: dict | None = None) -> int:
     """
     Возвращает следующую позицию (last+1) для списка объектов.
@@ -277,7 +398,7 @@ def policy_partial(request):
 @require_http_methods(["GET", "POST"])
 def product_form_create(request):
     if request.method == "GET":
-        form = ProductForm()
+        form = ProductForm(initial=_product_ref_initial_from_request(request))
         return render(request, PRODUCT_FORM_TEMPLATE, _product_form_page_context({"form": form, "action": "create"}))
     # POST
     form = ProductForm(request.POST)
@@ -476,6 +597,38 @@ def product_csv_upload(request):
 
     return JsonResponse({"ok": True, "created": created, "warnings": warnings})
 
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def product_csv_download(request):
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=";", lineterminator="\n")
+    writer.writerow(PRODUCT_CSV_HEADERS)
+
+    products = Product.objects.select_related(
+        "consulting_type_ref", "service_category_ref", "service_subtype_ref"
+    ).prefetch_related("owners")
+    for product in products:
+        writer.writerow(
+            [
+                product.short_name,
+                product.name_en,
+                product.name_ru,
+                product.display_name,
+                product.consulting_type_display,
+                product.service_category_display,
+                product.service_code,
+                product.service_subtype_display,
+                product.owner_display,
+            ]
+        )
+
+    response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="typical_products.csv"'
+    return response
+
 # --- Типовые разделы ---
 
 def _section_specialty_options():
@@ -554,6 +707,17 @@ def _typical_service_term_form_context(form, action, term=None):
     return ctx
 
 
+def _structure_form_context(form, action, structure=None):
+    ctx = {
+        "form": form,
+        "action": action,
+        "sections_by_product_json": _typical_sections_by_product_json(),
+    }
+    if structure:
+        ctx["structure"] = structure
+    return ctx
+
+
 def _specialty_tariff_specialty_options():
     return [
         {
@@ -601,7 +765,7 @@ def _specialty_tariff_owner(request, form):
 @require_http_methods(["GET", "POST"])
 def section_form_create(request):
     if request.method == "GET":
-        form = TypicalSectionForm()
+        form = TypicalSectionForm(initial=_product_field_initial_from_request(request))
         return render(request, SECTION_FORM_TEMPLATE, _section_form_context(form, "create"))
     form = TypicalSectionForm(request.POST)
     if not form.is_valid():
@@ -925,11 +1089,11 @@ def section_csv_download(request):
 @require_http_methods(["GET", "POST"])
 def structure_form_create(request):
     if request.method == "GET":
-        form = SectionStructureForm()
-        return render(request, STRUCTURE_FORM_TEMPLATE, {"form": form, "action": "create"})
+        form = SectionStructureForm(initial=_product_field_initial_from_request(request))
+        return render(request, STRUCTURE_FORM_TEMPLATE, _structure_form_context(form, "create"))
     form = SectionStructureForm(request.POST)
     if not form.is_valid():
-        return render(request, STRUCTURE_FORM_TEMPLATE, {"form": form, "action": "create"})
+        return render(request, STRUCTURE_FORM_TEMPLATE, _structure_form_context(form, "create"))
     obj = form.save(commit=False)
     if not getattr(obj, "position", 0):
         obj.position = _next_position(SectionStructure)
@@ -944,10 +1108,10 @@ def structure_form_edit(request, pk: int):
     structure = get_object_or_404(SectionStructure, pk=pk)
     if request.method == "GET":
         form = SectionStructureForm(instance=structure)
-        return render(request, STRUCTURE_FORM_TEMPLATE, {"form": form, "action": "edit", "structure": structure})
+        return render(request, STRUCTURE_FORM_TEMPLATE, _structure_form_context(form, "edit", structure))
     form = SectionStructureForm(request.POST, instance=structure)
     if not form.is_valid():
-        return render(request, STRUCTURE_FORM_TEMPLATE, {"form": form, "action": "edit", "structure": structure})
+        return render(request, STRUCTURE_FORM_TEMPLATE, _structure_form_context(form, "edit", structure))
     form.save()
     return _render_policy_updated(request)
 
@@ -959,6 +1123,114 @@ def structure_delete(request, pk: int):
     structure = get_object_or_404(SectionStructure, pk=pk)
     structure.delete()
     return _render_policy_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def structure_csv_upload(request):
+    csv_file = request.FILES.get("csv_file")
+    if not csv_file:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+    if not csv_file.name.lower().endswith(".csv"):
+        return JsonResponse({"ok": False, "error": "Допустимы только файлы CSV."}, status=400)
+
+    try:
+        raw = csv_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_file.seek(0)
+            raw = csv_file.read().decode("cp1251")
+        except Exception:
+            return JsonResponse(
+                {"ok": False, "error": "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251)."},
+                status=400,
+            )
+
+    try:
+        reader = csv.reader(io.StringIO(raw), delimiter=";")
+        rows = list(reader)
+        if not rows:
+            return JsonResponse({"ok": False, "error": "Файл пуст."}, status=400)
+        if len(rows[0]) <= 1:
+            reader = csv.reader(io.StringIO(raw), delimiter=",")
+            rows = list(reader)
+    except csv.Error as exc:
+        return JsonResponse({"ok": False, "error": f"Ошибка разбора CSV: {exc}. Проверьте формат и кодировку файла."}, status=400)
+
+    if len(rows) < 2:
+        return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
+
+    products_by_name = {_csv_lookup_key(p.short_name): p for p in Product.objects.all()}
+    sections_by_product = defaultdict(dict)
+    for section in TypicalSection.objects.select_related("product").all():
+        lookup = sections_by_product[section.product_id]
+        for label in (section.name_ru, section.name_en, section.code, section.short_name, section.short_name_ru):
+            key = _csv_lookup_key(label)
+            if key:
+                lookup.setdefault(key, section)
+
+    created = 0
+    warnings = []
+
+    for i, row in enumerate(rows[1:], start=2):
+        if not any(cell.strip() for cell in row):
+            continue
+        if len(row) < 3:
+            warnings.append(
+                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 3: "
+                "Продукт, Раздел (услуга), Подразделы)."
+            )
+            continue
+
+        product_name = row[0].strip()
+        section_name = row[1].strip()
+        product = products_by_name.get(_csv_lookup_key(product_name))
+        if not product:
+            warnings.append(f"Строка {i}: продукт «{product_name}» не найден. Доступные: {', '.join(products_by_name.keys())}.")
+            continue
+
+        section = sections_by_product[product.pk].get(_csv_lookup_key(section_name))
+        if not section:
+            warnings.append(f"Строка {i}: раздел «{section_name}» не найден для продукта «{product.short_name}».")
+            continue
+
+        try:
+            SectionStructure.objects.create(
+                product=product,
+                section=section,
+                subsections=row[2].strip(),
+                position=_next_position(SectionStructure),
+            )
+            created += 1
+        except Exception as exc:
+            warnings.append(f"Строка {i}: ошибка сохранения — {exc}")
+
+    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def structure_csv_download(request):
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=";", lineterminator="\n")
+    writer.writerow(STRUCTURE_CSV_HEADERS)
+
+    structures = SectionStructure.objects.select_related("product", "section").all()
+    for structure in structures:
+        writer.writerow(
+            [
+                structure.product.short_name,
+                structure.section.name_ru or structure.section.name_en,
+                structure.subsections,
+            ]
+        )
+
+    response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="section_structures.csv"'
+    return response
 
 
 def _normalize_structure_positions():
@@ -1007,7 +1279,7 @@ def structure_move_down(request, pk: int):
 @require_http_methods(["GET", "POST"])
 def service_goal_report_form_create(request):
     if request.method == "GET":
-        form = ServiceGoalReportForm()
+        form = ServiceGoalReportForm(initial=_product_field_initial_from_request(request))
         return render(request, SERVICE_GOAL_REPORT_FORM_TEMPLATE, {"form": form, "action": "create"})
     form = ServiceGoalReportForm(request.POST)
     if not form.is_valid():
@@ -1049,6 +1321,105 @@ def service_goal_report_delete(request, pk: int):
     service_goal_report = get_object_or_404(ServiceGoalReport, pk=pk)
     service_goal_report.delete()
     return _render_policy_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def service_goal_report_csv_upload(request):
+    csv_file = request.FILES.get("csv_file")
+    if not csv_file:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+    if not csv_file.name.lower().endswith(".csv"):
+        return JsonResponse({"ok": False, "error": "Допустимы только файлы CSV."}, status=400)
+
+    try:
+        raw = csv_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_file.seek(0)
+            raw = csv_file.read().decode("cp1251")
+        except Exception:
+            return JsonResponse(
+                {"ok": False, "error": "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251)."},
+                status=400,
+            )
+
+    try:
+        reader = csv.reader(io.StringIO(raw), delimiter=";")
+        rows = list(reader)
+        if not rows:
+            return JsonResponse({"ok": False, "error": "Файл пуст."}, status=400)
+        if len(rows[0]) <= 1:
+            reader = csv.reader(io.StringIO(raw), delimiter=",")
+            rows = list(reader)
+    except csv.Error as exc:
+        return JsonResponse({"ok": False, "error": f"Ошибка разбора CSV: {exc}. Проверьте формат и кодировку файла."}, status=400)
+
+    if len(rows) < 2:
+        return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
+
+    products_by_name = {_csv_lookup_key(p.short_name): p for p in Product.objects.all()}
+    created = 0
+    warnings = []
+
+    for i, row in enumerate(rows[1:], start=2):
+        if not any(cell.strip() for cell in row):
+            continue
+        if len(row) < 5:
+            warnings.append(
+                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 5: "
+                "Продукт, Цели оказания услуг, Цели оказания услуг в родительном падеже, "
+                "Титул отчета/ТКП, Название продукта)."
+            )
+            continue
+
+        product_name = row[0].strip()
+        product = products_by_name.get(_csv_lookup_key(product_name))
+        if not product:
+            warnings.append(f"Строка {i}: продукт «{product_name}» не найден. Доступные: {', '.join(products_by_name.keys())}.")
+            continue
+
+        try:
+            ServiceGoalReport.objects.create(
+                product=product,
+                service_goal=row[1].strip(),
+                service_goal_genitive=row[2].strip(),
+                report_title=row[3].strip(),
+                product_name=row[4].strip(),
+                position=_next_position(ServiceGoalReport),
+            )
+            created += 1
+        except Exception as exc:
+            warnings.append(f"Строка {i}: ошибка сохранения — {exc}")
+
+    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def service_goal_report_csv_download(request):
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=";", lineterminator="\n")
+    writer.writerow(SERVICE_GOAL_REPORT_CSV_HEADERS)
+
+    items = ServiceGoalReport.objects.select_related("product").all()
+    for item in items:
+        writer.writerow(
+            [
+                item.product.short_name,
+                item.service_goal,
+                item.service_goal_genitive,
+                item.report_title,
+                item.product_name,
+            ]
+        )
+
+    response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="service_goal_reports.csv"'
+    return response
 
 
 def _normalize_service_goal_report_positions():
@@ -1107,7 +1478,7 @@ def service_goal_report_move_down(request, pk: int):
 @require_http_methods(["GET", "POST"])
 def typical_service_composition_form_create(request):
     if request.method == "GET":
-        form = TypicalServiceCompositionForm()
+        form = TypicalServiceCompositionForm(initial=_product_field_initial_from_request(request))
         return render(
             request,
             TYPICAL_SERVICE_COMPOSITION_FORM_TEMPLATE,
@@ -1157,6 +1528,119 @@ def typical_service_composition_delete(request, pk: int):
     composition = get_object_or_404(TypicalServiceComposition, pk=pk)
     composition.delete()
     return _render_policy_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def typical_service_composition_csv_upload(request):
+    csv_file = request.FILES.get("csv_file")
+    if not csv_file:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+    if not csv_file.name.lower().endswith(".csv"):
+        return JsonResponse({"ok": False, "error": "Допустимы только файлы CSV."}, status=400)
+
+    try:
+        raw = csv_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_file.seek(0)
+            raw = csv_file.read().decode("cp1251")
+        except Exception:
+            return JsonResponse(
+                {"ok": False, "error": "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251)."},
+                status=400,
+            )
+
+    try:
+        reader = csv.reader(io.StringIO(raw), delimiter=";")
+        rows = list(reader)
+        if not rows:
+            return JsonResponse({"ok": False, "error": "Файл пуст."}, status=400)
+        if len(rows[0]) <= 1:
+            reader = csv.reader(io.StringIO(raw), delimiter=",")
+            rows = list(reader)
+    except csv.Error as exc:
+        return JsonResponse({"ok": False, "error": f"Ошибка разбора CSV: {exc}. Проверьте формат и кодировку файла."}, status=400)
+
+    if len(rows) < 2:
+        return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
+
+    products_by_name = {_csv_lookup_key(p.short_name): p for p in Product.objects.all()}
+    sections_by_product = defaultdict(dict)
+    for section in TypicalSection.objects.select_related("product").all():
+        lookup = sections_by_product[section.product_id]
+        for label in (section.name_ru, section.name_en, section.code, section.short_name, section.short_name_ru):
+            key = _csv_lookup_key(label)
+            if key:
+                lookup.setdefault(key, section)
+
+    created = 0
+    warnings = []
+
+    for i, row in enumerate(rows[1:], start=2):
+        if not any(cell.strip() for cell in row):
+            continue
+        if len(row) < 3:
+            warnings.append(
+                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 3: "
+                "Продукт, Раздел (услуга), Состав услуг)."
+            )
+            continue
+
+        product_name = row[0].strip()
+        section_name = row[1].strip()
+        product = products_by_name.get(_csv_lookup_key(product_name))
+        if not product:
+            warnings.append(f"Строка {i}: продукт «{product_name}» не найден. Доступные: {', '.join(products_by_name.keys())}.")
+            continue
+
+        section = sections_by_product[product.pk].get(_csv_lookup_key(section_name))
+        if not section:
+            warnings.append(f"Строка {i}: раздел «{section_name}» не найден для продукта «{product.short_name}».")
+            continue
+
+        service_composition = row[2].strip()
+        try:
+            TypicalServiceComposition.objects.create(
+                product=product,
+                section=section,
+                service_composition=service_composition,
+                service_composition_editor_state={
+                    "html": "",
+                    "plain_text": service_composition,
+                },
+                position=_next_position(TypicalServiceComposition),
+            )
+            created += 1
+        except Exception as exc:
+            warnings.append(f"Строка {i}: ошибка сохранения — {exc}")
+
+    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def typical_service_composition_csv_download(request):
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=";", lineterminator="\n")
+    writer.writerow(TYPICAL_SERVICE_COMPOSITION_CSV_HEADERS)
+
+    compositions = TypicalServiceComposition.objects.select_related("product", "section").all()
+    for composition in compositions:
+        writer.writerow(
+            [
+                composition.product.short_name,
+                composition.section.name_ru or composition.section.name_en,
+                composition.service_composition,
+            ]
+        )
+
+    response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="typical_service_compositions.csv"'
+    return response
 
 
 def _normalize_typical_service_composition_positions():
@@ -1211,7 +1695,7 @@ def typical_service_composition_move_down(request, pk: int):
 @require_http_methods(["GET", "POST"])
 def typical_service_term_form_create(request):
     if request.method == "GET":
-        form = TypicalServiceTermForm()
+        form = TypicalServiceTermForm(initial=_product_field_initial_from_request(request))
         return render(
             request,
             TYPICAL_SERVICE_TERM_FORM_TEMPLATE,
@@ -1261,6 +1745,119 @@ def typical_service_term_delete(request, pk: int):
     term = get_object_or_404(TypicalServiceTerm, pk=pk)
     term.delete()
     return _render_policy_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def typical_service_term_csv_upload(request):
+    csv_file = request.FILES.get("csv_file")
+    if not csv_file:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+    if not csv_file.name.lower().endswith(".csv"):
+        return JsonResponse({"ok": False, "error": "Допустимы только файлы CSV."}, status=400)
+
+    try:
+        raw = csv_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_file.seek(0)
+            raw = csv_file.read().decode("cp1251")
+        except Exception:
+            return JsonResponse(
+                {"ok": False, "error": "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251)."},
+                status=400,
+            )
+
+    try:
+        reader = csv.reader(io.StringIO(raw), delimiter=";")
+        rows = list(reader)
+        if not rows:
+            return JsonResponse({"ok": False, "error": "Файл пуст."}, status=400)
+        if len(rows[0]) <= 1:
+            reader = csv.reader(io.StringIO(raw), delimiter=",")
+            rows = list(reader)
+    except csv.Error as exc:
+        return JsonResponse({"ok": False, "error": f"Ошибка разбора CSV: {exc}. Проверьте формат и кодировку файла."}, status=400)
+
+    if len(rows) < 2:
+        return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
+
+    products_by_name = {_csv_lookup_key(p.short_name): p for p in Product.objects.all()}
+    created = 0
+    warnings = []
+
+    for i, row in enumerate(rows[1:], start=2):
+        if not any(cell.strip() for cell in row):
+            continue
+        if len(row) < 3:
+            warnings.append(
+                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 3: "
+                "Продукт, Срок подготовки Предварительного отчёта, мес., "
+                "Срок подготовки Итогового отчёта, нед.)."
+            )
+            continue
+
+        product_name = row[0].strip()
+        product = products_by_name.get(_csv_lookup_key(product_name))
+        if not product:
+            warnings.append(f"Строка {i}: продукт «{product_name}» не найден. Доступные: {', '.join(products_by_name.keys())}.")
+            continue
+
+        try:
+            preliminary_report_months = Decimal(row[1].strip().replace(",", "."))
+        except (InvalidOperation, ValueError):
+            warnings.append(f"Строка {i}: некорректный срок предварительного отчёта «{row[1].strip()}».")
+            continue
+        if preliminary_report_months < 0:
+            warnings.append(f"Строка {i}: срок предварительного отчёта не может быть отрицательным.")
+            continue
+
+        try:
+            final_report_weeks = int(row[2].strip())
+        except (TypeError, ValueError):
+            warnings.append(f"Строка {i}: некорректный срок итогового отчёта «{row[2].strip()}».")
+            continue
+        if final_report_weeks < 0:
+            warnings.append(f"Строка {i}: срок итогового отчёта не может быть отрицательным.")
+            continue
+
+        try:
+            TypicalServiceTerm.objects.create(
+                product=product,
+                preliminary_report_months=preliminary_report_months,
+                final_report_weeks=final_report_weeks,
+                position=_next_position(TypicalServiceTerm),
+            )
+            created += 1
+        except Exception as exc:
+            warnings.append(f"Строка {i}: ошибка сохранения — {exc}")
+
+    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def typical_service_term_csv_download(request):
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=";", lineterminator="\n")
+    writer.writerow(TYPICAL_SERVICE_TERM_CSV_HEADERS)
+
+    terms = TypicalServiceTerm.objects.select_related("product").all()
+    for term in terms:
+        writer.writerow(
+            [
+                term.product.short_name,
+                term.preliminary_report_months_display,
+                term.final_report_weeks,
+            ]
+        )
+
+    response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="typical_service_terms.csv"'
+    return response
 
 
 def _normalize_typical_service_term_positions():
@@ -1763,21 +2360,34 @@ def _tariff_owner(request, form):
     return request.user
 
 
+def _tariff_owner_label(user):
+    employee = getattr(user, "employee_profile", None)
+    if employee and employee.job_title:
+        return employee.job_title
+    return user.get_full_name() or user.username
+
+
+def _tariff_form_context(request, form, action, tariff=None):
+    ctx = {
+        "form": form,
+        "action": action,
+        "is_admin": request.user.is_superuser,
+        "sections_by_product_json": _typical_sections_by_product_json(),
+    }
+    if tariff:
+        ctx["tariff"] = tariff
+    return ctx
+
+
 @login_required
 @require_http_methods(["GET", "POST"])
 def tariff_form_create(request):
     if request.method == "GET":
-        form = TariffForm(request_user=request.user)
-        return render(request, TARIFF_FORM_TEMPLATE, {
-            "form": form, "action": "create",
-            "is_admin": request.user.is_superuser,
-        })
+        form = TariffForm(initial=_product_field_initial_from_request(request), request_user=request.user)
+        return render(request, TARIFF_FORM_TEMPLATE, _tariff_form_context(request, form, "create"))
     form = TariffForm(request.POST, request_user=request.user)
     if not form.is_valid():
-        return render(request, TARIFF_FORM_TEMPLATE, {
-            "form": form, "action": "create",
-            "is_admin": request.user.is_superuser,
-        })
+        return render(request, TARIFF_FORM_TEMPLATE, _tariff_form_context(request, form, "create"))
     obj = form.save(commit=False)
     obj.created_by = _tariff_owner(request, form)
     obj.position = _next_position(Tariff, {"created_by": obj.created_by})
@@ -1793,16 +2403,10 @@ def tariff_form_edit(request, pk: int):
         return _render_policy_updated(request)
     if request.method == "GET":
         form = TariffForm(instance=tariff, request_user=request.user)
-        return render(request, TARIFF_FORM_TEMPLATE, {
-            "form": form, "action": "edit", "tariff": tariff,
-            "is_admin": request.user.is_superuser,
-        })
+        return render(request, TARIFF_FORM_TEMPLATE, _tariff_form_context(request, form, "edit", tariff))
     form = TariffForm(request.POST, instance=tariff, request_user=request.user)
     if not form.is_valid():
-        return render(request, TARIFF_FORM_TEMPLATE, {
-            "form": form, "action": "edit", "tariff": tariff,
-            "is_admin": request.user.is_superuser,
-        })
+        return render(request, TARIFF_FORM_TEMPLATE, _tariff_form_context(request, form, "edit", tariff))
     obj = form.save(commit=False)
     if request.user.is_superuser:
         owner = form.cleaned_data.get("owner")
@@ -1820,6 +2424,166 @@ def tariff_delete(request, pk: int):
         return _render_policy_updated(request)
     tariff.delete()
     return _render_policy_updated(request)
+
+
+@login_required
+@require_POST
+def tariff_csv_upload(request):
+    csv_file = request.FILES.get("csv_file")
+    if not csv_file:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+    if not csv_file.name.lower().endswith(".csv"):
+        return JsonResponse({"ok": False, "error": "Допустимы только файлы CSV."}, status=400)
+
+    try:
+        raw = csv_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_file.seek(0)
+            raw = csv_file.read().decode("cp1251")
+        except Exception:
+            return JsonResponse(
+                {"ok": False, "error": "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251)."},
+                status=400,
+            )
+
+    try:
+        reader = csv.reader(io.StringIO(raw), delimiter=";")
+        rows = list(reader)
+        if not rows:
+            return JsonResponse({"ok": False, "error": "Файл пуст."}, status=400)
+        if len(rows[0]) <= 1:
+            reader = csv.reader(io.StringIO(raw), delimiter=",")
+            rows = list(reader)
+    except csv.Error as exc:
+        return JsonResponse({"ok": False, "error": f"Ошибка разбора CSV: {exc}. Проверьте формат и кодировку файла."}, status=400)
+
+    if len(rows) < 2:
+        return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
+
+    products_by_name = {_csv_lookup_key(p.short_name): p for p in Product.objects.all()}
+    sections_by_product = defaultdict(dict)
+    for section in TypicalSection.objects.select_related("product").all():
+        lookup = sections_by_product[section.product_id]
+        for label in (section.name_ru, section.name_en, section.code, section.short_name, section.short_name_ru):
+            key = _csv_lookup_key(label)
+            if key:
+                lookup.setdefault(key, section)
+
+    owners_by_label = {}
+    if request.user.is_superuser:
+        for user in get_user_model().objects.select_related("employee_profile").all():
+            labels = [
+                user.username,
+                user.get_full_name(),
+                _tariff_owner_label(user),
+            ]
+            for label in labels:
+                key = _csv_lookup_key(label)
+                if key:
+                    owners_by_label.setdefault(key, user)
+
+    created = 0
+    warnings = []
+
+    for i, row in enumerate(rows[1:], start=2):
+        if not any(cell.strip() for cell in row):
+            continue
+        if len(row) < 5:
+            warnings.append(
+                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 5-6: "
+                "Продукт, Раздел (услуга), Базовая ставка в ВПМ, Объем услуг в часах, "
+                "Объем услуг в днях для ТКП, [Руководитель направления])."
+            )
+            continue
+
+        product_name = row[0].strip()
+        section_name = row[1].strip()
+        product = products_by_name.get(_csv_lookup_key(product_name))
+        if not product:
+            warnings.append(f"Строка {i}: продукт «{product_name}» не найден. Доступные: {', '.join(products_by_name.keys())}.")
+            continue
+
+        section = sections_by_product[product.pk].get(_csv_lookup_key(section_name))
+        if not section:
+            warnings.append(f"Строка {i}: раздел «{section_name}» не найден для продукта «{product.short_name}».")
+            continue
+
+        try:
+            base_rate_vpm = Decimal(row[2].strip().replace(",", "."))
+        except (InvalidOperation, ValueError):
+            warnings.append(f"Строка {i}: некорректная базовая ставка «{row[2].strip()}».")
+            continue
+        if base_rate_vpm < 0:
+            warnings.append(f"Строка {i}: базовая ставка не может быть отрицательной.")
+            continue
+
+        try:
+            service_hours = int(row[3].strip())
+        except (TypeError, ValueError):
+            warnings.append(f"Строка {i}: некорректный объем услуг в часах «{row[3].strip()}».")
+            continue
+        if service_hours < 0:
+            warnings.append(f"Строка {i}: объем услуг в часах не может быть отрицательным.")
+            continue
+
+        try:
+            service_days_tkp = int(row[4].strip())
+        except (TypeError, ValueError):
+            warnings.append(f"Строка {i}: некорректный объем услуг в днях для ТКП «{row[4].strip()}».")
+            continue
+        if service_days_tkp < 0:
+            warnings.append(f"Строка {i}: объем услуг в днях для ТКП не может быть отрицательным.")
+            continue
+
+        owner = request.user
+        owner_name = row[5].strip() if len(row) > 5 else ""
+        if request.user.is_superuser and owner_name:
+            owner = owners_by_label.get(_csv_lookup_key(owner_name))
+            if not owner:
+                warnings.append(f"Строка {i}: руководитель «{owner_name}» не найден.")
+                continue
+
+        try:
+            Tariff.objects.create(
+                product=product,
+                section=section,
+                base_rate_vpm=base_rate_vpm,
+                service_hours=service_hours,
+                service_days_tkp=service_days_tkp,
+                created_by=owner,
+                position=_next_position(Tariff, {"created_by": owner}),
+            )
+            created += 1
+        except Exception as exc:
+            warnings.append(f"Строка {i}: ошибка сохранения — {exc}")
+
+    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
+
+
+@login_required
+@require_http_methods(["GET"])
+def tariff_csv_download(request):
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=";", lineterminator="\n")
+    writer.writerow(TARIFF_CSV_HEADERS)
+
+    for tariff in _get_tariffs_for_user(request.user):
+        writer.writerow(
+            [
+                tariff.product.short_name,
+                tariff.section.name_ru or tariff.section.name_en,
+                str(tariff.base_rate_vpm).replace(".", ","),
+                tariff.service_hours,
+                tariff.service_days_tkp,
+                _tariff_owner_label(tariff.created_by),
+            ]
+        )
+
+    response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="section_tariffs.csv"'
+    return response
 
 
 @login_required

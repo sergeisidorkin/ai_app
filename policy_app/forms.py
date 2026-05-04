@@ -159,6 +159,9 @@ class ProductForm(forms.ModelForm):
         elif self.instance.pk:
             consulting_type = self.instance.consulting_type_ref_id or None
             category = self.instance.service_category_ref_id or None
+        else:
+            consulting_type = _coerce_positive_int(self.initial.get("consulting_type_ref"))
+            category = _coerce_positive_int(self.initial.get("service_category_ref"))
         self.fields["consulting_type_ref"].queryset = ConsultingDirectionType.objects.order_by("position", "id")
         category_qs = ConsultingServiceType.objects.select_related("consulting_type").order_by("consulting_type__position", "position", "id")
         if consulting_type:
@@ -515,6 +518,28 @@ class SectionStructureForm(forms.ModelForm):
         self.fields["section"].label_from_instance = (
             lambda obj: f"{obj.code}: {obj.name_ru or obj.name_en}"
         )
+        product_id = None
+        section_id = None
+        if self.is_bound:
+            product_id = self.data.get("product")
+            section_id = self.data.get("section")
+        elif self.instance and self.instance.pk:
+            product_id = self.instance.product_id
+            section_id = self.instance.section_id
+        else:
+            product_id = self.initial.get("product")
+            section_id = self.initial.get("section")
+
+        section_qs = TypicalSection.objects.select_related("product").order_by("product_id", "position", "id")
+        if product_id:
+            filtered_qs = section_qs.filter(product_id=product_id)
+            if section_id:
+                filtered_qs = section_qs.filter(Q(product_id=product_id) | Q(pk=section_id))
+            self.fields["section"].queryset = filtered_qs
+        elif self.instance and self.instance.pk:
+            self.fields["section"].queryset = section_qs.filter(pk=self.instance.section_id)
+        else:
+            self.fields["section"].queryset = section_qs.none()
 
     class Meta:
         model = SectionStructure
@@ -526,6 +551,14 @@ class SectionStructureForm(forms.ModelForm):
                 "rows": 4,
             }),
         }
+
+    def clean(self):
+        cleaned = super().clean()
+        product = cleaned.get("product")
+        section = cleaned.get("section")
+        if product and section and section.product_id != product.pk:
+            self.add_error("section", "Раздел должен относиться к выбранному продукту.")
+        return cleaned
 
 
 class ServiceGoalReportForm(forms.ModelForm):
@@ -1034,6 +1067,28 @@ class TariffForm(forms.ModelForm):
         self.fields["section"].label_from_instance = (
             lambda obj: f"{obj.code}: {obj.name_ru or obj.name_en}"
         )
+        product_id = None
+        section_id = None
+        if self.is_bound:
+            product_id = self.data.get("product")
+            section_id = self.data.get("section")
+        elif self.instance and self.instance.pk:
+            product_id = self.instance.product_id
+            section_id = self.instance.section_id
+        else:
+            product_id = self.initial.get("product")
+            section_id = self.initial.get("section")
+
+        section_qs = TypicalSection.objects.select_related("product").order_by("product_id", "position", "id")
+        if product_id:
+            filtered_qs = section_qs.filter(product_id=product_id)
+            if section_id:
+                filtered_qs = section_qs.filter(Q(product_id=product_id) | Q(pk=section_id))
+            self.fields["section"].queryset = filtered_qs
+        elif self.instance and self.instance.pk:
+            self.fields["section"].queryset = section_qs.filter(pk=self.instance.section_id)
+        else:
+            self.fields["section"].queryset = section_qs.none()
         self.fields["owner"].queryset = User.objects.filter(
             Q(groups__name__in=(DEPARTMENT_HEAD_GROUP, *DIRECTOR_GROUPS))
         ).distinct().order_by("last_name", "first_name", "username")
@@ -1042,3 +1097,11 @@ class TariffForm(forms.ModelForm):
         )
         if self.instance and self.instance.pk:
             self.initial["owner"] = self.instance.created_by_id
+
+    def clean(self):
+        cleaned = super().clean()
+        product = cleaned.get("product")
+        section = cleaned.get("section")
+        if product and section and section.product_id != product.pk:
+            self.add_error("section", "Раздел должен относиться к выбранному продукту.")
+        return cleaned

@@ -23,7 +23,7 @@
     <link href="https://fonts.googleapis.com/css?family=Droid+Sans+Mono" rel="stylesheet">
 
     <!-- ваши глобальные стили -->
-    <link rel="stylesheet" href="{% static 'core/css/site.css' %}?v=20260504-2">
+    <link rel="stylesheet" href="{% static 'core/css/site.css' %}?v=20260504-3">
     <link rel="stylesheet" href="{% static 'vendor/intl-tel-input/css/intlTelInput.css' %}?v=20260421-1">
 
     {# ---------- FAVICONS (под твои имена файлов) ---------- #}
@@ -72,6 +72,7 @@
           document.querySelector('.modal.show, .modal.showing, .modal[style*="display: block"]')
           || document.body.classList.contains('contracts-modal-open')
           || document.body.classList.contains('contract-templates-modal-open')
+          || document.body.classList.contains('contract-requisites-modal-open')
         ) return;
         document.querySelectorAll('.modal-backdrop').forEach(function (backdrop) {
           backdrop.remove();
@@ -99,7 +100,11 @@
         if (!(target instanceof Element) || !target.classList.contains('modal-content')) return;
         const modalEl = target.closest('.modal');
         if (!modalEl || !window.bootstrap) return;
-        if (modalEl.id === 'contracts-modal' || modalEl.id === 'contract-templates-modal') return;
+        if (
+          modalEl.id === 'contracts-modal'
+          || modalEl.id === 'contract-templates-modal'
+          || modalEl.id === 'contract-requisites-modal'
+        ) return;
         window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
       });
 

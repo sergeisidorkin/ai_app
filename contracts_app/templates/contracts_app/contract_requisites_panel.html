@@ -75,6 +75,7 @@
 
 <script>
 (function() {
+  var modalEl = document.getElementById('contract-requisites-modal');
   var P = window.UIPref;
   var cfg = {
     prefKey: 'experts:ecdHiddenCols',
@@ -85,6 +86,38 @@
     tableId: 'ecd-table',
     hidden: P ? P.get('experts:ecdHiddenCols', {}) : {},
   };
+
+  function resetRequisitesModalBody() {
+    document.body.style.removeProperty('padding-right');
+  }
+
+  function lockRequisitesModalLayout() {
+    document.body.classList.add('contract-requisites-modal-open');
+    resetRequisitesModalBody();
+    window.requestAnimationFrame(resetRequisitesModalBody);
+  }
+
+  function unlockRequisitesModalLayout() {
+    document.body.classList.remove('contract-requisites-modal-open');
+    resetRequisitesModalBody();
+  }
+
+  function restoreRequisitesBackdropIfMissing() {
+    if (!modalEl || !modalEl.classList.contains('show')) return;
+    if (document.querySelector('.modal-backdrop')) return;
+    var backdrop = document.createElement('div');
+    backdrop.className = 'modal-backdrop fade show';
+    document.body.appendChild(backdrop);
+  }
+
+  if (modalEl) {
+    modalEl.addEventListener('show.bs.modal', lockRequisitesModalLayout);
+    modalEl.addEventListener('shown.bs.modal', function() {
+      lockRequisitesModalLayout();
+      restoreRequisitesBackdropIfMissing();
+    });
+    modalEl.addEventListener('hidden.bs.modal', unlockRequisitesModalLayout);
+  }
 
   function updateBtnLabel(btn, menu) {
     var cbs = menu.querySelectorAll('input.form-check-input:not([value="all"])');

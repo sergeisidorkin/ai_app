@@ -61,6 +61,7 @@ from core.cloud_paths import (
     normalize_cloud_path,
 )
 from policy_app.models import (
+    ADMIN_GROUP,
     DEPARTMENT_HEAD_GROUP,
     DIRECTOR_GROUP,
     DIRECTION_DIRECTOR_GROUP,
@@ -115,6 +116,18 @@ CONTRACT_IMAGE_PLACEHOLDER_SPECS = (
 
 def staff_required(user):
     return user.is_authenticated and user.is_staff
+
+
+def performer_contract_signing_required(user):
+    if not staff_required(user):
+        return False
+    employee = getattr(user, "employee_profile", None)
+    employee_role = getattr(employee, "role", "") or ""
+    return (
+        user.groups.filter(name=ADMIN_GROUP).exists()
+        or user.groups.filter(name=EXPERT_GROUP).exists()
+        or employee_role in {ADMIN_GROUP, EXPERT_GROUP}
+    )
 
 
 def _confirmed_project_ids_for_expert(user):
@@ -2750,7 +2763,7 @@ def sign_contract_documents(request):
 
 
 @login_required
-@user_passes_test(staff_required)
+@user_passes_test(performer_contract_signing_required)
 @require_POST
 def sign_performer_contract_documents(request):
     raw_ids = request.POST.getlist("performer_ids[]") or request.POST.getlist("performer_ids")
