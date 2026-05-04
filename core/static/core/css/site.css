@@ -23,7 +23,8 @@
 }
 
 body.contracts-modal-open,
-body.contract-templates-modal-open {
+body.contract-templates-modal-open,
+body.contract-requisites-modal-open {
   overflow-y: scroll !important;
   padding-right: 0 !important;
 }
@@ -678,6 +679,22 @@ body .second-sidebar + .flex-grow-1 {
 
 #master-proposal-kind-filter-dropdown .dropdown-menu {
   z-index: 4010;
+}
+
+#master-policy-consulting-filter-dropdown .dropdown-menu,
+#master-policy-category-filter-dropdown .dropdown-menu,
+#master-policy-subtype-filter-dropdown .dropdown-menu,
+#master-policy-product-filter-dropdown .dropdown-menu {
+  z-index: 4010;
+  box-shadow: 1px 0 0 #e6e6e6, -1px 0 0 #e6e6e6, 0 3px 13px rgba(0,0,0,.08);
+}
+
+#master-policy-product-filter-dropdown .project-filter-menu {
+  max-width: none;
+}
+
+#master-policy-product-filter-dropdown .form-check-label {
+  white-space: nowrap;
 }
 
 #master-classifiers-bsn-filter-dropdown .dropdown-menu {

@@ -14,7 +14,7 @@ from django.urls import reverse
 from classifiers_app.models import OKVCurrency
 from experts_app.models import ExpertSpecialty
 from group_app.models import GroupMember, OrgUnit
-from policy_app.forms import ProductForm, ServiceGoalReportForm
+from policy_app.forms import ProductForm, SectionStructureForm, ServiceGoalReportForm, TariffForm
 from policy_app.models import (
     ConsultingDirection,
     ConsultingDirectionType,
@@ -22,6 +22,7 @@ from policy_app.models import (
     ConsultingServiceType,
     ExpertiseDirection,
     Product,
+    SectionStructure,
     ServiceGoalReport,
     SpecialtyTariff,
     Tariff,
@@ -206,6 +207,61 @@ class ProductCsvUploadTests(TestCase):
         self.assertFalse(product.is_group_owner)
         self.assertEqual(list(product.owners.values_list("short_name", flat=True)), ["IMC Montan"])
 
+    def test_policy_partial_renders_product_csv_download_button(self):
+        response = self.client.get(reverse("policy_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Типовые продукты")
+        self.assertContains(response, 'id="products-csv-download-btn"', html=False)
+
+    def test_product_csv_download_exports_current_table_columns(self):
+        product = Product.objects.create(
+            short_name="AUD",
+            name_en="Audit",
+            name_ru="Аудит",
+            display_name="Аудит продукта",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_code="A",
+            service_subtype="Аудит проектных решений",
+            position=1,
+        )
+        product.owners.set([self.owner])
+
+        response = self.client.get(reverse("product_csv_download"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("typical_products.csv", response["Content-Disposition"])
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(
+            rows[0],
+            [
+                "Краткое имя",
+                "Наименование на английском языке",
+                "Наименование на русском языке",
+                "Отображаемое в системе имя",
+                "Вид консалтинга",
+                "Тип услуг",
+                "Код",
+                "Подтип услуги",
+                "Владелец",
+            ],
+        )
+        self.assertEqual(
+            rows[1],
+            [
+                "AUD",
+                "Audit",
+                "Аудит",
+                "Аудит продукта",
+                "Горный",
+                "Аудит",
+                "A",
+                "Аудит проектных решений",
+                "IMC Montan",
+            ],
+        )
+
 
 class ProductFormTests(TestCase):
     def setUp(self):
@@ -245,6 +301,150 @@ class ProductFormTests(TestCase):
 
         self.assertEqual(list(form.fields["service_category_ref"].queryset), [])
         self.assertEqual(list(form.fields["service_subtype_ref"].queryset), [])
+
+
+class PolicyMasterFilterTests(TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            username="policy-master-filter-admin",
+            password="secret123",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        direction = ConsultingDirection.objects.create(position=1)
+        self.consulting_type = ConsultingDirectionType.objects.create(
+            direction=direction,
+            name="Горный Master",
+            position=1,
+        )
+        self.service_type = ConsultingServiceType.objects.create(
+            direction=direction,
+            consulting_type=self.consulting_type,
+            name="Аудит Master",
+            code="AM",
+            position=1,
+        )
+        self.service_subtype = ConsultingServiceSubtype.objects.create(
+            direction=direction,
+            service_type=self.service_type,
+            name="Аудит проектных решений Master",
+            position=1,
+        )
+        self.product = Product.objects.create(
+            short_name="MF",
+            name_en="Master filter product",
+            display_name="Master filter product",
+            name_ru="Продукт мастер-фильтра",
+            consulting_type_ref=self.consulting_type,
+            service_category_ref=self.service_type,
+            service_subtype_ref=self.service_subtype,
+            position=1,
+        )
+        self.other_product = Product.objects.create(
+            short_name="OTHER-MF",
+            name_en="Other product",
+            display_name="Other product",
+            name_ru="Другой продукт",
+            consulting_type_ref=self.consulting_type,
+            service_category_ref=self.service_type,
+            service_subtype_ref=self.service_subtype,
+            position=2,
+        )
+        self.section = TypicalSection.objects.create(
+            product=self.product,
+            code="MF-1",
+            short_name="mf-1",
+            short_name_ru="мф-1",
+            name_en="Master section",
+            name_ru="Раздел мастер-фильтра",
+            accounting_type="Раздел",
+            position=1,
+        )
+        self.other_section = TypicalSection.objects.create(
+            product=self.other_product,
+            code="OMF-1",
+            short_name="omf-1",
+            short_name_ru="омф-1",
+            name_en="Other section",
+            name_ru="Другой раздел",
+            accounting_type="Раздел",
+            position=1,
+        )
+        ServiceGoalReport.objects.create(
+            product=self.product,
+            service_goal="Цель",
+            service_goal_genitive="Цели",
+            report_title="Отчет",
+            product_name="Название",
+            position=1,
+        )
+        Tariff.objects.create(
+            product=self.product,
+            section=self.section,
+            base_rate_vpm=Decimal("1.00"),
+            service_hours=1,
+            service_days_tkp=1,
+            created_by=self.user,
+            position=1,
+        )
+
+    def test_policy_partial_renders_master_filter_row_metadata(self):
+        response = self.client.get(reverse("policy_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-policy-filter-row="1"', html=False)
+        self.assertContains(response, f'data-product-id="{self.product.pk}"', html=False)
+        self.assertContains(response, 'data-product-label="MF Master filter product"', html=False)
+        self.assertContains(response, 'data-consulting-type="Горный Master"', html=False)
+        self.assertContains(response, 'data-service-category="Аудит Master"', html=False)
+        self.assertContains(response, 'data-service-subtype="Аудит проектных решений Master"', html=False)
+
+    def test_product_create_prefills_catalog_fields_from_selected_product(self):
+        response = self.client.get(reverse("product_form_create"), {"product": self.product.pk})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, f'<option value="{self.consulting_type.pk}" selected', html=False)
+        self.assertContains(response, f'<option value="{self.service_type.pk}" selected', html=False)
+        self.assertContains(response, f'<option value="{self.service_subtype.pk}" selected', html=False)
+
+    def test_product_create_prefills_catalog_fields_from_direct_refs(self):
+        response = self.client.get(
+            reverse("product_form_create"),
+            {
+                "consulting_type_ref": self.consulting_type.pk,
+                "service_category_ref": self.service_type.pk,
+                "service_subtype_ref": self.service_subtype.pk,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, f'<option value="{self.consulting_type.pk}" selected', html=False)
+        self.assertContains(response, f'<option value="{self.service_type.pk}" selected', html=False)
+        self.assertContains(response, f'<option value="{self.service_subtype.pk}" selected', html=False)
+
+    def test_create_forms_prefill_product_from_master_filter_param(self):
+        url_names = [
+            "section_form_create",
+            "structure_form_create",
+            "service_goal_report_form_create",
+            "typical_service_composition_form_create",
+            "typical_service_term_form_create",
+            "tariff_form_create",
+        ]
+
+        for url_name in url_names:
+            with self.subTest(url_name=url_name):
+                response = self.client.get(reverse(url_name), {"product": self.product.pk})
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(response, f'<option value="{self.product.pk}" selected', html=False)
+
+    def test_dependent_section_fields_are_limited_by_selected_product(self):
+        structure_form = SectionStructureForm(initial={"product": self.product.pk})
+        tariff_form = TariffForm(initial={"product": self.product.pk}, request_user=self.user)
+
+        self.assertEqual(list(structure_form.fields["section"].queryset), [self.section])
+        self.assertEqual(list(tariff_form.fields["section"].queryset), [self.section])
 
 
 class ConsultingDirectionViewsTests(TestCase):
@@ -611,6 +811,32 @@ class SectionStructureViewsTests(TestCase):
             service_subtype="По международным стандартам",
             position=1,
         )
+        self.section = TypicalSection.objects.create(
+            product=self.product,
+            code="STR-1",
+            short_name="section-en",
+            short_name_ru="section-ru",
+            name_en="Section EN",
+            name_ru="Раздел RU",
+            accounting_type="Раздел",
+            position=1,
+        )
+
+    def test_policy_partial_renders_structure_csv_buttons(self):
+        SectionStructure.objects.create(
+            product=self.product,
+            section=self.section,
+            subsections="Подраздел 1\nПодраздел 2",
+            position=1,
+        )
+
+        response = self.client.get(reverse("policy_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Типовая структура раздела (состава услуг)")
+        self.assertContains(response, "Подраздел 1")
+        self.assertContains(response, 'id="structures-csv-download-btn"', html=False)
+        self.assertContains(response, 'id="structures-csv-upload-btn"', html=False)
 
     def test_structure_form_renders_product_options_with_display_name(self):
         response = self.client.get(reverse("structure_form_create"))
@@ -620,6 +846,43 @@ class SectionStructureViewsTests(TestCase):
         self.assertContains(response, "policy-product-select")
         self.assertContains(response, 'data-short-label="STR"', html=False)
         self.assertContains(response, "STR Structure System")
+
+    def test_structure_csv_download_exports_current_table_columns(self):
+        SectionStructure.objects.create(
+            product=self.product,
+            section=self.section,
+            subsections="Подраздел 1\nПодраздел 2",
+            position=1,
+        )
+
+        response = self.client.get(reverse("structure_csv_download"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("section_structures.csv", response["Content-Disposition"])
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(rows[0], ["Продукт", "Раздел (услуга)", "Подразделы"])
+        self.assertEqual(rows[1], ["STR", "Раздел RU", "Подраздел 1\nПодраздел 2"])
+
+    def test_structure_csv_upload_creates_rows(self):
+        csv_file = SimpleUploadedFile(
+            "section_structures.csv",
+            (
+                "Продукт;Раздел (услуга);Подразделы\n"
+                "STR;Раздел RU;Подраздел 1\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("structure_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        self.assertEqual(response.json()["warnings"], [])
+        item = SectionStructure.objects.get()
+        self.assertEqual(item.product, self.product)
+        self.assertEqual(item.section, self.section)
+        self.assertEqual(item.subsections, "Подраздел 1")
+        self.assertEqual(item.position, 1)
 
 
 class ServiceGoalReportViewsTests(TestCase):
@@ -662,6 +925,8 @@ class ServiceGoalReportViewsTests(TestCase):
         self.assertContains(response, "Подготовки заключения")
         self.assertContains(response, "Налоговый обзор")
         self.assertContains(response, 'id="service-goal-reports-actions"', html=False)
+        self.assertContains(response, 'id="service-goal-reports-csv-download-btn"', html=False)
+        self.assertContains(response, 'id="service-goal-reports-csv-upload-btn"', html=False)
 
     def test_create_service_goal_report_saves_row(self):
         response = self.client.post(
@@ -698,6 +963,65 @@ class ServiceGoalReportViewsTests(TestCase):
         form = ServiceGoalReportForm()
         labels = [label for _, label in form.fields["product"].choices]
         self.assertIn("TAX Tax", labels)
+
+    def test_service_goal_report_csv_download_exports_current_table_columns(self):
+        ServiceGoalReport.objects.create(
+            product=self.product,
+            service_goal="Подготовка заключения",
+            service_goal_genitive="Подготовки заключения",
+            report_title="Итоговый отчет",
+            product_name="Налоговый обзор",
+            position=1,
+        )
+
+        response = self.client.get(reverse("service_goal_report_csv_download"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("service_goal_reports.csv", response["Content-Disposition"])
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(
+            rows[0],
+            [
+                "Продукт",
+                "Цели оказания услуг",
+                "Цели оказания услуг в родительном падеже",
+                "Титул отчета/ТКП",
+                "Название продукта",
+            ],
+        )
+        self.assertEqual(
+            rows[1],
+            [
+                "TAX",
+                "Подготовка заключения",
+                "Подготовки заключения",
+                "Итоговый отчет",
+                "Налоговый обзор",
+            ],
+        )
+
+    def test_service_goal_report_csv_upload_creates_rows(self):
+        csv_file = SimpleUploadedFile(
+            "service_goal_reports.csv",
+            (
+                "Продукт;Цели оказания услуг;Цели оказания услуг в родительном падеже;Титул отчета/ТКП;Название продукта\n"
+                "TAX;Подготовка документов;Подготовки документов;Отчет по документам;Документарная проверка\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("service_goal_report_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        self.assertEqual(response.json()["warnings"], [])
+        item = ServiceGoalReport.objects.get()
+        self.assertEqual(item.product, self.product)
+        self.assertEqual(item.service_goal, "Подготовка документов")
+        self.assertEqual(item.service_goal_genitive, "Подготовки документов")
+        self.assertEqual(item.report_title, "Отчет по документам")
+        self.assertEqual(item.product_name, "Документарная проверка")
+        self.assertEqual(item.position, 1)
 
     def test_move_up_reorders_globally_across_table(self):
         other_product = Product.objects.create(
@@ -833,6 +1157,8 @@ class TypicalServiceCompositionViewsTests(TestCase):
         self.assertContains(response, 'id="typical-service-compositions-table"', html=False)
         self.assertContains(response, 'class="policy-service-composition-cell"', html=False)
         self.assertContains(response, 'class="policy-service-composition-content"', html=False)
+        self.assertContains(response, 'id="typical-service-compositions-csv-download-btn"', html=False)
+        self.assertContains(response, 'id="typical-service-compositions-csv-upload-btn"', html=False)
 
     def test_create_typical_service_composition_saves_row(self):
         editor_state = {
@@ -865,6 +1191,47 @@ class TypicalServiceCompositionViewsTests(TestCase):
         self.assertContains(response, "policy-product-select")
         self.assertContains(response, 'data-short-label="TAX2"', html=False)
         self.assertContains(response, "TAX2 Tax 2")
+
+    def test_typical_service_composition_csv_download_exports_current_table_columns(self):
+        TypicalServiceComposition.objects.create(
+            product=self.product,
+            section=self.section,
+            service_composition="Подготовка\nАнализ\nВыпуск отчета",
+            position=1,
+        )
+
+        response = self.client.get(reverse("typical_service_composition_csv_download"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("typical_service_compositions.csv", response["Content-Disposition"])
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(rows[0], ["Продукт", "Раздел (услуга)", "Состав услуг"])
+        self.assertEqual(rows[1], ["TAX2", "Раздел RU", "Подготовка\nАнализ\nВыпуск отчета"])
+
+    def test_typical_service_composition_csv_upload_creates_rows(self):
+        csv_file = SimpleUploadedFile(
+            "typical_service_compositions.csv",
+            (
+                "Продукт;Раздел (услуга);Состав услуг\n"
+                "TAX2;Раздел RU;Подготовка и выпуск отчета\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("typical_service_composition_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        self.assertEqual(response.json()["warnings"], [])
+        item = TypicalServiceComposition.objects.get()
+        self.assertEqual(item.product, self.product)
+        self.assertEqual(item.section, self.section)
+        self.assertEqual(item.service_composition, "Подготовка и выпуск отчета")
+        self.assertEqual(
+            item.service_composition_editor_state,
+            {"html": "", "plain_text": "Подготовка и выпуск отчета"},
+        )
+        self.assertEqual(item.position, 1)
 
     def test_create_typical_service_composition_rejects_section_from_other_product(self):
         response = self.client.post(
@@ -957,6 +1324,8 @@ class TypicalServiceTermViewsTests(TestCase):
         self.assertContains(response, ">1,5<", html=False)
         self.assertContains(response, ">3<", html=False)
         self.assertContains(response, 'id="typical-service-terms-actions"', html=False)
+        self.assertContains(response, 'id="typical-service-terms-csv-download-btn"', html=False)
+        self.assertContains(response, 'id="typical-service-terms-csv-upload-btn"', html=False)
 
     def test_create_typical_service_term_saves_row(self):
         response = self.client.post(
@@ -1010,6 +1379,50 @@ class TypicalServiceTermViewsTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'value="1,5"', html=False)
+
+    def test_typical_service_term_csv_download_exports_current_table_columns(self):
+        TypicalServiceTerm.objects.create(
+            product=self.product,
+            preliminary_report_months=Decimal("1.5"),
+            final_report_weeks=3,
+            position=1,
+        )
+
+        response = self.client.get(reverse("typical_service_term_csv_download"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("typical_service_terms.csv", response["Content-Disposition"])
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(
+            rows[0],
+            [
+                "Продукт",
+                "Срок подготовки Предварительного отчёта, мес.",
+                "Срок подготовки Итогового отчёта, нед.",
+            ],
+        )
+        self.assertEqual(rows[1], ["TERM", "1,5", "3"])
+
+    def test_typical_service_term_csv_upload_creates_rows(self):
+        csv_file = SimpleUploadedFile(
+            "typical_service_terms.csv",
+            (
+                "Продукт;Срок подготовки Предварительного отчёта, мес.;Срок подготовки Итогового отчёта, нед.\n"
+                "TERM;2,5;4\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("typical_service_term_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        self.assertEqual(response.json()["warnings"], [])
+        item = TypicalServiceTerm.objects.get()
+        self.assertEqual(item.product, self.product)
+        self.assertEqual(item.preliminary_report_months, Decimal("2.5"))
+        self.assertEqual(item.final_report_weeks, 4)
+        self.assertEqual(item.position, 1)
 
     def test_non_staff_user_cannot_reorder_typical_service_terms(self):
         first = TypicalServiceTerm.objects.create(
@@ -1214,6 +1627,8 @@ class TariffViewsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Объем услуг в днях для ТКП")
         self.assertContains(response, ">5<", html=False)
+        self.assertContains(response, 'id="tariffs-csv-download-btn"', html=False)
+        self.assertContains(response, 'id="tariffs-csv-upload-btn"', html=False)
 
     def test_create_tariff_saves_service_days_tkp(self):
         response = self.client.post(
@@ -1240,6 +1655,59 @@ class TariffViewsTests(TestCase):
         self.assertContains(response, "policy-product-select")
         self.assertContains(response, 'data-short-label="TAR"', html=False)
         self.assertContains(response, "TAR Tariff product")
+
+    def test_tariff_csv_download_exports_current_table_columns(self):
+        Tariff.objects.create(
+            product=self.product,
+            section=self.section,
+            base_rate_vpm=Decimal("10.00"),
+            service_hours=8,
+            service_days_tkp=5,
+            created_by=self.user,
+            position=1,
+        )
+
+        response = self.client.get(reverse("tariff_csv_download"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("section_tariffs.csv", response["Content-Disposition"])
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(
+            rows[0],
+            [
+                "Продукт",
+                "Раздел (услуга)",
+                "Базовая ставка в ВПМ",
+                "Объем услуг в часах",
+                "Объем услуг в днях для ТКП",
+                "Руководитель направления",
+            ],
+        )
+        self.assertEqual(rows[1], ["TAR", "Тарифный раздел", "10,00", "8", "5", "policy-admin-4"])
+
+    def test_tariff_csv_upload_creates_rows_for_current_user(self):
+        csv_file = SimpleUploadedFile(
+            "section_tariffs.csv",
+            (
+                "Продукт;Раздел (услуга);Базовая ставка в ВПМ;Объем услуг в часах;Объем услуг в днях для ТКП\n"
+                "TAR;Тарифный раздел;12,50;16;6\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("tariff_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        self.assertEqual(response.json()["warnings"], [])
+        tariff = Tariff.objects.get()
+        self.assertEqual(tariff.product, self.product)
+        self.assertEqual(tariff.section, self.section)
+        self.assertEqual(tariff.base_rate_vpm, Decimal("12.50"))
+        self.assertEqual(tariff.service_hours, 16)
+        self.assertEqual(tariff.service_days_tkp, 6)
+        self.assertEqual(tariff.created_by, self.user)
+        self.assertEqual(tariff.position, 1)
 
     def test_move_up_normalizes_positions_before_reorder(self):
         first = Tariff.objects.create(

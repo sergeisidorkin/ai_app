@@ -119,7 +119,10 @@
             <tbody>
             {% for item in consulting_directions %}
                 {% for row in item.table_rows %}
-                    <tr>
+                    <tr data-policy-filter-row="1"
+                        data-consulting-type="{{ row.consulting_type|default_if_none:'' }}"
+                        data-service-category="{{ row.service_type|default_if_none:'' }}"
+                        data-service-subtype="{{ row.service_subtype|default_if_none:'' }}">
                         <td class="text-nowrap">
                             {% if request.user.is_authenticated and request.user.is_staff %}
                                 <div class="form-check">
@@ -219,7 +222,15 @@
             </thead>
             <tbody>
             {% for p in products %}
-                <tr data-product-id="{{ p.id }}"
+                <tr data-policy-filter-row="1"
+                    data-product-id="{{ p.id }}"
+                    data-product-label="{{ p.short_name }}{% if p.display_name %} {{ p.display_name }}{% endif %}"
+                    data-consulting-type="{{ p.consulting_type_display }}"
+                    data-service-category="{{ p.service_category_display }}"
+                    data-service-subtype="{{ p.service_subtype_display }}"
+                    data-consulting-type-ref="{{ p.consulting_type_ref_id|default_if_none:'' }}"
+                    data-service-category-ref="{{ p.service_category_ref_id|default_if_none:'' }}"
+                    data-service-subtype-ref="{{ p.service_subtype_ref_id|default_if_none:'' }}"
                     data-edit-url="{% url 'product_form_edit' p.pk %}"
                     data-delete-url="{% url 'product_delete' p.pk %}"
                     data-move-up-url="{% url 'product_move_up' p.pk %}"
@@ -281,6 +292,13 @@
                         </button>
                     </div>
                 </div>
+                <a href="{% url 'product_csv_download' %}"
+                   id="products-csv-download-btn"
+                   class="btn btn-primary btn-sm d-flex align-items-center"
+                   title="Скачать CSV"
+                   role="button">
+                    <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+                </a>
                 <button type="button"
                         id="products-csv-upload-btn"
                         class="btn btn-primary btn-sm d-flex align-items-center"
@@ -324,7 +342,13 @@
             </thead>
             <tbody>
             {% for item in service_goal_reports %}
-                <tr data-edit-url="{% url 'service_goal_report_form_edit' item.pk %}"
+                <tr data-policy-filter-row="1"
+                    data-product-id="{{ item.product_id }}"
+                    data-product-label="{{ item.product.short_name }}{% if item.product.display_name %} {{ item.product.display_name }}{% endif %}"
+                    data-consulting-type="{{ item.product.consulting_type_display }}"
+                    data-service-category="{{ item.product.service_category_display }}"
+                    data-service-subtype="{{ item.product.service_subtype_display }}"
+                    data-edit-url="{% url 'service_goal_report_form_edit' item.pk %}"
                     data-delete-url="{% url 'service_goal_report_delete' item.pk %}"
                     data-move-up-url="{% url 'service_goal_report_move_up' item.pk %}"
                     data-move-down-url="{% url 'service_goal_report_move_down' item.pk %}">
@@ -377,6 +401,20 @@
               </button>
             </div>
           </div>
+          <a href="{% url 'service_goal_report_csv_download' %}"
+             id="service-goal-reports-csv-download-btn"
+             class="btn btn-primary btn-sm d-flex align-items-center"
+             title="Скачать CSV"
+             role="button">
+            <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+          </a>
+          <button type="button"
+                  id="service-goal-reports-csv-upload-btn"
+                  class="btn btn-primary btn-sm d-flex align-items-center"
+                  title="Загрузить CSV">
+            <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+          </button>
+          <input type="file" id="service-goal-reports-csv-file-input" accept=".csv" class="d-none">
         </div>
         {% endif %}
     </div>
@@ -419,7 +457,12 @@
             </thead>
             <tbody>
             {% for s in sections %}
-                 <tr
+                 <tr data-policy-filter-row="1"
+                     data-product-id="{{ s.product_id }}"
+                     data-product-label="{{ s.product.short_name }}{% if s.product.display_name %} {{ s.product.display_name }}{% endif %}"
+                     data-consulting-type="{{ s.product.consulting_type_display }}"
+                     data-service-category="{{ s.product.service_category_display }}"
+                     data-service-subtype="{{ s.product.service_subtype_display }}"
                      data-edit-url="{% url 'section_form_edit' s.pk %}"
                      data-delete-url="{% url 'section_delete' s.pk %}"
                      data-move-up-url="{% url 'section_move_up' s.pk %}"
@@ -534,7 +577,13 @@
             </thead>
             <tbody>
             {% for st in structures %}
-                <tr data-edit-url="{% url 'structure_form_edit' st.pk %}"
+                <tr data-policy-filter-row="1"
+                    data-product-id="{{ st.product_id }}"
+                    data-product-label="{{ st.product.short_name }}{% if st.product.display_name %} {{ st.product.display_name }}{% endif %}"
+                    data-consulting-type="{{ st.product.consulting_type_display }}"
+                    data-service-category="{{ st.product.service_category_display }}"
+                    data-service-subtype="{{ st.product.service_subtype_display }}"
+                    data-edit-url="{% url 'structure_form_edit' st.pk %}"
                     data-delete-url="{% url 'structure_delete' st.pk %}"
                     data-move-up-url="{% url 'structure_move_up' st.pk %}"
                     data-move-down-url="{% url 'structure_move_down' st.pk %}">
@@ -586,6 +635,20 @@
               </button>
             </div>
           </div>
+          <a href="{% url 'structure_csv_download' %}"
+             id="structures-csv-download-btn"
+             class="btn btn-primary btn-sm d-flex align-items-center"
+             title="Скачать CSV"
+             role="button">
+            <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+          </a>
+          <button type="button"
+                  id="structures-csv-upload-btn"
+                  class="btn btn-primary btn-sm d-flex align-items-center"
+                  title="Загрузить CSV">
+            <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+          </button>
+          <input type="file" id="structures-csv-file-input" accept=".csv" class="d-none">
         </div>
         {% endif %}
     </div>
@@ -632,7 +695,13 @@
             </thead>
             <tbody>
             {% for item in typical_service_compositions %}
-                <tr data-edit-url="{% url 'typical_service_composition_form_edit' item.pk %}"
+                <tr data-policy-filter-row="1"
+                    data-product-id="{{ item.product_id }}"
+                    data-product-label="{{ item.product.short_name }}{% if item.product.display_name %} {{ item.product.display_name }}{% endif %}"
+                    data-consulting-type="{{ item.product.consulting_type_display }}"
+                    data-service-category="{{ item.product.service_category_display }}"
+                    data-service-subtype="{{ item.product.service_subtype_display }}"
+                    data-edit-url="{% url 'typical_service_composition_form_edit' item.pk %}"
                     data-delete-url="{% url 'typical_service_composition_delete' item.pk %}"
                     data-move-up-url="{% url 'typical_service_composition_move_up' item.pk %}"
                     data-move-down-url="{% url 'typical_service_composition_move_down' item.pk %}">
@@ -685,6 +754,20 @@
               </button>
             </div>
           </div>
+          <a href="{% url 'typical_service_composition_csv_download' %}"
+             id="typical-service-compositions-csv-download-btn"
+             class="btn btn-primary btn-sm d-flex align-items-center"
+             title="Скачать CSV"
+             role="button">
+            <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+          </a>
+          <button type="button"
+                  id="typical-service-compositions-csv-upload-btn"
+                  class="btn btn-primary btn-sm d-flex align-items-center"
+                  title="Загрузить CSV">
+            <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+          </button>
+          <input type="file" id="typical-service-compositions-csv-file-input" accept=".csv" class="d-none">
         </div>
         {% endif %}
     </div>
@@ -719,7 +802,13 @@
             </thead>
             <tbody>
             {% for item in typical_service_terms %}
-                <tr data-edit-url="{% url 'typical_service_term_form_edit' item.pk %}"
+                <tr data-policy-filter-row="1"
+                    data-product-id="{{ item.product_id }}"
+                    data-product-label="{{ item.product.short_name }}{% if item.product.display_name %} {{ item.product.display_name }}{% endif %}"
+                    data-consulting-type="{{ item.product.consulting_type_display }}"
+                    data-service-category="{{ item.product.service_category_display }}"
+                    data-service-subtype="{{ item.product.service_subtype_display }}"
+                    data-edit-url="{% url 'typical_service_term_form_edit' item.pk %}"
                     data-delete-url="{% url 'typical_service_term_delete' item.pk %}"
                     data-move-up-url="{% url 'typical_service_term_move_up' item.pk %}"
                     data-move-down-url="{% url 'typical_service_term_move_down' item.pk %}">
@@ -770,6 +859,20 @@
               </button>
             </div>
           </div>
+          <a href="{% url 'typical_service_term_csv_download' %}"
+             id="typical-service-terms-csv-download-btn"
+             class="btn btn-primary btn-sm d-flex align-items-center"
+             title="Скачать CSV"
+             role="button">
+            <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+          </a>
+          <button type="button"
+                  id="typical-service-terms-csv-upload-btn"
+                  class="btn btn-primary btn-sm d-flex align-items-center"
+                  title="Загрузить CSV">
+            <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+          </button>
+          <input type="file" id="typical-service-terms-csv-file-input" accept=".csv" class="d-none">
         </div>
         {% endif %}
     </div>
@@ -1030,7 +1133,13 @@
             </thead>
             <tbody>
             {% for t in tariffs %}
-                <tr data-edit-url="{% url 'tariff_form_edit' t.pk %}"
+                <tr data-policy-filter-row="1"
+                    data-product-id="{{ t.product_id }}"
+                    data-product-label="{{ t.product.short_name }}{% if t.product.display_name %} {{ t.product.display_name }}{% endif %}"
+                    data-consulting-type="{{ t.product.consulting_type_display }}"
+                    data-service-category="{{ t.product.service_category_display }}"
+                    data-service-subtype="{{ t.product.service_subtype_display }}"
+                    data-edit-url="{% url 'tariff_form_edit' t.pk %}"
                     data-delete-url="{% url 'tariff_delete' t.pk %}"
                     data-move-up-url="{% url 'tariff_move_up' t.pk %}"
                     data-move-down-url="{% url 'tariff_move_down' t.pk %}">
@@ -1090,6 +1199,20 @@
               </button>
             </div>
           </div>
+          <a href="{% url 'tariff_csv_download' %}"
+             id="tariffs-csv-download-btn"
+             class="btn btn-primary btn-sm d-flex align-items-center"
+             title="Скачать CSV"
+             role="button">
+            <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+          </a>
+          <button type="button"
+                  id="tariffs-csv-upload-btn"
+                  class="btn btn-primary btn-sm d-flex align-items-center"
+                  title="Загрузить CSV">
+            <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+          </button>
+          <input type="file" id="tariffs-csv-file-input" accept=".csv" class="d-none">
         </div>
     </div>
 </div>

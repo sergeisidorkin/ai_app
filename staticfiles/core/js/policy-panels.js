@@ -317,7 +317,12 @@
   document.addEventListener('click', function (e) {
     var mapping = {
       'products-csv-upload-btn': 'products-csv-file-input',
+      'service-goal-reports-csv-upload-btn': 'service-goal-reports-csv-file-input',
       'sections-csv-upload-btn': 'sections-csv-file-input',
+      'structures-csv-upload-btn': 'structures-csv-file-input',
+      'tariffs-csv-upload-btn': 'tariffs-csv-file-input',
+      'typical-service-compositions-csv-upload-btn': 'typical-service-compositions-csv-file-input',
+      'typical-service-terms-csv-upload-btn': 'typical-service-terms-csv-file-input',
     };
     for (var btnId in mapping) {
       var btn = e.target.closest('#' + btnId);
@@ -332,7 +337,12 @@
   document.addEventListener('change', async function (e) {
     var mapping = {
       'products-csv-file-input': '/policy/policy/product/csv-upload/',
+      'service-goal-reports-csv-file-input': '/policy/policy/service-goal-report/csv-upload/',
       'sections-csv-file-input': '/policy/policy/section/csv-upload/',
+      'structures-csv-file-input': '/policy/policy/structure/csv-upload/',
+      'tariffs-csv-file-input': '/policy/policy/tariff/csv-upload/',
+      'typical-service-compositions-csv-file-input': '/policy/policy/typical-service-composition/csv-upload/',
+      'typical-service-terms-csv-file-input': '/policy/policy/typical-service-term/csv-upload/',
     };
     var url = mapping[e.target.id];
     if (!url) return;

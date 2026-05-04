@@ -763,7 +763,7 @@ class ContractsCloudLabelTests(TestCase):
 
     @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
-    def test_contracts_partial_hides_signing_management_buttons_for_superuser_lawyer_role(
+    def test_contracts_partial_shows_signing_management_buttons_for_superuser_lawyer_role(
         self,
         _mocked_list_user_shares,
         _mocked_get_user_share,
@@ -784,8 +784,9 @@ class ContractsCloudLabelTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, 'id="signing-sign-contract-btn"', html=False)
-        self.assertNotContains(response, 'id="signing-edit-btn"', html=False)
-        self.assertNotContains(response, 'id="signing-send-scan-btn"', html=False)
+        self.assertContains(response, 'id="signing-edit-btn"', html=False)
+        self.assertContains(response, 'id="signing-send-scan-btn"', html=False)
+        self.assertContains(response, 'id="signing-master"', html=False)
 
     def test_contracts_partial_shows_signing_management_buttons_for_admin(self):
         response = self.client.get(reverse("contracts_partial"))
@@ -1084,6 +1085,24 @@ class ContractsCloudLabelTests(TestCase):
         self.assertFalse(data["ok"])
         self.assertIn("факсимильная подпись исполнителя", data["error"])
         self.assertNotIn("Загрузите файл", data["error"])
+        mocked_convert.assert_not_called()
+
+    def test_sign_performer_contract_documents_rejects_regular_staff_user(self):
+        staff_user = get_user_model().objects.create_user(
+            username="regular-staff-sign@example.com",
+            email="regular-staff-sign@example.com",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(staff_user)
+
+        with patch("projects_app.views.convert_docx_source_to_pdf") as mocked_convert:
+            response = self.client.post(
+                reverse("sign_performer_contract_documents"),
+                {"performer_ids[]": [self.performer.pk]},
+            )
+
+        self.assertEqual(response.status_code, 302)
         mocked_convert.assert_not_called()
 
     @override_settings(ONLYOFFICE_DOCUMENT_SERVER_URL="https://docs.example.com")
