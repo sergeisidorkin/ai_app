@@ -176,6 +176,7 @@ class ContractProjectWorkAdmin(_PerformerProxyMixin, admin.ModelAdmin):
                 "contract_project_disk_folder",
                 "contract_file",
                 ("contract_pdf_file", "contract_pdf_link"),
+                ("contract_signed_pdf_file", "contract_signed_pdf_link"),
             ),
         }),
     )
@@ -222,6 +223,8 @@ class ContractSigningWorkAdmin(_PerformerProxyMixin, admin.ModelAdmin):
         }),
         ("Подписанный договор", {
             "fields": (
+                "contract_signed_pdf_file",
+                "contract_signed_pdf_link",
                 "contract_signed_scan_file",
                 "contract_signed_scan",
                 "contract_signed_scan_link",

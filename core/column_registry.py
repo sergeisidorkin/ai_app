@@ -209,6 +209,7 @@ COLUMN_REGISTRY = {
                     "citizenship": "Гражданство",
                     "citizenship_identifier": "Идентификатор",
                     "citizenship_number": "Номер",
+                    "inn": "ИНН",
                     "snils": "СНИЛС",
                     "self_employed": "Самозан.",
                     "tax_rate": "Налог",
@@ -390,7 +391,6 @@ COLUMN_REGISTRY = {
                     "deadline": "Срок",
                     "signing_date": "Дата подписания",
                     "status": "Статус",
-                    "signing": "Подписание",
                 },
             },
             "request_approval": {
@@ -445,6 +445,10 @@ COLUMN_REGISTRY = {
         },
     },
 }
+
+COLUMN_REGISTRY["contracts"]["tables"]["contract_details"] = (
+    COLUMN_REGISTRY["experts"]["tables"]["contract_details"]
+)
 
 
 def get_section_choices():

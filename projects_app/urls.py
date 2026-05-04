@@ -39,6 +39,7 @@ urlpatterns = [
     path("projects/performers/contract-project-target-folder/save/", views.contract_project_target_folder_save, name="contract_project_target_folder_save"),
     path("projects/performers/contract-docx-source/<int:pk>/", views.contract_onlyoffice_docx_source, name="contract_onlyoffice_docx_source"),
     path("projects/performers/sign-contract/", views.sign_contract_documents, name="sign_contract_documents"),
+    path("projects/performers/sign-performer-contract/", views.sign_performer_contract_documents, name="sign_performer_contract_documents"),
     path("projects/performers/create-contract-project/", views.create_contract_project, name="create_contract_project"),
 
     path("projects/legal-entities/create/", views.legal_entity_form_create, name="legal_entity_form_create"),

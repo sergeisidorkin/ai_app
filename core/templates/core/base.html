@@ -23,7 +23,7 @@
     <link href="https://fonts.googleapis.com/css?family=Droid+Sans+Mono" rel="stylesheet">
 
     <!-- ваши глобальные стили -->
-    <link rel="stylesheet" href="{% static 'core/css/site.css' %}?v=20260430-4">
+    <link rel="stylesheet" href="{% static 'core/css/site.css' %}?v=20260504-2">
     <link rel="stylesheet" href="{% static 'vendor/intl-tel-input/css/intlTelInput.css' %}?v=20260421-1">
 
     {# ---------- FAVICONS (под твои имена файлов) ---------- #}
@@ -68,7 +68,11 @@
     </script>
     <script>
       function cleanupDanglingModalState() {
-        if (document.querySelector('.modal.show, .modal.showing')) return;
+        if (
+          document.querySelector('.modal.show, .modal.showing, .modal[style*="display: block"]')
+          || document.body.classList.contains('contracts-modal-open')
+          || document.body.classList.contains('contract-templates-modal-open')
+        ) return;
         document.querySelectorAll('.modal-backdrop').forEach(function (backdrop) {
           backdrop.remove();
         });
@@ -95,6 +99,7 @@
         if (!(target instanceof Element) || !target.classList.contains('modal-content')) return;
         const modalEl = target.closest('.modal');
         if (!modalEl || !window.bootstrap) return;
+        if (modalEl.id === 'contracts-modal' || modalEl.id === 'contract-templates-modal') return;
         window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
       });
 
@@ -142,7 +147,7 @@
         <script defer src="{% static 'core/js/selectable-tables-projects.js' %}"></script>
         <script src="{% static 'core/js/datepickers.js' %}"></script>
         <script src="{% static 'core/js/requests-panels.js' %}"></script>
-        <script defer src="{% static 'core/js/contracts-panels.js' %}"></script>
+        <script defer src="{% static 'core/js/contracts-panels.js' %}?v=20260504-1"></script>
         <script defer src="{% static 'core/js/queued-row-order.js' %}"></script>
         <script defer src="{% static 'core/js/worktime-panels.js' %}"></script>
         <script defer src="{% static 'letters_app/js/letters-panels.js' %}"></script>

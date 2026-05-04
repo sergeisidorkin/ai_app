@@ -1,13 +1,15 @@
 import logging
 import os
+import json
 from urllib.parse import quote
 
 from django.contrib.auth.decorators import login_required, user_passes_test
-from django.db import models
-from django.db.models import Max, Sum, Q
+from django.db import models, transaction
+from django.db.models import Count, Max, Sum, Q
 from django.db.models.functions import Trim
-from django.http import FileResponse, Http404, HttpResponse, JsonResponse
+from django.http import FileResponse, Http404, HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import render, get_object_or_404
+from django.template.loader import render_to_string
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods, require_POST
 
@@ -26,8 +28,9 @@ from group_app.models import GroupMember
 from nextcloud_app.api import NextcloudApiClient, NextcloudApiError
 from nextcloud_app.models import NextcloudUserLink
 from notifications_app.models import Notification, NotificationPerformerLink
-from policy_app.models import DEPARTMENT_HEAD_GROUP, LAWYER_GROUP
+from policy_app.models import ADMIN_GROUP, DEPARTMENT_HEAD_GROUP, EXPERT_GROUP, LAWYER_GROUP
 from projects_app.models import Performer, ProjectRegistration, ProjectRegistrationProduct
+from smtp_app.models import ExternalSMTPAccount
 from users_app.forms import FREELANCER_LABEL
 from users_app.models import Employee
 from .forms import (
@@ -38,13 +41,127 @@ from .forms import (
     ContractTemplateForm,
     ContractVariableForm,
 )
-from .models import ContractSubject, ContractTemplate, ContractVariable
+from .models import ContractReturnComment, ContractSubject, ContractTemplate, ContractVariable
 
 logger = logging.getLogger(__name__)
 
 
 def staff_required(user):
     return user.is_staff
+
+
+def _has_contract_admin_role(user):
+    if not user or not getattr(user, "is_authenticated", False):
+        return False
+    employee = getattr(user, "employee_profile", None)
+    employee_role = getattr(employee, "role", "")
+    return (
+        user.groups.filter(name=ADMIN_GROUP).exists()
+        or employee_role == ADMIN_GROUP
+    )
+
+
+def contract_signing_manager_required(user):
+    return bool(getattr(user, "is_superuser", False) or _has_contract_admin_role(user))
+
+
+def _user_has_role(user, group_name: str) -> bool:
+    if not user or not getattr(user, "is_authenticated", False):
+        return False
+    employee = getattr(user, "employee_profile", None)
+    employee_role = getattr(employee, "role", "")
+    return user.groups.filter(name=group_name).exists() or employee_role == group_name
+
+
+def _is_contract_expert(user) -> bool:
+    return _user_has_role(user, EXPERT_GROUP)
+
+
+def _is_contract_lawyer(user) -> bool:
+    return _user_has_role(user, LAWYER_GROUP)
+
+
+def _contract_return_author_role(user) -> str:
+    if _is_contract_lawyer(user):
+        return ContractReturnComment.AuthorRole.LAWYER
+    if _is_contract_expert(user):
+        return ContractReturnComment.AuthorRole.EXPERT
+    return ContractReturnComment.AuthorRole.OTHER
+
+
+def _user_can_access_contract_return(performer: Performer, user) -> bool:
+    if not user or not getattr(user, "is_authenticated", False):
+        return False
+    if _has_contract_admin_role(user) or _is_contract_lawyer(user):
+        return True
+    if not _is_contract_expert(user):
+        return bool(getattr(user, "is_staff", False))
+    employee = getattr(user, "employee_profile", None)
+    if not employee:
+        return False
+    if performer.employee_id == employee.pk:
+        return True
+    employee_full_name = Performer.employee_full_name(employee)
+    return bool(employee_full_name and performer.executor == employee_full_name)
+
+
+def _contract_return_comment_filter(performer: Performer) -> Q:
+    if performer.contract_batch_id:
+        return Q(contract_batch_id=performer.contract_batch_id)
+    return Q(performer=performer)
+
+
+def _contract_return_counts(performer: Performer) -> dict:
+    totals = ContractReturnComment.objects.filter(_contract_return_comment_filter(performer)).aggregate(
+        lawyer_count=Count("id", filter=Q(author_role=ContractReturnComment.AuthorRole.LAWYER)),
+        expert_count=Count("id", filter=Q(author_role=ContractReturnComment.AuthorRole.EXPERT)),
+    )
+    last_comment = (
+        ContractReturnComment.objects
+        .filter(_contract_return_comment_filter(performer))
+        .order_by("-created_at", "-id")
+        .first()
+    )
+    return {
+        "lawyer_count": totals["lawyer_count"] or 0,
+        "expert_count": totals["expert_count"] or 0,
+        "last_role": last_comment.author_role if last_comment else "",
+    }
+
+
+def _attach_contract_return_comment_counts(contracts):
+    contract_list = list(contracts)
+    batch_ids = [p.contract_batch_id for p in contract_list if p.contract_batch_id]
+    count_map = {}
+    last_role_map = {}
+    if batch_ids:
+        for row in (
+            ContractReturnComment.objects
+            .filter(contract_batch_id__in=batch_ids)
+            .values("contract_batch_id")
+            .annotate(
+                lawyer_count=Count("id", filter=Q(author_role=ContractReturnComment.AuthorRole.LAWYER)),
+                expert_count=Count("id", filter=Q(author_role=ContractReturnComment.AuthorRole.EXPERT)),
+            )
+        ):
+            count_map[row["contract_batch_id"]] = {
+                "lawyer_count": row["lawyer_count"],
+                "expert_count": row["expert_count"],
+            }
+        latest_ids = (
+            ContractReturnComment.objects
+            .filter(contract_batch_id__in=batch_ids)
+            .values("contract_batch_id")
+            .annotate(latest_id=Max("id"))
+            .values_list("latest_id", flat=True)
+        )
+        for comment in ContractReturnComment.objects.filter(id__in=latest_ids):
+            last_role_map[comment.contract_batch_id] = comment.author_role
+    for performer in contract_list:
+        counts = count_map.get(performer.contract_batch_id, {"lawyer_count": 0, "expert_count": 0})
+        performer.return_lawyer_comment_count = counts["lawyer_count"]
+        performer.return_expert_comment_count = counts["expert_count"]
+        performer.return_last_comment_role = last_role_map.get(performer.contract_batch_id, "")
 
 
 CONTRACTS_PARTIAL_TEMPLATE = "contracts_app/contracts_partial.html"
@@ -231,14 +348,21 @@ def _contracts_context(user=None):
             "currency",
         )
         .prefetch_related(registration_products_prefetch)
-        .annotate(executor_trim=Trim("executor"))
+        .annotate(
+            executor_trim=Trim("executor"),
+            contract_sent_order=models.Case(
+                models.When(contract_sent_at__isnull=True, then=models.Value(0)),
+                default=models.Value(1),
+                output_field=models.IntegerField(),
+            ),
+        )
         .filter(
             registration__status__in=active_participation_statuses,
             participation_response=Performer.ParticipationResponse.CONFIRMED,
             employee__employment=FREELANCER_LABEL,
         )
         .exclude(executor_trim="")
-        .order_by("registration_id", "executor", "asset_name", "position", "id")
+        .order_by("registration_id", "executor", "contract_sent_order", "contract_batch_id", "asset_name", "position", "id")
     )
     contract_conclusion_project_ids = (
         contract_conclusion_performers
@@ -265,12 +389,49 @@ def _contracts_context(user=None):
         .order_by("contract_batch_id", "position", "id")
     )
 
+    is_admin_role = False
+    is_expert = False
+    is_lawyer = False
+    has_active_smtp_connection = False
+    if user and getattr(user, "is_authenticated", False):
+        from policy_app.models import EXPERT_GROUP, LAWYER_GROUP
+        employee = getattr(user, "employee_profile", None)
+        employee_role = getattr(employee, "role", "")
+        is_expert = user.groups.filter(name=EXPERT_GROUP).exists() or employee_role == EXPERT_GROUP
+        is_lawyer = user.groups.filter(name=LAWYER_GROUP).exists() or employee_role == LAWYER_GROUP
+        is_admin_role = _has_contract_admin_role(user)
+        has_active_smtp_connection = ExternalSMTPAccount.objects.filter(
+            user=user,
+            is_active=True,
+            use_for_notifications=True,
+        ).exists()
+        if is_expert:
+            if employee:
+                expert_filter = Q(employee_id=employee.pk)
+                employee_full_name = Performer.employee_full_name(employee)
+                if employee_full_name:
+                    expert_filter |= Q(executor=employee_full_name)
+                all_performers = all_performers.filter(expert_filter)
+            else:
+                all_performers = all_performers.none()
+
     seen_batches = set()
+    contract_representatives = {}
     contracts = []
     for p in all_performers:
-        if p.contract_batch_id not in seen_batches:
+        batch_id = p.contract_batch_id
+        if batch_id not in seen_batches:
             seen_batches.add(p.contract_batch_id)
+            contract_representatives[batch_id] = p
             contracts.append(p)
+            continue
+        representative = contract_representatives.get(batch_id)
+        if (
+            representative
+            and not (representative.contract_signing_note or "").strip()
+            and (p.contract_signing_note or "").strip()
+        ):
+            representative.contract_signing_note = p.contract_signing_note
 
     price_map = {}
     for row in (
@@ -285,13 +446,8 @@ def _contracts_context(user=None):
         p.total_price = price_map.get(p.contract_batch_id)
     _attach_contract_group_members(contracts)
     _attach_contract_responsible_names(contracts)
-
-    is_expert = False
-    is_lawyer = False
-    if user and getattr(user, "is_authenticated", False):
-        from policy_app.models import EXPERT_GROUP, LAWYER_GROUP
-        is_expert = user.groups.filter(name=EXPERT_GROUP).exists()
-        is_lawyer = user.groups.filter(name=LAWYER_GROUP).exists()
+    _attach_contract_return_comment_counts(contracts)
+    has_contracts_sent_for_signing = any(p.contract_sent_at for p in contracts)
 
     def _build_badge_map(notification_type):
         qs = (
@@ -353,9 +509,13 @@ def _contracts_context(user=None):
         "contract_request_sent_initial": contract_request_sent_initial,
         "batch_badge_map": batch_badge_map,
         "lawyer_badge_map": lawyer_badge_map,
+        "can_sign_performer_contracts": is_admin_role or is_expert,
+        "can_manage_contract_signing_actions": bool(is_admin_role or (getattr(user, "is_superuser", False) and not is_lawyer)),
+        "has_contracts_sent_for_signing": has_contracts_sent_for_signing,
         "is_expert": is_expert,
         "is_lawyer": is_lawyer,
         "primary_cloud_storage_label": get_primary_cloud_storage_label(),
+        "has_active_smtp_connection": has_active_smtp_connection,
     }
 
 
@@ -532,8 +692,30 @@ def _build_contract_file_redirect_url(client, file_id: str) -> str:
 
 
 def _attach_contract_folder_urls(contracts, user=None):
+    folder_source_by_key = {}
+    for performer in contracts:
+        path = getattr(performer, "contract_project_disk_folder", "") or ""
+        if not path:
+            continue
+        key = (
+            getattr(performer, "registration_id", None),
+            _normalize_contract_person_name(getattr(performer, "executor", "")),
+        )
+        folder_source_by_key.setdefault(key, performer)
+
     folder_cache = {}
     for performer in contracts:
+        path = getattr(performer, "contract_project_disk_folder", "") or ""
+        if not path:
+            key = (
+                getattr(performer, "registration_id", None),
+                _normalize_contract_person_name(getattr(performer, "executor", "")),
+            )
+            source = folder_source_by_key.get(key)
+            if source:
+                performer.contract_project_disk_folder = getattr(source, "contract_project_disk_folder", "") or ""
+                performer.contract_project_folder_link = getattr(source, "contract_project_folder_link", "") or ""
+                performer.contract_project_folder_file_id = getattr(source, "contract_project_folder_file_id", "") or ""
         path = getattr(performer, "contract_project_disk_folder", "") or ""
         public_url = (getattr(performer, "contract_project_folder_link", "") or "").strip()
         performer.contract_project_folder_url = public_url or build_folder_url(path)
@@ -542,6 +724,9 @@ def _attach_contract_folder_urls(contracts, user=None):
         ).strip()
         performer.contract_project_pdf_file_url = (
             getattr(performer, "contract_pdf_link", "") or ""
+        ).strip()
+        performer.contract_signed_pdf_file_url = (
+            getattr(performer, "contract_signed_pdf_link", "") or ""
         ).strip()
         if path:
             folder_cache.setdefault(path, performer.contract_project_folder_url)
@@ -852,7 +1037,7 @@ def _upload_scan_to_cloud_bytes(user, performer, filename, file_bytes):
 
 
 @login_required
-@user_passes_test(staff_required)
+@user_passes_test(contract_signing_manager_required)
 @require_http_methods(["GET", "POST"])
 def contract_signing_edit(request, pk):
     performer = get_object_or_404(
@@ -1071,7 +1256,7 @@ def _rename_uploaded_file(uploaded_file, new_basename):
 
 
 @login_required
-@user_passes_test(staff_required)
+@user_passes_test(contract_signing_manager_required)
 @require_POST
 def contract_scan_upload(request, pk):
     performer = get_object_or_404(
@@ -1124,7 +1309,7 @@ def contract_scan_upload(request, pk):
 
 
 @login_required
-@user_passes_test(staff_required)
+@user_passes_test(contract_signing_manager_required)
 @require_POST
 def contract_signed_scan_upload(request, pk):
     performer = get_object_or_404(
@@ -1172,6 +1357,136 @@ def contract_signed_scan_upload(request, pk):
             "ok": True,
             "scan_name": scan_name,
             "storage_label": get_primary_cloud_storage_label(),
+        }
+    )
+
+
+@login_required
+@require_http_methods(["GET"])
+def contract_return_comment_modal(request, pk):
+    performer = get_object_or_404(
+        Performer.objects.select_related("registration", "employee", "employee__user"),
+        pk=pk,
+        contract_batch_id__isnull=False,
+    )
+    if not _user_can_access_contract_return(performer, request.user):
+        return HttpResponse("Недостаточно прав для просмотра комментариев.", status=403)
+
+    comments = (
+        ContractReturnComment.objects
+        .filter(_contract_return_comment_filter(performer))
+        .select_related("author")
+        .order_by("created_at", "id")
+    )
+    counts = _contract_return_counts(performer)
+    return render(
+        request,
+        "contracts_app/components/return_comment_modal.html",
+        {
+            "performer": performer,
+            "comments": comments,
+            "lawyer_count": counts["lawyer_count"],
+            "expert_count": counts["expert_count"],
+            "add_comment_url": "contracts_return_comment_add",
+            "return_url": "contracts_return_performer_contract",
+            "can_return_contract": _is_contract_expert(request.user),
+        },
+    )
+
+
+@login_required
+@require_POST
+def contract_return_comment_add(request, pk):
+    performer = get_object_or_404(
+        Performer.objects.select_related("registration", "employee", "employee__user"),
+        pk=pk,
+        contract_batch_id__isnull=False,
+    )
+    if not _user_can_access_contract_return(performer, request.user):
+        return HttpResponse("Недостаточно прав для добавления комментария.", status=403)
+
+    value = (request.POST.get("value") or "").strip()
+    if not value:
+        return HttpResponseBadRequest("Введите текст комментария.")
+
+    ContractReturnComment.objects.create(
+        performer=performer,
+        contract_batch_id=performer.contract_batch_id,
+        text=value,
+        author=request.user,
+        author_role=_contract_return_author_role(request.user),
+    )
+    comments = (
+        ContractReturnComment.objects
+        .filter(_contract_return_comment_filter(performer))
+        .select_related("author")
+        .order_by("created_at", "id")
+    )
+    counts = _contract_return_counts(performer)
+    history_html = render_to_string(
+        "contracts_app/components/return_comment_thread.html",
+        {
+            "performer": performer,
+            "comments": comments,
+            "oob": True,
+        },
+        request=request,
+    )
+    resp = HttpResponse(history_html)
+    resp["HX-Trigger"] = json.dumps({
+        "contracts:return-comment-updated": {
+            "performerId": performer.pk,
+            "lawyerCount": counts["lawyer_count"],
+            "expertCount": counts["expert_count"],
+            "lastRole": counts["last_role"],
+        }
+    })
+    return resp
+
+
+@login_required
+@require_POST
+def contract_return_performer_contract(request, pk):
+    from notifications_app.services import complete_contract_notifications_for_performers
+
+    performer = get_object_or_404(
+        Performer.objects.select_related("registration", "employee", "employee__user"),
+        pk=pk,
+        contract_batch_id__isnull=False,
+    )
+    if not _is_contract_expert(request.user) or not _user_can_access_contract_return(performer, request.user):
+        return JsonResponse({"ok": False, "error": "Вернуть договор может только Эксперт."}, status=403)
+    if performer.contract_signing_date:
+        return JsonResponse({"ok": False, "error": "Договор уже подписан факсимиле."}, status=400)
+    if performer.contract_send_date:
+        return JsonResponse({"ok": False, "error": "Скан договора уже отправлен."}, status=400)
+    if not performer.contract_sent_at:
+        return JsonResponse({"ok": False, "error": "Договор уже возвращён на составление проекта."}, status=400)
+
+    with transaction.atomic():
+        locked = Performer.objects.select_for_update().get(pk=performer.pk)
+        if locked.contract_batch_id:
+            batch_filter = Q(contract_batch_id=locked.contract_batch_id)
+        else:
+            batch_filter = Q(pk=locked.pk)
+        returned_ids = list(Performer.objects.filter(batch_filter).values_list("pk", flat=True))
+        updated = Performer.objects.filter(batch_filter).update(
+            contract_sent_at=None,
+            contract_deadline_at=None,
+            contract_signing_note="Разрабатывается проект договора",
+            contract_conclusion_status="",
+        )
+        completed_notifications = complete_contract_notifications_for_performers(
+            performer_ids=returned_ids,
+            actor=request.user,
+        )
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "updated": updated,
+            "completed_notifications": completed_notifications,
+            "status": "Разрабатывается проект договора",
         }
     )
 
@@ -1613,7 +1928,7 @@ def cs_move_down(request, pk):
 
 
 @login_required
-@user_passes_test(staff_required)
+@user_passes_test(contract_signing_manager_required)
 @require_POST
 def send_scan(request):
     from notifications_app.services import create_scan_notifications

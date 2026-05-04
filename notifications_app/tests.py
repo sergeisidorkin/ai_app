@@ -200,4 +200,5 @@ class ParticipationNotificationContractPrefillTests(TestCase):
         self.assertEqual(self.performer.contract_group_member_id, self.group_member.pk)
         self.assertTrue(self.performer.contract_number.startswith("IMCM/7001-ИИ/"))
         self.assertEqual(self.performer.contract_date, self.notification.action_at.date())
+        self.assertEqual(self.performer.contract_signing_note, "Разрабатывается проект договора")
         mocked_assignments.assert_called_once_with([self.performer.pk])

@@ -1,0 +1,7 @@
+<div id="contract-requisites-pane"
+     hx-get="{% url 'contract_requisites_partial' %}"
+     hx-trigger="contract-requisites:refresh from:body"
+     hx-target="#contract-requisites-pane"
+     hx-swap="outerHTML">
+  {% include "experts_app/contract_details_section.html" %}
+</div>

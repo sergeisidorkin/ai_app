@@ -58,12 +58,14 @@
       <col>                       <!-- Исполнитель -->
       <col>                       <!-- Грейд -->
       <col class="col-typical">    <!-- Типовой раздел -->
-      <col>                       <!-- Скоррект. затраты -->
-      <col class="perf-spacer">
-      <col>                       <!-- Расч. затраты -->
-      <col class="perf-spacer">
-      <col>                       <!-- Согласованная -->
-      <col class="perf-spacer">
+      {% if not is_expert %}
+        <col>                       <!-- Скоррект. затраты -->
+        <col class="perf-spacer">
+        <col>                       <!-- Расч. затраты -->
+        <col class="perf-spacer">
+        <col>                       <!-- Согласованная -->
+        <col class="perf-spacer">
+      {% endif %}
     </colgroup>
     <thead>
     <tr>
@@ -75,6 +77,7 @@
                    id="performers-master"
                    data-target-name="performer-select"
                    data-actions-id="performers-actions"
+                   {% if is_expert %}disabled{% endif %}
                    aria-label="Выделить все строки исполнителей">
           </div>
         {% endif %}
@@ -87,12 +90,14 @@
       <th>Исполнитель</th>
       <th>Грейд</th>
       <th>Типовой раздел</th>
-      <th class="text-end">Скоррект. затраты</th>
-      <th class="perf-spacer"></th>
-      <th class="text-end">Расч. затраты</th>
-      <th class="perf-spacer"></th>
-      <th class="text-end">Согласовано</th>
-      <th class="perf-spacer"></th>
+      {% if not is_expert %}
+        <th class="text-end">Скоррект. затраты</th>
+        <th class="perf-spacer"></th>
+        <th class="text-end">Расч. затраты</th>
+        <th class="perf-spacer"></th>
+        <th class="text-end">Согласовано</th>
+        <th class="perf-spacer"></th>
+      {% endif %}
     </tr>
     </thead>
     <tbody>
@@ -112,7 +117,7 @@
                      id="perf-sel-{{ p.id }}"
                      name="performer-select"
                      value="{{ p.id }}"
-                     {% if user_is_direction_head and p.executor_locked %}disabled{% endif %}
+                     {% if is_expert or user_is_direction_head and p.executor_locked %}disabled{% endif %}
                      aria-label="Выделить строку исполнителя">
             </div>
           {% endif %}
@@ -139,31 +144,35 @@
         <td class="text-nowrap">
           {% if p.typical_section %}{{ p.typical_section|typical_section_short }}{% else %}&mdash;{% endif %}
         </td>
-        <td class="text-nowrap text-end" data-sum-actual="{{ p.actual_costs|default_if_none:'' }}" data-currency="{% if p.currency %}{{ p.currency.code_alpha }}{% endif %}">{% if p.actual_costs != None %}{{ p.actual_costs|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% endif %}</td>
-        <td class="perf-spacer"></td>
-        <td class="text-nowrap text-end" data-sum-estimated="{{ p.estimated_costs|default_if_none:'' }}" data-currency="{% if p.currency %}{{ p.currency.code_alpha }}{% endif %}">{% if p.estimated_costs != None %}{{ p.estimated_costs|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% endif %}</td>
-        <td class="perf-spacer"></td>
-        <td class="text-nowrap text-end" data-sum-agreed="{{ p.agreed_amount|default_if_none:'' }}" data-currency="{% if p.currency %}{{ p.currency.code_alpha }}{% endif %}">{% if p.agreed_amount != None %}{{ p.agreed_amount|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% endif %}</td>
-        <td class="perf-spacer"></td>
+        {% if not is_expert %}
+          <td class="text-nowrap text-end" data-sum-actual="{{ p.actual_costs|default_if_none:'' }}" data-currency="{% if p.currency %}{{ p.currency.code_alpha }}{% endif %}">{% if p.actual_costs != None %}{{ p.actual_costs|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% endif %}</td>
+          <td class="perf-spacer"></td>
+          <td class="text-nowrap text-end" data-sum-estimated="{{ p.estimated_costs|default_if_none:'' }}" data-currency="{% if p.currency %}{{ p.currency.code_alpha }}{% endif %}">{% if p.estimated_costs != None %}{{ p.estimated_costs|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% endif %}</td>
+          <td class="perf-spacer"></td>
+          <td class="text-nowrap text-end" data-sum-agreed="{{ p.agreed_amount|default_if_none:'' }}" data-currency="{% if p.currency %}{{ p.currency.code_alpha }}{% endif %}">{% if p.agreed_amount != None %}{{ p.agreed_amount|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% endif %}</td>
+          <td class="perf-spacer"></td>
+        {% endif %}
       </tr>
     {% empty %}
-      <tr><td colspan="15" class="text-muted">Пока нет данных.</td></tr>
+      <tr><td colspan="{% if is_expert %}9{% else %}15{% endif %}" class="text-muted">Пока нет данных.</td></tr>
     {% endfor %}
     </tbody>
-    <tfoot>
-      <tr class="fw-semibold" id="perf-totals-row" style="border-top:1.5px solid #000;">
-        <td colspan="9" style="border-bottom:none; padding-bottom:0;"></td>
-        <td class="text-nowrap text-end" id="perf-total-actual" style="border-bottom:none; padding-bottom:0;"></td>
-        <td class="perf-spacer" style="border-bottom:none; padding-bottom:0;"></td>
-        <td class="text-nowrap text-end" id="perf-total-estimated" style="border-bottom:none; padding-bottom:0;"></td>
-        <td class="perf-spacer" style="border-bottom:none; padding-bottom:0;"></td>
-        <td class="text-nowrap text-end" id="perf-total-agreed" style="border-bottom:none; padding-bottom:0;"></td>
-        <td colspan="1" style="border-bottom:none; padding-bottom:0;"></td>
-      </tr>
-    </tfoot>
+    {% if not is_expert %}
+      <tfoot>
+        <tr class="fw-semibold" id="perf-totals-row" style="border-top:1.5px solid #000;">
+          <td colspan="9" style="border-bottom:none; padding-bottom:0;"></td>
+          <td class="text-nowrap text-end" id="perf-total-actual" style="border-bottom:none; padding-bottom:0;"></td>
+          <td class="perf-spacer" style="border-bottom:none; padding-bottom:0;"></td>
+          <td class="text-nowrap text-end" id="perf-total-estimated" style="border-bottom:none; padding-bottom:0;"></td>
+          <td class="perf-spacer" style="border-bottom:none; padding-bottom:0;"></td>
+          <td class="text-nowrap text-end" id="perf-total-agreed" style="border-bottom:none; padding-bottom:0;"></td>
+          <td colspan="1" style="border-bottom:none; padding-bottom:0;"></td>
+        </tr>
+      </tfoot>
+    {% endif %}
   </table>
 </div>
-{% if request.user.is_authenticated and request.user.is_staff and not user_is_direction_head %}
+{% if request.user.is_authenticated and request.user.is_staff and not user_is_direction_head and not is_expert %}
   <div class="d-flex align-items-stretch gap-2 products-actions-row mt-2">
     <button
       class="btn btn-primary btn-sm d-flex align-items-center"
@@ -191,7 +200,7 @@
   </div>
 {% endif %}
 
-<div id="participation-confirmation-section" class="mt-5">
+<div id="participation-confirmation-section" class="mt-5"{% if is_expert %} data-expert-readonly="1"{% endif %}>
   <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
     <div class="d-flex align-items-center gap-3 flex-wrap">
       <h5 class="table-section-title mb-0">
@@ -265,6 +274,7 @@
               <input class="form-check-input"
                      type="checkbox"
                      id="participation-master"
+                     {% if is_expert %}disabled{% endif %}
                      aria-label="Выделить все строки подтверждения участия">
             </div>
           {% endif %}
@@ -336,6 +346,7 @@
                        id="participation-sel-{{ row.id }}"
                        name="participation-select"
                        value="{{ row.id }}"
+                       {% if is_expert %}disabled{% endif %}
                        {% if user_is_direction_head and row.dh_checkbox_locked %}data-request-sent="1"{% elif not user_is_direction_head and row.participation_request_sent_at %}data-request-sent="1"{% endif %}
                        aria-label="Выделить строку подтверждения участия">
               </div>
@@ -365,7 +376,7 @@
       </tbody>
     </table>
 
-    {% if request.user.is_authenticated and request.user.is_staff %}
+    {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
       <div id="participation-request-actions"
            class="d-flex align-items-stretch gap-2 products-actions-row"
            data-request-url="{% url 'participation_request' %}">
@@ -527,6 +538,7 @@
               <input class="form-check-input"
                      type="checkbox"
                      id="info-request-master"
+                     {% if is_expert %}disabled{% endif %}
                      aria-label="Выделить все строки согласования запроса">
             </div>
           {% endif %}
@@ -568,6 +580,9 @@
                        id="info-request-sel-{{ p.id }}"
                        name="info-request-select"
                        value="{{ p.id }}"
+                       {% if is_expert %}
+                         disabled
+                       {% endif %}
                        {% if p.info_request_sent_at %}
                          disabled
                          title="Строка недоступна: запрос уже отправлен"
@@ -599,7 +614,7 @@
       </tbody>
     </table>
 
-    {% if request.user.is_authenticated and request.user.is_staff %}
+    {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
       <div id="info-request-actions"
            class="d-flex align-items-stretch gap-2 products-actions-row"
            data-request-url="{% url 'info_request_approval' %}"

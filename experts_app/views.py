@@ -9,16 +9,55 @@ from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_http_methods, require_POST
 
 from classifiers_app.models import TerritorialDivision
+from policy_app.models import ADMIN_GROUP, EXPERT_GROUP, LAWYER_GROUP
 from policy_app.models import Grade
 from .forms import ExpertSpecialtyForm, ExpertProfileForm, ExpertContractDetailsForm, _active_regions_qs
 from .models import ExpertContractDetails, ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
 
 PARTIAL_TEMPLATE = "experts_app/experts_partial.html"
+CONTRACT_REQUISITES_PARTIAL_TEMPLATE = "experts_app/contract_requisites_partial.html"
 FORM_TEMPLATE = "experts_app/specialty_form.html"
 PROFILE_FORM_TEMPLATE = "experts_app/profile_form.html"
 CONTRACT_DETAILS_FORM_TEMPLATE = "experts_app/contract_details_form.html"
 HX_TRIGGER_HEADER = "HX-Trigger"
 HX_EVENT = "experts-updated"
+CONTRACT_REQUISITES_HX_EVENT = "contract-requisites-updated"
+CONTRACT_DETAILS_TARGET_REQUISITES = "contract-requisites"
+CONTRACT_DETAILS_COLUMN_PICKER = (
+    ("1", "ФИО"),
+    ("2", "ФИО (полное) род. падеж"),
+    ("3", "Страна гражданства"),
+    ("4", "Статус"),
+    ("5", "Дата рожд."),
+    ("6", "Пол"),
+    ("7", "Гражданство"),
+    ("8", "Идентификатор"),
+    ("9", "Номер"),
+    ("10", "СНИЛС"),
+    ("11", "Самозан."),
+    ("12", "Налог"),
+    ("13", "Паспорт: серия"),
+    ("14", "номер"),
+    ("15", "кем выдан"),
+    ("16", "дата выдачи"),
+    ("17", "срок действия"),
+    ("18", "код подразд."),
+    ("19", "адрес регистрации"),
+    ("20", "Наименование банка"),
+    ("21", "SWIFT"),
+    ("22", "ИНН банка"),
+    ("23", "БИК"),
+    ("24", "Рас. счет"),
+    ("25", "Кор. счет"),
+    ("26", "Адрес банка"),
+    ("27", "Наим. банка-корр."),
+    ("28", "Адрес банка-корр."),
+    ("29", "БИК банка-корр."),
+    ("30", "SWIFT банка-корр."),
+    ("31", "Рас. счет банка-корр."),
+    ("32", "Кор. счет банка-корр."),
+    ("33", "Факсимиле"),
+)
 
 
 def _render_form_with_errors(request, template, context):
@@ -30,6 +69,21 @@ def _render_form_with_errors(request, template, context):
 
 def staff_required(u):
     return u.is_active and u.is_staff
+
+
+def contract_requisites_access_required(user):
+    if not user or not getattr(user, "is_active", False) or not getattr(user, "is_staff", False):
+        return False
+    employee = getattr(user, "employee_profile", None)
+    employee_role = getattr(employee, "role", "") or ""
+    is_expert = user.groups.filter(name=EXPERT_GROUP).exists() or employee_role == EXPERT_GROUP
+    is_lawyer = user.groups.filter(name=LAWYER_GROUP).exists() or employee_role == LAWYER_GROUP
+    is_admin = (
+        getattr(user, "is_superuser", False)
+        or user.groups.filter(name=ADMIN_GROUP).exists()
+        or employee_role == ADMIN_GROUP
+    )
+    return is_admin or is_lawyer or not is_expert
 
 
 def _ensure_profiles():
@@ -236,9 +290,88 @@ def _experts_context():
     }
 
 
+def _contract_details_context():
+    _ensure_profiles()
+    profiles = list(
+        ExpertProfile.objects.select_related(
+            "employee", "employee__user", "employee__person_record",
+        ).filter(
+            employee__user__is_staff=True,
+        ).all()
+    )
+    _sync_contract_detail_records(profiles)
+    contract_details = list(
+        ExpertContractDetails.objects.select_related(
+            "expert_profile",
+            "expert_profile__employee",
+            "expert_profile__employee__person_record",
+            "expert_profile__employee__user",
+            "citizenship_record",
+            "citizenship_record__country",
+            "citizenship_record__person",
+        ).filter(
+            expert_profile__employee__user__is_staff=True,
+            citizenship_record__is_active=True,
+        ).order_by(
+            "expert_profile__position",
+            "citizenship_record__position",
+            "citizenship_record_id",
+            "id",
+        )
+    )
+    return {
+        "contract_details": contract_details,
+        "contract_details_column_picker": CONTRACT_DETAILS_COLUMN_PICKER,
+    }
+
+
 def _render_updated(request):
     response = render(request, PARTIAL_TEMPLATE, _experts_context())
     response[HX_TRIGGER_HEADER] = HX_EVENT
+    return response
+
+
+def _render_contract_details_updated(request):
+    response = render(request, CONTRACT_REQUISITES_PARTIAL_TEMPLATE, _contract_details_context())
+    response[HX_TRIGGER_HEADER] = CONTRACT_REQUISITES_HX_EVENT
+    return response
+
+
+def _contract_details_form_target(request):
+    target_context = (
+        request.POST.get("target_context")
+        or request.GET.get("target")
+        or ""
+    )
+    if target_context == CONTRACT_DETAILS_TARGET_REQUISITES:
+        return CONTRACT_DETAILS_TARGET_REQUISITES, "#contract-requisites-pane"
+    return "experts", "#experts-pane"
+
+
+def _contract_details_form_context(form, contract_detail, target_context, hx_target):
+    return {
+        "form": form,
+        "contract_detail": contract_detail,
+        "contract_details_context": target_context,
+        "contract_details_hx_target": hx_target,
+    }
+
+
+def _render_contract_details_form(request, form, contract_detail, target_context, hx_target):
+    return render(
+        request,
+        CONTRACT_DETAILS_FORM_TEMPLATE,
+        _contract_details_form_context(form, contract_detail, target_context, hx_target),
+    )
+
+
+def _render_contract_details_form_with_errors(request, form, contract_detail, target_context, hx_target):
+    response = _render_contract_details_form(request, form, contract_detail, target_context, hx_target)
+    if target_context == CONTRACT_DETAILS_TARGET_REQUISITES:
+        response["HX-Retarget"] = "#contract-requisites-modal .modal-content"
+    else:
+        response["HX-Retarget"] = "#experts-contract-details-modal .modal-content"
+    response["HX-Reswap"] = "innerHTML"
     return response
 
 
@@ -261,6 +394,13 @@ def _normalize_positions():
 @require_http_methods(["GET"])
 def experts_partial(request):
     return render(request, PARTIAL_TEMPLATE, _experts_context())
+
+
+@login_required
+@user_passes_test(contract_requisites_access_required)
+@require_http_methods(["GET"])
+def contract_requisites_partial(request):
+    return render(request, CONTRACT_REQUISITES_PARTIAL_TEMPLATE, _contract_details_context())
 
 
 # ---------------------------------------------------------------------------
@@ -441,21 +581,18 @@ def contract_details_form_edit(request, pk: int):
         ),
         pk=pk,
     )
+    target_context, hx_target = _contract_details_form_target(request)
     if request.method == "GET":
         form = ExpertContractDetailsForm(instance=contract_detail)
-        return render(request, CONTRACT_DETAILS_FORM_TEMPLATE, {
-            "form": form,
-            "contract_detail": contract_detail,
-        })
+        return _render_contract_details_form(request, form, contract_detail, target_context, hx_target)
     old_facsimile_name = contract_detail.facsimile_file.name if contract_detail.facsimile_file else ""
     has_new_facsimile = "facsimile_file" in request.FILES
     clear_facsimile = bool(request.POST.get("facsimile_file-clear")) and not has_new_facsimile
     form = ExpertContractDetailsForm(request.POST, request.FILES, instance=contract_detail)
     if not form.is_valid():
-        return render(request, CONTRACT_DETAILS_FORM_TEMPLATE, {
-            "form": form,
-            "contract_detail": contract_detail,
-        })
+        return _render_contract_details_form_with_errors(
+            request, form, contract_detail, target_context, hx_target
+        )
     saved_contract_detail = form.save()
     new_facsimile_name = (
         saved_contract_detail.facsimile_file.name
@@ -465,6 +602,8 @@ def contract_details_form_edit(request, pk: int):
         storage = saved_contract_detail._meta.get_field("facsimile_file").storage
         if storage.exists(old_facsimile_name):
             storage.delete(old_facsimile_name)
+    if target_context == CONTRACT_DETAILS_TARGET_REQUISITES:
+        return _render_contract_details_updated(request)
     return _render_updated(request)
 
 

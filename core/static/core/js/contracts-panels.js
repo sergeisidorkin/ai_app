@@ -47,9 +47,7 @@
   }
 
   function updateTableScrollGaps() {
-    var root = pane();
-    if (!root) return;
-    qa('.contracts-action-table-wrap, #contract-conclusion-section .contract-conclusion-table-wrap', root).forEach(function(wrap) {
+    qa('.contracts-action-table-wrap, #contract-conclusion-section .contract-conclusion-table-wrap, #contract-details-section .contract-requisites-table-wrap', document).forEach(function(wrap) {
       wrap.classList.toggle('has-horizontal-scroll', wrap.scrollWidth > wrap.clientWidth + 1);
     });
   }
@@ -142,6 +140,145 @@
 
   window.addEventListener('resize', scheduleTableScrollGapsUpdate);
   window.addEventListener('load', scheduleTableScrollGapsUpdate);
+  window.addEventListener('contracts:section-shown', scheduleTableScrollGapsUpdate);
+})();
+
+
+/* -----------------------------------------------------------------------
+   Performer requisites subsection
+   ----------------------------------------------------------------------- */
+(function () {
+  if (window.__contractRequisitesBound) return;
+  window.__contractRequisitesBound = true;
+  if (typeof window.__contractRequisitesSel === 'undefined') {
+    window.__contractRequisitesSel = null;
+  }
+
+  function pane() { return document.getElementById('contract-requisites-pane'); }
+  var qa = function(sel, root) { return Array.from((root || document).querySelectorAll(sel)); };
+
+  function getRowChecks() {
+    return qa('tbody input.form-check-input[name="ecd-select"]', pane());
+  }
+
+  function getChecked() {
+    return getRowChecks().filter(function(box) { return box.checked; });
+  }
+
+  function updateRowHighlight() {
+    getRowChecks().forEach(function(box) {
+      var tr = box.closest('tr');
+      if (tr) tr.classList.toggle('table-active', !!box.checked);
+    });
+  }
+
+  function updateMasterState() {
+    var boxes = getRowChecks();
+    var root = pane();
+    var master = root && root.querySelector('input.form-check-input[data-target-name="ecd-select"]');
+    if (!master) return;
+    var checkedCount = boxes.filter(function(box) { return box.checked; }).length;
+    master.checked = boxes.length > 0 && checkedCount === boxes.length;
+    master.indeterminate = checkedCount > 0 && checkedCount < boxes.length;
+  }
+
+  function updateEditBtn() {
+    var root = pane();
+    var btn = root && root.querySelector('#ecd-edit-btn');
+    if (!btn) return;
+    btn.disabled = getChecked().length === 0;
+  }
+
+  function withRequisitesTarget(url) {
+    if (!url) return '';
+    return url + (url.indexOf('?') === -1 ? '?' : '&') + 'target=contract-requisites';
+  }
+
+  function requisitesModalIsOpen() {
+    return !!document.querySelector('#contract-requisites-modal.show');
+  }
+
+  function refreshPane() {
+    var root = pane();
+    if (!root || !window.htmx) return Promise.resolve();
+    if (requisitesModalIsOpen()) return Promise.resolve();
+    var url = root.getAttribute('hx-get');
+    if (!url) return Promise.resolve();
+    window.__contractRequisitesSel = getChecked().map(function(ch) { return String(ch.value); });
+    return htmx.ajax('GET', url, { target: '#contract-requisites-pane', swap: 'outerHTML' });
+  }
+
+  document.addEventListener('click', function(e) {
+    var root = pane();
+    if (!root) return;
+
+    var editBtn = e.target.closest('#ecd-edit-btn');
+    if (!editBtn || !root.contains(editBtn)) return;
+    e.preventDefault();
+
+    var checked = getChecked();
+    if (!checked.length) return;
+    var tr = checked[0].closest('tr');
+    var url = withRequisitesTarget(tr && tr.dataset.editUrl);
+    var target = document.querySelector('#contract-requisites-modal .modal-content');
+    if (!url || !target || !window.htmx) return;
+
+    window.__contractRequisitesSel = checked.map(function(ch) { return String(ch.value); });
+    htmx.ajax('GET', url, { target: target, swap: 'innerHTML' }).then(function() {
+      var modalEl = document.getElementById('contract-requisites-modal');
+      if (modalEl && window.bootstrap) {
+        window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+      }
+    });
+    updateEditBtn();
+  });
+
+  document.addEventListener('change', function(e) {
+    var root = pane();
+    if (!root) return;
+
+    var master = e.target.closest('input.form-check-input[data-target-name="ecd-select"]');
+    if (master && root.contains(master)) {
+      getRowChecks().forEach(function(box) { box.checked = master.checked; });
+      master.indeterminate = false;
+      updateMasterState();
+      updateRowHighlight();
+      updateEditBtn();
+      return;
+    }
+
+    var rowCb = e.target.closest('tbody input.form-check-input[name="ecd-select"]');
+    if (rowCb && root.contains(rowCb)) {
+      updateMasterState();
+      updateRowHighlight();
+      updateEditBtn();
+    }
+  });
+
+  document.body.addEventListener('htmx:afterSettle', function(e) {
+    var root = pane();
+    if (!root || !(e.target === root || root.contains(e.target))) return;
+    if (Array.isArray(window.__contractRequisitesSel)) {
+      var selected = new Set(window.__contractRequisitesSel);
+      getRowChecks().forEach(function(box) {
+        box.checked = selected.has(String(box.value));
+      });
+      window.__contractRequisitesSel = null;
+    }
+    updateMasterState();
+    updateRowHighlight();
+    updateEditBtn();
+  });
+
+  document.body.addEventListener('contacts-updated', function() {
+    refreshPane().catch(function() {});
+  });
+
+  document.addEventListener('DOMContentLoaded', function() {
+    updateMasterState();
+    updateRowHighlight();
+    updateEditBtn();
+  });
 })();
 
 
@@ -375,12 +512,31 @@
     var checked = getSigningChecked();
     var btn = root.querySelector('#signing-edit-btn');
     if (btn) btn.disabled = checked.length !== 1;
+    var signContractBtn = root.querySelector('#signing-sign-contract-btn');
+    if (signContractBtn) {
+      var selectedSigningRow = checked.length === 1 ? checked[0].closest('tr') : null;
+      var expertRequiresSent = signContractBtn.dataset.expertRequiresContractSent === '1';
+      var anySentForExpert = signContractBtn.dataset.expertHasContractSent === '1';
+      var selectedSentForExpert = selectedSigningRow && selectedSigningRow.dataset.contractSent === '1';
+      var sentForExpert = !expertRequiresSent || (selectedSigningRow ? selectedSentForExpert : anySentForExpert);
+      if (expertRequiresSent) {
+        signContractBtn.classList.toggle('d-none', !sentForExpert);
+        signContractBtn.classList.toggle('d-flex', !!sentForExpert);
+      }
+      var signEnabled = checked.length === 1
+        && selectedSigningRow
+        && selectedSigningRow.dataset.contractSignReady === '1'
+        && (!expertRequiresSent || !!selectedSentForExpert);
+      signContractBtn.disabled = !signEnabled;
+    }
     var sendBtn = root.querySelector('#signing-send-scan-btn');
     if (sendBtn) {
       var enabled = checked.length === 1
         && checked[0].closest('tr') && checked[0].closest('tr').dataset.hasScan === '1';
       sendBtn.disabled = !enabled;
     }
+    var returnBtn = root.querySelector('#signing-return-contract-btn');
+    if (returnBtn) returnBtn.disabled = checked.length !== 1;
   }
 
   function showContractsModal() {
@@ -393,6 +549,51 @@
       if (sizeEl) dlg.classList.add('modal-' + sizeEl.dataset.modalSize);
     }
     bootstrap.Modal.getOrCreateInstance(modalEl).show();
+  }
+
+  function refreshContractsPane() {
+    var contractsPane = document.getElementById('contracts-pane');
+    if (!contractsPane || !window.htmx) return;
+    var refreshUrl = contractsPane.getAttribute('hx-get') || contractsPane.dataset.refreshUrl;
+    if (refreshUrl) {
+      htmx.ajax('GET', refreshUrl, { target: '#contracts-pane', swap: 'innerHTML' });
+    }
+  }
+
+  function openReturnCommentModal(url) {
+    var target = document.querySelector('#contracts-modal .modal-content');
+    if (!url || !target || !window.htmx) return;
+    htmx.ajax('GET', url, target).then(function() {
+      showContractsModal();
+      var thread = target.querySelector('.contract-return-comment-thread');
+      if (thread) thread.scrollTop = thread.scrollHeight;
+    });
+  }
+
+  function updateReturnCommentDom(payload) {
+    var performerId = String(payload.performerId || '');
+    if (!performerId) return;
+    var wrapper = document.getElementById('contract-return-comment-' + performerId);
+    if (!wrapper) return;
+    var lawyerCount = Number(payload.lawyerCount || 0);
+    var expertCount = Number(payload.expertCount || 0);
+    var lawyerCounter = wrapper.querySelector('.chk-comment-counter--lawyer');
+    var expertCounter = wrapper.querySelector('.chk-comment-counter--expert');
+    if (lawyerCounter) {
+      lawyerCounter.textContent = lawyerCount ? String(lawyerCount) : '';
+      lawyerCounter.classList.toggle('has-comments', lawyerCount > 0);
+    }
+    if (expertCounter) {
+      expertCounter.textContent = expertCount ? String(expertCount) : '';
+      expertCounter.classList.toggle('has-comments', expertCount > 0);
+    }
+    var icon = wrapper.querySelector('.contract-return-comment-trigger i');
+    if (icon) {
+      var hasAnyComment = lawyerCount > 0 || expertCount > 0;
+      icon.className = 'bi ' + (hasAnyComment ? 'bi-chat-left-text-fill' : 'bi-chat-left text-muted');
+      if (payload.lastRole === 'lawyer') icon.classList.add('contract-return-icon--lawyer');
+      if (payload.lastRole === 'expert') icon.classList.add('contract-return-icon--expert');
+    }
   }
 
   function refreshSigning() {
@@ -420,6 +621,61 @@
       return;
     }
 
+    var signContractBtn = e.target.closest('#signing-sign-contract-btn');
+    if (signContractBtn && root.contains(signContractBtn)) {
+      var checkedForSign = getSigningChecked();
+      if (checkedForSign.length !== 1 || signContractBtn.disabled) return;
+      var signUrl = signContractBtn.dataset.url;
+      if (!signUrl) return;
+
+      var signFd = new FormData();
+      signFd.append('performer_ids[]', checkedForSign[0].value);
+
+      var originalHtml = signContractBtn.innerHTML;
+      signContractBtn.disabled = true;
+      signContractBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Подписание...';
+      fetch(signUrl, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': getCookie('csrftoken') },
+        body: signFd,
+      }).then(function(resp) {
+        return resp.json().then(function(data) {
+          if (!resp.ok || !data.ok) {
+            throw new Error(data && data.error ? data.error : 'Не удалось подписать договор.');
+          }
+          return data;
+        });
+      }).then(function(data) {
+        htmx.trigger(document.body, 'contracts-updated');
+        htmx.trigger(document.body, 'notifications-updated');
+        if (data.warnings && data.warnings.length) {
+          alert((data.message || 'Подписанный договор сформирован.') + '\n\n' + data.warnings.join('\n'));
+        }
+      }).catch(function(err) {
+        alert(err.message || 'Ошибка сети при подписании договора.');
+      }).finally(function() {
+        signContractBtn.innerHTML = originalHtml;
+        updateSigningEditBtn();
+      });
+      return;
+    }
+
+    var returnBtn = e.target.closest('#signing-return-contract-btn');
+    if (returnBtn && root.contains(returnBtn)) {
+      var checkedForReturn = getSigningChecked();
+      if (checkedForReturn.length !== 1 || returnBtn.disabled) return;
+      var returnRow = checkedForReturn[0].closest('tr');
+      openReturnCommentModal(returnRow && returnRow.dataset.returnCommentUrl);
+      return;
+    }
+
+    var returnCommentTrigger = e.target.closest('[data-contract-return-comment-trigger]');
+    if (returnCommentTrigger && root.contains(returnCommentTrigger)) {
+      e.preventDefault();
+      openReturnCommentModal(returnCommentTrigger.dataset.url);
+      return;
+    }
+
     var sendScanBtn = e.target.closest('#signing-send-scan-btn');
     if (sendScanBtn && root.contains(sendScanBtn)) {
       var checked = getSigningChecked();
@@ -439,13 +695,7 @@
         if (data.ok) {
           htmx.trigger(document.body, 'contracts-updated');
           htmx.trigger(document.body, 'notifications-updated');
-          var contractsPane = document.getElementById('contracts-pane');
-          if (contractsPane) {
-            var refreshUrl = contractsPane.getAttribute('hx-get') || contractsPane.dataset.refreshUrl;
-            if (refreshUrl) {
-              htmx.ajax('GET', refreshUrl, { target: '#contracts-pane', swap: 'innerHTML' });
-            }
-          }
+          refreshContractsPane();
         } else {
           alert(data.error || 'Ошибка при отправке скана.');
         }
@@ -456,6 +706,75 @@
       });
       return;
     }
+  });
+
+  document.body.addEventListener('contracts:return-comment-updated', function(event) {
+    var payload = (event.detail && (event.detail.value || event.detail)) || {};
+    updateReturnCommentDom(payload);
+    var modalRoot = document.querySelector('#contracts-modal [data-contract-return-modal-root]');
+    if (!modalRoot || String(modalRoot.dataset.performerId || '') !== String(payload.performerId || '')) return;
+    var lawyerCount = Number(payload.lawyerCount || 0);
+    var expertCount = Number(payload.expertCount || 0);
+    var lawyerTotal = document.querySelector('#contracts-modal [data-contract-return-total-lawyer]');
+    var expertTotal = document.querySelector('#contracts-modal [data-contract-return-total-expert]');
+    if (lawyerTotal) {
+      lawyerTotal.textContent = lawyerCount ? String(lawyerCount) : '';
+      lawyerTotal.classList.toggle('has-comments', lawyerCount > 0);
+    }
+    if (expertTotal) {
+      expertTotal.textContent = expertCount ? String(expertCount) : '';
+      expertTotal.classList.toggle('has-comments', expertCount > 0);
+    }
+  });
+
+  document.addEventListener('htmx:afterRequest', function(event) {
+    var form = event.target && event.target.closest && event.target.closest('.contract-return-comment-compose');
+    if (!form || !event.detail.successful) return;
+    var textarea = form.querySelector('textarea[name="value"]');
+    if (textarea) {
+      textarea.value = '';
+      textarea.focus();
+    }
+    var thread = document.querySelector('#contracts-modal .contract-return-comment-thread');
+    if (thread) thread.scrollTop = thread.scrollHeight;
+  });
+
+  document.addEventListener('click', function(event) {
+    var submitBtn = event.target.closest('[data-contract-return-submit]');
+    if (!submitBtn) return;
+    var modalRoot = submitBtn.closest('[data-contract-return-modal-root]');
+    if (!modalRoot || submitBtn.disabled) return;
+    var returnUrl = modalRoot.dataset.returnUrl;
+    if (!returnUrl) return;
+
+    var originalHtml = submitBtn.innerHTML;
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Возврат...';
+    fetch(returnUrl, {
+      method: 'POST',
+      headers: { 'X-CSRFToken': getCookie('csrftoken') },
+    }).then(function(resp) {
+      return resp.json().then(function(data) {
+        if (!resp.ok || !data.ok) {
+          throw new Error(data && data.error ? data.error : 'Не удалось вернуть договор.');
+        }
+        return data;
+      });
+    }).then(function() {
+      var modalEl = document.getElementById('contracts-modal');
+      if (modalEl && window.bootstrap) {
+        bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+      }
+      htmx.trigger(document.body, 'contracts-updated');
+      htmx.trigger(document.body, 'notifications-updated');
+      refreshContractsPane();
+    }).catch(function(err) {
+      alert(err.message || 'Ошибка сети при возврате договора.');
+    }).finally(function() {
+      submitBtn.innerHTML = originalHtml;
+      submitBtn.disabled = false;
+      refreshSigning();
+    });
   });
 
   function getCookie(name) {
@@ -713,12 +1032,7 @@
       var tr = first.closest('tr');
       var url = tr && tr.dataset.editUrl;
       if (!url) return;
-      htmx.ajax('GET', url, { target: config.modal, swap: 'innerHTML' }).then(function() {
-        var modalEl = document.getElementById(config.modalId);
-        if (modalEl && window.bootstrap) {
-          window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
-        }
-      });
+      htmx.ajax('GET', url, { target: config.modal, swap: 'innerHTML' });
       ensureActionsVisibility(name);
       return;
     }

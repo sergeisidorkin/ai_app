@@ -3,6 +3,7 @@ from . import views
 
 urlpatterns = [
     path("partial/", views.experts_partial, name="experts_partial"),
+    path("contract-requisites/partial/", views.contract_requisites_partial, name="contract_requisites_partial"),
     # ExpertSpecialty
     path("create/", views.specialty_form_create, name="esp_form_create"),
     path("<int:pk>/edit/", views.specialty_form_edit, name="esp_form_edit"),

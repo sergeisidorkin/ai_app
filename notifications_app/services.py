@@ -460,6 +460,48 @@ def mark_notification_as_read(notification, actor):
     return notification
 
 
+@transaction.atomic
+def complete_contract_notifications_for_performers(*, performer_ids, actor):
+    performer_ids = [int(value) for value in performer_ids or []]
+    if not performer_ids or not getattr(actor, "is_authenticated", False):
+        return 0
+
+    notification_ids = (
+        NotificationPerformerLink.objects
+        .filter(
+            performer_id__in=performer_ids,
+            notification__recipient=actor,
+            notification__notification_type=Notification.NotificationType.PROJECT_CONTRACT_CONCLUSION,
+        )
+        .values_list("notification_id", flat=True)
+        .distinct()
+    )
+    notifications = (
+        Notification.objects
+        .filter(pk__in=notification_ids, recipient=actor)
+        .exclude(is_read=True, is_processed=True)
+    )
+
+    now = timezone.now()
+    completed = 0
+    for notification in notifications:
+        update_fields = []
+        if not notification.is_read:
+            notification.is_read = True
+            notification.read_at = now
+            notification.read_by = actor
+            update_fields += ["is_read", "read_at", "read_by"]
+        if not notification.is_processed:
+            notification.is_processed = True
+            notification.action_at = now
+            notification.action_by = actor
+            update_fields += ["is_processed", "action_at", "action_by"]
+        if update_fields:
+            notification.save(update_fields=[*update_fields, "updated_at"])
+            completed += 1
+    return completed
+
+
 def check_direction_notifications_completion(performer_ids):
     """Auto-complete direction_confirmation notifications where all linked performers are confirmed."""
     if not performer_ids:
@@ -518,6 +560,7 @@ def process_participation_notification(notification, actor, action_choice):
             Performer.objects.filter(pk__in=self_performer_ids).update(
                 participation_response=Performer.ParticipationResponse.CONFIRMED,
                 participation_response_at=now,
+                contract_signing_note="Разрабатывается проект договора",
             )
             from contracts_app.services import prefill_contract_adjustment_fields
             from worktime_app.services import ensure_confirmed_assignments_for_performers
@@ -534,10 +577,13 @@ def process_participation_notification(notification, actor, action_choice):
         response_value = Performer.ParticipationResponse.CONFIRMED
         if action_choice == Notification.ActionChoice.DECLINED:
             response_value = Performer.ParticipationResponse.DECLINED
-        Performer.objects.filter(pk__in=all_performer_ids).update(
-            participation_response=response_value,
-            participation_response_at=now,
-        )
+        update_kwargs = {
+            "participation_response": response_value,
+            "participation_response_at": now,
+        }
+        if action_choice == Notification.ActionChoice.CONFIRMED:
+            update_kwargs["contract_signing_note"] = "Разрабатывается проект договора"
+        Performer.objects.filter(pk__in=all_performer_ids).update(**update_kwargs)
         if action_choice == Notification.ActionChoice.CONFIRMED:
             from contracts_app.services import prefill_contract_adjustment_fields
             from worktime_app.services import ensure_confirmed_assignments_for_performers
@@ -742,10 +788,15 @@ def _build_contract_payload(*, recipient, project, performers, request_sent_at, 
     prepayment_display = f"{int(prepayment_values[0])}%" if prepayment_values else "—"
     final_payment_display = f"{int(final_payment_values[0])}%" if final_payment_values else "—"
 
-    document_link = ""
+    document_docx_link = ""
+    document_pdf_link = ""
     for p in performers:
         if p.contract_project_link:
-            document_link = p.contract_project_link
+            document_docx_link = p.contract_project_link
+            break
+    for p in performers:
+        if p.contract_pdf_link:
+            document_pdf_link = p.contract_pdf_link
             break
 
     deadline_at_label = timezone.localtime(deadline_at).strftime("%H:%M %d.%m.%Y") if deadline_at else "—"
@@ -762,7 +813,9 @@ def _build_contract_payload(*, recipient, project, performers, request_sent_at, 
         "currency_code": currency_code,
         "prepayment_percent": prepayment_display,
         "final_payment_percent": final_payment_display,
-        "document_link": document_link,
+        "document_docx_link": document_docx_link,
+        "document_pdf_link": document_pdf_link,
+        "document_link": document_docx_link,
         "project_deadline": deadline_label,
         "duration_hours": str(duration_hours),
         "deadline_at": deadline_at_label,
@@ -773,12 +826,25 @@ def _build_contract_payload(*, recipient, project, performers, request_sent_at, 
         from letters_app.services import get_effective_template, render_template, render_subject
         tpl = get_effective_template("contract_sending", sender)
         if tpl:
-            document_link_html = (
-                f'<a href="{document_link}" target="_blank" rel="noopener">{document_link}</a>'
-                if document_link else ""
+            document_docx_link_html = (
+                f'<a href="{document_docx_link}" target="_blank" rel="noopener">{document_docx_link}</a>'
+                if document_docx_link else ""
             )
-            body_vars = {**template_vars, "document_link": document_link_html}
-            content_text = render_template(tpl.body_html, body_vars, safe_keys={"services_list", "document_link"})
+            document_pdf_link_html = (
+                f'<a href="{document_pdf_link}" target="_blank" rel="noopener">{document_pdf_link}</a>'
+                if document_pdf_link else ""
+            )
+            body_vars = {
+                **template_vars,
+                "document_docx_link": document_docx_link_html,
+                "document_pdf_link": document_pdf_link_html,
+                "document_link": document_docx_link_html,
+            }
+            content_text = render_template(
+                tpl.body_html,
+                body_vars,
+                safe_keys={"services_list", "document_docx_link", "document_pdf_link", "document_link"},
+            )
             if tpl.subject_template:
                 title_text = render_subject(tpl.subject_template, template_vars)
     except Exception:
@@ -802,7 +868,13 @@ def _build_contract_payload(*, recipient, project, performers, request_sent_at, 
                 f"Оплата услуг без учета налогов: {_display_amount(agreed_amount)} {currency_code}".strip(),
                 f"Порядок оплаты: {prepayment_display} аванс, {final_payment_display} окончательный платёж",
                 f"Срок исполнения: до {deadline_label}",
-                f"Документ доступен для скачивания по ссылке: {document_link}",
+                f"DOCX доступен для скачивания по ссылке: {document_docx_link}",
+            ]
+        )
+        if document_pdf_link:
+            content_lines.append(f"PDF доступен для скачивания по ссылке: {document_pdf_link}")
+        content_lines.extend(
+            [
                 "",
                 (
                     f"Подписать договор и загрузить подписанную скан-копию в разделе «Договоры» "
@@ -825,7 +897,9 @@ def _build_contract_payload(*, recipient, project, performers, request_sent_at, 
         "currency_code": currency_code,
         "prepayment_display": prepayment_display,
         "final_payment_display": final_payment_display,
-        "document_link": document_link,
+        "document_docx_link": document_docx_link,
+        "document_pdf_link": document_pdf_link,
+        "document_link": document_docx_link,
         "project_deadline_display": deadline_label,
         "duration_hours": duration_hours,
         "request_sent_at_display": timezone.localtime(request_sent_at).strftime("%d.%m.%Y %H:%M"),
@@ -835,7 +909,16 @@ def _build_contract_payload(*, recipient, project, performers, request_sent_at, 
 
 
 @transaction.atomic
-def create_contract_notifications(*, performers, sender, request_sent_at, deadline_at, duration_hours):
+def create_contract_notifications(
+    *,
+    performers,
+    sender,
+    request_sent_at,
+    deadline_at,
+    duration_hours,
+    delivery_channels=None,
+):
+    delivery_channels = normalize_delivery_channels(delivery_channels)
     performers = list(performers)
     missing_employee = [performer for performer in performers if not performer.employee_id]
     if missing_employee:
@@ -847,6 +930,9 @@ def create_contract_notifications(*, performers, sender, request_sent_at, deadli
         grouped[(performer.registration_id, performer.employee_id)].append(performer)
 
     created = []
+    system_email_jobs = []
+    connected_email_jobs = []
+    should_create_notifications = DELIVERY_CHANNEL_SYSTEM in delivery_channels
     for (_registration_id, _employee_id), grouped_performers in grouped.items():
         first = grouped_performers[0]
         recipient = first.employee.user
@@ -860,32 +946,101 @@ def create_contract_notifications(*, performers, sender, request_sent_at, deadli
             duration_hours=duration_hours,
             sender=sender,
         )
-        notification = Notification.objects.create(
-            notification_type=Notification.NotificationType.PROJECT_CONTRACT_CONCLUSION,
-            related_section=Notification.RelatedSection.CONTRACTS,
-            recipient=recipient,
-            sender=sender,
-            project=project,
-            title_text=title_text,
-            content_text=content_text,
-            payload=payload,
-            sent_at=request_sent_at,
-            deadline_at=deadline_at,
-            is_read=False,
-            is_processed=False,
+        if should_create_notifications:
+            notification = Notification.objects.create(
+                notification_type=Notification.NotificationType.PROJECT_CONTRACT_CONCLUSION,
+                related_section=Notification.RelatedSection.CONTRACTS,
+                recipient=recipient,
+                sender=sender,
+                project=project,
+                title_text=title_text,
+                content_text=content_text,
+                payload=payload,
+                sent_at=request_sent_at,
+                deadline_at=deadline_at,
+                is_read=False,
+                is_processed=False,
+            )
+            NotificationPerformerLink.objects.bulk_create(
+                [
+                    NotificationPerformerLink(
+                        notification=notification,
+                        performer=performer,
+                        position=index,
+                    )
+                    for index, performer in enumerate(grouped_performers, start=1)
+                ]
+            )
+            created.append(notification)
+        if DELIVERY_CHANNEL_SYSTEM_EMAIL in delivery_channels:
+            system_email_jobs.append(
+                {
+                    "recipient": recipient,
+                    "subject": title_text,
+                    "content": content_text,
+                    "sender": sender,
+                }
+            )
+        if DELIVERY_CHANNEL_CONNECTED_EMAIL in delivery_channels:
+            connected_email_jobs.append(
+                {
+                    "recipient": recipient,
+                    "subject": title_text,
+                    "content": content_text,
+                    "sender": sender,
+                }
+            )
+
+    system_email_requested = DELIVERY_CHANNEL_SYSTEM_EMAIL in delivery_channels
+    connected_email_requested = DELIVERY_CHANNEL_CONNECTED_EMAIL in delivery_channels
+    email_delivery = {
+        "requested": system_email_requested or connected_email_requested,
+        "attempted": len(system_email_jobs) + len(connected_email_jobs),
+        "sent": 0,
+        "failed": 0,
+        "errors": [],
+        "channels": {
+            DELIVERY_CHANNEL_SYSTEM_EMAIL: _empty_email_delivery_summary(
+                delivery_channel=DELIVERY_CHANNEL_SYSTEM_EMAIL,
+                email_requested=system_email_requested,
+                attempted=len(system_email_jobs),
+            ),
+            DELIVERY_CHANNEL_CONNECTED_EMAIL: _empty_email_delivery_summary(
+                delivery_channel=DELIVERY_CHANNEL_CONNECTED_EMAIL,
+                email_requested=connected_email_requested,
+                attempted=len(connected_email_jobs),
+            ),
+        },
+    }
+    if system_email_jobs:
+        transaction.on_commit(
+            lambda: _update_email_delivery_summary(
+                aggregate=email_delivery,
+                channel_summary=email_delivery["channels"][DELIVERY_CHANNEL_SYSTEM_EMAIL],
+                delivered_summary=_deliver_notification_email_jobs(
+                    system_email_jobs,
+                    delivery_channel=DELIVERY_CHANNEL_SYSTEM_EMAIL,
+                    email_requested=system_email_requested,
+                ),
+            )
         )
-        NotificationPerformerLink.objects.bulk_create(
-            [
-                NotificationPerformerLink(
-                    notification=notification,
-                    performer=performer,
-                    position=index,
-                )
-                for index, performer in enumerate(grouped_performers, start=1)
-            ]
+    if connected_email_jobs:
+        transaction.on_commit(
+            lambda: _update_email_delivery_summary(
+                aggregate=email_delivery,
+                channel_summary=email_delivery["channels"][DELIVERY_CHANNEL_CONNECTED_EMAIL],
+                delivered_summary=_deliver_notification_email_jobs(
+                    connected_email_jobs,
+                    delivery_channel=DELIVERY_CHANNEL_CONNECTED_EMAIL,
+                    email_requested=connected_email_requested,
+                ),
+            )
         )
-        created.append(notification)
-    return created
+    return {
+        "notifications": created,
+        "delivery_channels": delivery_channels,
+        "email_delivery": email_delivery,
+    }
 
 
 @transaction.atomic
@@ -1121,7 +1276,9 @@ def serialize_notification_cards(notifications):
                 "currency_code": payload.get("currency_code") or "",
                 "prepayment_display": payload.get("prepayment_display") or "—",
                 "final_payment_display": payload.get("final_payment_display") or "—",
-                "document_link": payload.get("document_link") or "",
+                "document_docx_link": payload.get("document_docx_link") or payload.get("document_link") or "",
+                "document_pdf_link": payload.get("document_pdf_link") or "",
+                "document_link": payload.get("document_docx_link") or payload.get("document_link") or "",
                 "document_link_scan": payload.get("document_link_scan") or "",
                 "recipient_name_lawer": payload.get("recipient_name_lawer") or "",
                 "content_html": (notification.content_text or "")

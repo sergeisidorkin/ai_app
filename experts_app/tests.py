@@ -52,6 +52,12 @@ class ExpertProfileUiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, "Яндекс Почта")
 
+    def test_experts_partial_no_longer_renders_contract_details_table(self):
+        response = self.client.get(reverse("experts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "Реквизиты физлиц-исполнителей")
+
     def test_experts_partial_auto_fills_extra_email_and_phones_from_contacts(self):
         person = PersonRecord.objects.create(
             last_name="Иванов",
@@ -325,6 +331,7 @@ class ExpertContractDetailsTests(TestCase):
             response = self.client.post(
                 reverse("epr_contract_details_edit", args=[self.contract_detail.pk]),
                 {
+                    "target_context": "contract-requisites",
                     "facsimile_file": SimpleUploadedFile(
                         "facsimile.pdf",
                         b"facsimile-data",
@@ -406,6 +413,7 @@ class ExpertContractDetailsTests(TestCase):
         response = self.client.post(
             reverse("epr_contract_details_edit", args=[self.contract_detail.pk]),
             {
+                "target_context": "contract-requisites",
                 "full_name_genitive": "Подмененное значение",
                 "self_employed": "",
                 "tax_rate": "",
@@ -453,6 +461,7 @@ class ExpertContractDetailsTests(TestCase):
         response = self.client.post(
             reverse("epr_contract_details_edit", args=[self.contract_detail.pk]),
             {
+                "target_context": "contract-requisites",
                 "full_name_genitive": "",
                 "self_employed": "",
                 "tax_rate": "",
@@ -509,6 +518,7 @@ class ExpertContractDetailsTests(TestCase):
         response = self.client.post(
             reverse("epr_contract_details_edit", args=[self.contract_detail.pk]),
             {
+                "target_context": "contract-requisites",
                 "full_name_genitive": "",
                 "self_employed": "",
                 "tax_rate": "",
@@ -638,7 +648,7 @@ class ExpertContractDetailsTests(TestCase):
         self.assertIn("facsimile.pdf", response["Content-Disposition"])
         self.assertEqual(b"".join(response.streaming_content), b"facsimile-data")
 
-    def test_experts_partial_renders_one_contract_details_row_per_citizenship(self):
+    def test_contract_requisites_partial_renders_one_contract_details_row_per_citizenship(self):
         CitizenshipRecord.objects.create(
             person=self.person,
             identifier="ВНЖ",
@@ -646,36 +656,37 @@ class ExpertContractDetailsTests(TestCase):
             position=2,
         )
 
-        response = self.client.get(reverse("experts_partial"))
+        response = self.client.get(reverse("contract_requisites_partial"))
 
         self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'hx-trigger="contract-requisites:refresh from:body"', html=False)
         row_count = ExpertContractDetails.objects.filter(expert_profile=self.profile).count()
         self.assertGreaterEqual(row_count, 2)
-        self.assertContains(response, "Иванов Иван Иванович", count=1 + row_count)
+        self.assertContains(response, "Иванов Иван Иванович", count=row_count)
 
-    def test_experts_partial_syncs_full_name_genitive_from_person_record(self):
+    def test_contract_requisites_partial_syncs_full_name_genitive_from_person_record(self):
         ExpertContractDetails.objects.filter(pk=self.contract_detail.pk).update(full_name_genitive="Старое значение")
         PersonRecord.objects.filter(pk=self.person.pk).update(full_name_genitive="Нового Иванова Ивана Ивановича")
 
-        response = self.client.get(reverse("experts_partial"))
+        response = self.client.get(reverse("contract_requisites_partial"))
 
         self.assertEqual(response.status_code, 200)
         self.contract_detail.refresh_from_db()
         self.assertEqual(self.contract_detail.full_name_genitive, "Нового Иванова Ивана Ивановича")
         self.assertContains(response, "Нового Иванова Ивана Ивановича")
 
-    def test_experts_partial_syncs_gender_from_person_record(self):
+    def test_contract_requisites_partial_syncs_gender_from_person_record(self):
         ExpertContractDetails.objects.filter(pk=self.contract_detail.pk).update(gender="")
         PersonRecord.objects.filter(pk=self.person.pk).update(gender="female")
 
-        response = self.client.get(reverse("experts_partial"))
+        response = self.client.get(reverse("contract_requisites_partial"))
 
         self.assertEqual(response.status_code, 200)
         self.contract_detail.refresh_from_db()
         self.assertEqual(self.contract_detail.gender, "female")
         self.assertContains(response, "женский")
 
-    def test_experts_partial_renders_only_active_citizenship_rows(self):
+    def test_contract_requisites_partial_renders_only_active_citizenship_rows(self):
         CitizenshipRecord.objects.create(
             person=self.person,
             country=self.country,
@@ -686,7 +697,7 @@ class ExpertContractDetailsTests(TestCase):
             position=2,
         )
 
-        response = self.client.get(reverse("experts_partial"))
+        response = self.client.get(reverse("contract_requisites_partial"))
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Страна гражданства")

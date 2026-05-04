@@ -8,6 +8,7 @@ from core.section_labels import APP_SECTION_LABELS
 from learning_app.services import build_learning_overview
 from nextcloud_app.services import build_nextcloud_overview
 from policy_app.models import (
+    ADMIN_GROUP,
     DEPARTMENT_HEAD_GROUP,
     DIRECTOR_GROUPS,
     EXPERT_GROUP,
@@ -42,9 +43,14 @@ def home_entry(request):
     if not request.user.is_staff:
         return redirect("user_profile")
     employee = Employee.objects.filter(user=request.user).first()
-    is_expert = request.user.groups.filter(name=EXPERT_GROUP).exists()
-    is_lawyer = request.user.groups.filter(name=LAWYER_GROUP).exists()
     employee_role = getattr(employee, "role", "") or ""
+    is_expert = request.user.groups.filter(name=EXPERT_GROUP).exists() or employee_role == EXPERT_GROUP
+    is_lawyer = request.user.groups.filter(name=LAWYER_GROUP).exists() or employee_role == LAWYER_GROUP
+    is_contract_admin = (
+        request.user.is_superuser
+        or request.user.groups.filter(name=ADMIN_GROUP).exists()
+        or employee_role == ADMIN_GROUP
+    )
     is_department_head = employee_role == DEPARTMENT_HEAD_GROUP
     is_director_role = employee_role in DIRECTOR_GROUPS
     can_access_worktime = is_worktime_eligible_employee(employee)
@@ -58,6 +64,9 @@ def home_entry(request):
         "is_lawyer": is_lawyer,
         "is_department_head": is_department_head,
         "is_director_role": is_director_role,
+        "can_access_contract_requisites": (
+            request.user.is_staff and (is_contract_admin or is_lawyer or not is_expert)
+        ),
         "can_access_worktime": can_access_worktime,
         "can_access_connections": can_access_connections,
         "smtp_only_connections": smtp_only_connections,

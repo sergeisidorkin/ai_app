@@ -1,5 +1,6 @@
 {% load projects_extras %}
 
+{% if not is_expert %}
 <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
   <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
     <i class="bi bi-table"></i> Корректировка условий договора
@@ -85,6 +86,7 @@
     <tbody>
     {% for p in contracts %}
       <tr data-project-id="{{ p.registration_id }}"
+          data-contract-status="{{ p.contract_signing_note|default:'—' }}"
           data-batch-id="{{ p.contract_batch_id }}"
           data-edit-url="{% url 'contracts_edit' p.pk %}"
       >
@@ -138,8 +140,9 @@
 {% endif %}
 
 {% include "contracts_app/contract_conclusion_section.html" with contract_performers=contract_conclusion_performers contract_projects=contract_conclusion_projects %}
+{% endif %}
 
-<div class="d-flex align-items-center gap-3 mb-3 mt-4 table-section-header flex-wrap">
+<div class="d-flex align-items-center gap-3 mb-3 {% if not is_expert %}mt-4 {% endif %}table-section-header flex-wrap">
   <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
     <i class="bi bi-table"></i> Подписание договора
   </h5>
@@ -172,7 +175,7 @@
   </div>
 </div>
 
-<div class="contracts-action-table-wrap" style="overflow-x:auto">
+<div class="contracts-action-table-wrap {% if not is_expert %}signing-table-wrap{% endif %}" style="overflow-x:auto">
   <table class="table table-sm align-middle signing-table">
     <colgroup>
       <col style="width:36px">
@@ -183,66 +186,93 @@
       <col>
       <col style="min-width:140px">
       <col>
-      <col style="width:28px">
-      <col style="min-width:180px">
-      <col style="width:28px">
-      <col style="min-width:160px">
-      <col style="min-width:160px">
-      <col style="width:28px">
-      <col style="min-width:180px">
-      <col style="min-width:160px">
+      <col>
+      <col>
+      <col>
+      <col>
     </colgroup>
     <thead>
     <tr>
       <th>
-        {% if request.user.is_authenticated and request.user.is_staff %}
-          <div class="form-check m-0">
-            <input class="form-check-input"
-                   type="checkbox"
-                   id="signing-master"
-                   data-target-name="signing-row-select"
-                   data-actions-id="signing-actions"
-                   aria-label="Выделить все строки подписания">
-          </div>
+        {% if request.user.is_authenticated %}
+          {% if can_manage_contract_signing_actions or can_sign_performer_contracts %}
+            <div class="form-check m-0">
+              <input class="form-check-input"
+                     type="checkbox"
+                     id="signing-master"
+                     data-target-name="signing-row-select"
+                     data-actions-id="signing-actions"
+                     aria-label="Выделить все строки подписания">
+            </div>
+          {% elif not is_expert %}
+            <div class="form-check m-0">
+              <input class="form-check-input"
+                     type="checkbox"
+                     id="signing-master"
+                     disabled
+                     aria-label="Выделить все строки подписания">
+            </div>
+          {% endif %}
         {% endif %}
       </th>
       <th class="text-nowrap">Проект</th>
       <th class="text-nowrap">Тип</th>
       <th class="text-nowrap">Название</th>
       <th class="text-nowrap">Исполнитель</th>
-      <th class="text-nowrap">Вид</th>
       <th class="text-nowrap">Номер договора</th>
-      <th class="text-nowrap">Наименование файла PDF</th>
-      <th></th>
-      <th class="text-nowrap">Скан с подписью сотрудника</th>
-      <th class="text-nowrap">Облако</th>
-      <th class="text-nowrap">Дата загрузки</th>
-      <th class="text-nowrap">Дата отправки</th>
-      <th></th>
-      <th class="text-nowrap">Скан подписанного договора</th>
-      <th class="text-nowrap">Дата загрузки</th>
+      <th class="text-nowrap">Проект договора</th>
+      <th class="text-nowrap">Возврат</th>
+      <th class="text-nowrap">Подписанный договор</th>
+      <th class="text-nowrap">Дата подписания</th>
+      <th class="text-nowrap">Статус</th>
+      <th class="text-nowrap">Заключение договора</th>
     </tr>
     </thead>
     <tbody>
     {% for p in contracts %}
       <tr data-project-id="{{ p.registration_id }}"
+          data-contract-status="{{ p.contract_signing_note|default:'—' }}"
           data-batch-id="{{ p.contract_batch_id }}"
           data-signing-edit-url="{% url 'contracts_signing_edit' p.pk %}"
+          data-return-comment-url="{% url 'contracts_return_comment_modal' p.pk %}"
+          data-contract-sign-ready="{% if p.contract_project_disk_folder and p.contract_file %}1{% else %}0{% endif %}"
+          data-contract-sent="{% if p.contract_sent_at %}1{% else %}0{% endif %}"
           {% if p.contract_employee_scan or p.contract_employee_scan_link or p.contract_scan_document %}data-has-scan="1"{% endif %}
           {% if p.contract_signed_scan_file or p.contract_signed_scan_link or p.contract_signed_scan %}data-has-signed-scan="1"{% endif %}
           {% if p.contract_send_date %}data-scan-sent="1"{% endif %}
       >
         <td class="text-nowrap">
-          {% if request.user.is_authenticated and request.user.is_staff %}
-            <div class="form-check m-0">
-              <input class="form-check-input"
-                     type="checkbox"
-                     id="signing-sel-{{ p.id }}"
-                     name="signing-row-select"
-                     value="{{ p.id }}"
-                     {% if is_expert and p.contract_send_date %}disabled{% endif %}
-                     aria-label="Выделить строку подписания">
-            </div>
+          {% if request.user.is_authenticated %}
+            {% if can_manage_contract_signing_actions or can_sign_performer_contracts %}
+              <div class="form-check m-0">
+                <input class="form-check-input"
+                       type="checkbox"
+                       id="signing-sel-{{ p.id }}"
+                       name="signing-row-select"
+                       value="{{ p.id }}"
+                       {% if is_expert and p.contract_signing_date %}
+                         disabled
+                         title="Строка недоступна: договор уже подписан факсимиле"
+                       {% elif is_expert and p.contract_send_date %}
+                         disabled
+                         title="Строка недоступна: скан уже отправлен"
+                       {% elif is_expert and not p.contract_sent_at %}
+                         disabled
+                         title="Строка недоступна: договор возвращён на составление проекта"
+                       {% endif %}
+                       aria-label="Выделить строку подписания">
+              </div>
+            {% elif not is_expert %}
+              <div class="form-check m-0">
+                <input class="form-check-input"
+                       type="checkbox"
+                       id="signing-sel-{{ p.id }}"
+                       name="signing-row-select"
+                       value="{{ p.id }}"
+                       disabled
+                       aria-label="Выделить строку подписания">
+              </div>
+            {% endif %}
           {% endif %}
         </td>
         <td class="text-nowrap">{% if p.registration %}<span class="clf-id-droid-mono">{{ p.registration.short_uid }}</span>{% endif %}</td>
@@ -251,7 +281,6 @@
         </td>
         <td class="text-truncate" style="max-width:200px;">{{ p.registration.name }}</td>
         <td class="text-nowrap">{{ p.executor|short_fio }}</td>
-        <td class="text-nowrap">{% if p.contract_is_addendum %}ДС{{ p.contract_addendum_number }}{% else %}Договор{% endif %}</td>
         <td class="text-nowrap">
           {{ p.contract_number|default:"—" }}
           {% if is_expert and batch_badge_map|get_item:p.contract_batch_id %}
@@ -281,66 +310,58 @@
             {% endif %}
           {% endif %}
         </td>
-        <td class="text-center p-0">
-          {% if request.user.is_staff %}
-            {% if p.contract_employee_scan_link %}
-              <a href="{{ p.contract_employee_scan_link }}" target="_blank" rel="noopener" class="ct-download-link" title="Скачать скан">
-                <i class="bi bi-download"></i>
-              </a>
-            {% else %}
-              <label class="ct-upload-link" title="Загрузить скан">
-                <i class="bi bi-upload"></i>
-                <input type="file" class="d-none js-scan-upload"
-                       data-upload-url="{% url 'contract_scan_upload' p.pk %}"
-                       data-performer-id="{{ p.pk }}"
-                       accept=".pdf,.jpg,.jpeg,.png,.tiff,.tif">
-              </label>
-            {% endif %}
-          {% endif %}
-        </td>
-        <td class="text-nowrap">{{ p.contract_scan_document|default:"—" }}</td>
-        <td class="text-nowrap">
-          {% with folder_url=p.contract_project_folder_url %}
-          {% if folder_url %}
-            <a href="{{ folder_url }}" target="_blank" rel="noopener" title="Открыть папку на {{ primary_cloud_storage_label }}">
-              <i class="bi bi-link-45deg" style="color: var(--bs-primary, #075D94);"></i>
-            </a>
-          {% else %}
-            <i class="bi bi-link-45deg" style="color: #ccc;"></i>
-          {% endif %}
+        <td class="text-nowrap contract-return-comment-cell">
+          {% with lawyer_count=p.return_lawyer_comment_count expert_count=p.return_expert_comment_count last_role=p.return_last_comment_role %}
+          <div class="contract-return-comment-compact" id="contract-return-comment-{{ p.id }}">
+            <span class="chk-comment-counter chk-comment-counter--lawyer{% if lawyer_count %} has-comments{% endif %}"
+                  title="Комментарии пользователя с ролью Юрист">{% if lawyer_count %}{{ lawyer_count }}{% endif %}</span>
+            <span class="chk-comment-counter chk-comment-counter--expert{% if expert_count %} has-comments{% endif %}"
+                  title="Комментарии пользователя с ролью Эксперт">{% if expert_count %}{{ expert_count }}{% endif %}</span>
+            <button
+              type="button"
+              class="btn btn-link btn-sm p-0 contract-return-comment-trigger"
+              title="{% if lawyer_count or expert_count %}Открыть комментарии возврата{% else %}Добавить комментарий возврата{% endif %}"
+              data-contract-return-comment-trigger="1"
+              data-performer-id="{{ p.id }}"
+              data-url="{% url 'contracts_return_comment_modal' p.pk %}">
+              <i class="bi {% if lawyer_count or expert_count %}bi-chat-left-text-fill{% else %}bi-chat-left text-muted{% endif %}{% if last_role == 'lawyer' %} contract-return-icon--lawyer{% elif last_role == 'expert' %} contract-return-icon--expert{% endif %}"></i>
+            </button>
+          </div>
           {% endwith %}
         </td>
-        <td class="text-nowrap">{% if p.contract_upload_date %}{{ p.contract_upload_date|date:"d.m.Y H:i" }}{% else %}—{% endif %}</td>
-        <td class="text-nowrap">{% if p.contract_send_date %}{{ p.contract_send_date|date:"d.m.Y H:i" }}{% else %}—{% endif %}</td>
-        <td class="text-center p-0">
-          {% if request.user.is_staff and not is_expert %}
-            {% if p.contract_signed_scan_link %}
-              <a href="{{ p.contract_signed_scan_link }}" target="_blank" rel="noopener" class="ct-download-link" title="Скачать подписанный договор">
-                <i class="bi bi-download"></i>
+        <td class="proposal-pdf-cell contract-signed-pdf-cell">
+          {% if p.contract_signed_pdf_file_url or p.contract_signed_pdf_file %}
+            {% if p.contract_signed_pdf_file_url %}
+              <a href="{{ p.contract_signed_pdf_file_url }}"
+                 target="_blank"
+                 rel="noopener"
+                 class="proposal-file-name-link proposal-pdf-file-name d-inline-flex align-items-center gap-1"
+                 title="Открыть подписанный договор на {{ primary_cloud_storage_label }}">
+                <i class="bi bi-file-pdf-fill" style="color: var(--bs-primary, #075D94);"></i>
+                <span class="proposal-file-name-text">{{ p.contract_signed_pdf_file|default:'PDF файл' }}</span>
               </a>
             {% else %}
-              <label class="ct-upload-link" title="Загрузить подписанный договор">
-                <i class="bi bi-upload"></i>
-                <input type="file" class="d-none js-signed-scan-upload"
-                       data-upload-url="{% url 'contract_signed_scan_upload' p.pk %}"
-                       data-performer-id="{{ p.pk }}"
-                       accept=".pdf,.jpg,.jpeg,.png,.tiff,.tif">
-              </label>
+              <span class="proposal-file-name-link proposal-pdf-file-name d-inline-flex align-items-center gap-1">
+                <i class="bi bi-file-pdf-fill" style="color: var(--bs-primary, #075D94);"></i>
+                <span class="proposal-file-name-text">{{ p.contract_signed_pdf_file }}</span>
+              </span>
             {% endif %}
           {% endif %}
         </td>
-        <td class="text-nowrap">{{ p.contract_signed_scan|default:"—" }}</td>
-        <td class="text-nowrap">{% if p.contract_signed_scan_upload_date %}{{ p.contract_signed_scan_upload_date|date:"d.m.Y H:i" }}{% else %}—{% endif %}</td>
+        <td class="text-nowrap">{{ p.contract_signing_date|date:"d.m.Y H:i"|default:"—" }}</td>
+        <td class="text-nowrap">{{ p.contract_response_status|default:"—" }}</td>
+        <td class="text-nowrap">{{ p.contract_signing_note|default:"—" }}</td>
       </tr>
     {% empty %}
-      <tr><td colspan="16" class="text-muted">Пока нет данных.</td></tr>
+      <tr><td colspan="12" class="text-muted">Пока нет данных.</td></tr>
     {% endfor %}
     </tbody>
   </table>
 </div>
-
-{% if request.user.is_authenticated and request.user.is_staff %}
+{% if request.user.is_authenticated %}
+  {% if can_manage_contract_signing_actions or can_sign_performer_contracts %}
   <div class="d-flex align-items-stretch gap-2 products-actions-row mt-0">
+    {% if can_manage_contract_signing_actions %}
     <button
       type="button"
       id="signing-edit-btn"
@@ -348,7 +369,29 @@
       disabled>
       <i class="bi bi-pencil-square me-2"></i>Редактировать
     </button>
+    {% endif %}
+    {% if can_sign_performer_contracts %}
+    <button
+      type="button"
+      id="signing-sign-contract-btn"
+      class="btn btn-primary btn-sm {% if is_expert and not has_contracts_sent_for_signing %}d-none{% else %}d-flex{% endif %} align-items-center"
+      data-url="{% url 'sign_performer_contract_documents' %}"
+      {% if is_expert %}data-expert-requires-contract-sent="1"{% endif %}
+      {% if is_expert and has_contracts_sent_for_signing %}data-expert-has-contract-sent="1"{% endif %}
+      disabled>
+      <i class="bi bi-vector-pen me-2"></i>Подписать договор
+    </button>
+    {% endif %}
     {% if is_expert %}
+    <button
+      type="button"
+      id="signing-return-contract-btn"
+      class="btn btn-primary btn-sm d-flex align-items-center"
+      disabled>
+      <i class="bi bi-arrow-counterclockwise me-2"></i>Вернуть договор
+    </button>
+    {% endif %}
+    {% if can_manage_contract_signing_actions %}
     <button
       type="button"
       id="signing-send-scan-btn"
@@ -360,7 +403,98 @@
     {% endif %}
     <div id="signing-actions" class="d-none"></div>
   </div>
+  {% endif %}
 {% endif %}
+
+<style>
+  #contracts-pane .contract-return-comment-cell {
+    vertical-align: middle;
+    padding-top: var(--bs-table-cell-padding-y, .25rem);
+    padding-bottom: var(--bs-table-cell-padding-y, .25rem);
+  }
+  #contracts-pane .contract-return-comment-compact {
+    display: flex;
+    justify-content: flex-start;
+    align-items: center;
+    gap: 5px;
+    line-height: 1;
+  }
+  #contracts-pane .contract-return-comment-cell .chk-comment-counter {
+    width: 16px;
+    height: 16px;
+    min-width: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 50%;
+    color: #ced4da;
+    background: #1c1d2012;
+    font-size: 9px;
+    line-height: 1;
+    font-weight: 600;
+    box-sizing: border-box;
+  }
+  #contracts-pane .contract-return-comment-cell .chk-comment-counter--lawyer.has-comments {
+    background: #075d94;
+    color: #fff;
+  }
+  #contracts-pane .contract-return-comment-cell .chk-comment-counter--expert.has-comments {
+    background: #8ecae6;
+    color: #fff;
+  }
+  #contracts-pane .contract-return-comment-trigger {
+    color: inherit;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 0 !important;
+    line-height: 1;
+  }
+  #contracts-pane .contract-return-comment-trigger i {
+    font-size: 1.35em;
+    line-height: 1;
+    display: block;
+    transform: translateY(2px);
+  }
+  #contracts-pane .contract-return-comment-trigger i.bi-chat-left {
+    color: #adb5bd !important;
+  }
+  #contracts-pane .contract-return-icon--lawyer {
+    color: #075d94 !important;
+  }
+  #contracts-pane .contract-return-icon--expert {
+    color: #8ecae6 !important;
+  }
+  #contracts-modal .chk-comment-msg-row {
+    display: flex;
+    margin-bottom: 10px;
+  }
+  #contracts-modal .chk-comment-bubble {
+    max-width: 82%;
+    border: 1px solid #d8dee5;
+    border-radius: .75rem;
+    padding: .55rem .75rem;
+    background: #fff;
+  }
+  #contracts-modal .chk-comment-meta {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    margin-bottom: 4px;
+    color: #6c757d;
+    font-size: .75rem;
+  }
+  #contracts-modal .chk-comment-author {
+    color: #212529;
+    font-weight: 600;
+  }
+  #contracts-modal .chk-comment-text {
+    white-space: normal;
+    line-height: 1.35;
+  }
+</style>
 
 <script>
 (function() {
@@ -396,14 +530,16 @@
     var signingLabel = pane.querySelector(".js-signing-filter-label");
     var contractRows = pane.querySelectorAll("table.contracts-table tbody tr");
     var signingRows = pane.querySelectorAll("table.signing-table tbody tr");
+    var primaryDropdown = projDropdown || signingDropdown;
 
-    if (!projDropdown || projChecks.length === 0) return;
-    if (projDropdown.dataset.bound === "1") {
+    if (!primaryDropdown) return;
+    if (primaryDropdown.dataset.bound === "1") {
       syncLocalFilters(window.__contractsProjectFilter || window.__contractProjectFilter || [FILTER_ALL]);
       applyFilters(window.__contractsProjectFilter || window.__contractProjectFilter || [FILTER_ALL]);
       return;
     }
-    projDropdown.dataset.bound = "1";
+    primaryDropdown.dataset.bound = "1";
+    if (projDropdown) projDropdown.dataset.bound = "1";
     if (signingDropdown) signingDropdown.dataset.bound = "1";
 
     function syncCbs(cbs, values) {
@@ -436,12 +572,21 @@
       updateFilterLabel(signingLabel, signingChecks, normalized);
     }
 
+    function currentStatusValues() {
+      return normalizeValues(window.__contractStatusFilter || [FILTER_ALL]);
+    }
+
     function applyFilters(values) {
       var pv = normalizeValues(values || window.__contractsProjectFilter || window.__contractProjectFilter || [FILTER_ALL]);
+      var sv = currentStatusValues();
       var showAll = pv.includes(FILTER_ALL) || !pv.length;
+      var showAllStatuses = sv.includes(FILTER_ALL) || !sv.length;
       var projSet = new Set(pv);
+      var statusSet = new Set(sv);
       function filterRow(row) {
-        var match = showAll || projSet.has(row.dataset.projectId || '');
+        var projectMatch = showAll || projSet.has(row.dataset.projectId || '');
+        var statusMatch = showAllStatuses || statusSet.has(row.dataset.contractStatus || '—');
+        var match = projectMatch && statusMatch;
         row.classList.toggle('d-none', !match);
         if (!match) {
           row.querySelectorAll('input.form-check-input').forEach(function(cb) {
@@ -501,6 +646,11 @@
       applySharedFilter(values, false);
     };
 
+    window.__syncContractsStatusFilter = function(values) {
+      window.__contractStatusFilter = normalizeValues(values);
+      applyFilters(window.__contractsProjectFilter || window.__contractProjectFilter || [FILTER_ALL]);
+    };
+
     if (!window.__contractsProjectFilterEventBound) {
       window.__contractsProjectFilterEventBound = true;
       document.body.addEventListener('contract-project-filter-updated', function(e) {
@@ -511,7 +661,18 @@
       });
     }
 
+    if (!window.__contractsStatusFilterEventBound) {
+      window.__contractsStatusFilterEventBound = true;
+      document.body.addEventListener('contract-status-filter-updated', function(e) {
+        var values = e.detail && e.detail.values ? e.detail.values : [FILTER_ALL];
+        if (typeof window.__syncContractsStatusFilter === 'function') {
+          window.__syncContractsStatusFilter(values);
+        }
+      });
+    }
+
     window.__contractsProjectFilter = normalizeValues(window.__contractProjectFilter || window.__contractsProjectFilter || [FILTER_ALL]);
+    window.__contractStatusFilter = normalizeValues(window.__contractStatusFilter || [FILTER_ALL]);
     syncLocalFilters(window.__contractsProjectFilter);
     applyFilters(window.__contractsProjectFilter);
   }
