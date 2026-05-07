@@ -31,6 +31,8 @@ OWNER_GROUP_VALUE = "__group__"
 
 
 def _coerce_positive_int(value):
+    if hasattr(value, "pk"):
+        value = value.pk
     try:
         parsed = int(str(value).strip())
     except (TypeError, ValueError):
@@ -521,14 +523,14 @@ class SectionStructureForm(forms.ModelForm):
         product_id = None
         section_id = None
         if self.is_bound:
-            product_id = self.data.get("product")
-            section_id = self.data.get("section")
+            product_id = _coerce_positive_int(self.data.get("product"))
+            section_id = _coerce_positive_int(self.data.get("section"))
         elif self.instance and self.instance.pk:
             product_id = self.instance.product_id
             section_id = self.instance.section_id
         else:
-            product_id = self.initial.get("product")
-            section_id = self.initial.get("section")
+            product_id = _coerce_positive_int(self.initial.get("product"))
+            section_id = _coerce_positive_int(self.initial.get("section"))
 
         section_qs = TypicalSection.objects.select_related("product").order_by("product_id", "position", "id")
         if product_id:
@@ -633,14 +635,14 @@ class TypicalServiceCompositionForm(forms.ModelForm):
         product_id = None
         section_id = None
         if self.is_bound:
-            product_id = self.data.get("product")
-            section_id = self.data.get("section")
+            product_id = _coerce_positive_int(self.data.get("product"))
+            section_id = _coerce_positive_int(self.data.get("section"))
         elif self.instance and self.instance.pk:
             product_id = self.instance.product_id
             section_id = self.instance.section_id
         else:
-            product_id = self.initial.get("product")
-            section_id = self.initial.get("section")
+            product_id = _coerce_positive_int(self.initial.get("product"))
+            section_id = _coerce_positive_int(self.initial.get("section"))
 
         section_qs = TypicalSection.objects.select_related("product").order_by("position", "id")
         if product_id:
@@ -1070,14 +1072,14 @@ class TariffForm(forms.ModelForm):
         product_id = None
         section_id = None
         if self.is_bound:
-            product_id = self.data.get("product")
-            section_id = self.data.get("section")
+            product_id = _coerce_positive_int(self.data.get("product"))
+            section_id = _coerce_positive_int(self.data.get("section"))
         elif self.instance and self.instance.pk:
             product_id = self.instance.product_id
             section_id = self.instance.section_id
         else:
-            product_id = self.initial.get("product")
-            section_id = self.initial.get("section")
+            product_id = _coerce_positive_int(self.initial.get("product"))
+            section_id = _coerce_positive_int(self.initial.get("section"))
 
         section_qs = TypicalSection.objects.select_related("product").order_by("product_id", "position", "id")
         if product_id:

@@ -1125,6 +1125,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             "preliminary_report_date": "",
             "final_report_term_weeks": "",
             "final_report_date": "",
+            "next_stage_delay_days": "",
             "advance_percent": str(self.fields["advance_percent"].initial or ""),
             "advance_term_days": str(self.fields["advance_term_days"].initial or ""),
             "preliminary_report_percent": str(self.fields["preliminary_report_percent"].initial or ""),
@@ -1152,6 +1153,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             "preliminary_report_date",
             "final_report_term_weeks",
             "final_report_date",
+            "next_stage_delay_days",
             "advance_percent",
             "advance_term_days",
             "preliminary_report_percent",
@@ -1242,6 +1244,11 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 "final_report_date": (
                     rows_map["final_report_date"][index] if index < len(rows_map["final_report_date"]) else ""
                 ).strip(),
+                "next_stage_delay_days": (
+                    rows_map["next_stage_delay_days"][index]
+                    if index < len(rows_map["next_stage_delay_days"])
+                    else ""
+                ).strip(),
                 "advance_percent": (
                     rows_map["advance_percent"][index] if index < len(rows_map["advance_percent"]) else ""
                 ).strip(),
@@ -1279,6 +1286,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     "preliminary_report_date",
                     "final_report_term_weeks",
                     "final_report_date",
+                    "next_stage_delay_days",
                 )
             )
             if has_data or row_count == 1:
@@ -1334,6 +1342,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                         "preliminary_report_date": str(payload.get("preliminary_report_date") or ""),
                         "final_report_term_weeks": str(payload.get("final_report_term_weeks") or ""),
                         "final_report_date": str(payload.get("final_report_date") or ""),
+                        "next_stage_delay_days": str(payload.get("next_stage_delay_days") or ""),
                         "advance_percent": self._stage_display_value(
                             payload.get("advance_percent"),
                             instance.advance_percent,
@@ -1394,6 +1403,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 "preliminary_report_date": _format_stage_date(instance.preliminary_report_date),
                 "final_report_term_weeks": str(instance.final_report_term_weeks or ""),
                 "final_report_date": _format_stage_date(instance.final_report_date),
+                "next_stage_delay_days": "",
                 "advance_percent": self._stage_display_value(
                     instance.advance_percent,
                     self.fields["advance_percent"].initial,
@@ -1486,6 +1496,15 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         if parsed < 0:
             raise forms.ValidationError(f"Этап {row_index}: поле «{field_label}» должно быть не меньше 0.")
         return parsed
+
+    def _parse_stage_signed_integer(self, value, *, row_index, field_label, default=0):
+        raw = str(value or "").strip()
+        if not raw:
+            return default
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            raise forms.ValidationError(f"Этап {row_index}: поле «{field_label}» заполнено некорректно.")
 
     def _load_stage_json(self, raw, *, row_index, field_label, expected_type, default):
         raw = str(raw or "").strip()
@@ -1967,6 +1986,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     "preliminary_report_date",
                     "final_report_term_weeks",
                     "final_report_date",
+                    "next_stage_delay_days",
                 )
             )
             product_raw = str(row.get("product_id") or "").strip()
@@ -2090,6 +2110,11 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                         row.get("final_report_date"),
                         row_index=rank,
                         field_label="Дата Итогового отчёта",
+                    ),
+                    "next_stage_delay_days": self._parse_stage_signed_integer(
+                        row.get("next_stage_delay_days"),
+                        row_index=rank,
+                        field_label="Задерж.",
                     ),
                     "advance_percent": advance_percent,
                     "advance_term_days": advance_term_days,
@@ -2276,6 +2301,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 "preliminary_report_date": _format_stage_date(item["preliminary_report_date"]),
                 "final_report_term_weeks": str(item["final_report_term_weeks"] or ""),
                 "final_report_date": _format_stage_date(item["final_report_date"]),
+                "next_stage_delay_days": item["next_stage_delay_days"] or 0,
                 "payment_schedule_common": self.payment_schedule_common_enabled,
                 "advance_percent": self._serialize_payload_decimal(item["advance_percent"]),
                 "advance_term_days": item["advance_term_days"],

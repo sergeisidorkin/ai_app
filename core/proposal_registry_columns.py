@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-PROPOSAL_REGISTRY_UI_COLUMNS = [
+PROPOSAL_REGISTRY_COLUMNS = [
     {
         "picker_value": "number",
         "data_col": "number",
@@ -202,7 +202,7 @@ PROPOSAL_REGISTRY_UI_COLUMNS = [
         "picker_value": "term",
         "data_col": "term",
         "source_column": "term",
-        "label": "Срок",
+        "label": "Срок предв. отчёта, мес.",
         "variable_available": True,
     },
     {
@@ -216,7 +216,7 @@ PROPOSAL_REGISTRY_UI_COLUMNS = [
         "picker_value": "final-report-weeks",
         "data_col": "final-report-weeks",
         "source_column": "final_report_term_weeks",
-        "label": "Срок итог. отчёта",
+        "label": "Срок итог. отчёта, нед.",
         "variable_available": True,
     },
     {
@@ -258,7 +258,7 @@ PROPOSAL_REGISTRY_UI_COLUMNS = [
         "picker_value": "advance-term",
         "data_col": "advance-term",
         "source_column": "advance_term",
-        "label": "Предоплата, срок",
+        "label": "Предоплата, срок дн.",
         "variable_available": True,
     },
     {
@@ -272,7 +272,7 @@ PROPOSAL_REGISTRY_UI_COLUMNS = [
         "picker_value": "preliminary-report-term",
         "data_col": "preliminary-report-term",
         "source_column": "preliminary_report_term",
-        "label": "Предв. отчёт, срок",
+        "label": "Предв. отчёт, срок дн.",
         "variable_available": True,
     },
     {
@@ -286,20 +286,181 @@ PROPOSAL_REGISTRY_UI_COLUMNS = [
         "picker_value": "final-report-term",
         "data_col": "final-report-term",
         "source_column": "final_report_term",
-        "label": "Итог. отчёт, срок",
+        "label": "Итог. отчёт, срок дн.",
         "variable_available": True,
     },
 ]
 
 
+PROPOSAL_REGISTRY_TRANSFERRED_SOURCE_COLUMNS = {
+    "term",
+    "preliminary_report_date",
+    "final_report_term_weeks",
+    "final_report_date",
+    "advance_percent",
+    "advance_term",
+    "preliminary_report_percent",
+    "preliminary_report_term",
+    "final_report_percent",
+    "final_report_term",
+}
+
+
+PROPOSAL_REGISTRY_DEFAULT_HIDDEN_SOURCE_COLUMNS = {
+    "country",
+    "identifier",
+    "registration_number",
+    "date",
+    "asset_owner_country",
+    "asset_owner_identifier",
+    "asset_owner_registration_number",
+    "asset_owner_registration_date",
+    "proposal_project_name",
+    "purpose",
+    "service_composition",
+    "report_languages",
+}
+
+
+PROPOSAL_PAYMENT_SCHEDULE_UI_COLUMNS = [
+    {
+        "picker_value": "number",
+        "data_col": "number",
+        "source_column": "number",
+        "label": "Номер",
+    },
+    {
+        "picker_value": "group",
+        "data_col": "group",
+        "source_column": "group",
+        "label": "Группа",
+    },
+    {
+        "picker_value": "tkp-id",
+        "data_col": "tkp-id",
+        "source_column": "tkp_id",
+        "label": "ТКП ID",
+    },
+    {
+        "picker_value": "type",
+        "data_col": "type",
+        "source_column": "type",
+        "label": "Тип",
+    },
+    {
+        "picker_value": "name",
+        "data_col": "name",
+        "source_column": "name",
+        "label": "Название",
+    },
+    {
+        "picker_value": "stage",
+        "data_col": "stage",
+        "source_column": "stage",
+        "label": "Этап",
+    },
+    {
+        "picker_value": "start-date",
+        "data_col": "start-date",
+        "source_column": "start_date",
+        "label": "Дата начала",
+    },
+    {
+        "picker_value": "term",
+        "data_col": "term",
+        "source_column": "term",
+        "label": "Срок предв. отчёта, мес.",
+    },
+    {
+        "picker_value": "preliminary-report-date",
+        "data_col": "preliminary-report-date",
+        "source_column": "preliminary_report_date",
+        "label": "Дата предв. отчёта",
+    },
+    {
+        "picker_value": "final-report-weeks",
+        "data_col": "final-report-weeks",
+        "source_column": "final_report_term_weeks",
+        "label": "Срок итог. отчёта, нед.",
+    },
+    {
+        "picker_value": "final-report-date",
+        "data_col": "final-report-date",
+        "source_column": "final_report_date",
+        "label": "Дата итог. отчёта",
+    },
+    {
+        "picker_value": "advance-percent",
+        "data_col": "advance-percent",
+        "source_column": "advance_percent",
+        "label": "Предоплата, проц.",
+    },
+    {
+        "picker_value": "advance-term",
+        "data_col": "advance-term",
+        "source_column": "advance_term",
+        "label": "Предоплата, срок дн.",
+    },
+    {
+        "picker_value": "preliminary-report-percent",
+        "data_col": "preliminary-report-percent",
+        "source_column": "preliminary_report_percent",
+        "label": "Предв. отчёт, проц.",
+    },
+    {
+        "picker_value": "preliminary-report-term",
+        "data_col": "preliminary-report-term",
+        "source_column": "preliminary_report_term",
+        "label": "Предв. отчёт, срок дн.",
+    },
+    {
+        "picker_value": "final-report-percent",
+        "data_col": "final-report-percent",
+        "source_column": "final_report_percent",
+        "label": "Итог. отчёт, проц.",
+    },
+    {
+        "picker_value": "final-report-term",
+        "data_col": "final-report-term",
+        "source_column": "final_report_term",
+        "label": "Итог. отчёт, срок дн.",
+    },
+]
+
+
+PROPOSAL_PAYMENT_SCHEDULE_DEFAULT_HIDDEN_SOURCE_COLUMNS = {
+    "advance_percent",
+    "preliminary_report_percent",
+    "final_report_percent",
+}
+
+
+def _with_default_hidden(item, default_hidden_source_columns):
+    column = dict(item)
+    if column["source_column"] in default_hidden_source_columns:
+        column["default_hidden"] = True
+    return column
+
+
 def get_proposal_registry_ui_columns():
-    return [dict(item) for item in PROPOSAL_REGISTRY_UI_COLUMNS]
+    return [
+        _with_default_hidden(item, PROPOSAL_REGISTRY_DEFAULT_HIDDEN_SOURCE_COLUMNS)
+        for item in PROPOSAL_REGISTRY_COLUMNS
+        if item["source_column"] not in PROPOSAL_REGISTRY_TRANSFERRED_SOURCE_COLUMNS
+    ]
+
+
+def get_proposal_payment_schedule_ui_columns():
+    return [
+        _with_default_hidden(item, PROPOSAL_PAYMENT_SCHEDULE_DEFAULT_HIDDEN_SOURCE_COLUMNS)
+        for item in PROPOSAL_PAYMENT_SCHEDULE_UI_COLUMNS
+    ]
 
 
 def get_proposal_registry_variable_columns():
     columns = {
         item["source_column"]: item["label"]
-        for item in PROPOSAL_REGISTRY_UI_COLUMNS
+        for item in PROPOSAL_REGISTRY_COLUMNS
         if item.get("variable_available", True)
     }
     # Keep the legacy source column available so old non-computed variables

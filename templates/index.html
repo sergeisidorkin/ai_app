@@ -182,7 +182,7 @@
     <div class="mt-auto py-3 border-top sidebar-profile">
       {% if request.user.is_authenticated %}
       <div class="d-flex align-items-center w-100 min-w-0">
-        <a href="{% if request.user.is_superuser and not is_director_role %}{% url 'admin:index' %}{% else %}{% url 'user_profile' %}{% endif %}" class="flex-shrink-0" title="{% if request.user.is_superuser and not is_director_role %}Панель администратора{% else %}Профиль пользователя{% endif %}">
+        <a href="{% if request.user.is_superuser and not is_director_role and not is_lawyer %}{% url 'admin:index' %}{% else %}{% url 'user_profile' %}{% endif %}" class="flex-shrink-0" title="{% if request.user.is_superuser and not is_director_role and not is_lawyer %}Панель администратора{% else %}Профиль пользователя{% endif %}">
           {% if employee and employee.avatar %}
             <img src="{{ employee.avatar.url }}" alt="Аватар" class="sidebar-avatar-img rounded-circle" width="32" height="32" style="object-fit:cover;">
           {% elif request.user.first_name or request.user.last_name %}
@@ -191,7 +191,7 @@
             <span class="profile-icon"><i class="bi bi-person-circle"></i></span>
           {% endif %}
         </a>
-        <a href="{% if request.user.is_superuser and not is_director_role %}{% url 'admin:index' %}{% else %}{% url 'user_profile' %}{% endif %}" class="link-text small text-truncate ms-2 me-auto min-w-0 text-decoration-none text-body">{{ request.user.get_full_name|default:request.user.email }}</a>
+        <a href="{% if request.user.is_superuser and not is_director_role and not is_lawyer %}{% url 'admin:index' %}{% else %}{% url 'user_profile' %}{% endif %}" class="link-text small text-truncate ms-2 me-auto min-w-0 text-decoration-none text-body">{{ request.user.get_full_name|default:request.user.email }}</a>
         <form method="post" action="{% url 'logout' %}" class="flex-shrink-0 link-text">
           {% csrf_token %}
           <button type="submit" class="sidebar-logout-btn" title="Выйти">
@@ -382,39 +382,64 @@
       {% endif %}
       <!-- Проекты -->
       <section id="projects" class="tab-pane fade">
-        <div class="templates-bleed">
-          <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
-            <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
-              <div class="d-flex align-items-center gap-3">
-                <h5 class="mb-0 ps-3 fs-4 pt-2">Проекты</h5>
-                <div class="dropdown pt-1" id="master-project-filter-dropdown" style="transform: translateY(3px);">
-                  <button class="btn btn-primary btn-sm dropdown-toggle" type="button"
-                          id="master-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
-                    Проекты: <span class="js-master-filter-label">Все</span>
-                  </button>
-                  <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="master-project-filter-toggle"
-                       style="max-height: 240px; overflow-y: auto;">
-                    <div class="form-check mb-2">
-                      <input class="form-check-input js-master-filter" type="checkbox" value="__all__" id="master-filter-all" checked>
-                      <label class="form-check-label" for="master-filter-all">Все проекты</label>
-                    </div>
-                    <hr class="dropdown-divider">
-                    <div id="master-filter-projects-list"></div>
-                  </div>
-                </div>
-              </div>
-              <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
-                 href="#notifications"
-                 data-bs-toggle="tab"
-                 aria-label="Открыть уведомления">
-                <i class="bi bi-bell fs-5"></i>
-                <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
-                      data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
+        <div class="d-flex templates-bleed">
+          <aside class="second-sidebar bg-body-tertiary border-end">
+            <div class="second-sidebar-header-spacer"></div>
+            <hr class="my-0">
+            <div class="list-group list-group-flush p-3 m-0" id="projects-second-sidebar-list">
+              <a href="#" class="list-group-item list-group-item-action active"
+                 data-projects-section="launch">
+                Регистрация и запуск проекта
+              </a>
+              <a href="#" class="list-group-item list-group-item-action"
+                 data-projects-section="scope">
+                Определение границ проекта
+              </a>
+              <a href="#" class="list-group-item list-group-item-action"
+                 data-projects-section="team">
+                Формирование команды
+              </a>
+              <a href="#" class="list-group-item list-group-item-action"
+                 data-projects-section="info-request">
+                Запрос информации
               </a>
             </div>
-          </div>
-          <div class="ps-3">
-            {% include "projects_app/panel.html" %}
+          </aside>
+
+          <div class="flex-grow-1 ps-3 pe-0" style="min-width:0;">
+            <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
+              <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
+                <div class="d-flex align-items-center gap-3">
+                  <h5 class="mb-0 ps-3 fs-4 pt-2" id="projects-section-title">Проекты</h5>
+                  <div class="dropdown pt-1" id="master-project-filter-dropdown" style="transform: translateY(3px);">
+                    <button class="btn btn-primary btn-sm dropdown-toggle" type="button"
+                            id="master-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                      Проекты: <span class="js-master-filter-label">Все</span>
+                    </button>
+                    <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="master-project-filter-toggle"
+                         style="max-height: 240px; overflow-y: auto;">
+                      <div class="form-check mb-2">
+                        <input class="form-check-input js-master-filter" type="checkbox" value="__all__" id="master-filter-all" checked>
+                        <label class="form-check-label" for="master-filter-all">Все проекты</label>
+                      </div>
+                      <hr class="dropdown-divider">
+                      <div id="master-filter-projects-list"></div>
+                    </div>
+                  </div>
+                </div>
+                <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
+                   href="#notifications"
+                   data-bs-toggle="tab"
+                   aria-label="Открыть уведомления">
+                  <i class="bi bi-bell fs-5"></i>
+                  <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
+                        data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
+                </a>
+              </div>
+            </div>
+            <div class="ps-3">
+              {% include "projects_app/panel.html" %}
+            </div>
           </div>
         </div>
       </section>
@@ -1810,6 +1835,62 @@
             }
             activateSidebarLink('business-entities');
             switchClfSection('business-entities');
+          });
+        })();
+        </script>
+
+        <script>
+        (function () {
+          var PROJECTS_TITLES = {
+            'launch': 'Регистрация и запуск проекта',
+            'scope': 'Определение границ проекта',
+            'team': 'Формирование команды',
+            'info-request': 'Запрос информации',
+          };
+          var DEFAULT_PROJECTS_SECTION = 'launch';
+          var sidebar = document.getElementById('projects-second-sidebar-list');
+
+          function activateSidebarLink(key) {
+            if (!sidebar) return;
+            sidebar.querySelectorAll('.list-group-item').forEach(function(a) { a.classList.remove('active'); });
+            var link = sidebar.querySelector('[data-projects-section="' + key + '"]');
+            if (link) link.classList.add('active');
+          }
+
+          function switchProjectsSection(key) {
+            if (!PROJECTS_TITLES[key]) key = DEFAULT_PROJECTS_SECTION;
+            document.querySelectorAll('.projects-section-content').forEach(function(el) { el.classList.add('d-none'); });
+            var target = document.getElementById('projects-content-' + key);
+            if (target) target.classList.remove('d-none');
+            activateSidebarLink(key);
+            window.__currentProjectsSection = key;
+            window.dispatchEvent(new CustomEvent('projects:section-shown', { detail: { section: key } }));
+          }
+          window.__switchProjectsSection = switchProjectsSection;
+
+          if (sidebar) {
+            sidebar.addEventListener('click', function (e) {
+              var link = e.target.closest('[data-projects-section]');
+              if (!link || !sidebar.contains(link)) return;
+              e.preventDefault();
+              var key = link.dataset.projectsSection || DEFAULT_PROJECTS_SECTION;
+              switchProjectsSection(key);
+              if (window.UIPref) UIPref.set('projects:section', key);
+            });
+          }
+
+          document.addEventListener('DOMContentLoaded', function () {
+            var saved = window.UIPref ? UIPref.get('projects:section', null) : null;
+            if (saved && PROJECTS_TITLES[saved]) {
+              switchProjectsSection(saved);
+              return;
+            }
+            switchProjectsSection(DEFAULT_PROJECTS_SECTION);
+          });
+
+          document.body.addEventListener('htmx:afterSettle', function (e) {
+            if (!(e.target && (e.target.id === 'projects-pane' || e.target.id === 'performers-pane'))) return;
+            switchProjectsSection(window.__currentProjectsSection || DEFAULT_PROJECTS_SECTION);
           });
         })();
         </script>

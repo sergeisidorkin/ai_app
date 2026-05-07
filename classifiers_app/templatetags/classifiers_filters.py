@@ -18,3 +18,13 @@ def format_money(value):
     decimal_part = f"{d - integer_part:.2f}"[2:]
     int_str = f"{integer_part:,}".replace(",", "\u00a0")
     return f"{sign}{int_str},{decimal_part}"
+
+
+@register.filter
+def format_decimal_comma(value, decimal_places=1):
+    try:
+        places = int(decimal_places)
+        d = Decimal(str(value))
+    except Exception:
+        return "" if value in (None, "") else value
+    return f"{d:.{places}f}".replace(".", ",")

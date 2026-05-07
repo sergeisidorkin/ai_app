@@ -1,88 +1,119 @@
 {% load static %}
 <div class="projects-outer-scroll">
-<div id="projects-pending-notifications"
-     hx-get="{% url 'project_pending_notifications' %}"
-     hx-trigger="load, notifications-updated from:body, performers-updated from:body"
-     hx-target="#projects-pending-notifications"
-     hx-swap="innerHTML"
-     >
-</div>
-<div class="card shadow-sm">
-  <div class="card-body">
-    <div id="projects-pane"
-         hx-get="{% url 'projects_partial' %}"
-         hx-trigger="load"
-         hx-target="#projects-pane"
-         hx-swap="innerHTML"
-         hx-indicator="#projects-loading">
-      <div id="projects-loading" class="text-muted htmx-indicator">Загрузка проектов…</div>
-    </div>
+  <div id="projects-pending-notifications"
+       hx-get="{% url 'project_pending_notifications' %}"
+       hx-trigger="load, notifications-updated from:body, performers-updated from:body"
+       hx-target="#projects-pending-notifications"
+       hx-swap="innerHTML">
+  </div>
 
-    <!-- Постоянная модалка -->
-    <div class="modal fade" id="projects-modal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog modal-dialog-scrollable">
-        <div class="modal-content"></div>
+  <div id="projects-pane"
+       hx-get="{% url 'projects_partial' %}"
+       hx-trigger="load"
+       hx-target="#projects-pane"
+       hx-swap="innerHTML"
+       hx-indicator="#projects-loading">
+    <div id="projects-content-launch" class="projects-section-content">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <div id="projects-loading" class="text-muted htmx-indicator d-inline-flex align-items-center gap-2">
+            <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+            <span>Загрузка проектов…</span>
+          </div>
+        </div>
       </div>
     </div>
-
-
-
-
-<div id="performers-pane"
-     style="margin-top: 50px;"
-     hx-get="{% url 'performers_partial' %}"
-     hx-trigger="load, performers-updated from:body"
-     hx-target="#performers-pane"
-     hx-swap="innerHTML"
-     hx-indicator="#performers-loading">
-  <div id="performers-loading" class="text-muted htmx-indicator">Загрузка исполнителей…</div>
-</div>
-
-<!-- Постоянная модалка «Исполнители» -->
-<div class="modal fade" id="performers-modal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-xl modal-dialog-scrollable">
-    <div class="modal-content">
-      <div class="p-5 text-center">
-        <div class="__spinner spinner-border" role="status">
-          <span class="visually-hidden">Загрузка…</span>
+    <div id="projects-content-scope" class="projects-section-content d-none">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <div class="text-muted htmx-indicator d-inline-flex align-items-center gap-2">
+            <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+            <span>Загрузка границ проекта…</span>
+          </div>
         </div>
       </div>
     </div>
   </div>
-</div>
-    <script src="{% static 'core/js/performers-panels.js' %}" defer></script>
-    <script>
-      document.body.addEventListener('projects-updated', function () {
-        const el = document.getElementById('projects-modal');
-        if (!el) return;
-        const modal = bootstrap.Modal.getInstance(el) || bootstrap.Modal.getOrCreateInstance(el);
-        modal.hide();
-      });
-    </script>
-    <script>
-      document.body.addEventListener('htmx:afterSwap', function (e) {
-        const modalContent = document.querySelector('#projects-modal .modal-content');
-        if (!modalContent || !modalContent.contains(e.target)) return;
 
-        const dlg = document.querySelector('#projects-modal .modal-dialog');
-        if (!dlg) return;
-
-        // Сбрасываем возможные размеры
-        dlg.classList.remove('modal-sm','modal-lg','modal-xl','modal-fullscreen');
-
-        // Если в загруженном фрагменте есть data-modal-size, применяем
-        const sz = modalContent.querySelector('[data-modal-size]')?.dataset?.modalSize;
-        if (sz) dlg.classList.add('modal-' + sz);
-      });
-    </script>
-    <script>
-      document.body.addEventListener('performers-updated', function () {
-        const el = document.getElementById('performers-modal');
-        if (!el) return;
-        const modal = bootstrap.Modal.getInstance(el) || bootstrap.Modal.getOrCreateInstance(el);
-        modal.hide();
-      });
-    </script>
+  <!-- Постоянная модалка -->
+  <div class="modal fade" id="projects-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-scrollable">
+      <div class="modal-content"></div>
+    </div>
   </div>
-</div>
+
+  <div id="performers-pane"
+       hx-get="{% url 'performers_partial' %}"
+       hx-trigger="load, performers-updated from:body"
+       hx-target="#performers-pane"
+       hx-swap="innerHTML"
+       hx-indicator="#performers-loading">
+    <div id="projects-content-team" class="projects-section-content d-none">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <div id="performers-loading" class="text-muted htmx-indicator d-inline-flex align-items-center gap-2">
+            <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+            <span>Загрузка исполнителей…</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="projects-content-info-request" class="projects-section-content d-none">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <div class="text-muted htmx-indicator d-inline-flex align-items-center gap-2">
+            <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+            <span>Загрузка запросов…</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Постоянная модалка «Исполнители» -->
+  <div class="modal fade" id="performers-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="p-5 text-center">
+          <div class="__spinner spinner-border" role="status">
+            <span class="visually-hidden">Загрузка…</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="{% static 'core/js/performers-panels.js' %}" defer></script>
+  <script>
+    document.body.addEventListener('projects-updated', function () {
+      const el = document.getElementById('projects-modal');
+      if (!el) return;
+      const modal = bootstrap.Modal.getInstance(el) || bootstrap.Modal.getOrCreateInstance(el);
+      modal.hide();
+    });
+  </script>
+  <script>
+    document.body.addEventListener('htmx:afterSwap', function (e) {
+      const modalContent = document.querySelector('#projects-modal .modal-content');
+      if (!modalContent || !modalContent.contains(e.target)) return;
+
+      const dlg = document.querySelector('#projects-modal .modal-dialog');
+      if (!dlg) return;
+
+      // Сбрасываем возможные размеры
+      dlg.classList.remove('modal-sm','modal-lg','modal-xl','modal-fullscreen');
+
+      // Если в загруженном фрагменте есть data-modal-size, применяем
+      const sz = modalContent.querySelector('[data-modal-size]')?.dataset?.modalSize;
+      if (sz) dlg.classList.add('modal-' + sz);
+    });
+  </script>
+  <script>
+    document.body.addEventListener('performers-updated', function () {
+      const el = document.getElementById('performers-modal');
+      if (!el) return;
+      const modal = bootstrap.Modal.getInstance(el) || bootstrap.Modal.getOrCreateInstance(el);
+      modal.hide();
+    });
+  </script>
 </div>

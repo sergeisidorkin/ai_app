@@ -33,6 +33,15 @@
   const PROPOSAL_SEND_PREF_KEY = 'proposals:dispatch-send-settings';
   const PROPOSAL_KIND_FILTER_PREF_KEY = 'proposals:kind-filter';
   const PROPOSAL_STATUS_FILTER_PREF_KEY = 'proposals:status-filter';
+  const PROPOSAL_PAYMENT_VIEW_PREF_KEY = 'proposals:payment-schedule-view';
+  const PROPOSAL_PAYMENT_GANTT_SCALE_PREF_KEY = 'proposals:payment-schedule-gantt-scale';
+  const PROPOSAL_PAYMENT_GANTT_OPEN_GROUPS_PREF_KEY = 'proposals:payment-schedule-gantt-open-groups';
+  const PROPOSAL_PAYMENT_VIEW_TABLE = 'table';
+  const PROPOSAL_PAYMENT_VIEW_GANTT = 'gantt';
+  const PROPOSAL_PAYMENT_GANTT_SCALE_DAY = 'day';
+  const PROPOSAL_PAYMENT_GANTT_SCALE_WEEK = 'week';
+  const PROPOSAL_PAYMENT_GANTT_SCALE_MONTH = 'month';
+  const PROPOSAL_PAYMENT_GANTT_SCALE_QUARTER = 'quarter';
   const PROPOSAL_KIND_FILTER_ALL = '__all__';
   const PROPOSAL_STATUS_FILTER_ALL = '__all__';
   const PROPOSAL_STATUS_FILTER_OPTIONS = [
@@ -350,6 +359,842 @@
       const contentWidth = widestLabel + checkboxWidth + 64;
       menu.style.minWidth = Math.max(controlWidth, 200, contentWidth) + 'px';
     });
+  }
+
+  function parseProposalPaymentDate(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+
+    const dotMatch = raw.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+    if (dotMatch) {
+      const day = Number.parseInt(dotMatch[1], 10);
+      const month = Number.parseInt(dotMatch[2], 10) - 1;
+      const year = Number.parseInt(dotMatch[3], 10);
+      const date = new Date(year, month, day);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    const isoMatch = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (isoMatch) {
+      const year = Number.parseInt(isoMatch[1], 10);
+      const month = Number.parseInt(isoMatch[2], 10) - 1;
+      const day = Number.parseInt(isoMatch[3], 10);
+      const date = new Date(year, month, day);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    return null;
+  }
+
+  function addProposalPaymentDays(date, days) {
+    const next = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    next.setDate(next.getDate() + days);
+    return next;
+  }
+
+  function centerProposalPaymentDateInDay(date) {
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12, 0, 0, 0);
+  }
+
+  function parseProposalPaymentDecimal(value) {
+    const normalized = String(value || '').replace(/\s+/g, '').replace(',', '.');
+    const parsed = Number.parseFloat(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function parseProposalPaymentPercent(value) {
+    const parsed = parseProposalPaymentDecimal(String(value || '').replace('%', ''));
+    return parsed === null ? null : Math.max(0, Math.min(100, parsed));
+  }
+
+  function isProposalPaymentZeroPercent(value) {
+    return Number.isFinite(value) && value <= 0;
+  }
+
+  function parseProposalPaymentInteger(value) {
+    const parsed = parseProposalPaymentDecimal(value);
+    return parsed === null ? null : Math.round(parsed);
+  }
+
+  function addProposalPaymentMonths(date, months) {
+    const safeMonths = Number.isFinite(months) ? Math.max(months, 0) : 0;
+    const wholeMonths = Math.trunc(safeMonths);
+    const fractionalMonths = safeMonths - wholeMonths;
+    const targetMonthStart = new Date(date.getFullYear(), date.getMonth() + wholeMonths, 1);
+    const targetMonthEndDay = new Date(targetMonthStart.getFullYear(), targetMonthStart.getMonth() + 1, 0).getDate();
+    const day = Math.min(date.getDate(), targetMonthEndDay);
+    const wholeDate = new Date(targetMonthStart.getFullYear(), targetMonthStart.getMonth(), day);
+    return addProposalPaymentDays(wholeDate, Math.round(fractionalMonths * 30));
+  }
+
+  function addProposalPaymentWeeks(date, weeks) {
+    const safeWeeks = Number.isFinite(weeks) ? Math.max(weeks, 0) : 0;
+    return addProposalPaymentDays(date, Math.round(safeWeeks * 7));
+  }
+
+  function formatProposalPaymentDurationLabel(value, unit) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    const normalized = raw
+      .replace(/\s+/g, '')
+      .replace(/\.(?=\d)/, ',')
+      .replace(/,0$/, '');
+    return normalized ? normalized + ' ' + unit : '';
+  }
+
+  function formatProposalPaymentNumber(value) {
+    if (!Number.isFinite(value)) return '';
+    return String(Math.round(value * 10) / 10).replace('.', ',').replace(/,0$/, '');
+  }
+
+  function formatProposalPaymentMilestoneTooltip(task) {
+    const percent = formatProposalPaymentNumber(task.payment_percent);
+    const days = formatProposalPaymentNumber(task.payment_term_days);
+    if (!task.text || !percent || !days) return '';
+    return task.text + ': ' + percent + '% в течение ' + days + ' дн.';
+  }
+
+  function getProposalPaymentCellText(row, key) {
+    return String(row.querySelector('[data-col="' + key + '"]')?.textContent || '').trim();
+  }
+
+  function getProposalPaymentProgress(preliminaryDate, finalDate) {
+    const today = new Date();
+    const todayOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    if (finalDate && finalDate < todayOnly) return 1;
+    if (preliminaryDate && preliminaryDate < todayOnly) return 0.5;
+    return 0;
+  }
+
+  function pushProposalPaymentMilestone(tasks, links, options) {
+    if (!options.date) return null;
+    const taskId = options.id;
+    const isZeroPayment = isProposalPaymentZeroPercent(options.paymentPercent);
+    tasks.push({
+      id: taskId,
+      text: options.text,
+      start_date: centerProposalPaymentDateInDay(options.date),
+      duration: 0,
+      type: 'milestone',
+      parent: options.parent,
+      bar_height: 17,
+      progress: options.date < new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()) ? 1 : 0,
+      proposal_id: options.proposalId,
+      tkp_id: options.tkpId || '',
+      stage: options.stage || '',
+      type_label: 'Веха',
+      payment_percent: options.paymentPercent,
+      payment_term_days: options.paymentTermDays,
+      is_zero_payment: isZeroPayment,
+      is_child: true,
+    });
+
+    if (options.previousId && !isZeroPayment) {
+      links.push({
+        id: 'proposal-payment-link-' + links.length,
+        source: options.previousId,
+        target: taskId,
+        type: '0',
+      });
+    }
+    return isZeroPayment ? null : taskId;
+  }
+
+  function pushProposalPaymentBar(tasks, links, options) {
+    if (!options.startDate || !options.endDate) return null;
+    const taskId = options.id;
+    const normalizedEndDate = options.endDate < options.startDate ? options.startDate : options.endDate;
+    tasks.push({
+      id: taskId,
+      text: options.text,
+      start_date: options.startDate,
+      end_date: addProposalPaymentDays(normalizedEndDate, 1),
+      parent: options.parent,
+      progress: getProposalPaymentProgress(null, normalizedEndDate),
+      proposal_id: options.proposalId,
+      tkp_id: options.tkpId || '',
+      stage: options.stage || '',
+      type_label: 'Отчет',
+      bar_label: options.barLabel || '',
+      hide_stage_bar_label: Boolean(options.hideStageBarLabel),
+      is_report_bar: true,
+      is_child: true,
+    });
+
+    if (options.previousId) {
+      links.push({
+        id: 'proposal-payment-link-' + links.length,
+        source: options.previousId,
+        target: taskId,
+        type: '0',
+      });
+    }
+    return taskId;
+  }
+
+  function getProposalPaymentGanttOpenGroups() {
+    const saved = window.UIPref
+      ? UIPref.get(PROPOSAL_PAYMENT_GANTT_OPEN_GROUPS_PREF_KEY, {})
+      : {};
+    return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+  }
+
+  function saveProposalPaymentGanttOpenGroups(openGroups) {
+    if (!window.UIPref || !openGroups || typeof openGroups !== 'object') return;
+    UIPref.set(PROPOSAL_PAYMENT_GANTT_OPEN_GROUPS_PREF_KEY, openGroups);
+  }
+
+  function setProposalPaymentGanttGroupOpenState(taskId, isOpen) {
+    const normalizedTaskId = String(taskId || '');
+    if (!normalizedTaskId) return;
+    const openGroups = getProposalPaymentGanttOpenGroups();
+    openGroups[normalizedTaskId] = Boolean(isOpen);
+    saveProposalPaymentGanttOpenGroups(openGroups);
+  }
+
+  function saveProposalPaymentCurrentGanttOpenGroups(gantt) {
+    if (!gantt || !window.UIPref || typeof gantt.eachTask !== 'function') return;
+    const openGroups = getProposalPaymentGanttOpenGroups();
+    try {
+      gantt.eachTask(function (task) {
+        if (!task?.is_group) return;
+        openGroups[String(task.id)] = Boolean(task.$open);
+      });
+      saveProposalPaymentGanttOpenGroups(openGroups);
+    } catch (error) {
+      // The singleton Gantt instance may not have proposal data yet.
+    }
+  }
+
+  function buildProposalPaymentGanttData(root) {
+    const rows = qa('#proposal-payment-schedule-table tbody tr[data-proposal-id]', root);
+    const proposalLabelById = new Map();
+    const stageLabelsByProposalId = new Map();
+    const tasks = [];
+    const links = [];
+    const openGroups = getProposalPaymentGanttOpenGroups();
+
+    rows.forEach((row, index) => {
+      const proposalId = String(row.dataset.proposalId || index + 1);
+      const stage = getProposalPaymentCellText(row, 'stage');
+      if (!stage) return;
+      if (!stageLabelsByProposalId.has(proposalId)) {
+        stageLabelsByProposalId.set(proposalId, new Set());
+      }
+      stageLabelsByProposalId.get(proposalId).add(stage);
+    });
+
+    rows.forEach((row, index) => {
+      const proposalId = String(row.dataset.proposalId || index + 1);
+      const currentTkpId = getProposalPaymentCellText(row, 'tkp-id');
+      const currentName = getProposalPaymentCellText(row, 'name');
+      if (currentTkpId || currentName) {
+        proposalLabelById.set(proposalId, {
+          tkpId: currentTkpId || proposalLabelById.get(proposalId)?.tkpId || '',
+          name: currentName || proposalLabelById.get(proposalId)?.name || '',
+        });
+      }
+
+      const startDate = parseProposalPaymentDate(getProposalPaymentCellText(row, 'start-date'));
+      if (!startDate) return;
+
+      const labels = proposalLabelById.get(proposalId) || {};
+      const stage = getProposalPaymentCellText(row, 'stage');
+      const type = getProposalPaymentCellText(row, 'type');
+      const preliminaryTermMonthsText = getProposalPaymentCellText(row, 'term');
+      const finalReportTermWeeksText = getProposalPaymentCellText(row, 'final-report-weeks');
+      const preliminaryDurationLabel = formatProposalPaymentDurationLabel(preliminaryTermMonthsText, 'мес.');
+      const finalReportDurationLabel = formatProposalPaymentDurationLabel(finalReportTermWeeksText, 'нед.');
+      const preliminaryTermMonths = parseProposalPaymentDecimal(preliminaryTermMonthsText);
+      const finalReportTermWeeks = parseProposalPaymentDecimal(finalReportTermWeeksText);
+      const advancePercent = parseProposalPaymentPercent(getProposalPaymentCellText(row, 'advance-percent'));
+      const preliminaryPaymentPercent = parseProposalPaymentPercent(getProposalPaymentCellText(row, 'preliminary-report-percent'));
+      const finalPaymentPercent = parseProposalPaymentPercent(getProposalPaymentCellText(row, 'final-report-percent'));
+      const advanceTermDays = parseProposalPaymentInteger(getProposalPaymentCellText(row, 'advance-term'));
+      const preliminaryPaymentTermDays = parseProposalPaymentInteger(getProposalPaymentCellText(row, 'preliminary-report-term'));
+      const finalPaymentTermDays = parseProposalPaymentInteger(getProposalPaymentCellText(row, 'final-report-term'));
+      const hideStageBarLabel = Boolean(stage && (stageLabelsByProposalId.get(proposalId)?.size || 0) <= 1);
+      const advanceDate = addProposalPaymentDays(startDate, advanceTermDays || 0);
+      const preliminaryDate = addProposalPaymentMonths(startDate, preliminaryTermMonths || 0);
+      const preliminaryPaymentDate = addProposalPaymentDays(preliminaryDate, preliminaryPaymentTermDays || 0);
+      const finalDate = addProposalPaymentWeeks(preliminaryDate, finalReportTermWeeks || 0);
+      const finalPaymentDate = addProposalPaymentDays(finalDate, finalPaymentTermDays || 0);
+      const groupStartDate = startDate;
+      const groupEndDate = finalDate;
+      const textParts = [
+        labels.tkpId || 'ТКП #' + proposalId,
+        stage,
+        labels.name || type,
+      ].filter(Boolean);
+      const groupTaskId = 'proposal-payment-' + proposalId + '-' + (index + 1);
+
+      tasks.push({
+        id: groupTaskId,
+        text: textParts.join(' · '),
+        start_date: groupStartDate,
+        end_date: addProposalPaymentDays(groupEndDate, 1),
+        progress: getProposalPaymentProgress(preliminaryDate, finalDate),
+        proposal_id: proposalId,
+        tkp_id: labels.tkpId || '',
+        stage: stage,
+        type_label: type,
+        hide_stage_bar_label: hideStageBarLabel,
+        is_group: true,
+        open: openGroups[groupTaskId] === true,
+      });
+
+      let previousMilestoneId = null;
+      previousMilestoneId = pushProposalPaymentMilestone(tasks, links, {
+        id: groupTaskId + '-advance',
+        parent: groupTaskId,
+        text: 'Предоплата',
+        date: advanceDate,
+        previousId: previousMilestoneId,
+        proposalId: proposalId,
+        tkpId: labels.tkpId || '',
+        stage: stage,
+        paymentPercent: advancePercent,
+        paymentTermDays: advanceTermDays,
+      }) || previousMilestoneId;
+      const preliminaryReportTaskId = pushProposalPaymentBar(tasks, links, {
+        id: groupTaskId + '-preliminary-report',
+        parent: groupTaskId,
+        text: 'Предварительный отчет',
+        startDate: startDate || advanceDate,
+        endDate: preliminaryDate,
+        previousId: previousMilestoneId,
+        proposalId: proposalId,
+        tkpId: labels.tkpId || '',
+        stage: stage,
+        barLabel: preliminaryDurationLabel,
+        hideStageBarLabel: hideStageBarLabel,
+      }) || previousMilestoneId;
+      previousMilestoneId = preliminaryReportTaskId || previousMilestoneId;
+      pushProposalPaymentMilestone(tasks, links, {
+        id: groupTaskId + '-preliminary-payment',
+        parent: groupTaskId,
+        text: 'Промежуточный платеж',
+        date: preliminaryPaymentDate,
+        previousId: preliminaryReportTaskId,
+        proposalId: proposalId,
+        tkpId: labels.tkpId || '',
+        stage: stage,
+        paymentPercent: preliminaryPaymentPercent,
+        paymentTermDays: preliminaryPaymentTermDays,
+      });
+      previousMilestoneId = pushProposalPaymentBar(tasks, links, {
+        id: groupTaskId + '-final-report',
+        parent: groupTaskId,
+        text: 'Итоговый отчет',
+        startDate: preliminaryDate || startDate,
+        endDate: finalDate,
+        previousId: previousMilestoneId,
+        proposalId: proposalId,
+        tkpId: labels.tkpId || '',
+        stage: stage,
+        barLabel: finalReportDurationLabel,
+        hideStageBarLabel: hideStageBarLabel,
+      }) || previousMilestoneId;
+      pushProposalPaymentMilestone(tasks, links, {
+        id: groupTaskId + '-final-payment',
+        parent: groupTaskId,
+        text: 'Окончательный платеж',
+        date: finalPaymentDate,
+        previousId: previousMilestoneId,
+        proposalId: proposalId,
+        tkpId: labels.tkpId || '',
+        stage: stage,
+        paymentPercent: finalPaymentPercent,
+        paymentTermDays: finalPaymentTermDays,
+      });
+    });
+
+    return { data: tasks, links: links };
+  }
+
+  function getProposalPaymentGanttScale(root) {
+    const activeButton = root?.querySelector('.js-proposal-payment-gantt-scale.active');
+    const savedScale = window.UIPref
+      ? UIPref.get(PROPOSAL_PAYMENT_GANTT_SCALE_PREF_KEY, PROPOSAL_PAYMENT_GANTT_SCALE_WEEK)
+      : PROPOSAL_PAYMENT_GANTT_SCALE_WEEK;
+    const scale = activeButton?.dataset?.scale || savedScale;
+    return [
+      PROPOSAL_PAYMENT_GANTT_SCALE_DAY,
+      PROPOSAL_PAYMENT_GANTT_SCALE_WEEK,
+      PROPOSAL_PAYMENT_GANTT_SCALE_MONTH,
+      PROPOSAL_PAYMENT_GANTT_SCALE_QUARTER,
+    ].includes(scale) ? scale : PROPOSAL_PAYMENT_GANTT_SCALE_WEEK;
+  }
+
+  function syncProposalPaymentGanttScaleButtons(root, scale) {
+    qa('.js-proposal-payment-gantt-scale', root).forEach((button) => {
+      const isActive = button.dataset.scale === scale;
+      button.classList.toggle('active', isActive);
+      button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    });
+  }
+
+  function applyProposalPaymentGanttScale(gantt, scale) {
+    const formatWeekRange = function (date) {
+      const end = addProposalPaymentDays(date, 6);
+      if (date.getMonth() === end.getMonth() && date.getFullYear() === end.getFullYear()) {
+        return gantt.date.date_to_str('%d')(date) + '-' + gantt.date.date_to_str('%d.%m')(end);
+      }
+      return gantt.date.date_to_str('%d.%m')(date) + '-' + gantt.date.date_to_str('%d.%m')(end);
+    };
+    const monthNames = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+    const shortMonthNames = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
+
+    if (scale === PROPOSAL_PAYMENT_GANTT_SCALE_DAY) {
+      gantt.config.scale_height = 54;
+      gantt.config.min_column_width = 36;
+      gantt.config.scales = [
+        { unit: 'month', step: 1, format: function (date) { return monthNames[date.getMonth()] + ' ' + date.getFullYear(); } },
+        { unit: 'day', step: 1, format: '%d' },
+      ];
+      return;
+    }
+
+    if (scale === PROPOSAL_PAYMENT_GANTT_SCALE_MONTH) {
+      gantt.config.scale_height = 54;
+      gantt.config.min_column_width = 64;
+      gantt.config.scales = [
+        { unit: 'year', step: 1, format: '%Y' },
+        { unit: 'month', step: 1, format: function (date) { return shortMonthNames[date.getMonth()]; } },
+      ];
+      return;
+    }
+
+    if (scale === PROPOSAL_PAYMENT_GANTT_SCALE_QUARTER) {
+      gantt.config.scale_height = 54;
+      gantt.config.min_column_width = 92;
+      gantt.config.scales = [
+        { unit: 'year', step: 1, format: '%Y' },
+        { unit: 'quarter', step: 1, format: function (date) { return 'Q' + (Math.floor(date.getMonth() / 3) + 1); } },
+      ];
+      return;
+    }
+
+    gantt.config.scale_height = 54;
+    gantt.config.min_column_width = 72;
+    gantt.config.scales = [
+      { unit: 'month', step: 1, format: function (date) { return monthNames[date.getMonth()] + ' ' + date.getFullYear(); } },
+      { unit: 'week', step: 1, format: formatWeekRange },
+    ];
+  }
+
+  function configureProposalPaymentGantt(root) {
+    const gantt = window.gantt;
+    if (!gantt) return null;
+    const scale = getProposalPaymentGanttScale(root);
+    syncProposalPaymentGanttScaleButtons(root, scale);
+
+    gantt.config.readonly = true;
+    gantt.config.fit_tasks = true;
+    gantt.config.autosize = 'y';
+    gantt.config.row_height = 34;
+    gantt.config.bar_height = 20;
+    gantt.config.grid_width = 500;
+    gantt.config.select_task = true;
+    const formatGridDate = gantt.date.date_to_str('%d.%m.%y');
+    gantt.config.columns = [
+      { name: 'text', label: 'ТКП / Этап', tree: true, align: 'left', width: 340, resize: true },
+      { name: 'start_date', label: 'Начало', align: 'center', width: 92, resize: true, template: function (task) { return formatGridDate(task.start_date); } },
+      { name: 'end_date', label: 'Оконч.', align: 'center', width: 92, resize: true, template: function (task) {
+        if (task.type === 'milestone') return formatGridDate(task.start_date);
+        return formatGridDate(addProposalPaymentDays(task.end_date, -1));
+      } },
+      { name: 'type_label', label: 'Продукт', align: 'left', width: 90, template: function (task) { return escapeHtml(task.type_label || ''); } },
+    ];
+    applyProposalPaymentGanttScale(gantt, scale);
+    gantt.templates.task_text = function (start, end, task) {
+      if (task.type === 'milestone') return '';
+      if (task.bar_label) return escapeHtml(task.bar_label);
+      if (task.hide_stage_bar_label) return '';
+      return escapeHtml(task.stage || task.text || '');
+    };
+    gantt.templates.task_class = function (start, end, task) {
+      if (task.is_report_bar) return 'proposal-payment-gantt-report-bar';
+      if (task.type === 'milestone') {
+        return 'proposal-payment-gantt-milestone' + (task.is_zero_payment ? ' proposal-payment-gantt-zero-payment' : '');
+      }
+      return '';
+    };
+    gantt.templates.grid_row_class = function (start, end, task) {
+      if (task.is_group) return 'proposal-payment-gantt-group-row';
+      if (task.is_child) return 'proposal-payment-gantt-child-row';
+      return '';
+    };
+    gantt.templates.link_class = function (link) {
+      try {
+        const sourceTask = gantt.getTask(link.source);
+        const targetTask = gantt.getTask(link.target);
+        return [
+          sourceTask?.type === 'milestone' ? 'proposal-payment-link-from-milestone' : '',
+          targetTask?.type === 'milestone' ? 'proposal-payment-link-to-milestone' : '',
+        ].filter(Boolean).join(' ');
+      } catch (error) {
+        return '';
+      }
+    };
+
+    return gantt;
+  }
+
+  function renderProposalPaymentGantt(root) {
+    const chart = root?.querySelector('#proposal-payment-gantt');
+    const empty = root?.querySelector('#proposal-payment-gantt-empty');
+    if (!chart || !empty) return;
+
+    const gantt = configureProposalPaymentGantt(root);
+    if (!gantt) {
+      chart.classList.add('d-none');
+      empty.classList.remove('d-none');
+      empty.textContent = 'DHTMLX Gantt не загружен.';
+      return;
+    }
+
+    saveProposalPaymentCurrentGanttOpenGroups(gantt);
+    const data = buildProposalPaymentGanttData(root);
+    if (!data.data.length) {
+      gantt.clearAll();
+      chart.classList.add('d-none');
+      empty.textContent = 'Нет строк с датами для построения диаграммы.';
+      empty.classList.remove('d-none');
+      return;
+    }
+
+    empty.classList.add('d-none');
+    chart.classList.remove('d-none');
+    const scale = getProposalPaymentGanttScale(root);
+    chart.classList.toggle('proposal-payment-gantt-scale-day', scale === PROPOSAL_PAYMENT_GANTT_SCALE_DAY);
+    chart.classList.toggle('proposal-payment-gantt-scale-week', scale === PROPOSAL_PAYMENT_GANTT_SCALE_WEEK);
+    chart.classList.toggle('proposal-payment-gantt-scale-month', scale === PROPOSAL_PAYMENT_GANTT_SCALE_MONTH);
+    chart.classList.toggle('proposal-payment-gantt-scale-quarter', scale === PROPOSAL_PAYMENT_GANTT_SCALE_QUARTER);
+    chart._proposalPaymentGanttTasks = data.data;
+    chart._proposalPaymentGanttLinks = data.links;
+    bindProposalPaymentGanttHaloRender(gantt);
+    bindProposalPaymentGanttOpenState(gantt);
+    gantt.init(chart);
+    gantt.clearAll();
+    gantt.parse(data);
+    gantt.render();
+    applyProposalPaymentMilestoneHaloSizes(chart, gantt, data.data);
+    applyProposalPaymentDayScaleMilestoneLinkBridges(chart, gantt, data.links);
+    bindProposalPaymentGanttRowHover(chart);
+    bindProposalPaymentGanttActiveRow(chart);
+    bindProposalPaymentGanttLinkHover(chart);
+  }
+
+  function getProposalPaymentMilestoneHaloSize(percent) {
+    if (!Number.isFinite(percent) || percent <= 0) return null;
+    const rowHeight = window.gantt?.config?.row_height || 34;
+    const diamondSize = 12;
+    const maxSize = rowHeight * 2;
+    return Math.round(diamondSize + (Math.min(100, percent) / 100) * (maxSize - diamondSize));
+  }
+
+  function applyProposalPaymentMilestoneHaloSizes(chart, gantt, tasks) {
+    if (!chart || !gantt) return;
+    chart.querySelectorAll('.proposal-payment-milestone-halo').forEach((node) => node.remove());
+    const isDayScale = chart.classList.contains('proposal-payment-gantt-scale-day');
+    tasks
+      .filter((task) => task.type === 'milestone')
+      .forEach((task) => {
+        const size = getProposalPaymentMilestoneHaloSize(task.payment_percent);
+        const tooltip = formatProposalPaymentMilestoneTooltip(task);
+        const escapedTaskId = escapeProposalPaymentGanttSelectorValue(task.id);
+        chart
+          .querySelectorAll('.gantt_task_line.proposal-payment-gantt-milestone[task_id="' + escapedTaskId + '"], .gantt_task_line.proposal-payment-gantt-milestone[data-task-id="' + escapedTaskId + '"]')
+          .forEach((node) => {
+            if (isDayScale && task.start_date) {
+              const milestoneSize = 12;
+              const left = Math.round(gantt.posFromDate(task.start_date) - (milestoneSize / 2)) - 0.5;
+              node.style.left = left + 'px';
+              node.style.width = milestoneSize + 'px';
+            }
+            if (size && !task.is_zero_payment) {
+              const halo = document.createElement('div');
+              halo.className = 'proposal-payment-milestone-halo';
+              halo.style.width = size + 'px';
+              halo.style.height = size + 'px';
+              node.insertBefore(halo, node.firstChild);
+            }
+            if (tooltip) {
+              node.setAttribute('title', tooltip);
+              node.querySelector('.gantt_task_content')?.setAttribute('title', tooltip);
+            }
+          });
+      });
+  }
+
+  function getProposalPaymentNumberStyle(node, property) {
+    const value = Number.parseFloat(node?.style?.[property] || '');
+    return Number.isFinite(value) ? value : null;
+  }
+
+  function applyProposalPaymentDayScaleMilestoneLinkBridges(chart, gantt, links) {
+    if (!chart || !gantt) return;
+    chart.querySelectorAll('.proposal-payment-milestone-link-bridge').forEach((node) => node.remove());
+    if (!chart.classList.contains('proposal-payment-gantt-scale-day') || !Array.isArray(links)) return;
+
+    links.forEach((link) => {
+      try {
+        const sourceTask = gantt.getTask(link.source);
+        const targetTask = gantt.getTask(link.target);
+        if (sourceTask?.type !== 'milestone' || targetTask?.type === 'milestone') return;
+
+        const linkNode = chart.querySelector('.gantt_task_link[link_id="' + escapeProposalPaymentGanttSelectorValue(link.id) + '"]');
+        const firstLine = linkNode?.querySelector('.gantt_line_wrapper');
+        const lineLeft = getProposalPaymentNumberStyle(firstLine, 'left');
+        const rowHeight = gantt.config.row_height || 34;
+        const sourceRight = Math.round(gantt.posFromDate(sourceTask.start_date) + 4);
+        if (lineLeft === null || lineLeft <= sourceRight) return;
+
+        const bridge = document.createElement('div');
+        bridge.className = 'proposal-payment-milestone-link-bridge';
+        bridge.dataset.linkId = String(link.id);
+        bridge.style.left = sourceRight + 'px';
+        bridge.style.top = Math.round(gantt.getTaskTop(sourceTask.id) + (rowHeight / 2)) + 'px';
+        bridge.style.width = (lineLeft - sourceRight + 9) + 'px';
+        linkNode?.parentElement?.appendChild(bridge);
+      } catch (error) {
+        // Links can briefly outlive tasks during Gantt smart rendering.
+      }
+    });
+  }
+
+  function setProposalPaymentBridgeHover(chart, linkId, isHovered) {
+    const escapedLinkId = escapeProposalPaymentGanttSelectorValue(linkId);
+    chart.querySelectorAll('.proposal-payment-milestone-link-bridge[data-link-id="' + escapedLinkId + '"]').forEach((node) => {
+      node.classList.toggle('proposal-payment-milestone-link-bridge-hover', isHovered);
+    });
+  }
+
+  function bindProposalPaymentGanttLinkHover(chart) {
+    if (!chart || chart.dataset.linkHoverBound === '1') return;
+    chart.dataset.linkHoverBound = '1';
+    chart.addEventListener('mouseover', (event) => {
+      const linkNode = event.target.closest?.('.gantt_task_link');
+      const linkId = linkNode?.getAttribute('link_id');
+      if (linkId) setProposalPaymentBridgeHover(chart, linkId, true);
+    });
+    chart.addEventListener('mouseout', (event) => {
+      const linkNode = event.target.closest?.('.gantt_task_link');
+      if (!linkNode) return;
+      const nextLinkNode = event.relatedTarget?.closest?.('.gantt_task_link');
+      if (nextLinkNode === linkNode) return;
+      const linkId = linkNode.getAttribute('link_id');
+      if (linkId) setProposalPaymentBridgeHover(chart, linkId, false);
+    });
+  }
+
+  function bindProposalPaymentGanttHaloRender(gantt) {
+    if (!gantt || gantt.$proposalPaymentHaloRenderEventId) return;
+    const applyHalos = function () {
+      const chart = document.getElementById('proposal-payment-gantt');
+      applyProposalPaymentMilestoneHaloSizes(chart, gantt, chart?._proposalPaymentGanttTasks || []);
+      applyProposalPaymentDayScaleMilestoneLinkBridges(chart, gantt, chart?._proposalPaymentGanttLinks || []);
+      if (chart?.dataset.activeTaskId) setProposalPaymentGanttActiveRow(chart, chart.dataset.activeTaskId);
+    };
+    gantt.$proposalPaymentHaloRenderEventId = gantt.attachEvent('onDataRender', function () {
+      requestAnimationFrame(applyHalos);
+    });
+    gantt.$proposalPaymentHaloScrollEventId = gantt.attachEvent('onGanttScroll', function () {
+      requestAnimationFrame(applyHalos);
+    });
+    gantt.$proposalPaymentHaloTaskClickEventId = gantt.attachEvent('onTaskClick', function (id) {
+      if (id !== undefined && id !== null && typeof gantt.selectTask === 'function') {
+        gantt.selectTask(id);
+      }
+      requestAnimationFrame(applyHalos);
+      return true;
+    });
+  }
+
+  function bindProposalPaymentGanttOpenState(gantt) {
+    if (!gantt || gantt.$proposalPaymentOpenStateEventIds) return;
+    gantt.$proposalPaymentOpenStateEventIds = [
+      gantt.attachEvent('onTaskOpened', function (id) {
+        try {
+          const task = gantt.getTask(id);
+          if (task?.is_group) setProposalPaymentGanttGroupOpenState(id, true);
+        } catch (error) {
+          // Ignore stale ids from a previous render.
+        }
+      }),
+      gantt.attachEvent('onTaskClosed', function (id) {
+        try {
+          const task = gantt.getTask(id);
+          if (task?.is_group) setProposalPaymentGanttGroupOpenState(id, false);
+        } catch (error) {
+          // Ignore stale ids from a previous render.
+        }
+      }),
+    ];
+  }
+
+  function getProposalPaymentGanttDomTaskId(element) {
+    const node = element?.closest?.('[data-task-id], [task_id]');
+    if (!node) return '';
+    return node.getAttribute('data-task-id') || node.getAttribute('task_id') || '';
+  }
+
+  function escapeProposalPaymentGanttSelectorValue(value) {
+    const raw = String(value || '');
+    if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(raw);
+    return raw.replace(/["\\]/g, '\\$&');
+  }
+
+  function setProposalPaymentGanttHoveredRow(chart, taskId) {
+    const normalizedTaskId = String(taskId || '');
+    chart.querySelectorAll('.proposal-payment-gantt-hover-row').forEach((node) => {
+      node.classList.remove('proposal-payment-gantt-hover-row');
+    });
+    if (!normalizedTaskId) return;
+
+    const escapedTaskId = escapeProposalPaymentGanttSelectorValue(normalizedTaskId);
+    const selector = '[data-task-id="' + escapedTaskId + '"], [task_id="' + escapedTaskId + '"]';
+    chart.querySelectorAll(selector).forEach((node) => {
+      if (!node.classList.contains('gantt_row') && !node.classList.contains('gantt_task_row') && !node.classList.contains('gantt_task_line')) return;
+      node.classList.add('proposal-payment-gantt-hover-row');
+    });
+  }
+
+  function setProposalPaymentGanttActiveRow(chart, taskId) {
+    const normalizedTaskId = String(taskId || '');
+    chart?.querySelectorAll('.proposal-payment-gantt-active-row').forEach((node) => {
+      node.classList.remove('proposal-payment-gantt-active-row');
+    });
+    if (!chart) return;
+    if (!normalizedTaskId) {
+      delete chart.dataset.activeTaskId;
+      return;
+    }
+    chart.dataset.activeTaskId = normalizedTaskId;
+
+    const escapedTaskId = escapeProposalPaymentGanttSelectorValue(normalizedTaskId);
+    const selector = '[data-task-id="' + escapedTaskId + '"], [task_id="' + escapedTaskId + '"]';
+    chart.querySelectorAll(selector).forEach((node) => {
+      if (!node.classList.contains('gantt_row') && !node.classList.contains('gantt_task_row') && !node.classList.contains('gantt_task_line')) return;
+      node.classList.add('proposal-payment-gantt-active-row');
+    });
+  }
+
+  function bindProposalPaymentGanttRowHover(chart) {
+    if (!chart || chart.dataset.rowHoverBound === '1') return;
+    chart.dataset.rowHoverBound = '1';
+    chart.addEventListener('mouseover', (event) => {
+      const taskId = getProposalPaymentGanttDomTaskId(event.target);
+      setProposalPaymentGanttHoveredRow(chart, taskId);
+    });
+    chart.addEventListener('mouseleave', () => {
+      setProposalPaymentGanttHoveredRow(chart, '');
+    });
+  }
+
+  function bindProposalPaymentGanttActiveRow(chart) {
+    if (!chart || chart.dataset.activeRowBound === '1') return;
+    chart.dataset.activeRowBound = '1';
+    const activateRow = (event) => {
+      const taskId = getProposalPaymentGanttDomTaskId(event.target);
+      if (!taskId) return;
+      setProposalPaymentGanttActiveRow(chart, taskId);
+      requestAnimationFrame(() => setProposalPaymentGanttActiveRow(chart, taskId));
+      window.setTimeout(() => setProposalPaymentGanttActiveRow(chart, taskId), 0);
+    };
+    chart.addEventListener('mousedown', activateRow, true);
+    chart.addEventListener('click', activateRow, true);
+  }
+
+  function clearProposalPaymentGanttSelection() {
+    const gantt = window.gantt;
+    const chart = document.getElementById('proposal-payment-gantt');
+    setProposalPaymentGanttActiveRow(chart, '');
+    if (!gantt || typeof gantt.getSelectedId !== 'function' || typeof gantt.unselectTask !== 'function') return;
+    const selectedId = gantt.getSelectedId();
+    if (selectedId === undefined || selectedId === null || selectedId === '') return;
+    gantt.unselectTask(selectedId);
+  }
+
+  function bindProposalPaymentGanttSelectionReset(root) {
+    if (!root || root.dataset.ganttSelectionResetBound === '1') return;
+    root.dataset.ganttSelectionResetBound = '1';
+    document.addEventListener('click', (event) => {
+      const ganttWrap = root.querySelector('#proposal-payment-gantt-wrap');
+      const chart = root.querySelector('#proposal-payment-gantt');
+      if (!ganttWrap || ganttWrap.classList.contains('d-none')) return;
+      if (chart?.contains(event.target)) return;
+      clearProposalPaymentGanttSelection();
+    });
+  }
+
+  function setProposalPaymentScheduleView(root, view) {
+    const normalizedView = view === PROPOSAL_PAYMENT_VIEW_GANTT
+      ? PROPOSAL_PAYMENT_VIEW_GANTT
+      : PROPOSAL_PAYMENT_VIEW_TABLE;
+    const isGantt = normalizedView === PROPOSAL_PAYMENT_VIEW_GANTT;
+    const tableWrap = root.querySelector('.proposal-payment-schedule-table-wrap');
+    const ganttWrap = root.querySelector('#proposal-payment-gantt-wrap');
+    const colpickerControls = root.querySelector('#proposal-payment-colpicker-controls');
+    const scaleControls = root.querySelector('#proposal-payment-gantt-scale-controls');
+    const label = root.querySelector('.js-proposal-payment-view-label');
+
+    tableWrap?.classList.toggle('d-none', isGantt);
+    ganttWrap?.classList.toggle('d-none', !isGantt);
+    colpickerControls?.classList.toggle('d-none', isGantt);
+    scaleControls?.classList.toggle('d-none', !isGantt);
+    if (label) label.textContent = isGantt ? 'График' : 'Таблица';
+
+    qa('.js-proposal-payment-view', root).forEach((input) => {
+      input.checked = input.value === normalizedView;
+    });
+    if (window.UIPref) UIPref.set(PROPOSAL_PAYMENT_VIEW_PREF_KEY, normalizedView);
+    if (isGantt) requestAnimationFrame(() => renderProposalPaymentGantt(root));
+  }
+
+  function initProposalPaymentScheduleViewSwitch() {
+    const root = pane();
+    if (!root) return;
+
+    const dropdown = root.querySelector('#proposal-payment-view-dropdown');
+    if (!dropdown) return;
+    bindProposalFilterMenuWidth(dropdown);
+
+    if (dropdown.dataset.bound !== '1') {
+      dropdown.dataset.bound = '1';
+      dropdown.addEventListener('change', (event) => {
+        const input = event.target.closest('.js-proposal-payment-view');
+        if (!input) return;
+        setProposalPaymentScheduleView(root, input.value);
+        const menu = dropdown.querySelector('.dropdown-menu');
+        if (menu && window.bootstrap?.Dropdown) {
+          window.bootstrap.Dropdown.getOrCreateInstance(dropdown.querySelector('[data-bs-toggle="dropdown"]')).hide();
+        }
+      });
+    }
+
+    qa('.js-proposal-payment-gantt-scale', root).forEach((button) => {
+      if (button.dataset.bound === '1') return;
+      button.dataset.bound = '1';
+      button.addEventListener('click', () => {
+        const scale = button.dataset.scale || PROPOSAL_PAYMENT_GANTT_SCALE_WEEK;
+        if (window.UIPref) UIPref.set(PROPOSAL_PAYMENT_GANTT_SCALE_PREF_KEY, scale);
+        syncProposalPaymentGanttScaleButtons(root, scale);
+        if (root.querySelector('.js-proposal-payment-view:checked')?.value === PROPOSAL_PAYMENT_VIEW_GANTT) {
+          renderProposalPaymentGantt(root);
+        }
+      });
+    });
+
+    const savedView = window.UIPref ? UIPref.get(PROPOSAL_PAYMENT_VIEW_PREF_KEY, PROPOSAL_PAYMENT_VIEW_TABLE) : PROPOSAL_PAYMENT_VIEW_TABLE;
+    syncProposalPaymentGanttScaleButtons(root, getProposalPaymentGanttScale(root));
+    bindProposalPaymentGanttSelectionReset(root);
+    const checkedView = root.querySelector('.js-proposal-payment-view:checked')?.value || PROPOSAL_PAYMENT_VIEW_TABLE;
+    const initialView = [PROPOSAL_PAYMENT_VIEW_TABLE, PROPOSAL_PAYMENT_VIEW_GANTT].includes(savedView)
+      ? savedView
+      : checkedView;
+    setProposalPaymentScheduleView(root, initialView);
   }
 
   function initProposalMasterFilters() {
@@ -5587,6 +6432,13 @@
       return Number.isFinite(parsed) ? parsed : null;
     }
 
+    function parseProposalInteger(value) {
+      const raw = String(value || '').trim().replace(/\s+/g, '');
+      if (!raw || !/^[+-]?\d+$/.test(raw)) return null;
+      const parsed = Number.parseInt(raw, 10);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
     function parseProposalDate(value) {
       const raw = String(value || '').trim();
       if (!raw) return null;
@@ -5679,6 +6531,13 @@
       if (!input) return null;
       const parsed = parseProposalDecimal(input.value);
       input.value = parsed === null ? '' : formatProposalDecimal(parsed);
+      return parsed;
+    }
+
+    function normalizeProposalIntegerInputValue(input) {
+      if (!input) return null;
+      const parsed = parseProposalInteger(input.value);
+      input.value = parsed === null ? '' : String(parsed);
       return parsed;
     }
 
@@ -5926,6 +6785,56 @@
         return Array.from(termsTbody.querySelectorAll('.proposal-stage-terms-row'));
       }
 
+      function getStageDelayRows() {
+        return Array.from(termsTbody.querySelectorAll('.proposal-stage-delay-row'));
+      }
+
+      function createStageDelayRow(stageKey) {
+        const row = document.createElement('tr');
+        row.className = 'proposal-stage-delay-row d-none';
+        row.dataset.proposalDelayForStageKey = String(stageKey || '');
+        row.innerHTML = [
+          '<td class="proposal-terms-stage-col">',
+          '<input type="text" class="form-control readonly-field proposal-stage-label-input" value="Лаг" readonly tabindex="-1">',
+          '</td>',
+          '<td>',
+          '<div class="proposal-stage-delay-input-wrap">',
+          '<div class="proposal-stage-delay-number-shell">',
+          '<input type="number" name="next_stage_delay_days" step="1" inputmode="numeric" class="form-control proposal-stage-next-delay-days" value="">',
+          '<span class="proposal-stage-delay-unit" aria-hidden="true">дн.</span>',
+          '</div>',
+          '<button type="button" class="btn btn-sm proposal-stage-delay-remove" title="Удалить лаг" aria-label="Удалить лаг">&times;</button>',
+          '</td>',
+          '<td colspan="4"></td>',
+        ].join('');
+        return row;
+      }
+
+      function getStageDelayRowForTermRow(row) {
+        const nextRow = row?.nextElementSibling;
+        if (nextRow?.classList?.contains('proposal-stage-delay-row')) return nextRow;
+        return null;
+      }
+
+      function getStageDelayActionSlot(row) {
+        let slot = row.querySelector('.proposal-stage-delay-action-slot');
+        if (slot) return slot;
+        const finalInput = row.querySelector('.proposal-stage-final-report-date');
+        const finalCell = finalInput?.closest('td');
+        if (!finalCell) return null;
+        let wrap = finalCell.querySelector('.proposal-stage-final-report-wrap');
+        if (!wrap) {
+          wrap = document.createElement('div');
+          wrap.className = 'proposal-stage-final-report-wrap';
+          finalCell.appendChild(wrap);
+          wrap.appendChild(finalInput);
+        }
+        slot = document.createElement('span');
+        slot.className = 'proposal-stage-delay-action-slot';
+        wrap.appendChild(slot);
+        return slot;
+      }
+
       function getTotalsRow() {
         return termsTbody.querySelector('.proposal-stage-terms-total-row');
       }
@@ -6085,6 +6994,42 @@
         }
       }
 
+      function ensureStageDelayRows() {
+        const termRows = getStageTermRows();
+        const expectedDelayRows = new Set();
+        termRows.forEach(function (row, index) {
+          const isEligible = termRows.length > 1 && index < termRows.length - 1;
+          const actionSlot = getStageDelayActionSlot(row);
+
+          let delayRow = getStageDelayRowForTermRow(row);
+          if (isEligible) {
+            if (!delayRow) {
+              delayRow = createStageDelayRow(row.dataset.proposalStageKey || String(index + 1));
+              termsTbody.insertBefore(delayRow, row.nextSibling);
+            }
+            delayRow.dataset.proposalDelayForStageKey = row.dataset.proposalStageKey || String(index + 1);
+            expectedDelayRows.add(delayRow);
+            const button = actionSlot?.querySelector('.proposal-stage-delay-add') || document.createElement('button');
+            if (!button.classList.contains('proposal-stage-delay-add')) {
+              button.type = 'button';
+              button.className = 'btn btn-sm rounded-circle proposal-stage-delay-add';
+              button.innerHTML = '<i class="bi bi-plus" aria-hidden="true"></i>';
+              actionSlot?.appendChild(button);
+            }
+            button.title = 'Добавить задержку/наложение';
+            button.setAttribute('aria-label', 'Добавить задержку или наложение после этапа ' + (index + 1));
+            button.classList.remove('d-none');
+          } else {
+            if (actionSlot) actionSlot.innerHTML = '';
+            if (delayRow) delayRow.remove();
+          }
+        });
+
+        getStageDelayRows().forEach(function (row) {
+          if (!expectedDelayRows.has(row)) row.remove();
+        });
+      }
+
       function syncStageLabels() {
         const productRows = getProductRows();
         const serviceBlocks = getServiceBlocks();
@@ -6139,6 +7084,8 @@
             termRow.dataset.proposalStageKey = stageUid;
             const stageInput = termRow.querySelector('.proposal-stage-label-input');
             if (stageInput) stageInput.value = 'Этап ' + rank;
+            const delayRow = getStageDelayRowForTermRow(termRow);
+            if (delayRow) delayRow.dataset.proposalDelayForStageKey = stageUid;
           }
         });
         if (summaryCommercialBlock) {
@@ -6277,6 +7224,33 @@
                 row.dataset.manualDateSource = 'final';
                 syncStageTerms();
               }
+            });
+          });
+        });
+      }
+
+      function bindStageDelayRows() {
+        function forceRowsAfterDelayToRecalculate(delayRow) {
+          const termRows = getStageTermRows();
+          const sourceTermRow = delayRow?.previousElementSibling?.classList?.contains('proposal-stage-terms-row')
+            ? delayRow.previousElementSibling
+            : null;
+          const sourceIndex = termRows.indexOf(sourceTermRow);
+          if (sourceIndex < 0) return;
+          termRows.slice(sourceIndex + 1).forEach(function (termRow) {
+            termRow.dataset.forceDatesFromTerms = '1';
+          });
+        }
+
+        getStageDelayRows().forEach(function (row) {
+          if (row.dataset.eventsBound === '1') return;
+          row.dataset.eventsBound = '1';
+          const input = row.querySelector('.proposal-stage-next-delay-days');
+          ['input', 'change'].forEach(function (eventName) {
+            input?.addEventListener(eventName, function () {
+              if (eventName === 'change') normalizeProposalIntegerInputValue(input);
+              forceRowsAfterDelayToRecalculate(row);
+              syncStageTerms();
             });
           });
         });
@@ -6515,6 +7489,7 @@
         const states = termRows.map(function (row) {
           const monthsInput = row.querySelector('.proposal-stage-service-term-months');
           const weeksInput = row.querySelector('.proposal-stage-final-report-term-weeks');
+          const delayInput = getStageDelayRowForTermRow(row)?.querySelector('.proposal-stage-next-delay-days');
           const months = normalizeProposalDecimalInputValue(monthsInput);
           const weeks = normalizeProposalDecimalInputValue(weeksInput);
           return {
@@ -6523,8 +7498,10 @@
             preliminaryInput: row.querySelector('.proposal-stage-preliminary-report-date'),
             weeksInput: weeksInput,
             finalInput: row.querySelector('.proposal-stage-final-report-date'),
+            delayInput: delayInput,
             months: months,
             weeks: weeks,
+            nextDelayDays: parseProposalInteger(delayInput?.value) || 0,
             preliminaryDate: parseProposalDate(row.querySelector('.proposal-stage-preliminary-report-date')?.value),
             finalDate: parseProposalDate(row.querySelector('.proposal-stage-final-report-date')?.value),
             shouldForceDatesFromTerms: row.dataset.forceDatesFromTerms === '1',
@@ -6545,19 +7522,24 @@
           );
         }
 
+        function applyNextStageDelay(date, state) {
+          if (!date) return date;
+          return state.nextDelayDays ? addDays(date, state.nextDelayDays) : date;
+        }
+
         function computeForwardDates(startDate, state) {
           if (state.months === null) {
             state.calculatedPreliminaryDate = null;
             state.calculatedFinalDate = null;
-            return startDate;
+            return applyNextStageDelay(startDate, state);
           }
           state.calculatedPreliminaryDate = addDecimalMonths(startDate, state.months);
           if (state.weeks === null) {
             state.calculatedFinalDate = null;
-            return state.calculatedPreliminaryDate;
+            return applyNextStageDelay(state.calculatedPreliminaryDate, state);
           }
           state.calculatedFinalDate = addDecimalWeeks(state.calculatedPreliminaryDate, state.weeks);
-          return state.calculatedFinalDate;
+          return applyNextStageDelay(state.calculatedFinalDate, state);
         }
 
         if (proposalReportTermsEditMode) {
@@ -6601,9 +7583,12 @@
 
             for (let index = manualIndex - 1; index >= 0; index -= 1) {
               const state = states[index];
-              state.calculatedFinalDate = rollingStartDate;
-              state.calculatedPreliminaryDate = rollingStartDate && state.weeks !== null
-                ? subtractDecimalWeeks(rollingStartDate, state.weeks)
+              const stageEndDate = rollingStartDate && state.nextDelayDays
+                ? addDays(rollingStartDate, -state.nextDelayDays)
+                : rollingStartDate;
+              state.calculatedFinalDate = stageEndDate;
+              state.calculatedPreliminaryDate = stageEndDate && state.weeks !== null
+                ? subtractDecimalWeeks(stageEndDate, state.weeks)
                 : null;
               rollingStartDate = state.calculatedPreliminaryDate && state.months !== null
                 ? subtractDecimalMonths(state.calculatedPreliminaryDate, state.months)
@@ -6615,7 +7600,10 @@
               form.__proposalStageBaseStartDate = baseStartDate;
             }
 
-            let forwardStartDate = manualState.calculatedFinalDate || manualState.calculatedPreliminaryDate || manualStageStartDate || baseStartDate;
+            let forwardStartDate = applyNextStageDelay(
+              manualState.calculatedFinalDate || manualState.calculatedPreliminaryDate || manualStageStartDate || baseStartDate,
+              manualState
+            );
             for (let index = manualIndex + 1; index < states.length; index += 1) {
               const state = states[index];
               forwardStartDate = computeForwardDates(forwardStartDate, state);
@@ -6630,7 +7618,7 @@
                 startDate = computeForwardDates(startDate, state);
                 applyStateDates(state);
               } else {
-                startDate = state.finalDate || state.preliminaryDate || startDate;
+                startDate = applyNextStageDelay(state.finalDate || state.preliminaryDate || startDate, state);
               }
             });
           }
@@ -6657,9 +7645,11 @@
       function syncStageContent() {
         ensureMirroredBlocks();
         syncStageLabels();
+        ensureStageDelayRows();
         ensureStageEditorsInitialized();
         bindSummaryCommercialSync();
         bindTermsRows();
+        bindStageDelayRows();
         getProductRows().forEach(function (row, index) {
           const productId = String(row.querySelector('.proposal-product-select')?.value || '').trim();
           const serviceBlock = getServiceBlocks()[index];
@@ -6705,6 +7695,40 @@
         syncPaymentScheduleMode();
         form.dispatchEvent(new CustomEvent('proposal-stage-products-changed'));
       }
+
+      termsTbody.addEventListener('click', function (event) {
+        const removeButton = event.target.closest('.proposal-stage-delay-remove');
+        if (removeButton) {
+          const delayRow = removeButton.closest('.proposal-stage-delay-row');
+          const delayInput = delayRow?.querySelector('.proposal-stage-next-delay-days');
+          if (!delayRow || !delayInput) return;
+          delayInput.value = '0';
+          delayRow.classList.add('d-none');
+          const termRows = getStageTermRows();
+          const sourceIndex = termRows.indexOf(delayRow.previousElementSibling);
+          if (sourceIndex >= 0) {
+            termRows.slice(sourceIndex + 1).forEach(function (termRow) {
+              termRow.dataset.forceDatesFromTerms = '1';
+            });
+          }
+          syncStageTerms();
+          return;
+        }
+
+        const addButton = event.target.closest('.proposal-stage-delay-add');
+        if (!addButton) return;
+        const termRow = addButton.closest('.proposal-stage-terms-row');
+        if (!termRow) return;
+        let delayRow = getStageDelayRowForTermRow(termRow);
+        if (!delayRow) {
+          delayRow = createStageDelayRow(termRow.dataset.proposalStageKey || '');
+          termsTbody.insertBefore(delayRow, termRow.nextSibling);
+        }
+        delayRow.classList.remove('d-none');
+        bindStageDelayRows();
+        syncStageTerms();
+        delayRow.querySelector('.proposal-stage-next-delay-days')?.focus();
+      });
 
       addBtn.addEventListener('click', function () {
         const firstRow = getProductRows()[0];
@@ -7572,6 +8596,12 @@
     }
   });
 
+  document.addEventListener('shown.bs.tab', function () {
+    const root = pane();
+    if (!root || root.querySelector('.js-proposal-payment-view:checked')?.value !== PROPOSAL_PAYMENT_VIEW_GANTT) return;
+    requestAnimationFrame(() => renderProposalPaymentGantt(root));
+  });
+
   document.body.addEventListener('htmx:afterSettle', function (event) {
     if (!(event.target && event.target.id === 'proposals-pane')) return;
     const last = window.__tableSelLast;
@@ -7581,6 +8611,7 @@
     updateHeaderPath();
     syncAllSelectionStates();
     initProposalMasterFilters();
+    initProposalPaymentScheduleViewSwitch();
     initProposalForm();
     restoreProposalSendSettings();
     restoreVariableCollapseState();
@@ -7756,6 +8787,7 @@
     updateHeaderPath();
     syncAllSelectionStates();
     initProposalMasterFilters();
+    initProposalPaymentScheduleViewSwitch();
     initProposalForm();
     restoreProposalSendSettings();
     if (typeof window.__proposalVarsExpanded === 'undefined') {

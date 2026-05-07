@@ -809,6 +809,7 @@
                     data-service-category="{{ item.product.service_category_display }}"
                     data-service-subtype="{{ item.product.service_subtype_display }}"
                     data-edit-url="{% url 'typical_service_term_form_edit' item.pk %}"
+                    data-gantt-url="{% url 'typical_service_term_gantt' item.pk %}"
                     data-delete-url="{% url 'typical_service_term_delete' item.pk %}"
                     data-move-up-url="{% url 'typical_service_term_move_up' item.pk %}"
                     data-move-down-url="{% url 'typical_service_term_move_down' item.pk %}">
@@ -859,6 +860,13 @@
               </button>
             </div>
           </div>
+          <button type="button"
+                  id="typical-service-terms-gantt-edit-btn"
+                  class="btn btn-outline-primary btn-sm d-none align-items-center"
+                  data-typical-service-term-gantt-edit
+                  disabled>
+            <i class="bi bi-diagram-3 me-2"></i>Редактировать
+          </button>
           <a href="{% url 'typical_service_term_csv_download' %}"
              id="typical-service-terms-csv-download-btn"
              class="btn btn-primary btn-sm d-flex align-items-center"
@@ -876,6 +884,36 @@
         </div>
         {% endif %}
     </div>
+
+    {% if request.user.is_authenticated and request.user.is_staff %}
+    <div id="typical-service-term-gantt-editor" class="typical-service-term-gantt-editor d-none" data-current-term-id="">
+      <div class="typical-service-term-gantt-toolbar d-flex align-items-center justify-content-between gap-3 flex-wrap">
+        <div>
+          <div class="fw-semibold">Диаграмма Ганта</div>
+          <div class="small text-muted" id="typical-service-term-gantt-subtitle">Выберите строку и нажмите «Редактировать».</div>
+        </div>
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+          <span class="small text-muted text-nowrap">Масштаб:</span>
+          <div class="btn-group btn-group-sm" role="group" aria-label="Масштаб диаграммы Гантта типовых сроков">
+            <button type="button" class="btn btn-outline-secondary js-typical-service-term-gantt-scale" data-scale="day">День</button>
+            <button type="button" class="btn btn-outline-secondary js-typical-service-term-gantt-scale" data-scale="week">Неделя</button>
+            <button type="button" class="btn btn-outline-secondary js-typical-service-term-gantt-scale" data-scale="month">Месяц</button>
+            <button type="button" class="btn btn-outline-secondary js-typical-service-term-gantt-scale" data-scale="quarter">Квартал</button>
+          </div>
+        </div>
+      </div>
+      <div id="typical-service-term-gantt-message" class="typical-service-term-gantt-message text-muted d-none"></div>
+      <div id="typical-service-term-gantt" class="typical-service-term-gantt"></div>
+      <div class="typical-service-term-gantt-footer d-flex justify-content-end gap-2">
+        <button type="button" class="btn btn-outline-secondary btn-sm" id="typical-service-term-gantt-cancel-btn">
+          Отмена
+        </button>
+        <button type="button" class="btn btn-primary btn-sm" id="typical-service-term-gantt-save-btn">
+          <i class="bi bi-check2-circle me-2"></i>Сохранить
+        </button>
+      </div>
+    </div>
+    {% endif %}
 
     <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 50px;">
         <h5 class="table-section-title">

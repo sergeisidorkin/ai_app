@@ -45,6 +45,7 @@ urlpatterns = [
     path("typical-service-compositions/<int:pk>/move-down/", views.typical_service_composition_move_down, name="typical_service_composition_move_down"),
     path("policy/typical-service-term/create/", views.typical_service_term_form_create, name="typical_service_term_form_create"),
     path("policy/typical-service-term/<int:pk>/edit/", views.typical_service_term_form_edit, name="typical_service_term_form_edit"),
+    path("policy/typical-service-term/<int:pk>/gantt/", views.typical_service_term_gantt, name="typical_service_term_gantt"),
     path("policy/typical-service-term/<int:pk>/delete/", views.typical_service_term_delete, name="typical_service_term_delete"),
     path("policy/typical-service-term/csv-upload/", views.typical_service_term_csv_upload, name="typical_service_term_csv_upload"),
     path("policy/typical-service-term/csv-download/", views.typical_service_term_csv_download, name="typical_service_term_csv_download"),

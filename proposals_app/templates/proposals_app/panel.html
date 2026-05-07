@@ -55,7 +55,7 @@
         <div class="modal-content"></div>
       </div>
     </div>
-    <script src="{% static 'core/js/proposals-panels.js' %}" defer></script>
+    <script src="{% static 'core/js/proposals-panels.js' %}?v=20260505-46" defer></script>
     <script>
       document.body.addEventListener('proposals-updated', function () {
         const el = document.getElementById('proposals-modal');
@@ -83,18 +83,45 @@
         window.__proposalColPickerBound = true;
 
         var P = window.UIPref;
-        var cfg = {
-          prefKey: 'proposals:hiddenCols',
-          wrapId: 'proposal-colpicker-wrap',
-          btnId: 'proposal-colpicker-btn',
-          menuId: 'proposal-colpicker-menu',
-          allId: 'proposal-col-all',
-          tableId: 'proposal-registry-table',
-          hidden: P ? P.get('proposals:hiddenCols', {}) : {},
-        };
+        var configs = [
+          {
+            prefKey: 'proposals:hiddenCols',
+            wrapId: 'proposal-colpicker-wrap',
+            btnId: 'proposal-colpicker-btn',
+            menuId: 'proposal-colpicker-menu',
+            allId: 'proposal-col-all',
+            tableId: 'proposal-registry-table',
+          },
+          {
+            prefKey: 'proposals:paymentScheduleHiddenCols',
+            wrapId: 'proposal-payment-colpicker-wrap',
+            btnId: 'proposal-payment-colpicker-btn',
+            menuId: 'proposal-payment-colpicker-menu',
+            allId: 'proposal-payment-col-all',
+            tableId: 'proposal-payment-schedule-table',
+          },
+        ];
 
-        function saveHidden() {
-          if (P) P.set(cfg.prefKey, cfg.hidden);
+        function getDefaultHidden(cfg) {
+          var menu = document.getElementById(cfg.menuId);
+          var hidden = {};
+          if (!menu) return hidden;
+          menu.querySelectorAll('input.form-check-input[data-default-hidden="true"]:not([value="all"])').forEach(function(cb) {
+            hidden[cb.value] = true;
+          });
+          return hidden;
+        }
+
+        function getHidden(cfg) {
+          if (!cfg.hidden) {
+            var saved = P ? P.get(cfg.prefKey, null) : null;
+            cfg.hidden = saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : getDefaultHidden(cfg);
+          }
+          return cfg.hidden || {};
+        }
+
+        function saveHidden(cfg) {
+          if (P) P.set(cfg.prefKey, getHidden(cfg));
         }
 
         function updateBtnLabel(btn, menu) {
@@ -104,16 +131,19 @@
           btn.textContent = checked === cbs.length ? 'Все поля' : checked + ' из ' + cbs.length;
         }
 
-        function applyVisibility() {
+        function applyVisibility(cfg) {
           var table = document.getElementById(cfg.tableId);
           if (!table) return;
-          var hidden = Object.keys(cfg.hidden);
+          var hidden = Object.keys(getHidden(cfg));
           table.querySelectorAll('[data-col]').forEach(function(cell) {
             cell.style.display = hidden.indexOf(cell.getAttribute('data-col')) !== -1 ? 'none' : '';
           });
+          table.querySelectorAll('col[data-col]').forEach(function(col) {
+            col.style.display = hidden.indexOf(col.getAttribute('data-col')) !== -1 ? 'none' : '';
+          });
         }
 
-        function initPicker() {
+        function initPicker(cfg) {
           var wrap = document.getElementById(cfg.wrapId);
           var btn = document.getElementById(cfg.btnId);
           var menu = document.getElementById(cfg.menuId);
@@ -125,8 +155,9 @@
           };
 
           var cbs = menu.querySelectorAll('input.form-check-input:not([value="all"])');
+          var hiddenState = getHidden(cfg);
           cbs.forEach(function(cb) {
-            cb.checked = !cfg.hidden[cb.value];
+            cb.checked = !hiddenState[cb.value];
           });
 
           var allCb = document.getElementById(cfg.allId);
@@ -137,7 +168,7 @@
           }
 
           updateBtnLabel(btn, menu);
-          applyVisibility();
+          applyVisibility(cfg);
 
           menu.onchange = function(e) {
             var cb = e.target;
@@ -153,24 +184,30 @@
             }
             cfg.hidden = {};
             items.forEach(function(c) { if (!c.checked) cfg.hidden[c.value] = true; });
-            saveHidden();
+            saveHidden(cfg);
             updateBtnLabel(btn, menu);
-            applyVisibility();
+            applyVisibility(cfg);
           };
         }
 
+        function initPickers() {
+          configs.forEach(initPicker);
+        }
+
         document.addEventListener('click', function(e) {
-          var wrap = document.getElementById(cfg.wrapId);
-          var menu = document.getElementById(cfg.menuId);
-          if (wrap && menu && !wrap.contains(e.target)) menu.classList.remove('show');
+          configs.forEach(function(cfg) {
+            var wrap = document.getElementById(cfg.wrapId);
+            var menu = document.getElementById(cfg.menuId);
+            if (wrap && menu && !wrap.contains(e.target)) menu.classList.remove('show');
+          });
         });
 
         document.body.addEventListener('htmx:afterSettle', function(e) {
           var pane = document.getElementById('proposals-pane');
-          if (pane && pane.contains(e.target)) initPicker();
+          if (pane && pane.contains(e.target)) initPickers();
         });
 
-        document.addEventListener('DOMContentLoaded', initPicker);
+        document.addEventListener('DOMContentLoaded', initPickers);
       })();
     </script>
   </div>

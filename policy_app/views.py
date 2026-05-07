@@ -1,8 +1,10 @@
 import csv
 import io
 import json
+import calendar
 from collections import defaultdict
-from decimal import Decimal, InvalidOperation
+from datetime import date, datetime, timedelta
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required, user_passes_test
@@ -96,6 +98,7 @@ TYPICAL_SERVICE_TERM_CSV_HEADERS = [
     "Срок подготовки Предварительного отчёта, мес.",
     "Срок подготовки Итогового отчёта, нед.",
 ]
+TYPICAL_SERVICE_TERM_GANTT_VERSION = 1
 TARIFF_CSV_HEADERS = [
     "Продукт",
     "Раздел (услуга)",
@@ -1690,6 +1693,180 @@ def typical_service_composition_move_down(request, pk: int):
 
 # --- Типовые сроки оказания услуг ---
 
+def _typical_service_term_gantt_base_date():
+    return date.today().replace(month=1, day=1)
+
+
+def _add_typical_service_term_gantt_months(start_date, months):
+    safe_months = max(Decimal(months or 0), Decimal("0"))
+    whole_months = int(safe_months)
+    fractional_months = safe_months - Decimal(whole_months)
+    month_index = start_date.month - 1 + whole_months
+    year = start_date.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(start_date.day, calendar.monthrange(year, month)[1])
+    whole_date = date(year, month, day)
+    extra_days = int((fractional_months * Decimal("30")).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    return whole_date + timedelta(days=extra_days)
+
+
+def _serialize_typical_service_term_gantt_date(value):
+    return value.isoformat()
+
+
+def _default_typical_service_term_gantt_data(term):
+    base_date = _typical_service_term_gantt_base_date()
+    preliminary_end = _add_typical_service_term_gantt_months(base_date, term.preliminary_report_months)
+    final_end = preliminary_end + timedelta(days=int(term.final_report_weeks or 0) * 7)
+    prefix = f"typical-service-term-{term.pk}"
+    return {
+        "data": [
+            {
+                "id": f"{prefix}-preliminary-report",
+                "text": "Предварительный отчёт",
+                "start_date": _serialize_typical_service_term_gantt_date(base_date),
+                "end_date": _serialize_typical_service_term_gantt_date(preliminary_end),
+                "progress": 0,
+                "system_key": "preliminary_report",
+                "type": "task",
+                "is_report_bar": True,
+            },
+            {
+                "id": f"{prefix}-final-report",
+                "text": "Итоговый отчёт",
+                "start_date": _serialize_typical_service_term_gantt_date(preliminary_end),
+                "end_date": _serialize_typical_service_term_gantt_date(final_end),
+                "progress": 0,
+                "system_key": "final_report",
+                "type": "task",
+                "is_report_bar": True,
+            },
+        ],
+        "links": [
+            {
+                "id": f"{prefix}-preliminary-to-final",
+                "source": f"{prefix}-preliminary-report",
+                "target": f"{prefix}-final-report",
+                "type": "0",
+            }
+        ],
+        "meta": {
+            "base_date": _serialize_typical_service_term_gantt_date(base_date),
+            "version": TYPICAL_SERVICE_TERM_GANTT_VERSION,
+        },
+    }
+
+
+def _parse_typical_service_term_gantt_date(value):
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    if "T" in raw:
+        raw = raw.replace("Z", "+00:00")
+        try:
+            return datetime.fromisoformat(raw).date()
+        except ValueError:
+            return None
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _task_end_date(task, start_date):
+    end_date = _parse_typical_service_term_gantt_date(task.get("end_date"))
+    if end_date:
+        return end_date
+    try:
+        duration = int(Decimal(str(task.get("duration", 0))))
+    except (InvalidOperation, ValueError, TypeError):
+        duration = 0
+    return start_date + timedelta(days=max(duration, 0))
+
+
+def _normalize_typical_service_term_gantt_payload(payload):
+    if not isinstance(payload, dict):
+        raise ValueError("Некорректный формат диаграммы.")
+    tasks = payload.get("data", payload.get("tasks", []))
+    links = payload.get("links", [])
+    if not isinstance(tasks, list):
+        raise ValueError("Список задач диаграммы должен быть массивом.")
+    if not isinstance(links, list):
+        raise ValueError("Список связей диаграммы должен быть массивом.")
+
+    normalized_tasks = [dict(task) for task in tasks if isinstance(task, dict)]
+    normalized_links = [dict(link) for link in links if isinstance(link, dict)]
+    meta = dict(payload.get("meta") or {}) if isinstance(payload.get("meta"), dict) else {}
+
+    dated_tasks = []
+    for task in normalized_tasks:
+        start_date = _parse_typical_service_term_gantt_date(task.get("start_date"))
+        if not start_date:
+            continue
+        end_date = _task_end_date(task, start_date)
+        task["start_date"] = _serialize_typical_service_term_gantt_date(start_date)
+        task["end_date"] = _serialize_typical_service_term_gantt_date(end_date)
+        dated_tasks.append((task, start_date, end_date))
+
+    if not dated_tasks:
+        raise ValueError("В диаграмме должна быть хотя бы одна задача с датой начала.")
+
+    base_date = _parse_typical_service_term_gantt_date(meta.get("base_date"))
+    if not base_date:
+        base_date = min(start_date for _, start_date, _ in dated_tasks)
+    meta["base_date"] = _serialize_typical_service_term_gantt_date(base_date)
+    meta["version"] = TYPICAL_SERVICE_TERM_GANTT_VERSION
+
+    return {"data": normalized_tasks, "links": normalized_links, "meta": meta}, dated_tasks, base_date
+
+
+def _find_typical_service_term_system_task(dated_tasks, system_key):
+    for task, start_date, end_date in dated_tasks:
+        if task.get("system_key") == system_key:
+            return task, start_date, end_date
+    return None
+
+
+def _calculate_typical_service_term_durations(dated_tasks, base_date):
+    preliminary_task = _find_typical_service_term_system_task(dated_tasks, "preliminary_report")
+    final_task = _find_typical_service_term_system_task(dated_tasks, "final_report")
+    if not preliminary_task:
+        raise ValueError("Не найдена задача «Предварительный отчёт».")
+    if not final_task:
+        raise ValueError("Не найдена задача «Итоговый отчёт».")
+
+    _, _, preliminary_end = preliminary_task
+    _, final_start, final_end = final_task
+    preliminary_days = max((preliminary_end - base_date).days, 0)
+    final_days = max((final_end - final_start).days, 0)
+    preliminary_months = (Decimal(preliminary_days) / Decimal("30")).quantize(
+        Decimal("0.1"),
+        rounding=ROUND_HALF_UP,
+    )
+    final_weeks = int((Decimal(final_days) / Decimal("7")).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    return preliminary_months, max(final_weeks, 0)
+
+
+def _typical_service_term_gantt_response_payload(term):
+    gantt_data = term.gantt_data if isinstance(term.gantt_data, dict) and term.gantt_data.get("data") else None
+    return {
+        "ok": True,
+        "gantt": gantt_data or _default_typical_service_term_gantt_data(term),
+        "term": {
+            "id": term.pk,
+            "product": term.product.short_name,
+            "preliminary_report_months": term.preliminary_report_months_display,
+            "final_report_weeks": term.final_report_weeks,
+        },
+    }
+
+
 @login_required
 @user_passes_test(staff_required)
 @require_http_methods(["GET", "POST"])
@@ -1736,6 +1913,28 @@ def typical_service_term_form_edit(request, pk: int):
         )
     form.save()
     return _render_policy_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def typical_service_term_gantt(request, pk: int):
+    term = get_object_or_404(TypicalServiceTerm.objects.select_related("product"), pk=pk)
+    if request.method == "GET":
+        return JsonResponse(_typical_service_term_gantt_response_payload(term))
+
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+        gantt_data, dated_tasks, base_date = _normalize_typical_service_term_gantt_payload(payload)
+        preliminary_months, final_weeks = _calculate_typical_service_term_durations(dated_tasks, base_date)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+
+    term.gantt_data = gantt_data
+    term.preliminary_report_months = preliminary_months
+    term.final_report_weeks = final_weeks
+    term.save(update_fields=["gantt_data", "preliminary_report_months", "final_report_weeks", "updated_at"])
+    return JsonResponse(_typical_service_term_gantt_response_payload(term))
 
 
 @login_required

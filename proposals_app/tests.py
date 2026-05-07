@@ -25,7 +25,10 @@ from docx.oxml.ns import qn
 from classifiers_app.models import BusinessEntityRecord, BusinessEntityIdentifierRecord, LegalEntityRecord, OKSMCountry, OKVCurrency
 from contacts_app.models import CitizenshipRecord, PersonRecord
 from core.models import CloudStorageSettings
-from core.proposal_registry_columns import get_proposal_registry_ui_columns
+from core.proposal_registry_columns import (
+    get_proposal_payment_schedule_ui_columns,
+    get_proposal_registry_ui_columns,
+)
 from experts_app.models import ExpertContractDetails, ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
 from group_app.models import GroupMember, OrgUnit
 from letters_app.models import LetterTemplate
@@ -2787,6 +2790,85 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertTrue(columns["asset_owner_region"]["split_inline"])
         self.assertEqual(columns["asset_owner_region"]["label"], "Владелец: регион")
 
+    def test_proposal_registry_columns_are_split_from_payment_schedule_columns(self):
+        registry_sources = {
+            column["source_column"]
+            for column in get_proposal_registry_ui_columns()
+        }
+        payment_labels = [
+            column["label"]
+            for column in get_proposal_payment_schedule_ui_columns()
+        ]
+
+        self.assertIn("type", registry_sources)
+        self.assertNotIn("term", registry_sources)
+        self.assertNotIn("preliminary_report_date", registry_sources)
+        self.assertNotIn("final_report_term_weeks", registry_sources)
+        self.assertNotIn("advance_percent", registry_sources)
+        self.assertEqual(
+            payment_labels,
+            [
+                "Номер",
+                "Группа",
+                "ТКП ID",
+                "Тип",
+                "Название",
+                "Этап",
+                "Дата начала",
+                "Срок предв. отчёта, мес.",
+                "Дата предв. отчёта",
+                "Срок итог. отчёта, нед.",
+                "Дата итог. отчёта",
+                "Предоплата, проц.",
+                "Предоплата, срок дн.",
+                "Предв. отчёт, проц.",
+                "Предв. отчёт, срок дн.",
+                "Итог. отчёт, проц.",
+                "Итог. отчёт, срок дн.",
+            ],
+        )
+
+    def test_proposal_registry_columns_mark_requested_fields_hidden_by_default(self):
+        default_hidden_sources = {
+            column["source_column"]
+            for column in get_proposal_registry_ui_columns()
+            if column.get("default_hidden")
+        }
+
+        self.assertEqual(
+            default_hidden_sources,
+            {
+                "country",
+                "identifier",
+                "registration_number",
+                "date",
+                "asset_owner_country",
+                "asset_owner_identifier",
+                "asset_owner_registration_number",
+                "asset_owner_registration_date",
+                "proposal_project_name",
+                "purpose",
+                "service_composition",
+                "report_languages",
+            },
+        )
+
+    def test_payment_schedule_columns_mark_requested_fields_hidden_by_default(self):
+        default_hidden_sources = {
+            column["source_column"]
+            for column in get_proposal_payment_schedule_ui_columns()
+            if column.get("default_hidden")
+        }
+
+        self.assertEqual(
+            default_hidden_sources,
+            {
+                "advance_percent",
+                "preliminary_report_percent",
+                "final_report_percent",
+            },
+        )
+
     def test_proposal_variable_form_locks_computed_variable_fields(self):
         variable = ProposalVariable.objects.create(
             key="{{client_country_full_name}}",
@@ -4244,6 +4326,7 @@ class ProposalRegistrationFormTests(TestCase):
         payload.setlist("preliminary_report_date", ["15.01.2026", "15.04.2026"])
         payload.setlist("final_report_term_weeks", ["2.0", "3.0"])
         payload.setlist("final_report_date", ["29.01.2026", "06.05.2026"])
+        payload.setlist("next_stage_delay_days", ["-3"])
 
         form = ProposalRegistrationForm(data=payload)
 
@@ -4265,6 +4348,8 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(str(proposal.final_report_term_weeks), "3.0")
         self.assertEqual(proposal.stage_payloads_json[-1]["product_id"], second_product.pk)
         self.assertEqual(proposal.stage_payloads_json[-1]["service_composition"], "ТЗ этапа 2")
+        self.assertEqual(proposal.stage_payloads_json[0]["next_stage_delay_days"], -3)
+        self.assertEqual(proposal.stage_payloads_json[1]["next_stage_delay_days"], 0)
         self.assertEqual(proposal.commercial_offers.count(), 1)
         self.assertEqual(proposal.commercial_offers.first().specialist, "Эксперт")
         self.assertEqual(proposal.commercial_offers.first().service_name, "")
@@ -4320,6 +4405,7 @@ class ProposalRegistrationFormTests(TestCase):
                     "preliminary_report_date": "15.01.2026",
                     "final_report_term_weeks": "2.0",
                     "final_report_date": "29.01.2026",
+                    "next_stage_delay_days": 4,
                 },
                 {
                     "rank": 2,
@@ -4356,6 +4442,7 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(form.stage_rows[1]["product_short_label"], "B")
         self.assertEqual(form.stage_rows[1]["service_composition"], "ТЗ 2")
         self.assertEqual(form.stage_rows[1]["final_report_date"], "06.05.2026")
+        self.assertEqual(form.stage_rows[0]["next_stage_delay_days"], "4")
 
     def test_resolve_variables_uses_summary_payload_after_multistage_save(self):
         group_member = GroupMember.objects.create(
@@ -4693,6 +4780,164 @@ class ProposalFormContextTests(TestCase):
             role=role,
         )
         return user, employee
+
+    def test_proposals_partial_renders_payment_schedule_table_by_product_stage(self):
+        first_product = Product.objects.create(
+            short_name="TDD",
+            name_en="Technical Due Diligence",
+            name_ru="ТДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        second_product = Product.objects.create(
+            short_name="JORC",
+            name_en="JORC Report",
+            name_ru="JORC",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Оптимизация",
+            position=2,
+        )
+        proposal = ProposalRegistration.objects.create(
+            number=3333,
+            group_member=self.group_member,
+            type=second_product,
+            name="Мультиэтапное ТКП",
+            year=2026,
+            stage_payloads_json=[
+                {
+                    "rank": 1,
+                    "product_id": first_product.pk,
+                    "service_term_months": "1.0",
+                    "preliminary_report_date": "15.02.2026",
+                    "final_report_term_weeks": "2.0",
+                    "final_report_date": "01.03.2026",
+                    "payment_schedule_common": False,
+                    "advance_percent": "30",
+                    "advance_term_days": 5,
+                    "preliminary_report_percent": "20",
+                    "preliminary_report_term_days": 6,
+                    "final_report_percent": "50",
+                    "final_report_term_days": 14,
+                },
+                {
+                    "rank": 2,
+                    "product_id": second_product.pk,
+                    "service_term_months": "2.0",
+                    "preliminary_report_date": "15.05.2026",
+                    "final_report_term_weeks": "3.0",
+                    "final_report_date": "05.06.2026",
+                    "payment_schedule_common": False,
+                    "advance_percent": "50",
+                    "advance_term_days": 10,
+                    "preliminary_report_percent": "30",
+                    "preliminary_report_term_days": 7,
+                    "final_report_percent": "20",
+                    "final_report_term_days": 21,
+                },
+            ],
+        )
+        ProposalRegistrationProduct.objects.bulk_create(
+            [
+                ProposalRegistrationProduct(proposal=proposal, product=first_product, rank=1),
+                ProposalRegistrationProduct(proposal=proposal, product=second_product, rank=2),
+            ]
+        )
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.context["proposal_payment_schedule_rows"]), 2)
+        self.assertTrue(response.context["proposal_payment_schedule_rows"][0]["is_first_for_proposal"])
+        self.assertTrue(response.context["proposal_payment_schedule_rows"][0]["has_next_for_proposal"])
+        self.assertFalse(response.context["proposal_payment_schedule_rows"][1]["is_first_for_proposal"])
+        self.assertTrue(response.context["proposal_payment_schedule_rows"][1]["is_continuation"])
+        self.assertFalse(response.context["proposal_payment_schedule_rows"][1]["has_next_for_proposal"])
+        self.assertContains(response, 'id="proposal-payment-schedule-table"', html=False)
+        self.assertContains(response, 'id="proposal-payment-master"', html=False)
+        self.assertContains(response, 'id="proposal-payment-col-term"', html=False)
+        self.assertContains(response, 'id="proposal-col-country" data-default-hidden="true"', html=False)
+        self.assertContains(response, 'id="proposal-payment-col-advance-percent" data-default-hidden="true"', html=False)
+        self.assertContains(response, 'class="proposal-payment-stage-has-next"', html=False)
+        self.assertContains(response, 'class="proposal-payment-stage-continuation"', html=False)
+        self.assertContains(response, f'data-edit-url="{reverse("proposal_form_edit", args=[proposal.pk])}"', html=False)
+        self.assertContains(response, "proposal-quick-edit me-1", html=False)
+        self.assertContains(response, '<td class="text-nowrap">\n              \n            </td>', html=False)
+        self.assertContains(response, '<td data-col="number"></td>', html=False)
+        self.assertContains(response, '<td data-col="group"></td>', html=False)
+        self.assertContains(response, "TDD-JORC", html=False)
+        self.assertContains(response, "Этап 1", html=False)
+        self.assertContains(response, "Этап 2", html=False)
+        self.assertContains(response, "1,0", html=False)
+        self.assertContains(response, "3,0", html=False)
+        self.assertContains(response, "15.01.2026", html=False)
+        self.assertContains(response, "15.03.2026", html=False)
+        self.assertContains(response, "30%", html=False)
+        self.assertContains(response, "21", html=False)
+        self.assertContains(response, "disabled", html=False)
+        self.assertNotContains(response, 'id="proposal-col-term"', html=False)
+        self.assertNotContains(response, 'id="proposal-col-advance-percent"', html=False)
+        self.assertNotContains(response, "proposal-payment-actions", html=False)
+
+    def test_payment_schedule_uses_stage_delay_for_next_stage_start(self):
+        first_product = Product.objects.create(
+            short_name="TDD",
+            name_en="Technical Due Diligence",
+            name_ru="ТДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        second_product = Product.objects.create(
+            short_name="JORC",
+            name_en="JORC Report",
+            name_ru="JORC",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Оптимизация",
+            position=2,
+        )
+        proposal = ProposalRegistration.objects.create(
+            number=3333,
+            group_member=self.group_member,
+            type=second_product,
+            name="Мультиэтапное ТКП",
+            year=2026,
+            stage_payloads_json=[
+                {
+                    "rank": 1,
+                    "product_id": first_product.pk,
+                    "service_term_months": "1.0",
+                    "preliminary_report_date": "15.02.2026",
+                    "final_report_term_weeks": "2.0",
+                    "final_report_date": "01.03.2026",
+                    "next_stage_delay_days": 5,
+                },
+                {
+                    "rank": 2,
+                    "product_id": second_product.pk,
+                    "service_term_months": "1.0",
+                    "final_report_term_weeks": "2.0",
+                },
+            ],
+        )
+        ProposalRegistrationProduct.objects.bulk_create(
+            [
+                ProposalRegistrationProduct(proposal=proposal, product=first_product, rank=1),
+                ProposalRegistrationProduct(proposal=proposal, product=second_product, rank=2),
+            ]
+        )
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        rows = response.context["proposal_payment_schedule_rows"]
+        self.assertEqual(rows[0]["next_stage_delay_days"], 5)
+        self.assertEqual(rows[1]["start_date"], date(2026, 3, 6))
+        self.assertEqual(rows[1]["preliminary_report_date"], date(2026, 4, 6))
+        self.assertEqual(rows[1]["final_report_date"], date(2026, 4, 20))
 
     def test_typical_sections_json_prefers_highest_grade_within_best_rank(self):
         product = Product.objects.create(
@@ -5285,6 +5530,10 @@ class ProposalFormContextTests(TestCase):
         self.assertContains(response, "Коммерческое предложение: Этап 1 TDD", html=False)
         self.assertContains(response, "Коммерческое предложение: Этап 2 JORC", html=False)
         self.assertContains(response, "Коммерческое предложение: все этапы", html=False)
+        self.assertContains(response, "proposal-stage-delay-add", html=False)
+        self.assertContains(response, "proposal-stage-delay-remove", html=False)
+        self.assertContains(response, 'name="next_stage_delay_days"', html=False)
+        self.assertContains(response, "Лаг", html=False)
 
 
 class ProposalNextcloudWorkspaceHookTests(TestCase):

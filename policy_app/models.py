@@ -31,7 +31,6 @@ SUPERUSER_GROUPS = (
     ADMIN_GROUP,
     DIRECTOR_GROUP,
     DIRECTION_DIRECTOR_GROUP,
-    LAWYER_GROUP,
 )
 
 def _join_catalog_values(items) -> str:
@@ -600,6 +599,11 @@ class TypicalServiceTerm(models.Model):
     final_report_weeks = models.PositiveIntegerField(
         "Срок подготовки Итогового отчёта, нед.",
         default=0,
+    )
+    gantt_data = models.JSONField(
+        "Диаграмма Гантта",
+        default=dict,
+        blank=True,
     )
     position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
 

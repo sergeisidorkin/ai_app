@@ -22,8 +22,9 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css?family=Droid+Sans+Mono" rel="stylesheet">
 
+    <link rel="stylesheet" href="{% static 'vendor/dhtmlx-gantt/dhtmlxgantt.css' %}?v=9.1.4">
     <!-- ваши глобальные стили -->
-    <link rel="stylesheet" href="{% static 'core/css/site.css' %}?v=20260504-3">
+    <link rel="stylesheet" href="{% static 'core/css/site.css' %}?v=20260507-1">
     <link rel="stylesheet" href="{% static 'vendor/intl-tel-input/css/intlTelInput.css' %}?v=20260421-1">
 
     {# ---------- FAVICONS (под твои имена файлов) ---------- #}
@@ -140,9 +141,10 @@
 
         <!-- Подключение статических модулей -->
         {% load static %}
+        <script defer src="{% static 'vendor/dhtmlx-gantt/dhtmlxgantt.js' %}?v=9.1.4"></script>
         <script defer src="{% static 'core/js/ui-prefs-restore.js' %}?v=20260423-2"></script>
         <script defer src="{% static 'core/js/selectable-tables.js' %}"></script>
-        <script defer src="{% static 'core/js/policy-panels.js' %}"></script>
+        <script defer src="{% static 'core/js/policy-panels.js' %}?v=20260507-9"></script>
         <script defer src="{% static 'core/js/classifiers-panels.js' %}?v=20260425-1"></script>
         <script defer src="{% static 'core/js/contacts-panels.js' %}?v=20260420-30"></script>
         <script defer src="{% static 'core/js/group-panels.js' %}"></script>

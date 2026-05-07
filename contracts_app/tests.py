@@ -763,7 +763,7 @@ class ContractsCloudLabelTests(TestCase):
 
     @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
-    def test_contracts_partial_shows_signing_management_buttons_for_superuser_lawyer_role(
+    def test_contracts_partial_hides_signing_management_buttons_for_superuser_lawyer_role(
         self,
         _mocked_list_user_shares,
         _mocked_get_user_share,
@@ -784,9 +784,12 @@ class ContractsCloudLabelTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, 'id="signing-sign-contract-btn"', html=False)
-        self.assertContains(response, 'id="signing-edit-btn"', html=False)
-        self.assertContains(response, 'id="signing-send-scan-btn"', html=False)
-        self.assertContains(response, 'id="signing-master"', html=False)
+        self.assertNotContains(response, 'id="signing-edit-btn"', html=False)
+        self.assertNotContains(response, 'id="signing-send-scan-btn"', html=False)
+        content = response.content.decode("utf-8")
+        checkbox_start = content.index(f'id="signing-sel-{self.performer.pk}"')
+        checkbox_html = content[checkbox_start:content.index("aria-label", checkbox_start)]
+        self.assertIn("disabled", checkbox_html)
 
     def test_contracts_partial_shows_signing_management_buttons_for_admin(self):
         response = self.client.get(reverse("contracts_partial"))
@@ -835,6 +838,28 @@ class ContractsCloudLabelTests(TestCase):
             is_staff=True,
         )
         self.client.force_login(staff_user)
+
+        edit_response = self.client.get(reverse("contracts_signing_edit", args=[self.performer.pk]))
+        send_scan_response = self.client.post(
+            reverse("signing_send_scan"),
+            {"performer_ids[]": [self.performer.pk]},
+        )
+
+        self.assertEqual(edit_response.status_code, 302)
+        self.assertEqual(send_scan_response.status_code, 302)
+
+    def test_contract_signing_management_actions_reject_superuser_lawyer_role(self):
+        lawyer_user = get_user_model().objects.create_user(
+            username="contracts-superuser-lawyer@example.com",
+            email="contracts-superuser-lawyer@example.com",
+            password="secret",
+            is_staff=True,
+            is_superuser=True,
+        )
+        Employee.objects.create(user=lawyer_user, role=LAWYER_GROUP)
+        lawyer_group, _ = Group.objects.get_or_create(name=LAWYER_GROUP)
+        lawyer_user.groups.add(lawyer_group)
+        self.client.force_login(lawyer_user)
 
         edit_response = self.client.get(reverse("contracts_signing_edit", args=[self.performer.pk]))
         send_scan_response = self.client.post(
