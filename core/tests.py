@@ -208,6 +208,32 @@ class HomePagePermissionsTests(TestCase):
         self.assertContains(response, "Производственный календарь")
         self.assertContains(response, 'data-clf-section="production-calendar"', html=False)
 
+    def test_staff_gets_projects_launch_subsection(self):
+        user = User.objects.create_user(
+            username="staff-projects-home",
+            email="staff-projects-home@example.com",
+            password="Secret123!",
+            is_staff=True,
+        )
+        self.client.force_login(user)
+
+        response = self.client.get(reverse("home"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="projects-second-sidebar-list"', html=False)
+        self.assertContains(response, 'data-projects-section="launch"', html=False)
+        self.assertContains(response, 'data-projects-section="scope"', html=False)
+        self.assertContains(response, 'data-projects-section="team"', html=False)
+        self.assertContains(response, 'data-projects-section="info-request"', html=False)
+        self.assertContains(response, 'id="projects-section-title">Проекты</h5>', html=False)
+        self.assertContains(response, 'id="projects-content-launch" class="projects-section-content"', html=False)
+        self.assertContains(response, 'id="projects-content-scope" class="projects-section-content d-none"', html=False)
+        self.assertContains(response, 'id="projects-content-team" class="projects-section-content d-none"', html=False)
+        self.assertContains(response, 'id="projects-content-info-request" class="projects-section-content d-none"', html=False)
+        self.assertContains(response, 'id="master-project-filter-dropdown"', html=False)
+        self.assertContains(response, 'id="projects-pane"', html=False)
+        self.assertContains(response, 'id="performers-pane"', html=False)
+
     def test_department_head_menu_hides_restricted_sections(self):
         user = User.objects.create_user(
             username="department-head-home",
@@ -328,3 +354,23 @@ class HomePagePermissionsTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'data-contracts-section="performer-requisites"', html=False)
+
+    def test_superuser_lawyer_profile_link_opens_user_profile(self):
+        user = User.objects.create_user(
+            username="superuser-lawyer-home",
+            email="superuser-lawyer-home@example.com",
+            password="Secret123!",
+            is_staff=True,
+            is_superuser=True,
+        )
+        Employee.objects.create(user=user, role=LAWYER_GROUP)
+        lawyer_group, _ = Group.objects.get_or_create(name=LAWYER_GROUP)
+        user.groups.add(lawyer_group)
+        self.client.force_login(user)
+
+        response = self.client.get(reverse("home"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, f'href="{reverse("user_profile")}"', html=False)
+        self.assertContains(response, "Профиль пользователя")
+        self.assertNotContains(response, f'href="{reverse("admin:index")}"', html=False)

@@ -1216,9 +1216,10 @@
   }
 
   .worktime-calendar-table-personal {
+    --worktime-select-width: 30px;
     --worktime-flex-width: 56px;
     --worktime-total-width: 80px;
-    min-width: calc(90px + 50px + 160px + 80px + 184px + (56px * var(--worktime-flex-column-count, 1)));
+    min-width: max(100%, calc(30px + 90px + 50px + 160px + 80px + 184px + (56px * var(--worktime-flex-column-count, 1))));
   }
 
   .worktime-calendar-table .worktime-flex-cell {
@@ -5222,49 +5223,35 @@
       clearHover(dayEl.closest('.flatpickr-calendar'));
     });
 
+    function initializeWorktimeInteractiveScope(root) {
+      var scope = root || document;
+      syncWorktimeTablesSoon(scope);
+      bindWorktimeHistogramSort(scope);
+      bindWorktimeGeneralCollapse(scope);
+      bindWorktimeAutosave(scope);
+      bindWorktimeRoundedTotals(scope);
+      bindWorktimeRealtimeTotals(scope);
+      bindWorktimeCategoryVisibility(scope);
+      bindWorktimeCellKeyboardNavigation(scope);
+    }
+
     document.addEventListener('DOMContentLoaded', function () {
-      syncWorktimeTablesSoon(document);
-      bindWorktimeHistogramSort(document);
-      bindWorktimeGeneralCollapse(document);
-      bindWorktimeAutosave(document);
-      bindWorktimeRoundedTotals(document);
-      bindWorktimeRealtimeTotals(document);
-      bindWorktimeCategoryVisibility(document);
-      bindWorktimeCellKeyboardNavigation(document);
+      initializeWorktimeInteractiveScope(document);
     });
 
     window.addEventListener('load', function () {
-      syncWorktimeTablesSoon(document);
-      bindWorktimeHistogramSort(document);
-      bindWorktimeGeneralCollapse(document);
-      bindWorktimeAutosave(document);
-      bindWorktimeRoundedTotals(document);
-      bindWorktimeRealtimeTotals(document);
-      bindWorktimeCategoryVisibility(document);
-      bindWorktimeCellKeyboardNavigation(document);
+      initializeWorktimeInteractiveScope(document);
     });
 
     document.body.addEventListener('htmx:afterSwap', function (event) {
-      syncWorktimeTablesSoon(event.target || document);
-      bindWorktimeHistogramSort(event.target || document);
-      bindWorktimeGeneralCollapse(event.target || document);
-      bindWorktimeAutosave(event.target || document);
-      bindWorktimeRoundedTotals(event.target || document);
-      bindWorktimeRealtimeTotals(event.target || document);
-      bindWorktimeCategoryVisibility(event.target || document);
-      bindWorktimeCellKeyboardNavigation(event.target || document);
+      initializeWorktimeInteractiveScope(event.target || document);
     });
 
     document.body.addEventListener('worktime-layout-visible', function () {
-      syncWorktimeTablesSoon(document);
-      bindWorktimeHistogramSort(document);
-      bindWorktimeGeneralCollapse(document);
-      bindWorktimeAutosave(document);
-      bindWorktimeRoundedTotals(document);
-      bindWorktimeRealtimeTotals(document);
-      bindWorktimeCategoryVisibility(document);
-      bindWorktimeCellKeyboardNavigation(document);
+      initializeWorktimeInteractiveScope(document);
     });
+
+    initializeWorktimeInteractiveScope(document);
 
     document.addEventListener('click', function (event) {
       var target = event.target;

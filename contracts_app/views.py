@@ -62,6 +62,8 @@ def _has_contract_admin_role(user):
 
 
 def contract_signing_manager_required(user):
+    if _is_contract_lawyer(user) and not _has_contract_admin_role(user):
+        return False
     return bool(getattr(user, "is_superuser", False) or _has_contract_admin_role(user))
 
 

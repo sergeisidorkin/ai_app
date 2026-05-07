@@ -1,50 +1,57 @@
 {% load projects_extras %}
 
-<div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
-  <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
-    <i class="bi bi-table"></i> Исполнители
-  </h5>
-  <div class="dropdown" id="perf-project-filter-dropdown">
-    <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
-            id="perf-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
-      Проекты: <span class="js-perf-filter-label">Все</span>
-    </button>
-    <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="perf-project-filter-toggle" style="max-height: 240px; overflow-y: auto;">
-      <div class="form-check mb-2">
-        <input class="form-check-input js-perf-filter" type="checkbox" value="__all__" id="perf-filter-all">
-        <label class="form-check-label" for="perf-filter-all">Все проекты</label>
+<div id="projects-content-team" class="projects-section-content d-none">
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <div id="performers-loading" class="text-muted htmx-indicator d-none align-items-center gap-2">
+        <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+        <span>Загрузка исполнителей…</span>
       </div>
-      <hr class="dropdown-divider">
-      {% for proj in performer_projects %}
-        <div class="form-check">
-          <input class="form-check-input js-perf-filter" type="checkbox"
-                 value="{{ proj.id }}" id="perf-filter-{{ proj.id }}"
-                 data-summary-label="{{ proj.short_uid }}"
-                 data-full-label="{{ proj.short_uid }}{% if proj.type_short_display %} {{ proj.type_short_display }}{% endif %}{% if proj.name %} {{ proj.name }}{% endif %}">
-          <label class="form-check-label" for="perf-filter-{{ proj.id }}">
-            {{ proj.short_uid }}{% if proj.type_short_display %} {{ proj.type_short_display }}{% endif %}{% if proj.name %} {{ proj.name }}{% endif %}
-          </label>
+      <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
+        <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
+          <i class="bi bi-table"></i> Исполнители
+        </h5>
+        <div class="dropdown" id="perf-project-filter-dropdown">
+          <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+                  id="perf-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+            Проекты: <span class="js-perf-filter-label">Все</span>
+          </button>
+          <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="perf-project-filter-toggle" style="max-height: 240px; overflow-y: auto;">
+            <div class="form-check mb-2">
+              <input class="form-check-input js-perf-filter" type="checkbox" value="__all__" id="perf-filter-all">
+              <label class="form-check-label" for="perf-filter-all">Все проекты</label>
+            </div>
+            <hr class="dropdown-divider">
+            {% for proj in performer_projects %}
+              <div class="form-check">
+                <input class="form-check-input js-perf-filter" type="checkbox"
+                       value="{{ proj.id }}" id="perf-filter-{{ proj.id }}"
+                       data-summary-label="{{ proj.short_uid }}"
+                       data-full-label="{{ proj.short_uid }}{% if proj.type_short_display %} {{ proj.type_short_display }}{% endif %}{% if proj.name %} {{ proj.name }}{% endif %}">
+                <label class="form-check-label" for="perf-filter-{{ proj.id }}">
+                  {{ proj.short_uid }}{% if proj.type_short_display %} {{ proj.type_short_display }}{% endif %}{% if proj.name %} {{ proj.name }}{% endif %}
+                </label>
+              </div>
+            {% empty %}
+              <div class="text-muted small">Нет проектов</div>
+            {% endfor %}
+          </div>
         </div>
-      {% empty %}
-        <div class="text-muted small">Нет проектов</div>
-      {% endfor %}
-    </div>
-  </div>
-  <div class="dropdown" id="perf-asset-filter-dropdown">
-    <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
-            id="perf-asset-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
-      Активы: <span class="js-perf-asset-label">Все</span>
-    </button>
-    <div class="dropdown-menu p-3" aria-labelledby="perf-asset-filter-toggle" style="max-height: 240px; overflow-y: auto; white-space: nowrap;">
-      <div class="form-check mb-2">
-        <input class="form-check-input js-perf-asset-filter" type="checkbox" value="__all__" id="perf-asset-all">
-        <label class="form-check-label" for="perf-asset-all">Все активы</label>
+        <div class="dropdown" id="perf-asset-filter-dropdown">
+          <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+                  id="perf-asset-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+            Активы: <span class="js-perf-asset-label">Все</span>
+          </button>
+          <div class="dropdown-menu p-3" aria-labelledby="perf-asset-filter-toggle" style="max-height: 240px; overflow-y: auto; white-space: nowrap;">
+            <div class="form-check mb-2">
+              <input class="form-check-input js-perf-asset-filter" type="checkbox" value="__all__" id="perf-asset-all">
+              <label class="form-check-label" for="perf-asset-all">Все активы</label>
+            </div>
+            <hr class="dropdown-divider">
+            <div id="perf-asset-list"></div>
+          </div>
+        </div>
       </div>
-      <hr class="dropdown-divider">
-      <div id="perf-asset-list"></div>
-    </div>
-  </div>
-</div>
 
 <div id="performers-main-section" style="overflow-x:auto">
   <table class="table table-sm align-middle performers-table mb-0">
@@ -461,7 +468,14 @@
   </div>
 </div>
 
-<div id="info-request-approval-section" class="mt-5">
+    </div>
+  </div>
+</div>
+
+<div id="projects-content-info-request" class="projects-section-content d-none">
+  <div class="card shadow-sm">
+    <div class="card-body">
+<div id="info-request-approval-section">
   <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
     <div class="d-flex align-items-center gap-3 flex-wrap">
       <h5 class="table-section-title mb-0">
@@ -749,6 +763,10 @@
         </div>
       </div>
     {% endif %}
+  </div>
+</div>
+
+    </div>
   </div>
 </div>
 

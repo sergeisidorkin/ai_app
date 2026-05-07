@@ -14,7 +14,13 @@ from django.urls import reverse
 from classifiers_app.models import OKVCurrency
 from experts_app.models import ExpertSpecialty
 from group_app.models import GroupMember, OrgUnit
-from policy_app.forms import ProductForm, SectionStructureForm, ServiceGoalReportForm, TariffForm
+from policy_app.forms import (
+    ProductForm,
+    SectionStructureForm,
+    ServiceGoalReportForm,
+    TariffForm,
+    TypicalServiceCompositionForm,
+)
 from policy_app.models import (
     ConsultingDirection,
     ConsultingDirectionType,
@@ -445,6 +451,40 @@ class PolicyMasterFilterTests(TestCase):
 
         self.assertEqual(list(structure_form.fields["section"].queryset), [self.section])
         self.assertEqual(list(tariff_form.fields["section"].queryset), [self.section])
+
+    def test_dependent_section_forms_reject_malformed_bound_ids_without_crashing(self):
+        form_configs = [
+            (
+                "structure",
+                SectionStructureForm,
+                {"subsections": "Подраздел"},
+                {},
+            ),
+            (
+                "service_composition",
+                TypicalServiceCompositionForm,
+                {"service_composition": "Состав услуг", "service_composition_editor_state": ""},
+                {},
+            ),
+            (
+                "tariff",
+                TariffForm,
+                {"base_rate_vpm": "1.00", "service_hours": "1", "service_days_tkp": "1"},
+                {"request_user": self.user},
+            ),
+        ]
+        malformed_cases = [
+            ({"product": "abc", "section": str(self.section.pk)}, "product"),
+            ({"product": str(self.product.pk), "section": "abc"}, "section"),
+        ]
+
+        for form_name, form_class, base_data, form_kwargs in form_configs:
+            for malformed_data, error_field in malformed_cases:
+                with self.subTest(form_name=form_name, error_field=error_field):
+                    form = form_class(data={**base_data, **malformed_data}, **form_kwargs)
+
+                    self.assertFalse(form.is_valid())
+                    self.assertIn(error_field, form.errors)
 
 
 class ConsultingDirectionViewsTests(TestCase):
@@ -1324,6 +1364,10 @@ class TypicalServiceTermViewsTests(TestCase):
         self.assertContains(response, ">1,5<", html=False)
         self.assertContains(response, ">3<", html=False)
         self.assertContains(response, 'id="typical-service-terms-actions"', html=False)
+        self.assertContains(response, 'id="typical-service-terms-gantt-edit-btn"', html=False)
+        self.assertContains(response, 'id="typical-service-term-gantt-editor"', html=False)
+        self.assertContains(response, 'id="typical-service-term-gantt-cancel-btn"', html=False)
+        self.assertContains(response, reverse("typical_service_term_gantt", args=[TypicalServiceTerm.objects.get().pk]))
         self.assertContains(response, 'id="typical-service-terms-csv-download-btn"', html=False)
         self.assertContains(response, 'id="typical-service-terms-csv-upload-btn"', html=False)
 
@@ -1379,6 +1423,117 @@ class TypicalServiceTermViewsTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'value="1,5"', html=False)
+
+    def test_typical_service_term_gantt_get_returns_default_diagram(self):
+        item = TypicalServiceTerm.objects.create(
+            product=self.product,
+            preliminary_report_months=Decimal("1.5"),
+            final_report_weeks=3,
+            position=1,
+        )
+
+        response = self.client.get(reverse("typical_service_term_gantt", args=[item.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["term"]["product"], "TERM")
+        tasks = payload["gantt"]["data"]
+        self.assertEqual(
+            {task["system_key"] for task in tasks},
+            {"preliminary_report", "final_report"},
+        )
+        self.assertEqual(len(payload["gantt"]["links"]), 1)
+
+    def test_typical_service_term_gantt_post_saves_diagram_and_updates_terms(self):
+        item = TypicalServiceTerm.objects.create(
+            product=self.product,
+            preliminary_report_months=Decimal("1.0"),
+            final_report_weeks=2,
+            position=1,
+        )
+        payload = {
+            "data": [
+                {
+                    "id": "preliminary",
+                    "text": "Предварительный отчёт",
+                    "system_key": "preliminary_report",
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-04-01",
+                    "progress": 0,
+                    "type": "task",
+                },
+                {
+                    "id": "final",
+                    "text": "Итоговый отчёт",
+                    "system_key": "final_report",
+                    "start_date": "2026-04-01",
+                    "end_date": "2026-05-13",
+                    "progress": 0,
+                    "type": "task",
+                },
+            ],
+            "links": [{"id": "link-1", "source": "preliminary", "target": "final", "type": "0"}],
+            "meta": {"base_date": "2026-01-01"},
+        }
+
+        response = self.client.post(
+            reverse("typical_service_term_gantt", args=[item.pk]),
+            data=json.dumps(payload, ensure_ascii=False),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+        item.refresh_from_db()
+        self.assertEqual(item.preliminary_report_months, Decimal("3.0"))
+        self.assertEqual(item.final_report_weeks, 6)
+        self.assertEqual(item.gantt_data["data"][0]["system_key"], "preliminary_report")
+        self.assertEqual(item.gantt_data["links"][0]["source"], "preliminary")
+
+    def test_typical_service_term_gantt_post_requires_system_tasks(self):
+        item = TypicalServiceTerm.objects.create(
+            product=self.product,
+            preliminary_report_months=Decimal("1.0"),
+            final_report_weeks=2,
+            position=1,
+        )
+
+        response = self.client.post(
+            reverse("typical_service_term_gantt", args=[item.pk]),
+            data=json.dumps({"data": [{"id": "task", "start_date": "2026-01-01", "end_date": "2026-01-08"}]}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        item.refresh_from_db()
+        self.assertEqual(item.preliminary_report_months, Decimal("1.0"))
+        self.assertEqual(item.final_report_weeks, 2)
+
+    def test_non_staff_user_cannot_edit_typical_service_term_gantt(self):
+        item = TypicalServiceTerm.objects.create(
+            product=self.product,
+            preliminary_report_months=Decimal("1.0"),
+            final_report_weeks=2,
+            position=1,
+        )
+        non_staff = get_user_model().objects.create_user(
+            username="policy-user-terms-gantt",
+            password="secret123",
+            is_staff=False,
+        )
+        client = self.client_class()
+        client.force_login(non_staff)
+
+        response = client.post(
+            reverse("typical_service_term_gantt", args=[item.pk]),
+            data=json.dumps({"data": []}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 302)
+        item.refresh_from_db()
+        self.assertEqual(item.gantt_data, {})
 
     def test_typical_service_term_csv_download_exports_current_table_columns(self):
         TypicalServiceTerm.objects.create(

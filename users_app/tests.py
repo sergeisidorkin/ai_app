@@ -5,7 +5,7 @@ from django.urls import reverse
 
 from contacts_app.models import CitizenshipRecord, EmailRecord, PersonRecord, PhoneRecord, PositionRecord
 from group_app.models import GroupMember
-from policy_app.models import DIRECTION_DIRECTOR_GROUP, DIRECTOR_GROUP, ROLE_GROUPS_ORDER
+from policy_app.models import DIRECTION_DIRECTOR_GROUP, DIRECTOR_GROUP, LAWYER_GROUP, ROLE_GROUPS_ORDER
 
 from .forms import EmployeeForm, ExternalRegistrationForm, FREELANCER_LABEL
 from .models import Employee, PendingRegistration
@@ -80,6 +80,21 @@ class UsersContactsSyncTests(TestCase):
 
         self.assertEqual(employee.role, DIRECTION_DIRECTOR_GROUP)
         self.assertTrue(employee.user.is_superuser)
+
+    def test_employee_form_does_not_grant_lawyer_superuser_rights(self):
+        group, _ = Group.objects.get_or_create(name=LAWYER_GROUP)
+        form = EmployeeForm(
+            self._employee_payload(
+                email="lawyer@example.com",
+                role=str(group.pk),
+            )
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        employee = form.save()
+
+        self.assertEqual(employee.role, LAWYER_GROUP)
+        self.assertFalse(employee.user.is_superuser)
 
     def test_employee_create_creates_linked_contact_records(self):
         response = self.client.post(reverse("emp_form_create"), self._employee_payload())

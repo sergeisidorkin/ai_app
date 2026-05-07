@@ -943,6 +943,30 @@ class WorkVolumePerformerCreationTests(TestCase):
         self.assertNotIn('name="final_payment"', form_content)
         self.assertNotIn('name="contract_number"', form_content)
 
+    def test_performers_partial_splits_project_subsections(self):
+        response = self.client.get(reverse("performers_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="projects-content-team" class="projects-section-content d-none"', html=False)
+        self.assertContains(response, 'id="projects-content-info-request" class="projects-section-content d-none"', html=False)
+        self.assertContains(response, 'id="performers-main-section"', html=False)
+        self.assertContains(response, 'id="participation-confirmation-section"', html=False)
+        self.assertContains(response, 'id="info-request-approval-section"', html=False)
+
+        content = response.content.decode("utf-8")
+        self.assertLess(
+            content.index('id="projects-content-team"'),
+            content.index('id="performers-main-section"'),
+        )
+        self.assertLess(
+            content.index('id="participation-confirmation-section"'),
+            content.index('id="projects-content-info-request"'),
+        )
+        self.assertLess(
+            content.index('id="projects-content-info-request"'),
+            content.index('id="info-request-approval-section"'),
+        )
+
     def test_direction_director_uses_project_manager_executor_locking(self):
         Employee.objects.create(user=self.user, role=DIRECTION_DIRECTOR_GROUP)
         company = GroupMember.objects.create(
@@ -1050,6 +1074,35 @@ class ProjectProductLinkSyncTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, expected_type)
         self.assertNotContains(response, '<td class="text-nowrap">DD</td>', html=False)
+
+    def test_projects_partial_splits_scope_tables_to_separate_subsection(self):
+        response = self.client.get(reverse("projects_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="projects-content-launch" class="projects-section-content"', html=False)
+        self.assertContains(response, 'id="projects-content-scope" class="projects-section-content d-none"', html=False)
+        self.assertContains(response, "Регистрация проекта")
+        self.assertContains(response, "Сроки проекта по договору")
+        self.assertContains(response, "Объем услуг: активы")
+        self.assertContains(response, "Объем услуг: юрлица")
+
+        content = response.content.decode("utf-8")
+        self.assertLess(
+            content.index('id="projects-content-launch"'),
+            content.index("Регистрация проекта"),
+        )
+        self.assertLess(
+            content.index("Сроки проекта по договору"),
+            content.index('id="projects-content-scope"'),
+        )
+        self.assertLess(
+            content.index('id="projects-content-scope"'),
+            content.index("Объем услуг: активы"),
+        )
+        self.assertLess(
+            content.index("Объем услуг: активы"),
+            content.index("Объем услуг: юрлица"),
+        )
 
 
 class ExpertProjectVisibilityTests(TestCase):

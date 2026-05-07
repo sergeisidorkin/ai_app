@@ -8,7 +8,10 @@
          hx-target="#policy-pane"
          hx-swap="innerHTML"
          hx-indicator="#policy-loading">
-      <div id="policy-loading" class="text-muted htmx-indicator">Загрузка политики…</div>
+      <div id="policy-loading" class="text-muted htmx-indicator d-inline-flex align-items-center gap-2">
+        <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+        <span>Загрузка продуктов…</span>
+      </div>
     </div>
 
     <!-- Постоянная модалка (вынесена за пределы policy-pane) -->

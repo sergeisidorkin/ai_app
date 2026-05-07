@@ -383,10 +383,48 @@
                     <td>
                       <input type="number" name="final_report_term_weeks" min="0" step="0.1" class="form-control readonly-field proposal-stage-final-report-term-weeks" value="{{ stage.final_report_term_weeks|floatformat:'1' }}" readonly tabindex="-1">
                     </td>
-                    <td>
-                      <input type="text" name="final_report_date" class="form-control js-date proposal-stage-final-report-date" value="{{ stage.final_report_date }}">
+                    <td class="proposal-stage-final-report-cell">
+                      <div class="proposal-stage-final-report-wrap">
+                        <input type="text" name="final_report_date" class="form-control js-date proposal-stage-final-report-date" value="{{ stage.final_report_date }}">
+                        <span class="proposal-stage-delay-action-slot">
+                          {% if form.stage_rows|length > 1 and not forloop.last %}
+                            <button type="button"
+                                    class="btn btn-sm rounded-circle proposal-stage-delay-add"
+                                    title="Добавить задержку/наложение"
+                                    aria-label="Добавить задержку или наложение после этапа {{ stage.rank }}">
+                              <i class="bi bi-plus" aria-hidden="true"></i>
+                            </button>
+                          {% endif %}
+                        </span>
+                      </div>
                     </td>
                   </tr>
+                  {% if not forloop.last %}
+                    <tr class="proposal-stage-delay-row{% if not stage.next_stage_delay_days %} d-none{% endif %}"
+                        data-proposal-delay-for-stage-key="{{ stage.rank }}">
+                      <td class="proposal-terms-stage-col">
+                        <input type="text" class="form-control readonly-field proposal-stage-label-input" value="Лаг" readonly tabindex="-1">
+                      </td>
+                      <td>
+                        <div class="proposal-stage-delay-input-wrap">
+                          <div class="proposal-stage-delay-number-shell">
+                            <input type="number"
+                                   name="next_stage_delay_days"
+                                   step="1"
+                                   inputmode="numeric"
+                                   class="form-control proposal-stage-next-delay-days"
+                                   value="{{ stage.next_stage_delay_days }}">
+                            <span class="proposal-stage-delay-unit" aria-hidden="true">дн.</span>
+                          </div>
+                          <button type="button"
+                                  class="btn btn-sm proposal-stage-delay-remove"
+                                  title="Удалить лаг"
+                                  aria-label="Удалить лаг после этапа {{ stage.rank }}">&times;</button>
+                        </div>
+                      </td>
+                      <td colspan="4"></td>
+                    </tr>
+                  {% endif %}
                 {% endfor %}
                 <tr class="proposal-stage-terms-total-row{% if form.stage_rows|length <= 1 %} d-none{% endif %}">
                   <td class="proposal-terms-stage-col">

@@ -2,6 +2,9 @@
 <div id="projects-pane">
   <!-- Индикатор, чтобы наследование hx-indicator не ругалось -->
   <div id="projects-loading" class="text-muted htmx-indicator d-none">Загрузка…</div>
+  <div id="projects-content-launch" class="projects-section-content">
+    <div class="card shadow-sm">
+      <div class="card-body">
   <!-- Регистрация проекта -->
   <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
     <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
@@ -404,8 +407,15 @@
     {% endif %}
   </div>
 
+      </div>
+    </div>
+  </div>
+
+  <div id="projects-content-scope" class="projects-section-content d-none">
+    <div class="card shadow-sm">
+      <div class="card-body">
   <!-- Объем работ -->
-  <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap" style="margin-top: 50px;">
+  <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
     <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
       <i class="bi bi-table"></i> Объем услуг: активы
     </h5>
@@ -680,6 +690,10 @@
         </div>
       </div>
     {% endif %}
+  </div>
+
+      </div>
+    </div>
   </div>
 
   <script>

@@ -20,7 +20,7 @@
             </div>
           </div>
           {% for column in proposal_registry_ui_columns %}
-            <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="{{ column.picker_value }}" id="proposal-col-{{ column.picker_value }}" checked><label class="form-check-label" for="proposal-col-{{ column.picker_value }}">{{ column.label }}</label></div></div>
+            <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="{{ column.picker_value }}" id="proposal-col-{{ column.picker_value }}"{% if column.default_hidden %} data-default-hidden="true"{% else %} checked{% endif %}><label class="form-check-label" for="proposal-col-{{ column.picker_value }}">{{ column.label }}</label></div></div>
           {% endfor %}
         </div>
       </div>
@@ -56,19 +56,9 @@
         <col class="proposal-purpose">
         <col class="proposal-services">
         <col class="proposal-evaluation-date">
-        <col class="proposal-term">
-        <col class="proposal-preliminary-report-date">
-        <col class="proposal-final-report-weeks">
-        <col class="proposal-final-report-date">
         <col class="proposal-report-languages">
         <col class="proposal-service-cost">
         <col class="proposal-currency">
-        <col class="proposal-advance-percent">
-        <col class="proposal-advance-term">
-        <col class="proposal-preliminary-report-percent">
-        <col class="proposal-preliminary-report-term">
-        <col class="proposal-final-report-percent">
-        <col class="proposal-final-report-term">
       </colgroup>
       <thead>
         <tr>
@@ -147,22 +137,12 @@
             <td data-col="purpose" class="proposal-textarea-cell">{{ proposal.purpose|linebreaksbr }}</td>
             <td data-col="service-composition" class="proposal-textarea-cell">{{ proposal.service_composition|linebreaksbr }}</td>
             <td data-col="evaluation-date">{{ proposal.evaluation_date|date:"d.m.Y" }}</td>
-            <td data-col="term">{{ proposal.service_term_months|floatformat:"1" }}</td>
-            <td data-col="preliminary-report-date">{{ proposal.preliminary_report_date|date:"d.m.Y" }}</td>
-            <td data-col="final-report-weeks">{{ proposal.final_report_term_weeks|floatformat:"1" }}</td>
-            <td data-col="final-report-date">{{ proposal.final_report_date|date:"d.m.Y" }}</td>
             <td data-col="report-languages" class="text-nowrap">{{ proposal.report_languages }}</td>
             <td data-col="service-cost" class="text-end">{{ proposal.service_cost|format_money }}</td>
             <td data-col="currency">{{ proposal.currency.code_alpha|default:"" }}</td>
-            <td data-col="advance-percent">{% if proposal.advance_percent != None %}{{ proposal.advance_percent|floatformat:"-2" }}%{% endif %}</td>
-            <td data-col="advance-term">{{ proposal.advance_term_days }}</td>
-            <td data-col="preliminary-report-percent">{% if proposal.preliminary_report_percent != None %}{{ proposal.preliminary_report_percent|floatformat:"-2" }}%{% endif %}</td>
-            <td data-col="preliminary-report-term">{{ proposal.preliminary_report_term_days }}</td>
-            <td data-col="final-report-percent">{% if proposal.final_report_percent != None %}{{ proposal.final_report_percent|floatformat:"-2" }}%{% endif %}</td>
-            <td data-col="final-report-term">{{ proposal.final_report_term_days }}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="39" class="text-muted">Пока нет данных.</td></tr>
+          <tr><td colspan="{{ proposal_registry_empty_colspan }}" class="text-muted">Пока нет данных.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -194,6 +174,146 @@
         </div>
       </div>
     {% endif %}
+  </div>
+
+  <div class="d-flex justify-content-between align-items-center gap-3 mb-3 table-section-header flex-wrap" style="margin-top: 24px;">
+    <div class="d-flex align-items-center gap-3 flex-wrap">
+      <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
+        <i class="bi bi-calendar-week"></i> Сроки и порядок платежей
+      </h5>
+      <div class="dropdown" id="proposal-payment-view-dropdown">
+        <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+                id="proposal-payment-view-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+          Вид: <span class="js-proposal-payment-view-label">Таблица</span>
+        </button>
+        <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="proposal-payment-view-toggle">
+          <label class="form-check proposal-payment-view-option" for="proposal-payment-view-table">
+            <input class="form-check-input js-proposal-payment-view" type="radio" name="proposal-payment-view"
+                   value="table" id="proposal-payment-view-table" checked>
+            <span class="form-check-label">Таблица</span>
+          </label>
+          <label class="form-check proposal-payment-view-option" for="proposal-payment-view-gantt">
+            <input class="form-check-input js-proposal-payment-view" type="radio" name="proposal-payment-view"
+                   value="gantt" id="proposal-payment-view-gantt">
+            <span class="form-check-label">График</span>
+          </label>
+        </div>
+      </div>
+    </div>
+    <div class="d-flex align-items-center justify-content-end gap-2 flex-wrap ms-auto">
+      <div class="d-flex align-items-center gap-2" id="proposal-payment-colpicker-controls">
+        <span class="small text-muted text-nowrap">Отображаемые поля:</span>
+        <div class="tkp-colpicker" id="proposal-payment-colpicker-wrap">
+          <button type="button" class="form-select form-select-sm text-start tkp-colpicker-btn" id="proposal-payment-colpicker-btn">
+            Все поля
+          </button>
+          <div class="tkp-colpicker-menu" id="proposal-payment-colpicker-menu">
+            <div class="tkp-colpicker-item">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" value="all" id="proposal-payment-col-all" checked>
+                <label class="form-check-label" for="proposal-payment-col-all">Все поля</label>
+              </div>
+            </div>
+            {% for column in proposal_payment_schedule_ui_columns %}
+              <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="{{ column.picker_value }}" id="proposal-payment-col-{{ column.picker_value }}"{% if column.default_hidden %} data-default-hidden="true"{% else %} checked{% endif %}><label class="form-check-label" for="proposal-payment-col-{{ column.picker_value }}">{{ column.label }}</label></div></div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+      <div id="proposal-payment-gantt-scale-controls" class="d-flex align-items-center gap-2 d-none">
+        <span class="small text-muted text-nowrap">Масштаб:</span>
+        <div class="btn-group btn-group-sm" role="group" aria-label="Масштаб диаграммы Гантта">
+          <button type="button" class="btn btn-outline-secondary js-proposal-payment-gantt-scale" data-scale="day">День</button>
+          <button type="button" class="btn btn-outline-secondary js-proposal-payment-gantt-scale" data-scale="week">Неделя</button>
+          <button type="button" class="btn btn-outline-secondary js-proposal-payment-gantt-scale" data-scale="month">Месяц</button>
+          <button type="button" class="btn btn-outline-secondary js-proposal-payment-gantt-scale" data-scale="quarter">Квартал</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="registration-table-wrap proposal-payment-schedule-table-wrap">
+    <table id="proposal-payment-schedule-table" class="table table-sm align-middle reg-table proposals-table">
+      <colgroup>
+        <col class="checkbox">
+        <col class="proposal-number" data-col="number">
+        <col class="group" data-col="group">
+        <col class="proposal-id" data-col="tkp-id">
+        <col class="proposal-type" data-col="type">
+        <col class="proposal-name" data-col="name">
+        <col class="proposal-stage" data-col="stage">
+        <col class="proposal-start-date" data-col="start-date">
+        <col class="proposal-term" data-col="term">
+        <col class="proposal-preliminary-report-date" data-col="preliminary-report-date">
+        <col class="proposal-final-report-weeks" data-col="final-report-weeks">
+        <col class="proposal-final-report-date" data-col="final-report-date">
+        <col class="proposal-advance-percent" data-col="advance-percent">
+        <col class="proposal-advance-term" data-col="advance-term">
+        <col class="proposal-preliminary-report-percent" data-col="preliminary-report-percent">
+        <col class="proposal-preliminary-report-term" data-col="preliminary-report-term">
+        <col class="proposal-final-report-percent" data-col="final-report-percent">
+        <col class="proposal-final-report-term" data-col="final-report-term">
+      </colgroup>
+      <thead>
+        <tr>
+          <th class="w-checkbox" style="width:1%">
+            <div class="form-check m-0">
+              <input class="form-check-input"
+                     type="checkbox"
+                     id="proposal-payment-master"
+                     aria-label="Выделить все строки сроков и порядка платежей"
+                     disabled>
+            </div>
+          </th>
+          {% for column in proposal_payment_schedule_ui_columns %}
+            <th data-col="{{ column.data_col }}">{{ column.label }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in proposal_payment_schedule_rows %}
+          <tr data-proposal-id="{{ row.proposal_id }}"
+              data-edit-url="{% url 'proposal_form_edit' row.proposal_id %}"{% if row.is_continuation or row.has_next_for_proposal %} class="{% if row.has_next_for_proposal %}proposal-payment-stage-has-next{% endif %}{% if row.is_continuation %}{% if row.has_next_for_proposal %} {% endif %}proposal-payment-stage-continuation{% endif %}"{% endif %}>
+            <td class="text-nowrap">
+              {% if row.is_first_for_proposal %}
+                <div class="form-check">
+                  <input class="form-check-input"
+                         type="checkbox"
+                         value="{{ row.proposal_id }}"
+                         aria-label="Строка сроков и порядка платежей"
+                         disabled>
+                </div>
+              {% endif %}
+            </td>
+            <td data-col="number">{% if row.is_first_for_proposal %}{{ row.number }}{% endif %}</td>
+            <td data-col="group">{% if row.is_first_for_proposal %}{{ row.group }}{% endif %}</td>
+            <td data-col="tkp-id" class="proposal-id-cell">{% if row.is_first_for_proposal %}{% if request.user.is_authenticated and request.user.is_staff %}<i class="bi bi-pencil-square text-secondary proposal-quick-edit me-1" role="button" title="Редактировать" aria-label="Редактировать ТКП"></i>{% endif %}<span class="clf-id-droid-mono">{{ row.tkp_id }}</span>{% endif %}</td>
+            <td data-col="type">{{ row.type }}</td>
+            <td data-col="name">{{ row.name }}</td>
+            <td data-col="stage">{{ row.stage }}</td>
+            <td data-col="start-date">{{ row.start_date|date:"d.m.Y" }}</td>
+            <td data-col="term">{{ row.service_term_months|format_decimal_comma:"1" }}</td>
+            <td data-col="preliminary-report-date">{{ row.preliminary_report_date|date:"d.m.Y" }}</td>
+            <td data-col="final-report-weeks">{{ row.final_report_term_weeks|format_decimal_comma:"1" }}</td>
+            <td data-col="final-report-date">{{ row.final_report_date|date:"d.m.Y" }}</td>
+            <td data-col="advance-percent">{% if row.advance_percent != None %}{{ row.advance_percent|floatformat:"-2" }}%{% endif %}</td>
+            <td data-col="advance-term">{{ row.advance_term_days|default_if_none:"" }}</td>
+            <td data-col="preliminary-report-percent">{% if row.preliminary_report_percent != None %}{{ row.preliminary_report_percent|floatformat:"-2" }}%{% endif %}</td>
+            <td data-col="preliminary-report-term">{{ row.preliminary_report_term_days|default_if_none:"" }}</td>
+            <td data-col="final-report-percent">{% if row.final_report_percent != None %}{{ row.final_report_percent|floatformat:"-2" }}%{% endif %}</td>
+            <td data-col="final-report-term">{{ row.final_report_term_days|default_if_none:"" }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="{{ proposal_payment_schedule_empty_colspan }}" class="text-muted">Пока нет данных.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div id="proposal-payment-gantt-wrap" class="proposal-payment-gantt-wrap d-none">
+    <div id="proposal-payment-gantt-empty" class="proposal-payment-gantt-empty text-muted d-none">
+      Нет строк с датами для построения диаграммы.
+    </div>
+    <div id="proposal-payment-gantt" class="proposal-payment-gantt"></div>
   </div>
 
   <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 24px;">

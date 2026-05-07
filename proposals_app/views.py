@@ -1,9 +1,10 @@
+import calendar
 import json
 import logging
 import os
 import sys
-from datetime import date as dt_date, datetime
-from decimal import Decimal
+from datetime import date as dt_date, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from urllib.parse import quote
 
 from django import forms
@@ -23,7 +24,10 @@ from core.cloud_storage import (
     get_primary_cloud_storage_label,
     is_nextcloud_primary,
 )
-from core.proposal_registry_columns import get_proposal_registry_ui_columns
+from core.proposal_registry_columns import (
+    get_proposal_payment_schedule_ui_columns,
+    get_proposal_registry_ui_columns,
+)
 from core.section_labels import get_app_section_label
 from experts_app.models import ExpertProfile, ExpertProfileSpecialty
 from nextcloud_app.api import NextcloudApiClient, NextcloudApiError
@@ -1005,6 +1009,214 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                 )
 
 
+def _proposal_schedule_decimal(value):
+    if value in (None, ""):
+        return None
+    if isinstance(value, Decimal):
+        return value
+    try:
+        return Decimal(str(value).strip().replace("\u00a0", "").replace(" ", "").replace(",", "."))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _proposal_schedule_int(value):
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _proposal_schedule_date(value):
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, dt_date):
+        return value
+    raw = str(value).strip()
+    for fmt in ("%d.%m.%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _proposal_schedule_month_end_day(year, month):
+    return calendar.monthrange(year, month)[1]
+
+
+def _add_proposal_schedule_months(value, months):
+    months = _proposal_schedule_decimal(months)
+    if not value or months is None:
+        return value
+    safe_months = max(months, Decimal("0"))
+    whole_months = int(safe_months)
+    fractional_days = int(((safe_months - whole_months) * Decimal("30")) + Decimal("0.5"))
+    month_index = (value.month - 1) + whole_months
+    year = value.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(value.day, _proposal_schedule_month_end_day(year, month))
+    return dt_date(year, month, day) + timedelta(days=fractional_days)
+
+
+def _subtract_proposal_schedule_months(value, months):
+    months = _proposal_schedule_decimal(months)
+    if not value or months is None:
+        return value
+    safe_months = max(months, Decimal("0"))
+    whole_months = int(safe_months)
+    fractional_days = int(((safe_months - whole_months) * Decimal("30")) + Decimal("0.5"))
+    base = value - timedelta(days=fractional_days)
+    month_index = (base.month - 1) - whole_months
+    year = base.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(base.day, _proposal_schedule_month_end_day(year, month))
+    return dt_date(year, month, day)
+
+
+def _add_proposal_schedule_weeks(value, weeks):
+    weeks = _proposal_schedule_decimal(weeks)
+    if not value or weeks is None:
+        return value
+    safe_weeks = max(weeks, Decimal("0"))
+    return value + timedelta(days=int((safe_weeks * Decimal("7")) + Decimal("0.5")))
+
+
+def _proposal_schedule_base_start_date(today=None):
+    current = (today or timezone.localdate()) + timedelta(days=14)
+    previous_monday = current - timedelta(days=current.weekday())
+    next_monday = previous_monday + timedelta(days=7)
+    if abs((current - previous_monday).days) <= abs((next_monday - current).days):
+        return previous_monday
+    return next_monday
+
+
+def _proposal_stage_payloads(proposal):
+    return [
+        payload
+        for payload in (getattr(proposal, "stage_payloads_json", None) or [])
+        if isinstance(payload, dict)
+    ]
+
+
+def _proposal_stage_value(payload, key, proposal, attr):
+    value = payload.get(key) if isinstance(payload, dict) else None
+    if value not in (None, ""):
+        return value
+    return getattr(proposal, attr, None)
+
+
+def _proposal_stage_payload_for_product(stage_payloads, product, index):
+    product_id = str(getattr(product, "pk", "") or "")
+    if product_id:
+        for payload in stage_payloads:
+            if str(payload.get("product_id") or "") == product_id:
+                return payload
+    if index < len(stage_payloads):
+        return stage_payloads[index]
+    return {}
+
+
+def _build_proposal_payment_schedule_rows(proposals):
+    rows = []
+    for proposal in proposals:
+        products = list(proposal.ordered_products()) if getattr(proposal, "pk", None) else []
+        if not products and getattr(proposal, "type_id", None):
+            products = [proposal.type]
+        stage_payloads = _proposal_stage_payloads(proposal)
+        if not products and stage_payloads:
+            products = [None for _ in stage_payloads]
+
+        rolling_start_date = _proposal_schedule_base_start_date()
+        product_count = len(products)
+        for index, product in enumerate(products, start=1):
+            payload = _proposal_stage_payload_for_product(stage_payloads, product, index - 1)
+            service_term_months = _proposal_schedule_decimal(
+                _proposal_stage_value(payload, "service_term_months", proposal, "service_term_months")
+            )
+            final_report_term_weeks = _proposal_schedule_decimal(
+                _proposal_stage_value(payload, "final_report_term_weeks", proposal, "final_report_term_weeks")
+            )
+            preliminary_report_date = _proposal_schedule_date(
+                _proposal_stage_value(payload, "preliminary_report_date", proposal, "preliminary_report_date")
+            )
+            final_report_date = _proposal_schedule_date(
+                _proposal_stage_value(payload, "final_report_date", proposal, "final_report_date")
+            )
+            next_stage_delay_days = _proposal_schedule_int(
+                payload.get("next_stage_delay_days") if isinstance(payload, dict) else 0
+            ) or 0
+
+            if preliminary_report_date and service_term_months is not None:
+                start_date = _subtract_proposal_schedule_months(preliminary_report_date, service_term_months)
+            else:
+                start_date = rolling_start_date
+            if not preliminary_report_date and service_term_months is not None:
+                preliminary_report_date = _add_proposal_schedule_months(start_date, service_term_months)
+            if not final_report_date and preliminary_report_date and final_report_term_weeks is not None:
+                final_report_date = _add_proposal_schedule_weeks(preliminary_report_date, final_report_term_weeks)
+            stage_end_date = final_report_date or preliminary_report_date or start_date
+            rolling_start_date = (
+                stage_end_date + timedelta(days=next_stage_delay_days)
+                if stage_end_date
+                else stage_end_date
+            )
+
+            rows.append(
+                {
+                    "proposal_id": proposal.pk,
+                    "is_first_for_proposal": index == 1,
+                    "is_continuation": index > 1,
+                    "has_next_for_proposal": index < product_count,
+                    "number": proposal.formatted_number,
+                    "group": proposal.group_display,
+                    "tkp_id": proposal.short_uid,
+                    "type": (getattr(product, "short_name", "") or str(product or "")).strip(),
+                    "name": proposal.name,
+                    "stage": f"Этап {index}",
+                    "start_date": start_date,
+                    "service_term_months": service_term_months,
+                    "preliminary_report_date": preliminary_report_date,
+                    "final_report_term_weeks": final_report_term_weeks,
+                    "final_report_date": final_report_date,
+                    "next_stage_delay_days": next_stage_delay_days,
+                    "advance_percent": _proposal_schedule_decimal(
+                        _proposal_stage_value(payload, "advance_percent", proposal, "advance_percent")
+                    ),
+                    "advance_term_days": _proposal_schedule_int(
+                        _proposal_stage_value(payload, "advance_term_days", proposal, "advance_term_days")
+                    ),
+                    "preliminary_report_percent": _proposal_schedule_decimal(
+                        _proposal_stage_value(
+                            payload,
+                            "preliminary_report_percent",
+                            proposal,
+                            "preliminary_report_percent",
+                        )
+                    ),
+                    "preliminary_report_term_days": _proposal_schedule_int(
+                        _proposal_stage_value(
+                            payload,
+                            "preliminary_report_term_days",
+                            proposal,
+                            "preliminary_report_term_days",
+                        )
+                    ),
+                    "final_report_percent": _proposal_schedule_decimal(
+                        _proposal_stage_value(payload, "final_report_percent", proposal, "final_report_percent")
+                    ),
+                    "final_report_term_days": _proposal_schedule_int(
+                        _proposal_stage_value(payload, "final_report_term_days", proposal, "final_report_term_days")
+                    ),
+                }
+            )
+    return rows
+
+
 def _proposals_context(request=None, user=None, *, debug_nextcloud_links=False):
     if request is not None and user is None:
         user = request.user
@@ -1048,11 +1260,17 @@ def _proposals_context(request=None, user=None, *, debug_nextcloud_links=False):
             is_active=True,
             use_for_notifications=True,
         ).exists()
+    proposal_registry_ui_columns = get_proposal_registry_ui_columns()
+    proposal_payment_schedule_ui_columns = get_proposal_payment_schedule_ui_columns()
     return {
         "proposals": proposals,
+        "proposal_payment_schedule_rows": _build_proposal_payment_schedule_rows(proposals),
         "proposal_templates": proposal_templates,
         "proposal_variables": proposal_variables,
-        "proposal_registry_ui_columns": get_proposal_registry_ui_columns(),
+        "proposal_registry_ui_columns": proposal_registry_ui_columns,
+        "proposal_payment_schedule_ui_columns": proposal_payment_schedule_ui_columns,
+        "proposal_registry_empty_colspan": len(proposal_registry_ui_columns) + 2,
+        "proposal_payment_schedule_empty_colspan": len(proposal_payment_schedule_ui_columns) + 1,
         "primary_cloud_storage_label": get_primary_cloud_storage_label(),
         "proposal_request_sent_initial": timezone.localtime().replace(second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M"),
         "has_active_smtp_connection": has_active_smtp_connection,
