@@ -2,7 +2,7 @@ import csv
 import io
 import json
 import calendar
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
@@ -1810,38 +1810,45 @@ def _roll_up_typical_service_term_gantt_parent_dates(tasks):
         children_by_parent[str(parent_id)].append(task)
 
     resolved = {}
+    resolving = set()
 
     def resolve_dates(task):
         task_id = str(task.get("id"))
         if task_id in resolved:
             return resolved[task_id]
+        if task_id in resolving:
+            raise ValueError("В диаграмме обнаружена циклическая связь родительских задач.")
 
-        start_date = _parse_typical_service_term_gantt_date(task.get("start_date"))
-        if not start_date:
-            resolved[task_id] = (None, None)
+        resolving.add(task_id)
+        try:
+            start_date = _parse_typical_service_term_gantt_date(task.get("start_date"))
+            if not start_date:
+                resolved[task_id] = (None, None)
+                return resolved[task_id]
+            end_date = _task_end_date(task, start_date)
+
+            child_dates = [
+                resolve_dates(child)
+                for child in children_by_parent.get(task_id, [])
+            ]
+            child_dates = [
+                (child_start, child_end)
+                for child_start, child_end in child_dates
+                if child_start and child_end
+            ]
+            if child_dates:
+                start_date = min(child_start for child_start, _ in child_dates)
+                end_date = max(child_end for _, child_end in child_dates)
+                task["start_date"] = _serialize_typical_service_term_gantt_date(start_date)
+                task["end_date"] = _serialize_typical_service_term_gantt_date(end_date)
+                task["duration"] = max((end_date - start_date).days, 0)
+                if task.get("type") not in {"milestone", TYPICAL_SERVICE_TERM_GANTT_SERVICE_SECTION_TYPE}:
+                    task["type"] = "project"
+
+            resolved[task_id] = (start_date, end_date)
             return resolved[task_id]
-        end_date = _task_end_date(task, start_date)
-
-        child_dates = [
-            resolve_dates(child)
-            for child in children_by_parent.get(task_id, [])
-        ]
-        child_dates = [
-            (child_start, child_end)
-            for child_start, child_end in child_dates
-            if child_start and child_end
-        ]
-        if child_dates:
-            start_date = min(child_start for child_start, _ in child_dates)
-            end_date = max(child_end for _, child_end in child_dates)
-            task["start_date"] = _serialize_typical_service_term_gantt_date(start_date)
-            task["end_date"] = _serialize_typical_service_term_gantt_date(end_date)
-            task["duration"] = max((end_date - start_date).days, 0)
-            if task.get("type") not in {"milestone", TYPICAL_SERVICE_TERM_GANTT_SERVICE_SECTION_TYPE}:
-                task["type"] = "project"
-
-        resolved[task_id] = (start_date, end_date)
-        return resolved[task_id]
+        finally:
+            resolving.discard(task_id)
 
     for task in tasks_by_id.values():
         resolve_dates(task)
@@ -1866,10 +1873,12 @@ def _normalize_typical_service_term_gantt_payload(
     allowed_section_names = set(allowed_section_names or [])
     section_specialties_by_name = section_specialties_by_name or {}
     allowed_specialties = set(allowed_specialties or [])
-    executor_specialties_by_label = {}
+    executor_specialties_by_key = {}
+    executor_legacy_labels = defaultdict(list)
     for item in allowed_executors or []:
         if isinstance(item, dict):
             label = str(item.get("label") or "").strip()
+            key = str(item.get("value") or item.get("id") or label).strip()
             specialties = {
                 str(value or "").strip()
                 for value in item.get("specialties", [])
@@ -1877,10 +1886,25 @@ def _normalize_typical_service_term_gantt_payload(
             }
         else:
             label = str(item or "").strip()
+            key = label
             specialties = set()
-        if label:
-            executor_specialties_by_label[label] = specialties
-    allowed_executor_labels = set(executor_specialties_by_label)
+        if key:
+            executor_specialties_by_key[key] = specialties
+        if label and key:
+            executor_legacy_labels[label].append(key)
+    ambiguous_executor_labels = {
+        label
+        for label, count in Counter(
+            str(item.get("label") or "").strip()
+            for item in allowed_executors or []
+            if isinstance(item, dict) and str(item.get("label") or "").strip()
+        ).items()
+        if count > 1
+    }
+    for label, keys in executor_legacy_labels.items():
+        if label not in ambiguous_executor_labels and len(keys) == 1:
+            executor_specialties_by_key[label] = executor_specialties_by_key[keys[0]]
+    allowed_executor_keys = set(executor_specialties_by_key)
     normalized_tasks = [dict(task) for task in tasks if isinstance(task, dict)]
     normalized_links = [dict(link) for link in links if isinstance(link, dict)]
     normalized_task_ids = {
@@ -1898,7 +1922,7 @@ def _normalize_typical_service_term_gantt_payload(
         link["lag_mode"] = "auto" if lag_mode == "auto" else "fixed"
     meta = dict(payload.get("meta") or {}) if isinstance(payload.get("meta"), dict) else {}
     def validate_executor_specialty(executor, specialty):
-        if executor and (not specialty or specialty not in executor_specialties_by_label.get(executor, set())):
+        if executor and (not specialty or specialty not in executor_specialties_by_key.get(executor, set())):
             raise ValueError("Выберите исполнителя, связанного с выбранной специальностью.")
 
     for task in normalized_tasks:
@@ -1917,7 +1941,7 @@ def _normalize_typical_service_term_gantt_payload(
             task.pop("resource_name", None)
         if specialty and specialty not in allowed_specialties:
             raise ValueError("Выберите специальность из списка.")
-        if executor and executor not in allowed_executor_labels:
+        if executor and executor not in allowed_executor_keys:
             raise ValueError("Выберите исполнителя из списка.")
         task["specialty"] = specialty
         task["executor"] = executor
@@ -2003,7 +2027,7 @@ def _normalize_typical_service_term_gantt_payload(
         executor = str(resource.get("executor") or "").strip()
         if specialty and specialty not in allowed_specialties:
             raise ValueError("Выберите специальность ресурса из списка.")
-        if executor and executor not in allowed_executor_labels:
+        if executor and executor not in allowed_executor_keys:
             raise ValueError("Выберите исполнителя ресурса из списка.")
         validate_executor_specialty(executor, specialty)
         resource_pair = (specialty, executor)
@@ -2152,8 +2176,12 @@ def _format_typical_service_term_executor_name(profile):
     return str(profile.full_name or "").strip()
 
 
+def _typical_service_term_executor_value(profile):
+    return f"expert-profile:{profile.pk}"
+
+
 def _typical_service_term_executor_options():
-    options_by_label = {}
+    options = []
     for profile in (
         ExpertProfile.objects.select_related("employee__user")
         .prefetch_related("ranked_specialties", "ranked_specialties__specialty")
@@ -2162,14 +2190,20 @@ def _typical_service_term_executor_options():
         label = _format_typical_service_term_executor_name(profile)
         if not label:
             continue
-        option = options_by_label.setdefault(label, {"label": label, "specialties": []})
-        seen_specialties = set(option["specialties"])
+        option = {
+            "id": profile.pk,
+            "value": _typical_service_term_executor_value(profile),
+            "label": label,
+            "specialties": [],
+        }
+        seen_specialties = set()
         for link in profile.ranked_specialties.all():
             specialty = str(link.specialty.specialty or "").strip()
             if specialty and specialty not in seen_specialties:
                 option["specialties"].append(specialty)
                 seen_specialties.add(specialty)
-    return list(options_by_label.values())
+        options.append(option)
+    return options
 
 
 def _typical_service_term_section_options(product_id):
