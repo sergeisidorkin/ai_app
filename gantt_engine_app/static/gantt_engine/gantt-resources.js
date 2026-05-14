@@ -35,11 +35,12 @@
   }
 
   function normalizeExecutors(items) {
-    var byLabel = {};
+    var byValue = {};
     (Array.isArray(items) ? items : []).forEach(function (item) {
       var label = normalizeText(typeof item === 'string' ? item : (item && (item.label || item.name || item.value)));
-      if (!label) return;
-      var current = byLabel[label] || { label: label, specialties: [] };
+      var value = normalizeText(typeof item === 'string' ? item : (item && (item.value || item.id || label)));
+      if (!label || !value) return;
+      var current = byValue[value] || { value: value, label: label, specialties: [] };
       var specialtySeen = {};
       current.specialties.forEach(function (value) { specialtySeen[value] = true; });
       normalizeList(item && item.specialties).forEach(function (specialty) {
@@ -47,9 +48,9 @@
         current.specialties.push(specialty);
         specialtySeen[specialty] = true;
       });
-      byLabel[label] = current;
+      byValue[value] = current;
     });
-    return Object.keys(byLabel).map(function (key) { return byLabel[key]; });
+    return Object.keys(byValue).map(function (key) { return byValue[key]; });
   }
 
   function createResources(rawOptions) {
@@ -202,6 +203,19 @@
       return rows.find(function (row) { return row.executor === normalized; }) || null;
     }
 
+    function findExecutor(value) {
+      var normalized = normalizeText(value);
+      if (!normalized) return null;
+      return catalogs.executors.find(function (executor) {
+        return executor.value === normalized || executor.label === normalized;
+      }) || null;
+    }
+
+    function executorLabel(value) {
+      var executor = findExecutor(value);
+      return executor ? executor.label : normalizeText(value);
+    }
+
     function resourcePairKey(rowLike) {
       var specialty = normalizeText(rowLike && rowLike.specialty);
       var executor = normalizeText(rowLike && rowLike.executor);
@@ -263,14 +277,14 @@
           id: resourceId || uniqueId('resource'),
           specialty: getTaskField(task, 'specialty'),
           executor: executor,
-          resourceName: getTaskField(task, 'resourceName') || executor,
+          resourceName: getTaskField(task, 'resourceName') || executorLabel(executor),
           taskIds: [],
           position: rows.length + 1,
         };
         rows.push(row);
       }
       if (!row.specialty) row.specialty = getTaskField(task, 'specialty');
-      if (!row.resourceName) row.resourceName = getTaskField(task, 'resourceName') || row.executor;
+      if (!row.resourceName) row.resourceName = getTaskField(task, 'resourceName') || executorLabel(row.executor);
       return row;
     }
 
@@ -328,16 +342,28 @@
       return catalogs.executors
         .filter(function (executor) {
           return executor.specialties.indexOf(normalized) !== -1;
-        })
-        .map(function (executor) { return executor.label; });
+        });
     }
 
     function optionHtml(values, selectedValue) {
       var selected = normalizeText(selectedValue);
-      return '<option value=""></option>' + normalizeList(values).map(function (value) {
-        return '<option value="' + escapeHtml(value) + '"' + (value === selected ? ' selected' : '') + '>' +
-          escapeHtml(value) + '</option>';
+      var seen = {};
+      return '<option value=""></option>' + (Array.isArray(values) ? values : []).map(function (item) {
+        var value = normalizeText(typeof item === 'string' ? item : (item && (item.value || item.id || item.label || item.name)));
+        var label = normalizeText(typeof item === 'string' ? item : (item && (item.label || item.name || item.value || item.id)));
+        if (!value || !label || seen[value]) return '';
+        seen[value] = true;
+        return '<option value="' + escapeHtml(value) + '"' +
+          (value === selected || label === selected ? ' selected' : '') + '>' +
+          escapeHtml(label) + '</option>';
       }).join('');
+    }
+
+    function executorOptionsContainValue(options, value) {
+      var normalized = normalizeText(value);
+      return (Array.isArray(options) ? options : []).some(function (executor) {
+        return executor.value === normalized || executor.label === normalized;
+      });
     }
 
     function resourceNumberKey(row) {
@@ -429,7 +455,7 @@
             specialty: row.specialty,
             executor: row.executor,
             resourceId: row.id,
-            resourceName: row.resourceName || row.executor,
+            resourceName: row.resourceName || executorLabel(row.executor),
           });
         });
         syncCalculatedResourceNamesToTasks();
@@ -603,7 +629,7 @@
           var oldSpecialty = row.specialty;
           var oldExecutor = row.executor;
           row.specialty = normalizeText(event.target.value);
-          if (getExecutorsForSpecialty(row.specialty).indexOf(row.executor) === -1) row.executor = '';
+          if (!executorOptionsContainValue(getExecutorsForSpecialty(row.specialty), row.executor)) row.executor = '';
           if (findDuplicateResourcePair(row)) {
             row.specialty = oldSpecialty;
             row.executor = oldExecutor;
@@ -968,7 +994,7 @@
       var specialtySelect = body.querySelector('.gantt-resources-modal-specialty');
       var executorSelect = body.querySelector('.gantt-resources-modal-executor');
       clearModalValidationWarning();
-      if (executor && getExecutorsForSpecialty(specialty).indexOf(executor) === -1) {
+      if (executor && !executorOptionsContainValue(getExecutorsForSpecialty(specialty), executor)) {
         showModalValidationWarning('Выберите исполнителя, связанного с выбранной специальностью.', executorSelect);
         return;
       }
@@ -1056,7 +1082,7 @@
           id: row.id,
           specialty: row.specialty,
           executor: row.executor,
-          resource_name: row.resourceName || row.executor,
+          resource_name: row.resourceName || executorLabel(row.executor),
           task_ids: sanitizeTaskIds(row.taskIds, row),
           position: index + 1,
         };

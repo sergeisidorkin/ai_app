@@ -330,20 +330,21 @@
   }
 
   function normalizeTypicalServiceTermGanttExecutorCatalog(executors) {
-    const byLabel = new Map();
+    const byValue = new Map();
     (Array.isArray(executors) ? executors : []).forEach(function (item) {
       const label = normalizeFilterValue(typeof item === 'string' ? item : (item?.label || item?.name || ''));
-      if (!label) return;
-      const current = byLabel.get(label) || { label: label, specialties: [] };
+      const value = normalizeFilterValue(typeof item === 'string' ? item : (item?.value || item?.id || label));
+      if (!label || !value) return;
+      const current = byValue.get(value) || { value: value, label: label, specialties: [] };
       const seenSpecialties = new Set(current.specialties);
       normalizeTypicalServiceTermGanttTextOptions(item?.specialties).forEach(function (specialty) {
         if (seenSpecialties.has(specialty)) return;
         current.specialties.push(specialty);
         seenSpecialties.add(specialty);
       });
-      byLabel.set(label, current);
+      byValue.set(value, current);
     });
-    return Array.from(byLabel.values());
+    return Array.from(byValue.values());
   }
 
   function getTypicalServiceTermGanttSectionOptions() {
@@ -374,21 +375,31 @@
     return getTypicalServiceTermGanttSectionByLabel(text) ? text : '';
   }
 
+  function getTypicalServiceTermGanttExecutorCatalog(editorArg) {
+    const editor = editorArg || getTypicalServiceTermGanttCurrentEditor();
+    return normalizeTypicalServiceTermGanttExecutorCatalog(editor?._typicalServiceTermGanttExecutors);
+  }
+
+  function getTypicalServiceTermGanttExecutorLabel(value) {
+    const normalized = normalizeFilterValue(value);
+    if (!normalized) return '';
+    const executor = getTypicalServiceTermGanttExecutorCatalog().find(function (item) {
+      return item.value === normalized || item.label === normalized;
+    });
+    return executor?.label || normalized;
+  }
+
   function getTypicalServiceTermGanttSpecialtyOptions() {
     const editor = getTypicalServiceTermGanttCurrentEditor();
     return normalizeTypicalServiceTermGanttTextOptions(editor?._typicalServiceTermGanttSpecialties);
   }
 
   function getTypicalServiceTermGanttExecutorOptions(specialty) {
-    const editor = getTypicalServiceTermGanttCurrentEditor();
     const normalizedSpecialty = normalizeFilterValue(specialty);
     if (!normalizedSpecialty) return [];
-    return normalizeTypicalServiceTermGanttExecutorCatalog(editor?._typicalServiceTermGanttExecutors)
+    return getTypicalServiceTermGanttExecutorCatalog()
       .filter(function (item) {
         return item.specialties.indexOf(normalizedSpecialty) !== -1;
-      })
-      .map(function (item) {
-        return item.label;
       });
   }
 
@@ -1678,7 +1689,7 @@
   function formatTypicalServiceTermGanttExecutor(task) {
     const value = getTypicalServiceTermGanttExecutorDisplayMode() === TYPICAL_SERVICE_TERM_GANTT_EXECUTOR_DISPLAY_RESOURCE
       ? (task?.resource_name || task?.resourceName || '')
-      : (task?.executor || '');
+      : getTypicalServiceTermGanttExecutorLabel(task?.executor);
     return typicalServiceTermGanttGridValueHtml(
       value,
       'typical-service-term-gantt-grid-value typical-service-term-gantt-grid-value--executor'
@@ -5096,16 +5107,44 @@
         const executorSelect = node.querySelector('.policy-gantt-executor-select');
         if (!specialtySelect || !executorSelect) return;
 
+        const normalizeOption = function (option) {
+          const value = normalizeFilterValue(
+            typeof option === 'string'
+              ? option
+              : (option?.value || option?.id || option?.label || option?.name || '')
+          );
+          const label = normalizeFilterValue(
+            typeof option === 'string'
+              ? option
+              : (option?.label || option?.name || option?.value || option?.id || '')
+          );
+          if (!value || !label) return null;
+          return { value: value, label: label };
+        };
+        const normalizeOptions = function (options) {
+          const seen = new Set();
+          return (Array.isArray(options) ? options : [])
+            .map(normalizeOption)
+            .filter(function (option) {
+              if (!option || seen.has(option.value)) return false;
+              seen.add(option.value);
+              return true;
+            });
+        };
         const optionHtml = function (options) {
-          return '<option value=""></option>' + options.map(function (label) {
-            return '<option value="' + escapePolicyHtml(label) + '">' + escapePolicyHtml(label) + '</option>';
+          return '<option value=""></option>' + options.map(function (option) {
+            return '<option value="' + escapePolicyHtml(option.value) + '">' +
+              escapePolicyHtml(option.label) + '</option>';
           }).join('');
         };
         const setSelectOptions = function (select, options, selectedValue) {
-          const normalizedOptions = normalizeTypicalServiceTermGanttTextOptions(options);
+          const normalizedOptions = normalizeOptions(options);
           const currentValue = normalizeFilterValue(selectedValue);
           select.innerHTML = optionHtml(normalizedOptions);
-          select.value = normalizedOptions.indexOf(currentValue) === -1 ? '' : currentValue;
+          const selectedOption = normalizedOptions.find(function (option) {
+            return option.value === currentValue || option.label === currentValue;
+          });
+          select.value = selectedOption ? selectedOption.value : '';
           return normalizedOptions;
         };
         const getLightbox = function () {

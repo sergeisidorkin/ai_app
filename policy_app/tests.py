@@ -1519,8 +1519,18 @@ class TypicalServiceTermViewsTests(TestCase):
         self.assertEqual(
             payload["executor_options"],
             [
-                {"label": "Иванов И.П.", "specialties": ["Горное дело"]},
-                {"label": "Петров П.С.", "specialties": ["Геология"]},
+                {
+                    "id": profile.pk,
+                    "value": f"expert-profile:{profile.pk}",
+                    "label": "Иванов И.П.",
+                    "specialties": ["Горное дело"],
+                },
+                {
+                    "id": other_profile.pk,
+                    "value": f"expert-profile:{other_profile.pk}",
+                    "label": "Петров П.С.",
+                    "specialties": ["Геология"],
+                },
             ],
         )
         self.assertEqual(
@@ -1537,7 +1547,7 @@ class TypicalServiceTermViewsTests(TestCase):
                     "start_date": "2026-01-01",
                     "end_date": "2026-01-08",
                     "specialty": "",
-                    "executor": "Иванов И.П.",
+                    "executor": f"expert-profile:{profile.pk}",
                 },
                 {
                     "id": "preliminary",
@@ -1569,7 +1579,95 @@ class TypicalServiceTermViewsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         item.refresh_from_db()
         self.assertEqual(item.gantt_data["data"][0]["specialty"], "Горное дело")
-        self.assertEqual(item.gantt_data["data"][0]["executor"], "Иванов И.П.")
+        self.assertEqual(item.gantt_data["data"][0]["executor"], f"expert-profile:{profile.pk}")
+
+    def test_typical_service_term_gantt_distinguishes_duplicate_executor_labels(self):
+        item = TypicalServiceTerm.objects.create(
+            product=self.product,
+            preliminary_report_months=Decimal("1.0"),
+            final_report_weeks=2,
+            position=1,
+        )
+        mining = ExpertSpecialty.objects.create(specialty="Горное дело", position=1)
+        geology = ExpertSpecialty.objects.create(specialty="Геология", position=2)
+        mining_user = get_user_model().objects.create_user(
+            username="duplicate-executor-mining",
+            first_name="Иван",
+            last_name="Иванов",
+        )
+        mining_employee = Employee.objects.create(user=mining_user, patronymic="Петрович")
+        mining_profile = ExpertProfile.objects.create(employee=mining_employee, position=1)
+        ExpertProfileSpecialty.objects.create(profile=mining_profile, specialty=mining, rank=1)
+        geology_user = get_user_model().objects.create_user(
+            username="duplicate-executor-geology",
+            first_name="Иван",
+            last_name="Иванов",
+        )
+        geology_employee = Employee.objects.create(user=geology_user, patronymic="Петрович")
+        geology_profile = ExpertProfile.objects.create(employee=geology_employee, position=2)
+        ExpertProfileSpecialty.objects.create(profile=geology_profile, specialty=geology, rank=1)
+
+        response = self.client.get(reverse("typical_service_term_gantt", args=[item.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["executor_options"],
+            [
+                {
+                    "id": mining_profile.pk,
+                    "value": f"expert-profile:{mining_profile.pk}",
+                    "label": "Иванов И.П.",
+                    "specialties": ["Горное дело"],
+                },
+                {
+                    "id": geology_profile.pk,
+                    "value": f"expert-profile:{geology_profile.pk}",
+                    "label": "Иванов И.П.",
+                    "specialties": ["Геология"],
+                },
+            ],
+        )
+
+        payload = {
+            "data": [
+                {
+                    "id": "task",
+                    "text": "Проектная задача",
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-01-08",
+                    "type": "task",
+                    "specialty": mining.specialty,
+                    "executor": f"expert-profile:{geology_profile.pk}",
+                },
+                {
+                    "id": "preliminary",
+                    "text": "Предварительный отчёт",
+                    "system_key": "preliminary_report",
+                    "start_date": "2026-01-08",
+                    "end_date": "2026-02-01",
+                    "type": "task",
+                },
+                {
+                    "id": "final",
+                    "text": "Итоговый отчёт",
+                    "system_key": "final_report",
+                    "start_date": "2026-02-01",
+                    "end_date": "2026-02-15",
+                    "type": "task",
+                },
+            ],
+            "links": [],
+            "meta": {"base_date": "2026-01-01"},
+        }
+
+        response = self.client.post(
+            reverse("typical_service_term_gantt", args=[item.pk]),
+            data=json.dumps(payload, ensure_ascii=False),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Выберите исполнителя, связанного с выбранной специальностью.", response.json()["error"])
 
     def test_typical_service_term_gantt_post_saves_project_resources_meta(self):
         item = TypicalServiceTerm.objects.create(
@@ -2161,6 +2259,49 @@ class TypicalServiceTermViewsTests(TestCase):
         self.assertEqual(parent_task["end_date"], "2026-04-01")
         self.assertEqual(parent_task["type"], "project")
         self.assertEqual(item.preliminary_report_months, Decimal("2.5"))
+
+    def test_typical_service_term_gantt_post_rejects_cyclic_parent_chain(self):
+        item = TypicalServiceTerm.objects.create(
+            product=self.product,
+            preliminary_report_months=Decimal("1.0"),
+            final_report_weeks=2,
+            position=1,
+        )
+        payload = {
+            "data": [
+                {
+                    "id": "preliminary",
+                    "text": "Предварительный отчёт",
+                    "system_key": "preliminary_report",
+                    "parent": "final",
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-02-01",
+                    "type": "task",
+                },
+                {
+                    "id": "final",
+                    "text": "Итоговый отчёт",
+                    "system_key": "final_report",
+                    "parent": "preliminary",
+                    "start_date": "2026-02-01",
+                    "end_date": "2026-02-15",
+                    "type": "task",
+                },
+            ],
+            "links": [],
+            "meta": {"base_date": "2026-01-01"},
+        }
+
+        response = self.client.post(
+            reverse("typical_service_term_gantt", args=[item.pk]),
+            data=json.dumps(payload, ensure_ascii=False),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("циклическая связь", response.json()["error"])
+        item.refresh_from_db()
+        self.assertEqual(item.gantt_data, {})
 
     def test_typical_service_term_gantt_post_requires_system_tasks(self):
         item = TypicalServiceTerm.objects.create(
