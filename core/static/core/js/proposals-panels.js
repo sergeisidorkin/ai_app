@@ -42,6 +42,40 @@
   const PROPOSAL_PAYMENT_GANTT_SCALE_WEEK = 'week';
   const PROPOSAL_PAYMENT_GANTT_SCALE_MONTH = 'month';
   const PROPOSAL_PAYMENT_GANTT_SCALE_QUARTER = 'quarter';
+  // The proposals' payment-schedule section owns its OWN Gantt instance built
+  // via window.GanttEngine.create(). No more shared singleton — see
+  // gantt_engine_app/static/gantt_engine/gantt-engine.js.
+  function getProposalPaymentGanttInstance() {
+    if (window.__proposalsPaymentGantt) return window.__proposalsPaymentGantt;
+    if (window.GanttEngine && typeof window.GanttEngine.create === 'function') {
+      const instance = window.GanttEngine.create();
+      if (instance) {
+        window.__proposalsPaymentGantt = instance;
+        return instance;
+      }
+    }
+    return null;
+  }
+
+  function disposeProposalPaymentGanttInstance() {
+    const gantt = window.__proposalsPaymentGantt;
+    if (!gantt) return;
+    try {
+      if (typeof gantt.clearAll === 'function') gantt.clearAll();
+    } catch (_) {
+      // A partially initialized DHTMLX instance can throw during cleanup.
+    }
+    if (window.GanttEngine && typeof window.GanttEngine.dispose === 'function') {
+      window.GanttEngine.dispose(gantt);
+    }
+    window.__proposalsPaymentGantt = null;
+  }
+
+  function proposalsGanttAttachEvent(eventName, handler) {
+    const g = getProposalPaymentGanttInstance();
+    if (!g || typeof g.attachEvent !== 'function') return null;
+    return g.attachEvent(eventName, handler);
+  }
   const PROPOSAL_KIND_FILTER_ALL = '__all__';
   const PROPOSAL_STATUS_FILTER_ALL = '__all__';
   const PROPOSAL_STATUS_FILTER_OPTIONS = [
@@ -476,6 +510,7 @@
       start_date: centerProposalPaymentDateInDay(options.date),
       duration: 0,
       type: 'milestone',
+      milestone_kind: 'payment',
       parent: options.parent,
       bar_height: 17,
       progress: options.date < new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()) ? 1 : 0,
@@ -735,6 +770,7 @@
   }
 
   function applyProposalPaymentGanttScale(gantt, scale) {
+    if (gantt && gantt.config) gantt.config.$ganttEngineScale = scale;
     const formatWeekRange = function (date) {
       const end = addProposalPaymentDays(date, 6);
       if (date.getMonth() === end.getMonth() && date.getFullYear() === end.getFullYear()) {
@@ -784,7 +820,7 @@
   }
 
   function configureProposalPaymentGantt(root) {
-    const gantt = window.gantt;
+    const gantt = getProposalPaymentGanttInstance();
     if (!gantt) return null;
     const scale = getProposalPaymentGanttScale(root);
     syncProposalPaymentGanttScaleButtons(root, scale);
@@ -809,6 +845,11 @@
     applyProposalPaymentGanttScale(gantt, scale);
     gantt.templates.task_text = function (start, end, task) {
       if (task.type === 'milestone') return '';
+      if (window.GanttEngine &&
+        typeof window.GanttEngine.shouldShowTaskLabel === 'function' &&
+        !window.GanttEngine.shouldShowTaskLabel(gantt, start, end, task, { scale: scale })) {
+        return '';
+      }
       if (task.bar_label) return escapeHtml(task.bar_label);
       if (task.hide_stage_bar_label) return '';
       return escapeHtml(task.stage || task.text || '');
@@ -816,7 +857,12 @@
     gantt.templates.task_class = function (start, end, task) {
       if (task.is_report_bar) return 'proposal-payment-gantt-report-bar';
       if (task.type === 'milestone') {
-        return 'proposal-payment-gantt-milestone' + (task.is_zero_payment ? ' proposal-payment-gantt-zero-payment' : '');
+        // Preserves the special payment-milestone formatting (green diamond
+        // + halo) shared across all sections that emit a `milestone_kind`.
+        var kindClasses = (window.GanttEngine && typeof window.GanttEngine.classesForMilestoneKind === 'function')
+          ? window.GanttEngine.classesForMilestoneKind(task)
+          : '';
+        return kindClasses;
       }
       return '';
     };
@@ -846,18 +892,28 @@
     const empty = root?.querySelector('#proposal-payment-gantt-empty');
     if (!chart || !empty) return;
 
-    const gantt = configureProposalPaymentGantt(root);
-    if (!gantt) {
+    if (!window.GanttEngine || typeof window.GanttEngine.create !== 'function') {
       chart.classList.add('d-none');
       empty.classList.remove('d-none');
       empty.textContent = 'DHTMLX Gantt не загружен.';
       return;
     }
 
-    saveProposalPaymentCurrentGanttOpenGroups(gantt);
+    // Preserve user's open/closed group state from any currently rendered
+    // instance before we tear it down for a fresh mount.
+    const previous = window.__proposalsPaymentGantt;
+    if (previous && previous.$container) {
+      saveProposalPaymentCurrentGanttOpenGroups(previous);
+    }
+
     const data = buildProposalPaymentGanttData(root);
     if (!data.data.length) {
-      gantt.clearAll();
+      // No rows to draw — hide the chart and show the empty-state message, but
+      // KEEP the underlying Gantt instance alive (if any). Disposing here would
+      // invalidate any DOM closures that captured the instance and would force
+      // a destructor()/create cycle the next time data appears. The instance
+      // gets torn down only via the htmx:afterSwap handler when its host
+      // container leaves the document.
       chart.classList.add('d-none');
       empty.textContent = 'Нет строк с датами для построения диаграммы.';
       empty.classList.remove('d-none');
@@ -873,8 +929,39 @@
     chart.classList.toggle('proposal-payment-gantt-scale-quarter', scale === PROPOSAL_PAYMENT_GANTT_SCALE_QUARTER);
     chart._proposalPaymentGanttTasks = data.data;
     chart._proposalPaymentGanttLinks = data.links;
+
+    // (Re)mount path for the proposals' payment Gantt.
+    //
+    // IMPORTANT: we deliberately REUSE the existing instance instead of
+    // destructor()+create() on every re-render. Many DOM handlers in this file
+    // (row-hover, link-hover, active-row tracking, halo rendering, etc.) close
+    // over the `gantt` reference at bind time — destroying the instance under
+    // their feet would leave them operating on a corpse and DHTMLX would throw
+    // `Cannot read properties of undefined (reading 'getService')` from inside
+    // refreshData/render. Disposal only happens when the host container leaves
+    // the document (htmx:afterSwap handler near the bottom of this file).
+    //
+    // Calling `gantt.init(chart)` repeatedly on the same instance is supported
+    // by DHTMLX and rebuilds the UI inside `chart` without invalidating the
+    // instance's internal services ($services, $data, templates, config).
+    const existing = window.__proposalsPaymentGantt;
+    if (existing) {
+      const boundContainer = existing.$container || existing.$root
+        || (existing.$layout && existing.$layout.$container) || null;
+      if (boundContainer && boundContainer !== chart && !document.body.contains(boundContainer)) {
+        disposeProposalPaymentGanttInstance();
+      }
+    }
+    const gantt = configureProposalPaymentGantt(root);
+    if (!gantt) {
+      chart.classList.add('d-none');
+      empty.classList.remove('d-none');
+      empty.textContent = 'DHTMLX Gantt не загружен.';
+      return;
+    }
     bindProposalPaymentGanttHaloRender(gantt);
     bindProposalPaymentGanttOpenState(gantt);
+    chart.innerHTML = '';
     gantt.init(chart);
     gantt.clearAll();
     gantt.parse(data);
@@ -888,7 +975,7 @@
 
   function getProposalPaymentMilestoneHaloSize(percent) {
     if (!Number.isFinite(percent) || percent <= 0) return null;
-    const rowHeight = window.gantt?.config?.row_height || 34;
+    const rowHeight = window.__proposalsPaymentGantt?.config?.row_height || 34;
     const diamondSize = 12;
     const maxSize = rowHeight * 2;
     return Math.round(diamondSize + (Math.min(100, percent) / 100) * (maxSize - diamondSize));
@@ -896,16 +983,16 @@
 
   function applyProposalPaymentMilestoneHaloSizes(chart, gantt, tasks) {
     if (!chart || !gantt) return;
-    chart.querySelectorAll('.proposal-payment-milestone-halo').forEach((node) => node.remove());
+    chart.querySelectorAll('.gantt-mk-payment-halo').forEach((node) => node.remove());
     const isDayScale = chart.classList.contains('proposal-payment-gantt-scale-day');
     tasks
-      .filter((task) => task.type === 'milestone')
+      .filter((task) => task.type === 'milestone' && task.milestone_kind === 'payment')
       .forEach((task) => {
         const size = getProposalPaymentMilestoneHaloSize(task.payment_percent);
         const tooltip = formatProposalPaymentMilestoneTooltip(task);
         const escapedTaskId = escapeProposalPaymentGanttSelectorValue(task.id);
         chart
-          .querySelectorAll('.gantt_task_line.proposal-payment-gantt-milestone[task_id="' + escapedTaskId + '"], .gantt_task_line.proposal-payment-gantt-milestone[data-task-id="' + escapedTaskId + '"]')
+          .querySelectorAll('.gantt_task_line.gantt-mk-payment[task_id="' + escapedTaskId + '"], .gantt_task_line.gantt-mk-payment[data-task-id="' + escapedTaskId + '"]')
           .forEach((node) => {
             if (isDayScale && task.start_date) {
               const milestoneSize = 12;
@@ -915,7 +1002,7 @@
             }
             if (size && !task.is_zero_payment) {
               const halo = document.createElement('div');
-              halo.className = 'proposal-payment-milestone-halo';
+              halo.className = 'gantt-mk-payment-halo';
               halo.style.width = size + 'px';
               halo.style.height = size + 'px';
               node.insertBefore(halo, node.firstChild);
@@ -997,13 +1084,13 @@
       applyProposalPaymentDayScaleMilestoneLinkBridges(chart, gantt, chart?._proposalPaymentGanttLinks || []);
       if (chart?.dataset.activeTaskId) setProposalPaymentGanttActiveRow(chart, chart.dataset.activeTaskId);
     };
-    gantt.$proposalPaymentHaloRenderEventId = gantt.attachEvent('onDataRender', function () {
+    gantt.$proposalPaymentHaloRenderEventId = proposalsGanttAttachEvent('onDataRender', function () {
       requestAnimationFrame(applyHalos);
     });
-    gantt.$proposalPaymentHaloScrollEventId = gantt.attachEvent('onGanttScroll', function () {
+    gantt.$proposalPaymentHaloScrollEventId = proposalsGanttAttachEvent('onGanttScroll', function () {
       requestAnimationFrame(applyHalos);
     });
-    gantt.$proposalPaymentHaloTaskClickEventId = gantt.attachEvent('onTaskClick', function (id) {
+    gantt.$proposalPaymentHaloTaskClickEventId = proposalsGanttAttachEvent('onTaskClick', function (id) {
       if (id !== undefined && id !== null && typeof gantt.selectTask === 'function') {
         gantt.selectTask(id);
       }
@@ -1015,7 +1102,7 @@
   function bindProposalPaymentGanttOpenState(gantt) {
     if (!gantt || gantt.$proposalPaymentOpenStateEventIds) return;
     gantt.$proposalPaymentOpenStateEventIds = [
-      gantt.attachEvent('onTaskOpened', function (id) {
+      proposalsGanttAttachEvent('onTaskOpened', function (id) {
         try {
           const task = gantt.getTask(id);
           if (task?.is_group) setProposalPaymentGanttGroupOpenState(id, true);
@@ -1023,7 +1110,7 @@
           // Ignore stale ids from a previous render.
         }
       }),
-      gantt.attachEvent('onTaskClosed', function (id) {
+      proposalsGanttAttachEvent('onTaskClosed', function (id) {
         try {
           const task = gantt.getTask(id);
           if (task?.is_group) setProposalPaymentGanttGroupOpenState(id, false);
@@ -1108,7 +1195,7 @@
   }
 
   function clearProposalPaymentGanttSelection() {
-    const gantt = window.gantt;
+    const gantt = window.__proposalsPaymentGantt;
     const chart = document.getElementById('proposal-payment-gantt');
     setProposalPaymentGanttActiveRow(chart, '');
     if (!gantt || typeof gantt.getSelectedId !== 'function' || typeof gantt.unselectTask !== 'function') return;
@@ -8781,6 +8868,19 @@
     if (!(target instanceof Element)) return;
     if (!target.closest('#proposals-pane') && !target.closest('#proposal-variables-section')) return;
     document.documentElement.classList.remove('proposal-progress-cursor');
+  });
+
+  // If the proposals pane (or anything containing our payment-schedule chart)
+  // gets swapped out, the cached Gantt instance is left bound to a detached
+  // DOM node. Detect that and dispose so we don't leak the engine — a fresh
+  // instance is built lazily on the next renderProposalPaymentGantt().
+  document.body.addEventListener('htmx:afterSwap', function () {
+    const gantt = window.__proposalsPaymentGantt;
+    if (!gantt) return;
+    const boundContainer = gantt.$container || gantt.$root
+      || (gantt.$layout && gantt.$layout.$container) || null;
+    if (boundContainer && document.body.contains(boundContainer)) return;
+    disposeProposalPaymentGanttInstance();
   });
 
   document.addEventListener('DOMContentLoaded', function () {

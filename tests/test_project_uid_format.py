@@ -11,7 +11,7 @@ from projects_app.models import ProjectRegistration
 
 
 @pytest.mark.django_db
-def test_project_short_uid_uses_agreement_sequence_and_group_member_order():
+def test_project_short_uid_uses_product_stage_sequence_and_group_member_order():
     first_member = GroupMember.objects.create(
         short_name="IMC RU 1",
         country_name="Россия",
@@ -42,10 +42,10 @@ def test_project_short_uid_uses_agreement_sequence_and_group_member_order():
     first_project.refresh_from_db()
     second_project.refresh_from_db()
 
-    assert first_project.agreement_sequence == 0
-    assert first_project.short_uid == "400000RU"
-    assert second_project.agreement_sequence == 1
-    assert second_project.short_uid == "400011RU"
+    assert first_project.agreement_sequence == 1
+    assert first_project.short_uid == "400010RU"
+    assert second_project.agreement_sequence == 2
+    assert second_project.short_uid == "400021RU"
 
 
 @pytest.mark.django_db

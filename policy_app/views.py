@@ -15,7 +15,7 @@ from django.http import HttpResponse, JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST
 
-from experts_app.models import ExpertSpecialty
+from experts_app.models import ExpertProfile, ExpertSpecialty
 from group_app.models import GroupMember, OrgUnit
 from .models import (
     ConsultingDirection,
@@ -99,6 +99,13 @@ TYPICAL_SERVICE_TERM_CSV_HEADERS = [
     "Срок подготовки Итогового отчёта, нед.",
 ]
 TYPICAL_SERVICE_TERM_GANTT_VERSION = 1
+TYPICAL_SERVICE_TERM_GANTT_SERVICE_SECTION_TYPE = "service_section"
+TYPICAL_SERVICE_TERM_GANTT_EXECUTOR_DISPLAY_EXECUTOR = "executor"
+TYPICAL_SERVICE_TERM_GANTT_EXECUTOR_DISPLAY_RESOURCE = "resource_name"
+TYPICAL_SERVICE_TERM_GANTT_SYSTEM_TASK_TEXT = {
+    "preliminary_report": "Предварительный отчёт",
+    "final_report": "Итоговый отчёт",
+}
 TARIFF_CSV_HEADERS = [
     "Продукт",
     "Раздел (услуга)",
@@ -1752,6 +1759,9 @@ def _default_typical_service_term_gantt_data(term):
         ],
         "meta": {
             "base_date": _serialize_typical_service_term_gantt_date(base_date),
+            "project_start": _serialize_typical_service_term_gantt_date(base_date),
+            "project_end": _serialize_typical_service_term_gantt_date(final_end),
+            "executor_display": TYPICAL_SERVICE_TERM_GANTT_EXECUTOR_DISPLAY_EXECUTOR,
             "version": TYPICAL_SERVICE_TERM_GANTT_VERSION,
         },
     }
@@ -1790,7 +1800,60 @@ def _task_end_date(task, start_date):
     return start_date + timedelta(days=max(duration, 0))
 
 
-def _normalize_typical_service_term_gantt_payload(payload):
+def _roll_up_typical_service_term_gantt_parent_dates(tasks):
+    tasks_by_id = {str(task.get("id")): task for task in tasks if task.get("id") is not None}
+    children_by_parent = defaultdict(list)
+    for task in tasks:
+        parent_id = task.get("parent")
+        if parent_id in (None, "", 0, "0"):
+            continue
+        children_by_parent[str(parent_id)].append(task)
+
+    resolved = {}
+
+    def resolve_dates(task):
+        task_id = str(task.get("id"))
+        if task_id in resolved:
+            return resolved[task_id]
+
+        start_date = _parse_typical_service_term_gantt_date(task.get("start_date"))
+        if not start_date:
+            resolved[task_id] = (None, None)
+            return resolved[task_id]
+        end_date = _task_end_date(task, start_date)
+
+        child_dates = [
+            resolve_dates(child)
+            for child in children_by_parent.get(task_id, [])
+        ]
+        child_dates = [
+            (child_start, child_end)
+            for child_start, child_end in child_dates
+            if child_start and child_end
+        ]
+        if child_dates:
+            start_date = min(child_start for child_start, _ in child_dates)
+            end_date = max(child_end for _, child_end in child_dates)
+            task["start_date"] = _serialize_typical_service_term_gantt_date(start_date)
+            task["end_date"] = _serialize_typical_service_term_gantt_date(end_date)
+            task["duration"] = max((end_date - start_date).days, 0)
+            if task.get("type") not in {"milestone", TYPICAL_SERVICE_TERM_GANTT_SERVICE_SECTION_TYPE}:
+                task["type"] = "project"
+
+        resolved[task_id] = (start_date, end_date)
+        return resolved[task_id]
+
+    for task in tasks_by_id.values():
+        resolve_dates(task)
+
+
+def _normalize_typical_service_term_gantt_payload(
+    payload,
+    allowed_section_names=None,
+    section_specialties_by_name=None,
+    allowed_specialties=None,
+    allowed_executors=None,
+):
     if not isinstance(payload, dict):
         raise ValueError("Некорректный формат диаграммы.")
     tasks = payload.get("data", payload.get("tasks", []))
@@ -1800,9 +1863,205 @@ def _normalize_typical_service_term_gantt_payload(payload):
     if not isinstance(links, list):
         raise ValueError("Список связей диаграммы должен быть массивом.")
 
+    allowed_section_names = set(allowed_section_names or [])
+    section_specialties_by_name = section_specialties_by_name or {}
+    allowed_specialties = set(allowed_specialties or [])
+    executor_specialties_by_label = {}
+    for item in allowed_executors or []:
+        if isinstance(item, dict):
+            label = str(item.get("label") or "").strip()
+            specialties = {
+                str(value or "").strip()
+                for value in item.get("specialties", [])
+                if str(value or "").strip()
+            }
+        else:
+            label = str(item or "").strip()
+            specialties = set()
+        if label:
+            executor_specialties_by_label[label] = specialties
+    allowed_executor_labels = set(executor_specialties_by_label)
     normalized_tasks = [dict(task) for task in tasks if isinstance(task, dict)]
     normalized_links = [dict(link) for link in links if isinstance(link, dict)]
+    normalized_task_ids = {
+        str(task.get("id")).strip()
+        for task in normalized_tasks
+        if task.get("id") is not None and str(task.get("id")).strip()
+    }
+    parent_task_ids = set()
+    for task in normalized_tasks:
+        parent_id = str(task.get("parent") or "").strip()
+        if parent_id and parent_id not in {"0", "null", "None"} and parent_id in normalized_task_ids:
+            parent_task_ids.add(parent_id)
+    for link in normalized_links:
+        lag_mode = str(link.get("lag_mode") or "").strip().lower()
+        link["lag_mode"] = "auto" if lag_mode == "auto" else "fixed"
     meta = dict(payload.get("meta") or {}) if isinstance(payload.get("meta"), dict) else {}
+    def validate_executor_specialty(executor, specialty):
+        if executor and (not specialty or specialty not in executor_specialties_by_label.get(executor, set())):
+            raise ValueError("Выберите исполнителя, связанного с выбранной специальностью.")
+
+    for task in normalized_tasks:
+        task_id = str(task.get("id")).strip() if task.get("id") is not None else ""
+        is_parent_task = task_id in parent_task_ids
+        system_key = str(task.get("system_key") or "").strip()
+        if system_key in TYPICAL_SERVICE_TERM_GANTT_SYSTEM_TASK_TEXT:
+            task["system_key"] = system_key
+            task["text"] = TYPICAL_SERVICE_TERM_GANTT_SYSTEM_TASK_TEXT[system_key]
+        specialty = str(task.get("specialty") or "").strip()
+        executor = str(task.get("executor") or "").strip()
+        if is_parent_task:
+            specialty = ""
+            executor = ""
+            task.pop("resource_id", None)
+            task.pop("resource_name", None)
+        if specialty and specialty not in allowed_specialties:
+            raise ValueError("Выберите специальность из списка.")
+        if executor and executor not in allowed_executor_labels:
+            raise ValueError("Выберите исполнителя из списка.")
+        task["specialty"] = specialty
+        task["executor"] = executor
+        if str(task.get("type") or "").strip() != TYPICAL_SERVICE_TERM_GANTT_SERVICE_SECTION_TYPE:
+            if not is_parent_task:
+                validate_executor_specialty(executor, specialty)
+            continue
+        section_name = str(task.get("service_section_name") or task.get("section_name") or "").strip()
+        display_name = str(task.get("text") or "").strip()
+        if not section_name and display_name in allowed_section_names:
+            section_name = display_name
+        if not section_name or section_name not in allowed_section_names:
+            raise ValueError("Выберите раздел (услугу) из списка для выбранного продукта.")
+        task["service_section_name"] = section_name
+        task["text"] = display_name or section_name
+        if is_parent_task:
+            task["specialty"] = ""
+            task["executor"] = ""
+            continue
+        section_specialties = section_specialties_by_name.get(section_name, [])
+        section_specialty_labels = [item["label"] for item in section_specialties if item.get("label")]
+        if section_specialty_labels:
+            if specialty and specialty not in section_specialty_labels:
+                raise ValueError("Выберите специальность из списка раздела (услуги).")
+            task["specialty"] = specialty or section_specialty_labels[0]
+        else:
+            task["specialty"] = ""
+        validate_executor_specialty(executor, task["specialty"])
+
+    task_ids = normalized_task_ids
+    tasks_by_id = {
+        str(task.get("id")).strip(): task
+        for task in normalized_tasks
+        if task.get("id") is not None and str(task.get("id")).strip()
+    }
+
+    def task_section_name(task):
+        if not task:
+            return ""
+        explicit = str(task.get("service_section_name") or task.get("section_name") or "").strip()
+        if explicit in allowed_section_names:
+            return explicit
+        text = str(task.get("text") or "").strip()
+        if text in allowed_section_names:
+            return text
+        visited = set()
+        parent_id = str(task.get("parent") or "").strip()
+        while parent_id and parent_id not in {"0", "null", "None"} and parent_id not in visited:
+            visited.add(parent_id)
+            parent = tasks_by_id.get(parent_id)
+            if not parent:
+                return ""
+            explicit = str(parent.get("service_section_name") or parent.get("section_name") or "").strip()
+            if explicit in allowed_section_names:
+                return explicit
+            text = str(parent.get("text") or "").strip()
+            if text in allowed_section_names:
+                return text
+            parent_id = str(parent.get("parent") or "").strip()
+        return ""
+
+    raw_resources = meta.get("resources", [])
+    if raw_resources in (None, ""):
+        raw_resources = []
+    if not isinstance(raw_resources, list):
+        raise ValueError("Список ресурсов проекта должен быть массивом.")
+    normalized_resources = []
+    seen_resource_ids = set()
+    seen_resource_task_ids = set()
+    seen_resource_pairs = set()
+    resource_numbers_by_executor = {}
+    next_resource_number = 1
+    for index, resource in enumerate(raw_resources, start=1):
+        if not isinstance(resource, dict):
+            continue
+        resource_id = str(resource.get("id") or f"resource-{index}").strip()
+        if not resource_id:
+            resource_id = f"resource-{index}"
+        if resource_id in seen_resource_ids:
+            raise ValueError("Идентификаторы ресурсов проекта должны быть уникальными.")
+        seen_resource_ids.add(resource_id)
+        specialty = str(resource.get("specialty") or "").strip()
+        executor = str(resource.get("executor") or "").strip()
+        if specialty and specialty not in allowed_specialties:
+            raise ValueError("Выберите специальность ресурса из списка.")
+        if executor and executor not in allowed_executor_labels:
+            raise ValueError("Выберите исполнителя ресурса из списка.")
+        validate_executor_specialty(executor, specialty)
+        resource_pair = (specialty, executor)
+        if specialty and executor:
+            if resource_pair in seen_resource_pairs:
+                raise ValueError("Ресурс с такой специальностью и ФИО уже есть в таблице.")
+            seen_resource_pairs.add(resource_pair)
+        resource_number_key = f"executor:{executor}" if executor else f"resource:{resource_id}"
+        if resource_number_key not in resource_numbers_by_executor:
+            resource_numbers_by_executor[resource_number_key] = next_resource_number
+            next_resource_number += 1
+        resource_name = f"Сотрудник {resource_numbers_by_executor[resource_number_key]}"
+        raw_task_ids = resource.get("task_ids", resource.get("taskIds", []))
+        if raw_task_ids in (None, ""):
+            raw_task_ids = []
+        if not isinstance(raw_task_ids, list):
+            raise ValueError("Список задач ресурса должен быть массивом.")
+        task_id_list = []
+        for raw_task_id in raw_task_ids:
+            task_id = str(raw_task_id or "").strip()
+            if not task_id:
+                continue
+            if task_id not in task_ids:
+                raise ValueError("Выберите задачу ресурса из списка задач диаграммы.")
+            if task_id in parent_task_ids:
+                raise ValueError("Родительскую задачу нельзя назначить ресурсу проекта.")
+            task = tasks_by_id.get(task_id)
+            section_name = task_section_name(task)
+            section_specialty_labels = [
+                item["label"]
+                for item in section_specialties_by_name.get(section_name, [])
+                if item.get("label")
+            ]
+            if specialty and section_specialty_labels and specialty not in section_specialty_labels:
+                raise ValueError("Выберите задачу из раздела (услуги), доступного выбранной специальности ресурса.")
+            if task_id in seen_resource_task_ids:
+                raise ValueError("Одна задача не может быть назначена нескольким ресурсам.")
+            seen_resource_task_ids.add(task_id)
+            task_id_list.append(task_id)
+        normalized_resources.append({
+            "id": resource_id,
+            "specialty": specialty,
+            "executor": executor,
+            "resource_name": resource_name,
+            "task_ids": task_id_list,
+            "position": index,
+        })
+    for resource in normalized_resources:
+        for task_id in resource["task_ids"]:
+            task = tasks_by_id.get(task_id)
+            if not task:
+                continue
+            task["specialty"] = resource["specialty"]
+            task["executor"] = resource["executor"]
+            task["resource_id"] = resource["id"]
+            task["resource_name"] = resource["resource_name"]
+    meta["resources"] = normalized_resources
+    _roll_up_typical_service_term_gantt_parent_dates(normalized_tasks)
 
     dated_tasks = []
     for task in normalized_tasks:
@@ -1821,6 +2080,27 @@ def _normalize_typical_service_term_gantt_payload(payload):
     if not base_date:
         base_date = min(start_date for _, start_date, _ in dated_tasks)
     meta["base_date"] = _serialize_typical_service_term_gantt_date(base_date)
+    project_start = _parse_typical_service_term_gantt_date(meta.get("project_start"))
+    if not project_start:
+        project_start = min(start_date for _, start_date, _ in dated_tasks)
+    project_end = _parse_typical_service_term_gantt_date(meta.get("project_end"))
+    if not project_end:
+        project_end = max(end_date for _, _, end_date in dated_tasks)
+    if project_end < project_start:
+        project_end = project_start
+    meta["project_start"] = _serialize_typical_service_term_gantt_date(project_start)
+    meta["project_end"] = _serialize_typical_service_term_gantt_date(project_end)
+    executor_display = str(meta.get("executor_display") or "").strip()
+    if executor_display not in {
+        TYPICAL_SERVICE_TERM_GANTT_EXECUTOR_DISPLAY_EXECUTOR,
+        TYPICAL_SERVICE_TERM_GANTT_EXECUTOR_DISPLAY_RESOURCE,
+    }:
+        executor_display = (
+            TYPICAL_SERVICE_TERM_GANTT_EXECUTOR_DISPLAY_RESOURCE
+            if str(meta.get("calendar_kind") or "").strip() == "abstract"
+            else TYPICAL_SERVICE_TERM_GANTT_EXECUTOR_DISPLAY_EXECUTOR
+        )
+    meta["executor_display"] = executor_display
     meta["version"] = TYPICAL_SERVICE_TERM_GANTT_VERSION
 
     return {"data": normalized_tasks, "links": normalized_links, "meta": meta}, dated_tasks, base_date
@@ -1833,7 +2113,7 @@ def _find_typical_service_term_system_task(dated_tasks, system_key):
     return None
 
 
-def _calculate_typical_service_term_durations(dated_tasks, base_date):
+def _calculate_typical_service_term_durations(dated_tasks):
     preliminary_task = _find_typical_service_term_system_task(dated_tasks, "preliminary_report")
     final_task = _find_typical_service_term_system_task(dated_tasks, "final_report")
     if not preliminary_task:
@@ -1841,9 +2121,9 @@ def _calculate_typical_service_term_durations(dated_tasks, base_date):
     if not final_task:
         raise ValueError("Не найдена задача «Итоговый отчёт».")
 
-    _, _, preliminary_end = preliminary_task
+    _, preliminary_start, preliminary_end = preliminary_task
     _, final_start, final_end = final_task
-    preliminary_days = max((preliminary_end - base_date).days, 0)
+    preliminary_days = max((preliminary_end - preliminary_start).days, 0)
     final_days = max((final_end - final_start).days, 0)
     preliminary_months = (Decimal(preliminary_days) / Decimal("30")).quantize(
         Decimal("0.1"),
@@ -1853,11 +2133,74 @@ def _calculate_typical_service_term_durations(dated_tasks, base_date):
     return preliminary_months, max(final_weeks, 0)
 
 
+def _typical_service_term_specialty_options():
+    return [
+        value
+        for value in ExpertSpecialty.objects.order_by("position", "id").values_list("specialty", flat=True)
+        if str(value or "").strip()
+    ]
+
+
+def _format_typical_service_term_executor_name(profile):
+    user = profile.employee.user
+    last_name = str(user.last_name or "").strip()
+    first_name = str(user.first_name or "").strip()
+    middle_name = str(profile.employee.patronymic or "").strip()
+    initials = "".join(part[:1] + "." for part in (first_name, middle_name) if part)
+    if last_name and initials:
+        return f"{last_name} {initials}"
+    return str(profile.full_name or "").strip()
+
+
+def _typical_service_term_executor_options():
+    options_by_label = {}
+    for profile in (
+        ExpertProfile.objects.select_related("employee__user")
+        .prefetch_related("ranked_specialties", "ranked_specialties__specialty")
+        .order_by("position", "id")
+    ):
+        label = _format_typical_service_term_executor_name(profile)
+        if not label:
+            continue
+        option = options_by_label.setdefault(label, {"label": label, "specialties": []})
+        seen_specialties = set(option["specialties"])
+        for link in profile.ranked_specialties.all():
+            specialty = str(link.specialty.specialty or "").strip()
+            if specialty and specialty not in seen_specialties:
+                option["specialties"].append(specialty)
+                seen_specialties.add(specialty)
+    return list(options_by_label.values())
+
+
+def _typical_service_term_section_options(product_id):
+    sections = (
+        TypicalSection.objects.filter(product_id=product_id)
+        .prefetch_related("ranked_specialties", "ranked_specialties__specialty")
+        .order_by("position", "id")
+    )
+    options = []
+    for section in sections:
+        specialties = []
+        seen = set()
+        for link in section.ranked_specialties.all():
+            label = str(link.specialty.specialty or "").strip()
+            if not label or label in seen:
+                continue
+            seen.add(label)
+            specialties.append({"label": label, "rank": link.rank})
+        options.append({"id": section.id, "label": section.name_ru, "specialties": specialties})
+    return options
+
+
 def _typical_service_term_gantt_response_payload(term):
     gantt_data = term.gantt_data if isinstance(term.gantt_data, dict) and term.gantt_data.get("data") else None
+    section_options = _typical_service_term_section_options(term.product_id)
     return {
         "ok": True,
         "gantt": gantt_data or _default_typical_service_term_gantt_data(term),
+        "section_options": section_options,
+        "specialty_options": _typical_service_term_specialty_options(),
+        "executor_options": _typical_service_term_executor_options(),
         "term": {
             "id": term.pk,
             "product": term.product.short_name,
@@ -1925,8 +2268,22 @@ def typical_service_term_gantt(request, pk: int):
 
     try:
         payload = json.loads(request.body.decode("utf-8") or "{}")
-        gantt_data, dated_tasks, base_date = _normalize_typical_service_term_gantt_payload(payload)
-        preliminary_months, final_weeks = _calculate_typical_service_term_durations(dated_tasks, base_date)
+        section_options = _typical_service_term_section_options(term.product_id)
+        section_names = [item["label"] for item in section_options]
+        section_specialties_by_name = {
+            item["label"]: item.get("specialties", [])
+            for item in section_options
+        }
+        specialty_options = _typical_service_term_specialty_options()
+        executor_options = _typical_service_term_executor_options()
+        gantt_data, dated_tasks, base_date = _normalize_typical_service_term_gantt_payload(
+            payload,
+            section_names,
+            section_specialties_by_name,
+            specialty_options,
+            executor_options,
+        )
+        preliminary_months, final_weeks = _calculate_typical_service_term_durations(dated_tasks)
     except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
         return JsonResponse({"ok": False, "error": str(exc)}, status=400)
 

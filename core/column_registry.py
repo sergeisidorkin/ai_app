@@ -259,7 +259,7 @@ COLUMN_REGISTRY = {
         "label": "Проекты",
         "tables": {
             "registration": {
-                "label": "Регистрация проекта",
+                "label": "Реестр проектов",
                 "columns": {
                     "number": "Номер",
                     "group": "Группа",

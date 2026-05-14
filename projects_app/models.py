@@ -37,7 +37,7 @@ class ProjectRegistration(models.Model):
         blank=True,
     )
     agreement_sequence = models.PositiveIntegerField(
-        "№ соглашения в проекте",
+        "№ этапа-продукта",
         default=0,
         editable=False,
         db_index=True,
@@ -127,7 +127,27 @@ class ProjectRegistration(models.Model):
     customer = models.CharField("Заказчик", max_length=255, blank=True)
     identifier = models.CharField("Идентификатор", max_length=64, blank=True, default="")
     registration_number = models.CharField("Регистрационный номер", max_length=100, blank=True)
+    registration_region = models.CharField("Регион", max_length=255, blank=True, default="")
     registration_date = models.DateField("Дата регистрации", null=True, blank=True)
+    asset_owner = models.CharField("Владелец активов", max_length=255, blank=True, default="")
+    asset_owner_matches_customer = models.BooleanField("Совпадает с Заказчиком", default=True)
+    asset_owner_country = models.ForeignKey(
+        OKSMCountry,
+        verbose_name="Страна владельца активов",
+        on_delete=models.SET_NULL,
+        related_name="project_asset_owner_registrations",
+        null=True,
+        blank=True,
+    )
+    asset_owner_identifier = models.CharField("Идентификатор владельца активов", max_length=64, blank=True, default="")
+    asset_owner_registration_number = models.CharField(
+        "Регистрационный номер владельца активов",
+        max_length=100,
+        blank=True,
+        default="",
+    )
+    asset_owner_region = models.CharField("Регион владельца активов", max_length=255, blank=True, default="")
+    asset_owner_registration_date = models.DateField("Дата регистрации владельца активов", null=True, blank=True)
     project_manager = models.CharField("Руководитель проекта", max_length=255, blank=True)
     project_manager_prs_id = models.CharField("ID-PRS руководителя проекта", max_length=32, blank=True, default="")
     contract_subject = models.TextField("Предмет договора", blank=True)
@@ -215,7 +235,71 @@ class ProjectRegistration(models.Model):
                 registration.short_uid = new_uid
             cls.objects.bulk_update([item[0] for item in to_refresh], ["short_uid"])
 
+    @classmethod
+    def refresh_number_sequences(cls, numbers):
+        normalized_numbers = []
+        for number in numbers:
+            if number is None:
+                continue
+            try:
+                normalized_numbers.append(int(number))
+            except (TypeError, ValueError):
+                continue
+        if not normalized_numbers:
+            return
+
+        registrations = list(
+            cls.objects
+            .select_related("group_member")
+            .filter(number__in=set(normalized_numbers))
+            .order_by("number", "position", "id")
+        )
+        if not registrations:
+            return
+
+        by_number = {}
+        for registration in registrations:
+            by_number.setdefault(registration.number, []).append(registration)
+
+        to_refresh = []
+        for group in by_number.values():
+            total = len(group)
+            for index, registration in enumerate(group, start=1):
+                sequence = 0 if total == 1 else index
+                current_sequence = int(registration.agreement_sequence or 0)
+                registration.agreement_sequence = sequence
+                new_uid = registration._build_short_uid()
+                if current_sequence == sequence and registration.short_uid == new_uid:
+                    continue
+                registration.short_uid = f"tmp{registration.pk}{uuid.uuid4().hex[:8]}"
+                to_refresh.append((registration, sequence, new_uid))
+
+        if not to_refresh:
+            return
+
+        with transaction.atomic():
+            cls.objects.bulk_update([item[0] for item in to_refresh], ["short_uid"])
+            for registration, sequence, new_uid in to_refresh:
+                registration.agreement_sequence = sequence
+                registration.short_uid = new_uid
+            cls.objects.bulk_update(
+                [item[0] for item in to_refresh],
+                ["agreement_sequence", "short_uid"],
+            )
+
     def save(self, *args, **kwargs):
+        old_number = None
+        old_position = None
+        if self.pk:
+            original = (
+                ProjectRegistration.objects
+                .filter(pk=self.pk)
+                .values("number", "position")
+                .first()
+            )
+            if original:
+                old_number = original["number"]
+                old_position = original["position"]
         member = self._resolved_group_member()
         if member:
             self.group = member.country_alpha2 or self.group
@@ -236,6 +320,13 @@ class ProjectRegistration(models.Model):
         if not self.short_uid or self._needs_uid_refresh():
             self.short_uid = self._build_short_uid()
         super().save(*args, **kwargs)
+        update_fields = kwargs.get("update_fields")
+        should_refresh_sequences = update_fields is None or bool(
+            {"number", "position", "group", "group_member", "agreement_sequence", "short_uid"}
+            & set(update_fields)
+        )
+        if should_refresh_sequences and (old_number != self.number or old_position != self.position or old_number is None):
+            self.refresh_number_sequences([old_number, self.number])
 
     def _calculate_stage1_end(self):
         if not self.contract_start:
@@ -282,12 +373,13 @@ class ProjectRegistration(models.Model):
         orig = (
             ProjectRegistration.objects
             .filter(pk=self.pk)
-            .values("number", "group", "group_member_id", "agreement_sequence")
+            .values("number", "position", "group", "group_member_id", "agreement_sequence")
             .first()
         )
         return (
             not orig
             or orig["number"] != self.number
+            or orig["position"] != self.position
             or orig["group"] != self.group
             or orig["group_member_id"] != self.group_member_id
             or orig["agreement_sequence"] != self.agreement_sequence
@@ -296,16 +388,24 @@ class ProjectRegistration(models.Model):
     def _needs_agreement_sequence_refresh(self):
         if not self.pk:
             return True
-        orig = ProjectRegistration.objects.filter(pk=self.pk).values("number").first()
-        return not orig or orig["number"] != self.number
+        orig = ProjectRegistration.objects.filter(pk=self.pk).values("number", "position").first()
+        return not orig or orig["number"] != self.number or orig["position"] != self.position
 
     def _build_agreement_sequence(self):
-        return (
+        siblings = list(
             ProjectRegistration.objects
             .filter(number=self.number)
             .exclude(pk=self.pk)
-            .count()
+            .order_by("position", "id")
+            .values_list("position", "id")
         )
+        if not siblings:
+            return 0
+        if not self.pk:
+            return len(siblings) + 1
+        current_key = (self.position or 0, self.pk)
+        earlier = sum(1 for position, pk in siblings if (position or 0, pk) < current_key)
+        return earlier + 1
 
     def _build_short_uid(self):
         return f"{self.formatted_number}{self.agreement_sequence}{self.group_order_number}{self.group_alpha2}"
@@ -651,6 +751,12 @@ def sync_project_registration_products_after_save(sender, instance, **kwargs):
 def sync_project_registration_products_after_delete(sender, instance, **kwargs):
     if instance.registration_id:
         _sync_project_registration_primary_product(instance.registration_id)
+
+
+@receiver(post_delete, sender=ProjectRegistration)
+def refresh_project_registration_sequences_after_delete(sender, instance, **kwargs):
+    ProjectRegistration.refresh_number_sequences([instance.number])
+
 
 @receiver(post_save, sender=WorkVolume)
 def ensure_primary_legal_entity(sender, instance, created, **kwargs):

@@ -892,7 +892,47 @@
           <div class="fw-semibold">Диаграмма Ганта</div>
           <div class="small text-muted" id="typical-service-term-gantt-subtitle">Выберите строку и нажмите «Редактировать».</div>
         </div>
-        <div class="d-flex align-items-center gap-2 flex-wrap">
+        <div class="typical-service-term-gantt-toolbar-controls d-flex align-items-center gap-2 flex-wrap">
+          <button type="button"
+                  class="btn btn-outline-secondary btn-sm typical-service-term-gantt-hide-non-working-toggle"
+                  id="typical-service-term-gantt-hide-non-working-btn"
+                  aria-label="Свернуть нерабочие дни на таймлайне"
+                  aria-pressed="false"
+                  title="Свернуть нерабочие дни: выходные и праздники не показываются на таймлайне">
+            <i class="bi bi-arrows-collapse-vertical" aria-hidden="true"></i>
+          </button>
+          <button type="button"
+                  class="btn btn-outline-secondary btn-sm typical-service-term-gantt-calendar-days-toggle"
+                  id="typical-service-term-gantt-calendar-days-btn"
+                  aria-label="Включить режим календарных дней"
+                  aria-pressed="false"
+                  title="Режим календарных дней: длительность считается без учёта производственного календаря">
+            <i class="bi bi-calendar3" aria-hidden="true"></i>
+          </button>
+          <button type="button"
+                  class="btn btn-outline-secondary btn-sm typical-service-term-gantt-timebox-toggle"
+                  id="typical-service-term-gantt-timebox-btn"
+                  aria-label="Включить режим таймбокса"
+                  aria-pressed="false"
+                  title="Режим таймбокса: подгонять цепочку к фиксированной вехе">
+            <i class="bi bi-calendar3-range" aria-hidden="true"></i>
+          </button>
+          <button type="button"
+                  class="btn btn-outline-secondary btn-sm typical-service-term-gantt-free-dates-toggle"
+                  id="typical-service-term-gantt-free-dates-btn"
+                  aria-label="Включить привязку сроков к сетке"
+                  aria-pressed="false"
+                  title="Свободное изменение сроков без привязки к сетке">
+            <i class="bi bi-align-end" aria-hidden="true"></i>
+          </button>
+          <label class="typical-service-term-gantt-project-bound small text-muted text-nowrap">
+            Начало проекта
+            <input type="text" class="form-control form-control-sm typical-service-term-gantt-project-start" inputmode="numeric" aria-label="Начало проекта">
+          </label>
+          <label class="typical-service-term-gantt-project-bound small text-muted text-nowrap">
+            Конец проекта
+            <input type="text" class="form-control form-control-sm typical-service-term-gantt-project-end" inputmode="numeric" aria-label="Конец проекта">
+          </label>
           <span class="small text-muted text-nowrap">Масштаб:</span>
           <div class="btn-group btn-group-sm" role="group" aria-label="Масштаб диаграммы Гантта типовых сроков">
             <button type="button" class="btn btn-outline-secondary js-typical-service-term-gantt-scale" data-scale="day">День</button>
@@ -900,18 +940,47 @@
             <button type="button" class="btn btn-outline-secondary js-typical-service-term-gantt-scale" data-scale="month">Месяц</button>
             <button type="button" class="btn btn-outline-secondary js-typical-service-term-gantt-scale" data-scale="quarter">Квартал</button>
           </div>
+          <button type="button"
+                  class="btn btn-outline-secondary btn-sm typical-service-term-gantt-fullscreen-toggle"
+                  id="typical-service-term-gantt-fullscreen-btn"
+                  aria-label="Развернуть диаграмму на весь экран"
+                  title="Развернуть диаграмму на весь экран">
+            <i class="bi bi-arrows-fullscreen" aria-hidden="true"></i>
+          </button>
         </div>
       </div>
       <div id="typical-service-term-gantt-message" class="typical-service-term-gantt-message text-muted d-none"></div>
       <div id="typical-service-term-gantt" class="typical-service-term-gantt"></div>
-      <div class="typical-service-term-gantt-footer d-flex justify-content-end gap-2">
-        <button type="button" class="btn btn-outline-secondary btn-sm" id="typical-service-term-gantt-cancel-btn">
-          Отмена
-        </button>
-        <button type="button" class="btn btn-primary btn-sm" id="typical-service-term-gantt-save-btn">
-          <i class="bi bi-check2-circle me-2"></i>Сохранить
-        </button>
+      <div class="typical-service-term-gantt-footer d-flex justify-content-between align-items-center gap-2">
+        <div class="d-flex align-items-center gap-2">
+          <button type="button"
+                  class="btn btn-outline-secondary btn-sm typical-service-term-gantt-settings-btn"
+                  id="typical-service-term-gantt-settings-btn"
+                  aria-label="Настройки диаграммы Ганта"
+                  title="Настройки">
+            <i class="bi bi-gear-wide-connected me-2" aria-hidden="true"></i>Настройки
+          </button>
+          <button type="button"
+                  class="btn btn-outline-secondary btn-sm typical-service-term-gantt-resources-btn"
+                  id="typical-service-term-gantt-resources-btn"
+                  aria-label="Показать ресурсы проекта"
+                  aria-expanded="false"
+                  aria-pressed="false"
+                  title="Ресурсы проекта">
+            <i class="bi bi-person-vcard" aria-hidden="true"></i>
+          </button>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          <button type="button" class="btn btn-outline-secondary btn-sm" id="typical-service-term-gantt-cancel-btn">
+            Отмена
+          </button>
+          <button type="button" class="btn btn-primary btn-sm" id="typical-service-term-gantt-save-btn">
+            <i class="bi bi-check2-circle me-2"></i>Сохранить
+          </button>
+        </div>
       </div>
+      <div id="typical-service-term-gantt-resources"
+           class="gantt-resources-panel typical-service-term-gantt-resources d-none"></div>
     </div>
     {% endif %}
 

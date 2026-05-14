@@ -53,11 +53,16 @@ from .forms import (
 )
 from .numcap_official_csv import process_numcap_official_sources
 from .production_calendar import (
+    _calendar_for_country,
+    build_day_values,
     default_country as default_production_calendar_country,
     download_isdayoff_calendar,
     generate_calendar_year,
     get_calendar_days,
+    is_country_supported,
     isdayoff_calendar_status,
+    iter_year_dates,
+    load_isdayoff_calendar,
     normalize_year,
     supported_countries_queryset,
 )
@@ -4234,6 +4239,143 @@ def _pc_form_context(request, form, action, item=None):
         "pc_filter_country_id": country.pk if country else "",
         "pc_filter_year": year,
     }
+
+
+@login_required
+@require_http_methods(["GET"])
+def pc_countries_json(request):
+    """Return supported countries for the production-calendar country selector."""
+    countries = supported_countries_queryset()
+    default = default_production_calendar_country()
+    items = [
+        {
+            "id": country.pk,
+            "alpha2": country.alpha2,
+            "alpha3": country.alpha3,
+            "code": country.code,
+            "short_name": country.short_name,
+        }
+        for country in countries
+    ]
+    return JsonResponse(
+        {
+            "ok": True,
+            "items": items,
+            "default_id": default.pk if default else None,
+            "default_alpha2": default.alpha2 if default else None,
+        }
+    )
+
+
+@login_required
+@require_http_methods(["GET"])
+def pc_calendar_json(request):
+    """Return production calendar days for a country and a year range.
+
+    Used by the Gantt working-days mode to know which days to treat as
+    non-working time. Stored ProductionCalendarDay rows take precedence; for
+    years that have not been generated yet we fall back to deriving the values
+    on the fly from holidays / isdayoff snapshots so the chart can be shaded
+    immediately without forcing the operator to pre-fill every year.
+    """
+
+    country = None
+    raw_country_id = _req_param(request, "country_id")
+    if raw_country_id:
+        try:
+            country = OKSMCountry.objects.filter(pk=int(raw_country_id)).first()
+        except (TypeError, ValueError):
+            country = None
+    if country is None:
+        country = default_production_calendar_country()
+    if country is None:
+        return JsonResponse(
+            {"ok": False, "error": "Поддерживаемая страна не выбрана."},
+            status=400,
+        )
+    if not is_country_supported(country):
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": f"Страна {country.alpha2} не поддерживается производственным календарём.",
+            },
+            status=400,
+        )
+
+    today_year = normalize_year(None)
+    try:
+        year_from = int(_req_param(request, "year_from") or today_year)
+    except (TypeError, ValueError):
+        year_from = today_year
+    try:
+        year_to = int(_req_param(request, "year_to") or year_from)
+    except (TypeError, ValueError):
+        year_to = year_from
+    year_from = normalize_year(year_from)
+    year_to = normalize_year(year_to)
+    if year_to < year_from:
+        year_from, year_to = year_to, year_from
+    if year_to - year_from > 10:
+        year_to = year_from + 10
+
+    days = []
+    for year in range(year_from, year_to + 1):
+        existing = {
+            item.date: item
+            for item in ProductionCalendarDay.objects.filter(
+                country=country,
+                date__year=year,
+            )
+        }
+        calendar = None
+        snapshot = None
+        try:
+            calendar = _calendar_for_country(country, year)
+        except ValueError:
+            calendar = {}
+        try:
+            snapshot = load_isdayoff_calendar(country.alpha2, year)
+        except Exception:  # pragma: no cover - defensive: keep API responsive
+            snapshot = None
+        for day in iter_year_dates(year):
+            stored = existing.get(day)
+            if stored is not None:
+                is_working = bool(stored.is_working_day)
+                is_shortened = bool(stored.is_shortened_day)
+                is_holiday = bool(stored.is_holiday)
+                holiday_name = stored.holiday_name or ""
+                source = "stored"
+            else:
+                values = build_day_values(calendar or {}, day, snapshot=snapshot)
+                is_working = bool(values["is_working_day"])
+                is_shortened = bool(values["is_shortened_day"])
+                is_holiday = bool(values["is_holiday"])
+                holiday_name = values["holiday_name"] or ""
+                source = "derived"
+            days.append(
+                {
+                    "date": day.isoformat(),
+                    "is_working_day": is_working,
+                    "is_shortened_day": is_shortened,
+                    "is_holiday": is_holiday,
+                    "holiday_name": holiday_name,
+                    "source": source,
+                }
+            )
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "country": {
+                "id": country.pk,
+                "alpha2": country.alpha2,
+                "short_name": country.short_name,
+            },
+            "year_from": year_from,
+            "year_to": year_to,
+            "days": days,
+        }
+    )
 
 
 @login_required

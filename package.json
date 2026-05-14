@@ -1,7 +1,6 @@
 {
   "dependencies": {
     "@microsoft/office-js": "1.1.110",
-    "dhtmlx-gantt": "^9.1.4",
     "google-libphonenumber": "^3.2.44"
   }
 }

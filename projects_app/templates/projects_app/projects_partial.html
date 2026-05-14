@@ -5,11 +5,12 @@
   <div id="projects-content-launch" class="projects-section-content">
     <div class="card shadow-sm">
       <div class="card-body">
-  <!-- Регистрация проекта -->
-  <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
-    <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
-      <i class="bi bi-table"></i> Регистрация проекта
-    </h5>
+  <!-- Реестр проектов -->
+  <div class="d-flex justify-content-between align-items-center gap-3 mb-3 table-section-header flex-wrap">
+    <div class="d-flex align-items-center gap-3 flex-wrap">
+      <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
+        <i class="bi bi-table"></i> Реестр проектов
+      </h5>
     <div class="dropdown" id="reg-project-filter-dropdown">
       <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
               id="reg-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
@@ -36,28 +37,76 @@
         {% endfor %}
       </div>
     </div>
+    </div>
+    <div class="d-flex align-items-center gap-2 ms-auto">
+      <span class="small text-muted text-nowrap">Отображаемые поля:</span>
+      <div class="tkp-colpicker" id="registration-colpicker-wrap">
+        <button type="button" class="form-select form-select-sm text-start tkp-colpicker-btn" id="registration-colpicker-btn">
+          Все поля
+        </button>
+        <div class="tkp-colpicker-menu" id="registration-colpicker-menu">
+          <div class="tkp-colpicker-item">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="all" id="registration-col-all" checked>
+              <label class="form-check-label" for="registration-col-all">Все поля</label>
+            </div>
+          </div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="number" id="registration-col-number" checked><label class="form-check-label" for="registration-col-number">Номер</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="agreement-type" id="registration-col-agreement-type" checked><label class="form-check-label" for="registration-col-agreement-type">Вид соглашения</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="group" id="registration-col-group" checked><label class="form-check-label" for="registration-col-group">Группа</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="project-id" id="registration-col-project-id" checked><label class="form-check-label" for="registration-col-project-id">Проект ID</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="type" id="registration-col-type" checked><label class="form-check-label" for="registration-col-type">Тип</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="name" id="registration-col-name" checked><label class="form-check-label" for="registration-col-name">Название</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="launch" id="registration-col-launch" checked><label class="form-check-label" for="registration-col-launch">Запуск</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="status" id="registration-col-status" checked><label class="form-check-label" for="registration-col-status">Статус</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="deadline" id="registration-col-deadline" checked><label class="form-check-label" for="registration-col-deadline">Дедлайн</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="year" id="registration-col-year" checked><label class="form-check-label" for="registration-col-year">Год</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="manager" id="registration-col-manager" checked><label class="form-check-label" for="registration-col-manager">Руководитель проекта</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="customer" id="registration-col-customer" checked><label class="form-check-label" for="registration-col-customer">Заказчик: наименование</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="country" id="registration-col-country" checked><label class="form-check-label" for="registration-col-country">Заказчик: страна</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="identifier" id="registration-col-identifier" checked><label class="form-check-label" for="registration-col-identifier">Заказчик: идент.</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="registration-number" id="registration-col-registration-number" checked><label class="form-check-label" for="registration-col-registration-number">Заказчик: регистр. номер</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="region" id="registration-col-region" checked><label class="form-check-label" for="registration-col-region">Заказчик: регион</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="date" id="registration-col-date" checked><label class="form-check-label" for="registration-col-date">Заказчик: дата регистр.</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="asset-owner" id="registration-col-asset-owner" checked><label class="form-check-label" for="registration-col-asset-owner">Владелец: наименование</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="asset-owner-country" id="registration-col-asset-owner-country" checked><label class="form-check-label" for="registration-col-asset-owner-country">Владелец: страна</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="asset-owner-identifier" id="registration-col-asset-owner-identifier" checked><label class="form-check-label" for="registration-col-asset-owner-identifier">Владелец: идент.</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="asset-owner-reg-number" id="registration-col-asset-owner-reg-number" checked><label class="form-check-label" for="registration-col-asset-owner-reg-number">Владелец: регистр. номер</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="asset-owner-region" id="registration-col-asset-owner-region" checked><label class="form-check-label" for="registration-col-asset-owner-region">Владелец: регион</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="asset-owner-date" id="registration-col-asset-owner-date" checked><label class="form-check-label" for="registration-col-asset-owner-date">Владелец: дата регистр.</label></div></div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div class="registration-table-wrap">
 
-    <table class="table table-sm align-middle reg-table">
+    <table id="registration-registry-table" class="table table-sm align-middle reg-table">
         <colgroup>
           <col class="checkbox">         <!-- 1: чекбокс -->
-          <col class="project-number">   <!-- 2: Номер -->
-          <col class="agreement-type">   <!-- 3: Вид соглашения -->
-          <col class="group">            <!-- 4: Группа -->
-          <col class="project-id">       <!-- 5: Проект ID -->
-          <col class="reg-type">          <!-- 6: Тип -->
-          <col class="reg-name">         <!-- 7: Название -->
-          <col class="reg-status">       <!-- 8: Статус -->
-          <col class="reg-deadline">      <!-- 9: Дедлайн -->
-          <col class="reg-year">         <!-- 10: Год -->
-          <col class="reg-manager">      <!-- 11: Руководитель проекта -->
-          <col class="reg-customer">     <!-- 12: Заказчик -->
-          <col class="reg-country">      <!-- 13: Страна -->
-          <col class="reg-identifier">   <!-- 14: Идентификатор -->
-          <col class="reg-regnumber">    <!-- 15: Регистр. номер -->
-          <col class="reg-regdate">     <!-- 16: Дата регистр. -->
+          <col class="project-number" data-col="number">   <!-- 2: Номер -->
+          <col class="agreement-type" data-col="agreement-type">   <!-- 3: Вид соглашения -->
+          <col class="group" data-col="group">            <!-- 4: Группа -->
+          <col class="project-id" data-col="project-id">       <!-- 5: Проект ID -->
+          <col class="reg-type" data-col="type">          <!-- 6: Тип -->
+          <col class="reg-name" data-col="name">         <!-- 7: Название -->
+          <col class="reg-launch" data-col="launch">       <!-- 8: Запуск -->
+          <col class="reg-status" data-col="status">       <!-- 9: Статус -->
+          <col class="reg-deadline" data-col="deadline">     <!-- 10: Дедлайн -->
+          <col class="reg-year" data-col="year">         <!-- 11: Год -->
+          <col class="reg-manager" data-col="manager">      <!-- 12: Руководитель проекта -->
+          <col class="reg-customer" data-col="customer">     <!-- 13: Заказчик -->
+          <col class="reg-country" data-col="country">      <!-- 14: Страна -->
+          <col class="reg-identifier" data-col="identifier">   <!-- 15: Идентификатор -->
+          <col class="reg-regnumber" data-col="registration-number">    <!-- 16: Регистр. номер -->
+          <col class="reg-region" data-col="region">      <!-- 17: Регион -->
+          <col class="reg-regdate" data-col="date">      <!-- 18: Дата регистр. -->
+          <col class="reg-asset-owner" data-col="asset-owner">      <!-- 19: Владелец -->
+          <col class="reg-asset-owner-country" data-col="asset-owner-country">      <!-- 20: Страна владельца -->
+          <col class="reg-asset-owner-identifier" data-col="asset-owner-identifier">      <!-- 21: Идент. владельца -->
+          <col class="reg-asset-owner-regnumber" data-col="asset-owner-reg-number">      <!-- 22: Регистр. номер владельца -->
+          <col class="reg-asset-owner-region" data-col="asset-owner-region">      <!-- 23: Регион владельца -->
+          <col class="reg-asset-owner-regdate" data-col="asset-owner-date">      <!-- 24: Дата регистр. владельца -->
         </colgroup>
       <thead>
       <tr>
@@ -74,21 +123,29 @@
             </div>
           {% endif %}
         </th>
-        <th class="col-project-number">Номер</th>
-        <th>Вид соглашения</th>
-        <th>Группа</th>
-        <th>Проект ID</th>
-        <th>Тип</th>
-        <th class="nowrap">Название</th>
-        <th>Статус</th>
-        <th>Дедлайн</th>
-        <th>Год</th>
-        <th>Руководитель проекта</th>
-        <th class="reg-customer-cell">Заказчик</th>
-        <th>Страна</th>
-        <th>Идент.</th>
-        <th>Регистр. номер</th>
-        <th>Дата</th>
+        <th class="col-project-number" data-col="number">Номер</th>
+        <th data-col="agreement-type">Вид соглашения</th>
+        <th data-col="group">Группа</th>
+        <th data-col="project-id">Проект ID</th>
+        <th data-col="type">Тип</th>
+        <th class="nowrap" data-col="name">Название</th>
+        <th class="reg-launch-cell" data-col="launch"><span class="visually-hidden">Запуск</span></th>
+        <th data-col="status">Статус</th>
+        <th data-col="deadline">Дедлайн</th>
+        <th data-col="year">Год</th>
+        <th data-col="manager">Руководитель проекта</th>
+        <th class="reg-customer-cell proposal-split-header proposal-split-header-inline" data-col="customer"><span class="proposal-split-header-prefix">Заказчик: </span><span class="proposal-split-header-suffix">наименование</span></th>
+        <th class="proposal-split-header" data-col="country"><span class="proposal-split-header-prefix">Заказчик: </span><span class="proposal-split-header-suffix">страна</span></th>
+        <th class="proposal-split-header" data-col="identifier"><span class="proposal-split-header-prefix">Заказчик: </span><span class="proposal-split-header-suffix">идент.</span></th>
+        <th class="proposal-split-header" data-col="registration-number"><span class="proposal-split-header-prefix">Заказчик: </span><span class="proposal-split-header-suffix">регистр. номер</span></th>
+        <th class="proposal-split-header proposal-split-header-inline" data-col="region"><span class="proposal-split-header-prefix">Заказчик: </span><span class="proposal-split-header-suffix">регион</span></th>
+        <th class="proposal-split-header" data-col="date"><span class="proposal-split-header-prefix">Заказчик: </span><span class="proposal-split-header-suffix">дата регистр.</span></th>
+        <th class="proposal-split-header proposal-split-header-inline" data-col="asset-owner"><span class="proposal-split-header-prefix">Владелец: </span><span class="proposal-split-header-suffix">наименование</span></th>
+        <th class="proposal-split-header" data-col="asset-owner-country"><span class="proposal-split-header-prefix">Владелец: </span><span class="proposal-split-header-suffix">страна</span></th>
+        <th class="proposal-split-header" data-col="asset-owner-identifier"><span class="proposal-split-header-prefix">Владелец: </span><span class="proposal-split-header-suffix">идент.</span></th>
+        <th class="proposal-split-header" data-col="asset-owner-reg-number"><span class="proposal-split-header-prefix">Владелец: </span><span class="proposal-split-header-suffix">регистр. номер</span></th>
+        <th class="proposal-split-header proposal-split-header-inline" data-col="asset-owner-region"><span class="proposal-split-header-prefix">Владелец: </span><span class="proposal-split-header-suffix">регион</span></th>
+        <th class="proposal-split-header" data-col="asset-owner-date"><span class="proposal-split-header-prefix">Владелец: </span><span class="proposal-split-header-suffix">дата регистр.</span></th>
       </tr>
       </thead>
       <tbody>
@@ -97,8 +154,12 @@
           data-project-id="{{ r.id }}"
           data-edit-url="{% url 'registration_form_edit' r.pk %}"
           data-delete-url="{% url 'registration_delete' r.pk %}"
+          data-status-url="{% url 'registration_status_update' r.pk %}"
+          data-manager-url="{% url 'registration_manager_update' r.pk %}"
+          data-deadline-url="{% url 'registration_deadline_update' r.pk %}"
           data-move-up-url="{% url 'registration_move_up' r.pk %}"
-          data-move-down-url="{% url 'registration_move_down' r.pk %}">
+          data-move-down-url="{% url 'registration_move_down' r.pk %}"
+          {% if r.is_continuation or r.has_next_for_number %}class="{% if r.has_next_for_number %}registration-number-has-next{% endif %}{% if r.is_continuation %}{% if r.has_next_for_number %} {% endif %}registration-number-continuation{% endif %}"{% endif %}>
           <td class="text-nowrap">
             {% if request.user.is_authenticated and request.user.is_staff %}
               <div class="form-check">
@@ -112,27 +173,140 @@
               </div>
             {% endif %}
           </td>
-          <td class="col-project-number">{{ r.number|stringformat:"04d" }}</td>
-          <td>{{ r.get_agreement_type_display }}</td>
-          <td>{{ r.group_display }}</td>
-          <td class="project-id-cell"><span class="clf-id-droid-mono">{{ r.short_uid }}</span></td>
-          <td>{{ r.type_short_display }}</td>
-          <td>{{ r.name }}</td>
-          <td>{{ r.status }}</td>
-          <td>{{ r.deadline|date:"d.m.y" }}</td>
-          <td>{{ r.year }}</td>
-          <td>{{ r.project_manager|short_fio }}</td>
-          <td>{{ r.customer }}</td>
-          <td>{{ r.country.short_name|default:"" }}</td>
-          <td>{{ r.identifier }}</td>
-          <td>{{ r.registration_number }}</td>
-          <td>{{ r.registration_date|date:"d.m.y" }}</td>
+          <td class="col-project-number" data-col="number">{% if r.is_first_for_number %}{{ r.number|stringformat:"04d" }}{% endif %}</td>
+          <td data-col="agreement-type">{% if r.is_first_for_number %}{{ r.get_agreement_type_display }}{% endif %}</td>
+          <td data-col="group">{% if r.is_first_for_number %}{{ r.group_display }}{% endif %}</td>
+          <td class="project-id-cell" data-col="project-id"><span class="clf-id-droid-mono">{{ r.short_uid }}</span></td>
+          <td data-col="type">{{ r.type_short_display }}</td>
+          <td data-col="name">{{ r.name }}</td>
+          <td class="reg-launch-cell text-center" data-reg-launch-cell data-col="launch">
+            {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+              {% if r.status == "Не начат" %}
+                <button type="button"
+                        class="btn btn-link p-0 reg-launch-btn"
+                        data-registration-launch
+                        data-launch-url="{% url 'registration_launch' r.pk %}"
+                        title="Запустить проект"
+                        aria-label="Запустить проект">
+                  <i class="bi bi-play-circle" aria-hidden="true"></i>
+                </button>
+              {% else %}
+                <button type="button"
+                        class="btn btn-link p-0 reg-launch-btn reg-launch-indicator{% if r.status == 'В работе' %} reg-launch-status--work{% elif r.status == 'Завершён' %} reg-launch-status--done{% elif r.status == 'Отложен' %} reg-launch-status--deferred{% elif r.status == 'На проверке' %} reg-launch-status--review{% endif %}"
+                        data-launch-url="{% url 'registration_launch' r.pk %}"
+                        disabled
+                        title="{{ r.status }}"
+                        aria-label="Статус проекта: {{ r.status }}">
+                  <i class="bi bi-circle" aria-hidden="true"></i>
+                </button>
+              {% endif %}
+            {% else %}
+              {% if r.status == "Не начат" %}
+                <i class="bi bi-play-circle text-muted reg-launch-icon" aria-hidden="true"></i>
+              {% else %}
+                <i class="bi bi-circle reg-launch-icon reg-launch-indicator{% if r.status == 'В работе' %} reg-launch-status--work{% elif r.status == 'Завершён' %} reg-launch-status--done{% elif r.status == 'Отложен' %} reg-launch-status--deferred{% elif r.status == 'На проверке' %} reg-launch-status--review{% endif %}"
+                   title="{{ r.status }}"
+                   aria-label="Статус проекта: {{ r.status }}"></i>
+              {% endif %}
+            {% endif %}
+          </td>
+          <td data-reg-status-cell data-status-value="{{ r.status }}" data-col="status">
+            {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+              <button type="button"
+                      class="btn btn-link p-0 reg-status-btn"
+                      data-registration-status
+                      data-status-url="{% url 'registration_status_update' r.pk %}"
+                      data-status-value="{{ r.status }}"
+                      title="Изменить статус проекта">
+                {{ r.status }}
+              </button>
+            {% else %}
+              {{ r.status }}
+            {% endif %}
+          </td>
+          <td data-reg-deadline-cell data-deadline-value="{{ r.deadline|date:'Y-m-d' }}" data-col="deadline">
+            {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+              <button type="button"
+                      class="btn btn-link p-0 reg-deadline-btn"
+                      data-registration-deadline
+                      data-deadline-url="{% url 'registration_deadline_update' r.pk %}"
+                      data-deadline-value="{{ r.deadline|date:'Y-m-d' }}"
+                      title="Изменить дедлайн проекта">
+                {{ r.deadline|date:"d.m.Y" }}
+              </button>
+            {% else %}
+              {{ r.deadline|date:"d.m.Y" }}
+            {% endif %}
+          </td>
+          <td data-col="year">{{ r.year }}</td>
+          <td data-reg-manager-cell data-manager-value="{{ r.project_manager_prs_id|default:r.project_manager }}" data-col="manager">
+            {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+              <button type="button"
+                      class="btn btn-link p-0 reg-manager-btn"
+                      data-registration-manager
+                      data-manager-url="{% url 'registration_manager_update' r.pk %}"
+                      data-manager-value="{{ r.project_manager_prs_id|default:r.project_manager }}"
+                      title="Изменить руководителя проекта">
+                {{ r.project_manager|short_fio }}
+              </button>
+            {% else %}
+              {{ r.project_manager|short_fio }}
+            {% endif %}
+          </td>
+          <td data-col="customer">{{ r.customer }}</td>
+          <td data-col="country">{{ r.country.short_name|default:"" }}</td>
+          <td data-col="identifier">{{ r.identifier }}</td>
+          <td data-col="registration-number">{{ r.registration_number }}</td>
+          <td data-col="region">{{ r.registration_region }}</td>
+          <td data-col="date">{{ r.registration_date|date:"d.m.y" }}</td>
+          <td data-col="asset-owner">{{ r.asset_owner }}</td>
+          <td data-col="asset-owner-country">{{ r.asset_owner_country.short_name|default:"" }}</td>
+          <td data-col="asset-owner-identifier">{{ r.asset_owner_identifier }}</td>
+          <td data-col="asset-owner-reg-number">{{ r.asset_owner_registration_number }}</td>
+          <td data-col="asset-owner-region">{{ r.asset_owner_region }}</td>
+          <td data-col="asset-owner-date">{{ r.asset_owner_registration_date|date:"d.m.y" }}</td>
         </tr>
       {% empty %}
-        <tr><td colspan="16" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="24" class="text-muted">Пока нет данных.</td></tr>
       {% endfor %}
       </tbody>
     </table>
+
+    {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+      <select id="registration-status-editor"
+              class="form-select form-select-sm d-none"
+              aria-label="Статус проекта">
+        {% for value, label in registration_status_choices %}
+          <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+      <select id="registration-manager-editor"
+              class="form-select form-select-sm d-none"
+              aria-label="Руководитель проекта">
+        {% for value, label in registration_manager_choices %}
+          <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+      <div id="registration-deadline-editor-wrap"
+           class="registration-deadline-editor-wrap d-none">
+        <input id="registration-deadline-editor"
+               class="form-control form-control-sm registration-deadline-editor-input"
+               type="text"
+               inputmode="numeric"
+               autocomplete="off"
+               autocorrect="off"
+               autocapitalize="off"
+               spellcheck="false"
+               placeholder="дд.мм.гггг"
+               aria-label="Дедлайн проекта">
+        <i class="bi bi-calendar registration-deadline-editor-icon" aria-hidden="true"></i>
+        <input id="registration-deadline-picker"
+               class="registration-deadline-native-picker"
+               type="date"
+               tabindex="-1"
+               aria-label="Выбрать дедлайн проекта">
+      </div>
+    {% endif %}
 
     {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
       <div class="d-flex align-items-stretch gap-2 products-actions-row"
@@ -145,7 +319,7 @@
           hx-get="{% url 'registration_form_create' %}"
           hx-target="#projects-modal .modal-content"
           hx-swap="innerHTML">
-          <i class="bi bi-plus-circle me-2"></i>Добавить строку
+          <i class="bi bi-plus-circle me-2"></i>Добавить проект
         </button>
         <div id="registrations-actions" class="d-none">
           <div class="btn-group">
@@ -319,7 +493,6 @@
           <col class="narrow">           <!-- 14: Этап 2, оконч. -->
           <col class="narrow">           <!-- 15: Этап 3, недель -->
           <col class="narrow">           <!-- 16: Срок, недель -->
-          <col class="col-subject">      <!-- 17: Предмет договора -->
         </colgroup>
       <thead>
       <tr>
@@ -329,9 +502,7 @@
                 <input class="form-check-input"
                        type="checkbox"
                        id="contract-conditions-master"
-                       data-target-name="contract-select"
-                       data-actions-id="contract-conditions-actions"
-                       {% if is_expert %}disabled{% endif %}
+                       disabled
                        aria-label="Выделить все строки условий контракта">
             </div>
           {% endif %}
@@ -351,21 +522,19 @@
         <th>Этап 2, ок.</th>
         <th>Этап 3, нед.</th>
         <th>Срок, нед.</th>
-        <th>Предмет договора</th>
       </tr>
       </thead>
       <tbody>
       {% for r in registrations %}
-        <tr data-project-id="{{ r.id }}" data-edit-url="{% url 'contract_form_edit' r.pk %}">
+        <tr data-project-id="{{ r.id }}">
           <td class="text-nowrap" style="width:30px; min-width:30px; max-width:30px;">
             {% if request.user.is_authenticated and request.user.is_staff %}
               <div class="form-check">
                     <input class="form-check-input"
                            type="checkbox"
                            id="contract-sel-{{ r.id }}"
-                           name="contract-select"
                            value="{{ r.id }}"
-                           {% if is_expert %}disabled{% endif %}
+                           disabled
                            aria-label="Выделить строку условий контракта">
               </div>
             {% endif %}
@@ -385,26 +554,12 @@
           <td>{{ r.stage2_end|date:"d.m.y" }}</td>
           <td>{{ r.stage3_weeks|comma_decimal:1 }}</td>
           <td>{{ r.term_weeks|comma_decimal:1 }}</td>
-          <td>{{ r.contract_subject }}</td>
         </tr>
       {% empty %}
-        <tr><td colspan="17" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="16" class="text-muted">Пока нет данных.</td></tr>
       {% endfor %}
       </tbody>
     </table>
-
-    {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
-      <div class="d-flex align-items-stretch gap-2 products-actions-row">
-        <button
-          type="button"
-          id="contract-edit-btn"
-          class="btn btn-primary btn-sm d-flex align-items-center"
-          disabled>
-          <i class="bi bi-pencil-square me-2"></i>Редактировать
-        </button>
-        <div id="contract-conditions-actions" class="d-none"></div>
-      </div>
-    {% endif %}
   </div>
 
       </div>

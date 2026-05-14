@@ -1,4 +1,42 @@
 {% load static %}
+<style>
+  .tkp-colpicker { position: relative; min-width: 14rem; }
+  .tkp-colpicker-btn {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding-right: 2rem !important;
+  }
+  .tkp-colpicker-menu {
+    display: none;
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: 1055;
+    background: #fff;
+    border: 1px solid #ced4da;
+    border-radius: .25rem;
+    max-height: 22rem;
+    overflow-y: auto;
+    min-width: 100%;
+    padding: .25rem 0;
+    box-shadow: 0 .25rem .5rem rgba(0,0,0,.15);
+    margin-top: 2px;
+  }
+  .tkp-colpicker-menu.show { display: block; }
+  .tkp-colpicker-item {
+    display: flex;
+    align-items: center;
+    padding: .2rem .75rem;
+    white-space: nowrap;
+    margin: 0;
+    font-size: .875em;
+    color: #212529;
+  }
+  .tkp-colpicker-item:hover { background: #f8f9fa; }
+  .tkp-colpicker-item .form-check { margin: 0; min-height: auto; }
+  .tkp-colpicker-item .form-check-label { cursor: pointer; user-select: none; }
+</style>
 <div class="projects-outer-scroll">
   <div id="projects-pending-notifications"
        hx-get="{% url 'project_pending_notifications' %}"

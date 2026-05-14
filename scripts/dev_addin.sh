@@ -24,11 +24,11 @@ wait_tls() {  # $1=host:port  $2=timeout_sec
   return 1
 }
 
-hold_on_port() {  # $1=port
+hold_until_stopped() {
   local p="${1}"
-  echo "[addin] holding while port :$p is LISTEN ..."
-  while lsof -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1; do
-    sleep 2
+  echo "[addin] holding dev stack after Office Add-in start (port :$p); press Ctrl-C to stop ..."
+  while true; do
+    sleep 3600
   done
 }
 
@@ -67,4 +67,4 @@ npx --yes office-addin-debugging start manifest.local.xml
 echo "[addin] waiting dev-server on https://localhost:3000 ..."
 wait_http "https://localhost:3000/" 30 || wait_http "https://localhost:3000/taskpane.html" 30 || true
 
-hold_on_port 3000
+hold_until_stopped 3000
