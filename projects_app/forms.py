@@ -2,8 +2,9 @@ from django import forms
 from django.db import models
 from django.db.models import Max
 from django.utils import timezone
+from datetime import datetime
 
-from classifiers_app.models import OKSMCountry, OKVCurrency, LegalEntityIdentifier
+from classifiers_app.models import OKSMCountry, OKVCurrency, LegalEntityIdentifier, TerritorialDivision
 from group_app.models import GroupMember
 from policy_app.models import (
     DIRECTION_DIRECTOR_GROUP,
@@ -53,6 +54,44 @@ DATE_WIDGET_FORMAT = "%Y-%m-%d"
 
 def _date_input_widget():
     return forms.DateInput(format=DATE_WIDGET_FORMAT, attrs=DATE_INPUT_ATTRS)
+
+
+def _parse_project_form_date(raw_value):
+    value = str(raw_value or "").strip()
+    if not value:
+        return None
+    for fmt in DATE_INPUT_FORMATS:
+        try:
+            return datetime.strptime(value, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _project_region_choices_for_country(country_id, current_value="", as_of=None):
+    choices = []
+    seen = set()
+    normalized_country_id = None
+    if country_id not in (None, ""):
+        try:
+            normalized_country_id = int(country_id)
+        except (TypeError, ValueError):
+            normalized_country_id = None
+    if normalized_country_id:
+        qs = TerritorialDivision.objects.filter(country_id=normalized_country_id)
+        if as_of:
+            qs = qs.filter(effective_date__lte=as_of).filter(
+                models.Q(abolished_date__isnull=True) | models.Q(abolished_date__gte=as_of)
+            )
+        for region_name in qs.order_by("region_name", "id").values_list("region_name", flat=True):
+            if not region_name or region_name in seen:
+                continue
+            seen.add(region_name)
+            choices.append(region_name)
+    current_region = str(current_value or "").strip()
+    if current_region and current_region not in seen:
+        choices.append(current_region)
+    return choices
 
 PROJECT_MANAGER_ROLES = (PROJECTS_HEAD_GROUP, DIRECTION_DIRECTOR_GROUP)
 
@@ -227,6 +266,12 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         required=False,
         widget=forms.Select(attrs={"id": "reg-country-select"}),
     )
+    registration_region = forms.ChoiceField(
+        label="Регион",
+        choices=[("", "---------")],
+        required=False,
+        widget=forms.Select(attrs={"id": "reg-region-select"}),
+    )
     identifier = forms.CharField(
         label="Идентификатор",
         required=False,
@@ -249,15 +294,147 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         widget=_date_input_widget(),
         input_formats=DATE_INPUT_FORMATS,
     )
+    asset_owner = forms.CharField(
+        label="Владелец активов",
+        required=False,
+        widget=forms.TextInput(
+            attrs={
+                "placeholder": "Искать по наименованию и регистрационному номеру",
+                "id": "reg-asset-owner-field",
+            }
+        ),
+    )
+    asset_owner_matches_customer = forms.BooleanField(
+        label="Совпадает с Заказчиком",
+        required=False,
+        initial=True,
+    )
+    asset_owner_country = forms.ModelChoiceField(
+        label="Страна",
+        queryset=OKSMCountry.objects.none(),
+        required=False,
+        widget=forms.Select(attrs={"id": "reg-asset-owner-country-select"}),
+    )
+    asset_owner_region = forms.ChoiceField(
+        label="Регион",
+        choices=[("", "---------")],
+        required=False,
+        widget=forms.Select(attrs={"id": "reg-asset-owner-region-select"}),
+    )
+    asset_owner_identifier = forms.CharField(
+        label="Идентификатор",
+        required=False,
+        widget=forms.TextInput(attrs={
+            "readonly": True,
+            "tabindex": "-1",
+            "class": "form-control readonly-field",
+            "id": "reg-asset-owner-identifier-field",
+        }),
+    )
+    asset_owner_registration_date = forms.DateField(
+        label="Дата регистрации",
+        required=False,
+        widget=_date_input_widget(),
+        input_formats=DATE_INPUT_FORMATS,
+    )
+    contract_start = forms.DateField(required=False,
+                                     widget=_date_input_widget(),
+                                     input_formats=DATE_INPUT_FORMATS)
+    contract_end = forms.DateField(required=False,
+                                   widget=_date_input_widget(),
+                                   input_formats=DATE_INPUT_FORMATS)
+    input_data = forms.IntegerField(
+        label="Исх. данные, дней",
+        required=False,
+        min_value=0,
+        initial=0,
+        widget=forms.NumberInput(attrs={"min": 0, "step": 1, "class": "form-control js-input-data"}),
+    )
+    stage1_weeks = forms.DecimalField(
+        label="Этап 1, недель",
+        required=False,
+        min_value=0,
+        max_digits=4,
+        decimal_places=1,
+        widget=forms.NumberInput(attrs={"min": 0, "step": "0.1", "class": "form-control js-stage1-weeks"}),
+    )
+    stage1_end = forms.DateField(
+        label="Этап 1, оконч.",
+        required=False,
+        disabled=True,
+        widget=forms.TextInput(
+            attrs={"class": "form-control js-stage1-end readonly-field", "readonly": True}
+        ),
+    )
+    completion_calc = forms.DateField(
+        label="Оконч., расчет",
+        required=False,
+        disabled=True,
+        widget=forms.TextInput(attrs={"class": "form-control js-completion-calc readonly-field", "readonly": True}),
+    )
+    stage2_weeks = forms.DecimalField(
+        label="Этап 2, недель",
+        required=False,
+        min_value=0,
+        max_digits=4,
+        decimal_places=1,
+        widget=forms.NumberInput(attrs={"min": 0, "step": "0.1", "class": "form-control js-stage2-weeks"}),
+    )
+    stage2_end = forms.DateField(
+        label="Этап 2, оконч.",
+        required=False,
+        disabled=True,
+        widget=forms.TextInput(
+            attrs={"class": "form-control js-stage2-end readonly-field", "readonly": True}
+        ),
+    )
+    stage1_date = forms.DateField(
+        label="Этап 1, дата",
+        required=False,
+        disabled=True,
+        widget=forms.TextInput(
+            attrs={"class": "form-control js-stage1-date readonly-field", "readonly": True}
+        ),
+    )
+    stage3_weeks = forms.DecimalField(
+        label="Этап 3, недель",
+        required=False,
+        min_value=0,
+        max_digits=4,
+        decimal_places=1,
+        widget=forms.NumberInput(attrs={"min": 0, "step": "0.1", "class": "form-control js-stage3-weeks"}),
+    )
+    stage3_end = forms.DateField(
+        label="Этап 3, оконч.",
+        required=False,
+        disabled=True,
+        widget=forms.TextInput(
+            attrs={"class": "form-control js-stage3-end readonly-field", "readonly": True}
+        ),
+    )
+    term_weeks = forms.DecimalField(
+        label="Срок, недель",
+        required=False,
+        decimal_places=1,
+        max_digits=5,
+        disabled=True,
+        widget=forms.NumberInput(attrs={"class": "form-control js-term-weeks readonly-field", "readonly": True}),
+    )
     type_ids = forms.CharField(required=False, widget=forms.HiddenInput())
 
     class Meta:
         model = ProjectRegistration
         fields = [
-            "number", "group_member", "agreement_type", "name",
+            "number", "group_member", "agreement_type", "agreement_number", "name",
             "status", "deadline", "year",
             "country", "customer", "identifier", "registration_number",
-            "registration_date", "project_manager",
+            "registration_region", "registration_date", "project_manager",
+            "asset_owner", "asset_owner_matches_customer", "asset_owner_country", "asset_owner_identifier",
+            "asset_owner_registration_number", "asset_owner_region",
+            "asset_owner_registration_date",
+            "contract_start", "contract_end", "completion_calc",
+            "input_data", "stage1_weeks", "stage1_end",
+            "stage2_weeks", "stage2_end", "stage3_weeks",
         ]
         widgets = {
             "year": forms.NumberInput(attrs={"placeholder": "ГГГГ"}),
@@ -265,6 +442,7 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         }
 
     def __init__(self, *args, **kwargs):
+        self.allow_multiple_products = kwargs.pop("allow_multiple_products", True)
         super().__init__(*args, **kwargs)
         current_group_member = self.data.get("group_member") or (self.instance.group_member_id if self.instance else "")
         if self.data:
@@ -282,21 +460,32 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         self.fields["group_member"].empty_label = "— Не выбрано —"
         self.fields["project_manager"].choices = _project_manager_choices(current_manager, show_prs_label=False)
         if not self.data:
+            self.initial["project_manager"] = current_manager
             self.fields["project_manager"].initial = current_manager
 
         today = timezone.now().date()
         country_qs = OKSMCountry.objects.filter(
             models.Q(expiry_date__isnull=True) | models.Q(expiry_date__gte=today)
         ).order_by("short_name")
-        if self.instance and self.instance.pk and self.instance.country_id:
-            country_qs = (country_qs | OKSMCountry.objects.filter(pk=self.instance.country_id)).distinct().order_by("short_name")
+        if self.instance and self.instance.pk and (self.instance.country_id or self.instance.asset_owner_country_id):
+            country_ids = [
+                value
+                for value in [self.instance.country_id, self.instance.asset_owner_country_id]
+                if value
+            ]
+            country_qs = (country_qs | OKSMCountry.objects.filter(pk__in=country_ids)).distinct().order_by("short_name")
         self.fields["country"].queryset = country_qs
         self.fields["country"].label_from_instance = lambda obj: obj.short_name
+        self.fields["asset_owner_country"].queryset = country_qs
+        self.fields["asset_owner_country"].label_from_instance = lambda obj: obj.short_name
 
         if self.instance and self.instance.pk and self.instance.identifier:
             self.fields["identifier"].initial = self.instance.identifier
+        if self.instance and self.instance.pk and self.instance.asset_owner_identifier:
+            self.fields["asset_owner_identifier"].initial = self.instance.asset_owner_identifier
 
         self._bootstrapify()
+        self.fields["asset_owner_matches_customer"].widget.attrs["class"] = "form-check-input"
         if not self.instance.pk and "group_member" not in self.data:
             self.fields["group_member"].initial = (
                 GroupMember.objects
@@ -312,10 +501,62 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
                 lei = LegalEntityIdentifier.objects.filter(country=russia).values_list("identifier", flat=True).first()
                 if lei:
                     self.fields["identifier"].initial = lei
+        customer_country_id = (
+            self.data.get("country")
+            if self.is_bound
+            else (getattr(self.instance, "country_id", None) or self.fields["country"].initial)
+        )
+        customer_region = (
+            self.data.get("registration_region")
+            if self.is_bound
+            else getattr(self.instance, "registration_region", "")
+        )
+        customer_registration_date = (
+            _parse_project_form_date(self.data.get("registration_date"))
+            if self.is_bound
+            else getattr(self.instance, "registration_date", None)
+        )
+        region_choices = [("", "---------")]
+        region_choices.extend(
+            (name, name)
+            for name in _project_region_choices_for_country(
+                customer_country_id,
+                current_value=customer_region,
+                as_of=customer_registration_date,
+            )
+        )
+        self.fields["registration_region"].choices = region_choices
+        asset_owner_country_id = (
+            self.data.get("asset_owner_country")
+            if self.is_bound
+            else getattr(self.instance, "asset_owner_country_id", None)
+        )
+        asset_owner_region = (
+            self.data.get("asset_owner_region")
+            if self.is_bound
+            else getattr(self.instance, "asset_owner_region", "")
+        )
+        asset_owner_registration_date = (
+            _parse_project_form_date(self.data.get("asset_owner_registration_date"))
+            if self.is_bound
+            else getattr(self.instance, "asset_owner_registration_date", None)
+        )
+        asset_owner_region_choices = [("", "---------")]
+        asset_owner_region_choices.extend(
+            (name, name)
+            for name in _project_region_choices_for_country(
+                asset_owner_country_id,
+                current_value=asset_owner_region,
+                as_of=asset_owner_registration_date,
+            )
+        )
+        self.fields["asset_owner_region"].choices = asset_owner_region_choices
         if not self.instance.pk and "year" not in self.data:
             self.fields["year"].initial = timezone.now().year
         if not self.instance.pk and "number" not in self.data:
             self.fields["number"].initial = _next_project_number()
+        if not self.instance.pk and "asset_owner_matches_customer" not in self.data:
+            self.fields["asset_owner_matches_customer"].initial = True
 
     def clean_group_member(self):
         member = self.cleaned_data.get("group_member")
@@ -327,6 +568,24 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         manager_name, manager_prs_id = _resolve_project_manager_choice(self.cleaned_data.get("project_manager"))
         self._cleaned_project_manager_prs_id = manager_prs_id
         return manager_name
+
+    def clean_input_data(self):
+        return self.cleaned_data.get("input_data") or 0
+
+    def clean_stage1_weeks(self):
+        return self.cleaned_data.get("stage1_weeks") or 0
+
+    def clean_stage2_weeks(self):
+        return self.cleaned_data.get("stage2_weeks") or 0
+
+    def clean_stage3_weeks(self):
+        return self.cleaned_data.get("stage3_weeks") or 0
+
+    def clean_registration_region(self):
+        return (self.cleaned_data.get("registration_region") or "").strip()
+
+    def clean_asset_owner_region(self):
+        return (self.cleaned_data.get("asset_owner_region") or "").strip()
 
     def save(self, commit=True):
         instance = super().save(commit=False)
@@ -369,7 +628,23 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         ordered_valid_ids = [product_id for product_id in normalized_ids if product_id in valid_set]
         if not ordered_valid_ids:
             self.add_error("type_ids", "Укажите хотя бы один продукт.")
+        elif not self.allow_multiple_products and len(ordered_valid_ids) > 1:
+            self.add_error("type_ids", "Для строки проекта можно выбрать только один продукт.")
         self.cleaned_type_ids = ordered_valid_ids
+        if cleaned_data.get("asset_owner_matches_customer"):
+            cleaned_data["asset_owner"] = cleaned_data.get("customer") or ""
+            cleaned_data["asset_owner_country"] = cleaned_data.get("country")
+            cleaned_data["asset_owner_region"] = cleaned_data.get("registration_region") or ""
+            cleaned_data["asset_owner_identifier"] = cleaned_data.get("identifier") or ""
+            cleaned_data["asset_owner_registration_number"] = cleaned_data.get("registration_number") or ""
+            cleaned_data["asset_owner_registration_date"] = cleaned_data.get("registration_date")
+        elif asset_owner_country := cleaned_data.get("asset_owner_country"):
+            cleaned_data["asset_owner_identifier"] = (
+                LegalEntityIdentifier.objects.filter(country=asset_owner_country)
+                .values_list("identifier", flat=True)
+                .first()
+                or ""
+            )
         return cleaned_data
 
 

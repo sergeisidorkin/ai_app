@@ -22,7 +22,16 @@ from .models import (
     _ensure_performer_rows_for_work_item,
     _sync_project_registration_primary_product,
 )
-from .forms import ProjectRegistrationForm, ContractConditionsForm, WorkVolumeForm, PerformerForm, BootstrapMixin, LegalEntityForm
+from .forms import (
+    ProjectRegistrationForm,
+    ContractConditionsForm,
+    WorkVolumeForm,
+    PerformerForm,
+    BootstrapMixin,
+    LegalEntityForm,
+    _project_manager_choices,
+    _resolve_project_manager_choice,
+)
 
 import json
 import os
@@ -154,6 +163,23 @@ def _confirmed_project_ids_for_expert(user):
     )
 
 
+def _annotate_registration_number_groups(registrations):
+    items = list(registrations)
+    start = 0
+    while start < len(items):
+        current_number = items[start].number
+        end = start + 1
+        while end < len(items) and items[end].number == current_number:
+            end += 1
+        group_size = end - start
+        for offset, registration in enumerate(items[start:end], start=1):
+            registration.is_first_for_number = offset == 1
+            registration.is_continuation = offset > 1
+            registration.has_next_for_number = offset < group_size
+        start = end
+    return items
+
+
 def _projects_context(user=None):
     expert_project_ids = _confirmed_project_ids_for_expert(user)
     is_expert = expert_project_ids is not None
@@ -163,7 +189,7 @@ def _projects_context(user=None):
     )
     registrations = (
         ProjectRegistration.objects
-        .select_related("country", "group_member", "type")
+        .select_related("country", "asset_owner_country", "group_member", "type")
         .prefetch_related(product_prefetch)
         .all()
     )
@@ -236,15 +262,29 @@ def _projects_context(user=None):
     if expert_project_ids is not None:
         reg_filter_projects = reg_filter_projects.filter(id__in=expert_project_ids)
     return {
-        "registrations": registrations,
+        "registrations": _annotate_registration_number_groups(registrations),
         "reg_filter_projects": reg_filter_projects,
         "primary_cloud_storage_label": get_primary_cloud_storage_label(),
         "work_items": work_items,
         "work_projects": work_projects,
         "legal_entities": legal_entities,
         "legal_projects": legal_projects,
+        "registration_status_choices": ProjectRegistration.STATUS_CHOICES,
+        "registration_manager_choices": _project_manager_choices("", show_prs_label=False),
         "is_expert": is_expert,
     }
+
+
+def _short_fio_label(value):
+    parts = " ".join(str(value or "").split()).split(" ")
+    if not parts or not parts[0]:
+        return ""
+    initials = "".join(f"{part[0]}." for part in parts[1:3] if part)
+    return f"{parts[0]} {initials}".strip()
+
+
+def _short_date_label(value):
+    return value.strftime("%d.%m.%Y") if value else ""
 
 
 def _product_option_label(product):
@@ -372,6 +412,7 @@ def _registration_form_context(form, action, registration=None):
         "form": form,
         "action": action,
         "registration": registration,
+        "allow_multiple_products": getattr(form, "allow_multiple_products", True),
         "product_options": catalog["options"],
         "registration_type_meta_json": json.dumps(catalog["meta"], ensure_ascii=False),
         "ranked_products": ranked_products,
@@ -405,6 +446,48 @@ def _save_ranked_registration_products(registration, product_ids):
         )
     _sync_project_registration_primary_product(registration.pk)
 
+
+REGISTRATION_CLONE_FIELDS = [
+    "number",
+    "group_member",
+    "agreement_type",
+    "agreement_number",
+    "name",
+    "status",
+    "deadline",
+    "year",
+    "country",
+    "customer",
+    "identifier",
+    "registration_number",
+    "registration_region",
+    "registration_date",
+    "asset_owner",
+    "asset_owner_matches_customer",
+    "asset_owner_country",
+    "asset_owner_identifier",
+    "asset_owner_registration_number",
+    "asset_owner_region",
+    "asset_owner_registration_date",
+    "project_manager",
+    "project_manager_prs_id",
+    "contract_start",
+    "contract_end",
+    "input_data",
+    "stage1_weeks",
+    "stage2_weeks",
+    "stage3_weeks",
+    "contract_subject",
+]
+
+
+def _copy_registration_form_values(source):
+    target = ProjectRegistration()
+    for field_name in REGISTRATION_CLONE_FIELDS:
+        setattr(target, field_name, getattr(source, field_name))
+    return target
+
+
 def _render_projects_updated(request):
     resp = render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
     resp[HX_TRIGGER_HEADER] = HX_PROJECTS_UPDATED_EVENT
@@ -427,6 +510,7 @@ def _sync_to_legal_entity_record(
     selected_identifier_record_id=None,
     selected_from_autocomplete=False,
     business_entity_source="",
+    registration_region="",
 ):
     """Create or update autocomplete registry chain from project data."""
     from classifiers_app.views import sync_autocomplete_registry_entry
@@ -437,6 +521,7 @@ def _sync_to_legal_entity_record(
         identifier_type=identifier,
         registration_number=registration_number,
         registration_date=registration_date,
+        registration_region=registration_region,
         user=user,
         selected_identifier_record_id=selected_identifier_record_id,
         selected_from_autocomplete=selected_from_autocomplete,
@@ -469,39 +554,29 @@ def registration_form_create(request):
     form = ProjectRegistrationForm(request.POST)
     if not form.is_valid():
         return render(request, REG_FORM_TEMPLATE, _registration_form_context(form, "create"))
-    obj = form.save(commit=False)
-    if not getattr(obj, "position", 0):
-        obj.position = _next_position(ProjectRegistration)
-    obj.save()
-    _save_ranked_registration_products(obj, getattr(form, "cleaned_type_ids", []))
+    base_obj = form.save(commit=False)
+    product_ids = list(getattr(form, "cleaned_type_ids", []))
+    with transaction.atomic():
+        start_position = _next_position(ProjectRegistration)
+        for offset, product_id in enumerate(product_ids):
+            obj = base_obj if offset == 0 else _copy_registration_form_values(base_obj)
+            obj.position = start_position + offset
+            obj.save()
+            _save_ranked_registration_products(obj, [product_id])
+        ProjectRegistration.refresh_number_sequences([base_obj.number])
     _sync_to_legal_entity_record(
-        obj.customer, obj.country, obj.identifier,
-        obj.registration_number, obj.registration_date, request.user,
+        base_obj.customer, base_obj.country, base_obj.identifier,
+        base_obj.registration_number, base_obj.registration_date, request.user,
         business_entity_source="[Проекты / Заказчик]",
+        registration_region=base_obj.registration_region,
         **_sync_selection_kwargs(request, "customer_autocomplete"),
     )
-    return _render_projects_updated(request)
-
-@login_required
-@user_passes_test(staff_required)
-@require_http_methods(["GET", "POST"])
-def registration_form_edit(request, pk: int):
-    reg = get_object_or_404(ProjectRegistration, pk=pk)
-    if request.method == "GET":
-        form = ProjectRegistrationForm(instance=reg)
-        return render(request, REG_FORM_TEMPLATE, _registration_form_context(form, "edit", reg))
-    form = ProjectRegistrationForm(request.POST, instance=reg)
-    if not form.is_valid():
-        return render(request, REG_FORM_TEMPLATE, _registration_form_context(form, "edit", reg))
-    obj = form.save()
-    _save_ranked_registration_products(obj, getattr(form, "cleaned_type_ids", []))
-    for work_item in obj.work_items.select_related("project").all():
-        _ensure_performer_rows_for_work_item(work_item)
     _sync_to_legal_entity_record(
-        obj.customer, obj.country, obj.identifier,
-        obj.registration_number, obj.registration_date, request.user,
-        business_entity_source="[Проекты / Заказчик]",
-        **_sync_selection_kwargs(request, "customer_autocomplete"),
+        base_obj.asset_owner, base_obj.asset_owner_country, base_obj.asset_owner_identifier,
+        base_obj.asset_owner_registration_number, base_obj.asset_owner_registration_date, request.user,
+        business_entity_source="[Проекты / Владелец активов]",
+        registration_region=base_obj.asset_owner_region,
+        **_sync_selection_kwargs(request, "asset_owner_autocomplete"),
     )
     return _render_projects_updated(request)
 
@@ -510,8 +585,98 @@ def registration_form_edit(request, pk: int):
 @require_POST
 def registration_delete(request, pk: int):
     reg = get_object_or_404(ProjectRegistration, pk=pk)
+    number = reg.number
     reg.delete()
+    ProjectRegistration.refresh_number_sequences([number])
     return _render_projects_updated(request)
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def registration_launch(request, pk: int):
+    updated = (
+        ProjectRegistration.objects
+        .filter(pk=pk, status="Не начат")
+        .update(status="В работе")
+    )
+    if not updated:
+        reg = get_object_or_404(ProjectRegistration.objects.only("id", "status"), pk=pk)
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "Запуск доступен только для проектов со статусом «Не начат».",
+                "status": reg.status,
+            },
+            status=400,
+        )
+
+    return JsonResponse({"ok": True, "status": "В работе"})
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def registration_status_update(request, pk: int):
+    status_value = (request.POST.get("status") or "").strip()
+    valid_statuses = {value for value, _label in ProjectRegistration.STATUS_CHOICES}
+    if status_value not in valid_statuses:
+        return JsonResponse({"ok": False, "error": "Некорректный статус проекта."}, status=400)
+
+    reg = get_object_or_404(ProjectRegistration.objects.only("id", "status"), pk=pk)
+    if reg.status != status_value:
+        reg.status = status_value
+        reg.save(update_fields=["status"])
+
+    return JsonResponse({"ok": True, "status": reg.status})
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def registration_manager_update(request, pk: int):
+    manager_value = (request.POST.get("project_manager") or "").strip()
+    manager_name, manager_prs_id = _resolve_project_manager_choice(manager_value)
+
+    reg = get_object_or_404(
+        ProjectRegistration.objects.only("id", "project_manager", "project_manager_prs_id"),
+        pk=pk,
+    )
+    if reg.project_manager != manager_name or reg.project_manager_prs_id != manager_prs_id:
+        reg.project_manager = manager_name
+        reg.project_manager_prs_id = manager_prs_id
+        reg.save(update_fields=["project_manager", "project_manager_prs_id"])
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "manager": reg.project_manager,
+            "managerValue": reg.project_manager_prs_id or reg.project_manager,
+            "managerLabel": _short_fio_label(reg.project_manager),
+        }
+    )
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def registration_deadline_update(request, pk: int):
+    raw_deadline = (request.POST.get("deadline") or "").strip()
+    deadline = None
+    if raw_deadline:
+        try:
+            deadline = datetime.strptime(raw_deadline, "%Y-%m-%d").date()
+        except ValueError:
+            return JsonResponse({"ok": False, "error": "Некорректная дата дедлайна."}, status=400)
+
+    reg = get_object_or_404(ProjectRegistration.objects.only("id", "deadline"), pk=pk)
+    if reg.deadline != deadline:
+        reg.deadline = deadline
+        reg.save(update_fields=["deadline"])
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "deadline": reg.deadline.isoformat() if reg.deadline else "",
+            "deadlineLabel": _short_date_label(reg.deadline),
+        }
+    )
 
 def _normalize_registration_positions():
     items = ProjectRegistration.objects.order_by("position", "id").only("id", "position")
@@ -523,26 +688,28 @@ def _normalize_registration_positions():
 @login_required
 def registration_move_up(request, pk: int):
     _normalize_registration_positions()
-    items = list(ProjectRegistration.objects.order_by("position", "id").only("id", "position"))
+    items = list(ProjectRegistration.objects.order_by("position", "id").only("id", "position", "number"))
     idx = next((i for i, it in enumerate(items) if it.id == pk), None)
     if idx is not None and idx > 0:
         cur, prev = items[idx], items[idx-1]
         ProjectRegistration.objects.filter(pk=cur.id).update(position=prev.position)
         ProjectRegistration.objects.filter(pk=prev.id).update(position=cur.position)
         _normalize_registration_positions()
+        ProjectRegistration.refresh_number_sequences([cur.number, prev.number])
     return _render_projects_updated(request)
 
 @require_http_methods(["POST", "GET"])
 @login_required
 def registration_move_down(request, pk: int):
     _normalize_registration_positions()
-    items = list(ProjectRegistration.objects.order_by("position", "id").only("id", "position"))
+    items = list(ProjectRegistration.objects.order_by("position", "id").only("id", "position", "number"))
     idx = next((i for i, it in enumerate(items) if it.id == pk), None)
     if idx is not None and idx < len(items) - 1:
         cur, nxt = items[idx], items[idx+1]
         ProjectRegistration.objects.filter(pk=cur.id).update(position=nxt.position)
         ProjectRegistration.objects.filter(pk=nxt.id).update(position=cur.position)
         _normalize_registration_positions()
+        ProjectRegistration.refresh_number_sequences([cur.number, nxt.number])
     return _render_projects_updated(request)
 
 # --- Условия контракта ---
@@ -629,9 +796,9 @@ def work_form_create(request):
 def registration_form_edit(request, pk: int):
     reg = get_object_or_404(ProjectRegistration, pk=pk)
     if request.method == "GET":
-        form = ProjectRegistrationForm(instance=reg)
+        form = ProjectRegistrationForm(instance=reg, allow_multiple_products=False)
         return render(request, REG_FORM_TEMPLATE, _registration_form_context(form, "edit", reg))
-    form = ProjectRegistrationForm(request.POST, instance=reg)
+    form = ProjectRegistrationForm(request.POST, instance=reg, allow_multiple_products=False)
     if not form.is_valid():
         return render(request, REG_FORM_TEMPLATE, _registration_form_context(form, "edit", reg))
     obj = form.save()
@@ -641,6 +808,16 @@ def registration_form_edit(request, pk: int):
     _sync_to_legal_entity_record(
         obj.customer, obj.country, obj.identifier,
         obj.registration_number, obj.registration_date, request.user,
+        business_entity_source="[Проекты / Заказчик]",
+        registration_region=obj.registration_region,
+        **_sync_selection_kwargs(request, "customer_autocomplete"),
+    )
+    _sync_to_legal_entity_record(
+        obj.asset_owner, obj.asset_owner_country, obj.asset_owner_identifier,
+        obj.asset_owner_registration_number, obj.asset_owner_registration_date, request.user,
+        business_entity_source="[Проекты / Владелец активов]",
+        registration_region=obj.asset_owner_region,
+        **_sync_selection_kwargs(request, "asset_owner_autocomplete"),
     )
     return _render_projects_updated(request)
 

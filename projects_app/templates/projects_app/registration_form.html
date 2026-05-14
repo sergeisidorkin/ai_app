@@ -1,12 +1,14 @@
 <div class="modal-header" data-modal-size="xl">
   <h5 class="modal-title">
-    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+    {% if action == "create" %}Добавить проект{% else %}Изменить проект{% endif %}
   </h5>
   <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
 </div>
 
 <form
   method="post"
+  data-country-region-url="{% url 'ler_regions_for_country' %}"
+  data-region-autofill-url="{% url 'ler_region_autofill' %}"
   {% if action == "create" %}
     hx-post="{% url 'registration_form_create' %}"
   {% else %}
@@ -89,10 +91,12 @@
               {% endfor %}
             </div>
           </div>
-          <button type="button" id="registration-add-product" class="btn"
-                  style="margin-top:.75rem; border:1px solid #ced4da; background-color:#fff; color:#495057; font-size:1rem; padding:.375rem .75rem;">
-            <i class="bi bi-plus-circle me-2"></i>Добавить продукт
-          </button>
+          {% if allow_multiple_products %}
+            <button type="button" id="registration-add-product" class="btn"
+                    style="margin-top:.75rem; border:1px solid #ced4da; background-color:#fff; color:#495057; font-size:1rem; padding:.375rem .75rem;">
+              <i class="bi bi-plus-circle me-2"></i>Добавить продукт
+            </button>
+          {% endif %}
         </div>
       </div>
 
@@ -117,8 +121,8 @@
       <div class="w-100"></div>
 
       <!-- Строка 4 -->
-      <div class="col-6 registration-col-type-aligned-wide">
-        <label class="form-label">Заказчик: краткое наименование юрлица</label>
+      <div class="col-4">
+        <label class="form-label">Заказчик</label>
         <div class="ler-ac-wrap">
           {{ form.customer }}
           <input type="hidden" name="customer_autocomplete_identifier_record_id" id="reg-customer-autocomplete-identifier-record-id" value="">
@@ -126,24 +130,134 @@
           <div class="ler-ac-list" id="reg-ler-ac-list"></div>
         </div>
       </div>
-      <div class="w-100"></div>
+      <div class="col-8 mb-3">
+        <div class="registration-customer-meta-grid">
+          <div>
+            <label class="form-label">Страна</label>
+            {{ form.country }}
+          </div>
+          <div>
+            <label class="form-label">Идентификатор</label>
+            {{ form.identifier }}
+          </div>
+          <div>
+            <label class="form-label">Регистрационный номер</label>
+            {{ form.registration_number }}
+          </div>
+          <div>
+            <label class="form-label">{{ form.registration_region.label }}</label>
+            {{ form.registration_region }}
+          </div>
+          <div>
+            <label class="form-label">Дата регистрации</label>
+            {{ form.registration_date }}
+          </div>
+        </div>
+      </div>
 
-      <!-- Строка 5 -->
+      <div class="col-4">
+        <label class="form-label">{{ form.asset_owner.label }}</label>
+        <div class="ler-ac-wrap">
+          {{ form.asset_owner }}
+          <input type="hidden" name="asset_owner_autocomplete_identifier_record_id" id="reg-asset-owner-autocomplete-identifier-record-id" value="">
+          <input type="hidden" name="asset_owner_autocomplete_selected_from_autocomplete" id="reg-asset-owner-autocomplete-selected" value="0">
+          <div class="ler-ac-list" id="reg-asset-owner-ler-ac-list"></div>
+        </div>
+      </div>
+      <div class="col-8 mb-3">
+        <div class="registration-customer-meta-grid">
+          <div>
+            <label class="form-label">{{ form.asset_owner_country.label }}</label>
+            {{ form.asset_owner_country }}
+          </div>
+          <div>
+            <label class="form-label">{{ form.asset_owner_identifier.label }}</label>
+            {{ form.asset_owner_identifier }}
+          </div>
+          <div>
+            <label class="form-label">Регистрационный номер</label>
+            {{ form.asset_owner_registration_number }}
+          </div>
+          <div>
+            <label class="form-label">{{ form.asset_owner_region.label }}</label>
+            {{ form.asset_owner_region }}
+          </div>
+          <div>
+            <label class="form-label">{{ form.asset_owner_registration_date.label }}</label>
+            {{ form.asset_owner_registration_date }}
+          </div>
+        </div>
+      </div>
+      <div class="col-12">
+        <div class="form-check mt-1">
+          {{ form.asset_owner_matches_customer }}
+          <label class="form-check-label" for="{{ form.asset_owner_matches_customer.id_for_label }}">
+            {{ form.asset_owner_matches_customer.label }}
+          </label>
+        </div>
+      </div>
+
+      <div class="col-12 mt-2">
+        <h6 class="mb-2">Сроки проекта по договору</h6>
+      </div>
+
       <div class="col-3">
-        <label class="form-label">Заказчик: страна регистрации</label>
-        {{ form.country }}
+        <label class="form-label">№ соглашения</label>
+        {{ form.agreement_number }}
       </div>
-      <div class="col-3 registration-col-type-aligned">
-        <label class="form-label">Идентификатор</label>
-        {{ form.identifier }}
+      <div class="col-3">
+        <label class="form-label">Начало контракта</label>
+        {{ form.contract_start }}
       </div>
-      <div class="col-3 registration-col-subtype-aligned">
-        <label class="form-label">Регистрационный номер</label>
-        {{ form.registration_number }}
+      <div class="col-3">
+        <label class="form-label">Оконч. контракта</label>
+        {{ form.contract_end }}
       </div>
-      <div class="col-3 mb-3 registration-col-type-block-end">
-        <label class="form-label">Дата регистрации</label>
-        {{ form.registration_date }}
+      <div class="col-3">
+        <label class="form-label">Оконч., расчет</label>
+        {{ form.completion_calc }}
+      </div>
+
+      <div class="col-3">
+        <label class="form-label">Срок, недель</label>
+        {{ form.term_weeks }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Исх. данные, дней</label>
+        {{ form.input_data }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Этап 1, недель</label>
+        {{ form.stage1_weeks }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Этап 1, оконч. расчет</label>
+        {{ form.stage1_end }}
+      </div>
+
+      <div class="col-3">
+        <label class="form-label">
+          Этап 1, дата
+          <i class="bi bi-lock-fill ms-1 js-stage1-lock" role="button" title="Разблокировать ввод даты"></i>
+        </label>
+        {{ form.stage1_date }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Этап 2, недель</label>
+        {{ form.stage2_weeks }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Этап 2, оконч. расчет</label>
+        {{ form.stage2_end }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Этап 3, недель</label>
+        {{ form.stage3_weeks }}
+      </div>
+
+      <div class="col-3">
+        <label class="form-label">Этап 3, оконч. расчет</label>
+        {{ form.stage3_end }}
       </div>
     </div>
 
@@ -169,16 +283,56 @@
 </form>
 <style>
   #projects-modal .modal-dialog {
-    max-width: min(1500px, calc(100vw - 2rem));
+    max-width: min(1800px, calc(100vw - 1rem));
   }
   #projects-modal .modal-footer .btn {
     position: relative;
     left: 18px;
   }
-  #projects-modal .readonly-field {
-    background-color: #f8f9fa;
-    color: #6c757d;
+  #projects-modal .readonly-field,
+  #projects-modal .readonly-field:disabled,
+  #projects-modal .readonly-field[readonly] {
+    background-color: #f8f9fa !important;
+    color: #6c757d !important;
+    opacity: 1 !important;
+    -webkit-text-fill-color: #6c757d;
   }
+  #projects-modal #reg-asset-owner-country-select.readonly-field,
+  #projects-modal #reg-asset-owner-region-select.readonly-field {
+    background-color: #f8f9fa !important;
+    color: #6c757d !important;
+    -webkit-text-fill-color: #6c757d;
+    cursor: default;
+    pointer-events: none;
+  }
+  #projects-modal form:has([name="asset_owner_matches_customer"]:checked) input[name="asset_owner"],
+  #projects-modal form:has([name="asset_owner_matches_customer"]:checked) #reg-asset-owner-country-select,
+  #projects-modal form:has([name="asset_owner_matches_customer"]:checked) #reg-asset-owner-region-select,
+  #projects-modal form:has([name="asset_owner_matches_customer"]:checked) input[name="asset_owner_registration_number"],
+  #projects-modal form:has([name="asset_owner_matches_customer"]:checked) input[name="asset_owner_registration_date"] {
+    background-color: #f8f9fa !important;
+    color: #6c757d !important;
+    opacity: 1 !important;
+    -webkit-text-fill-color: #6c757d;
+    cursor: default;
+    pointer-events: none;
+  }
+  #projects-modal .registration-customer-meta-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+  #projects-modal .registration-customer-meta-grid > div {
+    min-width: 0;
+  }
+  #projects-modal .js-stage1-lock {
+    cursor: pointer;
+    font-size: .85em;
+    vertical-align: baseline;
+    color: #6c757d;
+    transition: color .15s;
+  }
+  #projects-modal .js-stage1-lock:hover { color: #0d6efd; }
   #projects-modal .number-input-shell {
     position: relative;
   }
@@ -449,7 +603,7 @@
     const container = node.querySelector("#registration-products-container");
     const addBtn = node.querySelector("#registration-add-product");
     const metaEl = node.querySelector("#registration-type-meta");
-    if (!container || !addBtn || !metaEl || container.dataset.bound === "1") return;
+    if (!container || !metaEl || container.dataset.bound === "1") return;
     container.dataset.bound = "1";
 
     let meta = {};
@@ -646,7 +800,7 @@
       return row;
     };
 
-    addBtn.addEventListener("click", () => {
+    addBtn?.addEventListener("click", () => {
       container.appendChild(buildRow({}));
       renumberRows();
     });
@@ -686,23 +840,292 @@
     renumberRows();
   }
 
+  function resetRegistrationRegionSelect(regionSelect) {
+    if (!(regionSelect instanceof HTMLSelectElement)) return;
+    regionSelect.innerHTML = '<option value="">---------</option>';
+  }
+
+  function ensureRegistrationRegionOption(regionSelect, regionName) {
+    if (!(regionSelect instanceof HTMLSelectElement)) return;
+    const value = String(regionName || '').trim();
+    if (!value) return;
+    for (let i = 0; i < regionSelect.options.length; i += 1) {
+      if (regionSelect.options[i].value === value) return;
+    }
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    regionSelect.appendChild(option);
+  }
+
+  function loadRegistrationRegionOptions(regionUrl, countryId, regionSelect, options) {
+    if (!(regionSelect instanceof HTMLSelectElement)) return Promise.resolve();
+    const settings = options || {};
+    const nextRequestSeq = String((Number(regionSelect.dataset.regionRequestSeq || '0') || 0) + 1);
+    regionSelect.dataset.regionRequestSeq = nextRequestSeq;
+    const hasExplicitSelectedRegion = (
+      Object.prototype.hasOwnProperty.call(settings, 'selectedRegion')
+      && settings.selectedRegion !== undefined
+    );
+    const hasPendingSelectedRegion = regionSelect.dataset.pendingSelectedRegionSet === '1';
+    const pendingRegion = String(regionSelect.dataset.pendingSelectedRegion || '').trim();
+    const selectedRegion = String(
+      hasExplicitSelectedRegion && settings.selectedRegion !== null
+        ? settings.selectedRegion
+        : ''
+    ).trim();
+    const preserveCurrent = !!settings.preserveCurrent;
+    const currentRegion = preserveCurrent ? String(regionSelect.value || '').trim() : '';
+    const nextRegion = hasExplicitSelectedRegion
+      ? selectedRegion
+      : (hasPendingSelectedRegion ? pendingRegion : currentRegion);
+    const dateValue = String(settings.dateValue || '').trim();
+
+    if (!countryId || !regionUrl) {
+      resetRegistrationRegionSelect(regionSelect);
+      if (nextRegion) {
+        ensureRegistrationRegionOption(regionSelect, nextRegion);
+        regionSelect.value = nextRegion;
+      }
+      return Promise.resolve();
+    }
+
+    let requestUrl = regionUrl + '?country_id=' + encodeURIComponent(countryId);
+    if (dateValue) requestUrl += '&date=' + encodeURIComponent(dateValue);
+
+    return fetch(requestUrl)
+      .then((response) => response.json())
+      .then((data) => {
+        if (regionSelect.dataset.regionRequestSeq !== nextRequestSeq) return;
+        const regions = Array.isArray(data?.regions) ? data.regions.slice() : [];
+        resetRegistrationRegionSelect(regionSelect);
+        if (nextRegion && !regions.includes(nextRegion)) {
+          regions.push(nextRegion);
+        }
+        regions.forEach((regionName) => {
+          const option = document.createElement('option');
+          option.value = regionName;
+          option.textContent = regionName;
+          regionSelect.appendChild(option);
+        });
+        regionSelect.value = nextRegion;
+        if (hasPendingSelectedRegion) {
+          delete regionSelect.dataset.pendingSelectedRegion;
+          delete regionSelect.dataset.pendingSelectedRegionSet;
+        }
+      })
+      .catch(() => {
+        if (regionSelect.dataset.regionRequestSeq !== nextRequestSeq) return;
+        resetRegistrationRegionSelect(regionSelect);
+        if (nextRegion) {
+          ensureRegistrationRegionOption(regionSelect, nextRegion);
+          regionSelect.value = nextRegion;
+        }
+        if (hasPendingSelectedRegion) {
+          delete regionSelect.dataset.pendingSelectedRegion;
+          delete regionSelect.dataset.pendingSelectedRegionSet;
+        }
+      });
+  }
+
   function attachCountryIdentifierSync(node) {
     if (!node) return;
     const countrySelect = node.querySelector("#reg-country-select");
     const identifierField = node.querySelector("#reg-identifier-field");
+    const regionSelect = node.querySelector("#reg-region-select");
+    const registrationDateField = node.querySelector('input[name="registration_date"]');
+    const regionUrl = node.dataset.countryRegionUrl || '';
     if (!countrySelect || !identifierField || countrySelect.dataset.identBound === "1") return;
     countrySelect.dataset.identBound = "1";
+
+    function syncRegions(preserveCurrent, selectedRegion) {
+      const regionOptions = {
+        preserveCurrent: preserveCurrent,
+        dateValue: registrationDateField?.value || '',
+      };
+      if (selectedRegion !== undefined) {
+        regionOptions.selectedRegion = selectedRegion;
+      }
+      return loadRegistrationRegionOptions(regionUrl, countrySelect.value, regionSelect, regionOptions);
+    }
 
     countrySelect.addEventListener("change", () => {
       const countryId = countrySelect.value;
       if (!countryId) {
         identifierField.value = "";
+        resetRegistrationRegionSelect(regionSelect);
         return;
       }
       fetch("{% url 'identifier_for_country' %}?country_id=" + encodeURIComponent(countryId))
         .then(r => r.json())
-        .then(data => { identifierField.value = data.identifier || ""; });
+        .then(data => {
+          identifierField.value = data.identifier || "";
+          identifierField.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      syncRegions(false, '');
     });
+
+    registrationDateField?.addEventListener('change', () => syncRegions(true));
+    registrationDateField?.addEventListener('input', () => syncRegions(true));
+    if (!countrySelect.value) {
+      resetRegistrationRegionSelect(regionSelect);
+    } else {
+      syncRegions(true, regionSelect?.value || '');
+    }
+  }
+
+  function attachRegistrationRegionAutofill(node) {
+    if (!node) return;
+    const countrySelect = node.querySelector("#reg-country-select");
+    const identifierField = node.querySelector("#reg-identifier-field");
+    const registrationNumberField = node.querySelector('input[name="registration_number"]');
+    const registrationDateField = node.querySelector('input[name="registration_date"]');
+    const regionSelect = node.querySelector("#reg-region-select");
+    const autofillUrl = node.dataset.regionAutofillUrl || '';
+    const regionUrl = node.dataset.countryRegionUrl || '';
+    if (!countrySelect || !identifierField || !registrationNumberField || !regionSelect || registrationNumberField.dataset.regionAutofillBound === '1') {
+      return;
+    }
+    registrationNumberField.dataset.regionAutofillBound = '1';
+    let debounce = null;
+    let requestSeq = 0;
+
+    function applyRegion(regionName) {
+      const value = String(regionName || '').trim();
+      regionSelect.dataset.pendingSelectedRegion = value;
+      regionSelect.dataset.pendingSelectedRegionSet = '1';
+      loadRegistrationRegionOptions(regionUrl, countrySelect.value || '', regionSelect, {
+        preserveCurrent: false,
+        selectedRegion: value,
+        dateValue: registrationDateField?.value || '',
+      });
+    }
+
+    function requestAutofill() {
+      clearTimeout(debounce);
+      const countryId = countrySelect.value || '';
+      const identifier = identifierField.value || '';
+      const registrationNumber = registrationNumberField.value || '';
+      if (!countryId || !registrationNumber || !autofillUrl) return;
+      debounce = setTimeout(() => {
+        const seq = ++requestSeq;
+        let url = autofillUrl
+          + '?country_id=' + encodeURIComponent(countryId)
+          + '&identifier=' + encodeURIComponent(identifier)
+          + '&registration_number=' + encodeURIComponent(registrationNumber);
+        fetch(url)
+          .then((response) => response.json())
+          .then((data) => {
+            if (seq !== requestSeq) return;
+            applyRegion(data?.region || '');
+          })
+          .catch(() => {});
+      }, 250);
+    }
+
+    registrationNumberField.addEventListener('input', requestAutofill);
+    registrationNumberField.addEventListener('change', requestAutofill);
+    identifierField.addEventListener('change', requestAutofill);
+  }
+
+  function attachAssetOwnerCountryIdentifierSync(node) {
+    if (!node) return;
+    const countrySelect = node.querySelector("#reg-asset-owner-country-select");
+    const identifierField = node.querySelector("#reg-asset-owner-identifier-field");
+    const regionSelect = node.querySelector("#reg-asset-owner-region-select");
+    const registrationDateField = node.querySelector('input[name="asset_owner_registration_date"]');
+    const regionUrl = node.dataset.countryRegionUrl || '';
+    if (!countrySelect || !identifierField || countrySelect.dataset.identBound === "1") return;
+    countrySelect.dataset.identBound = "1";
+
+    function syncRegions(preserveCurrent, selectedRegion) {
+      const regionOptions = {
+        preserveCurrent: preserveCurrent,
+        dateValue: registrationDateField?.value || '',
+      };
+      if (selectedRegion !== undefined) {
+        regionOptions.selectedRegion = selectedRegion;
+      }
+      return loadRegistrationRegionOptions(regionUrl, countrySelect.value, regionSelect, regionOptions);
+    }
+
+    countrySelect.addEventListener("change", () => {
+      const countryId = countrySelect.value;
+      if (!countryId) {
+        identifierField.value = "";
+        resetRegistrationRegionSelect(regionSelect);
+        return;
+      }
+      fetch("{% url 'identifier_for_country' %}?country_id=" + encodeURIComponent(countryId))
+        .then(r => r.json())
+        .then(data => {
+          identifierField.value = data.identifier || "";
+          identifierField.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      syncRegions(false, '');
+    });
+
+    registrationDateField?.addEventListener('change', () => syncRegions(true));
+    registrationDateField?.addEventListener('input', () => syncRegions(true));
+    if (!countrySelect.value) {
+      resetRegistrationRegionSelect(regionSelect);
+    } else {
+      syncRegions(true, regionSelect?.value || '');
+    }
+  }
+
+  function attachAssetOwnerRegionAutofill(node) {
+    if (!node) return;
+    const countrySelect = node.querySelector("#reg-asset-owner-country-select");
+    const identifierField = node.querySelector("#reg-asset-owner-identifier-field");
+    const registrationNumberField = node.querySelector('input[name="asset_owner_registration_number"]');
+    const registrationDateField = node.querySelector('input[name="asset_owner_registration_date"]');
+    const regionSelect = node.querySelector("#reg-asset-owner-region-select");
+    const autofillUrl = node.dataset.regionAutofillUrl || '';
+    const regionUrl = node.dataset.countryRegionUrl || '';
+    if (!countrySelect || !identifierField || !registrationNumberField || !regionSelect || registrationNumberField.dataset.regionAutofillBound === '1') {
+      return;
+    }
+    registrationNumberField.dataset.regionAutofillBound = '1';
+    let debounce = null;
+    let requestSeq = 0;
+
+    function applyRegion(regionName) {
+      const value = String(regionName || '').trim();
+      regionSelect.dataset.pendingSelectedRegion = value;
+      regionSelect.dataset.pendingSelectedRegionSet = '1';
+      loadRegistrationRegionOptions(regionUrl, countrySelect.value || '', regionSelect, {
+        preserveCurrent: false,
+        selectedRegion: value,
+        dateValue: registrationDateField?.value || '',
+      });
+    }
+
+    function requestAutofill() {
+      clearTimeout(debounce);
+      const countryId = countrySelect.value || '';
+      const identifier = identifierField.value || '';
+      const registrationNumber = registrationNumberField.value || '';
+      if (!countryId || !registrationNumber || !autofillUrl) return;
+      debounce = setTimeout(() => {
+        const seq = ++requestSeq;
+        const url = autofillUrl
+          + '?country_id=' + encodeURIComponent(countryId)
+          + '&identifier=' + encodeURIComponent(identifier)
+          + '&registration_number=' + encodeURIComponent(registrationNumber);
+        fetch(url)
+          .then((response) => response.json())
+          .then((data) => {
+            if (seq !== requestSeq) return;
+            applyRegion(data?.region || '');
+          })
+          .catch(() => {});
+      }, 250);
+    }
+
+    registrationNumberField.addEventListener('input', requestAutofill);
+    registrationNumberField.addEventListener('change', requestAutofill);
+    identifierField.addEventListener('change', requestAutofill);
   }
 
   function replaceQuotes(el) {
@@ -724,10 +1147,12 @@
 
   function attachGuillemets(node) {
     if (!node) return;
-    const input = node.querySelector('input[name="customer"]');
-    if (!input || input.dataset.guillBound === "1") return;
-    input.dataset.guillBound = "1";
-    input.addEventListener("input", function() { replaceQuotes(input); });
+    ['customer', 'asset_owner'].forEach(function(fieldName) {
+      const input = node.querySelector('input[name="' + fieldName + '"]');
+      if (!input || input.dataset.guillBound === "1") return;
+      input.dataset.guillBound = "1";
+      input.addEventListener("input", function() { replaceQuotes(input); });
+    });
   }
 
   function attachLerAutocomplete(node) {
@@ -737,6 +1162,7 @@
     var selectedIdInput = node.querySelector('#reg-customer-autocomplete-identifier-record-id');
     var selectedFlagInput = node.querySelector('#reg-customer-autocomplete-selected');
     var countrySel = node.querySelector('#reg-country-select');
+    var regionSelect = node.querySelector('#reg-region-select');
     var regNumField = node.querySelector('input[name="registration_number"]');
     var regDateField = node.querySelector('input[name="registration_date"]');
     if (!input || !list || input.dataset.lerBound === '1') return;
@@ -784,6 +1210,222 @@
       if (identField) identField.value = r.identifier || '';
       if (regNumField) regNumField.value = r.registration_number || '';
       if (regDateField) regDateField.value = r.registration_date || '';
+      if (regionSelect) {
+        regionSelect.dataset.pendingSelectedRegion = r.region || '';
+        regionSelect.dataset.pendingSelectedRegionSet = '1';
+        loadRegistrationRegionOptions(node.dataset.countryRegionUrl || '', r.country_id || countrySel?.value || '', regionSelect, {
+          preserveCurrent: false,
+          selectedRegion: r.region || '',
+          dateValue: r.registration_date || regDateField?.value || '',
+        });
+      }
+      if (selectedIdInput) selectedIdInput.value = r.identifier_record_id || '';
+      if (selectedFlagInput) selectedFlagInput.value = '1';
+      list.classList.remove('show');
+      node.dispatchEvent(new CustomEvent('registration-customer-changed', { detail: { reason: 'autocomplete-pick' } }));
+    }
+
+    input.addEventListener('input', function() {
+      var q = input.value.trim();
+      clearSelection();
+      clearTimeout(debounce);
+      if (q.length < 1) { list.classList.remove('show'); return; }
+      debounce = setTimeout(function() {
+        fetch('{% url "ler_search" %}?q=' + encodeURIComponent(q))
+          .then(function(r) { return r.json(); })
+          .then(function(d) { render(d.results || [], q, d.total_count || 0); })
+          .catch(function() { list.classList.remove('show'); });
+      }, 200);
+    });
+
+    list.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      picking = true;
+      var item = e.target.closest('.ler-ac-item');
+      if (!item) return;
+      var idx = parseInt(item.dataset.idx, 10);
+      if (results[idx]) pick(results[idx]);
+    });
+
+    list.addEventListener('click', function(e) {
+      var item = e.target.closest('.ler-ac-item');
+      if (!item) return;
+      var idx = parseInt(item.dataset.idx, 10);
+      if (results[idx]) pick(results[idx]);
+      picking = false;
+    });
+
+    input.addEventListener('blur', function() {
+      if (picking) { picking = false; return; }
+      setTimeout(function() { list.classList.remove('show'); }, 200);
+    });
+
+    input.addEventListener('focus', function() {
+      if (results.length && input.value.trim().length >= 1) list.classList.add('show');
+    });
+    countrySel?.addEventListener('change', clearSelection);
+    regNumField?.addEventListener('input', clearSelection);
+    regNumField?.addEventListener('change', clearSelection);
+    regDateField?.addEventListener('input', clearSelection);
+    regDateField?.addEventListener('change', clearSelection);
+    regionSelect?.addEventListener('change', clearSelection);
+  }
+
+  function attachAssetOwnerMatchesCustomer(node) {
+    if (!node) return;
+    const alreadyBound = node.dataset.assetOwnerMatchesBound === '1';
+    const matchesCheckbox = node.querySelector('[name="asset_owner_matches_customer"]');
+    const customerInput = node.querySelector('input[name="customer"]');
+    const customerCountry = node.querySelector('#reg-country-select');
+    const customerRegion = node.querySelector('#reg-region-select');
+    const customerIdentifier = node.querySelector('#reg-identifier-field');
+    const customerRegistrationNumber = node.querySelector('input[name="registration_number"]');
+    const customerRegistrationDate = node.querySelector('input[name="registration_date"]');
+    const ownerInput = node.querySelector('input[name="asset_owner"]');
+    const ownerCountry = node.querySelector('#reg-asset-owner-country-select');
+    const ownerRegion = node.querySelector('#reg-asset-owner-region-select');
+    const ownerRegistrationNumber = node.querySelector('input[name="asset_owner_registration_number"]');
+    const ownerRegistrationDate = node.querySelector('input[name="asset_owner_registration_date"]');
+    const ownerIdentifier = node.querySelector('#reg-asset-owner-identifier-field');
+    const customerSelectedIdentifier = node.querySelector('#reg-customer-autocomplete-identifier-record-id');
+    const customerSelectedFlag = node.querySelector('#reg-customer-autocomplete-selected');
+    const ownerSelectedIdentifier = node.querySelector('#reg-asset-owner-autocomplete-identifier-record-id');
+    const ownerSelectedFlag = node.querySelector('#reg-asset-owner-autocomplete-selected');
+    if (
+      !matchesCheckbox
+      || !ownerInput
+      || !ownerCountry
+      || !ownerRegion
+      || !ownerRegistrationNumber
+      || !ownerRegistrationDate
+      || !ownerIdentifier
+    ) {
+      return;
+    }
+    if (!alreadyBound) node.dataset.assetOwnerMatchesBound = '1';
+
+    function setLockedState(locked) {
+      ownerInput.readOnly = locked;
+      ownerInput.disabled = false;
+      ownerInput.tabIndex = locked ? -1 : 0;
+      ownerInput.classList.toggle('readonly-field', locked);
+      ownerCountry.disabled = false;
+      ownerCountry.tabIndex = locked ? -1 : 0;
+      ownerCountry.setAttribute('aria-disabled', locked ? 'true' : 'false');
+      ownerCountry.classList.toggle('readonly-field', locked);
+      ownerRegion.disabled = false;
+      ownerRegion.tabIndex = locked ? -1 : 0;
+      ownerRegion.setAttribute('aria-disabled', locked ? 'true' : 'false');
+      ownerRegion.classList.toggle('readonly-field', locked);
+      ownerRegistrationNumber.readOnly = locked;
+      ownerRegistrationNumber.disabled = false;
+      ownerRegistrationNumber.tabIndex = locked ? -1 : 0;
+      ownerRegistrationNumber.classList.toggle('readonly-field', locked);
+      ownerRegistrationDate.readOnly = locked;
+      ownerRegistrationDate.disabled = false;
+      ownerRegistrationDate.tabIndex = locked ? -1 : 0;
+      ownerRegistrationDate.classList.toggle('readonly-field', locked);
+      if (ownerRegistrationDate._flatpickr) ownerRegistrationDate._flatpickr.set('clickOpens', !locked);
+    }
+
+    function syncFromCustomer() {
+      if (!matchesCheckbox.checked) {
+        setLockedState(false);
+        return;
+      }
+      ownerInput.value = customerInput ? (customerInput.value || '') : '';
+      ownerCountry.value = customerCountry ? (customerCountry.value || '') : '';
+      loadRegistrationRegionOptions(node.dataset.countryRegionUrl || '', ownerCountry.value || '', ownerRegion, {
+        preserveCurrent: false,
+        selectedRegion: customerRegion ? (customerRegion.value || '') : '',
+        dateValue: customerRegistrationDate ? (customerRegistrationDate.value || '') : '',
+      });
+      ownerIdentifier.value = customerIdentifier ? (customerIdentifier.value || '') : '';
+      ownerRegistrationNumber.value = customerRegistrationNumber ? (customerRegistrationNumber.value || '') : '';
+      ownerRegistrationDate.value = customerRegistrationDate ? (customerRegistrationDate.value || '') : '';
+      if (ownerSelectedIdentifier) ownerSelectedIdentifier.value = customerSelectedIdentifier ? (customerSelectedIdentifier.value || '') : '';
+      if (ownerSelectedFlag) ownerSelectedFlag.value = customerSelectedFlag ? (customerSelectedFlag.value || '0') : '0';
+      setLockedState(true);
+    }
+
+    if (!alreadyBound) {
+      matchesCheckbox.addEventListener('change', syncFromCustomer);
+      ['customer', 'registration_number', 'registration_date'].forEach(function(fieldName) {
+        node.querySelector('[name="' + fieldName + '"]')?.addEventListener('input', syncFromCustomer);
+        node.querySelector('[name="' + fieldName + '"]')?.addEventListener('change', syncFromCustomer);
+      });
+      customerCountry?.addEventListener('change', syncFromCustomer);
+      customerRegion?.addEventListener('change', syncFromCustomer);
+      customerIdentifier?.addEventListener('change', syncFromCustomer);
+      node.addEventListener('registration-customer-changed', syncFromCustomer);
+    }
+    syncFromCustomer();
+  }
+
+  function attachAssetOwnerLerAutocomplete(node) {
+    if (!node) return;
+    var input = node.querySelector('input[name="asset_owner"]');
+    var list = node.querySelector('#reg-asset-owner-ler-ac-list');
+    var selectedIdInput = node.querySelector('#reg-asset-owner-autocomplete-identifier-record-id');
+    var selectedFlagInput = node.querySelector('#reg-asset-owner-autocomplete-selected');
+    var countrySel = node.querySelector('#reg-asset-owner-country-select');
+    var regionSelect = node.querySelector('#reg-asset-owner-region-select');
+    var identifierField = node.querySelector('#reg-asset-owner-identifier-field');
+    var regNumField = node.querySelector('input[name="asset_owner_registration_number"]');
+    var regDateField = node.querySelector('input[name="asset_owner_registration_date"]');
+    if (!input || !list || input.dataset.lerBound === '1') return;
+    input.dataset.lerBound = '1';
+    var debounce = null;
+    var results = [];
+    var picking = false;
+
+    function clearSelection() {
+      if (selectedIdInput) selectedIdInput.value = '';
+      if (selectedFlagInput) selectedFlagInput.value = '0';
+    }
+
+    function highlight(text, q) {
+      if (!q) return text;
+      var esc = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return text.replace(new RegExp('(' + esc + ')', 'gi'), '<mark>$1</mark>');
+    }
+
+    function render(data, q, totalCount) {
+      results = data;
+      if (!data.length) { list.classList.remove('show'); return; }
+      var visible = data.slice(0, 3);
+      var html = visible.map(function(r, i) {
+        var main = highlight(r.short_name || '', q);
+        var parts = [r.full_name, r.identifier, r.registration_number].filter(Boolean);
+        var sub = parts.length ? highlight(parts.join(' · '), q) : '';
+        return '<div class="ler-ac-item" data-idx="' + i + '">'
+          + '<div class="ler-ac-main">' + main + '</div>'
+          + (sub ? '<div class="ler-ac-sub">' + sub + '</div>' : '')
+          + '</div>';
+      }).join('');
+      var remaining = totalCount - 3;
+      if (remaining > 0) {
+        html += '<div class="ler-ac-item ler-ac-more">Найдено ещё ' + remaining + ' юрлиц</div>';
+      }
+      list.innerHTML = html;
+      list.classList.add('show');
+    }
+
+    function pick(r) {
+      input.value = r.short_name || '';
+      if (countrySel && r.country_id) countrySel.value = r.country_id;
+      if (identifierField) identifierField.value = r.identifier || '';
+      if (regNumField) regNumField.value = r.registration_number || '';
+      if (regDateField) regDateField.value = r.registration_date || '';
+      if (regionSelect) {
+        regionSelect.dataset.pendingSelectedRegion = r.region || '';
+        regionSelect.dataset.pendingSelectedRegionSet = '1';
+        loadRegistrationRegionOptions(node.dataset.countryRegionUrl || '', r.country_id || countrySel?.value || '', regionSelect, {
+          preserveCurrent: false,
+          selectedRegion: r.region || '',
+          dateValue: r.registration_date || regDateField?.value || '',
+        });
+      }
       if (selectedIdInput) selectedIdInput.value = r.identifier_record_id || '';
       if (selectedFlagInput) selectedFlagInput.value = '1';
       list.classList.remove('show');
@@ -832,6 +1474,210 @@
     regNumField?.addEventListener('change', clearSelection);
     regDateField?.addEventListener('input', clearSelection);
     regDateField?.addEventListener('change', clearSelection);
+    regionSelect?.addEventListener('change', clearSelection);
+  }
+
+  const CONTRACT_DATE_FMT = { day: "2-digit", month: "2-digit", year: "numeric" };
+
+  function parseContractDate(value) {
+    if (!value) return null;
+    const raw = value.trim();
+    const dotParts = raw.split(".");
+    if (dotParts.length === 3) {
+      const [day, month, year] = dotParts;
+      const fullYear = year.length === 2 ? "20" + year : year;
+      const iso = `${fullYear}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+      const parsed = new Date(iso);
+      return isNaN(parsed) ? null : parsed;
+    }
+    const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (isoMatch) {
+      const [, year, month, day] = isoMatch;
+      const parsed = new Date(`${year}-${month}-${day}`);
+      return isNaN(parsed) ? null : parsed;
+    }
+    return null;
+  }
+
+  function addContractDays(date, n) {
+    const d = new Date(date);
+    d.setDate(d.getDate() + Math.round(n));
+    return d;
+  }
+
+  function diffContractDays(a, b) {
+    return Math.round((a - b) / 86400000);
+  }
+
+  function formatContractDate(date) {
+    return date.toLocaleDateString("ru-RU", CONTRACT_DATE_FMT);
+  }
+
+  function attachStageCalculator(node) {
+    if (!node || node.dataset.stageCalcBound === "1") return;
+    const start = node.querySelector("[name='contract_start']");
+    const inputDays = node.querySelector("[name='input_data']");
+    const stage1Weeks = node.querySelector("[name='stage1_weeks']");
+    const stage2Weeks = node.querySelector("[name='stage2_weeks']");
+    const stage3Weeks = node.querySelector("[name='stage3_weeks']");
+    const stage1DateEl = node.querySelector(".js-stage1-date");
+
+    const stage1EndTarget = node.querySelector(".js-stage1-end");
+    const stage2EndTarget = node.querySelector(".js-stage2-end");
+    const stage3EndTarget = node.querySelector(".js-stage3-end");
+    const completionTarget = node.querySelector(".js-completion-calc");
+    const termWeeksTarget = node.querySelector(".js-term-weeks");
+
+    if (!start || !inputDays || !stage1Weeks || !stage1EndTarget) return;
+    node.dataset.stageCalcBound = "1";
+
+    let stage1DateMode = false;
+    const lockIcon = node.querySelector(".js-stage1-lock");
+
+    function setReadonly(el, on) {
+      if (!el) return;
+      el.readOnly = on;
+      el.classList.toggle("readonly-field", on);
+      if (on) el.setAttribute("readonly", ""); else el.removeAttribute("readonly");
+    }
+
+    function applyLockState() {
+      if (stage1DateMode) {
+        if (stage1DateEl) {
+          stage1DateEl.disabled = false;
+          stage1DateEl.removeAttribute("disabled");
+          stage1DateEl.removeAttribute("readonly");
+          stage1DateEl.readOnly = false;
+          stage1DateEl.type = "date";
+          stage1DateEl.classList.remove("readonly-field");
+        }
+        setReadonly(stage1Weeks, true);
+        if (lockIcon) {
+          lockIcon.classList.remove("bi-lock-fill");
+          lockIcon.classList.add("bi-unlock-fill");
+          lockIcon.title = "Заблокировать — вернуться к вводу недель";
+        }
+      } else {
+        if (stage1DateEl) {
+          stage1DateEl.type = "text";
+          stage1DateEl.readOnly = true;
+          stage1DateEl.setAttribute("readonly", "");
+          stage1DateEl.classList.add("readonly-field");
+        }
+        setReadonly(stage1Weeks, false);
+        if (lockIcon) {
+          lockIcon.classList.remove("bi-unlock-fill");
+          lockIcon.classList.add("bi-lock-fill");
+          lockIcon.title = "Разблокировать ввод даты";
+        }
+      }
+    }
+
+    const clear = () => {
+      stage1EndTarget.value = "";
+      if (!stage1DateMode && stage1DateEl) stage1DateEl.value = "";
+      if (stage2EndTarget) stage2EndTarget.value = "";
+      if (stage3EndTarget) stage3EndTarget.value = "";
+      if (completionTarget) completionTarget.value = "";
+      if (termWeeksTarget) termWeeksTarget.value = "";
+    };
+
+    const recalc = () => {
+      const base = parseContractDate(start.value);
+      if (!base) { clear(); return; }
+
+      const days = parseInt(inputDays.value.replace(/\D/g, ""), 10) || 0;
+
+      let s1w;
+      if (stage1DateMode) {
+        const s1date = stage1DateEl.value ? new Date(stage1DateEl.value) : null;
+        if (s1date && !isNaN(s1date)) {
+          const elapsed = diffContractDays(s1date, base) - days;
+          s1w = Math.max(0, elapsed / 7);
+          stage1Weeks.value = s1w.toFixed(1);
+        } else {
+          s1w = 0;
+          stage1Weeks.value = "";
+        }
+      } else {
+        s1w = parseFloat((stage1Weeks.value || "0").replace(",", ".")) || 0;
+      }
+
+      const s2w = parseFloat((stage2Weeks?.value || "0").replace(",", ".")) || 0;
+      const s3w = parseFloat((stage3Weeks?.value || "0").replace(",", ".")) || 0;
+
+      const stage1Days = Math.max(0, days + s1w * 7);
+      const stage1Date = addContractDays(base, stage1Days);
+      stage1EndTarget.value = formatContractDate(stage1Date);
+
+      if (!stage1DateMode && stage1DateEl) {
+        stage1DateEl.value = formatContractDate(stage1Date);
+      }
+
+      let stage2Date = null;
+      if (stage2Weeks && stage2EndTarget) {
+        if (!Math.round(stage1Days) && !s2w) {
+          stage2EndTarget.value = "";
+        } else {
+          stage2Date = addContractDays(stage1Date, Math.max(0, s2w * 7));
+          stage2EndTarget.value = formatContractDate(stage2Date);
+        }
+      }
+
+      if (stage3EndTarget) {
+        const baseS2 = stage2Date || parseContractDate(stage2EndTarget?.value || "");
+        if (!baseS2 || !s3w) {
+          stage3EndTarget.value = "";
+        } else {
+          stage3EndTarget.value = formatContractDate(addContractDays(baseS2, Math.max(0, s3w * 7)));
+        }
+      }
+
+      if (completionTarget) {
+        const baseS2 = stage2Date || parseContractDate(stage2EndTarget?.value || "");
+        if (!baseS2) {
+          completionTarget.value = "";
+        } else {
+          completionTarget.value = formatContractDate(addContractDays(baseS2, Math.max(0, s3w * 7)));
+        }
+      }
+
+      if (termWeeksTarget) {
+        const tw = Math.max(0, (days / 7) + s1w + s2w + s3w);
+        termWeeksTarget.value = tw.toFixed(1);
+      }
+    };
+
+    if (lockIcon) {
+      lockIcon.addEventListener("click", () => {
+        if (!stage1DateMode && !parseContractDate(start.value)) {
+          alert("Сначала заполните поле «Начало контракта».");
+          return;
+        }
+        if (!stage1DateMode && stage1DateEl && stage1EndTarget) {
+          const d = parseContractDate(stage1EndTarget.value);
+          if (d) {
+            stage1DateEl.value = d.getFullYear() + "-"
+              + String(d.getMonth() + 1).padStart(2, "0") + "-"
+              + String(d.getDate()).padStart(2, "0");
+          }
+        }
+        stage1DateMode = !stage1DateMode;
+        applyLockState();
+        recalc();
+      });
+    }
+
+    applyLockState();
+    [start, inputDays, stage1Weeks, stage2Weeks, stage3Weeks]
+      .filter(Boolean)
+      .forEach((el) => ["input", "change"].forEach((evt) => el.addEventListener(evt, recalc)));
+
+    if (stage1DateEl) {
+      ["input", "change"].forEach((evt) => stage1DateEl.addEventListener(evt, recalc));
+    }
+
+    recalc();
   }
 
   function initCurrentModal() {
@@ -842,8 +1688,14 @@
     attachGroupSelectDisplay(form);
     attachRegistrationProducts(form);
     attachCountryIdentifierSync(form);
+    attachRegistrationRegionAutofill(form);
+    attachAssetOwnerCountryIdentifierSync(form);
+    attachAssetOwnerRegionAutofill(form);
     attachGuillemets(form);
     attachLerAutocomplete(form);
+    attachAssetOwnerLerAutocomplete(form);
+    attachAssetOwnerMatchesCustomer(form);
+    attachStageCalculator(form);
   }
 
   document.addEventListener("DOMContentLoaded", initCurrentModal);

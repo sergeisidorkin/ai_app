@@ -98,6 +98,7 @@ INSTALLED_APPS = [
     "proposals_app.apps.ProposalsAppConfig",
     "nextcloud_app.apps.NextcloudAppConfig",
     "smtp_app",
+    "gantt_engine_app.apps.GanttEngineAppConfig",
 ]
 
 MIDDLEWARE = [
@@ -310,7 +311,6 @@ STATIC_URL = "/static/"
 STATIC_ROOT = env("STATIC_ROOT", default=str(BASE_DIR / "staticfiles"))
 STATICFILES_DIRS = [
     BASE_DIR / "static",
-    ("vendor/dhtmlx-gantt", BASE_DIR / "node_modules" / "dhtmlx-gantt" / "codebase"),
 ]
 
 MEDIA_URL = "/media/"

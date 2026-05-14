@@ -6,7 +6,7 @@
          hx-get="{% url 'policy_partial' %}"
          hx-trigger="load"
          hx-target="#policy-pane"
-         hx-swap="innerHTML"
+         hx-swap="outerHTML"
          hx-indicator="#policy-loading">
       <div id="policy-loading" class="text-muted htmx-indicator d-inline-flex align-items-center gap-2">
         <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
@@ -34,6 +34,61 @@
           <div class="modal-body" id="policy-csv-result-body" style="white-space:pre-wrap;"></div>
           <div class="modal-footer">
             <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Закрыть</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Модалка настроек диаграммы Ганта типовых сроков -->
+    <div class="modal fade" id="typical-service-term-gantt-settings-modal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">
+              <i class="bi bi-gear-wide-connected me-2"></i>Настройки диаграммы Ганта
+            </h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+          </div>
+          <div class="modal-body">
+            <div class="mb-3">
+              <label for="typical-service-term-gantt-settings-calendar-kind" class="form-label">Вид календаря</label>
+              <select id="typical-service-term-gantt-settings-calendar-kind"
+                      class="form-select form-select-sm"
+                      aria-label="Вид календаря">
+                <option value="abstract">Условный календарь</option>
+                <option value="production">Производственный календарь</option>
+              </select>
+            </div>
+            <div class="mb-3" id="typical-service-term-gantt-settings-country-field">
+              <label for="typical-service-term-gantt-settings-country" class="form-label">Страна</label>
+              <select id="typical-service-term-gantt-settings-country"
+                      class="form-select form-select-sm"
+                      aria-label="Страна производственного календаря">
+                <option value="">Загрузка списка стран…</option>
+              </select>
+              <div class="form-text">
+                Источник данных — раздел «Справочники → Производственный календарь».
+              </div>
+            </div>
+            <div class="mb-3">
+              <label for="typical-service-term-gantt-settings-executor-display" class="form-label">Отображение исполнителей</label>
+              <select id="typical-service-term-gantt-settings-executor-display"
+                      class="form-select form-select-sm"
+                      aria-label="Отображение исполнителей">
+                <option value="executor">Фамилия И.О.</option>
+                <option value="resource_name">Сотрудник N</option>
+              </select>
+            </div>
+            <div id="typical-service-term-gantt-settings-status"
+                 class="small text-muted mt-2"
+                 aria-live="polite"></div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Закрыть</button>
+            <button type="button" class="btn btn-primary btn-sm"
+                    id="typical-service-term-gantt-settings-apply-btn">
+              Применить
+            </button>
           </div>
         </div>
       </div>
