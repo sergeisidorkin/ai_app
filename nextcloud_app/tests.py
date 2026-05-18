@@ -18,7 +18,11 @@ from nextcloud_app.api import NextcloudApiError
 from nextcloud_app.api import NextcloudApiClient
 from nextcloud_app.models import NextcloudUserLink
 from nextcloud_app.provisioning import ensure_nextcloud_account
-from nextcloud_app.workspace import create_basic_project_workspace_stream, create_proposal_workspace
+from nextcloud_app.workspace import (
+    create_basic_project_workspace_stream,
+    create_proposal_workspace,
+    grant_project_workspace_editor_access_for_performers,
+)
 
 User = get_user_model()
 
@@ -532,6 +536,93 @@ class NextcloudWorkspaceTests(TestCase):
         workspace = ProjectWorkspace.objects.get(project=self.project)
         self.assertEqual(workspace.disk_path, project_path)
         self.assertEqual(workspace.public_url, f"https://cloud.example.com/apps/files/files?dir={project_path}")
+
+    def test_create_basic_project_workspace_grants_access_to_confirmed_performer(self):
+        performer_user = User.objects.create_user(
+            username="performer@example.com",
+            email="performer@example.com",
+            password="Secret123!",
+            first_name="Петр",
+            last_name="Петров",
+            is_staff=True,
+            is_active=True,
+        )
+        performer_employee = Employee.objects.create(user=performer_user, patronymic="Петрович")
+        Performer.objects.create(
+            registration=self.project,
+            employee=performer_employee,
+            executor="Петров Петр Петрович",
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+        )
+        NextcloudUserLink.objects.create(
+            user=performer_user,
+            nextcloud_user_id=f"ncstaff-{performer_user.pk}",
+            nextcloud_username=f"ncstaff-{performer_user.pk}",
+            nextcloud_email="performer@example.com",
+        )
+        project_folder = _build_project_folder_name(self.project)
+        project_path = f"/Corporate Root/03 Проекты/2026/{project_folder}"
+        client = Mock()
+        client.is_configured = True
+        client.username = "cloud-admin"
+        client.ensure_folder.side_effect = lambda _owner, path: "/" + "/".join(
+            part for part in str(path).replace("\\", "/").split("/") if part
+        )
+        client.ensure_user_share.return_value = Mock()
+        client.build_files_url.return_value = f"https://cloud.example.com/apps/files/files?dir={project_path}"
+
+        items = list(create_basic_project_workspace_stream(self.creator, self.project, client=client))
+
+        self.assertTrue(items[-1].ok)
+        client.ensure_user_share.assert_has_calls(
+            [
+                call("cloud-admin", project_path, f"ncstaff-{self.manager.pk}", permissions=15),
+                call("cloud-admin", project_path, f"ncstaff-{performer_user.pk}", permissions=15),
+            ]
+        )
+
+    def test_grant_project_workspace_editor_access_for_confirmed_performer(self):
+        performer_user = User.objects.create_user(
+            username="workspace-performer@example.com",
+            email="workspace-performer@example.com",
+            password="Secret123!",
+            first_name="Сергей",
+            last_name="Сергеев",
+            is_staff=True,
+            is_active=True,
+        )
+        performer_employee = Employee.objects.create(user=performer_user, patronymic="Сергеевич")
+        performer = Performer.objects.create(
+            registration=self.project,
+            employee=performer_employee,
+            executor="Сергеев Сергей Сергеевич",
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+        )
+        NextcloudUserLink.objects.create(
+            user=performer_user,
+            nextcloud_user_id=f"ncstaff-{performer_user.pk}",
+            nextcloud_username=f"ncstaff-{performer_user.pk}",
+            nextcloud_email="workspace-performer@example.com",
+        )
+        ProjectWorkspace.objects.create(
+            project=self.project,
+            disk_path="/Corporate Root/03 Проекты/2026/Проект 6001 DD Проект Nextcloud",
+            created_by=self.creator,
+        )
+        client = Mock()
+        client.is_configured = True
+        client.username = "cloud-admin"
+        client.ensure_user_share.return_value = Mock()
+
+        granted = grant_project_workspace_editor_access_for_performers([performer.pk], client=client)
+
+        self.assertEqual(granted, 1)
+        client.ensure_user_share.assert_called_once_with(
+            "cloud-admin",
+            "/Corporate Root/03 Проекты/2026/Проект 6001 DD Проект Nextcloud",
+            f"ncstaff-{performer_user.pk}",
+            permissions=15,
+        )
 
     def test_create_basic_project_workspace_accepts_slash_as_root_path(self):
         settings_obj = CloudStorageSettings.get_solo()

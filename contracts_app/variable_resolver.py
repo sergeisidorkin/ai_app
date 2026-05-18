@@ -585,11 +585,68 @@ def _computed_finplat_sum_kop_text(ep, _p, all_performers) -> str:
     return number_to_words_ru(int(_kopecks(_calc_finplat(ep, all_performers))))
 
 
-def _computed_deadline_ru(_ep, p, _all_performers) -> str:
+def _parse_gantt_date(value):
+    from datetime import date, datetime
+
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    raw = str(value).strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
+    except ValueError:
+        pass
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _latest_gantt_deadline_for_performers(performer, all_performers):
+    registration = getattr(performer, "registration", None)
+    if not registration:
+        return None
+
+    performer_ids = {
+        str(item.pk)
+        for item in (all_performers or [performer])
+        if getattr(item, "pk", None) and getattr(item, "registration_id", None) == performer.registration_id
+    }
+    if not performer_ids and getattr(performer, "pk", None):
+        performer_ids = {str(performer.pk)}
+
+    payload = getattr(registration, "gantt_data", None)
+    if not performer_ids or not isinstance(payload, dict):
+        return None
+
+    dates = []
+    for task in payload.get("data") or []:
+        if (
+            not isinstance(task, dict)
+            or not task.get("performer_id")
+            or str(task.get("performer_id")) not in performer_ids
+        ):
+            continue
+        deadline = _parse_gantt_date(task.get("deadline"))
+        if deadline:
+            dates.append(deadline)
+    return max(dates) if dates else None
+
+
+def _computed_deadline_ru(_ep, p, all_performers) -> str:
     from core.dates import format_date_ru
-    if not p.registration or not p.registration.deadline:
+
+    deadline = _latest_gantt_deadline_for_performers(p, all_performers)
+    if not deadline:
         return ""
-    return format_date_ru(p.registration.deadline, "j E Y") + " г."
+    return format_date_ru(deadline, "j E Y") + " г."
 
 
 def _performer_contract_date(performer):

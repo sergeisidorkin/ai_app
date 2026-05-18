@@ -2025,6 +2025,79 @@ class ContractVariableResolverTests(TestCase):
         self.assertEqual(replacements["{{day}}"], "07")
         self.assertEqual(replacements["{{month}}"], "мая")
 
+    def test_deadline_ru_uses_latest_gantt_deadline_for_performer_batch(self):
+        product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        project = ProjectRegistration.objects.create(
+            number=7005,
+            type=product,
+            name="Проект с дедлайнами графика",
+            deadline=date(2030, 1, 1),
+            year=2026,
+        )
+        performer_a = Performer.objects.create(
+            registration=project,
+            executor="Иванов Иван Иванович",
+            asset_name="Карьер",
+        )
+        performer_b = Performer.objects.create(
+            registration=project,
+            executor="Иванов Иван Иванович",
+            asset_name="Фабрика",
+        )
+        unrelated_performer = Performer.objects.create(
+            registration=project,
+            executor="Петров Петр Петрович",
+            asset_name="Фабрика",
+        )
+        project.gantt_data = {
+            "data": [
+                {
+                    "id": f"managed-performer-{performer_a.pk}",
+                    "managed_source": "performer",
+                    "performer_id": performer_a.pk,
+                    "asset_name": "Карьер",
+                    "deadline": "2026-05-12",
+                },
+                {
+                    "id": f"managed-performer-{performer_b.pk}",
+                    "managed_source": "performer",
+                    "performer_id": performer_b.pk,
+                    "asset_name": "Фабрика",
+                    "deadline": "2026-05-20",
+                },
+                {
+                    "id": f"managed-performer-{unrelated_performer.pk}",
+                    "managed_source": "performer",
+                    "performer_id": unrelated_performer.pk,
+                    "asset_name": "Фабрика",
+                    "deadline": "2026-06-30",
+                },
+            ],
+            "links": [],
+            "meta": {},
+        }
+        project.save(update_fields=["gantt_data"])
+        project.refresh_from_db()
+        performer_a.registration = project
+        performer_b.registration = project
+        variables = [ContractVariable(key="{{deadline_ru}}", is_computed=True)]
+
+        replacements, lists = resolve_variables(
+            performer_a,
+            variables,
+            all_performers=[performer_a, performer_b],
+        )
+
+        self.assertEqual(lists, {})
+        self.assertEqual(replacements["{{deadline_ru}}"], "20 мая 2026 г.")
+
     def test_contacts_short_name_falls_back_to_performer_employee_person_record(self):
         user = get_user_model().objects.create_user(
             username="resolver-performer-person",

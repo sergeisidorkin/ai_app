@@ -1,14 +1,17 @@
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.contrib.auth import get_user_model
 from django.core import mail
 from django.test import SimpleTestCase, TestCase, override_settings
 
+from checklists_app.models import ProjectWorkspace
 from classifiers_app.models import OKSMCountry
 from contacts_app.models import CitizenshipRecord, PersonRecord
+from core.models import CloudStorageSettings
 from core.email_backend import DomainSMTPEmailBackend
 from group_app.models import GroupMember
+from nextcloud_app.models import NextcloudUserLink
 from notifications_app.email_delivery import (
     EmailDeliveryError,
     build_plain_text_body,
@@ -201,4 +204,53 @@ class ParticipationNotificationContractPrefillTests(TestCase):
         self.assertTrue(self.performer.contract_number.startswith("IMCM/7001-ИИ/"))
         self.assertEqual(self.performer.contract_date, self.notification.action_at.date())
         self.assertEqual(self.performer.contract_signing_note, "Разрабатывается проект договора")
+        mocked_assignments.assert_called_once_with([self.performer.pk])
+
+    @override_settings(
+        NEXTCLOUD_PROVISIONING_BASE_URL="https://cloud.example.com",
+        NEXTCLOUD_PROVISIONING_USERNAME="cloud-admin",
+        NEXTCLOUD_PROVISIONING_TOKEN="token",
+        NEXTCLOUD_OIDC_PROVIDER_ID=1,
+    )
+    @patch("nextcloud_app.workspace.NextcloudApiClient")
+    @patch("worktime_app.services.ensure_confirmed_assignments_for_performers")
+    def test_confirming_participation_grants_nextcloud_workspace_editor_access(
+        self,
+        mocked_assignments,
+        mocked_client_cls,
+    ):
+        settings_obj = CloudStorageSettings.get_solo()
+        settings_obj.primary_storage = CloudStorageSettings.PrimaryStorage.NEXTCLOUD
+        settings_obj.nextcloud_root_path = "/Corporate Root"
+        settings_obj.save()
+        ProjectWorkspace.objects.create(
+            project=self.project,
+            disk_path="/Corporate Root/03 Проекты/2026/Проект 7001 Договорный проект",
+            created_by=self.actor,
+        )
+        NextcloudUserLink.objects.create(
+            user=self.expert_user,
+            nextcloud_user_id=f"ncstaff-{self.expert_user.pk}",
+            nextcloud_username=f"ncstaff-{self.expert_user.pk}",
+            nextcloud_email=self.expert_user.email,
+        )
+        client = Mock()
+        client.is_configured = True
+        client.username = "cloud-admin"
+        client.ensure_user_share.return_value = Mock()
+        mocked_client_cls.EDITOR_PERMISSIONS = 15
+        mocked_client_cls.return_value = client
+
+        process_participation_notification(
+            self.notification,
+            self.expert_user,
+            Notification.ActionChoice.CONFIRMED,
+        )
+
+        client.ensure_user_share.assert_called_once_with(
+            "cloud-admin",
+            "/Corporate Root/03 Проекты/2026/Проект 7001 Договорный проект",
+            f"ncstaff-{self.expert_user.pk}",
+            permissions=15,
+        )
         mocked_assignments.assert_called_once_with([self.performer.pk])

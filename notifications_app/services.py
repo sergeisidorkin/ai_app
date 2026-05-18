@@ -532,6 +532,21 @@ def check_direction_notifications_completion(performer_ids):
             notification.save(update_fields=["is_processed", "action_at", "updated_at"])
 
 
+def _grant_nextcloud_workspace_access_for_confirmed_performers(performer_ids):
+    from core.cloud_storage import is_nextcloud_primary
+
+    if not is_nextcloud_primary():
+        return 0
+
+    from nextcloud_app.api import NextcloudApiError
+    from nextcloud_app.workspace import grant_project_workspace_editor_access_for_performers
+
+    try:
+        return grant_project_workspace_editor_access_for_performers(performer_ids)
+    except NextcloudApiError as exc:
+        raise ValueError(f"Не удалось предоставить доступ к рабочему пространству проекта в Nextcloud: {exc}") from exc
+
+
 @transaction.atomic
 def process_participation_notification(notification, actor, action_choice):
     if notification.notification_type != Notification.NotificationType.PROJECT_PARTICIPATION_CONFIRMATION:
@@ -567,6 +582,7 @@ def process_participation_notification(notification, actor, action_choice):
 
             prefill_contract_adjustment_fields(self_performer_ids, confirmed_at=now)
             ensure_confirmed_assignments_for_performers(self_performer_ids)
+            _grant_nextcloud_workspace_access_for_confirmed_performers(self_performer_ids)
         all_confirmed = not Performer.objects.filter(
             pk__in=all_performer_ids,
         ).exclude(
@@ -590,6 +606,7 @@ def process_participation_notification(notification, actor, action_choice):
 
             prefill_contract_adjustment_fields(all_performer_ids, confirmed_at=now)
             ensure_confirmed_assignments_for_performers(all_performer_ids)
+            _grant_nextcloud_workspace_access_for_confirmed_performers(all_performer_ids)
         is_fully_processed = True
 
     if not notification.is_read:
