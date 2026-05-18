@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch
 from django.contrib.auth import get_user_model
 from django.core import mail
 from django.test import SimpleTestCase, TestCase, override_settings
+from django.utils import timezone
 
 from checklists_app.models import ProjectWorkspace
 from classifiers_app.models import OKSMCountry
@@ -126,9 +127,11 @@ class ParticipationNotificationContractPrefillTests(TestCase):
         )
         self.expert_user = get_user_model().objects.create_user(
             username="expert@example.com",
+            email="expert@example.com",
             password="secret",
             first_name="Иван",
             last_name="Иванов",
+            is_staff=True,
         )
         self.country = OKSMCountry.objects.create(
             number=398,
@@ -202,7 +205,7 @@ class ParticipationNotificationContractPrefillTests(TestCase):
         self.assertIsNotNone(self.performer.contract_batch_id)
         self.assertEqual(self.performer.contract_group_member_id, self.group_member.pk)
         self.assertTrue(self.performer.contract_number.startswith("IMCM/7001-ИИ/"))
-        self.assertEqual(self.performer.contract_date, self.notification.action_at.date())
+        self.assertEqual(self.performer.contract_date, timezone.localdate(self.notification.action_at))
         self.assertEqual(self.performer.contract_signing_note, "Разрабатывается проект договора")
         mocked_assignments.assert_called_once_with([self.performer.pk])
 
