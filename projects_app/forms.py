@@ -945,6 +945,11 @@ class ProjectScheduleTaskForm(BootstrapMixin, forms.Form):
         self._populate_section_choices()
         self._bootstrapify()
 
+    def _current_value(self, field_name):
+        if self.is_bound:
+            return str(self.data.get(self.add_prefix(field_name)) or "").strip()
+        return str(self.initial.get(field_name) or "").strip()
+
     def _populate_section_choices(self):
         """Populate the service-section dropdown from the project's primary product.
 
@@ -962,9 +967,9 @@ class ProjectScheduleTaskForm(BootstrapMixin, forms.Form):
             )
         sections = _typical_service_term_section_options(product_id) if product_id else []
         labels = [item["label"] for item in sections]
-        initial_section = str(self.initial.get("service_section_name") or "").strip()
-        if initial_section and initial_section not in labels:
-            labels.append(initial_section)
+        current_section = self._current_value("service_section_name")
+        if current_section and current_section not in labels:
+            labels.append(current_section)
         self.fields["service_section_name"].choices = [("", "—")] + [(s, s) for s in labels]
         # Stash the per-section specialty list so the template can mirror the
         # lightbox's "section drives specialty options" behaviour if needed.
@@ -983,19 +988,19 @@ class ProjectScheduleTaskForm(BootstrapMixin, forms.Form):
         specialties = list(_typical_service_term_specialty_options())
         executors = list(_typical_service_term_executor_options())
 
-        initial_specialty = str(self.initial.get("specialty") or "").strip()
-        if initial_specialty and initial_specialty not in specialties:
-            specialties.append(initial_specialty)
+        current_specialty = self._current_value("specialty")
+        if current_specialty and current_specialty not in specialties:
+            specialties.append(current_specialty)
         self.fields["specialty"].choices = [("", "—")] + [(s, s) for s in specialties]
 
-        initial_executor = str(self.initial.get("executor") or "").strip()
+        current_executor = self._current_value("executor")
         executor_values = {item.get("value") for item in executors if item.get("value")}
-        if initial_executor and initial_executor not in executor_values:
+        if current_executor and current_executor not in executor_values:
             # Show the legacy/orphan value as-is so the user can clear or keep it.
             executors.append({
-                "value": initial_executor,
-                "label": initial_executor,
-                "specialties": [initial_specialty] if initial_specialty else [],
+                "value": current_executor,
+                "label": current_executor,
+                "specialties": [current_specialty] if current_specialty else [],
             })
         self.fields["executor"].choices = [("", "—")] + [
             (item["value"], item["label"]) for item in executors if item.get("value")

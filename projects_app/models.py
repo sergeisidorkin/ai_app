@@ -91,7 +91,7 @@ class ProjectRegistration(models.Model):
     input_data = models.PositiveIntegerField("Исх. данные, дней", null=True, blank=True, default=0)
 
     stage1_weeks = models.DecimalField(
-        "Этап 1, недель",
+        "Срок подготовки Предварительного отчёта, мес.",
         max_digits=4,
         decimal_places=1,
         default=0,

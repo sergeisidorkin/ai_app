@@ -2,6 +2,8 @@ import base64
 import copy
 import json
 import uuid
+from decimal import Decimal
+from importlib import import_module
 from io import BytesIO
 from datetime import date
 
@@ -256,6 +258,14 @@ class ProjectRegistrationFormTests(TestCase):
         self.assertEqual(registration.stage2_end, date(2026, 3, 14))
         self.assertEqual(registration.completion_calc, date(2026, 3, 14))
         self.assertEqual(str(registration.term_weeks), "6.3")
+
+    def test_stage1_migration_converts_legacy_weeks_to_months(self):
+        migration = import_module("projects_app.migrations.0069_migrate_stage1_weeks_to_months")
+
+        stage1_months = migration._weeks_to_contract_months(Decimal("6.0"))
+
+        self.assertEqual(stage1_months, Decimal("1.4"))
+        self.assertEqual(migration._term_weeks(stage1_months, Decimal("2.0")), Decimal("8.0"))
 
     def test_project_short_uid_uses_zero_padded_number(self):
         registration = ProjectRegistration.objects.create(
@@ -2732,6 +2742,59 @@ class ProjectProductLinkSyncTests(TestCase):
         project.refresh_from_db()
         remaining_ids = [str(t["id"]) for t in project.gantt_data["data"]]
         self.assertNotIn(first_task_id, remaining_ids)
+
+    def test_project_schedule_edit_accepts_posted_legacy_executor_choice(self):
+        project = ProjectRegistration.objects.create(
+            number=6104,
+            type=self.product,
+            name="Проект с устаревшим исполнителем",
+            status="В работе",
+            year=2026,
+        )
+        project.gantt_data = {
+            "data": [
+                {
+                    "id": "legacy-task",
+                    "text": "Старая задача",
+                    "type": "task",
+                    "start_date": "2026-05-14",
+                    "end_date": "2026-05-15",
+                    "specialty": "Архивная специальность",
+                    "executor": "Архивный Исполнитель",
+                    "progress": 10,
+                }
+            ],
+            "links": [],
+            "meta": {},
+        }
+        project.save(update_fields=["gantt_data"])
+
+        response = self.client.post(
+            reverse("project_schedule_form_edit", args=[project.pk, "legacy-task"]),
+            {
+                "type": "task",
+                "service_section_name": "",
+                "task": "Обновлённая задача",
+                "start_date": "2026-05-14",
+                "end_date": "2026-05-15",
+                "specialty": "Архивная специальность",
+                "executor": "Архивный Исполнитель",
+                "deadline": "",
+                "constraint_type": "",
+                "constraint_date": "",
+                "duration": "2",
+                "duration_star": "2",
+                "predecessors": "",
+                "progress": "75",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        project.refresh_from_db()
+        edited = next(t for t in project.gantt_data["data"] if t["id"] == "legacy-task")
+        self.assertEqual(edited["text"], "Обновлённая задача")
+        self.assertEqual(edited["executor"], "Архивный Исполнитель")
+        self.assertEqual(int(edited["progress"]), 75)
 
 
 class ExpertProjectVisibilityTests(TestCase):
