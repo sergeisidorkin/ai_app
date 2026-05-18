@@ -729,10 +729,21 @@ class TypicalServiceTermForm(forms.ModelForm):
             "placeholder": "0,0",
         }),
     )
+    source_data_weeks = forms.IntegerField(
+        label="Сроки предоставления исходных данных, нед.",
+        min_value=0,
+        required=False,
+        widget=forms.NumberInput(attrs={
+            "class": "form-control",
+            "min": "0",
+            "step": "1",
+            "placeholder": "0",
+        }),
+    )
 
     class Meta:
         model = TypicalServiceTerm
-        fields = ["product", "preliminary_report_months", "final_report_weeks"]
+        fields = ["product", "source_data_weeks", "preliminary_report_months", "final_report_weeks"]
         widgets = {
             "final_report_weeks": forms.NumberInput(attrs={
                 "class": "form-control",
@@ -745,6 +756,9 @@ class TypicalServiceTermForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         _configure_policy_product_field(self.fields["product"])
+
+    def clean_source_data_weeks(self):
+        return self.cleaned_data.get("source_data_weeks") or 0
 
 
 class ExpertiseDirectionForm(forms.ModelForm):

@@ -745,6 +745,34 @@ body .second-sidebar + .flex-grow-1 {
   pointer-events: none;
 }
 
+#project-schedule-filter-dropdown .project-filter-menu {
+  padding-right: 0 !important;
+  padding-left: 0 !important;
+}
+
+#project-schedule-filter-dropdown .proposal-payment-view-option {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  width: 100%;
+  min-width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: .35rem .75rem;
+  border-radius: .375rem;
+  cursor: pointer;
+}
+
+#project-schedule-filter-dropdown .proposal-payment-view-option:hover {
+  background: #f8f9fa;
+}
+
+#project-schedule-filter-dropdown .proposal-payment-view-option .form-check-input {
+  flex: 0 0 auto;
+  float: none;
+  margin: 0;
+}
+
 .project-filter-menu {
   width: max-content;
   min-width: 200px;
@@ -1934,9 +1962,48 @@ section#templates .alert.alert-info .text-muted {
   width: 100%;
 }
 
-#proposals-pane .registration-table-wrap > table.proposals-table {
-  width: max-content;
+#proposals-pane #proposal-registry-table {
+  width: 100%;
   min-width: 100%;
+}
+
+#proposals-pane #proposal-registry-table col.checkbox,
+#proposals-pane #proposal-registry-table > thead tr > :first-child,
+#proposals-pane #proposal-registry-table > tbody tr > :first-child {
+  width: 30px !important;
+  min-width: 30px !important;
+  max-width: 30px !important;
+}
+
+#proposals-pane #proposal-registry-table col.proposal-number,
+#proposals-pane #proposal-registry-table > thead tr > :nth-child(2),
+#proposals-pane #proposal-registry-table > tbody tr > :nth-child(2) {
+  width: 68px !important;
+  min-width: 68px !important;
+  max-width: 68px !important;
+}
+
+#proposals-pane #proposal-registry-table col.group,
+#proposals-pane #proposal-registry-table > thead tr > :nth-child(3),
+#proposals-pane #proposal-registry-table > tbody tr > :nth-child(3) {
+  width: 48px !important;
+  min-width: 48px !important;
+  max-width: 48px !important;
+}
+
+#proposals-pane #proposal-registry-table > thead tr > :first-child {
+  vertical-align: bottom !important;
+}
+
+#proposals-pane #proposal-registry-table > thead tr > :first-child .form-check {
+  position: static !important;
+  width: 100% !important;
+  height: auto !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin: 0 !important;
+  padding: 0 !important;
 }
 
 #proposals-pane .proposal-dispatch-table-wrap {

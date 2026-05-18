@@ -14,7 +14,7 @@
     {% endif %}
     hx-target="#policy-pane"
     hx-swap="outerHTML">
-  <div class="modal-body">
+  <div class="modal-body modal-body-scroll">
     {% csrf_token %}
     {% if is_admin %}
     <div class="mb-3">

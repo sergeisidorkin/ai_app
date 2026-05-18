@@ -1,3 +1,5 @@
+import copy
+
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core import signing
 from django.http import Http404, HttpResponse, HttpResponseForbidden, JsonResponse, StreamingHttpResponse
@@ -25,6 +27,7 @@ from .models import (
 from .forms import (
     ProjectRegistrationForm,
     ContractConditionsForm,
+    ProjectScheduleTaskForm,
     WorkVolumeForm,
     PerformerForm,
     BootstrapMixin,
@@ -32,12 +35,14 @@ from .forms import (
     _project_manager_choices,
     _resolve_project_manager_choice,
 )
+from .services.schedule_copy import copy_typical_gantt_to_project
+from .services import gantt_tasks
 
 import json
 import os
 import uuid
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from urllib.parse import quote
 
@@ -79,6 +84,7 @@ from policy_app.models import (
     Product,
     PROJECTS_HEAD_GROUP,
     TypicalSection,
+    TypicalServiceTerm,
     build_consulting_catalog_meta,
 )
 from smtp_app.models import ExternalSMTPAccount
@@ -107,6 +113,7 @@ from contracts_app.services import build_contract_file_name, contract_executor_s
 PROJECTS_PARTIAL_TEMPLATE = "projects_app/projects_partial.html"
 REG_FORM_TEMPLATE       = "projects_app/registration_form.html"
 CONTRACT_FORM_TEMPLATE  = "projects_app/contract_form.html"
+SCHEDULE_FORM_TEMPLATE  = "projects_app/project_schedule_form.html"
 WORK_FORM_TEMPLATE      = "projects_app/work_form.html"
 LEGAL_FORM_TEMPLATE     = "projects_app/legal_entity_form.html"
 
@@ -172,7 +179,9 @@ def _annotate_registration_number_groups(registrations):
         while end < len(items) and items[end].number == current_number:
             end += 1
         group_size = end - start
+        group_key = f"{current_number}:{start}"
         for offset, registration in enumerate(items[start:end], start=1):
+            registration.number_group_key = group_key
             registration.is_first_for_number = offset == 1
             registration.is_continuation = offset > 1
             registration.has_next_for_number = offset < group_size
@@ -243,6 +252,16 @@ def _projects_context(user=None):
     )
     if expert_project_ids is not None:
         legal_projects = legal_projects.filter(id__in=expert_project_ids)
+    schedule_projects_qs = (
+        ProjectRegistration.objects
+        .select_related("type")
+        .prefetch_related(product_prefetch)
+        .order_by("-number", "-id")
+    )
+    if expert_project_ids is not None:
+        schedule_projects_qs = schedule_projects_qs.filter(id__in=expert_project_ids)
+    schedule_projects = list(schedule_projects_qs)
+    schedule_items = gantt_tasks.iter_schedule_rows(schedule_projects)
     work_projects = (
         ProjectRegistration.objects
         .select_related("type")
@@ -265,6 +284,8 @@ def _projects_context(user=None):
         "registrations": _annotate_registration_number_groups(registrations),
         "reg_filter_projects": reg_filter_projects,
         "primary_cloud_storage_label": get_primary_cloud_storage_label(),
+        "schedule_items": schedule_items,
+        "schedule_projects": schedule_projects,
         "work_items": work_items,
         "work_projects": work_projects,
         "legal_entities": legal_entities,
@@ -295,6 +316,20 @@ def _product_option_label(product):
 
 def _registration_product_catalog():
     products = list(Product.objects.order_by("position", "id"))
+    typical_terms = {}
+    for item in (
+        TypicalServiceTerm.objects
+        .filter(product__in=products)
+        .order_by("product_id", "position", "id")
+    ):
+        product_id = str(item.product_id or "")
+        if not product_id or product_id in typical_terms:
+            continue
+        typical_terms[product_id] = {
+            "source_data_weeks": str(item.source_data_weeks),
+            "preliminary_report_months": format(item.preliminary_report_months, ".1f"),
+            "final_report_weeks": format(item.final_report_weeks, ".1f"),
+        }
     catalog_meta = build_consulting_catalog_meta()
     consulting_types = []
     service_categories = []
@@ -326,6 +361,7 @@ def _registration_product_catalog():
                     "consulting_type": (product.consulting_type_display or "").strip(),
                     "service_category": (product.service_category_display or "").strip(),
                     "service_subtype": (product.service_subtype_display or "").strip(),
+                    "typical_service_terms": typical_terms.get(str(product.pk), {}),
                 }
                 for product in products
             ],
@@ -340,6 +376,19 @@ def _request_list(data, key):
     if isinstance(value, (list, tuple)):
         return [str(item or "").strip() for item in value]
     return [str(value or "").strip()]
+
+
+def _request_decimal_at(data, key, index):
+    values = _request_list(data, key)
+    if index >= len(values):
+        return None
+    raw = values[index].replace(",", ".").strip()
+    if not raw:
+        return None
+    try:
+        return forms.DecimalField(required=False, min_value=0).clean(raw)
+    except forms.ValidationError:
+        return None
 
 
 def _registration_selected_type_rows(form, registration=None):
@@ -476,7 +525,6 @@ REGISTRATION_CLONE_FIELDS = [
     "input_data",
     "stage1_weeks",
     "stage2_weeks",
-    "stage3_weeks",
     "contract_subject",
 ]
 
@@ -560,6 +608,12 @@ def registration_form_create(request):
         start_position = _next_position(ProjectRegistration)
         for offset, product_id in enumerate(product_ids):
             obj = base_obj if offset == 0 else _copy_registration_form_values(base_obj)
+            stage1_value = _request_decimal_at(request.POST, "stage1_weeks", offset)
+            stage2_value = _request_decimal_at(request.POST, "stage2_weeks", offset)
+            if stage1_value is not None:
+                obj.stage1_weeks = stage1_value
+            if stage2_value is not None:
+                obj.stage2_weeks = stage2_value
             obj.position = start_position + offset
             obj.save()
             _save_ranked_registration_products(obj, [product_id])
@@ -610,6 +664,13 @@ def registration_launch(request, pk: int):
             status=400,
         )
 
+    reg = ProjectRegistration.objects.filter(pk=pk).first()
+    if reg is not None:
+        try:
+            copy_typical_gantt_to_project(reg, launch_date=date.today())
+        except Exception:
+            pass
+
     return JsonResponse({"ok": True, "status": "В работе"})
 
 @login_required
@@ -621,10 +682,20 @@ def registration_status_update(request, pk: int):
     if status_value not in valid_statuses:
         return JsonResponse({"ok": False, "error": "Некорректный статус проекта."}, status=400)
 
-    reg = get_object_or_404(ProjectRegistration.objects.only("id", "status"), pk=pk)
+    reg = get_object_or_404(
+        ProjectRegistration.objects.only("id", "status", "launched_at", "gantt_data"),
+        pk=pk,
+    )
+    previous_status = reg.status
     if reg.status != status_value:
         reg.status = status_value
         reg.save(update_fields=["status"])
+
+    if previous_status == "Не начат" and status_value == "В работе":
+        try:
+            copy_typical_gantt_to_project(reg, launch_date=date.today())
+        except Exception:
+            pass
 
     return JsonResponse({"ok": True, "status": reg.status})
 
@@ -669,6 +740,9 @@ def registration_deadline_update(request, pk: int):
     if reg.deadline != deadline:
         reg.deadline = deadline
         reg.save(update_fields=["deadline"])
+        from projects_app.services.schedule_sync import sync_project_gantt_by_id
+
+        sync_project_gantt_by_id(reg.pk)
 
     return JsonResponse(
         {
@@ -677,6 +751,33 @@ def registration_deadline_update(request, pk: int):
             "deadlineLabel": _short_date_label(reg.deadline),
         }
     )
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def registration_evaluation_date_update(request, pk: int):
+    raw_evaluation_date = (request.POST.get("evaluation_date") or "").strip()
+    evaluation_date = None
+    if raw_evaluation_date:
+        try:
+            evaluation_date = datetime.strptime(raw_evaluation_date, "%Y-%m-%d").date()
+        except ValueError:
+            return JsonResponse({"ok": False, "error": "Некорректная дата оценки."}, status=400)
+
+    reg = get_object_or_404(ProjectRegistration.objects.only("id", "evaluation_date"), pk=pk)
+    if reg.evaluation_date != evaluation_date:
+        reg.evaluation_date = evaluation_date
+        reg.save(update_fields=["evaluation_date"])
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "evaluationDate": reg.evaluation_date.isoformat() if reg.evaluation_date else "",
+            "evaluationDateLabel": _short_date_label(reg.evaluation_date),
+        }
+    )
+
 
 def _normalize_registration_positions():
     items = ProjectRegistration.objects.order_by("position", "id").only("id", "position")
@@ -731,6 +832,329 @@ def contract_form_edit(request, pk: int):
         })
     form.save()
     return _render_projects_updated(request)
+
+
+# --- График проекта ---
+# All five views below operate on `ProjectRegistration.gantt_data` (the same
+# JSON store backing the Gantt diagram). The (project_pk, task_id) pair
+# identifies a row uniquely; task_id is the DHTMLX task id inside the
+# `data` array.
+def _schedule_form_context(form, action, *, project_pk, task_id=None, project=None):
+    return {
+        "form": form,
+        "action": action,
+        "project_pk": project_pk,
+        "task_id": task_id,
+        "project": project,
+    }
+
+
+def _gantt_task_dict(reg, task_id: str):
+    payload = reg.gantt_data if isinstance(reg.gantt_data, dict) else {}
+    for task in payload.get("data") or []:
+        if isinstance(task, dict) and str(task.get("id")) == str(task_id):
+            return task
+    return None
+
+
+def _initial_from_task(task: dict, payload: dict) -> dict:
+    from datetime import date as _date
+    def _parse(value):
+        if not value:
+            return None
+        if isinstance(value, _date):
+            return value
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00")).date()
+        except (TypeError, ValueError):
+            for fmt in ("%Y-%m-%d", "%d.%m.%Y"):
+                try:
+                    return datetime.strptime(str(value), fmt).date()
+                except ValueError:
+                    continue
+        return None
+    # Resolve predecessors: turn each link.target==task.id into its source's WBS.
+    from .services.gantt_tasks import _wbs_for_tasks
+    wbs = _wbs_for_tasks(payload.get("data") or [])
+    sources = [
+        wbs.get(str(link.get("source"))) or str(link.get("source") or "")
+        for link in (payload.get("links") or [])
+        if str(link.get("target")) == str(task.get("id"))
+    ]
+    raw_type = str(task.get("type") or "task").strip() or "task"
+    section_name = str(task.get("service_section_name") or task.get("section_name") or "").strip()
+    text = task.get("text") or ""
+    # Lightbox parity: when the saved task is a service section, the textarea
+    # holds the optional display name (blank if it equals the section name);
+    # the section dropdown is the source of truth for the section identity.
+    if raw_type == "service_section":
+        display_text = "" if text == section_name else text
+    else:
+        display_text = text
+    return {
+        "type": raw_type,
+        "service_section_name": section_name,
+        "task": display_text,
+        "start_date": _parse(task.get("start_date")),
+        "end_date": _parse(task.get("end_date")),
+        "specialty": task.get("specialty") or "",
+        "executor": task.get("executor") or "",
+        "deadline": _parse(task.get("deadline")),
+        "constraint_type": (task.get("constraint_type") or "").lower(),
+        "constraint_date": _parse(task.get("constraint_date")),
+        "duration": (
+            int(round(float(task["duration"])))
+            if task.get("duration") not in (None, "")
+            else None
+        ),
+        "duration_star": (
+            (_parse(task.get("end_date")) - _parse(task.get("start_date"))).days
+            if _parse(task.get("end_date")) and _parse(task.get("start_date"))
+            else None
+        ),
+        "predecessors": ", ".join([s for s in sources if s]),
+        "progress": task.get("progress") or 0,
+    }
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def project_schedule_form_create(request, pk: int):
+    """Add a new task to ProjectRegistration[pk].gantt_data."""
+    reg = get_object_or_404(ProjectRegistration, pk=pk)
+    if request.method == "GET":
+        form = ProjectScheduleTaskForm(registration=reg)
+        return render(
+            request,
+            SCHEDULE_FORM_TEMPLATE,
+            _schedule_form_context(form, "create", project_pk=reg.pk, project=reg),
+        )
+    form = ProjectScheduleTaskForm(request.POST, registration=reg)
+    if not form.is_valid():
+        return render(
+            request,
+            SCHEDULE_FORM_TEMPLATE,
+            _schedule_form_context(form, "create", project_pk=reg.pk, project=reg),
+        )
+    try:
+        gantt_tasks.add_task(reg, form.task_payload())
+    except ValueError as exc:
+        form.add_error(None, str(exc))
+        return render(
+            request,
+            SCHEDULE_FORM_TEMPLATE,
+            _schedule_form_context(form, "create", project_pk=reg.pk, project=reg),
+        )
+    return _render_projects_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def project_schedule_form_edit(request, project_pk: int, task_id: str):
+    reg = get_object_or_404(ProjectRegistration, pk=project_pk)
+    task = _gantt_task_dict(reg, task_id)
+    if task is None:
+        raise Http404("Задача не найдена.")
+    if request.method == "GET":
+        form = ProjectScheduleTaskForm(
+            initial=_initial_from_task(task, reg.gantt_data or {}),
+            registration=reg,
+        )
+        return render(
+            request,
+            SCHEDULE_FORM_TEMPLATE,
+            _schedule_form_context(form, "edit", project_pk=reg.pk, task_id=task_id, project=reg),
+        )
+    form = ProjectScheduleTaskForm(request.POST, registration=reg)
+    if not form.is_valid():
+        return render(
+            request,
+            SCHEDULE_FORM_TEMPLATE,
+            _schedule_form_context(form, "edit", project_pk=reg.pk, task_id=task_id, project=reg),
+        )
+    try:
+        gantt_tasks.update_task(reg, task_id, form.task_payload())
+    except ValueError as exc:
+        form.add_error(None, str(exc))
+        return render(
+            request,
+            SCHEDULE_FORM_TEMPLATE,
+            _schedule_form_context(form, "edit", project_pk=reg.pk, task_id=task_id, project=reg),
+        )
+    return _render_projects_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def project_schedule_delete(request, project_pk: int, task_id: str):
+    reg = get_object_or_404(ProjectRegistration, pk=project_pk)
+    gantt_tasks.delete_task(reg, task_id)
+    return _render_projects_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def project_schedule_gantt(request, pk: int):
+    """Get or save the Gantt diagram payload for a project registration.
+
+    Mirrors policy_app.typical_service_term_gantt but stores into
+    ProjectRegistration.gantt_data. We reuse the same JSON normalization
+    helpers from policy_app to keep parity with the typical-service-term
+    editor used as the UI factory.
+    """
+    from policy_app.views import (
+        _typical_service_term_section_options,
+        _typical_service_term_specialty_options,
+        _typical_service_term_executor_options,
+        _normalize_typical_service_term_gantt_payload,
+        _default_typical_service_term_gantt_data,
+    )
+
+    reg = get_object_or_404(
+        ProjectRegistration.objects.select_related("type"),
+        pk=pk,
+    )
+
+    primary_product = reg.primary_product
+    primary_product_id = getattr(primary_product, "pk", None) or getattr(reg.type, "pk", None)
+    from projects_app.services.schedule_sync import sync_project_gantt_from_sources
+    sync_project_gantt_from_sources(reg)
+
+    def _build_payload():
+        gantt_data = (
+            reg.gantt_data
+            if isinstance(reg.gantt_data, dict) and reg.gantt_data.get("data")
+            else None
+        )
+        if gantt_data is None:
+            placeholder = SimpleNamespace(
+                pk=reg.pk,
+                source_data_weeks=0,
+                preliminary_report_months=0,
+                final_report_weeks=0,
+            )
+            gantt_data = _default_typical_service_term_gantt_data(placeholder)
+            base_iso = (reg.launched_at or date.today()).isoformat()
+            meta = gantt_data.setdefault("meta", {})
+            meta["base_date"] = base_iso
+            meta["project_start"] = base_iso
+
+        product_label = (
+            getattr(primary_product, "short_name", "")
+            or getattr(reg.type, "short_name", "")
+            or reg.short_uid
+        )
+        section_options = (
+            _typical_service_term_section_options(primary_product_id)
+            if primary_product_id
+            else []
+        )
+        section_specialties_by_name = {
+            item["label"]: item.get("specialties", []) for item in section_options
+        }
+        specialty_options = _typical_service_term_specialty_options()
+        executor_options = _typical_service_term_executor_options()
+        from projects_app.services.schedule_sync import extend_assignment_options_for_managed_tasks
+
+        specialty_options, executor_options = extend_assignment_options_for_managed_tasks(
+            copy.deepcopy(gantt_data),
+            specialty_options,
+            executor_options,
+            section_specialties_by_name,
+        )
+        return {
+            "ok": True,
+            "gantt": gantt_data,
+            "section_options": section_options,
+            "specialty_options": specialty_options,
+            "executor_options": executor_options,
+            "term": {
+                "id": reg.pk,
+                "product": product_label,
+                "project_label": f"{reg.short_uid} {product_label}".strip(),
+                "source_data_weeks": 0,
+                "preliminary_report_months": "0,0",
+                "final_report_weeks": 0,
+                "launched_at": reg.launched_at.isoformat() if reg.launched_at else "",
+            },
+        }
+
+    if request.method == "GET":
+        return JsonResponse(_build_payload())
+
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+        from projects_app.services.schedule_sync import (
+            canonicalize_managed_assignments_for_validation,
+            extend_assignment_options_from_project_payload,
+            extend_assignment_options_for_managed_tasks,
+            sanitize_project_gantt_resources_for_validation,
+            validate_managed_task_changes,
+        )
+
+        validate_managed_task_changes(reg.gantt_data, payload)
+        section_options = (
+            _typical_service_term_section_options(primary_product_id)
+            if primary_product_id
+            else []
+        )
+        section_names = [item["label"] for item in section_options]
+        section_specialties_by_name = {
+            item["label"]: item.get("specialties", []) for item in section_options
+        }
+        specialty_options = _typical_service_term_specialty_options()
+        executor_options = _typical_service_term_executor_options()
+        payload_for_normalize = canonicalize_managed_assignments_for_validation(
+            copy.deepcopy(payload),
+            reg,
+        )
+        payload_for_normalize = sanitize_project_gantt_resources_for_validation(payload_for_normalize)
+        specialty_options, executor_options = extend_assignment_options_from_project_payload(
+            payload_for_normalize,
+            specialty_options,
+            executor_options,
+        )
+        specialty_options, executor_options = extend_assignment_options_for_managed_tasks(
+            payload_for_normalize,
+            specialty_options,
+            executor_options,
+            section_specialties_by_name,
+        )
+        gantt_data, _dated_tasks, _base_date = _normalize_typical_service_term_gantt_payload(
+            payload_for_normalize,
+            section_names,
+            section_specialties_by_name,
+            specialty_options,
+            executor_options,
+        )
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+
+    reg.gantt_data = gantt_data
+    reg.save(update_fields=["gantt_data"])
+
+    sync_project_gantt_from_sources(reg)
+    return JsonResponse(_build_payload())
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+def project_schedule_move_up(request, project_pk: int, task_id: str):
+    reg = get_object_or_404(ProjectRegistration, pk=project_pk)
+    gantt_tasks.move_task(reg, task_id, "up")
+    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+def project_schedule_move_down(request, project_pk: int, task_id: str):
+    reg = get_object_or_404(ProjectRegistration, pk=project_pk)
+    gantt_tasks.move_task(reg, task_id, "down")
+    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
 
 
 # --- Объем работ ---

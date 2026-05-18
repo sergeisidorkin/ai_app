@@ -6,8 +6,52 @@
   window.__tableSelLast = window.__tableSelLast || null;
 
   function pane() {
-    var all = document.querySelectorAll('#policy-pane');
-    return all.length > 1 ? all[all.length - 1] : all[0] || null;
+    // The typical-service-term-gantt editor is reused (with the same ids) by
+    // other sections of the application — currently the projects' "График
+    // проекта" Gantt. Both panes (#policy-pane and #projects-pane) live in
+    // the DOM at once (Bootstrap tabs), so we need to pick the pane the user
+    // is actually looking at — the one whose ancestor tab-pane has the
+    // `.active` class. Fall back to whichever pane has the editor open
+    // (`d-none` removed), then to the policy pane for backwards compatibility.
+    var policyAll = document.querySelectorAll('#policy-pane');
+    var policyPane = policyAll.length > 1 ? policyAll[policyAll.length - 1] : policyAll[0] || null;
+    var projectsAll = document.querySelectorAll('#projects-pane');
+    var projectsPane = projectsAll.length > 1 ? projectsAll[projectsAll.length - 1] : projectsAll[0] || null;
+    function isVisible(el) {
+      if (!el) return false;
+      var tab = el.closest ? el.closest('.tab-pane') : null;
+      if (tab) return tab.classList.contains('active');
+      // No tab ancestor → assume it's standalone-visible.
+      return true;
+    }
+    function editorOpen(el) {
+      if (!el) return false;
+      var ed = el.querySelector('#typical-service-term-gantt-editor');
+      return !!(ed && !ed.classList.contains('d-none'));
+    }
+    var policyVisible = isVisible(policyPane);
+    var projectsVisible = isVisible(projectsPane);
+    if (projectsPane && projectsVisible && !policyVisible) return projectsPane;
+    if (policyPane && policyVisible && !projectsVisible) return policyPane;
+    // Both visible (shouldn't happen for tabs) or neither — disambiguate by
+    // which editor is currently open.
+    var policyOpen = editorOpen(policyPane);
+    var projectsOpen = editorOpen(projectsPane);
+    if (projectsOpen && !policyOpen) return projectsPane;
+    if (policyOpen && !projectsOpen) return policyPane;
+    return policyPane || projectsPane || null;
+  }
+
+  function typicalServiceTermGanttEditorEl() {
+    var p = pane();
+    return (p && p.querySelector('#typical-service-term-gantt-editor'))
+      || document.getElementById('typical-service-term-gantt-editor');
+  }
+
+  function typicalServiceTermGanttChartEl() {
+    var p = pane();
+    return (p && p.querySelector('#typical-service-term-gantt'))
+      || document.getElementById('typical-service-term-gantt');
   }
   const qa = (sel, root) => Array.from((root || document).querySelectorAll(sel));
 
@@ -86,7 +130,11 @@
   const TYPICAL_SERVICE_TERM_GANTT_NON_COLLAPSIBLE_COLUMNS = ['wbs', 'text', 'add'];
   const TYPICAL_SERVICE_TERM_GANTT_WEEKDAY_LABELS = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
   const TYPICAL_SERVICE_TERM_GANTT_SYSTEM_TASK_NAMES = {
+    source_data: 'Исходные данные',
+    source_data_asset: 'Актив',
     preliminary_report: 'Предварительный отчёт',
+    preliminary_report_asset: 'Актив',
+    preliminary_report_submission: 'Отправка Предварительного отчёта',
     final_report: 'Итоговый отчёт',
   };
   window.__policyTypicalServiceTermGanttSnapToGrid =
@@ -142,6 +190,36 @@
   // List of supported countries from the classifiers endpoint; refreshed lazily.
   window.__policyTypicalServiceTermGanttCalendarCountriesPromise =
     window.__policyTypicalServiceTermGanttCalendarCountriesPromise || null;
+  window.__policyTypicalServiceTermGanttSessionId =
+    Number(window.__policyTypicalServiceTermGanttSessionId) || 0;
+
+  function beginTypicalServiceTermGanttSession(editor) {
+    window.__policyTypicalServiceTermGanttSessionId += 1;
+    const sessionId = window.__policyTypicalServiceTermGanttSessionId;
+    if (editor) editor.dataset.typicalServiceTermGanttSessionId = String(sessionId);
+    return sessionId;
+  }
+
+  function getTypicalServiceTermGanttSessionId(root) {
+    const editor = root?.querySelector?.('#typical-service-term-gantt-editor');
+    const value = Number(editor?.dataset?.typicalServiceTermGanttSessionId);
+    return Number.isFinite(value) ? value : null;
+  }
+
+  function isTypicalServiceTermGanttSessionCurrent(root, gantt, sessionId, expectedKind, expectedCountryId) {
+    if (!Number.isFinite(sessionId)) return false;
+    if (gantt !== window.__policyTypicalServiceTermGantt) return false;
+    if (getTypicalServiceTermGanttSessionId(root) !== sessionId) return false;
+    if (expectedKind && getTypicalServiceTermGanttCalendarKind() !== expectedKind) return false;
+    if (
+      expectedKind === TYPICAL_SERVICE_TERM_GANTT_CALENDAR_KIND_PRODUCTION &&
+      Number.isFinite(expectedCountryId) &&
+      getTypicalServiceTermGanttCalendarCountryId() !== Number(expectedCountryId)
+    ) {
+      return false;
+    }
+    return true;
+  }
 
   function policyGanttAttachEvent(eventName, handler) {
     const g = getTypicalServiceTermGanttInstance();
@@ -255,6 +333,23 @@
 
   function normalizeFilterValue(value) {
     return String(value || '').trim();
+  }
+
+  function isTypicalServiceTermGanttManagedTask(task) {
+    return pane()?.id === 'projects-pane' &&
+      ['work_volume', 'performer', 'checklist_section'].includes(normalizeFilterValue(task?.managed_source));
+  }
+
+  function isTypicalServiceTermGanttManagedPerformerTask(task) {
+    return pane()?.id === 'projects-pane' && normalizeFilterValue(task?.managed_source) === 'performer';
+  }
+
+  function isTypicalServiceTermGanttManagedAssetTask(task) {
+    return pane()?.id === 'projects-pane' && normalizeFilterValue(task?.managed_source) === 'work_volume';
+  }
+
+  function isTypicalServiceTermGanttManagedChecklistSectionTask(task) {
+    return pane()?.id === 'projects-pane' && normalizeFilterValue(task?.managed_source) === 'checklist_section';
   }
 
   function escapePolicyHtml(value) {
@@ -2232,7 +2327,7 @@
     if (!gantt.$policyTypicalServiceTermColumnHandlesEventsBound && typeof gantt.attachEvent === 'function') {
       gantt.$policyTypicalServiceTermColumnHandlesEventsBound = true;
       const reinstall = function () {
-        const currentChart = document.getElementById('typical-service-term-gantt');
+        const currentChart = typicalServiceTermGanttChartEl();
         if (!currentChart) return true;
         requestAnimationFrame(function () {
           installTypicalServiceTermGanttColumnResizeHandles(gantt, currentChart);
@@ -2275,7 +2370,7 @@
       return getTypicalServiceTermGanttInstance();
     };
     const resolveChart = function () {
-      return document.getElementById('typical-service-term-gantt') || chart;
+      return typicalServiceTermGanttChartEl() || chart;
     };
     editor.addEventListener('click', function (event) {
       const button = event.target?.closest?.('.typical-service-term-gantt-column-collapse-btn');
@@ -2687,7 +2782,7 @@
     if (tasksStore && typeof tasksStore.attachEvent === 'function' && !tasksStore.$policyTypicalServiceTermLinkSourceBound) {
       tasksStore.$policyTypicalServiceTermLinkSourceBound = true;
       tasksStore.attachEvent('onStoreUpdated', function (id) {
-        const currentChart = document.getElementById('typical-service-term-gantt');
+        const currentChart = typicalServiceTermGanttChartEl();
         if (!currentChart || !currentChart.classList.contains('typical-service-term-gantt-link-dragging')) return true;
         const reapply = currentChart.$policyTypicalServiceTermReapplyLinkSource;
         if (typeof reapply !== 'function') return true;
@@ -2884,7 +2979,7 @@
     }
     if (!gantt.$policyTypicalServiceTermRowHighlightEventIds) {
       const reapplyActiveRow = function () {
-        const currentChart = document.getElementById('typical-service-term-gantt');
+        const currentChart = typicalServiceTermGanttChartEl();
         if (currentChart?.dataset.activeTaskId) {
           requestAnimationFrame(function () {
             setTypicalServiceTermGanttActiveRow(currentChart, currentChart.dataset.activeTaskId);
@@ -2895,32 +2990,32 @@
         policyGanttAttachEvent('onDataRender', function () {
           reapplyActiveRow();
           requestAnimationFrame(function () {
-            alignTypicalServiceTermGanttLinkHandles(document.getElementById('typical-service-term-gantt'));
+            alignTypicalServiceTermGanttLinkHandles(typicalServiceTermGanttChartEl());
           });
         }),
         policyGanttAttachEvent('onGanttScroll', function () {
           reapplyActiveRow();
           requestAnimationFrame(function () {
-            alignTypicalServiceTermGanttLinkHandles(document.getElementById('typical-service-term-gantt'));
+            alignTypicalServiceTermGanttLinkHandles(typicalServiceTermGanttChartEl());
           });
         }),
         policyGanttAttachEvent('onTaskClick', function (id) {
           if (id !== undefined && id !== null && typeof gantt.selectTask === 'function') {
             gantt.selectTask(id);
           }
-          const currentChart = document.getElementById('typical-service-term-gantt');
+          const currentChart = typicalServiceTermGanttChartEl();
           setTypicalServiceTermGanttActiveRow(currentChart, id);
           requestAnimationFrame(function () { setTypicalServiceTermGanttActiveRow(currentChart, id); });
           return true;
         }),
         policyGanttAttachEvent('onTaskSelected', function (id) {
-          const currentChart = document.getElementById('typical-service-term-gantt');
+          const currentChart = typicalServiceTermGanttChartEl();
           setTypicalServiceTermGanttActiveRow(currentChart, id);
           return true;
         }),
         policyGanttAttachEvent('onTaskUnselected', function () {
           requestAnimationFrame(function () {
-            const currentChart = document.getElementById('typical-service-term-gantt');
+            const currentChart = typicalServiceTermGanttChartEl();
             const selectedId = typeof gantt.getSelectedId === 'function' ? gantt.getSelectedId() : null;
             if (selectedId === undefined || selectedId === null || selectedId === '') {
               setTypicalServiceTermGanttActiveRow(currentChart, '');
@@ -2973,7 +3068,7 @@
   // No-op when fullscreen is not active or when no editor is present.
   function refreshTypicalServiceTermGanttFullscreenLayout(chart) {
     const editor = chart?.closest?.('.typical-service-term-gantt-editor')
-      || document.getElementById('typical-service-term-gantt-editor');
+      || typicalServiceTermGanttEditorEl();
     if (!editor || !editor.classList.contains('typical-service-term-gantt-editor--fullscreen')) return;
     const root = pane();
     if (!root) return;
@@ -3028,7 +3123,7 @@
 
   function clearTypicalServiceTermGanttSelection() {
     const gantt = getTypicalServiceTermGanttInstance();
-    const chart = document.getElementById('typical-service-term-gantt');
+    const chart = typicalServiceTermGanttChartEl();
     setTypicalServiceTermGanttActiveRow(chart, '');
     if (!gantt || typeof gantt.getSelectedId !== 'function' || typeof gantt.unselectTask !== 'function') return;
     const selectedId = gantt.getSelectedId();
@@ -3173,6 +3268,26 @@
       return value;
     }
     return null;
+  }
+
+  function defaultTypicalServiceTermGanttCalendarKindForRoot(root) {
+    return root?.id === 'projects-pane'
+      ? TYPICAL_SERVICE_TERM_GANTT_CALENDAR_KIND_PRODUCTION
+      : TYPICAL_SERVICE_TERM_GANTT_CALENDAR_KIND_ABSTRACT;
+  }
+
+  function withDefaultTypicalServiceTermGanttMeta(ganttData, root) {
+    const source = ganttData && typeof ganttData === 'object' ? ganttData : {};
+    const meta = Object.assign({}, source.meta && typeof source.meta === 'object' ? source.meta : {});
+    if (!getTypicalServiceTermGanttMetaCalendarKind(meta)) {
+      meta.calendar_kind = defaultTypicalServiceTermGanttCalendarKindForRoot(root);
+    }
+    if (!getTypicalServiceTermGanttMetaExecutorDisplayMode(meta)) {
+      meta.executor_display = meta.calendar_kind === TYPICAL_SERVICE_TERM_GANTT_CALENDAR_KIND_ABSTRACT
+        ? TYPICAL_SERVICE_TERM_GANTT_EXECUTOR_DISPLAY_RESOURCE
+        : TYPICAL_SERVICE_TERM_GANTT_EXECUTOR_DISPLAY_EXECUTOR;
+    }
+    return Object.assign({}, source, { meta: meta });
   }
 
   function applyTypicalServiceTermGanttMetaCalendarSettings(meta) {
@@ -4016,6 +4131,9 @@
     if (!gantt) return Promise.resolve(null);
     const opts = options || {};
     const chart = root ? root.querySelector('#typical-service-term-gantt') : null;
+    const sessionId = getTypicalServiceTermGanttSessionId(root);
+    const expectedKind = getTypicalServiceTermGanttCalendarKind();
+    const expectedCountryId = getTypicalServiceTermGanttCalendarCountryId();
     // In calendar-days mode we still want the country selection persisted, but
     // we don't apply work_time at all so durations stay calendar-based.
     if (isTypicalServiceTermGanttCalendarDaysMode()) {
@@ -4051,6 +4169,9 @@
       // re-enter this function with the populated id.
       return fetchTypicalServiceTermGanttCalendarCountries()
         .then(function (payload) {
+          if (!isTypicalServiceTermGanttSessionCurrent(root, gantt, sessionId, expectedKind, expectedCountryId)) {
+            return null;
+          }
           let defaultId = payload && Number.isFinite(payload.default_id) ? Number(payload.default_id) : null;
           if (!Number.isFinite(defaultId) && Array.isArray(payload?.items) && payload.items.length) {
             // Fall back to the first supported country; prefer Russia by alpha2.
@@ -4070,6 +4191,9 @@
     const range = getTypicalServiceTermGanttCalendarYearRange(gantt, root);
     return fetchTypicalServiceTermGanttCalendarRange(countryId, range.yearFrom, range.yearTo)
       .then(function (dataset) {
+        if (!isTypicalServiceTermGanttSessionCurrent(root, gantt, sessionId, expectedKind, countryId)) {
+          return null;
+        }
         window.__policyTypicalServiceTermGanttActiveCalendar = dataset;
         applyTypicalServiceTermGanttWorkTime(gantt, dataset);
         const editor = root?.querySelector('#typical-service-term-gantt-editor');
@@ -4092,6 +4216,9 @@
         return dataset;
       })
       .catch(function (error) {
+        if (!isTypicalServiceTermGanttSessionCurrent(root, gantt, sessionId, expectedKind, countryId)) {
+          return null;
+        }
         if (window.console && console.warn) {
           console.warn('[policy] production calendar fetch failed:', error);
         }
@@ -4763,6 +4890,7 @@
         };
         const applyLockState = function () {
           const parentTaskType = isParentTaskType();
+          const managedChecklistSectionTask = isTypicalServiceTermGanttManagedChecklistSectionTask(task);
           node.classList.toggle('policy-gantt-period-parent-task', parentTaskType);
           setReadonly(startInput, parentTaskType);
           startInput.classList.toggle('readonly-field', parentTaskType || durationEditMode);
@@ -4771,7 +4899,10 @@
           endInput.classList.toggle('readonly-field', parentTaskType || !durationEditMode);
           endInput.setAttribute('aria-readonly', (parentTaskType || !durationEditMode) ? 'true' : 'false');
           setReadonly(durationInput, parentTaskType || !durationEditMode);
-          setReadonly(progressInput, parentTaskType);
+          setReadonly(progressInput, parentTaskType || managedChecklistSectionTask);
+          if (managedChecklistSectionTask && progressInput) {
+            progressInput.title = 'Прогресс рассчитывается по статусам IMCM «Предоставлено» в таблице «Статусы запросов».';
+          }
           setDatePickerLocked(startInput, parentTaskType || durationEditMode);
           setDatePickerLocked(endInput, parentTaskType || !durationEditMode);
           if (parentTaskType && progressInput) {
@@ -4969,6 +5100,7 @@
     gantt.$policyTypicalServiceTermTaskNameBlockRegistered = true;
     const getLockedSystemTaskName = function (task) {
       const systemKey = normalizeFilterValue(task?.system_key);
+      if (isTypicalServiceTermGanttManagedTask(task)) return normalizeFilterValue(task?.text);
       return TYPICAL_SERVICE_TERM_GANTT_SYSTEM_TASK_NAMES[systemKey] || '';
     };
     gantt.form_blocks.policy_task_name = {
@@ -5003,6 +5135,7 @@
           return normalizeFilterValue(getTypeSelect()?.value || task?.type) === TYPICAL_SERVICE_TERM_GANTT_SERVICE_SECTION_TYPE;
         };
         const lockedSystemTaskName = getLockedSystemTaskName(task);
+        const managedPerformerTask = isTypicalServiceTermGanttManagedPerformerTask(task);
         const renderOptions = function (selectedValue) {
           const options = getTypicalServiceTermGanttSectionOptions();
           const currentValue = normalizeFilterValue(selectedValue || select.value || getTypicalServiceTermGanttTaskSectionName(task));
@@ -5025,6 +5158,11 @@
         const syncMode = function (clearOnExitSection) {
           const sectionMode = isServiceSectionType();
           renderOptions();
+          if (managedPerformerTask) {
+            select.disabled = true;
+            select.classList.add('readonly-field');
+            select.title = 'Раздел управляется таблицей «Исполнители».';
+          }
           sectionField.classList.toggle('d-none', !sectionMode);
           node.classList.toggle('policy-gantt-task-name--single-field', !sectionMode);
           if (!sectionMode && clearOnExitSection) {
@@ -5036,7 +5174,11 @@
         textarea.value = initialDisplayName;
         textarea.readOnly = !!lockedSystemTaskName;
         textarea.classList.toggle('readonly-field', !!lockedSystemTaskName);
-        textarea.title = lockedSystemTaskName ? 'Название системной задачи нельзя изменить.' : '';
+        textarea.title = lockedSystemTaskName
+          ? (isTypicalServiceTermGanttManagedAssetTask(task)
+            ? 'Название актива управляется таблицей «Объем услуг: активы».'
+            : 'Название системной задачи нельзя изменить.')
+          : '';
         renderOptions(initialSectionName);
 
         const typeSelect = getTypeSelect();
@@ -5054,8 +5196,10 @@
       get_value: function (node, task) {
         const lockedSystemTaskName = getLockedSystemTaskName(task);
         if (lockedSystemTaskName) {
-          delete task.service_section_name;
-          delete task.section_name;
+          if (!isTypicalServiceTermGanttManagedPerformerTask(task)) {
+            delete task.service_section_name;
+            delete task.section_name;
+          }
           task.text = lockedSystemTaskName;
           return lockedSystemTaskName;
         }
@@ -5137,9 +5281,14 @@
               escapePolicyHtml(option.label) + '</option>';
           }).join('');
         };
-        const setSelectOptions = function (select, options, selectedValue) {
+        const setSelectOptions = function (select, options, selectedValue, preserveSelected) {
           const normalizedOptions = normalizeOptions(options);
           const currentValue = normalizeFilterValue(selectedValue);
+          if (preserveSelected && currentValue && !normalizedOptions.some(function (option) {
+            return option.value === currentValue || option.label === currentValue;
+          })) {
+            normalizedOptions.push({ value: currentValue, label: currentValue });
+          }
           select.innerHTML = optionHtml(normalizedOptions);
           const selectedOption = normalizedOptions.find(function (option) {
             return option.value === currentValue || option.label === currentValue;
@@ -5168,9 +5317,23 @@
         const isParentTask = function () {
           return isTypicalServiceTermGanttSummaryTask(gantt, task);
         };
+        const isManagedPerformerTask = function () {
+          return isTypicalServiceTermGanttManagedPerformerTask(task);
+        };
+        const isManagedAssignmentTask = function () {
+          return isTypicalServiceTermGanttManagedPerformerTask(task)
+            || isTypicalServiceTermGanttManagedChecklistSectionTask(task);
+        };
         const applyReadonly = function (select, locked) {
           select.disabled = !!locked;
           select.classList.toggle('readonly-field', !!locked);
+          if (locked && isManagedAssignmentTask()) {
+            select.title = isTypicalServiceTermGanttManagedChecklistSectionTask(task)
+              ? 'Для разделов «Исходные данные» исполнитель и специальность не назначаются: это задача заказчика.'
+              : 'Поле управляется таблицей «Исполнители».';
+          } else if (!locked) {
+            select.title = '';
+          }
         };
         const syncExecutorOptions = function (forceDefault) {
           const specialty = normalizeFilterValue(specialtySelect.value);
@@ -5178,9 +5341,10 @@
           setSelectOptions(
             executorSelect,
             getTypicalServiceTermGanttExecutorOptions(specialty),
-            forceDefault ? '' : currentValue
+            forceDefault ? '' : currentValue,
+            isManagedAssignmentTask()
           );
-          applyReadonly(executorSelect, isParentTask() || !specialty);
+          applyReadonly(executorSelect, isParentTask() || !specialty || isManagedAssignmentTask());
         };
         const applySpecialtyState = function (forceDefault) {
           if (isParentTask()) {
@@ -5193,7 +5357,7 @@
           const currentValue = normalizeFilterValue(specialtySelect.value || task?.specialty);
           if (!isServiceSectionType()) {
             setSelectOptions(specialtySelect, getTypicalServiceTermGanttSpecialtyOptions(), forceDefault ? '' : currentValue);
-            applyReadonly(specialtySelect, false);
+            applyReadonly(specialtySelect, isManagedAssignmentTask());
             return;
           }
 
@@ -5205,7 +5369,7 @@
             return;
           }
 
-          setSelectOptions(specialtySelect, sectionSpecialties, currentValue);
+          setSelectOptions(specialtySelect, sectionSpecialties, currentValue, isManagedAssignmentTask());
           if (sectionSpecialties.length === 1) {
             specialtySelect.value = sectionSpecialties[0];
             applyReadonly(specialtySelect, true);
@@ -5214,7 +5378,7 @@
           if (forceDefault || sectionSpecialties.indexOf(specialtySelect.value) === -1) {
             specialtySelect.value = sectionSpecialties[0];
           }
-          applyReadonly(specialtySelect, false);
+          applyReadonly(specialtySelect, isManagedAssignmentTask());
         };
 
         applySpecialtyState(false);
@@ -5251,6 +5415,9 @@
         }
       },
       get_value: function (node, task) {
+        if (isTypicalServiceTermGanttManagedPerformerTask(task) || isTypicalServiceTermGanttManagedChecklistSectionTask(task)) {
+          return task;
+        }
         if (isTypicalServiceTermGanttSummaryTask(gantt, task)) {
           task.specialty = '';
           task.executor = '';
@@ -6906,6 +7073,150 @@
     return changedTaskIds.length > 0;
   }
 
+  function applyTypicalServiceTermGanttFixedMilestoneTimeboxes(gantt) {
+    if (!gantt || !isTypicalServiceTermGanttTimeboxEnabled() || typeof gantt.getLinks !== 'function' || typeof gantt.getTask !== 'function') return false;
+    const links = (gantt.getLinks() || []).filter(function (link) {
+      return isTypicalServiceTermGanttFsNoLagLink(gantt, link);
+    });
+    if (!links.length) return false;
+
+    const incoming = {};
+    links.forEach(function (link) {
+      const target = String(link?.target ?? '');
+      if (!target) return;
+      (incoming[target] = incoming[target] || []).push(link);
+    });
+
+    const changedTaskIds = [];
+    const rememberChanged = function (id) {
+      if (changedTaskIds.indexOf(id) === -1) changedTaskIds.push(id);
+    };
+    const canTimeboxTask = function (task) {
+      return !!task
+        && task.type !== gantt.config?.types?.milestone
+        && !isTypicalServiceTermGanttSummaryTask(gantt, task)
+        && !hasTypicalServiceTermGanttHardDateConstraint(task)
+        && isTypicalServiceTermGanttTimeboxAdjustable(task)
+        && task.start_date instanceof Date
+        && task.end_date instanceof Date;
+    };
+    const setTaskWindow = function (task, startDate, endDate, duration) {
+      const changed =
+        !(task.start_date instanceof Date) ||
+        !(task.end_date instanceof Date) ||
+        task.start_date.valueOf() !== startDate.valueOf() ||
+        task.end_date.valueOf() !== endDate.valueOf() ||
+        Number(task.duration || 0) !== Number(duration || 0);
+      task.start_date = new Date(startDate);
+      task.end_date = new Date(endDate);
+      task.duration = duration;
+      if (changed) rememberChanged(task.id);
+    };
+
+    const applyForMilestone = function (milestone) {
+      const fixedDate = getTypicalServiceTermGanttFixedMilestoneDate(gantt, milestone);
+      if (!fixedDate) return false;
+
+      const taskMap = {};
+      const visit = function (taskId) {
+        const sourceLinks = incoming[String(taskId)] || [];
+        sourceLinks.forEach(function (link) {
+          let source = null;
+          try { source = gantt.getTask(link.source); } catch (_) { source = null; }
+          if (!source) return;
+          if (!canTimeboxTask(source)) return;
+          const sourceId = String(source.id);
+          if (taskMap[sourceId]) return;
+          taskMap[sourceId] = source;
+          visit(sourceId);
+        });
+      };
+      visit(milestone.id);
+
+      const tasks = Object.keys(taskMap).map(function (id) { return taskMap[id]; });
+      if (!tasks.length) return false;
+
+      const taskIds = new Set(tasks.map(function (task) { return String(task.id); }));
+      const levelsById = {};
+      const visiting = {};
+      const levelFor = function (task) {
+        const taskId = String(task.id);
+        if (Number.isFinite(levelsById[taskId])) return levelsById[taskId];
+        if (visiting[taskId]) return 0;
+        visiting[taskId] = true;
+        let level = 0;
+        (incoming[taskId] || []).forEach(function (link) {
+          const sourceId = String(link.source);
+          if (!taskIds.has(sourceId)) return;
+          const sourceTask = taskMap[sourceId];
+          if (!sourceTask) return;
+          level = Math.max(level, levelFor(sourceTask) + 1);
+        });
+        visiting[taskId] = false;
+        levelsById[taskId] = level;
+        return level;
+      };
+      tasks.forEach(levelFor);
+
+      const roots = tasks.filter(function (task) { return levelFor(task) === 0; });
+      const chainStart = roots.reduce(function (minDate, task) {
+        if (!(task.start_date instanceof Date)) return minDate;
+        return !minDate || task.start_date < minDate ? task.start_date : minDate;
+      }, null);
+      if (!chainStart || fixedDate <= chainStart) return false;
+
+      const totalWindowDuration = calculateTypicalServiceTermGanttDuration(gantt, chainStart, fixedDate, { type: gantt.config?.types?.task || 'task' });
+      const maxLevel = tasks.reduce(function (max, task) { return Math.max(max, levelFor(task)); }, 0);
+      const segments = [];
+      for (let level = 0; level <= maxLevel; level += 1) {
+        const levelTasks = tasks.filter(function (task) { return levelFor(task) === level; });
+        if (!levelTasks.length) continue;
+        const oldDuration = Math.max.apply(null, levelTasks.map(function (task) {
+          return Math.max(1, getTypicalServiceTermGanttTaskDuration(gantt, task));
+        }));
+        segments.push({
+          id: 'timebox-segment-' + level,
+          level: level,
+          tasks: levelTasks,
+          oldDuration: oldDuration,
+        });
+      }
+      if (!segments.length || totalWindowDuration < segments.length) return false;
+
+      const durationBySegment = distributeTypicalServiceTermGanttTimeboxDurations(
+        totalWindowDuration,
+        segments,
+        function (segment) { return segment.oldDuration; }
+      );
+      if (!durationBySegment) return false;
+
+      let cursor = new Date(chainStart);
+      segments.forEach(function (segment) {
+        const duration = Math.max(1, Math.round(Number(durationBySegment[String(segment.id)]) || 1));
+        const nextEnd = calculateTypicalServiceTermGanttEndDate(gantt, cursor, duration, { type: gantt.config?.types?.task || 'task' });
+        if (!(nextEnd instanceof Date)) return;
+        segment.tasks.forEach(function (task) {
+          setTaskWindow(task, cursor, nextEnd, duration);
+        });
+        cursor = new Date(nextEnd);
+      });
+      return true;
+    };
+
+    if (typeof gantt.eachTask !== 'function') return false;
+    gantt.eachTask(function (task) {
+      if (getTypicalServiceTermGanttFixedMilestoneDate(gantt, task)) {
+        applyForMilestone(task);
+      }
+    });
+
+    changedTaskIds.forEach(function (id) {
+      if (typeof gantt.isTaskExists === 'function' && !gantt.isTaskExists(id)) return;
+      if (typeof gantt.updateTask === 'function') gantt.updateTask(id);
+    });
+    return changedTaskIds.length > 0;
+  }
+
   function applyTypicalServiceTermGanttParentRollup(gantt) {
     if (!gantt || gantt.$policyTypicalServiceTermParentRollupActive || typeof gantt.eachTask !== 'function') return;
     const summaryTasks = [];
@@ -7244,6 +7555,7 @@
       const apply = function () {
         applyTypicalServiceTermGanttParentRollup(gantt);
         applyTypicalServiceTermGanttConstraints(gantt);
+        applyTypicalServiceTermGanttFixedMilestoneTimeboxes(gantt);
         applyTypicalServiceTermGanttAutoScheduling(gantt, options || {});
         applyTypicalServiceTermGanttAlapScheduling(gantt);
         applyTypicalServiceTermGanttConstraints(gantt);
@@ -7614,10 +7926,12 @@
           task.service_section_name = sectionName;
           task.text = displayName || sectionName;
         }
-        const specialtyValue = normalizeFilterValue(lightbox?.querySelector('.policy-gantt-specialty-select')?.value);
-        const executorValue = normalizeFilterValue(lightbox?.querySelector('.policy-gantt-executor-select')?.value);
-        task.specialty = specialtyValue;
-        task.executor = executorValue;
+        if (!isTypicalServiceTermGanttManagedPerformerTask(task) && !isTypicalServiceTermGanttManagedChecklistSectionTask(task)) {
+          const specialtyValue = normalizeFilterValue(lightbox?.querySelector('.policy-gantt-specialty-select')?.value);
+          const executorValue = normalizeFilterValue(lightbox?.querySelector('.policy-gantt-executor-select')?.value);
+          task.specialty = specialtyValue;
+          task.executor = executorValue;
+        }
         const startValue = lightbox?.querySelector('.policy-gantt-period-start')?.value;
         const endValue = lightbox?.querySelector('.policy-gantt-period-end')?.value;
         const progressValue = lightbox?.querySelector('.policy-gantt-period-progress')?.value;
@@ -7632,6 +7946,8 @@
         if (endValue) task.end_date = parseDate(endValue);
         if (isTypicalServiceTermGanttSummaryTask(gantt, task)) {
           syncTypicalServiceTermGanttParentProgress(gantt);
+        } else if (isTypicalServiceTermGanttManagedChecklistSectionTask(task)) {
+          task.progress = Math.max(0, Math.min(1, Number(task?.progress) || 0));
         } else {
           const progressPercent = Number(String(progressValue || '').replace(',', '.'));
           task.progress = Number.isFinite(progressPercent)
@@ -7817,6 +8133,21 @@
     bindTypicalServiceTermGanttParentRollup(gantt);
     bindTypicalServiceTermGanttTimeboxScheduling(gantt);
     bindTypicalServiceTermGanttNewTaskDefaults(gantt);
+    if (!gantt.$policyTypicalServiceTermManagedTaskGuardsBound) {
+      gantt.$policyTypicalServiceTermManagedTaskGuardsBound = true;
+      policyGanttAttachEvent('onBeforeTaskDelete', function (_id, task) {
+        if (!isTypicalServiceTermGanttManagedTask(task)) return true;
+        window.alert('Эта задача управляется таблицами «Объем услуг: активы», «Исполнители» или «Статусы запросов». Удалите или измените соответствующую строку в таблице.');
+        return false;
+      });
+      policyGanttAttachEvent('onBeforeTaskDrag', function (id, mode) {
+        const progressMode = gantt.config?.drag_mode?.progress || 'progress';
+        if (String(mode) !== String(progressMode)) return true;
+        let task = null;
+        try { task = gantt.getTask(id); } catch (_) { task = null; }
+        return !isTypicalServiceTermGanttManagedChecklistSectionTask(task);
+      });
+    }
     if (typeof gantt._delete_task_confirm === 'function' && !gantt._policyTypicalServiceTermTaskConfirmPatched) {
       gantt._policyTypicalServiceTermTaskConfirmPatched = true;
       gantt._delete_task_confirm = function (params) {
@@ -8145,8 +8476,14 @@
     const chart = root?.querySelector('#typical-service-term-gantt');
     const subtitle = root?.querySelector('#typical-service-term-gantt-subtitle');
     if (!editor || !chart) return;
+    const sessionId = Number.isFinite(Number(context?.sessionId))
+      ? Number(context.sessionId)
+      : beginTypicalServiceTermGanttSession(editor);
+    editor.dataset.typicalServiceTermGanttSessionId = String(sessionId);
 
-    const ganttData = normalizeTypicalServiceTermGanttDates(payload?.gantt || {});
+    const ganttData = normalizeTypicalServiceTermGanttDates(
+      withDefaultTypicalServiceTermGanttMeta(payload?.gantt || {}, root)
+    );
     editor.dataset.currentTermId = normalizeFilterValue(context?.termId);
     editor.dataset.currentGanttUrl = normalizeFilterValue(context?.ganttUrl);
     editor._typicalServiceTermGanttMeta = ganttData.meta || {};
@@ -8196,6 +8533,7 @@
     const ganttUrl = normalizeFilterValue(button.dataset.ganttUrl);
     if (!ganttUrl) return;
     const editor = root.querySelector('#typical-service-term-gantt-editor');
+    const sessionId = beginTypicalServiceTermGanttSession(editor);
     if (editor) editor.classList.remove('d-none');
     showTypicalServiceTermGanttMessage(root, 'Загрузка диаграммы…', false);
     try {
@@ -8208,8 +8546,16 @@
         ganttUrl: ganttUrl,
         termId: button.dataset.termId,
         productLabel: button.dataset.productLabel,
+        sessionId: sessionId,
       });
-      editor?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      // Auto-scroll the editor into view by default — useful when opened from
+      // a button below the fold (e.g. the policy-pane "Редактировать" buttons).
+      // Callers that already have the editor in view (e.g. the projects-pane
+      // "Вид: График" toggle) can opt out via dataset.noScroll = '1' on the
+      // trigger element.
+      if (button.dataset.noScroll !== '1') {
+        editor?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
     } catch (error) {
       showTypicalServiceTermGanttMessage(root, error.message || 'Не удалось загрузить диаграмму.', true);
     }
@@ -8318,7 +8664,9 @@
       }
       setTypicalServiceTermGanttFullscreen(root, false);
       rememberPolicyScrollPosition();
-      await htmx.ajax('GET', '/policy/policy/partial/', { target: '#policy-pane', swap: 'outerHTML' });
+      var refreshUrl = normalizeFilterValue(editor?.dataset?.refreshUrl) || '/policy/policy/partial/';
+      var refreshTarget = normalizeFilterValue(editor?.dataset?.refreshTarget) || '#policy-pane';
+      await htmx.ajax('GET', refreshUrl, { target: refreshTarget, swap: 'outerHTML' });
     } catch (error) {
       showTypicalServiceTermGanttMessage(root, error.message || 'Не удалось сохранить диаграмму.', true);
       setTypicalServiceTermGanttSaveLoading(saveButton, false);
@@ -8337,6 +8685,7 @@
     }
     cleanupTypicalServiceTermGanttLightboxArtifacts();
     if (editor) {
+      beginTypicalServiceTermGanttSession(editor);
       applyTypicalServiceTermGanttMetaCalendarSettings(editor._typicalServiceTermGanttSavedMeta || editor._typicalServiceTermGanttMeta || {});
       editor.classList.add('d-none');
       editor.dataset.currentTermId = '';
@@ -8664,6 +9013,14 @@
   function openTypicalServiceTermGanttSettingsModal() {
     const modalEl = getTypicalServiceTermGanttSettingsModalElement();
     if (!modalEl || !window.bootstrap) return;
+    // The modal is included inside policy-pane (which lives inside the
+    // Bootstrap "products" tab). When the user opens the editor from a
+    // different tab (e.g. "projects"), the products tab has display:none on
+    // an ancestor, hiding the modal too while still rendering its backdrop.
+    // Hoist the modal to <body> on first open so it's always visible.
+    if (modalEl.parentElement !== document.body) {
+      document.body.appendChild(modalEl);
+    }
     initTypicalServiceTermGanttSettingsModal();
     setTypicalServiceTermGanttSettingsStatus('');
     const kindSelect = document.getElementById('typical-service-term-gantt-settings-calendar-kind');
@@ -8877,6 +9234,13 @@
     }
     const btn = e.target.closest('button[data-panel-action]');
     if (!btn || !root.contains(btn)) return;
+    // Project-schedule action buttons live inside #projects-pane and are
+    // handled by projects-panels.js. The two pane()s share button selectors,
+    // so without this guard a click on the project-schedule edit/up/down/delete
+    // would be processed twice (once here, once there) — opening BOTH the
+    // policy-modal AND the projects-modal and stacking two backdrops.
+    const ownerPane = btn.closest('#policy-pane, #projects-pane');
+    if (ownerPane && ownerPane.id !== 'policy-pane') return;
     e.preventDefault();
     const panel = btn.closest('div[id$="-actions"]');
     if (!panel) return;
@@ -9117,9 +9481,68 @@
     disposeTypicalServiceTermGanttInstance();
   });
 
+  // The editor markup is replicated inside the projects pane for the
+  // "График проекта" Gantt. Re-initialise handlers when that pane swaps.
+  document.body.addEventListener('htmx:afterSettle', function (e) {
+    if (!(e.target && e.target.id === 'projects-pane')) return;
+    try { initTypicalServiceTermGanttEditor(e.target); } catch (_) { /* noop */ }
+  });
+
   initPolicyProductSelects(document);
   initTypicalServiceCompositionWrapToggle();
   collapseSpecialtyTariffsSpecialties();
   initPolicyMasterFilters();
   initTypicalServiceTermGanttEditor(document);
+
+  // Public API so other panes (currently the projects "График проекта") can
+  // drive the same typical-service-term-gantt editor without duplicating its
+  // huge implementation. Pass either an HTMLElement (a button with the usual
+  // dataset) or a plain options object.
+  window.TypicalServiceTermGantt = {
+    open: function (buttonOrOptions) {
+      var trigger = buttonOrOptions;
+      if (!(buttonOrOptions instanceof HTMLElement)) {
+        var options = buttonOrOptions || {};
+        trigger = document.createElement('button');
+        if (options.ganttUrl) trigger.dataset.ganttUrl = String(options.ganttUrl);
+        if (options.termId !== undefined && options.termId !== null) {
+          trigger.dataset.termId = String(options.termId);
+        }
+        if (options.productLabel) trigger.dataset.productLabel = String(options.productLabel);
+        // Honored by openTypicalServiceTermGanttEditor — when truthy the
+        // editor is NOT auto-scrolled into view after rendering.
+        if (options.noScroll) trigger.dataset.noScroll = '1';
+      }
+      // Ensure editor handlers are bound on whichever pane is currently
+      // active. We pass the active pane (returned by pane()) so that
+      // root.querySelector(...) resolves to the editor INSIDE that pane —
+      // critical when both #policy-pane and #projects-pane render the
+      // editor with the same ids (Bootstrap tab siblings).
+      try {
+        var currentPane = pane();
+        if (currentPane) initTypicalServiceTermGanttEditor(currentPane);
+      } catch (_) { /* noop */ }
+      return openTypicalServiceTermGanttEditor(trigger);
+    },
+    close: function () {
+      try { cancelTypicalServiceTermGantt(); } catch (_) { /* noop */ }
+    },
+    isOpen: function () {
+      var editor = typicalServiceTermGanttEditorEl();
+      return !!(editor && !editor.classList.contains('d-none'));
+    },
+    refresh: function () {
+      var pane2 = pane();
+      if (!pane2) return;
+      var editor = pane2.querySelector('#typical-service-term-gantt-editor');
+      var url = editor && editor.dataset ? editor.dataset.currentGanttUrl : '';
+      if (!url) return;
+      try {
+        var trigger = document.createElement('button');
+        trigger.dataset.ganttUrl = url;
+        if (editor.dataset.currentTermId) trigger.dataset.termId = editor.dataset.currentTermId;
+        return openTypicalServiceTermGanttEditor(trigger);
+      } catch (_) { /* noop */ }
+    },
+  };
 })();

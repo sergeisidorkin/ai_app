@@ -1,4 +1,5 @@
 import csv
+import copy
 import io
 import json
 import calendar
@@ -95,15 +96,21 @@ TYPICAL_SERVICE_COMPOSITION_CSV_HEADERS = [
 ]
 TYPICAL_SERVICE_TERM_CSV_HEADERS = [
     "Продукт",
+    "Сроки предоставления исходных данных, нед.",
     "Срок подготовки Предварительного отчёта, мес.",
     "Срок подготовки Итогового отчёта, нед.",
 ]
 TYPICAL_SERVICE_TERM_GANTT_VERSION = 1
 TYPICAL_SERVICE_TERM_GANTT_SERVICE_SECTION_TYPE = "service_section"
+TYPICAL_SERVICE_TERM_GANTT_CALENDAR_KIND_ABSTRACT = "abstract"
 TYPICAL_SERVICE_TERM_GANTT_EXECUTOR_DISPLAY_EXECUTOR = "executor"
 TYPICAL_SERVICE_TERM_GANTT_EXECUTOR_DISPLAY_RESOURCE = "resource_name"
 TYPICAL_SERVICE_TERM_GANTT_SYSTEM_TASK_TEXT = {
+    "source_data": "Исходные данные",
+    "source_data_asset": "Актив",
     "preliminary_report": "Предварительный отчёт",
+    "preliminary_report_asset": "Актив",
+    "preliminary_report_submission": "Отправка Предварительного отчёта",
     "final_report": "Итоговый отчёт",
 }
 TARIFF_CSV_HEADERS = [
@@ -1723,19 +1730,64 @@ def _serialize_typical_service_term_gantt_date(value):
 
 def _default_typical_service_term_gantt_data(term):
     base_date = _typical_service_term_gantt_base_date()
-    preliminary_end = _add_typical_service_term_gantt_months(base_date, term.preliminary_report_months)
+    source_data_end = base_date + timedelta(days=int(getattr(term, "source_data_weeks", 0) or 0) * 7)
+    preliminary_end = _add_typical_service_term_gantt_months(source_data_end, term.preliminary_report_months)
     final_end = preliminary_end + timedelta(days=int(term.final_report_weeks or 0) * 7)
     prefix = f"typical-service-term-{term.pk}"
     return {
         "data": [
             {
+                "id": f"{prefix}-source-data",
+                "text": "Исходные данные",
+                "start_date": _serialize_typical_service_term_gantt_date(base_date),
+                "end_date": _serialize_typical_service_term_gantt_date(source_data_end),
+                "progress": 0,
+                "system_key": "source_data",
+                "type": "project",
+                "is_report_bar": True,
+                "$open": True,
+            },
+            {
+                "id": f"{prefix}-source-data-asset",
+                "text": "Актив",
+                "start_date": _serialize_typical_service_term_gantt_date(base_date),
+                "end_date": _serialize_typical_service_term_gantt_date(source_data_end),
+                "progress": 0,
+                "system_key": "source_data_asset",
+                "type": "task",
+                "parent": f"{prefix}-source-data",
+                "is_report_bar": True,
+            },
+            {
                 "id": f"{prefix}-preliminary-report",
                 "text": "Предварительный отчёт",
-                "start_date": _serialize_typical_service_term_gantt_date(base_date),
+                "start_date": _serialize_typical_service_term_gantt_date(source_data_end),
                 "end_date": _serialize_typical_service_term_gantt_date(preliminary_end),
                 "progress": 0,
                 "system_key": "preliminary_report",
+                "type": "project",
+                "is_report_bar": True,
+                "$open": True,
+            },
+            {
+                "id": f"{prefix}-preliminary-report-asset",
+                "text": "Актив",
+                "start_date": _serialize_typical_service_term_gantt_date(source_data_end),
+                "end_date": _serialize_typical_service_term_gantt_date(preliminary_end),
+                "progress": 0,
+                "system_key": "preliminary_report_asset",
                 "type": "task",
+                "parent": f"{prefix}-preliminary-report",
+                "is_report_bar": True,
+            },
+            {
+                "id": f"{prefix}-preliminary-report-submission",
+                "text": "Отправка Предварительного отчёта",
+                "start_date": _serialize_typical_service_term_gantt_date(preliminary_end),
+                "end_date": _serialize_typical_service_term_gantt_date(preliminary_end),
+                "progress": 0,
+                "system_key": "preliminary_report_submission",
+                "type": "milestone",
                 "is_report_bar": True,
             },
             {
@@ -1751,8 +1803,20 @@ def _default_typical_service_term_gantt_data(term):
         ],
         "links": [
             {
-                "id": f"{prefix}-preliminary-to-final",
+                "id": f"{prefix}-source-data-to-preliminary",
+                "source": f"{prefix}-source-data",
+                "target": f"{prefix}-preliminary-report",
+                "type": "0",
+            },
+            {
+                "id": f"{prefix}-preliminary-to-submission",
                 "source": f"{prefix}-preliminary-report",
+                "target": f"{prefix}-preliminary-report-submission",
+                "type": "0",
+            },
+            {
+                "id": f"{prefix}-submission-to-final",
+                "source": f"{prefix}-preliminary-report-submission",
                 "target": f"{prefix}-final-report",
                 "type": "0",
             }
@@ -1761,7 +1825,8 @@ def _default_typical_service_term_gantt_data(term):
             "base_date": _serialize_typical_service_term_gantt_date(base_date),
             "project_start": _serialize_typical_service_term_gantt_date(base_date),
             "project_end": _serialize_typical_service_term_gantt_date(final_end),
-            "executor_display": TYPICAL_SERVICE_TERM_GANTT_EXECUTOR_DISPLAY_EXECUTOR,
+            "calendar_kind": TYPICAL_SERVICE_TERM_GANTT_CALENDAR_KIND_ABSTRACT,
+            "executor_display": TYPICAL_SERVICE_TERM_GANTT_EXECUTOR_DISPLAY_RESOURCE,
             "version": TYPICAL_SERVICE_TERM_GANTT_VERSION,
         },
     }
@@ -1798,6 +1863,181 @@ def _task_end_date(task, start_date):
     except (InvalidOperation, ValueError, TypeError):
         duration = 0
     return start_date + timedelta(days=max(duration, 0))
+
+
+def _unique_typical_service_term_gantt_task_id(tasks, preferred_id):
+    existing = {str(task.get("id")) for task in tasks if task.get("id") is not None}
+    candidate = str(preferred_id or "task").strip() or "task"
+    if candidate not in existing:
+        return candidate
+    suffix = 1
+    while f"{candidate}-{suffix}" in existing:
+        suffix += 1
+    return f"{candidate}-{suffix}"
+
+
+def _sync_typical_service_term_gantt_asset_task(tasks, parent_system_key="preliminary_report", asset_system_key="preliminary_report_asset"):
+    tasks_by_id = {
+        str(task.get("id")): task
+        for task in tasks
+        if task.get("id") is not None
+    }
+    parent = next(
+        (
+            task for task in tasks
+            if str(task.get("system_key") or "").strip() == parent_system_key
+        ),
+        None,
+    )
+    if parent is None or parent.get("id") is None:
+        return None
+
+    parent_id = str(parent.get("id"))
+    asset = next(
+        (
+            task for task in tasks
+            if str(task.get("system_key") or "").strip() == asset_system_key
+        ),
+        None,
+    )
+    if asset is None:
+        asset = next(
+            (
+                task for task in tasks
+                if str(task.get("parent") or "").strip() == parent_id
+                and str(task.get("text") or "").strip() == "Актив"
+            ),
+            None,
+        )
+        if asset is None:
+            asset = {
+                "id": _unique_typical_service_term_gantt_task_id(
+                    tasks,
+                    f"{parent_id}-asset",
+                ),
+                "progress": 0,
+                "type": "task",
+                "is_report_bar": True,
+            }
+            try:
+                insert_at = tasks.index(parent) + 1
+            except ValueError:
+                insert_at = len(tasks)
+            tasks.insert(insert_at, asset)
+
+    start_date = _parse_typical_service_term_gantt_date(parent.get("start_date"))
+    if start_date:
+        end_date = _task_end_date(parent, start_date)
+        asset["start_date"] = _serialize_typical_service_term_gantt_date(start_date)
+        asset["end_date"] = _serialize_typical_service_term_gantt_date(end_date)
+        asset["duration"] = max((end_date - start_date).days, 0)
+    asset["system_key"] = asset_system_key
+    asset["text"] = TYPICAL_SERVICE_TERM_GANTT_SYSTEM_TASK_TEXT[asset_system_key]
+    asset["parent"] = parent_id
+    asset["type"] = "task"
+    asset["is_report_bar"] = True
+    parent["$open"] = True
+    if str(parent.get("type") or "").strip() != TYPICAL_SERVICE_TERM_GANTT_SERVICE_SECTION_TYPE:
+        parent["type"] = "project"
+    # Drop impossible self-parenting or stale parent references if the row was
+    # repurposed from an existing user task.
+    if str(asset.get("id")) == parent_id:
+        asset["id"] = _unique_typical_service_term_gantt_task_id(
+            [task for task in tasks if task is not asset],
+            f"{parent_id}-asset",
+        )
+    return asset
+
+
+def _sync_typical_service_term_gantt_system_tasks(tasks):
+    preliminary = next(
+        (
+            task for task in tasks
+            if str(task.get("system_key") or "").strip() == "preliminary_report"
+            and task.get("id") is not None
+        ),
+        None,
+    )
+    source_data = next(
+        (
+            task for task in tasks
+            if str(task.get("system_key") or "").strip() == "source_data"
+            and task.get("id") is not None
+        ),
+        None,
+    )
+    if source_data is None and preliminary is not None:
+        preliminary_start = _parse_typical_service_term_gantt_date(preliminary.get("start_date"))
+        preferred_id = f"{preliminary.get('id')}-source-data"
+        source_data = {
+            "id": _unique_typical_service_term_gantt_task_id(tasks, preferred_id),
+            "text": TYPICAL_SERVICE_TERM_GANTT_SYSTEM_TASK_TEXT["source_data"],
+            "start_date": _serialize_typical_service_term_gantt_date(preliminary_start) if preliminary_start else preliminary.get("start_date"),
+            "end_date": _serialize_typical_service_term_gantt_date(preliminary_start) if preliminary_start else preliminary.get("start_date"),
+            "duration": 0,
+            "progress": 0,
+            "system_key": "source_data",
+            "type": "project",
+            "is_report_bar": True,
+            "$open": True,
+        }
+        try:
+            insert_at = tasks.index(preliminary)
+        except ValueError:
+            insert_at = 0
+        tasks.insert(insert_at, source_data)
+    submission = next(
+        (
+            task for task in tasks
+            if str(task.get("system_key") or "").strip() == "preliminary_report_submission"
+            and task.get("id") is not None
+        ),
+        None,
+    )
+    if submission is None and preliminary is not None:
+        preliminary_start = _parse_typical_service_term_gantt_date(preliminary.get("start_date"))
+        preliminary_end = _task_end_date(preliminary, preliminary_start) if preliminary_start else None
+        preferred_id = f"{preliminary.get('id')}-submission"
+        submission = {
+            "id": _unique_typical_service_term_gantt_task_id(tasks, preferred_id),
+            "text": TYPICAL_SERVICE_TERM_GANTT_SYSTEM_TASK_TEXT["preliminary_report_submission"],
+            "start_date": _serialize_typical_service_term_gantt_date(preliminary_end) if preliminary_end else preliminary.get("end_date") or preliminary.get("start_date"),
+            "end_date": _serialize_typical_service_term_gantt_date(preliminary_end) if preliminary_end else preliminary.get("end_date") or preliminary.get("start_date"),
+            "duration": 0,
+            "progress": 0,
+            "system_key": "preliminary_report_submission",
+            "type": "milestone",
+            "is_report_bar": True,
+        }
+        preliminary_id = str(preliminary.get("id") or "")
+        descendant_ids = {preliminary_id}
+        changed = True
+        while changed:
+            changed = False
+            for task in tasks:
+                task_id = str(task.get("id") or "")
+                if task_id and task_id not in descendant_ids and str(task.get("parent") or "") in descendant_ids:
+                    descendant_ids.add(task_id)
+                    changed = True
+        insert_at = max(
+            (index for index, task in enumerate(tasks) if str(task.get("id") or "") in descendant_ids),
+            default=-1,
+        ) + 1
+        tasks.insert(insert_at, submission)
+    for system_key in ("source_data", "preliminary_report", "preliminary_report_submission", "final_report"):
+        task = next(
+            (
+                item for item in tasks
+                if str(item.get("system_key") or "").strip() == system_key
+            ),
+            None,
+        )
+        if task is not None:
+            task["text"] = TYPICAL_SERVICE_TERM_GANTT_SYSTEM_TASK_TEXT[system_key]
+            if system_key == "preliminary_report_submission":
+                task["type"] = "milestone"
+    _sync_typical_service_term_gantt_asset_task(tasks, "source_data", "source_data_asset")
+    _sync_typical_service_term_gantt_asset_task(tasks, "preliminary_report", "preliminary_report_asset")
 
 
 def _roll_up_typical_service_term_gantt_parent_dates(tasks):
@@ -1907,6 +2147,7 @@ def _normalize_typical_service_term_gantt_payload(
     allowed_executor_keys = set(executor_specialties_by_key)
     normalized_tasks = [dict(task) for task in tasks if isinstance(task, dict)]
     normalized_links = [dict(link) for link in links if isinstance(link, dict)]
+    _sync_typical_service_term_gantt_system_tasks(normalized_tasks)
     normalized_task_ids = {
         str(task.get("id")).strip()
         for task in normalized_tasks
@@ -2021,7 +2262,11 @@ def _normalize_typical_service_term_gantt_payload(
         if not resource_id:
             resource_id = f"resource-{index}"
         if resource_id in seen_resource_ids:
-            raise ValueError("Идентификаторы ресурсов проекта должны быть уникальными.")
+            base_resource_id = resource_id
+            suffix = 2
+            while resource_id in seen_resource_ids:
+                resource_id = f"{base_resource_id}-{suffix}"
+                suffix += 1
         seen_resource_ids.add(resource_id)
         specialty = str(resource.get("specialty") or "").strip()
         executor = str(resource.get("executor") or "").strip()
@@ -2086,6 +2331,8 @@ def _normalize_typical_service_term_gantt_payload(
             task["resource_name"] = resource["resource_name"]
     meta["resources"] = normalized_resources
     _roll_up_typical_service_term_gantt_parent_dates(normalized_tasks)
+    _sync_typical_service_term_gantt_system_tasks(normalized_tasks)
+    _roll_up_typical_service_term_gantt_parent_dates(normalized_tasks)
 
     dated_tasks = []
     for task in normalized_tasks:
@@ -2138,23 +2385,29 @@ def _find_typical_service_term_system_task(dated_tasks, system_key):
 
 
 def _calculate_typical_service_term_durations(dated_tasks):
+    source_data_task = _find_typical_service_term_system_task(dated_tasks, "source_data")
     preliminary_task = _find_typical_service_term_system_task(dated_tasks, "preliminary_report")
     final_task = _find_typical_service_term_system_task(dated_tasks, "final_report")
+    if not source_data_task:
+        raise ValueError("Не найдена задача «Исходные данные».")
     if not preliminary_task:
         raise ValueError("Не найдена задача «Предварительный отчёт».")
     if not final_task:
         raise ValueError("Не найдена задача «Итоговый отчёт».")
 
+    _, source_data_start, source_data_end = source_data_task
     _, preliminary_start, preliminary_end = preliminary_task
     _, final_start, final_end = final_task
+    source_data_days = max((source_data_end - source_data_start).days, 0)
     preliminary_days = max((preliminary_end - preliminary_start).days, 0)
     final_days = max((final_end - final_start).days, 0)
+    source_data_weeks = int((Decimal(source_data_days) / Decimal("7")).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
     preliminary_months = (Decimal(preliminary_days) / Decimal("30")).quantize(
         Decimal("0.1"),
         rounding=ROUND_HALF_UP,
     )
     final_weeks = int((Decimal(final_days) / Decimal("7")).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-    return preliminary_months, max(final_weeks, 0)
+    return max(source_data_weeks, 0), preliminary_months, max(final_weeks, 0)
 
 
 def _typical_service_term_specialty_options():
@@ -2227,7 +2480,20 @@ def _typical_service_term_section_options(product_id):
 
 
 def _typical_service_term_gantt_response_payload(term):
-    gantt_data = term.gantt_data if isinstance(term.gantt_data, dict) and term.gantt_data.get("data") else None
+    gantt_data = copy.deepcopy(term.gantt_data) if isinstance(term.gantt_data, dict) and term.gantt_data.get("data") else None
+    if gantt_data is not None:
+        meta = gantt_data.setdefault("meta", {})
+        meta.setdefault("calendar_kind", TYPICAL_SERVICE_TERM_GANTT_CALENDAR_KIND_ABSTRACT)
+        meta.setdefault("executor_display", TYPICAL_SERVICE_TERM_GANTT_EXECUTOR_DISPLAY_RESOURCE)
+        tasks = gantt_data.get("data")
+        if isinstance(tasks, list):
+            try:
+                _sync_typical_service_term_gantt_system_tasks(tasks)
+                _roll_up_typical_service_term_gantt_parent_dates(tasks)
+                _sync_typical_service_term_gantt_system_tasks(tasks)
+                _roll_up_typical_service_term_gantt_parent_dates(tasks)
+            except ValueError:
+                pass
     section_options = _typical_service_term_section_options(term.product_id)
     return {
         "ok": True,
@@ -2238,6 +2504,7 @@ def _typical_service_term_gantt_response_payload(term):
         "term": {
             "id": term.pk,
             "product": term.product.short_name,
+            "source_data_weeks": term.source_data_weeks,
             "preliminary_report_months": term.preliminary_report_months_display,
             "final_report_weeks": term.final_report_weeks,
         },
@@ -2302,6 +2569,30 @@ def typical_service_term_gantt(request, pk: int):
 
     try:
         payload = json.loads(request.body.decode("utf-8") or "{}")
+        for task in (payload.get("data") or []) if isinstance(payload, dict) else []:
+            if not isinstance(task, dict):
+                continue
+            for key in (
+                "managed_source",
+                "managed_scope",
+                "work_volume_id",
+                "performer_id",
+                "typical_section_id",
+                "template_task_id",
+                "asset_name",
+            ):
+                task.pop(key, None)
+            if task.get("system_key") == "project_asset":
+                task["system_key"] = "preliminary_report_asset"
+            if task.get("system_key") == "source_data_project_asset":
+                task["system_key"] = "source_data_asset"
+        meta = payload.setdefault("meta", {}) if isinstance(payload, dict) else {}
+        if isinstance(meta, dict):
+            calendar_kind = str(meta.get("calendar_kind") or TYPICAL_SERVICE_TERM_GANTT_CALENDAR_KIND_ABSTRACT).strip()
+            if calendar_kind != TYPICAL_SERVICE_TERM_GANTT_CALENDAR_KIND_ABSTRACT:
+                raise ValueError("Типовая диаграмма должна сохраняться только в условном календаре.")
+            meta["calendar_kind"] = TYPICAL_SERVICE_TERM_GANTT_CALENDAR_KIND_ABSTRACT
+            meta["executor_display"] = TYPICAL_SERVICE_TERM_GANTT_EXECUTOR_DISPLAY_RESOURCE
         section_options = _typical_service_term_section_options(term.product_id)
         section_names = [item["label"] for item in section_options]
         section_specialties_by_name = {
@@ -2317,14 +2608,15 @@ def typical_service_term_gantt(request, pk: int):
             specialty_options,
             executor_options,
         )
-        preliminary_months, final_weeks = _calculate_typical_service_term_durations(dated_tasks)
+        source_data_weeks, preliminary_months, final_weeks = _calculate_typical_service_term_durations(dated_tasks)
     except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
         return JsonResponse({"ok": False, "error": str(exc)}, status=400)
 
     term.gantt_data = gantt_data
+    term.source_data_weeks = source_data_weeks
     term.preliminary_report_months = preliminary_months
     term.final_report_weeks = final_weeks
-    term.save(update_fields=["gantt_data", "preliminary_report_months", "final_report_weeks", "updated_at"])
+    term.save(update_fields=["gantt_data", "source_data_weeks", "preliminary_report_months", "final_report_weeks", "updated_at"])
     return JsonResponse(_typical_service_term_gantt_response_payload(term))
 
 
@@ -2382,9 +2674,9 @@ def typical_service_term_csv_upload(request):
             continue
         if len(row) < 3:
             warnings.append(
-                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 3: "
-                "Продукт, Срок подготовки Предварительного отчёта, мес., "
-                "Срок подготовки Итогового отчёта, нед.)."
+                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 3 или 4: "
+                "Продукт, Сроки предоставления исходных данных, нед., "
+                "Срок подготовки Предварительного отчёта, мес., Срок подготовки Итогового отчёта, нед.)."
             )
             continue
 
@@ -2394,19 +2686,33 @@ def typical_service_term_csv_upload(request):
             warnings.append(f"Строка {i}: продукт «{product_name}» не найден. Доступные: {', '.join(products_by_name.keys())}.")
             continue
 
+        has_source_data_column = len(row) >= 4
+        source_data_raw = row[1].strip() if has_source_data_column else "0"
+        preliminary_raw = row[2].strip() if has_source_data_column else row[1].strip()
+        final_raw = row[3].strip() if has_source_data_column else row[2].strip()
+
         try:
-            preliminary_report_months = Decimal(row[1].strip().replace(",", "."))
+            source_data_weeks = int(source_data_raw or "0")
+        except (TypeError, ValueError):
+            warnings.append(f"Строка {i}: некорректный срок исходных данных «{source_data_raw}».")
+            continue
+        if source_data_weeks < 0:
+            warnings.append(f"Строка {i}: срок исходных данных не может быть отрицательным.")
+            continue
+
+        try:
+            preliminary_report_months = Decimal(preliminary_raw.replace(",", "."))
         except (InvalidOperation, ValueError):
-            warnings.append(f"Строка {i}: некорректный срок предварительного отчёта «{row[1].strip()}».")
+            warnings.append(f"Строка {i}: некорректный срок предварительного отчёта «{preliminary_raw}».")
             continue
         if preliminary_report_months < 0:
             warnings.append(f"Строка {i}: срок предварительного отчёта не может быть отрицательным.")
             continue
 
         try:
-            final_report_weeks = int(row[2].strip())
+            final_report_weeks = int(final_raw)
         except (TypeError, ValueError):
-            warnings.append(f"Строка {i}: некорректный срок итогового отчёта «{row[2].strip()}».")
+            warnings.append(f"Строка {i}: некорректный срок итогового отчёта «{final_raw}».")
             continue
         if final_report_weeks < 0:
             warnings.append(f"Строка {i}: срок итогового отчёта не может быть отрицательным.")
@@ -2415,6 +2721,7 @@ def typical_service_term_csv_upload(request):
         try:
             TypicalServiceTerm.objects.create(
                 product=product,
+                source_data_weeks=source_data_weeks,
                 preliminary_report_months=preliminary_report_months,
                 final_report_weeks=final_report_weeks,
                 position=_next_position(TypicalServiceTerm),
@@ -2440,6 +2747,7 @@ def typical_service_term_csv_download(request):
         writer.writerow(
             [
                 term.product.short_name,
+                term.source_data_weeks,
                 term.preliminary_report_months_display,
                 term.final_report_weeks,
             ]

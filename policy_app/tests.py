@@ -1,4 +1,5 @@
 import csv
+import copy
 import io
 import json
 from decimal import Decimal
@@ -1359,8 +1360,10 @@ class TypicalServiceTermViewsTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Типовые сроки оказания услуг")
+        self.assertContains(response, "Сроки предоставления исходных данных, нед.")
         self.assertContains(response, "Срок подготовки Предварительного отчёта, мес.")
         self.assertContains(response, "Срок подготовки Итогового отчёта, нед.")
+        self.assertContains(response, ">0<", html=False)
         self.assertContains(response, ">1,5<", html=False)
         self.assertContains(response, ">3<", html=False)
         self.assertContains(response, 'id="typical-service-terms-actions"', html=False)
@@ -1463,15 +1466,127 @@ class TypicalServiceTermViewsTests(TestCase):
         tasks = payload["gantt"]["data"]
         self.assertEqual(
             {task["system_key"] for task in tasks},
-            {"preliminary_report", "final_report"},
+            {
+                "source_data",
+                "source_data_asset",
+                "preliminary_report",
+                "preliminary_report_asset",
+                "preliminary_report_submission",
+                "final_report",
+            },
         )
-        self.assertEqual(len(payload["gantt"]["links"]), 1)
+        source_data = next(task for task in tasks if task["system_key"] == "source_data")
+        source_asset = next(task for task in tasks if task["system_key"] == "source_data_asset")
+        preliminary = next(task for task in tasks if task["system_key"] == "preliminary_report")
+        asset = next(task for task in tasks if task["system_key"] == "preliminary_report_asset")
+        submission = next(task for task in tasks if task["system_key"] == "preliminary_report_submission")
+        self.assertEqual(source_asset["text"], "Актив")
+        self.assertEqual(source_asset["parent"], source_data["id"])
+        self.assertEqual(asset["text"], "Актив")
+        self.assertEqual(asset["parent"], preliminary["id"])
+        self.assertEqual(asset["start_date"], preliminary["start_date"])
+        self.assertEqual(asset["end_date"], preliminary["end_date"])
+        self.assertEqual(submission["text"], "Отправка Предварительного отчёта")
+        self.assertEqual(submission["type"], "milestone")
+        self.assertEqual(submission["start_date"], preliminary["end_date"])
+        self.assertEqual(submission["end_date"], preliminary["end_date"])
+        self.assertEqual(len(payload["gantt"]["links"]), 3)
         self.assertEqual(payload["gantt"]["meta"]["project_start"], payload["gantt"]["meta"]["base_date"])
         self.assertIn("project_end", payload["gantt"]["meta"])
+        self.assertEqual(payload["gantt"]["meta"]["calendar_kind"], "abstract")
+        self.assertEqual(payload["gantt"]["meta"]["executor_display"], "resource_name")
         self.assertEqual(
             payload["section_options"],
             [{"id": TypicalSection.objects.get(product=self.product).pk, "label": "Раздел продукта", "specialties": []}],
         )
+
+    def test_typical_service_term_gantt_get_adds_asset_task_to_existing_diagram_without_saving(self):
+        source_gantt = {
+            "data": [
+                {
+                    "id": "preliminary",
+                    "text": "Предварительный отчёт",
+                    "system_key": "preliminary_report",
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-02-01",
+                    "type": "task",
+                },
+                {
+                    "id": "final",
+                    "text": "Итоговый отчёт",
+                    "system_key": "final_report",
+                    "start_date": "2026-02-01",
+                    "end_date": "2026-02-15",
+                    "type": "task",
+                },
+            ],
+            "links": [],
+            "meta": {"base_date": "2026-01-01", "calendar_kind": "abstract"},
+        }
+        item = TypicalServiceTerm.objects.create(
+            product=self.product,
+            preliminary_report_months=Decimal("1.0"),
+            final_report_weeks=2,
+            position=1,
+            gantt_data=copy.deepcopy(source_gantt),
+        )
+
+        response = self.client.get(reverse("typical_service_term_gantt", args=[item.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        tasks = response.json()["gantt"]["data"]
+        source_data = next(task for task in tasks if task.get("system_key") == "source_data")
+        source_asset = next(task for task in tasks if task.get("system_key") == "source_data_asset")
+        self.assertEqual(source_data["text"], "Исходные данные")
+        self.assertEqual(source_asset["text"], "Актив")
+        self.assertEqual(source_asset["parent"], source_data["id"])
+        submission = next(task for task in tasks if task.get("system_key") == "preliminary_report_submission")
+        self.assertEqual(submission["text"], "Отправка Предварительного отчёта")
+        self.assertEqual(submission["type"], "milestone")
+        asset = next(task for task in tasks if task.get("system_key") == "preliminary_report_asset")
+        self.assertEqual(asset["text"], "Актив")
+        self.assertEqual(asset["parent"], "preliminary")
+        item.refresh_from_db()
+        self.assertEqual(item.gantt_data, source_gantt)
+
+    def test_typical_service_term_gantt_post_rejects_production_calendar_payload(self):
+        item = TypicalServiceTerm.objects.create(
+            product=self.product,
+            preliminary_report_months=Decimal("1.0"),
+            final_report_weeks=2,
+            position=1,
+        )
+        payload = {
+            "data": [
+                {
+                    "id": "preliminary",
+                    "text": "Предварительный отчёт",
+                    "system_key": "preliminary_report",
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-02-01",
+                    "type": "task",
+                },
+                {
+                    "id": "final",
+                    "text": "Итоговый отчёт",
+                    "system_key": "final_report",
+                    "start_date": "2026-02-01",
+                    "end_date": "2026-02-15",
+                    "type": "task",
+                },
+            ],
+            "links": [],
+            "meta": {"base_date": "2026-01-01", "calendar_kind": "production"},
+        }
+
+        response = self.client.post(
+            reverse("typical_service_term_gantt", args=[item.pk]),
+            data=json.dumps(payload, ensure_ascii=False),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("условном календаре", response.json()["error"])
 
     def test_typical_service_term_gantt_returns_assignment_options_and_autofills_section_specialty(self):
         item = TypicalServiceTerm.objects.create(
@@ -1752,6 +1867,103 @@ class TypicalServiceTermViewsTests(TestCase):
             ],
         )
         self.assertEqual(item.gantt_data["data"][0]["resource_name"], "Сотрудник 1")
+
+    def test_typical_service_term_gantt_post_renames_duplicate_resource_ids(self):
+        item = TypicalServiceTerm.objects.create(
+            product=self.product,
+            preliminary_report_months=Decimal("1.0"),
+            final_report_weeks=2,
+            position=1,
+        )
+        mining = ExpertSpecialty.objects.create(specialty="Горное дело", position=1)
+        geology = ExpertSpecialty.objects.create(specialty="Геология", position=2)
+        first_user = get_user_model().objects.create_user(
+            username="resource-dup-first",
+            first_name="Иван",
+            last_name="Иванов",
+        )
+        second_user = get_user_model().objects.create_user(
+            username="resource-dup-second",
+            first_name="Петр",
+            last_name="Петров",
+        )
+        first_employee = Employee.objects.create(user=first_user, patronymic="Петрович")
+        second_employee = Employee.objects.create(user=second_user, patronymic="Петрович")
+        first_profile = ExpertProfile.objects.create(employee=first_employee, position=1)
+        second_profile = ExpertProfile.objects.create(employee=second_employee, position=2)
+        ExpertProfileSpecialty.objects.create(profile=first_profile, specialty=mining, rank=1)
+        ExpertProfileSpecialty.objects.create(profile=second_profile, specialty=geology, rank=1)
+        payload = {
+            "data": [
+                {
+                    "id": "resource-task-1",
+                    "text": "Первая задача",
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-01-08",
+                    "type": "task",
+                    "specialty": "Горное дело",
+                    "executor": "Иванов И.П.",
+                    "resource_id": "resource-1",
+                },
+                {
+                    "id": "resource-task-2",
+                    "text": "Вторая задача",
+                    "start_date": "2026-01-08",
+                    "end_date": "2026-01-15",
+                    "type": "task",
+                    "specialty": "Геология",
+                    "executor": "Петров П.П.",
+                    "resource_id": "resource-1",
+                },
+                {
+                    "id": "preliminary",
+                    "text": "Предварительный отчёт",
+                    "system_key": "preliminary_report",
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-02-01",
+                    "type": "task",
+                },
+                {
+                    "id": "final",
+                    "text": "Итоговый отчёт",
+                    "system_key": "final_report",
+                    "start_date": "2026-02-01",
+                    "end_date": "2026-02-15",
+                    "type": "task",
+                },
+            ],
+            "links": [],
+            "meta": {
+                "base_date": "2026-01-01",
+                "resources": [
+                    {
+                        "id": "resource-1",
+                        "specialty": "Горное дело",
+                        "executor": "Иванов И.П.",
+                        "task_ids": ["resource-task-1"],
+                    },
+                    {
+                        "id": "resource-1",
+                        "specialty": "Геология",
+                        "executor": "Петров П.П.",
+                        "task_ids": ["resource-task-2"],
+                    },
+                ],
+            },
+        }
+
+        response = self.client.post(
+            reverse("typical_service_term_gantt", args=[item.pk]),
+            data=json.dumps(payload, ensure_ascii=False),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.content.decode("utf-8"))
+        item.refresh_from_db()
+        resource_ids = [resource["id"] for resource in item.gantt_data["meta"]["resources"]]
+        self.assertEqual(resource_ids, ["resource-1", "resource-1-2"])
+        second_task = next(task for task in item.gantt_data["data"] if task["id"] == "resource-task-2")
+        self.assertEqual(second_task["resource_id"], "resource-1-2")
 
     def test_typical_service_term_gantt_post_rejects_resource_executor_from_other_specialty(self):
         item = TypicalServiceTerm.objects.create(
@@ -2081,11 +2293,38 @@ class TypicalServiceTermViewsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["ok"])
         item.refresh_from_db()
+        self.assertEqual(item.source_data_weeks, 0)
         self.assertEqual(item.preliminary_report_months, Decimal("2.0"))
         self.assertEqual(item.final_report_weeks, 6)
-        self.assertEqual(item.gantt_data["data"][0]["system_key"], "preliminary_report")
-        self.assertEqual(item.gantt_data["data"][0]["text"], "Предварительный отчёт")
-        self.assertEqual(item.gantt_data["data"][1]["text"], "Итоговый отчёт")
+        source_data = next(
+            task for task in item.gantt_data["data"]
+            if task.get("system_key") == "source_data"
+        )
+        self.assertEqual(source_data["text"], "Исходные данные")
+        preliminary = next(
+            task for task in item.gantt_data["data"]
+            if task.get("system_key") == "preliminary_report"
+        )
+        self.assertEqual(preliminary["text"], "Предварительный отчёт")
+        asset = next(
+            task for task in item.gantt_data["data"]
+            if task.get("system_key") == "preliminary_report_asset"
+        )
+        self.assertEqual(asset["text"], "Актив")
+        self.assertEqual(asset["parent"], "preliminary")
+        self.assertEqual(asset["start_date"], preliminary["start_date"])
+        self.assertEqual(asset["end_date"], preliminary["end_date"])
+        submission = next(
+            task for task in item.gantt_data["data"]
+            if task.get("system_key") == "preliminary_report_submission"
+        )
+        self.assertEqual(submission["text"], "Отправка Предварительного отчёта")
+        self.assertEqual(submission["type"], "milestone")
+        final = next(
+            task for task in item.gantt_data["data"]
+            if task.get("system_key") == "final_report"
+        )
+        self.assertEqual(final["text"], "Итоговый отчёт")
         self.assertEqual(item.gantt_data["links"][0]["source"], "preliminary")
         self.assertEqual(item.gantt_data["meta"]["project_start"], "2026-01-01")
         self.assertEqual(item.gantt_data["meta"]["project_end"], "2026-06-01")
@@ -2255,10 +2494,19 @@ class TypicalServiceTermViewsTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         item.refresh_from_db()
-        parent_task = item.gantt_data["data"][0]
+        parent_task = next(
+            task for task in item.gantt_data["data"]
+            if task.get("system_key") == "preliminary_report"
+        )
         self.assertEqual(parent_task["end_date"], "2026-04-01")
         self.assertEqual(parent_task["type"], "project")
-        self.assertEqual(item.preliminary_report_months, Decimal("2.5"))
+        asset_task = next(
+            task for task in item.gantt_data["data"]
+            if task.get("system_key") == "preliminary_report_asset"
+        )
+        self.assertEqual(asset_task["start_date"], parent_task["start_date"])
+        self.assertEqual(asset_task["end_date"], parent_task["end_date"])
+        self.assertEqual(item.preliminary_report_months, Decimal("3.0"))
 
     def test_typical_service_term_gantt_post_rejects_cyclic_parent_chain(self):
         item = TypicalServiceTerm.objects.create(
@@ -2364,11 +2612,12 @@ class TypicalServiceTermViewsTests(TestCase):
             rows[0],
             [
                 "Продукт",
+                "Сроки предоставления исходных данных, нед.",
                 "Срок подготовки Предварительного отчёта, мес.",
                 "Срок подготовки Итогового отчёта, нед.",
             ],
         )
-        self.assertEqual(rows[1], ["TERM", "1,5", "3"])
+        self.assertEqual(rows[1], ["TERM", "0", "1,5", "3"])
 
     def test_typical_service_term_csv_upload_creates_rows(self):
         csv_file = SimpleUploadedFile(
@@ -2387,9 +2636,29 @@ class TypicalServiceTermViewsTests(TestCase):
         self.assertEqual(response.json()["warnings"], [])
         item = TypicalServiceTerm.objects.get()
         self.assertEqual(item.product, self.product)
+        self.assertEqual(item.source_data_weeks, 0)
         self.assertEqual(item.preliminary_report_months, Decimal("2.5"))
         self.assertEqual(item.final_report_weeks, 4)
         self.assertEqual(item.position, 1)
+
+    def test_typical_service_term_csv_upload_accepts_source_data_weeks(self):
+        csv_file = SimpleUploadedFile(
+            "typical_service_terms.csv",
+            (
+                "Продукт;Сроки предоставления исходных данных, нед.;Срок подготовки Предварительного отчёта, мес.;Срок подготовки Итогового отчёта, нед.\n"
+                "TERM;3;2,5;4\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("typical_service_term_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        item = TypicalServiceTerm.objects.get()
+        self.assertEqual(item.source_data_weeks, 3)
+        self.assertEqual(item.preliminary_report_months, Decimal("2.5"))
+        self.assertEqual(item.final_report_weeks, 4)
 
     def test_non_staff_user_cannot_reorder_typical_service_terms(self):
         first = TypicalServiceTerm.objects.create(

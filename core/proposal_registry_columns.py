@@ -293,6 +293,7 @@ PROPOSAL_REGISTRY_COLUMNS = [
 
 
 PROPOSAL_REGISTRY_TRANSFERRED_SOURCE_COLUMNS = {
+    "evaluation_date",
     "term",
     "preliminary_report_date",
     "final_report_term_weeks",
@@ -358,6 +359,12 @@ PROPOSAL_PAYMENT_SCHEDULE_UI_COLUMNS = [
         "data_col": "stage",
         "source_column": "stage",
         "label": "Этап",
+    },
+    {
+        "picker_value": "evaluation-date",
+        "data_col": "evaluation-date",
+        "source_column": "evaluation_date",
+        "label": "Дата оценки",
     },
     {
         "picker_value": "start-date",

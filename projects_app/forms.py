@@ -251,9 +251,15 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
             }
         ),
     )
-    deadline = forms.DateField(required=True,
+    deadline = forms.DateField(required=False,
                                widget=_date_input_widget(),
                                input_formats=DATE_INPUT_FORMATS)
+    evaluation_date = forms.DateField(
+        label="Дата оценки",
+        required=False,
+        widget=_date_input_widget(),
+        input_formats=DATE_INPUT_FORMATS,
+    )
     group_member = forms.ModelChoiceField(
         label="Группа",
         queryset=GroupMember.objects.none(),
@@ -351,15 +357,23 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         widget=forms.NumberInput(attrs={"min": 0, "step": 1, "class": "form-control js-input-data"}),
     )
     stage1_weeks = forms.DecimalField(
-        label="Этап 1, недель",
+        label="Срок подготовки Предварительного отчёта, мес.",
         required=False,
         min_value=0,
         max_digits=4,
         decimal_places=1,
-        widget=forms.NumberInput(attrs={"min": 0, "step": "0.1", "class": "form-control js-stage1-weeks"}),
+        widget=forms.NumberInput(
+            attrs={
+                "min": 0,
+                "step": "0.1",
+                "class": "form-control readonly-field js-stage1-weeks",
+                "readonly": True,
+                "tabindex": "-1",
+            }
+        ),
     )
     stage1_end = forms.DateField(
-        label="Этап 1, оконч.",
+        label="Дата Предварительного отчёта",
         required=False,
         disabled=True,
         widget=forms.TextInput(
@@ -373,27 +387,35 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         widget=forms.TextInput(attrs={"class": "form-control js-completion-calc readonly-field", "readonly": True}),
     )
     stage2_weeks = forms.DecimalField(
-        label="Этап 2, недель",
+        label="Срок подготовки Итогового отчёта, нед.",
         required=False,
         min_value=0,
         max_digits=4,
         decimal_places=1,
-        widget=forms.NumberInput(attrs={"min": 0, "step": "0.1", "class": "form-control js-stage2-weeks"}),
+        widget=forms.NumberInput(
+            attrs={
+                "min": 0,
+                "step": "0.1",
+                "class": "form-control readonly-field js-stage2-weeks",
+                "readonly": True,
+                "tabindex": "-1",
+            }
+        ),
     )
     stage2_end = forms.DateField(
-        label="Этап 2, оконч.",
+        label="Дата Итогового отчёта",
         required=False,
-        disabled=True,
+        input_formats=DATE_INPUT_FORMATS,
         widget=forms.TextInput(
-            attrs={"class": "form-control js-stage2-end readonly-field", "readonly": True}
+            attrs={"class": "form-control js-date js-stage2-end"}
         ),
     )
     stage1_date = forms.DateField(
-        label="Этап 1, дата",
+        label="Дата Предварительного отчёта",
         required=False,
-        disabled=True,
+        input_formats=DATE_INPUT_FORMATS,
         widget=forms.TextInput(
-            attrs={"class": "form-control js-stage1-date readonly-field", "readonly": True}
+            attrs={"class": "form-control js-date js-stage1-date"}
         ),
     )
     stage3_weeks = forms.DecimalField(
@@ -426,7 +448,7 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         model = ProjectRegistration
         fields = [
             "number", "group_member", "agreement_type", "agreement_number", "name",
-            "status", "deadline", "year",
+            "status", "deadline", "year", "evaluation_date",
             "country", "customer", "identifier", "registration_number",
             "registration_region", "registration_date", "project_manager",
             "asset_owner", "asset_owner_matches_customer", "asset_owner_country", "asset_owner_identifier",
@@ -485,6 +507,8 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
             self.fields["asset_owner_identifier"].initial = self.instance.asset_owner_identifier
 
         self._bootstrapify()
+        if self.instance and self.instance.pk and self.instance.stage1_end:
+            self.fields["stage1_date"].initial = self.instance.stage1_end
         self.fields["asset_owner_matches_customer"].widget.attrs["class"] = "form-check-input"
         if not self.instance.pk and "group_member" not in self.data:
             self.fields["group_member"].initial = (
@@ -663,15 +687,23 @@ class ContractConditionsForm(BootstrapMixin, forms.ModelForm):
         widget=forms.NumberInput(attrs={"min": 0, "step": 1, "class": "form-control js-input-data"}),
     )
     stage1_weeks = forms.DecimalField(
-        label="Этап 1, недель",
+        label="Срок подготовки Предварительного отчёта, мес.",
         required=False,
         min_value=0,
         max_digits=4,
         decimal_places=1,
-        widget=forms.NumberInput(attrs={"min": 0, "step": "0.1", "class": "form-control js-stage1-weeks"}),
+        widget=forms.NumberInput(
+            attrs={
+                "min": 0,
+                "step": "0.1",
+                "class": "form-control readonly-field js-stage1-weeks",
+                "readonly": True,
+                "tabindex": "-1",
+            }
+        ),
     )
     stage1_end = forms.DateField(
-        label="Этап 1, оконч.",
+        label="Дата Предварительного отчёта",
         required=False,
         disabled=True,
         widget=forms.TextInput(
@@ -685,27 +717,35 @@ class ContractConditionsForm(BootstrapMixin, forms.ModelForm):
         widget=forms.TextInput(attrs={"class": "form-control js-completion-calc readonly-field", "readonly": True}),
     )
     stage2_weeks = forms.DecimalField(
-        label="Этап 2, недель",
+        label="Срок подготовки Итогового отчёта, нед.",
         required=False,
         min_value=0,
         max_digits=4,
         decimal_places=1,
-        widget=forms.NumberInput(attrs={"min": 0, "step": "0.1", "class": "form-control js-stage2-weeks"}),
+        widget=forms.NumberInput(
+            attrs={
+                "min": 0,
+                "step": "0.1",
+                "class": "form-control readonly-field js-stage2-weeks",
+                "readonly": True,
+                "tabindex": "-1",
+            }
+        ),
     )
     stage2_end = forms.DateField(
-        label="Этап 2, оконч.",
+        label="Дата Итогового отчёта",
         required=False,
-        disabled=True,
+        input_formats=DATE_INPUT_FORMATS,
         widget=forms.TextInput(
-            attrs={"class": "form-control js-stage2-end readonly-field", "readonly": True}
+            attrs={"class": "form-control js-date js-stage2-end"}
         ),
     )
     stage1_date = forms.DateField(
-        label="Этап 1, дата",
+        label="Дата Предварительного отчёта",
         required=False,
-        disabled=True,
+        input_formats=DATE_INPUT_FORMATS,
         widget=forms.TextInput(
-            attrs={"class": "form-control js-stage1-date readonly-field", "readonly": True}
+            attrs={"class": "form-control js-date js-stage1-date"}
         ),
     )
     stage3_weeks = forms.DecimalField(
@@ -751,6 +791,8 @@ class ContractConditionsForm(BootstrapMixin, forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._bootstrapify()
+        if self.instance and self.instance.pk and self.instance.stage1_end:
+            self.fields["stage1_date"].initial = self.instance.stage1_end
 
     def clean_input_data(self):
         return self.cleaned_data.get("input_data") or 0
@@ -774,6 +816,244 @@ class ProjectChoiceField(forms.ModelChoiceField):
         if name_label:
             parts.append(name_label)
         return " ".join(parts)
+
+
+CONSTRAINT_TYPE_CHOICES = (
+    ("", "Нет ограничения"),
+    ("asap", "ASAP — Как можно раньше"),
+    ("alap", "ALAP — Как можно позже"),
+    ("snet", "SNET — Начать не раньше"),
+    ("snlt", "SNLT — Начать не позже"),
+    ("fnet", "FNET — Закончить не раньше"),
+    ("fnlt", "FNLT — Закончить не позже"),
+    ("mso",  "MSO — Фиксированное начало"),
+    ("mfo",  "MFO — Фиксированное окончание"),
+)
+
+# Mirrors the lightbox `type` <select> in policy-panels.js (gantt.config.lightbox.sections > "type").
+TASK_TYPE_CHOICES = (
+    ("task", "Задача"),
+    ("project", "Родительская задача"),
+    ("milestone", "Веха"),
+    ("service_section", "Раздел (услуга)"),
+)
+SERVICE_SECTION_TYPE = "service_section"
+
+
+class ProjectScheduleTaskForm(BootstrapMixin, forms.Form):
+    """Plain form that produces a DHTMLX-shaped task dict.
+
+    Used by the table view's Add/Edit buttons. The actual persistence happens
+    in `projects_app.services.gantt_tasks` against `ProjectRegistration.gantt_data`,
+    so this form is intentionally NOT a ModelForm.
+    """
+
+    type = forms.ChoiceField(
+        label="Тип",
+        required=False,
+        choices=TASK_TYPE_CHOICES,
+        initial="task",
+    )
+    # In Gantt parlance: when type == service_section, this picks the service
+    # section ("Название раздела (услуг)") and `task`/text holds the optional
+    # display name. Choices are populated in `__init__` from the project's
+    # primary product.
+    service_section_name = forms.ChoiceField(
+        label="Название раздела (услуг)",
+        required=False,
+        choices=[("", "—")],
+    )
+    task = forms.CharField(label="Название", required=False, max_length=255)
+    start_date = forms.DateField(
+        label="Начало",
+        required=False,
+        widget=_date_input_widget(),
+        input_formats=DATE_INPUT_FORMATS,
+    )
+    end_date = forms.DateField(
+        label="Окончание",
+        required=False,
+        widget=_date_input_widget(),
+        input_formats=DATE_INPUT_FORMATS,
+    )
+    # Specialty/executor are closed dropdowns sharing options with the Gantt
+    # lightbox (see `policy_app.views._typical_service_term_*_options`). The
+    # choices are populated in `__init__` so the form picks up live DB values.
+    # Each executor `<option>` carries a `data-specialties` attribute so the
+    # form template can filter executors client-side based on the selected
+    # specialty - mirroring the lightbox UX exactly.
+    specialty = forms.ChoiceField(
+        label="Специальность",
+        required=False,
+        choices=[("", "—")],
+    )
+    executor = forms.ChoiceField(
+        label="Исполнитель",
+        required=False,
+        choices=[("", "—")],
+    )
+    deadline = forms.DateField(
+        label="Дедлайн",
+        required=False,
+        widget=_date_input_widget(),
+        input_formats=DATE_INPUT_FORMATS,
+    )
+    constraint_type = forms.ChoiceField(
+        label="Тип ограничения",
+        required=False,
+        choices=CONSTRAINT_TYPE_CHOICES,
+    )
+    constraint_date = forms.DateField(
+        label="Дата ограничения",
+        required=False,
+        widget=_date_input_widget(),
+        input_formats=DATE_INPUT_FORMATS,
+    )
+    duration = forms.IntegerField(
+        label="Длительность (рабочие дни)",
+        required=False,
+        min_value=0,
+        widget=forms.NumberInput(attrs={"min": "0", "step": "1"}),
+    )
+    duration_star = forms.IntegerField(
+        label="Длительность (календарные дни)",
+        required=False,
+        min_value=0,
+        widget=forms.NumberInput(attrs={"min": "0", "step": "1"}),
+    )
+    predecessors = forms.CharField(
+        label="Предшественники",
+        required=False,
+        max_length=255,
+        # Read-only: this field only mirrors the actual link state computed from
+        # gantt_data["links"]. Editing of predecessors happens in the Gantt
+        # diagram (Связи panel inside the lightbox), not in the table form.
+        widget=forms.TextInput(attrs={"readonly": "readonly", "class": "readonly-field"}),
+    )
+    progress = forms.IntegerField(
+        label="Прогресс",
+        required=False,
+        min_value=0,
+        max_value=100,
+        widget=forms.NumberInput(attrs={"min": "0", "max": "100", "step": "1"}),
+    )
+
+    def __init__(self, *args, registration=None, **kwargs):
+        self._registration = registration
+        super().__init__(*args, **kwargs)
+        self._populate_assignment_choices()
+        self._populate_section_choices()
+        self._bootstrapify()
+
+    def _populate_section_choices(self):
+        """Populate the service-section dropdown from the project's primary product.
+
+        Sections come from the same helper the Gantt uses
+        (`policy_app.views._typical_service_term_section_options`), so the
+        table form and the diagram lightbox always offer the same list.
+        """
+        from policy_app.views import _typical_service_term_section_options
+        product_id = None
+        if self._registration is not None:
+            primary = self._registration.primary_product
+            product_id = (
+                getattr(primary, "pk", None)
+                or getattr(self._registration.type, "pk", None)
+            )
+        sections = _typical_service_term_section_options(product_id) if product_id else []
+        labels = [item["label"] for item in sections]
+        initial_section = str(self.initial.get("service_section_name") or "").strip()
+        if initial_section and initial_section not in labels:
+            labels.append(initial_section)
+        self.fields["service_section_name"].choices = [("", "—")] + [(s, s) for s in labels]
+        # Stash the per-section specialty list so the template can mirror the
+        # lightbox's "section drives specialty options" behaviour if needed.
+        self.section_options = sections
+
+    def _populate_assignment_choices(self):
+        """Populate specialty / executor dropdowns from the same source the Gantt lightbox uses.
+
+        Existing values that are no longer in the live option list are still
+        appended so previously-saved tasks remain editable (backward compat).
+        """
+        from policy_app.views import (
+            _typical_service_term_specialty_options,
+            _typical_service_term_executor_options,
+        )
+        specialties = list(_typical_service_term_specialty_options())
+        executors = list(_typical_service_term_executor_options())
+
+        initial_specialty = str(self.initial.get("specialty") or "").strip()
+        if initial_specialty and initial_specialty not in specialties:
+            specialties.append(initial_specialty)
+        self.fields["specialty"].choices = [("", "—")] + [(s, s) for s in specialties]
+
+        initial_executor = str(self.initial.get("executor") or "").strip()
+        executor_values = {item.get("value") for item in executors if item.get("value")}
+        if initial_executor and initial_executor not in executor_values:
+            # Show the legacy/orphan value as-is so the user can clear or keep it.
+            executors.append({
+                "value": initial_executor,
+                "label": initial_executor,
+                "specialties": [initial_specialty] if initial_specialty else [],
+            })
+        self.fields["executor"].choices = [("", "—")] + [
+            (item["value"], item["label"]) for item in executors if item.get("value")
+        ]
+        # Stash the full executor metadata so the template can render
+        # data-specialties attributes for client-side filtering.
+        self.executor_options = executors
+
+    def clean_progress(self):
+        return self.cleaned_data.get("progress") or 0
+
+    def task_payload(self) -> dict:
+        """Return a dict ready to be merged into a DHTMLX task object.
+
+        Date fields are serialized to ISO strings (`YYYY-MM-DD`); empty
+        optional values map to `None` so the service layer can clear them
+        out of the existing task. The `predecessors` field is returned
+        as a list of strings (WBS or task ids) to be resolved against the
+        live payload by the service.
+        """
+        cleaned = self.cleaned_data
+        def _iso(value):
+            return value.isoformat() if value else None
+        constraint_type = (cleaned.get("constraint_type") or "").lower() or None
+        task_type = (cleaned.get("type") or "task").strip() or "task"
+        section_name = (cleaned.get("service_section_name") or "").strip()
+        text = cleaned.get("task") or ""
+        # Mirror the Gantt lightbox `policy_task_name.get_value`: when the task
+        # is a service section, persist the section under `service_section_name`
+        # and let the display text fall back to the section name when blank.
+        if task_type == SERVICE_SECTION_TYPE:
+            display_text = text or section_name
+        else:
+            display_text = text
+            section_name = ""
+        payload = {
+            "type": task_type,
+            "text": display_text,
+            "start_date": _iso(cleaned.get("start_date")),
+            "end_date": _iso(cleaned.get("end_date")),
+            "specialty": cleaned.get("specialty") or "",
+            "executor": cleaned.get("executor") or "",
+            "deadline": _iso(cleaned.get("deadline")),
+            "constraint_type": constraint_type,
+            "constraint_date": _iso(cleaned.get("constraint_date")),
+            "duration": int(cleaned["duration"]) if cleaned.get("duration") is not None else None,
+            "duration_star": int(cleaned["duration_star"]) if cleaned.get("duration_star") is not None else None,
+            "progress": int(cleaned.get("progress") or 0),
+            # Predecessors are intentionally NOT submitted from the table form —
+            # the field is read-only there and only reflects current link state.
+            # `None` tells the service layer to leave existing links untouched.
+            "predecessors": None,
+        }
+        # Only emit service_section_name when it's set; otherwise let the
+        # service layer drop the key from the stored task.
+        payload["service_section_name"] = section_name or None
+        return payload
+
 
 class WorkVolumeForm(BootstrapMixin, forms.ModelForm):
     project = ProjectChoiceField(

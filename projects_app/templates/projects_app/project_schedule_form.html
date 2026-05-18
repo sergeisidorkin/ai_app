@@ -1,0 +1,251 @@
+<div data-modal-size="xl"></div>
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+    {% if project %}
+      <small class="text-muted ms-2">{{ project.short_uid }} {{ project.name }}</small>
+    {% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    {% if action == "create" %}
+      hx-post="{% url 'project_schedule_form_create' project_pk %}"
+    {% else %}
+      hx-post="{% url 'project_schedule_form_edit' project_pk task_id %}"
+    {% endif %}
+    hx-target="#projects-pane"
+    hx-swap="outerHTML">
+  <div class="modal-body">
+    {% csrf_token %}
+
+    <div class="row">
+      <div class="col-md-4 mb-3">
+        <label class="form-label" for="id_type">Тип</label>
+        {{ form.type }}
+      </div>
+      <div class="col-md-8 mb-3 js-project-schedule-section-field d-none">
+        <label class="form-label" for="id_service_section_name">Название раздела (услуг)</label>
+        {{ form.service_section_name }}
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="col-md-12 mb-3">
+        <label class="form-label" for="id_task">Название</label>
+        {{ form.task }}
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="col-md-4 mb-3">
+        <label class="form-label">Начало</label>
+        {{ form.start_date }}
+      </div>
+      <div class="col-md-4 mb-3">
+        <label class="form-label">Окончание</label>
+        {{ form.end_date }}
+      </div>
+      <div class="col-md-4 mb-3">
+        <label class="form-label">Дедлайн</label>
+        {{ form.deadline }}
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="col-md-6 mb-3">
+        <label class="form-label" for="id_specialty">Специальность</label>
+        <select id="id_specialty" name="specialty" class="form-select js-project-schedule-specialty">
+          {% for value, label in form.specialty.field.choices %}
+            <option value="{{ value }}"{% if value == form.specialty.value|default_if_none:"" %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-6 mb-3">
+        <label class="form-label" for="id_executor">Исполнитель</label>
+        <select id="id_executor" name="executor" class="form-select js-project-schedule-executor">
+          <option value=""{% if not form.executor.value %} selected{% endif %}>—</option>
+          {% for option in form.executor_options %}
+            {% if option.value %}
+              <option
+                value="{{ option.value }}"
+                data-specialties="{% for spec in option.specialties %}{{ spec }}{% if not forloop.last %}|{% endif %}{% endfor %}"
+                {% if option.value == form.executor.value %}selected{% endif %}>{{ option.label }}</option>
+            {% endif %}
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        // Mirror the Gantt lightbox UX (policy-panels.js > ensureTypicalServiceTermGanttAssignmentBlock):
+        //   - empty specialty   => executor list is empty and disabled
+        //   - selecting specialty => executor list filtered to executors carrying that specialty
+        //   - changing specialty  => executor selection is reset (forceDefault=true)
+        const specialty = document.getElementById('id_specialty');
+        const executor = document.getElementById('id_executor');
+        if (!specialty || !executor) return;
+        // Snapshot the full catalogue once. We REBUILD <option> nodes on every
+        // filter pass — relying on `hidden` on <option> is unreliable across
+        // browsers (Safari still shows hidden options in the dropdown).
+        const catalogue = Array.from(executor.options)
+          .filter(function (opt) { return opt.value; })
+          .map(function (opt) {
+            return {
+              value: opt.value,
+              label: opt.textContent,
+              specialties: (opt.dataset.specialties || '')
+                .split('|')
+                .map(function (s) { return s.trim(); })
+                .filter(Boolean),
+            };
+          });
+        const initialExecutor = executor.value;
+        function rebuild(items, selectedValue) {
+          executor.innerHTML = '';
+          const placeholder = document.createElement('option');
+          placeholder.value = '';
+          placeholder.textContent = '—';
+          executor.appendChild(placeholder);
+          items.forEach(function (item) {
+            const opt = document.createElement('option');
+            opt.value = item.value;
+            opt.textContent = item.label;
+            opt.dataset.specialties = item.specialties.join('|');
+            executor.appendChild(opt);
+          });
+          executor.value = selectedValue || '';
+        }
+        function syncExecutors(resetSelection) {
+          const sel = (specialty.value || '').trim();
+          const previous = resetSelection ? '' : executor.value;
+          if (!sel) {
+            rebuild([], '');
+            executor.disabled = true;
+            executor.classList.add('readonly-field');
+            return;
+          }
+          // Strict match — executor must list the selected specialty
+          // (same as getTypicalServiceTermGanttExecutorOptions in policy-panels.js).
+          const filtered = catalogue.filter(function (item) {
+            return item.specialties.indexOf(sel) !== -1;
+          });
+          const keep = filtered.some(function (item) { return item.value === previous; })
+            ? previous : '';
+          rebuild(filtered, keep);
+          executor.disabled = filtered.length === 0;
+          executor.classList.toggle('readonly-field', executor.disabled);
+        }
+        specialty.addEventListener('change', function () { syncExecutors(true); });
+        syncExecutors(false);
+        // Legacy fallback: an existing task may have an executor without any
+        // matching specialty (old text-input data). Surface the orphan option
+        // so the user can clear it or set a fitting specialty.
+        if (!specialty.value && initialExecutor) {
+          const legacy = catalogue.find(function (item) { return item.value === initialExecutor; });
+          if (legacy) {
+            rebuild([legacy], initialExecutor);
+            executor.disabled = false;
+            executor.classList.remove('readonly-field');
+          }
+        }
+      })();
+
+      // Type → "Название раздела (услуг)" toggle, mirroring the lightbox
+      // (policy-panels.js > policy_task_name.set_value > syncMode).
+      (function () {
+        const typeSelect = document.getElementById('id_type');
+        const sectionField = document.querySelector('.js-project-schedule-section-field');
+        const sectionSelect = document.getElementById('id_service_section_name');
+        if (!typeSelect || !sectionField) return;
+        function syncSectionVisibility() {
+          const isSection = (typeSelect.value || '').trim() === 'service_section';
+          sectionField.classList.toggle('d-none', !isSection);
+          if (sectionSelect) {
+            sectionSelect.required = false; // Gantt also doesn't enforce required at HTML level
+            if (!isSection) sectionSelect.value = '';
+          }
+        }
+        typeSelect.addEventListener('change', syncSectionVisibility);
+        syncSectionVisibility();
+      })();
+
+      // Type == "Родительская задача" (project) locks date/duration/progress —
+      // mirrors the Gantt lightbox where summary tasks roll up these values
+      // from their children (policy-panels.js > applyLockState in policy_period).
+      (function () {
+        const typeSelect = document.getElementById('id_type');
+        if (!typeSelect) return;
+        const lockedIds = ['id_start_date', 'id_end_date', 'id_duration', 'id_duration_star', 'id_progress'];
+        function setLocked(input, locked) {
+          if (!input) return;
+          // `readonly` (not `disabled`) so the value still submits — for
+          // parent tasks the Gantt normalizer rolls dates/duration up from
+          // children, but we still want to round-trip the existing values.
+          if (locked) {
+            input.setAttribute('readonly', 'readonly');
+            input.setAttribute('aria-readonly', 'true');
+            input.classList.add('readonly-field');
+            input.tabIndex = -1;
+          } else {
+            input.removeAttribute('readonly');
+            input.removeAttribute('aria-readonly');
+            input.classList.remove('readonly-field');
+            input.removeAttribute('tabindex');
+          }
+        }
+        function syncLockState() {
+          const locked = (typeSelect.value || '').trim() === 'project';
+          lockedIds.forEach(function (id) {
+            setLocked(document.getElementById(id), locked);
+          });
+        }
+        typeSelect.addEventListener('change', syncLockState);
+        syncLockState();
+      })();
+    </script>
+
+    <div class="row">
+      <div class="col-md-4 mb-3">
+        <label class="form-label">Тип ограничения</label>
+        {{ form.constraint_type }}
+      </div>
+      <div class="col-md-4 mb-3">
+        <label class="form-label">Дата ограничения</label>
+        {{ form.constraint_date }}
+      </div>
+      <div class="col-md-4 mb-3">
+        <label class="form-label" for="id_predecessors">Предшественники</label>
+        {{ form.predecessors }}
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="col-md-4 mb-3">
+        <label class="form-label">Длительность (рабочие дни)</label>
+        {{ form.duration }}
+      </div>
+      <div class="col-md-4 mb-3">
+        <label class="form-label">Длительность (календарные дни)</label>
+        {{ form.duration_star }}
+      </div>
+      <div class="col-md-4 mb-3">
+        <label class="form-label">Прогресс</label>
+        {{ form.progress }}
+      </div>
+    </div>
+
+    {% if form.non_field_errors %}
+      <div class="alert alert-danger mb-0">{{ form.non_field_errors }}</div>
+    {% elif form.errors %}
+      <div class="alert alert-danger mb-0">Проверьте введённые данные.</div>
+    {% endif %}
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>

@@ -1,3 +1,4 @@
+import calendar
 import uuid
 
 from django.conf import settings
@@ -6,7 +7,7 @@ from django.core.validators import MinValueValidator, MaxValueValidator
 from policy_app.models import Product, TypicalSection
 from classifiers_app.models import OKSMCountry, OKVCurrency
 from group_app.models import GroupMember
-from datetime import timedelta
+from datetime import date as dt_date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.db.models import Max
@@ -80,6 +81,8 @@ class ProjectRegistration(models.Model):
         ("Отложен", "Отложен"),
     ]
     status = models.CharField("Статус", max_length=20, choices=STATUS_CHOICES, default="Не начат")
+    launched_at = models.DateField("Дата запуска", null=True, blank=True)
+    gantt_data = models.JSONField("Диаграмма Ганта", default=dict, blank=True)
 
     contract_start = models.DateField("Начало контракта", null=True, blank=True)
     contract_end = models.DateField("Окончание контракта", null=True, blank=True)
@@ -115,6 +118,7 @@ class ProjectRegistration(models.Model):
 
     deadline = models.DateField("Дедлайн", null=True, blank=True)
     year = models.PositiveIntegerField("Год", null=True, blank=True)
+    evaluation_date = models.DateField("Дата оценки", null=True, blank=True)
 
     country = models.ForeignKey(
         OKSMCountry,
@@ -331,13 +335,7 @@ class ProjectRegistration(models.Model):
     def _calculate_stage1_end(self):
         if not self.contract_start:
             return None
-        days = Decimal(self.input_data or 0)
-        weeks = Decimal(self.stage1_weeks or 0) * Decimal("7")
-        total = days + weeks
-        if total < 0:
-            total = Decimal("0")
-        rounded_days = int(total.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-        return self.contract_start + timedelta(days=rounded_days)
+        return self._add_contract_months(self.contract_start, self.stage1_weeks)
 
     def _calculate_stage2_end(self):
         if not self.stage1_end:
@@ -350,22 +348,32 @@ class ProjectRegistration(models.Model):
         return self.stage1_end + timedelta(days=rounded_days)
 
     def _calculate_term_weeks(self):
-        days = Decimal(self.input_data or 0) / Decimal("7")
-        stage1 = Decimal(self.stage1_weeks or 0)
+        stage1 = (Decimal(self.stage1_weeks or 0) * Decimal("30")) / Decimal("7")
         stage2 = Decimal(self.stage2_weeks or 0)
-        stage3 = Decimal(self.stage3_weeks or 0)
-        total = days + stage1 + stage2 + stage3
+        total = stage1 + stage2
         if total < 0:
             total = Decimal("0")
         return total.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
 
     def _calculate_completion_calc(self):
-        if not self.stage2_end:
-            return None
-        weeks = Decimal(self.stage3_weeks or 0) * Decimal("7")
-        total = max(weeks, Decimal("0"))
-        rounded = int(total.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-        return self.stage2_end + timedelta(days=rounded)
+        return self.stage2_end
+
+    @staticmethod
+    def _contract_month_end_day(year, month):
+        return calendar.monthrange(year, month)[1]
+
+    @classmethod
+    def _add_contract_months(cls, value, months):
+        if not value:
+            return value
+        safe_months = max(Decimal(months or 0), Decimal("0"))
+        whole_months = int(safe_months)
+        fractional_days = int(((safe_months - whole_months) * Decimal("30")) + Decimal("0.5"))
+        month_index = (value.month - 1) + whole_months
+        year = value.year + month_index // 12
+        month = month_index % 12 + 1
+        day = min(value.day, cls._contract_month_end_day(year, month))
+        return dt_date(year, month, day) + timedelta(days=fractional_days)
 
     def _needs_uid_refresh(self):
         if not self.pk:
@@ -508,6 +516,7 @@ class ProjectRegistrationProduct(models.Model):
 
     def __str__(self):
         return f"{self.registration.short_uid} — {self.product.short_name} (#{self.rank})"
+
 
 class WorkVolume(models.Model):
     position = models.PositiveIntegerField(default=0, db_index=True, verbose_name="Позиция")
@@ -1258,6 +1267,34 @@ class Performer(models.Model):
         if timezone.now() > self.contract_deadline_at:
             return "Просрочено"
         return ""
+
+
+def _sync_project_gantt_for_registration(registration_id):
+    if not registration_id:
+        return
+    from projects_app.services.schedule_sync import sync_project_gantt_by_id
+
+    sync_project_gantt_by_id(registration_id)
+
+
+@receiver(post_save, sender=WorkVolume)
+def sync_project_gantt_after_work_volume_save(sender, instance, **kwargs):
+    _sync_project_gantt_for_registration(instance.project_id)
+
+
+@receiver(post_delete, sender=WorkVolume)
+def sync_project_gantt_after_work_volume_delete(sender, instance, **kwargs):
+    _sync_project_gantt_for_registration(instance.project_id)
+
+
+@receiver(post_save, sender=Performer)
+def sync_project_gantt_after_performer_save(sender, instance, **kwargs):
+    _sync_project_gantt_for_registration(instance.registration_id)
+
+
+@receiver(post_delete, sender=Performer)
+def sync_project_gantt_after_performer_delete(sender, instance, **kwargs):
+    _sync_project_gantt_for_registration(instance.registration_id)
 
 
 class PerformerParticipationSnapshot(models.Model):

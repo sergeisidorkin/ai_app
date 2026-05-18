@@ -165,10 +165,19 @@
     }
 
     function normalizeMetaRows(meta) {
+      var seenIds = {};
       return (Array.isArray(meta && meta.resources) ? meta.resources : [])
         .map(function (item, index) {
           if (!item || typeof item !== 'object') return null;
           var id = normalizeText(item.id) || uniqueId('resource');
+          if (seenIds[id]) {
+            var baseId = id;
+            var suffix = seenIds[baseId] + 1;
+            while (seenIds[baseId + '-' + suffix]) suffix += 1;
+            seenIds[baseId] = suffix;
+            id = baseId + '-' + suffix;
+          }
+          seenIds[id] = 1;
           return {
             id: id,
             specialty: normalizeText(item.specialty),

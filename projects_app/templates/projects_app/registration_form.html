@@ -101,27 +101,35 @@
       </div>
 
       <!-- Строка 2 -->
-      <div class="col-3">
-        <label class="form-label">Статус</label>
-        {{ form.status }}
-      </div>
-      <div class="col-3 registration-col-type-aligned">
-        <label class="form-label">Дедлайн</label>
-        {{ form.deadline }}
-      </div>
-      <div class="col-3 registration-col-subtype-aligned">
-        <label class="form-label">Год</label>
-        {{ form.year }}
-      </div>
-      <div class="col-3 registration-col-type-block-end">
-        <label class="form-label">Руководитель проекта</label>
-        {{ form.project_manager }}
+      <div class="col-12">
+        <div class="registration-schedule-grid">
+          <div>
+            <label class="form-label">Год</label>
+            {{ form.year }}
+          </div>
+          <div>
+            <label class="form-label">Дата оценки</label>
+            {{ form.evaluation_date }}
+          </div>
+          <div>
+            <label class="form-label">Дедлайн</label>
+            {{ form.deadline }}
+          </div>
+          <div>
+            <label class="form-label">Руководитель проекта</label>
+            {{ form.project_manager }}
+          </div>
+          <div>
+            <label class="form-label">Статус</label>
+            {{ form.status }}
+          </div>
+        </div>
       </div>
 
       <div class="w-100"></div>
 
       <!-- Строка 4 -->
-      <div class="col-4">
+      <div class="col-4 registration-customer-row">
         <label class="form-label">Заказчик</label>
         <div class="ler-ac-wrap">
           {{ form.customer }}
@@ -130,7 +138,7 @@
           <div class="ler-ac-list" id="reg-ler-ac-list"></div>
         </div>
       </div>
-      <div class="col-8 mb-3">
+      <div class="col-8 mb-3 registration-customer-row">
         <div class="registration-customer-meta-grid">
           <div>
             <label class="form-label">Страна</label>
@@ -188,8 +196,8 @@
           </div>
         </div>
       </div>
-      <div class="col-12">
-        <div class="form-check mt-1">
+      <div class="col-12 mt-0 mb-3">
+        <div class="form-check mt-0">
           {{ form.asset_owner_matches_customer }}
           <label class="form-check-label" for="{{ form.asset_owner_matches_customer.id_for_label }}">
             {{ form.asset_owner_matches_customer.label }}
@@ -197,67 +205,91 @@
         </div>
       </div>
 
-      <div class="col-12 mt-2">
-        <h6 class="mb-2">Сроки проекта по договору</h6>
-      </div>
+      <div class="col-12">
+        <div class="registration-contract-grid">
+          <div class="registration-contract-row registration-contract-row-5">
+            <div>
+              <label class="form-label">№ соглашения</label>
+              {{ form.agreement_number }}
+            </div>
+            <div>
+              <label class="form-label">Начало контракта</label>
+              {{ form.contract_start }}
+            </div>
+            <div>
+              <label class="form-label">Оконч. контракта</label>
+              {{ form.contract_end }}
+            </div>
+            <div>
+              <label class="form-label">Оконч., расчет</label>
+              {{ form.completion_calc }}
+            </div>
+            <div>
+              <label class="form-label">Срок, недель</label>
+              {{ form.term_weeks }}
+            </div>
+          </div>
 
-      <div class="col-3">
-        <label class="form-label">№ соглашения</label>
-        {{ form.agreement_number }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">Начало контракта</label>
-        {{ form.contract_start }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">Оконч. контракта</label>
-        {{ form.contract_end }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">Оконч., расчет</label>
-        {{ form.completion_calc }}
-      </div>
+          <div class="registration-contract-row registration-contract-row-1">
+            <div>
+              <label class="form-label">Исх. данные, дней</label>
+              {{ form.input_data }}
+            </div>
+          </div>
 
-      <div class="col-3">
-        <label class="form-label">Срок, недель</label>
-        {{ form.term_weeks }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">Исх. данные, дней</label>
-        {{ form.input_data }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">Этап 1, недель</label>
-        {{ form.stage1_weeks }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">Этап 1, оконч. расчет</label>
-        {{ form.stage1_end }}
-      </div>
-
-      <div class="col-3">
-        <label class="form-label">
-          Этап 1, дата
-          <i class="bi bi-lock-fill ms-1 js-stage1-lock" role="button" title="Разблокировать ввод даты"></i>
-        </label>
-        {{ form.stage1_date }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">Этап 2, недель</label>
-        {{ form.stage2_weeks }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">Этап 2, оконч. расчет</label>
-        {{ form.stage2_end }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">Этап 3, недель</label>
-        {{ form.stage3_weeks }}
-      </div>
-
-      <div class="col-3">
-        <label class="form-label">Этап 3, оконч. расчет</label>
-        {{ form.stage3_end }}
+          <div class="registration-contract-terms-block">
+            <label class="form-label mb-2">Сроки</label>
+            <div class="registration-contract-terms-editor">
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0 registration-contract-terms-table">
+                  <thead>
+                    <tr>
+                      <th class="registration-contract-terms-stage-col">Этап</th>
+                      <th>
+                        {{ form.stage1_weeks.label }}
+                        <i class="bi bi-lock-fill ms-1 js-registration-report-terms-lock" role="button" title="Разблокировать ввод сроков"></i>
+                      </th>
+                      <th>{{ form.stage1_date.label }}</th>
+                      <th>
+                        {{ form.stage2_weeks.label }}
+                        <i class="bi bi-lock-fill ms-1 js-registration-report-terms-lock" role="button" title="Разблокировать ввод сроков"></i>
+                      </th>
+                      <th>{{ form.stage2_end.label }}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="registration-contract-terms-row">
+                      <td class="registration-contract-terms-stage-col">
+                        <input type="text" class="form-control readonly-field registration-contract-stage-label-input" value="Этап 1" readonly tabindex="-1">
+                      </td>
+                      <td>{{ form.stage1_weeks }}</td>
+                      <td>{{ form.stage1_date }}</td>
+                      <td>{{ form.stage2_weeks }}</td>
+                      <td>{{ form.stage2_end }}</td>
+                    </tr>
+                    <tr class="registration-contract-terms-total-row">
+                      <td class="registration-contract-terms-stage-col">
+                        <input type="text" class="form-control readonly-field registration-contract-stage-label-input" value="Итого" readonly tabindex="-1">
+                      </td>
+                      <td>
+                        <input type="number" class="form-control readonly-field js-registration-total-stage1-months" value="" readonly tabindex="-1">
+                      </td>
+                      <td>
+                        <input type="text" class="form-control readonly-field" value="" readonly tabindex="-1">
+                      </td>
+                      <td>
+                        <input type="number" class="form-control readonly-field js-registration-total-stage2-weeks" value="" readonly tabindex="-1">
+                      </td>
+                      <td>
+                        <input type="text" class="form-control readonly-field" value="" readonly tabindex="-1">
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -297,6 +329,13 @@
     opacity: 1 !important;
     -webkit-text-fill-color: #6c757d;
   }
+  #projects-modal .form-label {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   #projects-modal #reg-asset-owner-country-select.readonly-field,
   #projects-modal #reg-asset-owner-region-select.readonly-field {
     background-color: #f8f9fa !important;
@@ -320,19 +359,155 @@
   #projects-modal .registration-customer-meta-grid {
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 0.75rem;
+    gap: 0.5rem;
   }
   #projects-modal .registration-customer-meta-grid > div {
     min-width: 0;
   }
-  #projects-modal .js-stage1-lock {
+  #projects-modal .registration-schedule-grid {
+    display: grid;
+    gap: 0.5rem;
+    grid-template-columns: 1fr;
+    margin-top: 1rem;
+  }
+  #projects-modal .registration-schedule-grid > div {
+    min-width: 0;
+  }
+  #projects-modal .registration-contract-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  #projects-modal .registration-contract-row {
+    display: grid;
+    gap: 0.5rem;
+    grid-template-columns: 1fr;
+  }
+  #projects-modal .registration-contract-row > div {
+    min-width: 0;
+  }
+  #projects-modal .registration-contract-terms-editor {
+    border: 1px solid #dee2e6;
+    border-radius: .5rem;
+    padding: 1rem;
+    background: #fff;
+    margin-bottom: 1rem;
+  }
+  #projects-modal .registration-contract-terms-table {
+    margin-bottom: 0;
+    width: 100%;
+  }
+  #projects-modal .registration-contract-terms-table th {
+    white-space: nowrap;
+    font-weight: 400;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #projects-modal .registration-contract-terms-table td {
+    vertical-align: middle;
+    padding-top: .45rem;
+    padding-bottom: .45rem;
+  }
+  #projects-modal .registration-contract-terms-table .registration-contract-terms-stage-col {
+    width: 5.5rem;
+    min-width: 5.5rem;
+    max-width: 5.5rem;
+  }
+  #projects-modal .registration-contract-terms-table th.registration-contract-terms-stage-col,
+  #projects-modal .registration-contract-terms-table td.registration-contract-terms-stage-col {
+    padding-left: 0 !important;
+    padding-right: .25rem !important;
+  }
+  #projects-modal .registration-contract-terms-table > :not(caption) > * > * {
+    border-top: 0;
+    border-bottom: 0;
+  }
+  #projects-modal .registration-contract-stage-label-input {
+    text-align: center;
+  }
+  #projects-modal .registration-contract-terms-total-row td {
+    background: transparent;
+  }
+  #projects-modal .registration-stage-final-report-wrap {
+    display: flex;
+    align-items: center;
+    gap: .35rem;
+  }
+  #projects-modal .registration-stage-final-report-wrap .js-stage2-end {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+  }
+  #projects-modal .registration-stage-delay-action-slot {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 1.75rem;
+  }
+  #projects-modal .registration-stage-delay-action-slot:empty {
+    display: none;
+  }
+  #projects-modal .registration-stage-delay-add {
+    width: 1.75rem;
+    height: 1.75rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    color: #6c757d;
+    border: 1px solid #ced4da;
+    background-color: #f8f9fa;
+    font-size: 1.25rem;
+    line-height: 1;
+  }
+  #projects-modal .registration-stage-delay-add:hover,
+  #projects-modal .registration-stage-delay-add:focus {
+    background-color: #eef1f4;
+    color: #343a40;
+    border-color: #ced4da;
+  }
+  #projects-modal .registration-stage-delay-input-wrap {
+    display: flex;
+    align-items: center;
+    gap: .375rem;
+  }
+  #projects-modal .registration-stage-delay-number-shell {
+    position: relative;
+    max-width: 8rem;
+  }
+  #projects-modal .registration-stage-delay-number-shell input {
+    padding-right: 2.25rem;
+  }
+  #projects-modal .registration-stage-delay-unit {
+    position: absolute;
+    top: 50%;
+    right: .65rem;
+    transform: translateY(-50%);
+    color: #6c757d;
+    font-size: .875rem;
+    pointer-events: none;
+  }
+  #projects-modal .registration-stage-delay-remove {
+    color: #adb5bd;
+    border: 0;
+    background: transparent;
+    padding: 0 .25rem;
+    line-height: 1;
+  }
+  #projects-modal .registration-stage-delay-remove:hover {
+    color: #dc3545;
+  }
+  #projects-modal .registration-customer-row {
+    margin-top: 1rem;
+  }
+  #projects-modal .js-registration-report-terms-lock {
     cursor: pointer;
     font-size: .85em;
     vertical-align: baseline;
     color: #6c757d;
     transition: color .15s;
   }
-  #projects-modal .js-stage1-lock:hover { color: #0d6efd; }
+  #projects-modal .js-registration-report-terms-lock:hover { color: #0d6efd; }
   #projects-modal .number-input-shell {
     position: relative;
   }
@@ -513,6 +688,14 @@
     color: #dc3545;
   }
   @media (min-width: 1200px) {
+    #projects-modal .registration-schedule-grid {
+      grid-template-columns:
+        repeat(3, minmax(0, calc(15.5556% - 0.4222rem)))
+        repeat(2, minmax(0, calc(26.6667% - 0.3667rem)));
+    }
+    #projects-modal .registration-contract-row-5 {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
     #projects-modal .registration-col-type-aligned {
       flex: 0 0 calc(25% - 26px);
       width: calc(25% - 26px);
@@ -616,6 +799,170 @@
     const consultingTypes = Array.isArray(meta.consulting_types) ? meta.consulting_types : [];
     const serviceCategories = Array.isArray(meta.service_categories) ? meta.service_categories : [];
     const productById = new Map(products.map((product) => [String(product.id), product]));
+
+    const getProductRows = () => Array.from(container.querySelectorAll(".registration-product-row"));
+    const getTermsTbody = () => node.querySelector(".registration-contract-terms-table tbody");
+    const getTermsRows = () => Array.from(
+      node.querySelectorAll(".registration-contract-terms-row")
+    );
+    const getStageDelayRows = () => Array.from(
+      node.querySelectorAll(".registration-stage-delay-row")
+    );
+    const getTermsTotalRow = () => node.querySelector(".registration-contract-terms-total-row");
+
+    const createStageDelayRow = () => {
+      const row = document.createElement("tr");
+      row.className = "registration-stage-delay-row d-none";
+      row.innerHTML = [
+        '<td class="registration-contract-terms-stage-col">',
+        '<input type="text" class="form-control readonly-field registration-contract-stage-label-input" value="Лаг" readonly tabindex="-1">',
+        '</td>',
+        '<td>',
+        '<div class="registration-stage-delay-input-wrap">',
+        '<div class="registration-stage-delay-number-shell">',
+        '<input type="number" name="next_stage_delay_days" step="1" inputmode="numeric" class="form-control registration-stage-next-delay-days" value="">',
+        '<span class="registration-stage-delay-unit" aria-hidden="true">дн.</span>',
+        '</div>',
+        '<button type="button" class="btn btn-sm registration-stage-delay-remove" title="Удалить лаг" aria-label="Удалить лаг">&times;</button>',
+        '</div>',
+        '</td>',
+        '<td colspan="3"></td>',
+      ].join("");
+      return row;
+    };
+
+    const getStageDelayRowForTermRow = (row) => {
+      const nextRow = row?.nextElementSibling;
+      return nextRow?.classList?.contains("registration-stage-delay-row") ? nextRow : null;
+    };
+
+    const getStageDelayActionSlot = (row) => {
+      let slot = row.querySelector(".registration-stage-delay-action-slot");
+      if (slot) return slot;
+      const finalInput = row.querySelector(".js-stage2-end");
+      const finalCell = finalInput?.closest("td");
+      if (!finalCell) return null;
+      let wrap = finalCell.querySelector(".registration-stage-final-report-wrap");
+      if (!wrap) {
+        wrap = document.createElement("div");
+        wrap.className = "registration-stage-final-report-wrap";
+        finalCell.appendChild(wrap);
+        wrap.appendChild(finalInput);
+      }
+      slot = document.createElement("span");
+      slot.className = "registration-stage-delay-action-slot";
+      wrap.appendChild(slot);
+      return slot;
+    };
+
+    const cloneTermsRow = (row) => {
+      const clone = row.cloneNode(true);
+      delete clone.dataset.eventsBound;
+      delete clone.dataset.productId;
+      delete clone.dataset.forceDatesFromTerms;
+      clone.querySelectorAll("input").forEach((input) => {
+        delete input.dataset.hasPicker;
+        if (!input.classList.contains("registration-contract-stage-label-input")) {
+          input.value = "";
+        }
+      });
+      return clone;
+    };
+
+    const syncRegistrationStageTerms = () => {
+      if (node.__registrationStageCalculatorApi) {
+        node.__registrationStageCalculatorApi.sync();
+      }
+    };
+
+    const ensureTermsRows = () => {
+      const tbody = getTermsTbody();
+      const totalRow = getTermsTotalRow();
+      if (!tbody || !totalRow) return;
+      let termRows = getTermsRows();
+      const productRows = getProductRows();
+      while (termRows.length < productRows.length && termRows.length) {
+        tbody.insertBefore(cloneTermsRow(termRows[termRows.length - 1]), totalRow);
+        termRows = getTermsRows();
+      }
+      while (termRows.length > productRows.length && termRows.length > 1) {
+        termRows[termRows.length - 1].remove();
+        termRows = getTermsRows();
+      }
+    };
+
+    const ensureStageDelayRows = () => {
+      const tbody = getTermsTbody();
+      if (!tbody) return;
+      const termRows = getTermsRows();
+      const expectedDelayRows = new Set();
+      termRows.forEach((row, index) => {
+        const isEligible = termRows.length > 1 && index < termRows.length - 1;
+        const actionSlot = getStageDelayActionSlot(row);
+        let delayRow = getStageDelayRowForTermRow(row);
+        if (isEligible) {
+          if (!delayRow) {
+            delayRow = createStageDelayRow();
+            tbody.insertBefore(delayRow, row.nextSibling);
+          }
+          expectedDelayRows.add(delayRow);
+          const button = actionSlot?.querySelector(".registration-stage-delay-add") || document.createElement("button");
+          if (!button.classList.contains("registration-stage-delay-add")) {
+            button.type = "button";
+            button.className = "btn btn-sm rounded-circle registration-stage-delay-add";
+            button.innerHTML = '<i class="bi bi-plus" aria-hidden="true"></i>';
+            actionSlot?.appendChild(button);
+          }
+          button.title = "Добавить задержку/наложение";
+          button.setAttribute("aria-label", "Добавить задержку или наложение после этапа " + (index + 1));
+          button.classList.remove("d-none");
+        } else {
+          if (actionSlot) actionSlot.innerHTML = "";
+          if (delayRow) delayRow.remove();
+        }
+      });
+      getStageDelayRows().forEach((row) => {
+        if (!expectedDelayRows.has(row)) row.remove();
+      });
+    };
+
+    const syncTermsRowsWithProducts = () => {
+      ensureTermsRows();
+      const termRows = getTermsRows();
+      getProductRows().forEach((productRow, index) => {
+        const termRow = termRows[index];
+        if (!termRow) return;
+        const productId = String(productRow.querySelector(".registration-product-select")?.value || "").trim();
+        const product = productById.get(productId);
+        const previousProductId = String(termRow.dataset.productId || "");
+        const stageInput = termRow.querySelector(".registration-contract-stage-label-input");
+        const monthsInput = termRow.querySelector("[name='stage1_weeks']");
+        const weeksInput = termRow.querySelector("[name='stage2_weeks']");
+        if (stageInput) stageInput.value = "Этап " + (index + 1);
+        const terms = product?.typical_service_terms || {};
+        if (!productId && previousProductId) {
+          if (monthsInput) monthsInput.value = "";
+          if (weeksInput) weeksInput.value = "";
+          const preliminaryInput = termRow.querySelector(".js-stage1-date");
+          const finalInput = termRow.querySelector(".js-stage2-end");
+          if (preliminaryInput) preliminaryInput.value = "";
+          if (finalInput) finalInput.value = "";
+          termRow.dataset.forceDatesFromTerms = "1";
+        }
+        if (productId && productId !== previousProductId) {
+          if (monthsInput && terms.preliminary_report_months !== undefined) {
+            monthsInput.value = terms.preliminary_report_months || "";
+          }
+          if (weeksInput && terms.final_report_weeks !== undefined) {
+            weeksInput.value = terms.final_report_weeks || "";
+          }
+          termRow.dataset.forceDatesFromTerms = "1";
+        }
+        termRow.dataset.productId = productId;
+      });
+      ensureStageDelayRows();
+      syncRegistrationStageTerms();
+    };
 
     const uniqueValues = (items) => {
       const seen = new Set();
@@ -734,10 +1081,11 @@
     };
 
     const renumberRows = () => {
-      container.querySelectorAll(".registration-product-row").forEach((row, idx) => {
+      getProductRows().forEach((row, idx) => {
         const badge = row.querySelector(".registration-product-badge");
         if (badge) badge.textContent = idx + 1;
       });
+      syncTermsRowsWithProducts();
     };
 
     const bindRow = (row) => {
@@ -755,6 +1103,7 @@
           serviceSubtype: "",
           productId: "",
         });
+        syncTermsRowsWithProducts();
       });
       categorySelect?.addEventListener("change", () => {
         syncRow(row, {
@@ -763,6 +1112,7 @@
           serviceSubtype: "",
           productId: "",
         });
+        syncTermsRowsWithProducts();
       });
       subtypeSelect?.addEventListener("change", () => {
         syncRow(row, {
@@ -771,9 +1121,11 @@
           serviceSubtype: subtypeSelect.value,
           productId: "",
         });
+        syncTermsRowsWithProducts();
       });
       productSelect?.addEventListener("change", () => {
         syncRow(row, { productId: productSelect.value });
+        syncTermsRowsWithProducts();
       });
     };
 
@@ -822,6 +1174,7 @@
           serviceSubtype: "",
           productId: "",
         });
+        syncTermsRowsWithProducts();
         return;
       }
       removeBtn.closest(".registration-product-row")?.remove();
@@ -1505,178 +1858,341 @@
     return d;
   }
 
+  function addContractMonths(date, n) {
+    const safeMonths = Math.max(parseFloat(n) || 0, 0);
+    const wholeMonths = Math.floor(safeMonths);
+    const fractionalDays = Math.round((safeMonths - wholeMonths) * 30);
+    const monthIndex = date.getMonth() + wholeMonths;
+    const year = date.getFullYear() + Math.floor(monthIndex / 12);
+    const month = ((monthIndex % 12) + 12) % 12;
+    const day = Math.min(date.getDate(), new Date(year, month + 1, 0).getDate());
+    return addContractDays(new Date(year, month, day), fractionalDays);
+  }
+
   function diffContractDays(a, b) {
     return Math.round((a - b) / 86400000);
+  }
+
+  function diffContractMonths(a, b) {
+    let wholeMonths = (a.getFullYear() - b.getFullYear()) * 12 + (a.getMonth() - b.getMonth());
+    let anchor = addContractMonths(b, wholeMonths);
+    if (anchor > a) {
+      wholeMonths -= 1;
+      anchor = addContractMonths(b, wholeMonths);
+    }
+    return Math.max(0, wholeMonths + diffContractDays(a, anchor) / 30);
   }
 
   function formatContractDate(date) {
     return date.toLocaleDateString("ru-RU", CONTRACT_DATE_FMT);
   }
 
+  function formatContractDateIso(date) {
+    if (!date || isNaN(date)) return "";
+    return date.getFullYear() + "-"
+      + String(date.getMonth() + 1).padStart(2, "0") + "-"
+      + String(date.getDate()).padStart(2, "0");
+  }
+
   function attachStageCalculator(node) {
     if (!node || node.dataset.stageCalcBound === "1") return;
     const start = node.querySelector("[name='contract_start']");
     const inputDays = node.querySelector("[name='input_data']");
-    const stage1Weeks = node.querySelector("[name='stage1_weeks']");
-    const stage2Weeks = node.querySelector("[name='stage2_weeks']");
-    const stage3Weeks = node.querySelector("[name='stage3_weeks']");
-    const stage1DateEl = node.querySelector(".js-stage1-date");
-
-    const stage1EndTarget = node.querySelector(".js-stage1-end");
-    const stage2EndTarget = node.querySelector(".js-stage2-end");
-    const stage3EndTarget = node.querySelector(".js-stage3-end");
     const completionTarget = node.querySelector(".js-completion-calc");
     const termWeeksTarget = node.querySelector(".js-term-weeks");
+    const totalMonthsTarget = node.querySelector(".js-registration-total-stage1-months");
+    const totalWeeksTarget = node.querySelector(".js-registration-total-stage2-weeks");
 
-    if (!start || !inputDays || !stage1Weeks || !stage1EndTarget) return;
+    if (!start || !inputDays) return;
     node.dataset.stageCalcBound = "1";
 
-    let stage1DateMode = false;
-    const lockIcon = node.querySelector(".js-stage1-lock");
+    let reportTermsEditMode = false;
+    const lockIcons = Array.from(node.querySelectorAll(".js-registration-report-terms-lock"));
 
-    function setReadonly(el, on) {
+    const getTermRows = () => Array.from(node.querySelectorAll(".registration-contract-terms-row"));
+    const getStageDelayRows = () => Array.from(node.querySelectorAll(".registration-stage-delay-row"));
+    const getStageDelayRowForTermRow = (row) => {
+      const nextRow = row?.nextElementSibling;
+      return nextRow?.classList?.contains("registration-stage-delay-row") ? nextRow : null;
+    };
+
+    function parseContractDecimal(value) {
+      const raw = String(value || "").replace(",", ".").trim();
+      if (!raw) return null;
+      const parsed = parseFloat(raw);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function parseContractInteger(value) {
+      const parsed = parseInt(String(value || "").replace(/[^\d-]/g, ""), 10);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    function formatContractDecimal(value) {
+      return Number.isFinite(value) ? value.toFixed(1) : "";
+    }
+
+    function setContractDateValue(input, date) {
+      if (!input) return;
+      if (!date || isNaN(date)) {
+        input.value = "";
+        if (input._flatpickr) input._flatpickr.clear(false);
+        if (window.$ && $.fn && $.fn.datepicker) $(input).datepicker("update", "");
+        return;
+      }
+      const isoValue = formatContractDateIso(date);
+      const displayValue = formatContractDate(date);
+      if (input._flatpickr) {
+        input._flatpickr.setDate(isoValue, false, "Y-m-d");
+        return;
+      }
+      if (window.$ && $.fn && $.fn.datepicker && input.dataset.hasPicker === "1") {
+        $(input).datepicker("update", displayValue);
+        return;
+      }
+      input.value = input.type === "date" ? isoValue : displayValue;
+    }
+
+    function setReadonly(el, on, options) {
       if (!el) return;
       el.readOnly = on;
       el.classList.toggle("readonly-field", on);
       if (on) el.setAttribute("readonly", ""); else el.removeAttribute("readonly");
+      if (!on) el.removeAttribute("disabled");
+      el.tabIndex = on ? -1 : 0;
+      if (options?.lockPicker) {
+        if (el._flatpickr) el._flatpickr.set("clickOpens", !on);
+        el.style.pointerEvents = on ? "none" : "";
+      }
     }
 
     function applyLockState() {
-      if (stage1DateMode) {
-        if (stage1DateEl) {
-          stage1DateEl.disabled = false;
-          stage1DateEl.removeAttribute("disabled");
-          stage1DateEl.removeAttribute("readonly");
-          stage1DateEl.readOnly = false;
-          stage1DateEl.type = "date";
-          stage1DateEl.classList.remove("readonly-field");
-        }
-        setReadonly(stage1Weeks, true);
-        if (lockIcon) {
-          lockIcon.classList.remove("bi-lock-fill");
-          lockIcon.classList.add("bi-unlock-fill");
-          lockIcon.title = "Заблокировать — вернуться к вводу недель";
-        }
-      } else {
-        if (stage1DateEl) {
-          stage1DateEl.type = "text";
-          stage1DateEl.readOnly = true;
-          stage1DateEl.setAttribute("readonly", "");
-          stage1DateEl.classList.add("readonly-field");
-        }
-        setReadonly(stage1Weeks, false);
-        if (lockIcon) {
-          lockIcon.classList.remove("bi-unlock-fill");
-          lockIcon.classList.add("bi-lock-fill");
-          lockIcon.title = "Разблокировать ввод даты";
-        }
-      }
-    }
-
-    const clear = () => {
-      stage1EndTarget.value = "";
-      if (!stage1DateMode && stage1DateEl) stage1DateEl.value = "";
-      if (stage2EndTarget) stage2EndTarget.value = "";
-      if (stage3EndTarget) stage3EndTarget.value = "";
-      if (completionTarget) completionTarget.value = "";
-      if (termWeeksTarget) termWeeksTarget.value = "";
-    };
-
-    const recalc = () => {
-      const base = parseContractDate(start.value);
-      if (!base) { clear(); return; }
-
-      const days = parseInt(inputDays.value.replace(/\D/g, ""), 10) || 0;
-
-      let s1w;
-      if (stage1DateMode) {
-        const s1date = stage1DateEl.value ? new Date(stage1DateEl.value) : null;
-        if (s1date && !isNaN(s1date)) {
-          const elapsed = diffContractDays(s1date, base) - days;
-          s1w = Math.max(0, elapsed / 7);
-          stage1Weeks.value = s1w.toFixed(1);
-        } else {
-          s1w = 0;
-          stage1Weeks.value = "";
-        }
-      } else {
-        s1w = parseFloat((stage1Weeks.value || "0").replace(",", ".")) || 0;
-      }
-
-      const s2w = parseFloat((stage2Weeks?.value || "0").replace(",", ".")) || 0;
-      const s3w = parseFloat((stage3Weeks?.value || "0").replace(",", ".")) || 0;
-
-      const stage1Days = Math.max(0, days + s1w * 7);
-      const stage1Date = addContractDays(base, stage1Days);
-      stage1EndTarget.value = formatContractDate(stage1Date);
-
-      if (!stage1DateMode && stage1DateEl) {
-        stage1DateEl.value = formatContractDate(stage1Date);
-      }
-
-      let stage2Date = null;
-      if (stage2Weeks && stage2EndTarget) {
-        if (!Math.round(stage1Days) && !s2w) {
-          stage2EndTarget.value = "";
-        } else {
-          stage2Date = addContractDays(stage1Date, Math.max(0, s2w * 7));
-          stage2EndTarget.value = formatContractDate(stage2Date);
-        }
-      }
-
-      if (stage3EndTarget) {
-        const baseS2 = stage2Date || parseContractDate(stage2EndTarget?.value || "");
-        if (!baseS2 || !s3w) {
-          stage3EndTarget.value = "";
-        } else {
-          stage3EndTarget.value = formatContractDate(addContractDays(baseS2, Math.max(0, s3w * 7)));
-        }
-      }
-
-      if (completionTarget) {
-        const baseS2 = stage2Date || parseContractDate(stage2EndTarget?.value || "");
-        if (!baseS2) {
-          completionTarget.value = "";
-        } else {
-          completionTarget.value = formatContractDate(addContractDays(baseS2, Math.max(0, s3w * 7)));
-        }
-      }
-
-      if (termWeeksTarget) {
-        const tw = Math.max(0, (days / 7) + s1w + s2w + s3w);
-        termWeeksTarget.value = tw.toFixed(1);
-      }
-    };
-
-    if (lockIcon) {
-      lockIcon.addEventListener("click", () => {
-        if (!stage1DateMode && !parseContractDate(start.value)) {
-          alert("Сначала заполните поле «Начало контракта».");
-          return;
-        }
-        if (!stage1DateMode && stage1DateEl && stage1EndTarget) {
-          const d = parseContractDate(stage1EndTarget.value);
-          if (d) {
-            stage1DateEl.value = d.getFullYear() + "-"
-              + String(d.getMonth() + 1).padStart(2, "0") + "-"
-              + String(d.getDate()).padStart(2, "0");
-          }
-        }
-        stage1DateMode = !stage1DateMode;
-        applyLockState();
-        recalc();
+      getTermRows().forEach((row) => {
+        setReadonly(row.querySelector(".js-stage1-date"), reportTermsEditMode, { lockPicker: true });
+        setReadonly(row.querySelector(".js-stage2-end"), reportTermsEditMode, { lockPicker: true });
+        setReadonly(row.querySelector("[name='stage1_weeks']"), !reportTermsEditMode);
+        setReadonly(row.querySelector("[name='stage2_weeks']"), !reportTermsEditMode);
+      });
+      lockIcons.forEach((icon) => {
+        icon.classList.toggle("bi-lock-fill", !reportTermsEditMode);
+        icon.classList.toggle("bi-unlock-fill", reportTermsEditMode);
+        icon.title = reportTermsEditMode ? "Заблокировать ввод сроков" : "Разблокировать ввод сроков";
       });
     }
 
+    const clear = () => {
+      getTermRows().forEach((row) => {
+        const preliminaryInput = row.querySelector(".js-stage1-date");
+        const finalInput = row.querySelector(".js-stage2-end");
+        if (preliminaryInput) preliminaryInput.value = "";
+        if (finalInput) finalInput.value = "";
+      });
+      if (completionTarget) completionTarget.value = "";
+    };
+
+    const markRowsFrom = (row) => {
+      const rows = getTermRows();
+      const index = rows.indexOf(row);
+      if (index < 0) return;
+      rows.slice(index).forEach((item) => {
+        item.dataset.forceDatesFromTerms = "1";
+      });
+    };
+
+    const markRowsAfterDelay = (delayRow) => {
+      const previousTermRow = delayRow?.previousElementSibling?.classList?.contains("registration-contract-terms-row")
+        ? delayRow.previousElementSibling
+        : null;
+      const rows = getTermRows();
+      const index = rows.indexOf(previousTermRow);
+      if (index < 0) return;
+      rows.slice(index + 1).forEach((item) => {
+        item.dataset.forceDatesFromTerms = "1";
+      });
+    };
+
+    const recalc = (manualRow, manualDateSource) => {
+      const base = parseContractDate(start.value);
+
+      let rollingStart = base;
+      let lastFinalDate = null;
+      let totalMonths = 0;
+      let totalWeeks = 0;
+
+      getTermRows().forEach((row) => {
+        const stage1Months = row.querySelector("[name='stage1_weeks']");
+        const stage2Weeks = row.querySelector("[name='stage2_weeks']");
+        const stage1DateEl = row.querySelector(".js-stage1-date");
+        const stage2EndTarget = row.querySelector(".js-stage2-end");
+        if (!stage1Months || !stage2Weeks || !stage1DateEl || !stage2EndTarget) return;
+
+        let s1m = parseContractDecimal(stage1Months.value);
+        let s2w = parseContractDecimal(stage2Weeks.value);
+        let preliminaryDate = parseContractDate(stage1DateEl.value);
+        let finalDate = parseContractDate(stage2EndTarget.value);
+        const delayDays = parseContractInteger(
+          getStageDelayRowForTermRow(row)?.querySelector(".registration-stage-next-delay-days")?.value
+        );
+        const forceFromTerms = row.dataset.forceDatesFromTerms === "1";
+
+        if (!base) {
+          preliminaryDate = null;
+          finalDate = null;
+          setContractDateValue(stage1DateEl, null);
+          setContractDateValue(stage2EndTarget, null);
+        } else if (reportTermsEditMode || forceFromTerms || (!preliminaryDate && !finalDate)) {
+          s1m = s1m ?? 0;
+          s2w = s2w ?? 0;
+          preliminaryDate = addContractMonths(rollingStart, s1m);
+          finalDate = addContractDays(preliminaryDate, Math.max(0, s2w * 7));
+          setContractDateValue(stage1DateEl, preliminaryDate);
+          setContractDateValue(stage2EndTarget, finalDate);
+        } else {
+          if (row === manualRow && manualDateSource === "final" && finalDate && preliminaryDate) {
+            s2w = Math.max(0, diffContractDays(finalDate, preliminaryDate) / 7);
+            stage2Weeks.value = formatContractDecimal(s2w);
+          } else if (row === manualRow && manualDateSource === "final" && finalDate && s2w !== null) {
+            preliminaryDate = addContractDays(finalDate, -Math.max(0, s2w * 7));
+            setContractDateValue(stage1DateEl, preliminaryDate);
+            s1m = diffContractMonths(preliminaryDate, rollingStart);
+            stage1Months.value = formatContractDecimal(s1m);
+          } else if (preliminaryDate) {
+            s1m = diffContractMonths(preliminaryDate, rollingStart);
+            stage1Months.value = formatContractDecimal(s1m);
+            if (s2w !== null) {
+              finalDate = addContractDays(preliminaryDate, Math.max(0, s2w * 7));
+              setContractDateValue(stage2EndTarget, finalDate);
+            }
+          }
+          if (finalDate && preliminaryDate) {
+            s2w = Math.max(0, diffContractDays(finalDate, preliminaryDate) / 7);
+            stage2Weeks.value = formatContractDecimal(s2w);
+          }
+        }
+
+        if (s1m !== null) {
+          s1m = Math.max(0, s1m);
+          stage1Months.value = formatContractDecimal(s1m);
+          totalMonths += s1m;
+        }
+        if (s2w !== null) {
+          s2w = Math.max(0, s2w);
+          stage2Weeks.value = formatContractDecimal(s2w);
+          totalWeeks += s2w;
+        }
+        lastFinalDate = finalDate || preliminaryDate || lastFinalDate;
+        rollingStart = lastFinalDate ? addContractDays(lastFinalDate, delayDays) : rollingStart;
+        delete row.dataset.forceDatesFromTerms;
+      });
+
+      if (completionTarget) {
+        completionTarget.value = lastFinalDate ? formatContractDate(lastFinalDate) : "";
+      }
+
+      if (termWeeksTarget) {
+        const tw = Math.max(0, (totalMonths * 30 / 7) + totalWeeks);
+        termWeeksTarget.value = formatContractDecimal(tw);
+      }
+      if (totalMonthsTarget) totalMonthsTarget.value = formatContractDecimal(totalMonths);
+      if (totalWeeksTarget) totalWeeksTarget.value = formatContractDecimal(totalWeeks);
+    };
+
+    lockIcons.forEach((icon) => {
+      icon.addEventListener("click", () => {
+        reportTermsEditMode = !reportTermsEditMode;
+        applyLockState();
+        getTermRows().forEach((row) => {
+          row.dataset.forceDatesFromTerms = "1";
+        });
+        recalc();
+      });
+    });
+
+    const bindStageDelayRows = () => {
+      getStageDelayRows().forEach((row) => {
+        if (row.dataset.stageDelayEventsBound === "1") return;
+        row.dataset.stageDelayEventsBound = "1";
+        const input = row.querySelector(".registration-stage-next-delay-days");
+        ["input", "change"].forEach((evt) => {
+          input?.addEventListener(evt, () => {
+            markRowsAfterDelay(row);
+            recalc();
+          });
+        });
+      });
+    };
+
+    const termsTbody = node.querySelector(".registration-contract-terms-table tbody");
+    termsTbody?.addEventListener("click", (event) => {
+      const removeButton = event.target.closest(".registration-stage-delay-remove");
+      if (removeButton) {
+        const delayRow = removeButton.closest(".registration-stage-delay-row");
+        const delayInput = delayRow?.querySelector(".registration-stage-next-delay-days");
+        if (!delayRow || !delayInput) return;
+        delayInput.value = "0";
+        delayRow.classList.add("d-none");
+        markRowsAfterDelay(delayRow);
+        recalc();
+        return;
+      }
+
+      const addButton = event.target.closest(".registration-stage-delay-add");
+      if (!addButton) return;
+      const termRow = addButton.closest(".registration-contract-terms-row");
+      const delayRow = getStageDelayRowForTermRow(termRow);
+      if (!delayRow) return;
+      delayRow.classList.remove("d-none");
+      bindStageDelayRows();
+      markRowsAfterDelay(delayRow);
+      recalc();
+      delayRow.querySelector(".registration-stage-next-delay-days")?.focus();
+    });
+
+    const bindTermRows = () => {
+      getTermRows().forEach((row) => {
+        if (row.dataset.stageCalcEventsBound === "1") return;
+        row.dataset.stageCalcEventsBound = "1";
+        const stage1Months = row.querySelector("[name='stage1_weeks']");
+        const stage2Weeks = row.querySelector("[name='stage2_weeks']");
+        const stage1DateEl = row.querySelector(".js-stage1-date");
+        const stage2EndTarget = row.querySelector(".js-stage2-end");
+        ["input", "change"].forEach((evt) => {
+          stage1Months?.addEventListener(evt, () => {
+            markRowsFrom(row);
+            recalc();
+          });
+          stage2Weeks?.addEventListener(evt, () => {
+            markRowsFrom(row);
+            recalc();
+          });
+          stage1DateEl?.addEventListener(evt, () => recalc(row, "preliminary"));
+          stage2EndTarget?.addEventListener(evt, () => recalc(row, "final"));
+        });
+      });
+    };
+
+    ["input", "change"].forEach((evt) => {
+      start.addEventListener(evt, () => {
+        getTermRows().forEach((row) => {
+          row.dataset.forceDatesFromTerms = "1";
+        });
+        recalc();
+      });
+      inputDays.addEventListener(evt, recalc);
+    });
+
+    node.__registrationStageCalculatorApi = {
+      sync() {
+        bindTermRows();
+        bindStageDelayRows();
+        applyLockState();
+        recalc();
+      },
+    };
+
+    bindTermRows();
+    bindStageDelayRows();
     applyLockState();
-    [start, inputDays, stage1Weeks, stage2Weeks, stage3Weeks]
-      .filter(Boolean)
-      .forEach((el) => ["input", "change"].forEach((evt) => el.addEventListener(evt, recalc)));
-
-    if (stage1DateEl) {
-      ["input", "change"].forEach((evt) => stage1DateEl.addEventListener(evt, recalc));
-    }
-
     recalc();
   }
 

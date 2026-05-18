@@ -1,4 +1,5 @@
 import base64
+import copy
 import json
 import uuid
 from io import BytesIO
@@ -14,7 +15,7 @@ from django.utils import timezone
 from docx import Document
 from docx.enum.text import WD_COLOR_INDEX
 
-from checklists_app.models import ChecklistItem, SourceDataItemFolder, SourceDataSectionFolder, SourceDataWorkspace
+from checklists_app.models import ChecklistItem, ChecklistStatus, SourceDataItemFolder, SourceDataSectionFolder, SourceDataWorkspace
 from classifiers_app.models import BusinessEntityIdentifierRecord, BusinessEntityRecord, LegalEntityRecord, OKSMCountry
 from contacts_app.models import CitizenshipRecord, PersonRecord
 from core.models import CloudStorageSettings
@@ -28,6 +29,7 @@ from policy_app.models import (
     LAWYER_GROUP,
     PROJECTS_HEAD_GROUP,
     Product,
+    TypicalServiceTerm,
     TypicalSectionSpecialty,
 )
 from experts_app.models import ExpertContractDetails, ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
@@ -129,7 +131,7 @@ class ProjectRegistrationFormTests(TestCase):
             position=2,
         )
 
-    def test_type_ids_and_deadline_are_required(self):
+    def test_type_ids_required_and_deadline_optional(self):
         form = ProjectRegistrationForm(
             data={
                 "number": 4444,
@@ -144,7 +146,7 @@ class ProjectRegistrationFormTests(TestCase):
 
         self.assertFalse(form.is_valid())
         self.assertIn("type_ids", form.errors)
-        self.assertIn("deadline", form.errors)
+        self.assertNotIn("deadline", form.errors)
 
     def test_number_accepts_zero_and_rejects_negative_values(self):
         valid_form = ProjectRegistrationForm(
@@ -208,6 +210,52 @@ class ProjectRegistrationFormTests(TestCase):
         form = ProjectRegistrationForm(instance=registration)
 
         self.assertEqual(form["number"].value(), 1)
+
+    def test_contract_schedule_labels_use_report_terms(self):
+        registration_form = ProjectRegistrationForm()
+        contract_form = ContractConditionsForm()
+
+        for form in (registration_form, contract_form):
+            self.assertEqual(
+                form.fields["stage1_weeks"].label,
+                "Срок подготовки Предварительного отчёта, мес.",
+            )
+            self.assertTrue(form.fields["stage1_weeks"].widget.attrs["readonly"])
+            self.assertIn("readonly-field", form.fields["stage1_weeks"].widget.attrs["class"])
+            self.assertEqual(
+                form.fields["stage1_end"].label,
+                "Дата Предварительного отчёта",
+            )
+            self.assertEqual(form.fields["stage1_date"].label, "Дата Предварительного отчёта")
+            self.assertNotIn("readonly-field", form.fields["stage1_date"].widget.attrs["class"])
+            self.assertEqual(
+                form.fields["stage2_weeks"].label,
+                "Срок подготовки Итогового отчёта, нед.",
+            )
+            self.assertTrue(form.fields["stage2_weeks"].widget.attrs["readonly"])
+            self.assertIn("readonly-field", form.fields["stage2_weeks"].widget.attrs["class"])
+            self.assertEqual(form.fields["stage2_end"].label, "Дата Итогового отчёта")
+            self.assertNotIn("readonly-field", form.fields["stage2_end"].widget.attrs["class"])
+
+    def test_contract_schedule_calculates_preliminary_report_in_months(self):
+        registration = ProjectRegistration.objects.create(
+            number=2,
+            group_member=self.group_member,
+            type=self.product,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            name="Проект со сроками",
+            status="Не начат",
+            contract_start=date(2026, 1, 31),
+            input_data=10,
+            stage1_weeks="1.0",
+            stage2_weeks="2.0",
+            stage3_weeks="4.0",
+        )
+
+        self.assertEqual(registration.stage1_end, date(2026, 2, 28))
+        self.assertEqual(registration.stage2_end, date(2026, 3, 14))
+        self.assertEqual(registration.completion_calc, date(2026, 3, 14))
+        self.assertEqual(str(registration.term_weeks), "6.3")
 
     def test_project_short_uid_uses_zero_padded_number(self):
         registration = ProjectRegistration.objects.create(
@@ -323,7 +371,7 @@ class ProjectRegistrationFormTests(TestCase):
 
     def test_projects_date_fields_use_native_date_inputs(self):
         forms_and_fields = [
-            (ProjectRegistrationForm(), ["deadline", "registration_date"]),
+            (ProjectRegistrationForm(), ["deadline", "evaluation_date", "registration_date"]),
             (ContractConditionsForm(), ["contract_start", "contract_end"]),
             (WorkVolumeForm(), ["registration_date"]),
             (LegalEntityForm(), ["registration_date"]),
@@ -598,6 +646,41 @@ class ProjectRegistrationFormViewTests(TestCase):
         self.assertContains(response, "Продукт")
         self.assertContains(response, "Контроль")
         self.assertContains(response, "Контроль качества")
+        content = response.content.decode("utf-8")
+        schedule_field_order = [
+            '<label class="form-label">Год</label>',
+            '<label class="form-label">Дата оценки</label>',
+            '<label class="form-label">Дедлайн</label>',
+            '<label class="form-label">Руководитель проекта</label>',
+            '<label class="form-label">Статус</label>',
+        ]
+        schedule_field_positions = [content.index(item) for item in schedule_field_order]
+        self.assertEqual(schedule_field_positions, sorted(schedule_field_positions))
+        self.assertContains(response, '<label class="form-label mb-2">Сроки</label>', html=False)
+        self.assertContains(response, '<th class="registration-contract-terms-stage-col">Этап</th>', html=False)
+        self.assertContains(response, 'value="Итого"', html=False)
+        self.assertContains(response, "js-registration-report-terms-lock", html=False)
+        self.assertContains(response, "registration-stage-delay-add", html=False)
+        self.assertContains(response, "registration-stage-next-delay-days", html=False)
+        self.assertNotContains(response, "Дата Предварительного отчёта, оконч. расчет")
+
+    def test_registration_form_product_meta_includes_typical_terms(self):
+        TypicalServiceTerm.objects.create(
+            product=self.product,
+            preliminary_report_months="1.5",
+            final_report_weeks=2,
+            position=1,
+        )
+
+        response = self.client.get(reverse("registration_form_create"))
+
+        self.assertEqual(response.status_code, 200)
+        meta = json.loads(response.context["registration_type_meta_json"])
+        product_meta = next(item for item in meta["products"] if item["id"] == self.product.pk)
+        self.assertEqual(
+            product_meta["typical_service_terms"],
+            {"source_data_weeks": "0", "preliminary_report_months": "1.5", "final_report_weeks": "2.0"},
+        )
 
     def test_registration_edit_rejects_multiple_products(self):
         registration = ProjectRegistration.objects.create(
@@ -667,6 +750,9 @@ class ProjectRegistrationFormViewTests(TestCase):
         second.refresh_from_db()
         self.assertContains(response, 'class="registration-number-has-next"', html=False)
         self.assertContains(response, 'class="registration-number-continuation"', html=False)
+        self.assertContains(response, 'data-reg-group-number="6211"', html=False)
+        self.assertContains(response, 'data-reg-group-cell="number"', html=False)
+        self.assertContains(response, "__refreshRegistrationVisibleGroups", html=False)
         self.assertContains(response, first.short_uid)
         self.assertContains(response, second.short_uid)
 
@@ -726,6 +812,951 @@ class ProjectRegistrationFormViewTests(TestCase):
         self.assertEqual(response.json(), {"ok": True, "status": "На проверке"})
         registration.refresh_from_db()
         self.assertEqual(registration.status, "На проверке")
+
+    def test_registration_status_update_copies_gantt_to_russian_production_calendar(self):
+        country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+        source_gantt_data = {
+            "data": [
+                {
+                    "id": "task-1",
+                    "text": "Работа",
+                    "start_date": "2026-04-30",
+                    "end_date": "2026-05-04",
+                    "deadline": "2026-05-04",
+                    "constraint_type": "fnlt",
+                    "constraint_date": "2026-05-04",
+                    "duration": 2,
+                    "progress": 0,
+                    "type": "task",
+                }
+            ],
+            "links": [],
+            "meta": {
+                "base_date": "2026-04-30",
+                "project_start": "2026-04-30",
+                "project_end": "2026-05-04",
+                "calendar_kind": "abstract",
+                "executor_display": "resource_name",
+                "version": 1,
+            },
+        }
+        term = TypicalServiceTerm.objects.create(
+            product=self.product,
+            preliminary_report_months="0",
+            final_report_weeks=0,
+            position=1,
+            gantt_data=copy.deepcopy(source_gantt_data),
+        )
+        registration = ProjectRegistration.objects.create(
+            number=6213,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Проект с типовым графиком",
+            status="Не начат",
+            year=2026,
+        )
+
+        with patch("projects_app.views.date") as mocked_date:
+            mocked_date.today.return_value = date(2026, 4, 30)
+            response = self.client.post(
+                reverse("registration_status_update", args=[registration.pk]),
+                {"status": "В работе"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        registration.refresh_from_db()
+        task = registration.gantt_data["data"][0]
+        meta = registration.gantt_data["meta"]
+        self.assertEqual(meta["calendar_kind"], "production")
+        self.assertEqual(meta["calendar_country_id"], country.pk)
+        self.assertEqual(meta["executor_display"], "executor")
+        self.assertEqual(task["start_date"], "2026-04-30")
+        self.assertEqual(task["end_date"], "2026-05-05")
+        self.assertEqual(task["deadline"], "2026-05-05")
+        self.assertEqual(task["constraint_date"], "2026-05-05")
+        self.assertEqual(task["duration"], 2)
+        term.refresh_from_db()
+        self.assertEqual(term.gantt_data, source_gantt_data)
+
+    def _create_project_gantt_asset_sync_fixture(self, *, deadline=None):
+        section_a = self.product.sections.create(
+            code="SEC-A",
+            short_name="Section A",
+            short_name_ru="Раздел A",
+            name_en="Section A",
+            name_ru="Раздел A",
+            accounting_type="Раздел",
+            position=1,
+        )
+        section_b = self.product.sections.create(
+            code="SEC-B",
+            short_name="Section B",
+            short_name_ru="Раздел B",
+            name_en="Section B",
+            name_ru="Раздел B",
+            accounting_type="Раздел",
+            position=2,
+        )
+        specialty_a = ExpertSpecialty.objects.create(specialty="Специальность A")
+        specialty_b = ExpertSpecialty.objects.create(specialty="Специальность B")
+        TypicalSectionSpecialty.objects.create(section=section_a, specialty=specialty_a, rank=1)
+        TypicalSectionSpecialty.objects.create(section=section_b, specialty=specialty_b, rank=1)
+        TypicalServiceTerm.objects.create(
+            product=self.product,
+            preliminary_report_months="0",
+            final_report_weeks=0,
+            position=1,
+            gantt_data={
+                "data": [
+                    {
+                        "id": "source-data",
+                        "text": "Исходные данные",
+                        "start_date": "2025-12-20",
+                        "end_date": "2026-01-01",
+                        "duration": 8,
+                        "progress": 0,
+                        "type": "project",
+                        "system_key": "source_data",
+                        "$open": True,
+                    },
+                    {
+                        "id": "source-data-asset-template",
+                        "text": "Актив",
+                        "start_date": "2025-12-20",
+                        "end_date": "2026-01-01",
+                        "duration": 8,
+                        "progress": 0,
+                        "type": "project",
+                        "parent": "source-data",
+                        "system_key": "source_data_asset",
+                        "$open": True,
+                    },
+                    {
+                        "id": "source-data-sec-a-template",
+                        "text": "Раздел A",
+                        "service_section_name": "Раздел A",
+                        "start_date": "2025-12-22",
+                        "end_date": "2025-12-26",
+                        "duration": 4,
+                        "progress": 0,
+                        "type": "service_section",
+                        "parent": "source-data-asset-template",
+                    },
+                    {
+                        "id": "source-data-sec-b-template",
+                        "text": "Раздел B",
+                        "service_section_name": "Раздел B",
+                        "start_date": "2025-12-26",
+                        "end_date": "2025-12-30",
+                        "duration": 4,
+                        "progress": 0,
+                        "type": "service_section",
+                        "parent": "source-data-asset-template",
+                    },
+                    {
+                        "id": "source-data-note-template",
+                        "text": "Вспомогательная задача исходных данных",
+                        "start_date": "2025-12-30",
+                        "end_date": "2026-01-01",
+                        "duration": 2,
+                        "progress": 0,
+                        "type": "task",
+                        "parent": "source-data-asset-template",
+                    },
+                    {
+                        "id": "preliminary",
+                        "text": "Предварительный отчёт",
+                        "start_date": "2026-01-01",
+                        "end_date": "2026-01-20",
+                        "duration": 13,
+                        "progress": 0,
+                        "type": "project",
+                        "system_key": "preliminary_report",
+                        "$open": True,
+                    },
+                    {
+                        "id": "before-asset",
+                        "text": "До актива",
+                        "start_date": "2026-01-01",
+                        "end_date": "2026-01-02",
+                        "duration": 1,
+                        "progress": 0,
+                        "type": "task",
+                        "parent": "preliminary",
+                    },
+                    {
+                        "id": "asset-template",
+                        "text": "Актив",
+                        "start_date": "2026-01-01",
+                        "end_date": "2026-01-20",
+                        "duration": 13,
+                        "progress": 0,
+                        "type": "project",
+                        "parent": "preliminary",
+                        "system_key": "preliminary_report_asset",
+                        "$open": True,
+                    },
+                    {
+                        "id": "sec-a-template",
+                        "text": "Раздел A",
+                        "service_section_name": "Раздел A",
+                        "start_date": "2026-01-02",
+                        "end_date": "2026-01-06",
+                        "duration": 2,
+                        "progress": 0,
+                        "type": "service_section",
+                        "parent": "asset-template",
+                    },
+                    {
+                        "id": "sec-b-template",
+                        "text": "Раздел B",
+                        "service_section_name": "Раздел B",
+                        "start_date": "2026-01-06",
+                        "end_date": "2026-01-08",
+                        "duration": 2,
+                        "progress": 0,
+                        "type": "service_section",
+                        "parent": "asset-template",
+                    },
+                    {
+                        "id": "preliminary-note-template",
+                        "text": "Вспомогательная задача предварительного отчета",
+                        "start_date": "2026-01-08",
+                        "end_date": "2026-01-10",
+                        "duration": 2,
+                        "progress": 0,
+                        "type": "task",
+                        "parent": "asset-template",
+                    },
+                    {
+                        "id": "after-asset",
+                        "text": "После актива",
+                        "start_date": "2026-01-08",
+                        "end_date": "2026-01-09",
+                        "duration": 1,
+                        "progress": 0,
+                        "type": "task",
+                        "parent": "preliminary",
+                    },
+                    {
+                        "id": "final",
+                        "text": "Итоговый отчёт",
+                        "start_date": "2026-01-20",
+                        "end_date": "2026-01-20",
+                        "duration": 0,
+                        "progress": 0,
+                        "type": "milestone",
+                        "system_key": "final_report",
+                    },
+                ],
+                "links": [
+                    {
+                        "id": "sec-a-to-final",
+                        "source": "sec-a-template",
+                        "target": "final",
+                        "type": "0",
+                        "lag": 3,
+                        "lag_mode": "auto",
+                    },
+                    {
+                        "id": "source-data-sec-a-to-preliminary",
+                        "source": "source-data-sec-a-template",
+                        "target": "preliminary",
+                        "type": "0",
+                        "lag": 2,
+                        "lag_mode": "fixed",
+                    },
+                    {
+                        "id": "source-data-sec-b-to-note",
+                        "source": "source-data-sec-b-template",
+                        "target": "source-data-note-template",
+                        "type": "0",
+                        "lag": 0,
+                        "lag_mode": "fixed",
+                    },
+                    {
+                        "id": "preliminary-sec-b-to-note",
+                        "source": "sec-b-template",
+                        "target": "preliminary-note-template",
+                        "type": "0",
+                        "lag": 0,
+                        "lag_mode": "fixed",
+                    },
+                ],
+                "meta": {
+                    "base_date": "2026-01-01",
+                    "project_start": "2026-01-01",
+                    "project_end": "2026-01-20",
+                    "calendar_kind": "abstract",
+                    "executor_display": "resource_name",
+                    "version": 1,
+                },
+            },
+        )
+        registration = ProjectRegistration.objects.create(
+            number=6214,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Проект с активами в графике",
+            status="Не начат",
+            year=2026,
+            deadline=deadline,
+        )
+        ProjectRegistrationProduct.objects.create(
+            registration=registration,
+            product=self.product,
+            rank=1,
+        )
+        asset_a = WorkVolume.objects.create(
+            project=registration,
+            name="Карьер",
+            asset_name="Карьер",
+            manager="Менеджер A",
+        )
+        asset_b = WorkVolume.objects.create(
+            project=registration,
+            name="Фабрика",
+            asset_name="Фабрика",
+            manager="Менеджер B",
+        )
+        Performer.objects.filter(work_item=asset_a).exclude(typical_section=section_a).delete()
+        Performer.objects.filter(work_item=asset_b).exclude(typical_section=section_b).delete()
+        performer_a = Performer.objects.get(work_item=asset_a, typical_section=section_a)
+        performer_a.executor = "Иванов Иван Иванович"
+        performer_a.save()
+        performer_b = Performer.objects.get(work_item=asset_b, typical_section=section_b)
+        performer_b.executor = "Петров Петр Петрович"
+        performer_b.save()
+
+        response = self.client.post(
+            reverse("registration_status_update", args=[registration.pk]),
+            {"status": "В работе"},
+        )
+        self.assertEqual(response.status_code, 200)
+        registration.refresh_from_db()
+        return registration, asset_a, asset_b, performer_a, performer_b
+
+    def test_registration_launch_creates_managed_asset_and_performer_gantt_tasks(self):
+        registration, asset_a, asset_b, performer_a, performer_b = self._create_project_gantt_asset_sync_fixture()
+
+        tasks = registration.gantt_data["data"]
+        task_ids = {str(task.get("id")) for task in tasks}
+        broken_links = [
+            link for link in registration.gantt_data["links"]
+            if str(link.get("source")) not in task_ids
+            or str(link.get("target")) not in task_ids
+        ]
+        asset_tasks = [
+            task for task in tasks
+            if task.get("managed_source") == "work_volume"
+            and task.get("managed_scope") == "preliminary_report"
+        ]
+        performer_tasks = [task for task in tasks if task.get("managed_source") == "performer"]
+
+        self.assertEqual(broken_links, [])
+        self.assertCountEqual([task["text"] for task in asset_tasks], ["Карьер", "Фабрика"])
+        self.assertCountEqual(
+            [task["work_volume_id"] for task in asset_tasks],
+            [asset_a.pk, asset_b.pk],
+        )
+        self.assertCountEqual(
+            [(task["work_volume_id"], task["performer_id"], task["service_section_name"], task["executor"]) for task in performer_tasks],
+            [
+                (asset_a.pk, performer_a.pk, "Раздел A", "Иванов И.И."),
+                (asset_b.pk, performer_b.pk, "Раздел B", "Петров П.П."),
+            ],
+        )
+        for task in performer_tasks:
+            parent = next(item for item in asset_tasks if item["id"] == task["parent"])
+            self.assertEqual(task["asset_name"], parent["text"])
+
+    def test_registration_launch_preserves_asset_template_position_among_preliminary_children(self):
+        registration, _asset_a, _asset_b, _performer_a, _performer_b = self._create_project_gantt_asset_sync_fixture()
+
+        preliminary_children = [
+            task["text"]
+            for task in registration.gantt_data["data"]
+            if task.get("parent") == "preliminary"
+        ]
+
+        self.assertEqual(preliminary_children, ["До актива", "Карьер", "Фабрика", "После актива"])
+
+    def test_registration_launch_preserves_service_section_template_links(self):
+        registration, _asset_a, _asset_b, performer_a, _performer_b = self._create_project_gantt_asset_sync_fixture()
+
+        managed_section_id = f"managed-performer-{performer_a.pk}"
+        link = next(
+            link for link in registration.gantt_data["links"]
+            if str(link.get("source")) == managed_section_id and str(link.get("target")) == "final"
+        )
+
+        self.assertEqual(link["type"], "0")
+        self.assertEqual(link["lag"], 3)
+        self.assertEqual(link["lag_mode"], "auto")
+
+    def test_registration_gantt_sync_creates_source_data_sections_from_checklists(self):
+        registration, asset_a, asset_b, _performer_a, _performer_b = self._create_project_gantt_asset_sync_fixture()
+        section_a = self.product.sections.get(code="SEC-A")
+        section_b = self.product.sections.get(code="SEC-B")
+
+        ChecklistItem.objects.create(
+            project=registration,
+            section=section_a,
+            code="A",
+            number=1,
+            short_name="Паспорт",
+            name="Паспорт по разделу A",
+            position=1,
+        )
+        ChecklistItem.objects.create(
+            project=registration,
+            section=section_b,
+            code="B",
+            number=1,
+            short_name="Отчет",
+            name="Отчет по разделу B",
+            position=2,
+        )
+        registration.refresh_from_db()
+
+        tasks = registration.gantt_data["data"]
+        source_assets = [
+            task for task in tasks
+            if task.get("managed_source") == "work_volume"
+            and task.get("managed_scope") == "source_data"
+        ]
+        source_sections = [
+            task for task in tasks
+            if task.get("managed_source") == "checklist_section"
+        ]
+
+        self.assertCountEqual([task["text"] for task in source_assets], ["Карьер", "Фабрика"])
+        self.assertCountEqual(
+            [
+                (
+                    task["work_volume_id"],
+                    task["typical_section_id"],
+                    task["service_section_name"],
+                    task["executor"],
+                    task["specialty"],
+                )
+                for task in source_sections
+            ],
+            [
+                (asset_a.pk, section_a.pk, "Раздел A", "", ""),
+                (asset_a.pk, section_b.pk, "Раздел B", "", ""),
+                (asset_b.pk, section_a.pk, "Раздел A", "", ""),
+                (asset_b.pk, section_b.pk, "Раздел B", "", ""),
+            ],
+        )
+
+    def test_project_gantt_sync_reflects_checklist_section_changes(self):
+        registration, asset_a, asset_b, _performer_a, _performer_b = self._create_project_gantt_asset_sync_fixture()
+        section_a = self.product.sections.get(code="SEC-A")
+        item = ChecklistItem.objects.create(
+            project=registration,
+            section=section_a,
+            code="A",
+            number=1,
+            short_name="Паспорт",
+            name="Паспорт по разделу A",
+            position=1,
+        )
+        registration.refresh_from_db()
+        self.assertCountEqual(
+            [
+                task["work_volume_id"]
+                for task in registration.gantt_data["data"]
+                if task.get("managed_source") == "checklist_section"
+                and task.get("typical_section_id") == section_a.pk
+            ],
+            [asset_a.pk, asset_b.pk],
+        )
+
+        item.delete()
+        registration.refresh_from_db()
+        self.assertFalse(
+            any(
+                task.get("managed_source") == "checklist_section"
+                and task.get("typical_section_id") == section_a.pk
+                for task in registration.gantt_data["data"]
+            )
+        )
+
+    def test_source_data_section_progress_reflects_imcm_provided_status_share(self):
+        registration, asset_a, _asset_b, _performer_a, _performer_b = self._create_project_gantt_asset_sync_fixture()
+        section_a = self.product.sections.get(code="SEC-A")
+        legal_entity = asset_a.legal_entities.get()
+        item_a = ChecklistItem.objects.create(
+            project=registration,
+            section=section_a,
+            code="A",
+            number=1,
+            short_name="Паспорт",
+            name="Паспорт по разделу A",
+            position=1,
+        )
+        item_b = ChecklistItem.objects.create(
+            project=registration,
+            section=section_a,
+            code="A",
+            number=2,
+            short_name="Отчет",
+            name="Отчет по разделу A",
+            position=2,
+        )
+
+        ChecklistStatus.objects.create(
+            checklist_item=item_a,
+            legal_entity=legal_entity,
+            status=ChecklistStatus.Status.PROVIDED,
+        )
+        ChecklistStatus.objects.create(
+            checklist_item=item_b,
+            legal_entity=legal_entity,
+            status=ChecklistStatus.Status.PARTIAL,
+        )
+        registration.refresh_from_db()
+        managed_section = next(
+            task for task in registration.gantt_data["data"]
+            if task.get("managed_source") == "checklist_section"
+            and task.get("work_volume_id") == asset_a.pk
+            and task.get("typical_section_id") == section_a.pk
+        )
+        self.assertEqual(managed_section["progress"], 0.5)
+
+        second_status = ChecklistStatus.objects.get(checklist_item=item_b, legal_entity=legal_entity)
+        second_status.status = ChecklistStatus.Status.PROVIDED
+        second_status.save()
+        registration.refresh_from_db()
+        managed_section = next(
+            task for task in registration.gantt_data["data"]
+            if task.get("managed_source") == "checklist_section"
+            and task.get("work_volume_id") == asset_a.pk
+            and task.get("typical_section_id") == section_a.pk
+        )
+        self.assertEqual(managed_section["progress"], 1)
+
+    def test_project_gantt_save_rejects_manual_source_data_section_progress_change(self):
+        registration, asset_a, _asset_b, _performer_a, _performer_b = self._create_project_gantt_asset_sync_fixture()
+        section_a = self.product.sections.get(code="SEC-A")
+        ChecklistItem.objects.create(
+            project=registration,
+            section=section_a,
+            code="A",
+            number=1,
+            short_name="Паспорт",
+            name="Паспорт по разделу A",
+            position=1,
+        )
+        registration.refresh_from_db()
+        submitted_payload = copy.deepcopy(registration.gantt_data)
+        managed_section = next(
+            task for task in submitted_payload["data"]
+            if task.get("managed_source") == "checklist_section"
+            and task.get("work_volume_id") == asset_a.pk
+            and task.get("typical_section_id") == section_a.pk
+        )
+        managed_section["progress"] = 0.75
+
+        response = self.client.post(
+            reverse("project_schedule_gantt", args=[registration.pk]),
+            data=json.dumps(submitted_payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Управляемые поля", response.json()["error"])
+
+    def test_registration_launch_preserves_source_data_section_template_links(self):
+        registration, _asset_a, _asset_b, _performer_a, _performer_b = self._create_project_gantt_asset_sync_fixture()
+        section_a = self.product.sections.get(code="SEC-A")
+        ChecklistItem.objects.create(
+            project=registration,
+            section=section_a,
+            code="A",
+            number=1,
+            short_name="Паспорт",
+            name="Паспорт по разделу A",
+            position=1,
+        )
+        registration.refresh_from_db()
+
+        managed_section = next(
+            task for task in registration.gantt_data["data"]
+            if task.get("managed_source") == "checklist_section"
+            and task.get("typical_section_id") == section_a.pk
+        )
+        link = next(
+            link for link in registration.gantt_data["links"]
+            if str(link.get("source")) == managed_section["id"]
+            and str(link.get("target")) == "preliminary"
+        )
+
+        self.assertEqual(link["type"], "0")
+        self.assertEqual(link["lag"], 2)
+        self.assertEqual(link["lag_mode"], "fixed")
+
+    def test_registration_launch_sets_preliminary_submission_deadline_constraint(self):
+        registration, _asset_a, _asset_b, _performer_a, _performer_b = self._create_project_gantt_asset_sync_fixture(
+            deadline=date(2026, 6, 15),
+        )
+
+        submission = next(
+            task for task in registration.gantt_data["data"]
+            if task.get("system_key") == "preliminary_report_submission"
+        )
+
+        self.assertEqual(submission["text"], "Отправка Предварительного отчёта")
+        self.assertEqual(submission["type"], "milestone")
+        self.assertEqual(submission["constraint_type"], "mfo")
+        self.assertEqual(submission["constraint_date"], "2026-06-15")
+
+    def test_registration_deadline_update_syncs_preliminary_submission_constraint(self):
+        registration, _asset_a, _asset_b, _performer_a, _performer_b = self._create_project_gantt_asset_sync_fixture()
+
+        response = self.client.post(
+            reverse("registration_deadline_update", args=[registration.pk]),
+            {"deadline": "2026-06-15"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        registration.refresh_from_db()
+        submission = next(
+            task for task in registration.gantt_data["data"]
+            if task.get("system_key") == "preliminary_report_submission"
+        )
+        self.assertEqual(submission["constraint_type"], "mfo")
+        self.assertEqual(submission["constraint_date"], "2026-06-15")
+
+        response = self.client.post(
+            reverse("registration_deadline_update", args=[registration.pk]),
+            {"deadline": ""},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        registration.refresh_from_db()
+        submission = next(
+            task for task in registration.gantt_data["data"]
+            if task.get("system_key") == "preliminary_report_submission"
+        )
+        self.assertNotIn("constraint_type", submission)
+        self.assertNotIn("constraint_date", submission)
+
+    def test_project_gantt_sync_reflects_performer_and_work_volume_changes(self):
+        registration, asset_a, asset_b, performer_a, performer_b = self._create_project_gantt_asset_sync_fixture()
+
+        performer_a.executor = "Сидоров Сидор Сидорович"
+        performer_a.save()
+        registration.refresh_from_db()
+        updated_task = next(
+            task for task in registration.gantt_data["data"]
+            if task.get("performer_id") == performer_a.pk
+        )
+        self.assertEqual(updated_task["executor"], "Сидоров С.С.")
+
+        performer_b_id = performer_b.pk
+        performer_b.delete()
+        registration.refresh_from_db()
+        self.assertFalse(
+            any(task.get("performer_id") == performer_b_id for task in registration.gantt_data["data"])
+        )
+
+        asset_a_id = asset_a.pk
+        asset_a.delete()
+        registration.refresh_from_db()
+        self.assertFalse(
+            any(task.get("work_volume_id") == asset_a_id for task in registration.gantt_data["data"])
+        )
+        self.assertTrue(
+            any(task.get("work_volume_id") == asset_b.pk for task in registration.gantt_data["data"])
+        )
+
+        asset_b_id = asset_b.pk
+        asset_b.delete()
+        registration.refresh_from_db()
+        self.assertFalse(
+            any(task.get("work_volume_id") == asset_b_id for task in registration.gantt_data["data"])
+        )
+        self.assertFalse(
+            any(task.get("managed_source") in {"work_volume", "performer"} for task in registration.gantt_data["data"])
+        )
+        self.assertTrue(
+            any(task.get("system_key") == "preliminary_report_asset" for task in registration.gantt_data["data"])
+        )
+
+    def test_source_data_section_assignment_does_not_track_preliminary_performer(self):
+        registration, asset_a, _asset_b, performer_a, _performer_b = self._create_project_gantt_asset_sync_fixture()
+        section_a = self.product.sections.get(code="SEC-A")
+        ChecklistItem.objects.create(
+            project=registration,
+            section=section_a,
+            code="A",
+            number=1,
+            short_name="Паспорт",
+            name="Паспорт по разделу A",
+            position=1,
+        )
+        registration.refresh_from_db()
+
+        source_section = next(
+            task for task in registration.gantt_data["data"]
+            if task.get("managed_source") == "checklist_section"
+            and task.get("work_volume_id") == asset_a.pk
+            and task.get("typical_section_id") == section_a.pk
+        )
+        self.assertEqual(source_section["executor"], "")
+        self.assertEqual(source_section["specialty"], "")
+
+        performer_a.executor = "Сидоров Сидор Сидорович"
+        performer_a.save()
+        registration.refresh_from_db()
+
+        preliminary_section = next(
+            task for task in registration.gantt_data["data"]
+            if task.get("managed_source") == "performer"
+            and task.get("performer_id") == performer_a.pk
+        )
+        source_section = next(
+            task for task in registration.gantt_data["data"]
+            if task.get("managed_source") == "checklist_section"
+            and task.get("work_volume_id") == asset_a.pk
+            and task.get("typical_section_id") == section_a.pk
+        )
+        self.assertEqual(preliminary_section["executor"], "Сидоров С.С.")
+        self.assertEqual(source_section["executor"], "")
+        self.assertEqual(source_section["specialty"], "")
+
+    def test_managed_gantt_tasks_cannot_be_deleted_through_schedule_api(self):
+        registration, asset_a, _asset_b, _performer_a, _performer_b = self._create_project_gantt_asset_sync_fixture()
+        asset_task = next(
+            task for task in registration.gantt_data["data"]
+            if task.get("managed_source") == "work_volume"
+            and task.get("managed_scope") == "preliminary_report"
+            and task.get("work_volume_id") == asset_a.pk
+        )
+
+        from projects_app.services import gantt_tasks
+
+        self.assertFalse(gantt_tasks.delete_task(registration, asset_task["id"]))
+        registration.refresh_from_db()
+        self.assertTrue(
+            any(task.get("id") == asset_task["id"] for task in registration.gantt_data["data"])
+        )
+
+        submitted_payload = copy.deepcopy(registration.gantt_data)
+        submitted_payload["data"] = [
+            task for task in submitted_payload["data"]
+            if task.get("id") != asset_task["id"]
+        ]
+        response = self.client.post(
+            reverse("project_schedule_gantt", args=[registration.pk]),
+            data=json.dumps(submitted_payload),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Управляемые задачи", response.json()["error"])
+
+    def test_project_gantt_save_allows_managed_performer_executor_text(self):
+        registration, _asset_a, _asset_b, performer_a, _performer_b = self._create_project_gantt_asset_sync_fixture()
+        submitted_payload = copy.deepcopy(registration.gantt_data)
+        unmanaged_task = next(task for task in submitted_payload["data"] if task.get("id") == "final")
+        unmanaged_task["progress"] = 25
+
+        response = self.client.post(
+            reverse("project_schedule_gantt", args=[registration.pk]),
+            data=json.dumps(submitted_payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.content.decode("utf-8"))
+        registration.refresh_from_db()
+        managed_task = next(
+            task for task in registration.gantt_data["data"]
+            if task.get("performer_id") == performer_a.pk
+        )
+        self.assertEqual(managed_task["executor"], "Иванов И.И.")
+        final_task = next(task for task in registration.gantt_data["data"] if task.get("id") == "final")
+        self.assertEqual(final_task["progress"], 25)
+
+    def test_project_gantt_save_accepts_legacy_full_name_managed_executor(self):
+        registration, _asset_a, _asset_b, performer_a, _performer_b = self._create_project_gantt_asset_sync_fixture()
+        submitted_payload = copy.deepcopy(registration.gantt_data)
+        managed_task = next(
+            task for task in submitted_payload["data"]
+            if task.get("performer_id") == performer_a.pk
+        )
+        managed_task["executor"] = "Иванов Иван Иванович"
+
+        response = self.client.post(
+            reverse("project_schedule_gantt", args=[registration.pk]),
+            data=json.dumps(submitted_payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.content.decode("utf-8"))
+        registration.refresh_from_db()
+        saved_task = next(
+            task for task in registration.gantt_data["data"]
+            if task.get("performer_id") == performer_a.pk
+        )
+        self.assertEqual(saved_task["executor"], "Иванов И.И.")
+
+    def test_project_gantt_save_allows_existing_template_executor_assignments(self):
+        registration, _asset_a, _asset_b, _performer_a, _performer_b = self._create_project_gantt_asset_sync_fixture()
+        submitted_payload = copy.deepcopy(registration.gantt_data)
+        submitted_payload["data"].append({
+            "id": "template-assigned-task",
+            "text": "Шаблонная задача с исполнителем",
+            "start_date": "2026-01-10",
+            "end_date": "2026-01-12",
+            "type": "task",
+            "specialty": "Специальность A",
+            "executor": "Пичугин В.А.",
+            "resource_id": "resource-template",
+        })
+        submitted_payload.setdefault("meta", {})["resources"] = [
+            {
+                "id": "resource-template",
+                "specialty": "Специальность A",
+                "executor": "Пичугин В.А.",
+                "task_ids": ["template-assigned-task", "missing-task"],
+            },
+            {
+                "id": "resource-template",
+                "specialty": "Специальность B",
+                "executor": "Дворников А.В.",
+                "task_ids": [],
+            },
+        ]
+
+        response = self.client.post(
+            reverse("project_schedule_gantt", args=[registration.pk]),
+            data=json.dumps(submitted_payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.content.decode("utf-8"))
+        registration.refresh_from_db()
+        saved_task = next(task for task in registration.gantt_data["data"] if task["id"] == "template-assigned-task")
+        self.assertEqual(saved_task["executor"], "Пичугин В.А.")
+        resources = registration.gantt_data["meta"]["resources"]
+        self.assertEqual([resource["id"] for resource in resources], ["resource-template", "resource-template-2"])
+
+    def test_project_gantt_save_drops_browser_resource_for_managed_task_without_specialty(self):
+        registration, asset_a, _asset_b, _performer_a, _performer_b = self._create_project_gantt_asset_sync_fixture()
+        section_without_specialties = self.product.sections.create(
+            code="SEC-C",
+            short_name="Section C",
+            short_name_ru="Раздел C",
+            name_en="Section C",
+            name_ru="Раздел C",
+            accounting_type="Раздел",
+            position=3,
+        )
+        performer = Performer.objects.create(
+            work_item=asset_a,
+            registration=registration,
+            asset_name=asset_a.asset_name,
+            typical_section=section_without_specialties,
+            executor="Соколова Мария Александровна",
+        )
+        asset_task = next(
+            task for task in registration.gantt_data["data"]
+            if task.get("managed_source") == "work_volume"
+            and task.get("managed_scope") == "preliminary_report"
+            and task.get("work_volume_id") == asset_a.pk
+        )
+        task_id = f"managed-performer-{performer.pk}"
+        browser_resource_id = "resource-browser-managed-without-specialty"
+        registration.gantt_data["data"].append({
+            "id": task_id,
+            "text": "Раздел C",
+            "service_section_name": "Раздел C",
+            "start_date": "2026-01-10",
+            "end_date": "2026-01-12",
+            "duration": 2,
+            "progress": 0,
+            "type": "service_section",
+            "parent": asset_task["id"],
+            "managed_source": "performer",
+            "performer_id": performer.pk,
+            "work_volume_id": asset_a.pk,
+            "typical_section_id": section_without_specialties.pk,
+            "asset_name": asset_a.asset_name,
+            "specialty": "",
+            "executor": "Соколова М.А.",
+            "resource_id": browser_resource_id,
+            "resource_name": "Соколова М.А.",
+        })
+        registration.gantt_data.setdefault("meta", {}).setdefault("resources", []).append({
+            "id": browser_resource_id,
+            "specialty": "",
+            "executor": "Соколова М.А.",
+            "resource_name": "Соколова М.А.",
+            "task_ids": [task_id],
+        })
+        registration.save(update_fields=["gantt_data"])
+        submitted_payload = copy.deepcopy(registration.gantt_data)
+
+        response = self.client.post(
+            reverse("project_schedule_gantt", args=[registration.pk]),
+            data=json.dumps(submitted_payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.content.decode("utf-8"))
+        registration.refresh_from_db()
+        saved_task = next(task for task in registration.gantt_data["data"] if task["id"] == task_id)
+        self.assertEqual(saved_task["specialty"], "")
+        self.assertNotIn("resource_id", saved_task)
+        self.assertFalse(
+            any(resource["id"] == browser_resource_id for resource in registration.gantt_data["meta"]["resources"])
+        )
+
+    def test_project_gantt_get_includes_managed_performer_executor_options(self):
+        registration, _asset_a, _asset_b, _performer_a, _performer_b = self._create_project_gantt_asset_sync_fixture()
+        conflict_user = get_user_model().objects.create_user(
+            username="managed.executor.conflict",
+            first_name="Иван",
+            last_name="Иванов",
+            is_staff=True,
+        )
+        conflict_employee = Employee.objects.create(user=conflict_user, patronymic="Иванович")
+        conflict_profile = ExpertProfile.objects.create(employee=conflict_employee)
+        conflict_specialty = ExpertSpecialty.objects.create(specialty="Другая специальность")
+        ExpertProfileSpecialty.objects.create(
+            profile=conflict_profile,
+            specialty=conflict_specialty,
+            rank=1,
+        )
+
+        response = self.client.get(reverse("project_schedule_gantt", args=[registration.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        executor_options = payload["executor_options"]
+        self.assertTrue(
+            any(
+                item["value"] == "Иванов И.И."
+                and item["label"] == "Иванов И.И."
+                and "Специальность A" in item["specialties"]
+                for item in executor_options
+            )
+        )
+        self.assertTrue(
+            any(item["value"] == "Петров П.П." and item["label"] == "Петров П.П." for item in executor_options)
+        )
 
     def test_registration_status_update_rejects_unknown_status(self):
         registration = ProjectRegistration.objects.create(
@@ -878,6 +1909,73 @@ class ProjectRegistrationFormViewTests(TestCase):
         self.assertFalse(response.json()["ok"])
         registration.refresh_from_db()
         self.assertIsNone(registration.deadline)
+
+    def test_registration_evaluation_date_update_changes_project_evaluation_date(self):
+        registration = ProjectRegistration.objects.create(
+            number=6210,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Проект со сменой даты оценки",
+            status="Не начат",
+            year=2026,
+        )
+
+        response = self.client.post(
+            reverse("registration_evaluation_date_update", args=[registration.pk]),
+            {"evaluation_date": "2026-06-15"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {"ok": True, "evaluationDate": "2026-06-15", "evaluationDateLabel": "15.06.2026"},
+        )
+        registration.refresh_from_db()
+        self.assertEqual(registration.evaluation_date, date(2026, 6, 15))
+
+    def test_registration_evaluation_date_update_allows_clearing_project_evaluation_date(self):
+        registration = ProjectRegistration.objects.create(
+            number=6211,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Проект без даты оценки",
+            status="Не начат",
+            year=2026,
+            evaluation_date=date(2026, 6, 15),
+        )
+
+        response = self.client.post(
+            reverse("registration_evaluation_date_update", args=[registration.pk]),
+            {"evaluation_date": ""},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"ok": True, "evaluationDate": "", "evaluationDateLabel": ""})
+        registration.refresh_from_db()
+        self.assertIsNone(registration.evaluation_date)
+
+    def test_registration_evaluation_date_update_rejects_invalid_date(self):
+        registration = ProjectRegistration.objects.create(
+            number=6212,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Проект с ошибочной датой оценки",
+            status="Не начат",
+            year=2026,
+        )
+
+        response = self.client.post(
+            reverse("registration_evaluation_date_update", args=[registration.pk]),
+            {"evaluation_date": "15.06.2026"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.json()["ok"])
+        registration.refresh_from_db()
+        self.assertIsNone(registration.evaluation_date)
 
 
 class ProjectRegistrationRegistrySyncTests(TestCase):
@@ -1082,6 +2180,19 @@ class ProjectRegistrationRegistrySyncTests(TestCase):
 
         self.assertEqual(deps_response.status_code, 200)
         self.assertEqual(deps_response.json()["type_short"], self.second_product.short_name)
+
+    def test_registration_create_applies_schedule_terms_by_product_row(self):
+        response = self._post_registration(
+            type_id=[self.product.pk, self.second_product.pk],
+            contract_start="2026-01-01",
+            stage1_weeks=["1.0", "2.0"],
+            stage2_weeks=["3.0", "4.0"],
+        )
+
+        self.assertEqual(response.status_code, 200)
+        projects = list(ProjectRegistration.objects.filter(number=4444).order_by("position", "id"))
+        self.assertEqual([str(project.stage1_weeks) for project in projects], ["1.0", "2.0"])
+        self.assertEqual([str(project.stage2_weeks) for project in projects], ["3.0", "4.0"])
 
 
 class WorkVolumePerformerCreationTests(TestCase):
@@ -1441,11 +2552,39 @@ class ProjectProductLinkSyncTests(TestCase):
         self.assertNotContains(response, '<td class="text-nowrap">DD</td>', html=False)
 
     def test_projects_partial_splits_scope_tables_to_separate_subsection(self):
-        ProjectRegistration.objects.create(
+        project = ProjectRegistration.objects.create(
             number=6102,
             type=self.product,
             name="Проект в работе",
             status="В работе",
+            year=2026,
+        )
+        project.gantt_data = {
+            "data": [
+                {
+                    "id": "task-1",
+                    "parent": 0,
+                    "text": "Подготовка данных",
+                    "start_date": "2026-05-14",
+                    "end_date": "2026-05-21",
+                    "specialty": "Оценка",
+                    "executor": "Иванов И.И.",
+                    "deadline": "2026-05-25",
+                    "constraint_type": "fnlt",
+                    "constraint_date": "2026-05-25",
+                    "duration": 5,
+                    "progress": 50,
+                }
+            ],
+            "links": [],
+            "meta": {},
+        }
+        project.save(update_fields=["gantt_data"])
+        new_project = ProjectRegistration.objects.create(
+            number=6104,
+            type=self.product,
+            name="Новый проект без графика",
+            status="Не начат",
             year=2026,
         )
 
@@ -1455,11 +2594,13 @@ class ProjectProductLinkSyncTests(TestCase):
         self.assertContains(response, 'id="projects-content-launch" class="projects-section-content"', html=False)
         self.assertContains(response, 'id="projects-content-scope" class="projects-section-content d-none"', html=False)
         self.assertContains(response, "Реестр проектов")
-        self.assertContains(response, "Запуск")
+        self.assertContains(response, "Иконки статуса")
         self.assertContains(response, 'data-registration-launch', html=False)
         self.assertContains(response, 'data-registration-status', html=False)
         self.assertContains(response, 'data-registration-manager', html=False)
         self.assertContains(response, 'data-registration-deadline', html=False)
+        self.assertContains(response, 'data-registration-date', html=False)
+        self.assertContains(response, "Дата оценки")
         self.assertContains(response, 'id="registration-status-editor"', html=False)
         self.assertContains(response, 'id="registration-manager-editor"', html=False)
         self.assertContains(response, 'id="registration-deadline-editor"', html=False)
@@ -1467,6 +2608,26 @@ class ProjectProductLinkSyncTests(TestCase):
         self.assertContains(response, 'bi bi-circle', html=False)
         self.assertContains(response, 'reg-launch-status--work', html=False)
         self.assertContains(response, "Сроки проекта по договору")
+        self.assertContains(response, "Срок предв. отчёта, мес.")
+        self.assertContains(response, "Дата предв. отчёта")
+        self.assertContains(response, "Срок итог. отчёта, нед.")
+        self.assertContains(response, "Дата итог. отчёта")
+        self.assertNotContains(response, "Этап 3, нед.")
+        self.assertContains(response, "График проекта")
+        self.assertContains(response, "Подготовка данных")
+        self.assertContains(response, "14.05.2026")
+        self.assertContains(response, "50%")
+        self.assertContains(response, 'id="project-schedule-filter-dropdown"', html=False)
+        self.assertContains(response, 'id="project-schedule-filter-none"', html=False)
+        self.assertContains(response, f'id="project-schedule-filter-{new_project.pk}"', html=False)
+        self.assertContains(response, "Не выбран")
+        self.assertContains(response, 'type="radio"', html=False)
+        self.assertContains(response, 'name="project-schedule-project-radio"', html=False)
+        self.assertContains(response, 'proposal-payment-view-option', html=False)
+        self.assertNotContains(response, 'id="project-schedule-filter-all"', html=False)
+        self.assertContains(response, 'name="project-schedule-select"', html=False)
+        self.assertContains(response, 'id="project-schedule-actions"', html=False)
+        self.assertContains(response, 'data-target-name="project-schedule-select"', html=False)
         self.assertContains(response, "Объем услуг: активы")
         self.assertContains(response, "Объем услуг: юрлица")
 
@@ -1481,12 +2642,96 @@ class ProjectProductLinkSyncTests(TestCase):
         )
         self.assertLess(
             content.index('id="projects-content-scope"'),
+            content.index("График проекта"),
+        )
+        self.assertLess(
+            content.index("График проекта"),
             content.index("Объем услуг: активы"),
         )
         self.assertLess(
             content.index("Объем услуг: активы"),
             content.index("Объем услуг: юрлица"),
         )
+        registration_header_order = [
+            '<th class="nowrap" data-col="name">Название</th>',
+            '<th data-col="year">Год</th>',
+            '<th data-col="evaluation-date">Дата оценки</th>',
+            '<th data-col="deadline">Дедлайн</th>',
+            '<th data-col="manager">Руководитель проекта</th>',
+            '<th class="reg-launch-cell" data-col="launch"><span class="visually-hidden">Запуск</span></th>',
+            '<th data-col="status">Статус</th>',
+        ]
+        registration_header_positions = [content.index(item) for item in registration_header_order]
+        self.assertEqual(registration_header_positions, sorted(registration_header_positions))
+
+    def test_project_schedule_crud_and_move_actions(self):
+        project = ProjectRegistration.objects.create(
+            number=6103,
+            type=self.product,
+            name="Проект с графиком",
+            status="В работе",
+            year=2026,
+        )
+
+        create_payload = {
+            "task": "Старт",
+            "start_date": "2026-05-14",
+            "end_date": "2026-05-15",
+            "specialty": "",
+            "executor": "",
+            "deadline": "2026-05-16",
+            "constraint_type": "",
+            "constraint_date": "",
+            "duration": "2",
+            "duration_star": "2",
+            "predecessors": "",
+            "progress": "10",
+        }
+        response = self.client.post(
+            reverse("project_schedule_form_create", args=[project.pk]), create_payload
+        )
+        self.assertEqual(response.status_code, 200)
+        project.refresh_from_db()
+        tasks = project.gantt_data.get("data", [])
+        self.assertEqual(len(tasks), 1)
+        first_task = tasks[0]
+        self.assertEqual(first_task["text"], "Старт")
+        self.assertEqual(int(first_task.get("progress") or 0), 10)
+        first_task_id = str(first_task["id"])
+
+        # Append a second task directly via the same service the view uses, then
+        # move the first one down.
+        from projects_app.services import gantt_tasks as _gantt_tasks
+        second_task_id = _gantt_tasks.add_task(project, {"text": "Финиш"})
+
+        response = self.client.post(
+            reverse("project_schedule_move_down", args=[project.pk, first_task_id])
+        )
+        self.assertEqual(response.status_code, 200)
+        project.refresh_from_db()
+        ordered_ids = [str(t["id"]) for t in project.gantt_data["data"]]
+        self.assertEqual(ordered_ids, [second_task_id, first_task_id])
+
+        edit_payload = {**create_payload, "task": "Обновлённый старт", "progress": "75"}
+        response = self.client.post(
+            reverse("project_schedule_form_edit", args=[project.pk, first_task_id]),
+            edit_payload,
+        )
+        self.assertEqual(response.status_code, 200)
+        project.refresh_from_db()
+        edited = next(
+            t for t in project.gantt_data["data"] if str(t["id"]) == first_task_id
+        )
+        self.assertEqual(edited["text"], "Обновлённый старт")
+        self.assertEqual(int(edited.get("progress") or 0), 75)
+
+        response = self.client.post(
+            reverse("project_schedule_delete", args=[project.pk, first_task_id])
+        )
+        self.assertEqual(response.status_code, 200)
+        project.refresh_from_db()
+        remaining_ids = [str(t["id"]) for t in project.gantt_data["data"]]
+        self.assertNotIn(first_task_id, remaining_ids)
 
 
 class ExpertProjectVisibilityTests(TestCase):

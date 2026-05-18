@@ -796,6 +796,7 @@
                     {% endif %}
                 </th>
                 <th>Продукт</th>
+                <th>Сроки предоставления исходных данных, нед.</th>
                 <th>Срок подготовки Предварительного отчёта, мес.</th>
                 <th>Срок подготовки Итогового отчёта, нед.</th>
             </tr>
@@ -826,11 +827,12 @@
                         {% endif %}
                     </td>
                     <td class="text-nowrap">{{ item.product.short_name }}</td>
+                    <td class="text-nowrap">{{ item.source_data_weeks }}</td>
                     <td class="text-nowrap">{{ item.preliminary_report_months_display }}</td>
                     <td class="text-nowrap">{{ item.final_report_weeks }}</td>
                 </tr>
             {% empty %}
-                <tr><td colspan="4" class="text-muted">Пока нет данных.</td></tr>
+                <tr><td colspan="5" class="text-muted">Пока нет данных.</td></tr>
             {% endfor %}
             </tbody>
         </table>

@@ -51,43 +51,62 @@
         {{ form.term_weeks }}
       </div>
 
-      <!-- Строка 3 -->
       <div class="col-3">
         <label class="form-label">Исх. данные, дней</label>
         {{ form.input_data }}
       </div>
-      <div class="col-3">
-        <label class="form-label">Этап 1, недель</label>
-        {{ form.stage1_weeks }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">Этап 1, оконч. расчет</label>
-        {{ form.stage1_end }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">
-          Этап 1, дата
-          <i class="bi bi-lock-fill ms-1 js-stage1-lock" role="button" title="Разблокировать ввод даты"></i>
-        </label>
-        {{ form.stage1_date }}
-      </div>
 
-      <!-- Строка 4 -->
-      <div class="col-3">
-        <label class="form-label">Этап 2, недель</label>
-        {{ form.stage2_weeks }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">Этап 2, оконч. расчет</label>
-        {{ form.stage2_end }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">Этап 3, недель</label>
-        {{ form.stage3_weeks }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">Этап 3, оконч. расчет</label>
-        {{ form.stage3_end }}
+      <div class="col-12">
+        <label class="form-label mb-2">Сроки</label>
+        <div class="registration-contract-terms-editor">
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0 registration-contract-terms-table">
+              <thead>
+                <tr>
+                  <th class="registration-contract-terms-stage-col">Этап</th>
+                  <th>
+                    {{ form.stage1_weeks.label }}
+                    <i class="bi bi-lock-fill ms-1 js-registration-report-terms-lock" role="button" title="Разблокировать ввод сроков"></i>
+                  </th>
+                  <th>{{ form.stage1_date.label }}</th>
+                  <th>
+                    {{ form.stage2_weeks.label }}
+                    <i class="bi bi-lock-fill ms-1 js-registration-report-terms-lock" role="button" title="Разблокировать ввод сроков"></i>
+                  </th>
+                  <th>{{ form.stage2_end.label }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="registration-contract-terms-row">
+                  <td class="registration-contract-terms-stage-col">
+                    <input type="text" class="form-control readonly-field registration-contract-stage-label-input" value="Этап 1" readonly tabindex="-1">
+                  </td>
+                  <td>{{ form.stage1_weeks }}</td>
+                  <td>{{ form.stage1_date }}</td>
+                  <td>{{ form.stage2_weeks }}</td>
+                  <td>{{ form.stage2_end }}</td>
+                </tr>
+                <tr class="registration-contract-terms-total-row">
+                  <td class="registration-contract-terms-stage-col">
+                    <input type="text" class="form-control readonly-field registration-contract-stage-label-input" value="Итого" readonly tabindex="-1">
+                  </td>
+                  <td>
+                    <input type="number" class="form-control readonly-field js-registration-total-stage1-months" value="" readonly tabindex="-1">
+                  </td>
+                  <td>
+                    <input type="text" class="form-control readonly-field" value="" readonly tabindex="-1">
+                  </td>
+                  <td>
+                    <input type="number" class="form-control readonly-field js-registration-total-stage2-weeks" value="" readonly tabindex="-1">
+                  </td>
+                  <td>
+                    <input type="text" class="form-control readonly-field" value="" readonly tabindex="-1">
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
 
       <!-- Строка 5 -->
@@ -122,14 +141,56 @@
     background-color: #f8f9fa;
     color: #6c757d;
   }
-  .js-stage1-lock {
+  #projects-modal .registration-contract-terms-editor {
+    border: 1px solid #dee2e6;
+    border-radius: .5rem;
+    padding: 1rem;
+    background: #fff;
+    margin-bottom: 1rem;
+  }
+  #projects-modal .registration-contract-terms-table {
+    margin-bottom: 0;
+    width: 100%;
+  }
+  #projects-modal .registration-contract-terms-table th {
+    white-space: nowrap;
+    font-weight: 400;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #projects-modal .registration-contract-terms-table td {
+    vertical-align: middle;
+    padding-top: .45rem;
+    padding-bottom: .45rem;
+  }
+  #projects-modal .registration-contract-terms-table .registration-contract-terms-stage-col {
+    width: 5.5rem;
+    min-width: 5.5rem;
+    max-width: 5.5rem;
+  }
+  #projects-modal .registration-contract-terms-table th.registration-contract-terms-stage-col,
+  #projects-modal .registration-contract-terms-table td.registration-contract-terms-stage-col {
+    padding-left: 0 !important;
+    padding-right: .25rem !important;
+  }
+  #projects-modal .registration-contract-terms-table > :not(caption) > * > * {
+    border-top: 0;
+    border-bottom: 0;
+  }
+  #projects-modal .registration-contract-stage-label-input {
+    text-align: center;
+  }
+  #projects-modal .registration-contract-terms-total-row td {
+    background: transparent;
+  }
+  #projects-modal .js-registration-report-terms-lock {
     cursor: pointer;
     font-size: .85em;
     vertical-align: baseline;
     color: #6c757d;
     transition: color .15s;
   }
-  .js-stage1-lock:hover { color: #0d6efd; }
+  #projects-modal .js-registration-report-terms-lock:hover { color: #0d6efd; }
 </style>
 <script>
 (function() {
@@ -161,182 +222,213 @@
     return d;
   }
 
+  function addMonths(date, n) {
+    const safeMonths = Math.max(parseFloat(n) || 0, 0);
+    const wholeMonths = Math.floor(safeMonths);
+    const fractionalDays = Math.round((safeMonths - wholeMonths) * 30);
+    const monthIndex = date.getMonth() + wholeMonths;
+    const year = date.getFullYear() + Math.floor(monthIndex / 12);
+    const month = ((monthIndex % 12) + 12) % 12;
+    const day = Math.min(date.getDate(), new Date(year, month + 1, 0).getDate());
+    return addDays(new Date(year, month, day), fractionalDays);
+  }
+
   function diffDays(a, b) {
     return Math.round((a - b) / 86400000);
+  }
+
+  function diffMonths(a, b) {
+    let wholeMonths = (a.getFullYear() - b.getFullYear()) * 12 + (a.getMonth() - b.getMonth());
+    let anchor = addMonths(b, wholeMonths);
+    if (anchor > a) {
+      wholeMonths -= 1;
+      anchor = addMonths(b, wholeMonths);
+    }
+    return Math.max(0, wholeMonths + diffDays(a, anchor) / 30);
   }
 
   function fmtDate(d) {
     return d.toLocaleDateString("ru-RU", DATE_FMT);
   }
 
+  function fmtDateIso(d) {
+    if (!d || isNaN(d)) return "";
+    return d.getFullYear() + "-"
+      + String(d.getMonth() + 1).padStart(2, "0") + "-"
+      + String(d.getDate()).padStart(2, "0");
+  }
+
   function attachStageCalculator(node) {
     if (!node) return;
     const start        = node.querySelector("[name='contract_start']");
     const inputDays    = node.querySelector("[name='input_data']");
-    const stage1Weeks  = node.querySelector("[name='stage1_weeks']");
+    const stage1Months = node.querySelector("[name='stage1_weeks']");
     const stage2Weeks  = node.querySelector("[name='stage2_weeks']");
-    const stage3Weeks  = node.querySelector("[name='stage3_weeks']");
     const stage1DateEl = node.querySelector(".js-stage1-date");
 
-    const stage1EndTarget  = node.querySelector(".js-stage1-end");
     const stage2EndTarget  = node.querySelector(".js-stage2-end");
-    const stage3EndTarget  = node.querySelector(".js-stage3-end");
     const completionTarget = node.querySelector(".js-completion-calc");
     const termWeeksTarget  = node.querySelector(".js-term-weeks");
+    const totalMonthsTarget = node.querySelector(".js-registration-total-stage1-months");
+    const totalWeeksTarget = node.querySelector(".js-registration-total-stage2-weeks");
 
-    if (!start || !inputDays || !stage1Weeks || !stage1EndTarget) return;
+    if (!start || !inputDays || !stage1Months || !stage1DateEl || !stage2Weeks || !stage2EndTarget) return;
 
-    let stage1DateMode = false;
+    let reportTermsEditMode = false;
 
-    const lockIcon = node.querySelector(".js-stage1-lock")
-      || document.querySelector("#projects-modal .js-stage1-lock");
+    const lockIcons = Array.from(node.querySelectorAll(".js-registration-report-terms-lock"));
 
-    function setReadonly(el, on) {
+    function parseDecimal(value) {
+      const raw = String(value || "").replace(",", ".").trim();
+      if (!raw) return null;
+      const parsed = parseFloat(raw);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function formatDecimal(value) {
+      return Number.isFinite(value) ? value.toFixed(1) : "";
+    }
+
+    function setDateValue(input, date) {
+      if (!input) return;
+      if (!date || isNaN(date)) {
+        input.value = "";
+        if (input._flatpickr) input._flatpickr.clear(false);
+        if (window.$ && $.fn && $.fn.datepicker) $(input).datepicker("update", "");
+        return;
+      }
+      const isoValue = fmtDateIso(date);
+      const displayValue = fmtDate(date);
+      if (input._flatpickr) {
+        input._flatpickr.setDate(isoValue, false, "Y-m-d");
+        return;
+      }
+      if (window.$ && $.fn && $.fn.datepicker && input.dataset.hasPicker === "1") {
+        $(input).datepicker("update", displayValue);
+        return;
+      }
+      input.value = input.type === "date" ? isoValue : displayValue;
+    }
+
+    function setReadonly(el, on, options) {
       if (!el) return;
       el.readOnly = on;
       el.classList.toggle("readonly-field", on);
       if (on) el.setAttribute("readonly", ""); else el.removeAttribute("readonly");
-    }
-
-    function applyLockState() {
-      if (stage1DateMode) {
-        if (stage1DateEl) {
-          stage1DateEl.disabled = false;
-          stage1DateEl.removeAttribute("disabled");
-          stage1DateEl.removeAttribute("readonly");
-          stage1DateEl.readOnly = false;
-          stage1DateEl.type = "date";
-          stage1DateEl.classList.remove("readonly-field");
-        }
-        setReadonly(stage1Weeks, true);
-        if (lockIcon) {
-          lockIcon.classList.remove("bi-lock-fill");
-          lockIcon.classList.add("bi-unlock-fill");
-          lockIcon.title = "Заблокировать — вернуться к вводу недель";
-        }
-      } else {
-        if (stage1DateEl) {
-          stage1DateEl.type = "text";
-          stage1DateEl.readOnly = true;
-          stage1DateEl.setAttribute("readonly", "");
-          stage1DateEl.classList.add("readonly-field");
-        }
-        setReadonly(stage1Weeks, false);
-        if (lockIcon) {
-          lockIcon.classList.remove("bi-unlock-fill");
-          lockIcon.classList.add("bi-lock-fill");
-          lockIcon.title = "Разблокировать ввод даты";
-        }
+      if (!on) el.removeAttribute("disabled");
+      el.tabIndex = on ? -1 : 0;
+      if (options?.lockPicker) {
+        if (el._flatpickr) el._flatpickr.set("clickOpens", !on);
+        el.style.pointerEvents = on ? "none" : "";
       }
     }
 
-    if (lockIcon) {
-      lockIcon.addEventListener("click", () => {
-        if (!stage1DateMode) {
-          if (!parseDate(start.value)) {
-            alert("Сначала заполните поле «Начало контракта».");
-            return;
-          }
-        }
-        if (!stage1DateMode && stage1DateEl && stage1EndTarget) {
-          const d = parseDate(stage1EndTarget.value);
-          if (d) {
-            const iso = d.getFullYear() + "-"
-              + String(d.getMonth() + 1).padStart(2, "0") + "-"
-              + String(d.getDate()).padStart(2, "0");
-            stage1DateEl.value = iso;
-          }
-        }
-        stage1DateMode = !stage1DateMode;
-        applyLockState();
-        recalc();
+    function applyLockState() {
+      setReadonly(stage1DateEl, reportTermsEditMode, { lockPicker: true });
+      setReadonly(stage2EndTarget, reportTermsEditMode, { lockPicker: true });
+      setReadonly(stage1Months, !reportTermsEditMode);
+      setReadonly(stage2Weeks, !reportTermsEditMode);
+      lockIcons.forEach(function (icon) {
+        icon.classList.toggle("bi-lock-fill", !reportTermsEditMode);
+        icon.classList.toggle("bi-unlock-fill", reportTermsEditMode);
+        icon.title = reportTermsEditMode ? "Заблокировать ввод сроков" : "Разблокировать ввод сроков";
       });
     }
 
-    applyLockState();
-
     const clear = () => {
-      stage1EndTarget.value = "";
-      if (!stage1DateMode && stage1DateEl) stage1DateEl.value = "";
+      stage1DateEl.value = "";
       if (stage2EndTarget) stage2EndTarget.value = "";
-      if (stage3EndTarget) stage3EndTarget.value = "";
       if (completionTarget) completionTarget.value = "";
       if (termWeeksTarget) termWeeksTarget.value = "";
+      if (totalMonthsTarget) totalMonthsTarget.value = "";
+      if (totalWeeksTarget) totalWeeksTarget.value = "";
     };
 
-    const recalc = () => {
+    const recalc = (manualDateSource) => {
       const base = parseDate(start.value);
       if (!base) { clear(); return; }
 
       const days = parseInt(inputDays.value.replace(/\D/g, ""), 10) || 0;
+      const stage1Base = base;
+      let s1m = parseDecimal(stage1Months.value);
+      let s2w = parseDecimal(stage2Weeks.value);
+      let preliminaryDate = parseDate(stage1DateEl.value);
+      let finalDate = parseDate(stage2EndTarget.value);
 
-      let s1w;
-      if (stage1DateMode) {
-        const s1date = stage1DateEl.value ? new Date(stage1DateEl.value) : null;
-        if (s1date && !isNaN(s1date)) {
-          const elapsed = diffDays(s1date, base) - days;
-          s1w = Math.max(0, elapsed / 7);
-          stage1Weeks.value = s1w.toFixed(1);
-        } else {
-          s1w = 0;
-          stage1Weeks.value = "";
-        }
+      if (reportTermsEditMode) {
+        s1m = s1m ?? 0;
+        s2w = s2w ?? 0;
+        preliminaryDate = addMonths(stage1Base, s1m);
+        finalDate = addDays(preliminaryDate, Math.max(0, s2w * 7));
+        setDateValue(stage1DateEl, preliminaryDate);
+        setDateValue(stage2EndTarget, finalDate);
+      } else if (!preliminaryDate && !finalDate) {
+        s1m = s1m ?? 0;
+        s2w = s2w ?? 0;
+        preliminaryDate = addMonths(stage1Base, s1m);
+        finalDate = addDays(preliminaryDate, Math.max(0, s2w * 7));
+        setDateValue(stage1DateEl, preliminaryDate);
+        setDateValue(stage2EndTarget, finalDate);
       } else {
-        s1w = parseFloat((stage1Weeks.value || "0").replace(",", ".")) || 0;
-      }
-
-      const s2w = parseFloat((stage2Weeks?.value || "0").replace(",", ".")) || 0;
-      const s3w = parseFloat((stage3Weeks?.value || "0").replace(",", ".")) || 0;
-
-      const stage1Days = Math.max(0, days + s1w * 7);
-      const stage1Date = addDays(base, stage1Days);
-      stage1EndTarget.value = fmtDate(stage1Date);
-
-      if (!stage1DateMode && stage1DateEl) {
-        stage1DateEl.value = fmtDate(stage1Date);
-      }
-
-      let stage2Date = null;
-      if (stage2Weeks && stage2EndTarget) {
-        if (!Math.round(stage1Days) && !s2w) {
-          stage2EndTarget.value = "";
-        } else {
-          stage2Date = addDays(stage1Date, Math.max(0, s2w * 7));
-          stage2EndTarget.value = fmtDate(stage2Date);
+        if (manualDateSource === "final" && finalDate && preliminaryDate) {
+          s2w = Math.max(0, diffDays(finalDate, preliminaryDate) / 7);
+          stage2Weeks.value = formatDecimal(s2w);
+        } else if (manualDateSource === "final" && finalDate && s2w !== null) {
+          preliminaryDate = addDays(finalDate, -Math.max(0, s2w * 7));
+          setDateValue(stage1DateEl, preliminaryDate);
+          s1m = diffMonths(preliminaryDate, stage1Base);
+          stage1Months.value = formatDecimal(s1m);
+        } else if (preliminaryDate) {
+          s1m = diffMonths(preliminaryDate, stage1Base);
+          stage1Months.value = formatDecimal(s1m);
+          if (s2w !== null) {
+            finalDate = addDays(preliminaryDate, Math.max(0, s2w * 7));
+            setDateValue(stage2EndTarget, finalDate);
+          }
+        }
+        if (finalDate && preliminaryDate) {
+          s2w = Math.max(0, diffDays(finalDate, preliminaryDate) / 7);
+          stage2Weeks.value = formatDecimal(s2w);
         }
       }
 
-      if (stage3EndTarget) {
-        const baseS2 = stage2Date || parseDate(stage2EndTarget?.value || "");
-        if (!baseS2 || !s3w) {
-          stage3EndTarget.value = "";
-        } else {
-          stage3EndTarget.value = fmtDate(addDays(baseS2, Math.max(0, s3w * 7)));
-        }
+      if (s1m !== null) {
+        stage1Months.value = formatDecimal(Math.max(0, s1m));
+      }
+      if (s2w !== null) {
+        stage2Weeks.value = formatDecimal(Math.max(0, s2w));
       }
 
       if (completionTarget) {
-        const baseS2 = stage2Date || parseDate(stage2EndTarget?.value || "");
-        if (!baseS2) {
-          completionTarget.value = "";
-        } else {
-          completionTarget.value = fmtDate(addDays(baseS2, Math.max(0, s3w * 7)));
-        }
+        completionTarget.value = finalDate ? fmtDate(finalDate) : "";
       }
 
       if (termWeeksTarget) {
-        const tw = Math.max(0, (days / 7) + s1w + s2w + s3w);
-        termWeeksTarget.value = tw.toFixed(1);
+        const tw = Math.max(0, ((s1m || 0) * 30 / 7) + (s2w || 0));
+        termWeeksTarget.value = formatDecimal(tw);
       }
+      if (totalMonthsTarget) totalMonthsTarget.value = s1m !== null ? formatDecimal(Math.max(0, s1m)) : "";
+      if (totalWeeksTarget) totalWeeksTarget.value = s2w !== null ? formatDecimal(Math.max(0, s2w)) : "";
     };
 
-    [start, inputDays, stage1Weeks, stage2Weeks, stage3Weeks]
+    lockIcons.forEach(function (icon) {
+      icon.addEventListener("click", function () {
+        reportTermsEditMode = !reportTermsEditMode;
+        applyLockState();
+        recalc();
+      });
+    });
+
+    applyLockState();
+
+    [start, inputDays, stage1Months, stage2Weeks]
       .filter(Boolean)
       .forEach((el) => ["input", "change"].forEach((evt) => el.addEventListener(evt, recalc)));
 
-    if (stage1DateEl) {
-      ["input", "change"].forEach((evt) => stage1DateEl.addEventListener(evt, recalc));
-    }
+    ["input", "change"].forEach((evt) => {
+      stage1DateEl.addEventListener(evt, () => recalc("preliminary"));
+      stage2EndTarget.addEventListener(evt, () => recalc("final"));
+    });
 
     recalc();
   }

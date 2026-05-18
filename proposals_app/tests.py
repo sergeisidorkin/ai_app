@@ -2801,6 +2801,7 @@ class ProposalRegistrationFormTests(TestCase):
         ]
 
         self.assertIn("type", registry_sources)
+        self.assertNotIn("evaluation_date", registry_sources)
         self.assertNotIn("term", registry_sources)
         self.assertNotIn("preliminary_report_date", registry_sources)
         self.assertNotIn("final_report_term_weeks", registry_sources)
@@ -2814,6 +2815,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "Тип",
                 "Название",
                 "Этап",
+                "Дата оценки",
                 "Дата начала",
                 "Срок предв. отчёта, мес.",
                 "Дата предв. отчёта",
@@ -3629,6 +3631,73 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertTrue(lists["[[payment_schedule]]"][1]["contextual_spacing"])
         self.assertNotIn("left_indent_cm", lists["[[payment_schedule]]"][4])
 
+    def test_resolve_payment_schedule_uses_stage_order_when_product_repeats(self):
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        product = Product.objects.create(
+            short_name="TDD",
+            name_en="Technical Due Diligence",
+            name_ru="ТДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        ServiceGoalReport.objects.create(product=product, product_name="Технический аудит", position=1)
+        proposal = ProposalRegistration.objects.create(
+            number=3333,
+            group_member=group_member,
+            type=product,
+            name="Поэтапный график с повтором продукта",
+            year=2026,
+            stage_payloads_json=[
+                {
+                    "rank": 1,
+                    "product_id": product.pk,
+                    "payment_schedule_common": False,
+                    "advance_percent": "30",
+                    "advance_term_days": 5,
+                    "preliminary_report_percent": "20",
+                    "preliminary_report_term_days": 6,
+                    "final_report_percent": "50",
+                    "final_report_term_days": 14,
+                },
+                {
+                    "rank": 2,
+                    "product_id": product.pk,
+                    "payment_schedule_common": False,
+                    "advance_percent": "50",
+                    "advance_term_days": 10,
+                    "preliminary_report_percent": "30",
+                    "preliminary_report_term_days": 7,
+                    "final_report_percent": "20",
+                    "final_report_term_days": 21,
+                },
+            ],
+        )
+        ProposalRegistrationProduct.objects.bulk_create(
+            [
+                ProposalRegistrationProduct(proposal=proposal, product=product, rank=1),
+                ProposalRegistrationProduct(proposal=proposal, product=product, rank=2),
+            ]
+        )
+
+        _, lists, _ = resolve_variables(
+            proposal,
+            [ProposalVariable(key="[[payment_schedule]]", is_computed=True)],
+        )
+        texts = [item["runs"][0]["text"] for item in lists["[[payment_schedule]]"]]
+
+        self.assertEqual(texts[0], "Этап 1 — Технический аудит:")
+        self.assertEqual(texts[1], "30% — предоплата при подписании контракта — в течение 5 календарных дней.")
+        self.assertEqual(texts[4], "Этап 2 — Технический аудит:")
+        self.assertEqual(texts[5], "50% — предоплата при подписании контракта — в течение 10 календарных дней.")
+
     def test_resolve_preliminary_report_term_month_uses_month_declension(self):
         cases = [
             ("1", "1 месяц"),
@@ -4356,6 +4425,72 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(proposal.commercial_totals_json["contract_total"], "1000")
         self.assertEqual(str(proposal.service_cost), "1000.00")
 
+    def test_form_saves_multistage_proposal_with_repeated_product(self):
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        product = Product.objects.create(
+            short_name="DUP",
+            name_en="Repeated product",
+            name_ru="Повторяющийся продукт",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        totals_payload = json.dumps(
+            {
+                "exchange_rate": "95.1000",
+                "discount_percent": "5",
+                "contract_total": "1000",
+                "contract_total_auto": "1000",
+                "rub_total_service_text": "Курс ЦБ",
+                "discounted_total_service_text": "Скидка",
+                "travel_expenses_mode": "actual",
+            },
+            ensure_ascii=False,
+        )
+        payload = QueryDict("", mutable=True)
+        payload.update(
+            {
+                "number": "3333",
+                "group_member": str(group_member.pk),
+                "name": "ТКП с повтором продукта",
+                "kind": ProposalRegistration.ProposalKind.REGULAR,
+                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "year": "2026",
+            }
+        )
+        payload.setlist("type", [str(product.pk), str(product.pk)])
+        payload.setlist("service_composition", ["Состав первого этапа", "Состав второго этапа"])
+        payload.setlist("commercial_offer_payload", ["[]", "[]"])
+        payload.setlist("commercial_totals_payload", [totals_payload, totals_payload])
+        payload["summary_commercial_offer_payload"] = "[]"
+        payload["summary_commercial_totals_payload"] = totals_payload
+
+        form = ProposalRegistrationForm(data=payload)
+
+        self.assertTrue(form.is_valid(), form.errors)
+        proposal = form.save()
+        proposal.refresh_from_db()
+
+        self.assertEqual(
+            list(
+                ProposalRegistrationProduct.objects.filter(proposal=proposal)
+                .order_by("rank")
+                .values_list("product_id", flat=True)
+            ),
+            [product.pk, product.pk],
+        )
+        self.assertEqual(proposal.ordered_product_ids, [product.pk, product.pk])
+        self.assertEqual([stage["product_id"] for stage in proposal.stage_payloads_json], [product.pk, product.pk])
+        self.assertEqual(proposal.stage_payloads_json[0]["service_composition"], "Состав первого этапа")
+        self.assertEqual(proposal.stage_payloads_json[1]["service_composition"], "Состав второго этапа")
+
     def test_form_rehydrates_stage_rows_from_saved_stage_payloads(self):
         group_member = GroupMember.objects.create(
             short_name="IMC Montan",
@@ -4810,6 +4945,7 @@ class ProposalFormContextTests(TestCase):
                 {
                     "rank": 1,
                     "product_id": first_product.pk,
+                    "evaluation_date": "01.01.2026",
                     "service_term_months": "1.0",
                     "preliminary_report_date": "15.02.2026",
                     "final_report_term_weeks": "2.0",
@@ -4825,6 +4961,7 @@ class ProposalFormContextTests(TestCase):
                 {
                     "rank": 2,
                     "product_id": second_product.pk,
+                    "evaluation_date": "05.02.2026",
                     "service_term_months": "2.0",
                     "preliminary_report_date": "15.05.2026",
                     "final_report_term_weeks": "3.0",
@@ -4855,8 +4992,17 @@ class ProposalFormContextTests(TestCase):
         self.assertFalse(response.context["proposal_payment_schedule_rows"][1]["is_first_for_proposal"])
         self.assertTrue(response.context["proposal_payment_schedule_rows"][1]["is_continuation"])
         self.assertFalse(response.context["proposal_payment_schedule_rows"][1]["has_next_for_proposal"])
+        self.assertEqual(
+            response.context["proposal_payment_schedule_rows"][0]["evaluation_date"],
+            date(2026, 1, 1),
+        )
+        self.assertEqual(
+            response.context["proposal_payment_schedule_rows"][1]["evaluation_date"],
+            date(2026, 2, 5),
+        )
         self.assertContains(response, 'id="proposal-payment-schedule-table"', html=False)
         self.assertContains(response, 'id="proposal-payment-master"', html=False)
+        self.assertContains(response, 'id="proposal-payment-col-evaluation-date"', html=False)
         self.assertContains(response, 'id="proposal-payment-col-term"', html=False)
         self.assertContains(response, 'id="proposal-col-country" data-default-hidden="true"', html=False)
         self.assertContains(response, 'id="proposal-payment-col-advance-percent" data-default-hidden="true"', html=False)
@@ -4870,6 +5016,8 @@ class ProposalFormContextTests(TestCase):
         self.assertContains(response, "TDD-JORC", html=False)
         self.assertContains(response, "Этап 1", html=False)
         self.assertContains(response, "Этап 2", html=False)
+        self.assertContains(response, "01.01.2026", html=False)
+        self.assertContains(response, "05.02.2026", html=False)
         self.assertContains(response, "1,0", html=False)
         self.assertContains(response, "3,0", html=False)
         self.assertContains(response, "15.01.2026", html=False)
@@ -4877,9 +5025,62 @@ class ProposalFormContextTests(TestCase):
         self.assertContains(response, "30%", html=False)
         self.assertContains(response, "21", html=False)
         self.assertContains(response, "disabled", html=False)
+        self.assertNotContains(response, 'id="proposal-col-evaluation-date"', html=False)
         self.assertNotContains(response, 'id="proposal-col-term"', html=False)
         self.assertNotContains(response, 'id="proposal-col-advance-percent"', html=False)
         self.assertNotContains(response, "proposal-payment-actions", html=False)
+
+    def test_payment_schedule_table_uses_stage_order_when_product_repeats(self):
+        product = Product.objects.create(
+            short_name="TDD",
+            name_en="Technical Due Diligence",
+            name_ru="ТДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        proposal = ProposalRegistration.objects.create(
+            number=3333,
+            group_member=self.group_member,
+            type=product,
+            name="Мультиэтапное ТКП с повтором продукта",
+            year=2026,
+            stage_payloads_json=[
+                {
+                    "rank": 1,
+                    "product_id": product.pk,
+                    "evaluation_date": "01.01.2026",
+                    "service_term_months": "1.0",
+                    "preliminary_report_date": "15.02.2026",
+                    "final_report_term_weeks": "2.0",
+                    "final_report_date": "01.03.2026",
+                },
+                {
+                    "rank": 2,
+                    "product_id": product.pk,
+                    "evaluation_date": "05.02.2026",
+                    "service_term_months": "2.0",
+                    "preliminary_report_date": "15.05.2026",
+                    "final_report_term_weeks": "3.0",
+                    "final_report_date": "05.06.2026",
+                },
+            ],
+        )
+        ProposalRegistrationProduct.objects.bulk_create(
+            [
+                ProposalRegistrationProduct(proposal=proposal, product=product, rank=1),
+                ProposalRegistrationProduct(proposal=proposal, product=product, rank=2),
+            ]
+        )
+
+        response = self.client.get(reverse("proposals_partial"))
+        rows = response.context["proposal_payment_schedule_rows"]
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["evaluation_date"], date(2026, 1, 1))
+        self.assertEqual(rows[1]["evaluation_date"], date(2026, 2, 5))
 
     def test_payment_schedule_uses_stage_delay_for_next_stage_start(self):
         first_product = Product.objects.create(

@@ -1112,6 +1112,10 @@ def _proposal_stage_value(payload, key, proposal, attr):
 
 def _proposal_stage_payload_for_product(stage_payloads, product, index):
     product_id = str(getattr(product, "pk", "") or "")
+    if 0 <= index < len(stage_payloads):
+        indexed_payload = stage_payloads[index]
+        if not product_id or str(indexed_payload.get("product_id") or "") == product_id:
+            return indexed_payload
     if product_id:
         for payload in stage_payloads:
             if str(payload.get("product_id") or "") == product_id:
@@ -1178,6 +1182,9 @@ def _build_proposal_payment_schedule_rows(proposals):
                     "type": (getattr(product, "short_name", "") or str(product or "")).strip(),
                     "name": proposal.name,
                     "stage": f"Этап {index}",
+                    "evaluation_date": _proposal_schedule_date(
+                        _proposal_stage_value(payload, "evaluation_date", proposal, "evaluation_date")
+                    ),
                     "start_date": start_date,
                     "service_term_months": service_term_months,
                     "preliminary_report_date": preliminary_report_date,

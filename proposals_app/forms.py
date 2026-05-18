@@ -1969,7 +1969,6 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
     def _collect_stage_payloads(self):
         stage_payloads = []
         cleaned_product_ids = []
-        seen_product_ids = set()
         for row in self.stage_rows:
             rank = int(row.get("rank") or len(stage_payloads) + 1)
             row_has_data = any(
@@ -2001,9 +2000,6 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             product = Product.objects.filter(pk=product_id).first()
             if product is None:
                 raise forms.ValidationError(f"Этап {rank}: выбранный продукт не найден.")
-            if product_id in seen_product_ids:
-                raise forms.ValidationError(f"Этап {rank}: продукт уже выбран для другого этапа.")
-            seen_product_ids.add(product_id)
             cleaned_product_ids.append(product_id)
 
             service_composition_mode = str(row.get("service_composition_mode") or "sections").strip() or "sections"

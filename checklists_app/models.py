@@ -2,6 +2,8 @@ import secrets
 
 from django.conf import settings
 from django.db import models
+from django.db.models.signals import post_delete, post_save
+from django.dispatch import receiver
 from django.utils import timezone
 from datetime import timedelta
 
@@ -44,6 +46,27 @@ class ChecklistItem(models.Model):
         return f"{self.code} {self.number:02d} — {self.short_name or self.name[:40]}"
 
 
+def _sync_project_gantt_for_checklist_item(project_id):
+    if not project_id:
+        return
+    try:
+        from projects_app.services.schedule_sync import sync_project_gantt_by_id
+
+        sync_project_gantt_by_id(project_id)
+    except Exception:
+        return
+
+
+@receiver(post_save, sender=ChecklistItem)
+def sync_project_gantt_after_checklist_item_save(sender, instance, **kwargs):
+    _sync_project_gantt_for_checklist_item(instance.project_id)
+
+
+@receiver(post_delete, sender=ChecklistItem)
+def sync_project_gantt_after_checklist_item_delete(sender, instance, **kwargs):
+    _sync_project_gantt_for_checklist_item(instance.project_id)
+
+
 class ChecklistStatus(models.Model):
     class Status(models.TextChoices):
         PROVIDED = "provided", "Предоставлено"
@@ -82,6 +105,24 @@ class ChecklistStatus(models.Model):
 
     def __str__(self):
         return f"{self.checklist_item_id} / {self.legal_entity_id} — {self.get_status_display()}"
+
+
+def _sync_project_gantt_for_checklist_status(instance):
+    try:
+        project_id = getattr(instance.checklist_item, "project_id", None)
+    except Exception:
+        project_id = None
+    _sync_project_gantt_for_checklist_item(project_id)
+
+
+@receiver(post_save, sender=ChecklistStatus)
+def sync_project_gantt_after_checklist_status_save(sender, instance, **kwargs):
+    _sync_project_gantt_for_checklist_status(instance)
+
+
+@receiver(post_delete, sender=ChecklistStatus)
+def sync_project_gantt_after_checklist_status_delete(sender, instance, **kwargs):
+    _sync_project_gantt_for_checklist_status(instance)
 
 
 class ChecklistStatusHistory(models.Model):

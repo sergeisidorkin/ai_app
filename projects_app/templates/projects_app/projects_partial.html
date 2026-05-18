@@ -57,11 +57,12 @@
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="project-id" id="registration-col-project-id" checked><label class="form-check-label" for="registration-col-project-id">Проект ID</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="type" id="registration-col-type" checked><label class="form-check-label" for="registration-col-type">Тип</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="name" id="registration-col-name" checked><label class="form-check-label" for="registration-col-name">Название</label></div></div>
-          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="launch" id="registration-col-launch" checked><label class="form-check-label" for="registration-col-launch">Запуск</label></div></div>
-          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="status" id="registration-col-status" checked><label class="form-check-label" for="registration-col-status">Статус</label></div></div>
-          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="deadline" id="registration-col-deadline" checked><label class="form-check-label" for="registration-col-deadline">Дедлайн</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="year" id="registration-col-year" checked><label class="form-check-label" for="registration-col-year">Год</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="evaluation-date" id="registration-col-evaluation-date" checked><label class="form-check-label" for="registration-col-evaluation-date">Дата оценки</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="deadline" id="registration-col-deadline" checked><label class="form-check-label" for="registration-col-deadline">Дедлайн</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="manager" id="registration-col-manager" checked><label class="form-check-label" for="registration-col-manager">Руководитель проекта</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="launch" id="registration-col-launch" checked><label class="form-check-label" for="registration-col-launch">Иконки статуса</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="status" id="registration-col-status" checked><label class="form-check-label" for="registration-col-status">Статус</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="customer" id="registration-col-customer" checked><label class="form-check-label" for="registration-col-customer">Заказчик: наименование</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="country" id="registration-col-country" checked><label class="form-check-label" for="registration-col-country">Заказчик: страна</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="identifier" id="registration-col-identifier" checked><label class="form-check-label" for="registration-col-identifier">Заказчик: идент.</label></div></div>
@@ -87,26 +88,28 @@
           <col class="project-number" data-col="number">   <!-- 2: Номер -->
           <col class="agreement-type" data-col="agreement-type">   <!-- 3: Вид соглашения -->
           <col class="group" data-col="group">            <!-- 4: Группа -->
-          <col class="project-id" data-col="project-id">       <!-- 5: Проект ID -->
-          <col class="reg-type" data-col="type">          <!-- 6: Тип -->
-          <col class="reg-name" data-col="name">         <!-- 7: Название -->
-          <col class="reg-launch" data-col="launch">       <!-- 8: Запуск -->
-          <col class="reg-status" data-col="status">       <!-- 9: Статус -->
-          <col class="reg-deadline" data-col="deadline">     <!-- 10: Дедлайн -->
-          <col class="reg-year" data-col="year">         <!-- 11: Год -->
+          <col class="quick-edit" style="width:1%">       <!-- 5: Редактировать -->
+          <col class="project-id" data-col="project-id">       <!-- 6: Проект ID -->
+          <col class="reg-type" data-col="type">          <!-- 7: Тип -->
+          <col class="reg-name" data-col="name">         <!-- 8: Название -->
+          <col class="reg-year" data-col="year">         <!-- 9: Год -->
+          <col class="reg-evaluation-date" data-col="evaluation-date">     <!-- 10: Дата оценки -->
+          <col class="reg-deadline" data-col="deadline">     <!-- 11: Дедлайн -->
           <col class="reg-manager" data-col="manager">      <!-- 12: Руководитель проекта -->
-          <col class="reg-customer" data-col="customer">     <!-- 13: Заказчик -->
-          <col class="reg-country" data-col="country">      <!-- 14: Страна -->
-          <col class="reg-identifier" data-col="identifier">   <!-- 15: Идентификатор -->
-          <col class="reg-regnumber" data-col="registration-number">    <!-- 16: Регистр. номер -->
-          <col class="reg-region" data-col="region">      <!-- 17: Регион -->
-          <col class="reg-regdate" data-col="date">      <!-- 18: Дата регистр. -->
-          <col class="reg-asset-owner" data-col="asset-owner">      <!-- 19: Владелец -->
-          <col class="reg-asset-owner-country" data-col="asset-owner-country">      <!-- 20: Страна владельца -->
-          <col class="reg-asset-owner-identifier" data-col="asset-owner-identifier">      <!-- 21: Идент. владельца -->
-          <col class="reg-asset-owner-regnumber" data-col="asset-owner-reg-number">      <!-- 22: Регистр. номер владельца -->
-          <col class="reg-asset-owner-region" data-col="asset-owner-region">      <!-- 23: Регион владельца -->
-          <col class="reg-asset-owner-regdate" data-col="asset-owner-date">      <!-- 24: Дата регистр. владельца -->
+          <col class="reg-launch" data-col="launch">       <!-- 13: Запуск -->
+          <col class="reg-status" data-col="status">       <!-- 14: Статус -->
+          <col class="reg-customer" data-col="customer">     <!-- 15: Заказчик -->
+          <col class="reg-country" data-col="country">      <!-- 16: Страна -->
+          <col class="reg-identifier" data-col="identifier">   <!-- 17: Идентификатор -->
+          <col class="reg-regnumber" data-col="registration-number">    <!-- 18: Регистр. номер -->
+          <col class="reg-region" data-col="region">      <!-- 19: Регион -->
+          <col class="reg-regdate" data-col="date">      <!-- 20: Дата регистр. -->
+          <col class="reg-asset-owner" data-col="asset-owner">      <!-- 21: Владелец -->
+          <col class="reg-asset-owner-country" data-col="asset-owner-country">      <!-- 22: Страна владельца -->
+          <col class="reg-asset-owner-identifier" data-col="asset-owner-identifier">      <!-- 23: Идент. владельца -->
+          <col class="reg-asset-owner-regnumber" data-col="asset-owner-reg-number">      <!-- 24: Регистр. номер владельца -->
+          <col class="reg-asset-owner-region" data-col="asset-owner-region">      <!-- 25: Регион владельца -->
+          <col class="reg-asset-owner-regdate" data-col="asset-owner-date">      <!-- 26: Дата регистр. владельца -->
         </colgroup>
       <thead>
       <tr>
@@ -126,14 +129,16 @@
         <th class="col-project-number" data-col="number">Номер</th>
         <th data-col="agreement-type">Вид соглашения</th>
         <th data-col="group">Группа</th>
+        <th class="project-quick-edit-col" style="width:1%; padding:0;"></th>
         <th data-col="project-id">Проект ID</th>
         <th data-col="type">Тип</th>
         <th class="nowrap" data-col="name">Название</th>
+        <th data-col="year">Год</th>
+        <th data-col="evaluation-date">Дата оценки</th>
+        <th data-col="deadline">Дедлайн</th>
+        <th data-col="manager">Руководитель проекта</th>
         <th class="reg-launch-cell" data-col="launch"><span class="visually-hidden">Запуск</span></th>
         <th data-col="status">Статус</th>
-        <th data-col="deadline">Дедлайн</th>
-        <th data-col="year">Год</th>
-        <th data-col="manager">Руководитель проекта</th>
         <th class="reg-customer-cell proposal-split-header proposal-split-header-inline" data-col="customer"><span class="proposal-split-header-prefix">Заказчик: </span><span class="proposal-split-header-suffix">наименование</span></th>
         <th class="proposal-split-header" data-col="country"><span class="proposal-split-header-prefix">Заказчик: </span><span class="proposal-split-header-suffix">страна</span></th>
         <th class="proposal-split-header" data-col="identifier"><span class="proposal-split-header-prefix">Заказчик: </span><span class="proposal-split-header-suffix">идент.</span></th>
@@ -152,11 +157,16 @@
       {% for r in registrations %}
         <tr
           data-project-id="{{ r.id }}"
+          data-reg-group-key="{{ r.number_group_key }}"
+          data-reg-group-number="{{ r.number|stringformat:'04d' }}"
+          data-reg-group-agreement-type="{{ r.get_agreement_type_display }}"
+          data-reg-group-group="{{ r.group_display }}"
           data-edit-url="{% url 'registration_form_edit' r.pk %}"
           data-delete-url="{% url 'registration_delete' r.pk %}"
           data-status-url="{% url 'registration_status_update' r.pk %}"
           data-manager-url="{% url 'registration_manager_update' r.pk %}"
           data-deadline-url="{% url 'registration_deadline_update' r.pk %}"
+          data-evaluation-date-url="{% url 'registration_evaluation_date_update' r.pk %}"
           data-move-up-url="{% url 'registration_move_up' r.pk %}"
           data-move-down-url="{% url 'registration_move_down' r.pk %}"
           {% if r.is_continuation or r.has_next_for_number %}class="{% if r.has_next_for_number %}registration-number-has-next{% endif %}{% if r.is_continuation %}{% if r.has_next_for_number %} {% endif %}registration-number-continuation{% endif %}"{% endif %}>
@@ -173,12 +183,70 @@
               </div>
             {% endif %}
           </td>
-          <td class="col-project-number" data-col="number">{% if r.is_first_for_number %}{{ r.number|stringformat:"04d" }}{% endif %}</td>
-          <td data-col="agreement-type">{% if r.is_first_for_number %}{{ r.get_agreement_type_display }}{% endif %}</td>
-          <td data-col="group">{% if r.is_first_for_number %}{{ r.group_display }}{% endif %}</td>
+          <td class="col-project-number" data-col="number" data-reg-group-cell="number">{% if r.is_first_for_number %}{{ r.number|stringformat:"04d" }}{% endif %}</td>
+          <td data-col="agreement-type" data-reg-group-cell="agreement-type">{% if r.is_first_for_number %}{{ r.get_agreement_type_display }}{% endif %}</td>
+          <td data-col="group" data-reg-group-cell="group">{% if r.is_first_for_number %}{{ r.group_display }}{% endif %}</td>
+          <td class="text-center p-0 project-quick-edit-col" style="width:1%;">
+            {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+              <i class="bi bi-pencil-square text-secondary project-quick-edit"
+                 role="button"
+                 title="Редактировать"
+                 aria-label="Редактировать проект"></i>
+            {% endif %}
+          </td>
           <td class="project-id-cell" data-col="project-id"><span class="clf-id-droid-mono">{{ r.short_uid }}</span></td>
           <td data-col="type">{{ r.type_short_display }}</td>
           <td data-col="name">{{ r.name }}</td>
+          <td data-col="year">{{ r.year }}</td>
+          <td data-reg-date-cell
+              data-reg-date-field="evaluation_date"
+              data-date-value="{{ r.evaluation_date|date:'Y-m-d' }}"
+              data-col="evaluation-date">
+            {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+              <button type="button"
+                      class="btn btn-link p-0 reg-deadline-btn reg-evaluation-date-btn"
+                      data-registration-date
+                      data-date-field="evaluation_date"
+                      data-date-url="{% url 'registration_evaluation_date_update' r.pk %}"
+                      data-date-value="{{ r.evaluation_date|date:'Y-m-d' }}"
+                      data-date-post-field="evaluation_date"
+                      data-date-response-field="evaluationDate"
+                      data-date-response-label-field="evaluationDateLabel"
+                      title="Изменить дату оценки">
+                {{ r.evaluation_date|date:"d.m.Y" }}
+              </button>
+            {% else %}
+              {{ r.evaluation_date|date:"d.m.Y" }}
+            {% endif %}
+          </td>
+          <td data-reg-deadline-cell data-deadline-value="{{ r.deadline|date:'Y-m-d' }}" data-col="deadline">
+            {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+              <button type="button"
+                      class="btn btn-link p-0 reg-deadline-btn"
+                      data-registration-deadline
+                      data-deadline-url="{% url 'registration_deadline_update' r.pk %}"
+                      data-deadline-value="{{ r.deadline|date:'Y-m-d' }}"
+                      title="Изменить дедлайн проекта">
+                {{ r.deadline|date:"d.m.Y" }}
+              </button>
+            {% else %}
+              {{ r.deadline|date:"d.m.Y" }}
+            {% endif %}
+          </td>
+          <td data-reg-manager-cell data-manager-value="{{ r.project_manager_prs_id|default:r.project_manager }}" data-col="manager">
+            {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+              <button type="button"
+                      class="btn btn-link p-0 reg-manager-btn"
+                      data-registration-manager
+                      data-manager-url="{% url 'registration_manager_update' r.pk %}"
+                      data-manager-value="{{ r.project_manager_prs_id|default:r.project_manager }}"
+                      title="Изменить руководителя проекта">
+                {{ r.project_manager|short_fio }}
+              </button>
+            {% else %}
+              {{ r.project_manager|short_fio }}
+            {% endif %}
+          </td>
           <td class="reg-launch-cell text-center" data-reg-launch-cell data-col="launch">
             {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
               {% if r.status == "Не начат" %}
@@ -224,35 +292,6 @@
               {{ r.status }}
             {% endif %}
           </td>
-          <td data-reg-deadline-cell data-deadline-value="{{ r.deadline|date:'Y-m-d' }}" data-col="deadline">
-            {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
-              <button type="button"
-                      class="btn btn-link p-0 reg-deadline-btn"
-                      data-registration-deadline
-                      data-deadline-url="{% url 'registration_deadline_update' r.pk %}"
-                      data-deadline-value="{{ r.deadline|date:'Y-m-d' }}"
-                      title="Изменить дедлайн проекта">
-                {{ r.deadline|date:"d.m.Y" }}
-              </button>
-            {% else %}
-              {{ r.deadline|date:"d.m.Y" }}
-            {% endif %}
-          </td>
-          <td data-col="year">{{ r.year }}</td>
-          <td data-reg-manager-cell data-manager-value="{{ r.project_manager_prs_id|default:r.project_manager }}" data-col="manager">
-            {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
-              <button type="button"
-                      class="btn btn-link p-0 reg-manager-btn"
-                      data-registration-manager
-                      data-manager-url="{% url 'registration_manager_update' r.pk %}"
-                      data-manager-value="{{ r.project_manager_prs_id|default:r.project_manager }}"
-                      title="Изменить руководителя проекта">
-                {{ r.project_manager|short_fio }}
-              </button>
-            {% else %}
-              {{ r.project_manager|short_fio }}
-            {% endif %}
-          </td>
           <td data-col="customer">{{ r.customer }}</td>
           <td data-col="country">{{ r.country.short_name|default:"" }}</td>
           <td data-col="identifier">{{ r.identifier }}</td>
@@ -267,7 +306,7 @@
           <td data-col="asset-owner-date">{{ r.asset_owner_registration_date|date:"d.m.y" }}</td>
         </tr>
       {% empty %}
-        <tr><td colspan="24" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="26" class="text-muted">Пока нет данных.</td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -487,12 +526,11 @@
           <col class="narrow-sm">         <!-- 8: Оконч. -->
           <col class="narrow-sm">         <!-- 9: Оконч. lock -->
           <col class="narrow">           <!-- 10: Исх. данные -->
-          <col class="narrow">           <!-- 11: Этап 1, недель -->
-          <col class="narrow">           <!-- 12: Этап 1, оконч. -->
-          <col class="narrow">           <!-- 13: Этап 2, недель -->
-          <col class="narrow">           <!-- 14: Этап 2, оконч. -->
-          <col class="narrow">           <!-- 15: Этап 3, недель -->
-          <col class="narrow">           <!-- 16: Срок, недель -->
+          <col class="narrow">           <!-- 11: Срок предв. отчёта -->
+          <col class="narrow">           <!-- 12: Дата предв. отчёта -->
+          <col class="narrow">           <!-- 13: Срок итог. отчёта -->
+          <col class="narrow">           <!-- 14: Дата итог. отчёта -->
+          <col class="narrow">           <!-- 15: Срок, недель -->
         </colgroup>
       <thead>
       <tr>
@@ -516,11 +554,10 @@
         <th>Оконч.</th>
         <th>Оконч. <i class="bi bi-lock"></i></th>
         <th>Исх. данные</th>
-        <th>Этап 1, нед.</th>
-        <th>Этап 1, ок.</th>
-        <th>Этап 2, нед.</th>
-        <th>Этап 2, ок.</th>
-        <th>Этап 3, нед.</th>
+        <th>Срок предв. отчёта, мес.</th>
+        <th>Дата предв. отчёта</th>
+        <th>Срок итог. отчёта, нед.</th>
+        <th>Дата итог. отчёта</th>
         <th>Срок, нед.</th>
       </tr>
       </thead>
@@ -552,11 +589,10 @@
           <td>{{ r.stage1_end|date:"d.m.y" }}</td>
           <td>{{ r.stage2_weeks|comma_decimal:1 }}</td>
           <td>{{ r.stage2_end|date:"d.m.y" }}</td>
-          <td>{{ r.stage3_weeks|comma_decimal:1 }}</td>
           <td>{{ r.term_weeks|comma_decimal:1 }}</td>
         </tr>
       {% empty %}
-        <tr><td colspan="16" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="15" class="text-muted">Пока нет данных.</td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -569,8 +605,330 @@
   <div id="projects-content-scope" class="projects-section-content d-none">
     <div class="card shadow-sm">
       <div class="card-body">
-  <!-- Объем работ -->
+  <!-- График проекта -->
   <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
+    <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
+      <i class="bi bi-table js-project-schedule-title-icon"></i> График проекта
+    </h5>
+    {% if request.user.is_authenticated and request.user.is_staff %}
+    <div class="dropdown" id="project-schedule-view-dropdown">
+      <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+              id="project-schedule-view-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+        Вид: <span class="js-project-schedule-view-label">Таблица</span>
+      </button>
+      <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="project-schedule-view-toggle">
+        <label class="form-check proposal-payment-view-option" for="project-schedule-view-table">
+          <input class="form-check-input js-project-schedule-view" type="radio"
+                 name="project-schedule-view" value="table" id="project-schedule-view-table" checked>
+          <span class="form-check-label">Таблица</span>
+        </label>
+        <label class="form-check proposal-payment-view-option" for="project-schedule-view-gantt">
+          <input class="form-check-input js-project-schedule-view" type="radio"
+                 name="project-schedule-view" value="gantt" id="project-schedule-view-gantt">
+          <span class="form-check-label">График</span>
+        </label>
+      </div>
+    </div>
+    {% endif %}
+    <div class="dropdown" id="project-schedule-filter-dropdown">
+      <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+              id="project-schedule-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+        Проекты: <span class="js-project-schedule-filter-label">Не выбран</span>
+      </button>
+      <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="project-schedule-filter-toggle" style="max-height: 240px; overflow-y: auto;">
+        <label class="form-check proposal-payment-view-option" for="project-schedule-filter-none">
+          <input class="form-check-input js-project-schedule-filter" type="radio"
+                 name="project-schedule-project-radio" value="" id="project-schedule-filter-none" checked>
+          <span class="form-check-label">Не выбран</span>
+        </label>
+        <hr class="dropdown-divider">
+        {% for project in schedule_projects %}
+          <label class="form-check proposal-payment-view-option" for="project-schedule-filter-{{ project.id }}">
+            <input class="form-check-input js-project-schedule-filter" type="radio"
+                   name="project-schedule-project-radio" value="{{ project.id }}" id="project-schedule-filter-{{ project.id }}"
+                   data-summary-label="{{ project.short_uid }}"
+                   data-full-label="{{ project.short_uid }}{% if project.type_short_display %} {{ project.type_short_display }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}"
+                   data-gantt-url="{% url 'project_schedule_gantt' project.id %}">
+            <span class="form-check-label">
+              {{ project.short_uid }}{% if project.type_short_display %} {{ project.type_short_display }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}
+            </span>
+          </label>
+        {% empty %}
+          <div class="text-muted small">Нет проектов</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="project-schedule-table-wrap">
+    <div class="project-schedule-scroll-wrap">
+      <table class="table table-sm align-middle project-schedule-table">
+        <colgroup>
+          <col class="col-checkbox">
+          <col>
+          <col class="col-task">
+          <col>
+          <col>
+          <col>
+          <col class="col-executor">
+          <col>
+          <col>
+          <col>
+          <col>
+          <col>
+          <col>
+        </colgroup>
+      <thead>
+      <tr>
+        <th style="width:30px; min-width:30px; max-width:30px;">
+          {% if request.user.is_authenticated and request.user.is_staff %}
+            <div class="form-check m-0">
+              <input class="form-check-input"
+                     type="checkbox"
+                     id="project-schedule-master"
+                     data-target-name="project-schedule-select"
+                     data-actions-id="project-schedule-actions"
+                     {% if is_expert %}disabled{% endif %}
+                     aria-label="Выделить все строки графика проекта">
+            </div>
+          {% endif %}
+        </th>
+        <th>№</th>
+        <th class="col-task">
+          <span class="col-task-header">
+            <span class="col-task-header-title">Задача</span>
+            <span class="col-task-outline-controls" aria-label="Уровень раскрытия задач">
+              <button type="button" class="col-task-outline-btn js-project-schedule-outline" data-outline-level="1" title="Показать до уровня 1" aria-pressed="false">1</button>
+              <button type="button" class="col-task-outline-btn js-project-schedule-outline" data-outline-level="2" title="Показать до уровня 2" aria-pressed="false">2</button>
+              <button type="button" class="col-task-outline-btn js-project-schedule-outline" data-outline-level="3" title="Показать до уровня 3" aria-pressed="false">3</button>
+              <button type="button" class="col-task-outline-btn js-project-schedule-outline" data-outline-level="4" title="Показать до уровня 4" aria-pressed="false">4</button>
+            </span>
+          </span>
+        </th>
+        <th>Начало</th>
+        <th>Окончание</th>
+        <th>Специальность</th>
+        <th class="text-nowrap">Исполнитель</th>
+        <th>Дедлайн</th>
+        <th>Ограничение</th>
+        <th class="text-nowrap">Длит.</th>
+        <th class="text-nowrap">Длит.*</th>
+        <th class="text-nowrap">Предш.</th>
+        <th class="text-nowrap">Прогр.</th>
+      </tr>
+      </thead>
+      <tbody>
+      {% for item in schedule_items %}
+        <tr
+          class="project-schedule-row{% if item.has_children %} project-schedule-row-parent{% endif %}{% if item.parent_id %} project-schedule-row-child{% endif %}"
+          data-project-id="{{ item.project_id }}"
+          data-task-id="{{ item.task_id }}"
+          data-parent-id="{{ item.parent_id }}"
+          data-level="{{ item.level }}"
+          data-has-children="{{ item.has_children|yesno:'1,0' }}"
+          data-edit-url="{% url 'project_schedule_form_edit' item.project_id item.task_id %}"
+          data-delete-url="{% url 'project_schedule_delete' item.project_id item.task_id %}"
+          data-move-up-url="{% url 'project_schedule_move_up' item.project_id item.task_id %}"
+          data-move-down-url="{% url 'project_schedule_move_down' item.project_id item.task_id %}">
+          <td class="text-nowrap" style="width:30px; min-width:30px; max-width:30px;">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+              <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       id="project-schedule-sel-{{ item.project_id }}-{{ item.task_id }}"
+                       name="project-schedule-select"
+                       value="{{ item.project_id }}:{{ item.task_id }}"
+                       {% if is_expert %}disabled{% endif %}
+                       aria-label="Выделить строку графика проекта">
+              </div>
+            {% endif %}
+          </td>
+          <td class="text-nowrap">{{ item.row_number }}</td>
+          <td class="col-task" title="{{ item.task }}">
+            <div class="col-task-cell">
+              <span class="col-task-tree" style="--task-tree-level: {{ item.level }};" aria-hidden="true">
+                {% if item.has_children %}
+                  <button type="button"
+                          class="col-task-toggle js-project-schedule-toggle"
+                          data-task-id="{{ item.task_id }}"
+                          aria-label="Свернуть/развернуть подстроки"
+                          aria-expanded="true">
+                    <i class="bi bi-caret-down-fill"></i>
+                  </button>
+                {% else %}
+                  <span class="col-task-toggle col-task-toggle-spacer"></span>
+                {% endif %}
+              </span>
+              <span class="col-task-text">{{ item.task }}</span>
+            </div>
+          </td>
+          <td class="text-nowrap">{{ item.start_date|date:"d.m.Y" }}</td>
+          <td class="text-nowrap">{{ item.end_date|date:"d.m.Y" }}</td>
+          <td>{{ item.specialty }}</td>
+          <td class="text-nowrap">{{ item.executor }}</td>
+          <td class="text-nowrap">{{ item.deadline|date:"d.m.Y" }}</td>
+          <td>{{ item.constraint }}</td>
+          <td class="text-nowrap">{{ item.duration|comma_decimal:0 }}</td>
+          <td class="text-nowrap">{{ item.duration_star|comma_decimal:0 }}</td>
+          <td>{{ item.predecessors }}</td>
+          <td class="text-nowrap">{{ item.progress }}%</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="13" class="text-muted">Пока нет данных.</td></tr>
+      {% endfor %}
+      </tbody>
+      </table>
+    </div>
+
+    {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+      <div class="d-flex align-items-stretch gap-2 products-actions-row">
+        <button
+          id="project-schedule-add-btn"
+          class="btn btn-primary btn-sm d-flex align-items-center"
+          type="button"
+          data-create-url-template="{% url 'project_schedule_form_create' 0 %}"
+          hx-target="#projects-modal .modal-content"
+          hx-swap="innerHTML"
+          disabled
+          title="Выберите проект в фильтре сверху">
+          <i class="bi bi-plus-circle me-2"></i>Добавить строку
+        </button>
+        <div id="project-schedule-actions" class="d-none" data-target-name="project-schedule-select">
+          <div class="btn-group">
+            <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+              <i class="bi bi-arrow-up-square"></i>
+            </button>
+            <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+              <i class="bi bi-arrow-down-square"></i>
+            </button>
+            <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+              <i class="bi bi-pencil-square"></i>
+            </button>
+            <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+              <i class="bi bi-x-square"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+
+  {# --- Диаграмма Ганта графика проекта --- #}
+  {# Wrap toggled by project-schedule-gantt.js; the editor below uses the SAME #}
+  {# ids/classes as policy_partial.html so it can be driven by the existing    #}
+  {# typical-service-term-gantt code in policy-panels.js (window.TypicalServiceTermGantt). #}
+  <div id="project-schedule-gantt-wrap" class="project-schedule-gantt-wrap d-none"
+       data-typical-service-term-gantt-host
+       data-current-project-id="">
+    <div id="project-schedule-gantt-empty" class="text-muted small mb-2 d-none">
+      Выберите проект в фильтре «Проекты:», чтобы увидеть диаграмму Ганта.
+    </div>
+    {% if request.user.is_authenticated and request.user.is_staff %}
+    <div id="typical-service-term-gantt-editor"
+         class="typical-service-term-gantt-editor d-none"
+         data-current-term-id=""
+         data-refresh-url="{% url 'projects_partial' %}"
+         data-refresh-target="#projects-pane">
+      <div class="typical-service-term-gantt-toolbar d-flex align-items-center justify-content-between gap-3 flex-wrap">
+        <div>
+          <div class="fw-semibold">Диаграмма Ганта</div>
+          <div class="small text-muted" id="typical-service-term-gantt-subtitle">Выберите проект в фильтре «Проекты:».</div>
+        </div>
+        <div class="typical-service-term-gantt-toolbar-controls d-flex align-items-center gap-2 flex-wrap">
+          <button type="button"
+                  class="btn btn-outline-secondary btn-sm typical-service-term-gantt-hide-non-working-toggle"
+                  id="typical-service-term-gantt-hide-non-working-btn"
+                  aria-label="Свернуть нерабочие дни на таймлайне"
+                  aria-pressed="false"
+                  title="Свернуть нерабочие дни: выходные и праздники не показываются на таймлайне">
+            <i class="bi bi-arrows-collapse-vertical" aria-hidden="true"></i>
+          </button>
+          <button type="button"
+                  class="btn btn-outline-secondary btn-sm typical-service-term-gantt-calendar-days-toggle"
+                  id="typical-service-term-gantt-calendar-days-btn"
+                  aria-label="Включить режим календарных дней"
+                  aria-pressed="false"
+                  title="Режим календарных дней: длительность считается без учёта производственного календаря">
+            <i class="bi bi-calendar3" aria-hidden="true"></i>
+          </button>
+          <button type="button"
+                  class="btn btn-outline-secondary btn-sm typical-service-term-gantt-timebox-toggle"
+                  id="typical-service-term-gantt-timebox-btn"
+                  aria-label="Включить режим таймбокса"
+                  aria-pressed="false"
+                  title="Режим таймбокса: подгонять цепочку к фиксированной вехе">
+            <i class="bi bi-calendar3-range" aria-hidden="true"></i>
+          </button>
+          <button type="button"
+                  class="btn btn-outline-secondary btn-sm typical-service-term-gantt-free-dates-toggle"
+                  id="typical-service-term-gantt-free-dates-btn"
+                  aria-label="Включить привязку сроков к сетке"
+                  aria-pressed="false"
+                  title="Свободное изменение сроков без привязки к сетке">
+            <i class="bi bi-align-end" aria-hidden="true"></i>
+          </button>
+          <label class="typical-service-term-gantt-project-bound small text-muted text-nowrap">
+            Начало проекта
+            <input type="text" class="form-control form-control-sm typical-service-term-gantt-project-start" inputmode="numeric" aria-label="Начало проекта">
+          </label>
+          <label class="typical-service-term-gantt-project-bound small text-muted text-nowrap">
+            Конец проекта
+            <input type="text" class="form-control form-control-sm typical-service-term-gantt-project-end" inputmode="numeric" aria-label="Конец проекта">
+          </label>
+          <span class="small text-muted text-nowrap">Масштаб:</span>
+          <div class="btn-group btn-group-sm" role="group" aria-label="Масштаб диаграммы Ганта графика проекта">
+            <button type="button" class="btn btn-outline-secondary js-typical-service-term-gantt-scale" data-scale="day">День</button>
+            <button type="button" class="btn btn-outline-secondary js-typical-service-term-gantt-scale" data-scale="week">Неделя</button>
+            <button type="button" class="btn btn-outline-secondary js-typical-service-term-gantt-scale" data-scale="month">Месяц</button>
+            <button type="button" class="btn btn-outline-secondary js-typical-service-term-gantt-scale" data-scale="quarter">Квартал</button>
+          </div>
+          <button type="button"
+                  class="btn btn-outline-secondary btn-sm typical-service-term-gantt-fullscreen-toggle"
+                  id="typical-service-term-gantt-fullscreen-btn"
+                  aria-label="Развернуть диаграмму на весь экран"
+                  title="Развернуть диаграмму на весь экран">
+            <i class="bi bi-arrows-fullscreen" aria-hidden="true"></i>
+          </button>
+        </div>
+      </div>
+      <div id="typical-service-term-gantt-message" class="typical-service-term-gantt-message text-muted d-none"></div>
+      <div id="typical-service-term-gantt" class="typical-service-term-gantt"></div>
+      <div class="typical-service-term-gantt-footer d-flex justify-content-between align-items-center gap-2">
+        <div class="d-flex align-items-center gap-2">
+          <button type="button"
+                  class="btn btn-outline-secondary btn-sm typical-service-term-gantt-settings-btn"
+                  id="typical-service-term-gantt-settings-btn"
+                  aria-label="Настройки диаграммы Ганта"
+                  title="Настройки">
+            <i class="bi bi-gear-wide-connected me-2" aria-hidden="true"></i>Настройки
+          </button>
+          <button type="button"
+                  class="btn btn-outline-secondary btn-sm typical-service-term-gantt-resources-btn"
+                  id="typical-service-term-gantt-resources-btn"
+                  aria-label="Показать ресурсы проекта"
+                  aria-expanded="false"
+                  aria-pressed="false"
+                  title="Ресурсы проекта">
+            <i class="bi bi-person-vcard" aria-hidden="true"></i>
+          </button>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          <button type="button" class="btn btn-outline-secondary btn-sm" id="typical-service-term-gantt-cancel-btn">
+            Отмена
+          </button>
+          <button type="button" class="btn btn-primary btn-sm" id="typical-service-term-gantt-save-btn">
+            <i class="bi bi-check2-circle me-2"></i>Сохранить
+          </button>
+        </div>
+      </div>
+      <div id="typical-service-term-gantt-resources"
+           class="gantt-resources-panel typical-service-term-gantt-resources d-none"></div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Объем работ -->
+  <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap" style="margin-top: 50px;">
     <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
       <i class="bi bi-table"></i> Объем услуг: активы
     </h5>
@@ -876,6 +1234,40 @@
         menu.style.minWidth = Math.max(controlWidth, 200, contentWidth) + "px";
       });
     };
+    window.__refreshRegistrationVisibleGroups = window.__refreshRegistrationVisibleGroups || function(root) {
+      const pane = root || document.getElementById("projects-pane");
+      const table = pane?.querySelector("table.reg-table");
+      if (!table) return;
+
+      let activeKey = null;
+      let previousVisibleRow = null;
+      table.querySelectorAll("tbody tr[data-reg-group-key]").forEach(row => {
+        row.classList.remove("registration-number-has-next", "registration-number-continuation");
+        const isVisible = !row.classList.contains("d-none");
+        const key = row.dataset.regGroupKey || "";
+        if (!isVisible || !key) return;
+
+        if (key !== activeKey) {
+          activeKey = key;
+          previousVisibleRow = null;
+        }
+
+        const isContinuation = !!previousVisibleRow;
+        row.classList.toggle("registration-number-continuation", isContinuation);
+        if (previousVisibleRow) {
+          previousVisibleRow.classList.add("registration-number-has-next");
+        }
+
+        const numberCell = row.cells[1];
+        const agreementCell = row.cells[2];
+        const groupCell = row.cells[3];
+        if (numberCell) numberCell.textContent = isContinuation ? "" : (row.dataset.regGroupNumber || "");
+        if (agreementCell) agreementCell.textContent = isContinuation ? "" : (row.dataset.regGroupAgreementType || "");
+        if (groupCell) groupCell.textContent = isContinuation ? "" : (row.dataset.regGroupGroup || "");
+
+        previousVisibleRow = row;
+      });
+    };
 
     function initRegFilter() {
       const pane = document.getElementById("projects-pane");
@@ -917,6 +1309,7 @@
         });
         updateLabel(values);
         if (window.__enforceMasterOnRows) window.__enforceMasterOnRows();
+        else window.__refreshRegistrationVisibleGroups(pane);
       }
 
       function normalizeSelection() {
@@ -1062,6 +1455,328 @@
     document.body.addEventListener("htmx:afterSettle", (event) => {
       if (event.target && event.target.id === "projects-pane") {
         initLegalFilter();
+      }
+    });
+  })();
+  </script>
+  <script>
+  (function() {
+    window.__projectScheduleFilter = window.__projectScheduleFilter || [];
+
+    function initProjectScheduleFilter() {
+      const pane = document.getElementById("projects-pane");
+      if (!pane) return;
+
+      const radios = pane.querySelectorAll(".js-project-schedule-filter");
+      const label = pane.querySelector(".js-project-schedule-filter-label");
+      const rows = pane.querySelectorAll("table.project-schedule-table tbody tr");
+
+      if (radios.length === 0) return;
+      const firstRadio = radios[0];
+      if (firstRadio.dataset.projectScheduleBound === "1") return;
+      firstRadio.dataset.projectScheduleBound = "1";
+      window.bindProjectFilterMenuWidth(label?.closest(".dropdown"));
+
+      function syncRadio(value) {
+        radios.forEach((radio) => { radio.checked = radio.value === value; });
+      }
+
+      function updateLabel(value) {
+        if (!value) {
+          label.textContent = "Не выбран";
+          return;
+        }
+        const input = Array.from(radios).find((radio) => radio.value === value);
+        label.textContent = window.getProjectFilterSummaryLabel(input, "1 проект");
+      }
+
+      function applyFilter(value) {
+        const projectId = value || "";
+        window.__projectScheduleFilter = projectId ? [projectId] : [];
+        rows.forEach((row) => {
+          const pid = row.dataset.projectId || "";
+          const visible = !!projectId && pid === projectId;
+          row.classList.toggle("d-none", !visible);
+          if (!visible) {
+            const checkbox = row.querySelector('input[name="project-schedule-select"]');
+            if (checkbox) checkbox.checked = false;
+          }
+        });
+        updateLabel(projectId);
+        if (window.__enforceMasterOnRows) window.__enforceMasterOnRows();
+        else if (window.__refreshProjectsSelectionState) window.__refreshProjectsSelectionState();
+        pane.dispatchEvent(new CustomEvent("project-schedule-filter-changed", { detail: { projectId } }));
+      }
+
+      window.__syncProjectScheduleFilter = function(projectId) {
+        const value = Array.from(radios).some((radio) => radio.value === projectId) ? projectId : "";
+        syncRadio(value);
+        applyFilter(value);
+      };
+
+      radios.forEach((radio) => {
+        radio.addEventListener("change", () => {
+          if (radio.checked) applyFilter(radio.value);
+        });
+      });
+
+      const initialValue = window.__projectScheduleFilter
+        && window.__projectScheduleFilter.length === 1
+        && Array.from(radios).some((radio) => radio.value === window.__projectScheduleFilter[0])
+          ? window.__projectScheduleFilter[0]
+          : "";
+      syncRadio(initialValue);
+      applyFilter(initialValue);
+      syncProjectScheduleAddBtn(initialValue);
+    }
+
+    function syncProjectScheduleAddBtn(projectId) {
+      const btn = document.getElementById("project-schedule-add-btn");
+      if (!btn) return;
+      const template = btn.dataset.createUrlTemplate || "";
+      if (projectId && template) {
+        const url = template.replace(/\/0\//, "/" + encodeURIComponent(projectId) + "/");
+        btn.disabled = false;
+        btn.removeAttribute("title");
+        btn.setAttribute("hx-get", url);
+        if (window.htmx && typeof window.htmx.process === "function") {
+          window.htmx.process(btn);
+        }
+      } else {
+        btn.disabled = true;
+        btn.setAttribute("title", "Выберите проект в фильтре сверху");
+        btn.removeAttribute("hx-get");
+      }
+    }
+
+    function bindAddBtnListener() {
+      const pane = document.getElementById("projects-pane");
+      if (pane && !pane.dataset.scheduleAddBtnBound) {
+        pane.dataset.scheduleAddBtnBound = "1";
+        pane.addEventListener("project-schedule-filter-changed", (event) => {
+          syncProjectScheduleAddBtn(event.detail && event.detail.projectId);
+        });
+      }
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      initProjectScheduleFilter();
+      bindAddBtnListener();
+    });
+    document.body.addEventListener("htmx:afterSettle", (event) => {
+      if (event.target && event.target.id === "projects-pane") {
+        initProjectScheduleFilter();
+        bindAddBtnListener();
+      }
+    });
+  })();
+  </script>
+  <script>
+  // ---------------------------------------------------------------------------
+  // График проекта: collapse/expand parent rows in the table view.
+  //
+  // Mirrors the Gantt grid's tree behaviour: a caret in front of the task
+  // text on parent rows toggles visibility of all descendants. State is
+  // persisted per project in localStorage so it survives reloads / filter
+  // changes / HTMX re-renders. The Gantt diagram has its own state and is
+  // unaffected by what we toggle here.
+  // ---------------------------------------------------------------------------
+  (function() {
+    const STORAGE_PREFIX = "project-schedule-collapsed:";
+    const OUTLINE_PREFIX = "project-schedule-outline:";
+
+    function loadCollapsed(projectId) {
+      try {
+        const raw = window.localStorage.getItem(STORAGE_PREFIX + projectId);
+        if (!raw) return new Set();
+        const arr = JSON.parse(raw);
+        return new Set(Array.isArray(arr) ? arr.map(String) : []);
+      } catch (_) {
+        return new Set();
+      }
+    }
+
+    function saveCollapsed(projectId, set) {
+      try {
+        window.localStorage.setItem(
+          STORAGE_PREFIX + projectId,
+          JSON.stringify(Array.from(set))
+        );
+      } catch (_) { /* storage may be disabled */ }
+    }
+
+    function loadOutlineLevel(projectId) {
+      try {
+        const raw = window.localStorage.getItem(OUTLINE_PREFIX + projectId);
+        const lvl = raw ? parseInt(raw, 10) : 0;
+        return (lvl >= 1 && lvl <= 4) ? lvl : 0;
+      } catch (_) {
+        return 0;
+      }
+    }
+
+    function saveOutlineLevel(projectId, level) {
+      try {
+        if (level && level >= 1 && level <= 4) {
+          window.localStorage.setItem(OUTLINE_PREFIX + projectId, String(level));
+        } else {
+          window.localStorage.removeItem(OUTLINE_PREFIX + projectId);
+        }
+      } catch (_) { /* storage may be disabled */ }
+    }
+
+    function getCurrentProjectId(root) {
+      const checked = root.querySelector('.js-project-schedule-filter:checked');
+      const value = checked ? String(checked.value || '') : '';
+      return (value && value !== '__all__') ? value : '';
+    }
+
+    function rowsForProject(projectId, root) {
+      return Array.from(root.querySelectorAll(
+        'table.project-schedule-table tbody tr.project-schedule-row[data-project-id="' + projectId + '"]'
+      ));
+    }
+
+    function applyCollapsedState(projectId, root) {
+      const collapsed = loadCollapsed(projectId);
+      const rows = rowsForProject(projectId, root);
+      const rowById = new Map();
+      rows.forEach((row) => rowById.set(row.dataset.taskId, row));
+
+      // Update each parent row's caret button to reflect persisted state.
+      rows.forEach((row) => {
+        const taskId = row.dataset.taskId;
+        const isCollapsed = collapsed.has(taskId);
+        const btn = row.querySelector('.js-project-schedule-toggle');
+        if (btn) {
+          btn.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+        }
+      });
+
+      // A row should be hidden iff *any* ancestor (along the parent chain
+      // up to a top-level row) is collapsed. Walk parent links per row.
+      rows.forEach((row) => {
+        let cursor = row.parentElement ? row.parentElement.querySelector(
+          'tr.project-schedule-row[data-project-id="' + projectId + '"][data-task-id="' + (row.dataset.parentId || '') + '"]'
+        ) : null;
+        let hidden = false;
+        // walk up via dataset.parentId chain; bound by row count to avoid loops
+        let safety = rows.length + 2;
+        let parentId = row.dataset.parentId || '';
+        while (parentId && safety-- > 0) {
+          if (collapsed.has(parentId)) { hidden = true; break; }
+          const parentRow = rowById.get(parentId);
+          if (!parentRow) break;
+          parentId = parentRow.dataset.parentId || '';
+        }
+        row.classList.toggle('project-schedule-row-collapsed-hidden', hidden);
+      });
+    }
+
+    function applyAllProjects(root) {
+      if (!root) return;
+      const projectIds = new Set();
+      root.querySelectorAll('table.project-schedule-table tbody tr.project-schedule-row[data-project-id]')
+        .forEach((row) => projectIds.add(row.dataset.projectId));
+      projectIds.forEach((projectId) => applyCollapsedState(projectId, root));
+    }
+
+    function syncOutlineButtons(root, projectId) {
+      const activeLevel = projectId ? loadOutlineLevel(projectId) : 0;
+      root.querySelectorAll('.js-project-schedule-outline').forEach((btn) => {
+        const lvl = parseInt(btn.dataset.outlineLevel || '0', 10);
+        const isActive = lvl > 0 && lvl === activeLevel;
+        btn.classList.toggle('active', isActive);
+        btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+        btn.disabled = !projectId;
+      });
+    }
+
+    function applyOutlineLevel(root, projectId, targetLevel) {
+      // "Show up to level N" → every parent at depth (level >= N - 1) becomes
+      // collapsed, parents at shallower depth become expanded. This mirrors
+      // the Gantt's applyTypicalServiceTermGanttOutlineLevel exactly (where
+      // task.$open = visualLevel < targetLevel) but in our 0-indexed `level`.
+      const collapsed = new Set();
+      root.querySelectorAll(
+        'tr.project-schedule-row-parent[data-project-id="' + projectId + '"]'
+      ).forEach((row) => {
+        const lvl = parseInt(row.dataset.level || '0', 10);
+        if (lvl >= (targetLevel - 1)) {
+          collapsed.add(String(row.dataset.taskId));
+        }
+      });
+      saveCollapsed(projectId, collapsed);
+      saveOutlineLevel(projectId, targetLevel);
+      applyCollapsedState(projectId, root);
+      syncOutlineButtons(root, projectId);
+    }
+
+    function bindToggleHandler(root) {
+      if (!root || root.dataset.scheduleTreeBound === '1') return;
+      root.dataset.scheduleTreeBound = '1';
+      root.addEventListener('click', (event) => {
+        // Per-row caret toggle: open/close just this parent and remember it.
+        const caret = event.target.closest('.js-project-schedule-toggle');
+        if (caret) {
+          const row = caret.closest('tr.project-schedule-row');
+          if (!row) return;
+          const projectId = row.dataset.projectId;
+          const taskId = row.dataset.taskId;
+          if (!projectId || !taskId) return;
+          const collapsed = loadCollapsed(projectId);
+          if (collapsed.has(taskId)) {
+            collapsed.delete(taskId);
+          } else {
+            collapsed.add(taskId);
+          }
+          saveCollapsed(projectId, collapsed);
+          // Manual per-row toggle invalidates the "active outline level"
+          // highlight (just like in the Gantt grid header).
+          saveOutlineLevel(projectId, 0);
+          applyCollapsedState(projectId, root);
+          syncOutlineButtons(root, projectId);
+          return;
+        }
+        // Header outline-level button (1/2/3/4).
+        const outline = event.target.closest('.js-project-schedule-outline');
+        if (outline && !outline.disabled) {
+          const projectId = getCurrentProjectId(root);
+          if (!projectId) return;
+          const lvl = parseInt(outline.dataset.outlineLevel || '0', 10);
+          if (lvl >= 1 && lvl <= 4) {
+            applyOutlineLevel(root, projectId, lvl);
+          }
+        }
+      });
+    }
+
+    function bindFilterChangeHandler(root) {
+      // The "project-schedule-filter-changed" CustomEvent is dispatched on
+      // the pane with the default bubbles:false, so listening on `document`
+      // would never receive it. Bind directly to the pane (idempotent).
+      if (!root || root.dataset.scheduleTreeFilterBound === '1') return;
+      root.dataset.scheduleTreeFilterBound = '1';
+      root.addEventListener('project-schedule-filter-changed', () => {
+        applyAllProjects(root);
+        syncOutlineButtons(root, getCurrentProjectId(root));
+      });
+    }
+
+    function init() {
+      const pane = document.getElementById('projects-pane');
+      if (!pane) return;
+      bindToggleHandler(pane);
+      bindFilterChangeHandler(pane);
+      applyAllProjects(pane);
+      syncOutlineButtons(pane, getCurrentProjectId(pane));
+    }
+
+    document.addEventListener('DOMContentLoaded', init);
+    document.body.addEventListener('htmx:afterSettle', (event) => {
+      if (event.target && (event.target.id === 'projects-pane' ||
+          (event.target.closest && event.target.closest('#projects-pane')))) {
+        init();
       }
     });
   })();
@@ -1279,7 +1994,7 @@
       var mv = getMasterValues();
       if (mv[0] !== FILTER_ALL) {
         var allRows = [];
-        ["table.reg-table", "table.contract-table", "table.work-table", "table.legal-table"].forEach(function(sel) {
+        ["table.reg-table", "table.contract-table", "table.project-schedule-table", "table.work-table", "table.legal-table"].forEach(function(sel) {
           pane.querySelectorAll(sel + " tbody tr").forEach(function(r) { allRows.push(r); });
         });
         var perfPane = document.getElementById("performers-pane");
@@ -1293,6 +2008,7 @@
       }
       if (window.__refreshProjectsSelectionState) window.__refreshProjectsSelectionState();
       if (window.__refreshPerformersSelectionState) window.__refreshPerformersSelectionState();
+      if (window.__refreshRegistrationVisibleGroups) window.__refreshRegistrationVisibleGroups(pane);
     }
 
     window.__enforceMasterOnRows = enforceMasterOnRows;
@@ -1302,6 +2018,7 @@
       var tables = [
         pane.querySelectorAll("table.reg-table tbody tr"),
         pane.querySelectorAll("table.contract-table tbody tr"),
+        pane.querySelectorAll("table.project-schedule-table tbody tr"),
         pane.querySelectorAll("table.work-table tbody tr"),
         pane.querySelectorAll("table.legal-table tbody tr")
       ];
@@ -1318,6 +2035,7 @@
           row.classList.toggle("d-none", !showAll && values.indexOf(pid) === -1);
         });
       }
+      if (window.__refreshRegistrationVisibleGroups) window.__refreshRegistrationVisibleGroups(pane);
     }
 
     function syncTableFilter(cssClass, allId, globalVar, values) {
@@ -1359,6 +2077,39 @@
       window[globalVar] = isAll ? [FILTER_ALL] : values.slice();
     }
 
+    function syncProjectScheduleFilter(values) {
+      var radios = pane.querySelectorAll(".js-project-schedule-filter");
+      if (!radios.length) return;
+      var selectedValue = (values.length === 1 && values[0] !== FILTER_ALL) ? values[0] : "";
+      var validSelection = !selectedValue || Array.from(radios).some(function(radio) { return radio.value === selectedValue; });
+      if (!validSelection) selectedValue = "";
+
+      radios.forEach(function(radio) {
+        radio.checked = radio.value === selectedValue;
+        radio.disabled = false;
+      });
+
+      var label = pane.querySelector(".js-project-schedule-filter-label");
+      if (label) {
+        if (!selectedValue) {
+          label.textContent = "Не выбран";
+        } else {
+          var selected = Array.from(radios).find(function(radio) { return radio.value === selectedValue; });
+          label.textContent = window.getProjectFilterSummaryLabel(selected, "1 проект");
+        }
+      }
+      pane.querySelectorAll("table.project-schedule-table tbody tr").forEach(function(row) {
+        var visible = !!selectedValue && (row.dataset.projectId || "") === selectedValue;
+        row.classList.toggle("d-none", !visible);
+        if (!visible) {
+          var checkbox = row.querySelector('input[name="project-schedule-select"]');
+          if (checkbox) checkbox.checked = false;
+        }
+      });
+      window.__projectScheduleFilter = selectedValue ? [selectedValue] : [];
+      pane.dispatchEvent(new CustomEvent("project-schedule-filter-changed", { detail: { projectId: selectedValue } }));
+    }
+
     function syncPerfFilter(values) {
       var perfPane = document.getElementById("performers-pane");
       if (!perfPane) return;
@@ -1396,6 +2147,7 @@
       syncMasterLabel(values);
       filterTableRows(values);
       syncTableFilter("js-reg-filter", "reg-filter-all", "__regProjectFilter", values);
+      syncProjectScheduleFilter(values);
       syncTableFilter("js-work-filter", "work-filter-all", "__workProjectFilter", values);
       syncTableFilter("js-legal-filter", "legal-filter-all", "__legalProjectFilter", values);
 

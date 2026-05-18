@@ -589,6 +589,10 @@ class TypicalServiceTerm(models.Model):
         on_delete=models.CASCADE,
         related_name="typical_service_terms",
     )
+    source_data_weeks = models.PositiveIntegerField(
+        "Сроки предоставления исходных данных, нед.",
+        default=0,
+    )
     preliminary_report_months = models.DecimalField(
         "Срок подготовки Предварительного отчёта, мес.",
         max_digits=6,
@@ -616,7 +620,12 @@ class TypicalServiceTerm(models.Model):
         ordering = ["position", "id"]
 
     def __str__(self):
-        return f"{self.product.short_name} / {self.preliminary_report_months} мес. / {self.final_report_weeks} нед."
+        return (
+            f"{self.product.short_name} / "
+            f"{self.source_data_weeks} нед. / "
+            f"{self.preliminary_report_months} мес. / "
+            f"{self.final_report_weeks} нед."
+        )
 
     @property
     def preliminary_report_months_display(self):

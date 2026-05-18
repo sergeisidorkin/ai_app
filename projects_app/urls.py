@@ -11,14 +11,22 @@ urlpatterns = [
     path("projects/registration/<int:pk>/status/", views.registration_status_update, name="registration_status_update"),
     path("projects/registration/<int:pk>/manager/", views.registration_manager_update, name="registration_manager_update"),
     path("projects/registration/<int:pk>/deadline/", views.registration_deadline_update, name="registration_deadline_update"),
+    path("projects/registration/<int:pk>/evaluation-date/", views.registration_evaluation_date_update, name="registration_evaluation_date_update"),
     path("projects/registration/<int:pk>/move-up/", views.registration_move_up, name="registration_move_up"),
     path("projects/registration/<int:pk>/move-down/", views.registration_move_down, name="registration_move_down"),
+    path("projects/registration/<int:pk>/gantt/", views.project_schedule_gantt, name="project_schedule_gantt"),
     path("projects/registration/create-workspace/", views.create_registration_workspace, name="create_registration_workspace"),
     path("projects/registration/workspace-folders/", views.workspace_folders_list, name="workspace_folders_list"),
     path("projects/registration/workspace-folders/save/", views.workspace_folders_save, name="workspace_folders_save"),
     path("projects/registration/workspace-folders/reset/", views.workspace_folders_reset, name="workspace_folders_reset"),
 
     path("projects/contract/<int:pk>/edit/", views.contract_form_edit, name="contract_form_edit"),
+
+    path("projects/registration/<int:pk>/gantt/task/add/", views.project_schedule_form_create, name="project_schedule_form_create"),
+    path("projects/registration/<int:project_pk>/gantt/task/<str:task_id>/edit/", views.project_schedule_form_edit, name="project_schedule_form_edit"),
+    path("projects/registration/<int:project_pk>/gantt/task/<str:task_id>/delete/", views.project_schedule_delete, name="project_schedule_delete"),
+    path("projects/registration/<int:project_pk>/gantt/task/<str:task_id>/move-up/", views.project_schedule_move_up, name="project_schedule_move_up"),
+    path("projects/registration/<int:project_pk>/gantt/task/<str:task_id>/move-down/", views.project_schedule_move_down, name="project_schedule_move_down"),
 
     path("projects/work/create/", views.work_form_create, name="work_form_create"),
     path("projects/work/<int:pk>/edit/",  views.work_form_edit, name="work_form_edit"),
