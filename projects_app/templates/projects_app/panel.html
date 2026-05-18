@@ -79,6 +79,9 @@
       <div class="modal-content"></div>
     </div>
   </div>
+  {# Settings modal for the typical-service-term Gantt is rendered by         #}
+  {# policy_app/panel.html (always loaded for staff users alongside this      #}
+  {# panel). Reusing it keeps a single instance and avoids duplicate ids.     #}
 
   <div id="performers-pane"
        hx-get="{% url 'performers_partial' %}"
@@ -123,6 +126,26 @@
 
   <script src="{% static 'core/js/performers-panels.js' %}" defer></script>
   <script>
+    function showProjectsModal() {
+      const modalEl = document.getElementById('projects-modal');
+      if (!modalEl || !window.bootstrap) return null;
+      const modal = window.bootstrap.Modal.getOrCreateInstance(modalEl, { backdrop: true, focus: true });
+      modal.show();
+      return modal;
+    }
+
+    document.body.addEventListener('htmx:beforeRequest', function (e) {
+      const elt = e.detail && e.detail.elt;
+      if (!(elt instanceof Element)) return;
+      const target = elt.getAttribute('hx-target') || elt.dataset.hxTarget || '';
+      if (target !== '#projects-modal .modal-content') return;
+      const modalContent = document.querySelector('#projects-modal .modal-content');
+      if (modalContent) {
+        modalContent.innerHTML = '<div class="p-5 text-center"><div class="spinner-border" role="status"><span class="visually-hidden">Загрузка…</span></div></div>';
+      }
+      showProjectsModal();
+    });
+
     document.body.addEventListener('projects-updated', function () {
       const el = document.getElementById('projects-modal');
       if (!el) return;
@@ -144,6 +167,8 @@
       // Если в загруженном фрагменте есть data-modal-size, применяем
       const sz = modalContent.querySelector('[data-modal-size]')?.dataset?.modalSize;
       if (sz) dlg.classList.add('modal-' + sz);
+
+      showProjectsModal();
     });
   </script>
   <script>

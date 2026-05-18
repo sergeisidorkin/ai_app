@@ -31,34 +31,33 @@
     <table id="proposal-registry-table" class="table table-sm align-middle reg-table proposals-table">
       <colgroup>
         <col class="checkbox">
-        <col class="proposal-number">
-        <col class="group">
+        <col class="proposal-number" data-col="number">
+        <col class="group" data-col="group">
         <col class="quick-edit" style="width:1%">
-        <col class="proposal-id">
-        <col class="proposal-type">
-        <col class="proposal-name">
-        <col class="proposal-kind">
-        <col class="proposal-status">
-        <col class="proposal-year">
-        <col class="proposal-customer">
-        <col class="proposal-country">
-        <col class="proposal-identifier">
-        <col class="proposal-regnumber">
-        <col class="proposal-region">
-        <col class="proposal-regdate">
-        <col class="proposal-customer">
-        <col class="proposal-country">
-        <col class="proposal-identifier">
-        <col class="proposal-regnumber">
-        <col class="proposal-region">
-        <col class="proposal-regdate">
-        <col class="proposal-name">
-        <col class="proposal-purpose">
-        <col class="proposal-services">
-        <col class="proposal-evaluation-date">
-        <col class="proposal-report-languages">
-        <col class="proposal-service-cost">
-        <col class="proposal-currency">
+        <col class="proposal-id" data-col="tkp-id">
+        <col class="proposal-type" data-col="type">
+        <col class="proposal-name" data-col="name">
+        <col class="proposal-kind" data-col="kind">
+        <col class="proposal-status" data-col="status">
+        <col class="proposal-year" data-col="year">
+        <col class="proposal-customer" data-col="customer">
+        <col class="proposal-country" data-col="country">
+        <col class="proposal-identifier" data-col="identifier">
+        <col class="proposal-regnumber" data-col="reg-number">
+        <col class="proposal-region" data-col="region">
+        <col class="proposal-regdate" data-col="date">
+        <col class="proposal-customer" data-col="asset-owner">
+        <col class="proposal-country" data-col="asset-owner-country">
+        <col class="proposal-identifier" data-col="asset-owner-identifier">
+        <col class="proposal-regnumber" data-col="asset-owner-reg-number">
+        <col class="proposal-region" data-col="asset-owner-region">
+        <col class="proposal-regdate" data-col="asset-owner-date">
+        <col class="proposal-name" data-col="proposal-project-name">
+        <col class="proposal-purpose" data-col="purpose">
+        <col class="proposal-services" data-col="service-composition">
+        <col class="proposal-report-languages" data-col="report-languages">
+        <col class="proposal-service-cost" data-col="service-cost">
+        <col class="proposal-currency" data-col="currency">
       </colgroup>
       <thead>
         <tr>
@@ -136,7 +135,6 @@
             <td data-col="proposal-project-name">{{ proposal.proposal_project_name }}</td>
             <td data-col="purpose" class="proposal-textarea-cell">{{ proposal.purpose|linebreaksbr }}</td>
             <td data-col="service-composition" class="proposal-textarea-cell">{{ proposal.service_composition|linebreaksbr }}</td>
-            <td data-col="evaluation-date">{{ proposal.evaluation_date|date:"d.m.Y" }}</td>
             <td data-col="report-languages" class="text-nowrap">{{ proposal.report_languages }}</td>
             <td data-col="service-cost" class="text-end">{{ proposal.service_cost|format_money }}</td>
             <td data-col="currency">{{ proposal.currency.code_alpha|default:"" }}</td>
@@ -242,6 +240,7 @@
         <col class="proposal-type" data-col="type">
         <col class="proposal-name" data-col="name">
         <col class="proposal-stage" data-col="stage">
+        <col class="proposal-evaluation-date" data-col="evaluation-date">
         <col class="proposal-start-date" data-col="start-date">
         <col class="proposal-term" data-col="term">
         <col class="proposal-preliminary-report-date" data-col="preliminary-report-date">
@@ -291,6 +290,7 @@
             <td data-col="type">{{ row.type }}</td>
             <td data-col="name">{{ row.name }}</td>
             <td data-col="stage">{{ row.stage }}</td>
+            <td data-col="evaluation-date">{{ row.evaluation_date|date:"d.m.Y" }}</td>
             <td data-col="start-date">{{ row.start_date|date:"d.m.Y" }}</td>
             <td data-col="term">{{ row.service_term_months|format_decimal_comma:"1" }}</td>
             <td data-col="preliminary-report-date">{{ row.preliminary_report_date|date:"d.m.Y" }}</td>

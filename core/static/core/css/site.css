@@ -694,12 +694,16 @@ body .second-sidebar + .flex-grow-1 {
   max-width: none;
 }
 
-#proposal-payment-view-dropdown .project-filter-menu {
+#proposal-payment-view-dropdown .project-filter-menu,
+#project-schedule-filter-dropdown .project-filter-menu,
+#project-schedule-view-dropdown .project-filter-menu {
   padding-right: 0 !important;
   padding-left: 0 !important;
 }
 
-#proposal-payment-view-dropdown .proposal-payment-view-option {
+#proposal-payment-view-dropdown .proposal-payment-view-option,
+#project-schedule-filter-dropdown .proposal-payment-view-option,
+#project-schedule-view-dropdown .proposal-payment-view-option {
   display: flex;
   align-items: center;
   gap: .5rem;
@@ -712,11 +716,15 @@ body .second-sidebar + .flex-grow-1 {
   cursor: pointer;
 }
 
-#proposal-payment-view-dropdown .proposal-payment-view-option:hover {
+#proposal-payment-view-dropdown .proposal-payment-view-option:hover,
+#project-schedule-filter-dropdown .proposal-payment-view-option:hover,
+#project-schedule-view-dropdown .proposal-payment-view-option:hover {
   background: #f8f9fa;
 }
 
-#proposal-payment-view-dropdown .proposal-payment-view-option .form-check-input {
+#proposal-payment-view-dropdown .proposal-payment-view-option .form-check-input,
+#project-schedule-filter-dropdown .proposal-payment-view-option .form-check-input,
+#project-schedule-view-dropdown .proposal-payment-view-option .form-check-input {
   flex: 0 0 auto;
   float: none;
   margin: 0;
@@ -1753,6 +1761,7 @@ section#templates .alert.alert-info .text-muted {
 #projects-pane table.reg-table col.project-number { width: 70px !important; }
 #projects-pane table.reg-table col.agreement-type { width: 9%  !important; }
 #projects-pane table.reg-table col.group          { width: 4%  !important; }
+#projects-pane table.reg-table col.quick-edit     { width: 1%  !important; }
 #projects-pane table.reg-table col.project-id     { width: 6%  !important; }
 #projects-pane table.reg-table col.reg-type       { width: 4%  !important; }
 #projects-pane table.reg-table col.reg-name       { width: 13% !important; }
@@ -1760,7 +1769,8 @@ section#templates .alert.alert-info .text-muted {
 #projects-pane table.reg-table col.reg-status     { width: 140px !important; }
 #projects-pane table.reg-table col.reg-deadline   { width: 150px !important; }
 #projects-pane table.reg-table col.reg-year       { width: 3%  !important; }
-#projects-pane table.reg-table col.reg-manager    { width: 10% !important; }
+#projects-pane table.reg-table col.reg-evaluation-date { width: 150px !important; }
+#projects-pane table.reg-table col.reg-manager    { width: 9% !important; }
 #projects-pane table.reg-table col.reg-customer   { width: 13% !important; }
 #projects-pane table.reg-table col.reg-country    { width: 5%  !important; }
 #projects-pane table.reg-table col.reg-identifier { width: 4%  !important; }
@@ -1893,6 +1903,15 @@ section#templates .alert.alert-info .text-muted {
   color: #a1a9b1 !important;
 }
 
+#projects-pane table.reg-table .project-quick-edit-col {
+  width: 1% !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  white-space: nowrap !important;
+  vertical-align: top !important;
+  text-align: center !important;
+}
+
 #projects-pane table.reg-table .reg-launch-cell {
   width: 44px !important;
   min-width: 44px !important;
@@ -1990,7 +2009,8 @@ section#templates .alert.alert-info .text-muted {
 
 #projects-pane table.reg-table tbody td[data-reg-status-cell],
 #projects-pane table.reg-table tbody td[data-reg-manager-cell],
-#projects-pane table.reg-table tbody td[data-reg-deadline-cell] {
+#projects-pane table.reg-table tbody td[data-reg-deadline-cell],
+#projects-pane table.reg-table tbody td[data-reg-date-cell] {
   min-width: 140px !important;
   padding-top: 0 !important;
   padding-bottom: 0 !important;
@@ -1998,6 +2018,11 @@ section#templates .alert.alert-info .text-muted {
 }
 
 #projects-pane table.reg-table tbody td[data-reg-deadline-cell] {
+  min-width: 150px !important;
+  width: 150px !important;
+}
+
+#projects-pane table.reg-table tbody td[data-reg-date-field="evaluation_date"] {
   min-width: 150px !important;
   width: 150px !important;
 }
@@ -2285,9 +2310,48 @@ section#templates .alert.alert-info .text-muted {
   width: 100%;
 }
 
-#proposals-pane .registration-table-wrap > table.proposals-table {
-  width: max-content;
+#proposals-pane #proposal-registry-table {
+  width: 100%;
   min-width: 100%;
+}
+
+#proposals-pane #proposal-registry-table col.checkbox,
+#proposals-pane #proposal-registry-table > thead tr > :first-child,
+#proposals-pane #proposal-registry-table > tbody tr > :first-child {
+  width: 30px !important;
+  min-width: 30px !important;
+  max-width: 30px !important;
+}
+
+#proposals-pane #proposal-registry-table col.proposal-number,
+#proposals-pane #proposal-registry-table > thead tr > :nth-child(2),
+#proposals-pane #proposal-registry-table > tbody tr > :nth-child(2) {
+  width: 68px !important;
+  min-width: 68px !important;
+  max-width: 68px !important;
+}
+
+#proposals-pane #proposal-registry-table col.group,
+#proposals-pane #proposal-registry-table > thead tr > :nth-child(3),
+#proposals-pane #proposal-registry-table > tbody tr > :nth-child(3) {
+  width: 48px !important;
+  min-width: 48px !important;
+  max-width: 48px !important;
+}
+
+#proposals-pane #proposal-registry-table > thead tr > :first-child {
+  vertical-align: bottom !important;
+}
+
+#proposals-pane #proposal-registry-table > thead tr > :first-child .form-check {
+  position: static !important;
+  width: 100% !important;
+  height: auto !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin: 0 !important;
+  padding: 0 !important;
 }
 
 #proposals-pane .proposal-payment-schedule-table-wrap > table.proposals-table {
@@ -2576,7 +2640,7 @@ section#templates .alert.alert-info .text-muted {
   background-color: rgba(var(--bs-primary-rgb, 7, 93, 148), .12) !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor {
+.typical-service-term-gantt-editor {
   position: relative;
   margin-top: 1rem;
   border: 1px solid transparent;
@@ -2591,7 +2655,7 @@ body.typical-service-term-gantt-fullscreen-active {
   overflow: hidden;
 }
 
-#policy-pane .typical-service-term-gantt-editor.typical-service-term-gantt-editor--fullscreen {
+.typical-service-term-gantt-editor.typical-service-term-gantt-editor--fullscreen {
   position: fixed;
   inset: 0;
   /* Flex column where every child sits at its own intrinsic height; the
@@ -2614,7 +2678,7 @@ body.typical-service-term-gantt-fullscreen-active {
   overflow-y: auto;
 }
 
-#policy-pane .typical-service-term-gantt-editor.typical-service-term-gantt-editor--fullscreen .typical-service-term-gantt-toolbar {
+.typical-service-term-gantt-editor.typical-service-term-gantt-editor--fullscreen .typical-service-term-gantt-toolbar {
   position: sticky;
   top: 0;
   z-index: 120;
@@ -2622,11 +2686,11 @@ body.typical-service-term-gantt-fullscreen-active {
   flex: 0 0 auto;
 }
 
-#policy-pane .typical-service-term-gantt-editor.typical-service-term-gantt-editor--fullscreen .typical-service-term-gantt {
+.typical-service-term-gantt-editor.typical-service-term-gantt-editor--fullscreen .typical-service-term-gantt {
   flex: 0 0 auto;
 }
 
-#policy-pane .typical-service-term-gantt-editor.typical-service-term-gantt-editor--fullscreen .typical-service-term-gantt-footer {
+.typical-service-term-gantt-editor.typical-service-term-gantt-editor--fullscreen .typical-service-term-gantt-footer {
   position: sticky;
   bottom: 0;
   z-index: 120;
@@ -2636,7 +2700,7 @@ body.typical-service-term-gantt-fullscreen-active {
   margin-top: auto;
 }
 
-#policy-pane .typical-service-term-gantt-editor::after {
+.typical-service-term-gantt-editor::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -2646,29 +2710,29 @@ body.typical-service-term-gantt-fullscreen-active {
   z-index: 5;
 }
 
-#policy-pane .typical-service-term-gantt-editor.typical-service-term-gantt-editor--fullscreen::after {
+.typical-service-term-gantt-editor.typical-service-term-gantt-editor--fullscreen::after {
   display: none;
 }
 
-#policy-pane .typical-service-term-gantt-toolbar,
-#policy-pane .typical-service-term-gantt-footer {
+.typical-service-term-gantt-toolbar,
+.typical-service-term-gantt-footer {
   padding: .75rem 1rem;
   background: #fff;
 }
 
-#policy-pane .typical-service-term-gantt-toolbar {
+.typical-service-term-gantt-toolbar {
   border-bottom: 1px solid #dee2e6;
 }
 
-#policy-pane .typical-service-term-gantt-toolbar-controls {
+.typical-service-term-gantt-toolbar-controls {
   row-gap: .5rem !important;
 }
 
-#policy-pane .typical-service-term-gantt-fullscreen-toggle,
-#policy-pane .typical-service-term-gantt-timebox-toggle,
-#policy-pane .typical-service-term-gantt-free-dates-toggle,
-#policy-pane .typical-service-term-gantt-calendar-days-toggle,
-#policy-pane .typical-service-term-gantt-hide-non-working-toggle {
+.typical-service-term-gantt-fullscreen-toggle,
+.typical-service-term-gantt-timebox-toggle,
+.typical-service-term-gantt-free-dates-toggle,
+.typical-service-term-gantt-calendar-days-toggle,
+.typical-service-term-gantt-hide-non-working-toggle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2676,7 +2740,7 @@ body.typical-service-term-gantt-fullscreen-active {
   min-width: calc(1.5em + .75rem + 2px);
 }
 
-#policy-pane .typical-service-term-gantt-free-dates-toggle {
+.typical-service-term-gantt-free-dates-toggle {
   width: calc(1.5em + .5rem + 2px);
   min-width: calc(1.5em + .5rem + 2px);
   margin-right: .35rem;
@@ -2684,38 +2748,38 @@ body.typical-service-term-gantt-fullscreen-active {
   padding-right: 0;
 }
 
-#policy-pane .typical-service-term-gantt-calendar-days-toggle {
+.typical-service-term-gantt-calendar-days-toggle {
   margin-right: .15rem;
 }
 
-#policy-pane .typical-service-term-gantt-hide-non-working-toggle {
+.typical-service-term-gantt-hide-non-working-toggle {
   margin-right: .15rem;
 }
 
-#policy-pane .typical-service-term-gantt-hide-non-working-toggle:disabled,
-#policy-pane .typical-service-term-gantt-hide-non-working-toggle.disabled {
+.typical-service-term-gantt-hide-non-working-toggle:disabled,
+.typical-service-term-gantt-hide-non-working-toggle.disabled {
   opacity: .45;
   cursor: not-allowed;
   pointer-events: none;
 }
 
-#policy-pane .typical-service-term-gantt-project-bound {
+.typical-service-term-gantt-project-bound {
   display: inline-flex;
   align-items: center;
   gap: .35rem;
   margin: 0;
 }
 
-#policy-pane .typical-service-term-gantt-project-bound .form-control {
+.typical-service-term-gantt-project-bound .form-control {
   width: 8.7rem;
 }
 
-#policy-pane .typical-service-term-gantt-footer {
+.typical-service-term-gantt-footer {
   border-top: 0;
   padding-bottom: 1rem;
 }
 
-#policy-pane .typical-service-term-gantt-settings-btn {
+.typical-service-term-gantt-settings-btn {
   display: inline-flex;
   align-items: center;
 }
@@ -2919,7 +2983,7 @@ body.typical-service-term-gantt-fullscreen-active {
   min-width: 260px;
 }
 
-#policy-pane .typical-service-term-gantt-resources-btn {
+.typical-service-term-gantt-resources-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2927,37 +2991,37 @@ body.typical-service-term-gantt-fullscreen-active {
   min-width: calc(1.5em + .75rem + 2px);
 }
 
-#policy-pane .typical-service-term-gantt-resources-btn:not(.active):not([aria-pressed="true"]):hover,
-#policy-pane .typical-service-term-gantt-resources-btn:not(.active):not([aria-pressed="true"]):focus:hover {
+.typical-service-term-gantt-resources-btn:not(.active):not([aria-pressed="true"]):hover,
+.typical-service-term-gantt-resources-btn:not(.active):not([aria-pressed="true"]):focus:hover {
   color: #5f676e !important;
   background-color: #f8f9fa !important;
   border-color: #5f676e !important;
 }
 
-#policy-pane .typical-service-term-gantt-resources-btn:not(.active):not([aria-pressed="true"]):focus:not(:hover) {
+.typical-service-term-gantt-resources-btn:not(.active):not([aria-pressed="true"]):focus:not(:hover) {
   color: #6c757d !important;
   background-color: transparent !important;
   border-color: #6c757d !important;
 }
 
-#policy-pane .typical-service-term-gantt-resources-btn.active,
-#policy-pane .typical-service-term-gantt-resources-btn[aria-pressed="true"] {
+.typical-service-term-gantt-resources-btn.active,
+.typical-service-term-gantt-resources-btn[aria-pressed="true"] {
   color: #6c757d !important;
   background-color: #f1f3f5 !important;
   border-color: #6c757d !important;
 }
 
-#policy-pane .typical-service-term-gantt-resources-btn.active:hover,
-#policy-pane .typical-service-term-gantt-resources-btn[aria-pressed="true"]:hover,
-#policy-pane .typical-service-term-gantt-resources-btn.active:focus:hover,
-#policy-pane .typical-service-term-gantt-resources-btn[aria-pressed="true"]:focus:hover {
+.typical-service-term-gantt-resources-btn.active:hover,
+.typical-service-term-gantt-resources-btn[aria-pressed="true"]:hover,
+.typical-service-term-gantt-resources-btn.active:focus:hover,
+.typical-service-term-gantt-resources-btn[aria-pressed="true"]:focus:hover {
   color: #5f676e !important;
   background-color: #e9ecef !important;
   border-color: #5f676e !important;
 }
 
-#policy-pane .typical-service-term-gantt-resources-btn.active:focus:not(:hover),
-#policy-pane .typical-service-term-gantt-resources-btn[aria-pressed="true"]:focus:not(:hover) {
+.typical-service-term-gantt-resources-btn.active:focus:not(:hover),
+.typical-service-term-gantt-resources-btn[aria-pressed="true"]:focus:not(:hover) {
   color: #6c757d !important;
   background-color: #f1f3f5 !important;
   border-color: #6c757d !important;
@@ -2969,46 +3033,46 @@ body.typical-service-term-gantt-fullscreen-active {
   }
 }
 
-#policy-pane .typical-service-term-gantt-message {
+.typical-service-term-gantt-message {
   padding: .75rem 1rem;
   border-bottom: 1px solid #dee2e6;
   background: #fff;
 }
 
-#policy-pane .js-typical-service-term-gantt-scale.active,
-#policy-pane .js-typical-service-term-gantt-scale.active:hover,
-#policy-pane .js-typical-service-term-gantt-scale.active:focus {
+.js-typical-service-term-gantt-scale.active,
+.js-typical-service-term-gantt-scale.active:hover,
+.js-typical-service-term-gantt-scale.active:focus {
   color: #fff !important;
   background: var(--bs-primary, #075D94) !important;
   border-color: var(--bs-primary, #075D94) !important;
 }
 
-#policy-pane .typical-service-term-gantt-free-dates-toggle.active,
-#policy-pane .typical-service-term-gantt-free-dates-toggle.active:hover,
-#policy-pane .typical-service-term-gantt-free-dates-toggle.active:focus,
-#policy-pane .typical-service-term-gantt-timebox-toggle.active,
-#policy-pane .typical-service-term-gantt-timebox-toggle.active:hover,
-#policy-pane .typical-service-term-gantt-timebox-toggle.active:focus,
-#policy-pane .typical-service-term-gantt-calendar-days-toggle.active,
-#policy-pane .typical-service-term-gantt-calendar-days-toggle.active:hover,
-#policy-pane .typical-service-term-gantt-calendar-days-toggle.active:focus,
-#policy-pane .typical-service-term-gantt-hide-non-working-toggle.active,
-#policy-pane .typical-service-term-gantt-hide-non-working-toggle.active:hover,
-#policy-pane .typical-service-term-gantt-hide-non-working-toggle.active:focus {
+.typical-service-term-gantt-free-dates-toggle.active,
+.typical-service-term-gantt-free-dates-toggle.active:hover,
+.typical-service-term-gantt-free-dates-toggle.active:focus,
+.typical-service-term-gantt-timebox-toggle.active,
+.typical-service-term-gantt-timebox-toggle.active:hover,
+.typical-service-term-gantt-timebox-toggle.active:focus,
+.typical-service-term-gantt-calendar-days-toggle.active,
+.typical-service-term-gantt-calendar-days-toggle.active:hover,
+.typical-service-term-gantt-calendar-days-toggle.active:focus,
+.typical-service-term-gantt-hide-non-working-toggle.active,
+.typical-service-term-gantt-hide-non-working-toggle.active:hover,
+.typical-service-term-gantt-hide-non-working-toggle.active:focus {
   color: #fff !important;
   background: var(--bs-primary, #075D94) !important;
   border-color: var(--bs-primary, #075D94) !important;
 }
 
 /* Non-working day shading inside the chart area. */
-#policy-pane .typical-service-term-gantt .gantt_data_area {
+.typical-service-term-gantt .gantt_data_area {
   position: relative !important;
   /* Confine the overlay's `mix-blend-mode: multiply` to the chart area so it
      doesn't blend with anything outside the timeline. */
   isolation: isolate;
 }
 
-#policy-pane .typical-service-term-gantt-non-working-overlay {
+.typical-service-term-gantt-non-working-overlay {
   position: absolute;
   top: 0;
   left: 0;
@@ -3022,7 +3086,7 @@ body.typical-service-term-gantt-fullscreen-active {
   z-index: 1;
 }
 
-#policy-pane .typical-service-term-gantt-non-working-day-bg {
+.typical-service-term-gantt-non-working-day-bg {
   position: absolute;
   top: 0;
   /* Same lightness on every scale (Day, Week, Month, Quarter). The previous
@@ -3033,7 +3097,7 @@ body.typical-service-term-gantt-fullscreen-active {
 
 /* In calendar-days mode the stripes are hidden via JS removing the nodes;
    this is a defensive override in case any stray DOM stays around. */
-#policy-pane .typical-service-term-gantt.typical-service-term-gantt-calendar-days
+.typical-service-term-gantt.typical-service-term-gantt-calendar-days
   .typical-service-term-gantt-non-working-day-bg {
   display: none;
 }
@@ -3042,7 +3106,7 @@ body.typical-service-term-gantt-fullscreen-active {
    week/month/quarter scales. `splitSize` is overridden to allocate 0px of
    header height to this row, but as a defensive measure we visually erase
    its cell content too. */
-#policy-pane .typical-service-term-gantt .gantt_scale_cell.typical-service-term-gantt-hidden-day-cell {
+.typical-service-term-gantt .gantt_scale_cell.typical-service-term-gantt-hidden-day-cell {
   border: 0 !important;
   background: transparent !important;
   color: transparent !important;
@@ -3057,17 +3121,17 @@ body.typical-service-term-gantt-fullscreen-active {
    chart background is broken into day cells too. We don't want a forest of
    thin vertical lines in the timeline; the visible scale rows above already
    provide week/month/quarter boundaries. */
-#policy-pane .typical-service-term-gantt.typical-service-term-gantt-hidden-day-cells .gantt_task_cell {
+.typical-service-term-gantt.typical-service-term-gantt-hidden-day-cells .gantt_task_cell {
   border-right-color: transparent !important;
 }
-#policy-pane .typical-service-term-gantt.typical-service-term-gantt-hidden-day-cells .gantt_task_row .gantt_task_cell + .gantt_task_cell {
+.typical-service-term-gantt.typical-service-term-gantt-hidden-day-cells .gantt_task_row .gantt_task_cell + .gantt_task_cell {
   border-left-color: transparent !important;
 }
 
 /* Synthetic gridlines drawn at week/month/quarter boundaries when the chart
    uses day-grain background cells. Matches dhtmlxGantt's default cell border
    colour so the lines blend in with the rest of the grid. */
-#policy-pane .typical-service-term-gantt-grid-line {
+.typical-service-term-gantt-grid-line {
   position: absolute;
   top: 0;
   width: 1px;
@@ -3076,7 +3140,7 @@ body.typical-service-term-gantt-fullscreen-active {
   z-index: 0;
 }
 
-#policy-pane .typical-service-term-gantt {
+.typical-service-term-gantt {
   position: relative;
   width: 100%;
   height: auto;
@@ -3100,7 +3164,7 @@ body.typical-service-term-gantt-fullscreen-active {
    `gantt_grid_data` area, leaving a large white gap between the last row and
    the bottom horizontal scrollbar. */
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-project-boundary-line {
+.typical-service-term-gantt-editor .typical-service-term-gantt-project-boundary-line {
   position: absolute;
   top: 0;
   width: 0;
@@ -3110,33 +3174,33 @@ body.typical-service-term-gantt-fullscreen-active {
   z-index: auto !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-project-boundary-line--today {
+.typical-service-term-gantt-editor .typical-service-term-gantt-project-boundary-line--today {
   border-left: 2px dashed var(--bs-primary, #075D94);
   opacity: .95;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_container,
-#policy-pane .typical-service-term-gantt-editor .gantt_grid,
-#policy-pane .typical-service-term-gantt-editor .gantt_task,
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_scale,
-#policy-pane .typical-service-term-gantt-editor .gantt_task_scale,
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_head_cell,
-#policy-pane .typical-service-term-gantt-editor .gantt_cell,
-#policy-pane .typical-service-term-gantt-editor .gantt_task_content,
-#policy-pane .typical-service-term-gantt-editor .gantt_scale_cell {
+.typical-service-term-gantt-editor .gantt_container,
+.typical-service-term-gantt-editor .gantt_grid,
+.typical-service-term-gantt-editor .gantt_task,
+.typical-service-term-gantt-editor .gantt_grid_scale,
+.typical-service-term-gantt-editor .gantt_task_scale,
+.typical-service-term-gantt-editor .gantt_grid_head_cell,
+.typical-service-term-gantt-editor .gantt_cell,
+.typical-service-term-gantt-editor .gantt_task_content,
+.typical-service-term-gantt-editor .gantt_scale_cell {
   font-family: inherit !important;
   font-size: inherit !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_container {
+.typical-service-term-gantt-editor .gantt_container {
   border-bottom: 0 !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_layout_cell_border_bottom {
+.typical-service-term-gantt-editor .gantt_layout_cell_border_bottom {
   border-bottom: 0 !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_content {
+.typical-service-term-gantt-editor .gantt_task_content {
   font-size: .86rem !important;
   padding: 0 6px !important;
   overflow: hidden !important;
@@ -3145,47 +3209,47 @@ body.typical-service-term-gantt-fullscreen-active {
   box-sizing: border-box !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_scale,
-#policy-pane .typical-service-term-gantt-editor .gantt_task_scale {
+.typical-service-term-gantt-editor .gantt_grid_scale,
+.typical-service-term-gantt-editor .gantt_task_scale {
   background: #f8f9fa;
 }
 
-#policy-pane .typical-service-term-gantt.typical-service-term-gantt-scale-week .gantt_scale_line:last-child .gantt_scale_cell,
+.typical-service-term-gantt.typical-service-term-gantt-scale-week .gantt_scale_line:last-child .gantt_scale_cell,
 /* When the hidden day-level sub-scale is appended, the week row is no longer
    the last child — keep the smaller font on the week labels. */
-#policy-pane .typical-service-term-gantt.typical-service-term-gantt-scale-week.typical-service-term-gantt-hidden-day-cells .gantt_scale_line:nth-last-child(2) .gantt_scale_cell {
+.typical-service-term-gantt.typical-service-term-gantt-scale-week.typical-service-term-gantt-hidden-day-cells .gantt_scale_line:nth-last-child(2) .gantt_scale_cell {
   font-size: .86rem !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_head_text {
+.typical-service-term-gantt-editor .gantt_grid_head_text {
   text-align: inherit;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_head_cell:first-child {
+.typical-service-term-gantt-editor .gantt_grid_head_cell:first-child {
   text-align: center !important;
   padding-left: 24px !important;
   padding-right: 8px !important;
   box-sizing: border-box;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_head_cell:first-child .gantt_grid_head_text {
+.typical-service-term-gantt-editor .gantt_grid_head_cell:first-child .gantt_grid_head_text {
   display: inline-block;
   min-width: 7.2em;
   max-width: 100%;
   text-align: left;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_head_cell:nth-child(2) {
+.typical-service-term-gantt-editor .gantt_grid_head_cell:nth-child(2) {
   text-align: left !important;
   padding-left: 22px !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_head_cell:nth-child(2) .gantt_grid_head_text {
+.typical-service-term-gantt-editor .gantt_grid_head_cell:nth-child(2) .gantt_grid_head_text {
   display: block;
   width: 100%;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-task-header {
+.typical-service-term-gantt-editor .typical-service-term-gantt-task-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -3194,13 +3258,13 @@ body.typical-service-term-gantt-fullscreen-active {
   min-width: 0;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-task-header-title {
+.typical-service-term-gantt-editor .typical-service-term-gantt-task-header-title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-outline-controls {
+.typical-service-term-gantt-editor .typical-service-term-gantt-outline-controls {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -3208,7 +3272,7 @@ body.typical-service-term-gantt-fullscreen-active {
   padding-right: .8rem;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-outline-btn {
+.typical-service-term-gantt-editor .typical-service-term-gantt-outline-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3224,28 +3288,28 @@ body.typical-service-term-gantt-fullscreen-active {
   cursor: pointer;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-outline-btn:hover,
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-outline-btn:focus,
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-outline-btn.active {
+.typical-service-term-gantt-editor .typical-service-term-gantt-outline-btn:hover,
+.typical-service-term-gantt-editor .typical-service-term-gantt-outline-btn:focus,
+.typical-service-term-gantt-editor .typical-service-term-gantt-outline-btn.active {
   color: #fff;
   background: var(--bs-primary, #075D94);
   border-color: var(--bs-primary, #075D94);
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-grid-value {
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-value {
   display: inline-block;
   box-sizing: border-box;
   font-variant-numeric: tabular-nums;
   line-height: inherit;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--wbs,
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--predecessors {
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--wbs,
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--predecessors {
   max-width: 100%;
   text-align: left;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--wbs {
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--wbs {
   max-width: 100%;
   width: 7.2em;
   text-align: left;
@@ -3254,7 +3318,7 @@ body.typical-service-term-gantt-fullscreen-active {
   white-space: nowrap;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--predecessors {
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--predecessors {
   width: 100%;
   max-width: 100%;
   overflow: hidden;
@@ -3262,34 +3326,34 @@ body.typical-service-term-gantt-fullscreen-active {
   white-space: nowrap;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--duration {
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--duration {
   width: 2.2em;
   max-width: 100%;
   text-align: right;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--weekday-date {
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--weekday-date {
   white-space: nowrap;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-weekday-label {
+.typical-service-term-gantt-editor .typical-service-term-gantt-weekday-label {
   color: #adb5bd;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--progress {
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--progress {
   width: 3.4em;
   max-width: 100%;
   text-align: right;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--deadline {
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--deadline {
   width: 4.8em;
   max-width: 100%;
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--constraint {
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--constraint {
   width: 7.4em;
   max-width: 100%;
   text-align: left;
@@ -3299,8 +3363,8 @@ body.typical-service-term-gantt-fullscreen-active {
   white-space: nowrap;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--specialty,
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--executor {
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--specialty,
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--executor {
   width: 100%;
   max-width: 100%;
   overflow: hidden;
@@ -3308,12 +3372,12 @@ body.typical-service-term-gantt-fullscreen-active {
   white-space: nowrap;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_head_cell {
+.typical-service-term-gantt-editor .gantt_grid_head_cell {
   position: relative;
   overflow: visible !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-column-collapse-btn {
+.typical-service-term-gantt-editor .typical-service-term-gantt-column-collapse-btn {
   position: absolute;
   top: 1px;
   right: 2px;
@@ -3334,45 +3398,45 @@ body.typical-service-term-gantt-fullscreen-active {
   z-index: 35;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-column-collapse-btn .bi {
+.typical-service-term-gantt-editor .typical-service-term-gantt-column-collapse-btn .bi {
   display: block;
   line-height: 1;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_head_cell.typical-service-term-gantt-grid-column--collapsible:hover > .typical-service-term-gantt-column-collapse-btn,
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_head_cell.typical-service-term-gantt-grid-column--collapsible:focus-within > .typical-service-term-gantt-column-collapse-btn,
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_head_cell.typical-service-term-gantt-grid-column--collapsed > .typical-service-term-gantt-column-collapse-btn {
+.typical-service-term-gantt-editor .gantt_grid_head_cell.typical-service-term-gantt-grid-column--collapsible:hover > .typical-service-term-gantt-column-collapse-btn,
+.typical-service-term-gantt-editor .gantt_grid_head_cell.typical-service-term-gantt-grid-column--collapsible:focus-within > .typical-service-term-gantt-column-collapse-btn,
+.typical-service-term-gantt-editor .gantt_grid_head_cell.typical-service-term-gantt-grid-column--collapsed > .typical-service-term-gantt-column-collapse-btn {
   opacity: 1;
   pointer-events: auto;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_head_cell.typical-service-term-gantt-grid-column--collapsed > .typical-service-term-gantt-column-collapse-btn {
+.typical-service-term-gantt-editor .gantt_grid_head_cell.typical-service-term-gantt-grid-column--collapsed > .typical-service-term-gantt-column-collapse-btn {
   right: 0;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-column-collapse-btn:hover,
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-column-collapse-btn:focus-visible {
+.typical-service-term-gantt-editor .typical-service-term-gantt-column-collapse-btn:hover,
+.typical-service-term-gantt-editor .typical-service-term-gantt-column-collapse-btn:focus-visible {
   color: var(--bs-primary, #075D94);
   background: transparent;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_head_cell.typical-service-term-gantt-grid-column--collapsed {
+.typical-service-term-gantt-editor .gantt_grid_head_cell.typical-service-term-gantt-grid-column--collapsed {
   padding-left: 0 !important;
   padding-right: 0 !important;
   border-right: 1px dashed var(--dhx-gantt-base-colors-border, #DFE0E1) !important;
   color: transparent !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_head_cell.typical-service-term-gantt-grid-column--collapsed .gantt_grid_head_text,
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_head_cell.typical-service-term-gantt-grid-column--collapsed > :not(.typical-service-term-gantt-column-collapse-btn),
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_data .gantt_cell.typical-service-term-gantt-grid-column--collapsed > * {
+.typical-service-term-gantt-editor .gantt_grid_head_cell.typical-service-term-gantt-grid-column--collapsed .gantt_grid_head_text,
+.typical-service-term-gantt-editor .gantt_grid_head_cell.typical-service-term-gantt-grid-column--collapsed > :not(.typical-service-term-gantt-column-collapse-btn),
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_cell.typical-service-term-gantt-grid-column--collapsed > * {
   visibility: hidden !important;
   color: transparent !important;
   -webkit-text-fill-color: transparent !important;
   text-shadow: none !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_data .gantt_cell.typical-service-term-gantt-grid-column--collapsed {
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_cell.typical-service-term-gantt-grid-column--collapsed {
   padding-left: 0 !important;
   padding-right: 0 !important;
   border-right: 1px dashed var(--dhx-gantt-base-colors-border, #DFE0E1) !important;
@@ -3381,13 +3445,13 @@ body.typical-service-term-gantt-fullscreen-active {
   text-shadow: none !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_scale .gantt_grid_head_cell.gantt_last_cell,
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_scale .gantt_grid_head_cell:last-child {
+.typical-service-term-gantt-editor .gantt_grid_scale .gantt_grid_head_cell.gantt_last_cell,
+.typical-service-term-gantt-editor .gantt_grid_scale .gantt_grid_head_cell:last-child {
   border-right-color: transparent !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_resize_wrap,
-#policy-pane .typical-service-term-gantt-editor .gantt_resizer {
+.typical-service-term-gantt-editor .gantt_grid_resize_wrap,
+.typical-service-term-gantt-editor .gantt_resizer {
   cursor: col-resize !important;
   position: relative !important;
   overflow: visible !important;
@@ -3396,8 +3460,8 @@ body.typical-service-term-gantt-fullscreen-active {
   border-right: 0 !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_resize_wrap::after,
-#policy-pane .typical-service-term-gantt-editor .gantt_resizer::after {
+.typical-service-term-gantt-editor .gantt_grid_resize_wrap::after,
+.typical-service-term-gantt-editor .gantt_resizer::after {
   content: "";
   position: absolute;
   top: 0;
@@ -3409,30 +3473,30 @@ body.typical-service-term-gantt-fullscreen-active {
   pointer-events: none;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_resize_wrap:hover::after,
-#policy-pane .typical-service-term-gantt-editor .gantt_resizer:hover::after,
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_resize_wrap.is-resizing::after,
-#policy-pane .typical-service-term-gantt-editor .gantt_resizer.is-resizing::after {
+.typical-service-term-gantt-editor .gantt_grid_resize_wrap:hover::after,
+.typical-service-term-gantt-editor .gantt_resizer:hover::after,
+.typical-service-term-gantt-editor .gantt_grid_resize_wrap.is-resizing::after,
+.typical-service-term-gantt-editor .gantt_resizer.is-resizing::after {
   background: var(--bs-primary, #075D94);
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_scale .gantt_grid_column_resize_wrap {
+.typical-service-term-gantt-editor .gantt_grid_scale .gantt_grid_column_resize_wrap {
   cursor: col-resize !important;
   width: 16px !important;
   margin-left: -8px !important;
   z-index: 4 !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_column_resize_wrap .gantt_grid_column_resize {
+.typical-service-term-gantt-editor .gantt_grid_column_resize_wrap .gantt_grid_column_resize {
   width: 1px !important;
   background: #ced4da !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_column_resize_wrap:hover .gantt_grid_column_resize {
+.typical-service-term-gantt-editor .gantt_grid_column_resize_wrap:hover .gantt_grid_column_resize {
   background: var(--bs-primary, #075D94) !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-grid-resizer {
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-resizer {
   position: absolute;
   top: 0;
   bottom: 0;
@@ -3444,8 +3508,8 @@ body.typical-service-term-gantt-fullscreen-active {
 
 /* Disable dhtmlx's native grid/timeline resizer in favour of the custom handle so it doesn't
    intercept the drag and re-clamp the grid width based on its own logic. */
-#policy-pane .typical-service-term-gantt-editor .gantt_resizer,
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_resize_wrap {
+.typical-service-term-gantt-editor .gantt_resizer,
+.typical-service-term-gantt-editor .gantt_grid_resize_wrap {
   pointer-events: none !important;
 }
 
@@ -3456,20 +3520,20 @@ body.typical-service-term-gantt-fullscreen-active {
    force it to the cell's width and enable horizontal scroll (so dhtmlx's scrollLeft works
    to reveal the hidden columns), but hide the native scrollbar — the visible scroll handle
    comes from the dedicated `gridScrollHor` cell positioned under the grid. */
-#policy-pane .typical-service-term-gantt-editor--grid-narrow .gantt_grid {
+.typical-service-term-gantt-editor--grid-narrow .gantt_grid {
   width: 100% !important;
   overflow-x: scroll !important;
   overflow-y: hidden !important;
   scrollbar-width: none !important;
   -ms-overflow-style: none !important;
 }
-#policy-pane .typical-service-term-gantt-editor--grid-narrow .gantt_grid::-webkit-scrollbar {
+.typical-service-term-gantt-editor--grid-narrow .gantt_grid::-webkit-scrollbar {
   display: none !important;
   width: 0 !important;
   height: 0 !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-grid-resizer::after {
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-resizer::after {
   content: "";
   position: absolute;
   top: 0;
@@ -3479,19 +3543,19 @@ body.typical-service-term-gantt-fullscreen-active {
   background: #ced4da;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-grid-resizer:hover::after,
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-grid-resizer.is-resizing::after {
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-resizer:hover::after,
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-resizer.is-resizing::after {
   background: var(--bs-primary, #075D94);
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-bottom-spacer,
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-bottom-spacer::after {
+.typical-service-term-gantt-editor .typical-service-term-gantt-bottom-spacer,
+.typical-service-term-gantt-editor .typical-service-term-gantt-bottom-spacer::after {
   background: transparent !important;
   pointer-events: none !important;
   cursor: default !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-column-resizer {
+.typical-service-term-gantt-editor .typical-service-term-gantt-column-resizer {
   position: absolute;
   top: 0;
   right: -8px;
@@ -3501,12 +3565,12 @@ body.typical-service-term-gantt-fullscreen-active {
   z-index: 20;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-column-resizer--last {
+.typical-service-term-gantt-editor .typical-service-term-gantt-column-resizer--last {
   right: auto;
   margin-left: -8px;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-column-resizer::after {
+.typical-service-term-gantt-editor .typical-service-term-gantt-column-resizer::after {
   content: "";
   position: absolute;
   top: 0;
@@ -3516,107 +3580,107 @@ body.typical-service-term-gantt-fullscreen-active {
   background: #ced4da;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-column-resizer--last::after {
+.typical-service-term-gantt-editor .typical-service-term-gantt-column-resizer--last::after {
   left: 7.5px;
   width: 2px;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt:not(.typical-service-term-gantt-column-resizing) .gantt_grid_head_cell:hover > .typical-service-term-gantt-column-resizer::after,
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-column-resizer:hover::after,
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-column-resizer.is-resizing::after {
+.typical-service-term-gantt-editor .typical-service-term-gantt:not(.typical-service-term-gantt-column-resizing) .gantt_grid_head_cell:hover > .typical-service-term-gantt-column-resizer::after,
+.typical-service-term-gantt-editor .typical-service-term-gantt-column-resizer:hover::after,
+.typical-service-term-gantt-editor .typical-service-term-gantt-column-resizer.is-resizing::after {
   background: var(--bs-primary, #075D94);
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line {
+.typical-service-term-gantt-editor .gantt_task_line {
   border-radius: .45rem;
   background: var(--bs-primary, #075D94);
   border-color: #064d7a;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-deadline-missed {
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-deadline-missed {
   border-color: #dc3545 !important;
   box-shadow: inset 0 0 0 2px rgba(220, 53, 69, .55);
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_progress {
+.typical-service-term-gantt-editor .gantt_task_progress {
   background: #064d7a;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-deadline-missed .gantt_task_progress {
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-deadline-missed .gantt_task_progress {
   background: rgba(220, 53, 69, .32) !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-1 {
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-1 {
   background: rgba(7, 93, 148, .88);
   border-color: rgba(7, 93, 148, .98);
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-2 {
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-2 {
   background: rgba(7, 93, 148, .70);
   border-color: rgba(7, 93, 148, .84);
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-3 {
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-3 {
   background: rgba(91, 172, 219, .62);
   border-color: rgba(56, 139, 190, .78);
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-4 {
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-4 {
   background: rgba(126, 196, 232, .50);
   border-color: rgba(91, 172, 219, .66);
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-5 {
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-5 {
   background: rgba(173, 181, 189, .46);
   border-color: rgba(146, 155, 164, .62);
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-6 {
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-6 {
   background: rgba(190, 196, 202, .38);
   border-color: rgba(166, 174, 182, .54);
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-7 {
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-7 {
   background: rgba(206, 212, 218, .32);
   border-color: rgba(181, 188, 195, .46);
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-1 .gantt_task_progress {
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-1 .gantt_task_progress {
   background: rgba(4, 62, 99, .64);
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-2 .gantt_task_progress {
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-2 .gantt_task_progress {
   background: rgba(5, 78, 124, .50);
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-3 .gantt_task_progress {
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-3 .gantt_task_progress {
   background: rgba(48, 137, 190, .56);
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-4 .gantt_task_progress {
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-4 .gantt_task_progress {
   background: rgba(76, 166, 216, .46);
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-5 .gantt_task_progress {
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-5 .gantt_task_progress {
   background: rgba(133, 142, 151, .46);
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-6 .gantt_task_progress {
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-6 .gantt_task_progress {
   background: rgba(153, 161, 169, .40);
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-7 .gantt_task_progress {
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-7 .gantt_task_progress {
   background: rgba(171, 178, 185, .34);
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-parent-bar .gantt_task_content {
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-parent-bar .gantt_task_content {
   display: flex;
   align-items: center;
   gap: .25rem;
   padding-right: .35rem;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-task-text {
+.typical-service-term-gantt-editor .typical-service-term-gantt-task-text {
   display: block;
   flex: 1 1 auto;
   min-width: 0;
@@ -3627,7 +3691,7 @@ body.typical-service-term-gantt-fullscreen-active {
   transform: translateY(-1px);
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-parent-lock {
+.typical-service-term-gantt-editor .typical-service-term-gantt-parent-lock {
   margin-left: auto;
   color: rgba(255, 255, 255, .96);
   font-size: calc(.72rem - 1px);
@@ -3637,15 +3701,15 @@ body.typical-service-term-gantt-fullscreen-active {
   transform: translateY(-1px);
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_deadline {
+.typical-service-term-gantt-editor .gantt_task_deadline {
   display: none !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_constraint_marker {
+.typical-service-term-gantt-editor .gantt_constraint_marker {
   display: none !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-constraint-marker {
+.typical-service-term-gantt-editor .typical-service-term-gantt-constraint-marker {
   position: absolute;
   width: 6px;
   height: 12px;
@@ -3653,7 +3717,7 @@ body.typical-service-term-gantt-fullscreen-active {
   z-index: 4;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-constraint-marker::before {
+.typical-service-term-gantt-editor .typical-service-term-gantt-constraint-marker::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -3662,7 +3726,7 @@ body.typical-service-term-gantt-fullscreen-active {
   box-sizing: border-box;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-constraint-marker::after {
+.typical-service-term-gantt-editor .typical-service-term-gantt-constraint-marker::after {
   content: "";
   position: absolute;
   inset: 1px;
@@ -3670,20 +3734,20 @@ body.typical-service-term-gantt-fullscreen-active {
   clip-path: polygon(0 0, 100% 50%, 0 100%);
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-constraint-marker--finish::before {
+.typical-service-term-gantt-editor .typical-service-term-gantt-constraint-marker--finish::before {
   clip-path: polygon(100% 0, 0 50%, 100% 100%);
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-constraint-marker--finish::after {
+.typical-service-term-gantt-editor .typical-service-term-gantt-constraint-marker--finish::after {
   inset: 1px;
   clip-path: polygon(100% 0, 0 50%, 100% 100%);
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-constraint-marker--finish {
+.typical-service-term-gantt-editor .typical-service-term-gantt-constraint-marker--finish {
   transform: translateX(-6px);
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-deadline-marker {
+.typical-service-term-gantt-editor .typical-service-term-gantt-deadline-marker {
   position: absolute;
   width: 12px;
   height: 9px;
@@ -3697,9 +3761,9 @@ body.typical-service-term-gantt-fullscreen-active {
   --dhx-gantt-progress-handle-border: var(--dhx-gantt-base-colors-border, #DFE0E1);
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-deadline-marker--hover,
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-deadline-marker--active,
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-deadline-marker--dragging {
+.typical-service-term-gantt-editor .typical-service-term-gantt-deadline-marker--hover,
+.typical-service-term-gantt-editor .typical-service-term-gantt-deadline-marker--active,
+.typical-service-term-gantt-editor .typical-service-term-gantt-deadline-marker--dragging {
   opacity: 1;
   pointer-events: auto;
 }
@@ -3710,68 +3774,68 @@ body.typical-service-term-gantt-deadline-dragging * {
   user-select: none !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-deadline-marker svg {
+.typical-service-term-gantt-editor .typical-service-term-gantt-deadline-marker svg {
   display: block;
   width: 12px;
   height: 9px;
   transform: rotate(180deg);
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-deadline-marker--missed svg path {
+.typical-service-term-gantt-editor .typical-service-term-gantt-deadline-marker--missed svg path {
   fill: var(--dhx-gantt-progress-handle-background);
   stroke: var(--dhx-gantt-progress-handle-border);
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-3,
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-4,
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-5,
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-6,
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-7 {
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-3,
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-4,
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-5,
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-6,
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-7 {
   color: #04466f;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-report-bar {
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-report-bar {
   background: rgba(7, 93, 148, .36) !important;
   border-color: rgba(7, 93, 148, .55) !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-report-bar .gantt_task_progress {
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-report-bar .gantt_task_progress {
   background: rgba(7, 93, 148, .28) !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_link .gantt_line_wrapper,
-#policy-pane .typical-service-term-gantt-editor .gantt_task_link .gantt_link_corner,
-#policy-pane .typical-service-term-gantt-editor .gantt_task_link .gantt_link_arrow {
+.typical-service-term-gantt-editor .gantt_task_link .gantt_line_wrapper,
+.typical-service-term-gantt-editor .gantt_task_link .gantt_link_corner,
+.typical-service-term-gantt-editor .gantt_task_link .gantt_link_arrow {
   margin-top: 1px;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_link.typical-service-term-gantt-link-to-milestone .gantt_link_arrow,
-#policy-pane .typical-service-term-gantt-editor .gantt_task_link.typical-service-term-gantt-link-from-milestone .gantt_line_wrapper {
+.typical-service-term-gantt-editor .gantt_task_link.typical-service-term-gantt-link-to-milestone .gantt_link_arrow,
+.typical-service-term-gantt-editor .gantt_task_link.typical-service-term-gantt-link-from-milestone .gantt_line_wrapper {
   z-index: 3;
 }
 
-#policy-pane .typical-service-term-gantt-editor {
+.typical-service-term-gantt-editor {
   --dhx-gantt-link-handle-offset: 9px;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_link_control {
+.typical-service-term-gantt-editor .gantt_link_control {
   width: calc(var(--dhx-gantt-link-handle-offset) + var(--dhx-gantt-link-handle-size)) !important;
   height: var(--dhx-gantt-link-handle-size) !important;
   line-height: var(--dhx-gantt-link-handle-size) !important;
   z-index: 12 !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_link_control.task_left {
+.typical-service-term-gantt-editor .gantt_link_control.task_left {
   transform: translate(-100%, -50%) !important;
   justify-content: flex-start !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_link_control.task_right {
+.typical-service-term-gantt-editor .gantt_link_control.task_right {
   transform: translate(100%, -50%) !important;
   justify-content: flex-end !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_link_control .gantt_link_point {
+.typical-service-term-gantt-editor .gantt_link_control .gantt_link_point {
   position: relative !important;
   inset: auto !important;
   margin: 0 !important;
@@ -3780,20 +3844,20 @@ body.typical-service-term-gantt-deadline-dragging * {
   border-color: var(--dhx-gantt-link-handle-border) !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.gantt_link_source {
+.typical-service-term-gantt-editor .gantt_task_line.gantt_link_source {
   --dhx-gantt-link-handle-background: #86b7fe;
   --dhx-gantt-link-handle-border: var(--bs-primary, #075D94);
   --dhx-gantt-link-handle-background-hover: #86b7fe;
   --dhx-gantt-link-handle-border-hover: var(--bs-primary, #075D94);
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_link_control .gantt_link_point:hover,
-#policy-pane .typical-service-term-gantt-editor .gantt_link_control .gantt_link_point:active,
-#policy-pane .typical-service-term-gantt-editor .gantt_link_control .gantt_link_point.typical-service-term-gantt-link-source-point,
-#policy-pane .typical-service-term-gantt-editor .gantt_link_control .gantt_link_point.typical-service-term-gantt-link-target-point,
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.gantt_link_target.link_start_allow .gantt_link_control.task_start_date .gantt_link_point,
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.gantt_link_target.link_finish_allow .gantt_link_control.task_end_date .gantt_link_point,
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.gantt_link_target .gantt_link_control .gantt_link_point:hover {
+.typical-service-term-gantt-editor .gantt_link_control .gantt_link_point:hover,
+.typical-service-term-gantt-editor .gantt_link_control .gantt_link_point:active,
+.typical-service-term-gantt-editor .gantt_link_control .gantt_link_point.typical-service-term-gantt-link-source-point,
+.typical-service-term-gantt-editor .gantt_link_control .gantt_link_point.typical-service-term-gantt-link-target-point,
+.typical-service-term-gantt-editor .gantt_task_line.gantt_link_target.link_start_allow .gantt_link_control.task_start_date .gantt_link_point,
+.typical-service-term-gantt-editor .gantt_task_line.gantt_link_target.link_finish_allow .gantt_link_control.task_end_date .gantt_link_point,
+.typical-service-term-gantt-editor .gantt_task_line.gantt_link_target .gantt_link_control .gantt_link_point:hover {
   background-color: #86b7fe !important;
   border-color: var(--bs-primary, #075D94) !important;
 }
@@ -3964,21 +4028,21 @@ body.typical-service-term-gantt-deadline-dragging * {
   display: none !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_row {
+.typical-service-term-gantt-editor .gantt_row {
   position: relative;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_row > .gantt_cell:nth-child(2) {
+.typical-service-term-gantt-editor .gantt_row > .gantt_cell:nth-child(2) {
   padding-left: 2px !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_row > .gantt_cell:nth-child(2) .gantt_tree_icon {
+.typical-service-term-gantt-editor .gantt_row > .gantt_cell:nth-child(2) .gantt_tree_icon {
   width: 16px !important;
   min-width: 16px !important;
   margin-left: 0 !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_data .gantt_row > .gantt_cell:first-child {
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row > .gantt_cell:first-child {
   display: flex !important;
   align-items: center;
   justify-content: center;
@@ -3987,11 +4051,11 @@ body.typical-service-term-gantt-deadline-dragging * {
   box-sizing: border-box;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_tree_icon.gantt_blank {
+.typical-service-term-gantt-editor .gantt_tree_icon.gantt_blank {
   width: 16px !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_row::before {
+.typical-service-term-gantt-editor .gantt_row::before {
   content: '';
   position: absolute;
   left: 4px;
@@ -4008,30 +4072,30 @@ body.typical-service-term-gantt-deadline-dragging * {
   z-index: 2;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_row:hover::before {
+.typical-service-term-gantt-editor .gantt_row:hover::before {
   opacity: 0.85;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_row:hover {
+.typical-service-term-gantt-editor .gantt_row:hover {
   cursor: grab;
 }
 
-body.typical-service-term-gantt-row-dragging #policy-pane .typical-service-term-gantt-editor .gantt_grid_data .gantt_row.typical-service-term-gantt-hover-row:not(.gantt_selected):not(.typical-service-term-gantt-active-row),
-body.typical-service-term-gantt-row-dragging #policy-pane .typical-service-term-gantt-editor .gantt_grid_data .gantt_row.odd.typical-service-term-gantt-hover-row:not(.gantt_selected):not(.typical-service-term-gantt-active-row),
-body.typical-service-term-gantt-row-dragging #policy-pane .typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row.typical-service-term-gantt-hover-row:not(.gantt_selected):not(.typical-service-term-gantt-active-row),
-body.typical-service-term-gantt-row-dragging #policy-pane .typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row.odd.typical-service-term-gantt-hover-row:not(.gantt_selected):not(.typical-service-term-gantt-active-row) {
+body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor .gantt_grid_data .gantt_row.typical-service-term-gantt-hover-row:not(.gantt_selected):not(.typical-service-term-gantt-active-row),
+body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor .gantt_grid_data .gantt_row.odd.typical-service-term-gantt-hover-row:not(.gantt_selected):not(.typical-service-term-gantt-active-row),
+body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row.typical-service-term-gantt-hover-row:not(.gantt_selected):not(.typical-service-term-gantt-active-row),
+body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row.odd.typical-service-term-gantt-hover-row:not(.gantt_selected):not(.typical-service-term-gantt-active-row) {
   background-color: transparent !important;
 }
 
-body.typical-service-term-gantt-row-dragging #policy-pane .typical-service-term-gantt-editor .gantt_grid_data .gantt_row:not(.gantt_selected):not(.typical-service-term-gantt-active-row):hover,
-body.typical-service-term-gantt-row-dragging #policy-pane .typical-service-term-gantt-editor .gantt_grid_data .gantt_row.odd:not(.gantt_selected):not(.typical-service-term-gantt-active-row):hover,
-body.typical-service-term-gantt-row-dragging #policy-pane .typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row:not(.gantt_selected):not(.typical-service-term-gantt-active-row):hover,
-body.typical-service-term-gantt-row-dragging #policy-pane .typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row.odd:not(.gantt_selected):not(.typical-service-term-gantt-active-row):hover {
+body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor .gantt_grid_data .gantt_row:not(.gantt_selected):not(.typical-service-term-gantt-active-row):hover,
+body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor .gantt_grid_data .gantt_row.odd:not(.gantt_selected):not(.typical-service-term-gantt-active-row):hover,
+body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row:not(.gantt_selected):not(.typical-service-term-gantt-active-row):hover,
+body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row.odd:not(.gantt_selected):not(.typical-service-term-gantt-active-row):hover {
   background-color: transparent !important;
 }
 
-body.typical-service-term-gantt-row-dragging #policy-pane .typical-service-term-gantt-editor .gantt_row::before,
-body.typical-service-term-gantt-row-dragging #policy-pane .typical-service-term-gantt-editor .gantt_row:hover::before {
+body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor .gantt_row::before,
+body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor .gantt_row:hover::before {
   opacity: 0 !important;
 }
 
@@ -4043,7 +4107,7 @@ body.typical-service-term-gantt-row-dragging #policy-pane .typical-service-term-
   padding-left: 4px !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_link_tooltip,
+.typical-service-term-gantt-editor .gantt_link_tooltip,
 .gantt_link_tooltip {
   font-size: .78rem !important;
   font-weight: 400 !important;
@@ -4059,7 +4123,7 @@ body.typical-service-term-gantt-row-dragging #policy-pane .typical-service-term-
   overflow: hidden;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_link_tooltip b,
+.typical-service-term-gantt-editor .gantt_link_tooltip b,
 .gantt_link_tooltip b {
   font-weight: 400 !important;
 }
@@ -4068,22 +4132,22 @@ body.typical-service-term-gantt-row-dragging #policy-pane .typical-service-term-
   border-bottom-color: var(--bs-danger, #dc3545) !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line:not(.typical-service-term-gantt-link-source-bar).link_start_deny .gantt_link_control.task_start_date .gantt_link_point,
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line:not(.typical-service-term-gantt-link-source-bar).link_finish_deny .gantt_link_control.task_end_date .gantt_link_point {
+.typical-service-term-gantt-editor .gantt_task_line:not(.typical-service-term-gantt-link-source-bar).link_start_deny .gantt_link_control.task_start_date .gantt_link_point,
+.typical-service-term-gantt-editor .gantt_task_line:not(.typical-service-term-gantt-link-source-bar).link_finish_deny .gantt_link_control.task_end_date .gantt_link_point {
   background-color: #f5c2c7 !important;
   border-color: var(--bs-danger, #dc3545) !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt.typical-service-term-gantt-link-dragging .gantt_link_control div {
+.typical-service-term-gantt-editor .typical-service-term-gantt.typical-service-term-gantt-link-dragging .gantt_link_control div {
   display: block !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-link-from-end .gantt_link_control.task_start_date,
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-link-from-start .gantt_link_control.task_end_date {
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-link-from-end .gantt_link_control.task_start_date,
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-link-from-start .gantt_link_control.task_end_date {
   display: none !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-link-source-bar .gantt_link_control div {
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-link-source-bar .gantt_link_control div {
   --dhx-gantt-link-handle-background: #86b7fe !important;
   --dhx-gantt-link-handle-border: var(--bs-primary, #075D94) !important;
   --dhx-gantt-link-handle-background-hover: #86b7fe !important;
@@ -4092,44 +4156,44 @@ body.typical-service-term-gantt-row-dragging #policy-pane .typical-service-term-
   border-color: var(--bs-primary, #075D94) !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_data .gantt_row.typical-service-term-gantt-hover-row,
-#policy-pane .typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row.typical-service-term-gantt-hover-row {
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row.typical-service-term-gantt-hover-row,
+.typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row.typical-service-term-gantt-hover-row {
   background-color: #1c1d200b !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_data .gantt_row.gantt_selected,
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_data .gantt_row.odd.gantt_selected,
-#policy-pane .typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row.gantt_selected,
-#policy-pane .typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row.odd.gantt_selected,
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_data .gantt_row.typical-service-term-gantt-active-row,
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_data .gantt_row.odd.typical-service-term-gantt-active-row,
-#policy-pane .typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row.typical-service-term-gantt-active-row,
-#policy-pane .typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row.odd.typical-service-term-gantt-active-row {
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row.gantt_selected,
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row.odd.gantt_selected,
+.typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row.gantt_selected,
+.typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row.odd.gantt_selected,
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row.typical-service-term-gantt-active-row,
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row.odd.typical-service-term-gantt-active-row,
+.typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row.typical-service-term-gantt-active-row,
+.typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row.odd.typical-service-term-gantt-active-row {
   background-color: rgba(var(--bs-primary-rgb, 7, 93, 148), .12) !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_data .gantt_row.gantt_selected .gantt_cell.typical-service-term-gantt-grid-column--collapsed,
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_data .gantt_row.odd.gantt_selected .gantt_cell.typical-service-term-gantt-grid-column--collapsed,
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_data .gantt_row.typical-service-term-gantt-active-row .gantt_cell.typical-service-term-gantt-grid-column--collapsed,
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_data .gantt_row.odd.typical-service-term-gantt-active-row .gantt_cell.typical-service-term-gantt-grid-column--collapsed {
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row.gantt_selected .gantt_cell.typical-service-term-gantt-grid-column--collapsed,
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row.odd.gantt_selected .gantt_cell.typical-service-term-gantt-grid-column--collapsed,
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row.typical-service-term-gantt-active-row .gantt_cell.typical-service-term-gantt-grid-column--collapsed,
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row.odd.typical-service-term-gantt-active-row .gantt_cell.typical-service-term-gantt-grid-column--collapsed {
   border-right: 1px dashed var(--dhx-gantt-base-colors-border, #DFE0E1) !important;
   color: transparent !important;
   -webkit-text-fill-color: transparent !important;
   text-shadow: none !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_data .gantt_row.gantt_selected .gantt_cell.typical-service-term-gantt-grid-column--collapsed > *,
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_data .gantt_row.odd.gantt_selected .gantt_cell.typical-service-term-gantt-grid-column--collapsed > *,
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_data .gantt_row.typical-service-term-gantt-active-row .gantt_cell.typical-service-term-gantt-grid-column--collapsed > *,
-#policy-pane .typical-service-term-gantt-editor .gantt_grid_data .gantt_row.odd.typical-service-term-gantt-active-row .gantt_cell.typical-service-term-gantt-grid-column--collapsed > * {
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row.gantt_selected .gantt_cell.typical-service-term-gantt-grid-column--collapsed > *,
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row.odd.gantt_selected .gantt_cell.typical-service-term-gantt-grid-column--collapsed > *,
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row.typical-service-term-gantt-active-row .gantt_cell.typical-service-term-gantt-grid-column--collapsed > *,
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row.odd.typical-service-term-gantt-active-row .gantt_cell.typical-service-term-gantt-grid-column--collapsed > * {
   visibility: hidden !important;
   color: transparent !important;
   -webkit-text-fill-color: transparent !important;
   text-shadow: none !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.gantt_milestone,
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-milestone {
+.typical-service-term-gantt-editor .gantt_task_line.gantt_milestone,
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-milestone {
   visibility: visible !important;
   background: transparent !important;
   border-color: transparent !important;
@@ -4137,7 +4201,7 @@ body.typical-service-term-gantt-row-dragging #policy-pane .typical-service-term-
   box-shadow: none !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .typical-service-term-gantt-milestone .gantt_task_content {
+.typical-service-term-gantt-editor .typical-service-term-gantt-milestone .gantt_task_content {
   position: absolute !important;
   top: 50% !important;
   left: 50% !important;
@@ -4155,12 +4219,12 @@ body.typical-service-term-gantt-row-dragging #policy-pane .typical-service-term-
   box-sizing: border-box !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-milestone .gantt_task_progress_drag,
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-milestone .gantt_task_drag {
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-milestone .gantt_task_progress_drag,
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-milestone .gantt_task_drag {
   display: none !important;
 }
 
-#policy-pane .typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-parent-bar .gantt_task_progress_drag {
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-parent-bar .gantt_task_progress_drag {
   display: none !important;
 }
 
@@ -6568,7 +6632,8 @@ html.proposal-progress-cursor * {
 .performer-quick-edit { cursor: pointer; opacity: .45; transition: opacity .15s; }
 .performer-quick-edit:hover { opacity: .85; }
 .proposal-quick-edit,
-.proposal-dispatch-quick-edit {
+.proposal-dispatch-quick-edit,
+.project-quick-edit {
   display: inline-block;
   vertical-align: middle;
   line-height: 1;
@@ -6578,7 +6643,8 @@ html.proposal-progress-cursor * {
   transition: opacity .15s;
 }
 .proposal-quick-edit:hover,
-.proposal-dispatch-quick-edit:hover { opacity: .85; }
+.proposal-dispatch-quick-edit:hover,
+.project-quick-edit:hover { opacity: .85; }
 .performer-locked-icon { opacity: .35; }
 
 .perf-nav-btn {
@@ -6829,6 +6895,175 @@ html.proposal-progress-cursor * {
 #contract-conclusion-section .contract-conclusion-table-wrap > .performers-table {
   width: 100%;
   min-width: 100%;
+}
+
+#projects-pane {
+  --project-schedule-table-scroll-offset-top: 0px;
+  --project-schedule-table-margin-to-scroll: 10px;
+  --project-schedule-table-action-gap: 30px;
+  --project-schedule-table-scroll-action-gap: 11.75px;
+}
+
+#projects-pane .project-schedule-scroll-wrap {
+  overflow-x: auto;
+  overflow-y: visible;
+  width: 100%;
+  padding-bottom: var(--project-schedule-table-scroll-offset-top);
+}
+
+#projects-pane .project-schedule-scroll-wrap > .project-schedule-table {
+  width: 100%;
+  min-width: 100%;
+  margin-bottom: 0 !important;
+}
+
+#projects-pane .project-schedule-scroll-wrap.has-horizontal-scroll > .project-schedule-table {
+  margin-bottom: var(--project-schedule-table-margin-to-scroll) !important;
+}
+
+#projects-pane .project-schedule-scroll-wrap + .products-actions-row {
+  margin-top: var(--project-schedule-table-action-gap) !important;
+}
+
+#projects-pane .project-schedule-scroll-wrap.has-horizontal-scroll + .products-actions-row {
+  margin-top: var(--project-schedule-table-scroll-action-gap) !important;
+}
+
+#projects-pane .project-schedule-table thead th:nth-child(7),
+#projects-pane .project-schedule-table tbody td:nth-child(7) {
+  white-space: nowrap !important;
+}
+
+/* "Задача" column: just content-sized — the cell expands exactly enough to
+   show the full task text on a single line, no further. No greedy growth,
+   no squeezing of neighbouring columns. The overlap regression we hit earlier
+   was caused by max-width:0 + width:100% on <col> (greedy) combined with a
+   min-width on the inner wrapper that exceeded the cell's allocated width.
+   Both are removed.
+
+   Ellipsis still triggers as a graceful fallback IF some outer constraint
+   (e.g. the page sidebar squeezing the panel below the table's natural sum
+   of column widths) shrinks the cell below its content width. In day-to-day
+   browser-window resizing the wrapper (.project-schedule-scroll-wrap) takes
+   the overflow as a horizontal scrollbar — that's the existing behaviour for
+   all other columns and matches how the table feels overall. */
+#projects-pane .project-schedule-table thead th.col-task,
+#projects-pane .project-schedule-table tbody td.col-task {
+  white-space: nowrap !important;
+}
+#projects-pane .project-schedule-table .col-task-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+#projects-pane .project-schedule-table .col-task-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Tree caret + indentation, mirroring the Gantt grid's expand/collapse UX.
+   --task-tree-level is set per row from the template (item.level). */
+#projects-pane .project-schedule-table .col-task-tree {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  /* 16px per nesting level, like the DHTMLX gantt_tree_indent default. */
+  padding-left: calc(var(--task-tree-level, 0) * 16px);
+}
+#projects-pane .project-schedule-table .col-task-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #495057;
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 2px;
+}
+#projects-pane .project-schedule-table .col-task-toggle:hover {
+  background: rgba(13, 110, 253, 0.1);
+  color: #0d6efd;
+}
+#projects-pane .project-schedule-table .col-task-toggle-spacer {
+  cursor: default;
+  pointer-events: none;
+}
+/* Collapsed state: rotate caret 90° counter-clockwise so it points right. */
+#projects-pane .project-schedule-table .col-task-toggle[aria-expanded="false"] .bi {
+  transform: rotate(-90deg);
+}
+#projects-pane .project-schedule-table .col-task-toggle .bi {
+  transition: transform 0.12s ease-out;
+}
+
+/* Rows hidden by the tree-collapse JS. We use a dedicated class instead of
+   d-none so that the existing project filter (which toggles d-none on
+   non-matching rows) can compose freely with collapse state. */
+#projects-pane .project-schedule-table tbody tr.project-schedule-row-collapsed-hidden {
+  display: none !important;
+}
+
+/* "Задача" column header: title shifted right so it lines up with the row
+   text (which is offset by the caret 16px + flex gap 6px = 22px), and the
+   1-2-3-4 outline buttons floated to the right edge — same layout & visual
+   styling as the Gantt grid header (see .typical-service-term-gantt-task-
+   header* rules above) for visual parity. */
+#projects-pane .project-schedule-table thead th.col-task .col-task-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .35rem;
+  width: 100%;
+  min-width: 0;
+}
+#projects-pane .project-schedule-table thead th.col-task .col-task-header-title {
+  padding-left: 22px;       /* matches row text offset (16px caret + 6px gap) */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#projects-pane .project-schedule-table thead th.col-task .col-task-outline-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  /* Push the 1/2/3/4 buttons a bit to the left so there's a visible gap
+     between the last button and the next column header ("Начало"). Same
+     value the Gantt grid header uses for parity. */
+  margin-right: .8rem;
+}
+#projects-pane .project-schedule-table thead th.col-task .col-task-outline-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  padding: 0;
+  border: 1px solid #ced4da;
+  border-radius: .2rem;
+  background: #fff;
+  color: #6c757d;
+  font-size: .72rem;
+  line-height: 1;
+  cursor: pointer;
+}
+#projects-pane .project-schedule-table thead th.col-task .col-task-outline-btn:hover,
+#projects-pane .project-schedule-table thead th.col-task .col-task-outline-btn:focus,
+#projects-pane .project-schedule-table thead th.col-task .col-task-outline-btn.active {
+  color: #fff;
+  background: var(--bs-primary, #075D94);
+  border-color: var(--bs-primary, #075D94);
+}
+#projects-pane .project-schedule-table thead th.col-task .col-task-outline-btn:disabled {
+  opacity: .55;
+  cursor: not-allowed;
 }
 
 #contract-conclusion-section .performers-table col:not(.col-checkbox):not(.col-number) {

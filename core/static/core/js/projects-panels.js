@@ -31,6 +31,7 @@
     return pane()?.querySelector(`input.form-check-input[data-actions-id="${CSS.escape(id)}"]`) || null;
   }
   function getNameForPanel(panel) {
+    if (panel?.dataset?.targetName) return panel.dataset.targetName;
     const master = getMasterForPanel(panel);
     return master?.dataset?.targetName || null;
   }
@@ -92,17 +93,88 @@
     ensureActionsVisibility(name);
     if (name === 'contract-select') updateContractEditBtn();
     if (name === 'registration-select') updateRegWorkspaceBtn();
+    if (name === 'project-schedule-select') scheduleProjectScheduleScrollGapsUpdate();
   }
   window.__refreshProjectsSelectionState = function() {
-    ['registration-select', 'contract-select', 'work-select', 'legal-select'].forEach(syncSelectionToVisible);
+    ['registration-select', 'contract-select', 'project-schedule-select', 'work-select', 'legal-select'].forEach(syncSelectionToVisible);
   };
   document.addEventListener('DOMContentLoaded', initProjectRegistryColPicker);
+  document.addEventListener('DOMContentLoaded', function() {
+    bindProjectScheduleScrollGaps();
+    scheduleProjectScheduleScrollGapsUpdate();
+  });
+  window.addEventListener('resize', scheduleProjectScheduleScrollGapsUpdate);
+  window.addEventListener('load', scheduleProjectScheduleScrollGapsUpdate);
+
+  document.addEventListener('change', (e) => {
+    const root = pane();
+    if (!root) return;
+    const viewInput = e.target.closest('.js-project-schedule-view');
+    if (viewInput && root.contains(viewInput)) scheduleProjectScheduleScrollGapsUpdate();
+  });
 
   function getDeleteConfirmationMessage(name, count) {
     if (name === 'work-select') {
       return `Удалить ${count} строк(у/и) из "Объем услуг"? Будут также удалены связанные строки в "Юридические лица" и "Исполнители".`;
     }
     return `Удалить ${count} строк(у/и)?`;
+  }
+
+  function getProjectScheduleFilterValue() {
+    const root = pane();
+    const selected = root?.querySelector('.js-project-schedule-filter:checked');
+    const value = selected?.value || (window.__projectScheduleFilter && window.__projectScheduleFilter[0]) || '';
+    return value === '__all__' ? '' : value;
+  }
+
+  function updateProjectScheduleScrollGaps() {
+    const root = pane();
+    if (!root) return;
+    qa('.project-schedule-scroll-wrap', root).forEach((wrap) => {
+      wrap.classList.toggle('has-horizontal-scroll', wrap.scrollWidth > wrap.clientWidth + 1);
+    });
+  }
+
+  function scheduleProjectScheduleScrollGapsUpdate() {
+    window.requestAnimationFrame(updateProjectScheduleScrollGaps);
+  }
+
+  function bindProjectScheduleScrollGaps(root = pane()) {
+    if (!root || root.dataset.projectScheduleScrollGapsBound === '1') return;
+    root.dataset.projectScheduleScrollGapsBound = '1';
+    root.addEventListener('project-schedule-filter-changed', scheduleProjectScheduleScrollGapsUpdate);
+  }
+
+  function prepareProjectScheduleWrap(wrap, selectedIds) {
+    const projectId = getProjectScheduleFilterValue();
+    const selectedSet = new Set((selectedIds || []).map(String));
+    wrap.querySelectorAll('table.project-schedule-table tbody tr').forEach((row) => {
+      const visible = !!projectId && (row.dataset.projectId || '') === projectId;
+      row.classList.toggle('d-none', !visible);
+      const checkbox = row.querySelector('input[name="project-schedule-select"]');
+      if (checkbox) checkbox.checked = visible && selectedSet.has(String(checkbox.value));
+      row.classList.toggle('table-active', !!(checkbox && checkbox.checked));
+    });
+  }
+
+  async function replaceProjectScheduleWrapFromResponse(url, selectedIds) {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'X-CSRFToken': csrftoken,
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+    });
+    if (!response.ok) throw new Error('Не удалось обновить график проекта.');
+    const html = await response.text();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const nextWrap = doc.querySelector('.project-schedule-table-wrap');
+    const currentWrap = pane()?.querySelector('.project-schedule-table-wrap');
+    if (!nextWrap || !currentWrap) throw new Error('Не удалось обновить график проекта.');
+    prepareProjectScheduleWrap(nextWrap, selectedIds);
+    currentWrap.replaceWith(nextWrap);
+    syncSelectionToVisible('project-schedule-select');
+    scheduleProjectScheduleScrollGapsUpdate();
   }
 
   function updateRegWorkspaceBtn() {
@@ -245,6 +317,16 @@
       updateContractEditBtn();
       return;
     }
+
+    const quickEdit = e.target.closest('.project-quick-edit');
+    if (quickEdit && root.contains(quickEdit)) {
+      const tr = quickEdit.closest('tr');
+      const url = tr?.dataset?.editUrl;
+      if (!url) return;
+
+      await htmx.ajax('GET', url, { target: '#projects-modal .modal-content', swap: 'innerHTML' });
+      return;
+    }
   });
 
   function getRegistrationStatusEditor(root) {
@@ -353,6 +435,10 @@
     delete editor.dataset.segment;
     delete editor.dataset.pendingDigits;
     delete editor.dataset.pendingAt;
+    delete editor.dataset.dateField;
+    delete editor.dataset.datePostField;
+    delete editor.dataset.dateResponseField;
+    delete editor.dataset.dateResponseLabelField;
   }
 
   function closeRegistrationInlineEditors() {
@@ -431,14 +517,30 @@
     try { editor.showPicker(); } catch (_) { editor.focus(); }
   }
 
-  function updateRegistrationDeadlineDom(tr, deadlineValue, deadlineLabel) {
-    const deadlineCell = tr?.querySelector('[data-reg-deadline-cell]');
+  function getRegistrationDateCell(tr, fieldName) {
+    if (!tr) return null;
+    if (fieldName && fieldName !== 'deadline') {
+      return tr.querySelector(`[data-reg-date-field="${CSS.escape(fieldName)}"]`);
+    }
+    return tr.querySelector('[data-reg-deadline-cell]');
+  }
+
+  function updateRegistrationDeadlineDom(tr, fieldName, deadlineValue, deadlineLabel) {
+    const deadlineCell = getRegistrationDateCell(tr, fieldName);
     if (!deadlineCell) return;
-    deadlineCell.dataset.deadlineValue = deadlineValue || '';
-    const deadlineBtn = deadlineCell.querySelector('[data-registration-deadline]');
+    if (fieldName && fieldName !== 'deadline') {
+      deadlineCell.dataset.dateValue = deadlineValue || '';
+    } else {
+      deadlineCell.dataset.deadlineValue = deadlineValue || '';
+    }
+    const deadlineBtn = deadlineCell.querySelector('[data-registration-date], [data-registration-deadline]');
     if (deadlineBtn) {
       deadlineBtn.textContent = deadlineLabel || '';
-      deadlineBtn.dataset.deadlineValue = deadlineValue || '';
+      if (deadlineBtn.hasAttribute('data-registration-date')) {
+        deadlineBtn.dataset.dateValue = deadlineValue || '';
+      } else {
+        deadlineBtn.dataset.deadlineValue = deadlineValue || '';
+      }
     } else {
       deadlineCell.textContent = deadlineLabel || '';
     }
@@ -552,6 +654,10 @@
   async function saveRegistrationDeadlineEditor(editor, closeAfterSave) {
     const root = pane();
     const url = editor.dataset.deadlineUrl;
+    const dateField = editor.dataset.dateField || 'deadline';
+    const postField = editor.dataset.datePostField || 'deadline';
+    const responseField = editor.dataset.dateResponseField || 'deadline';
+    const responseLabelField = editor.dataset.dateResponseLabelField || 'deadlineLabel';
     const projectId = editor.dataset.projectId || '';
     const tr = projectId
       ? root?.querySelector(`table.reg-table tbody tr[data-project-id="${CSS.escape(projectId)}"]`)
@@ -566,9 +672,9 @@
     const payloadValue = iso || '';
     if (closeAfterSave) editor.disabled = true;
     try {
-      const data = await postRegistrationDeadline(url, payloadValue);
-      const savedValue = data.deadline || payloadValue;
-      updateRegistrationDeadlineDom(tr, savedValue, data.deadlineLabel || '');
+      const data = await postRegistrationDeadline(url, payloadValue, postField);
+      const savedValue = data[responseField] || payloadValue;
+      updateRegistrationDeadlineDom(tr, dateField, savedValue, data[responseLabelField] || '');
       editor.dataset.previousValue = savedValue || '';
       const picker = getRegistrationDeadlinePicker(root);
       if (picker) picker.value = savedValue || '';
@@ -602,9 +708,11 @@
     const editor = getRegistrationDeadlineEditor(root);
     const wrap = getRegistrationDeadlineEditorWrap(root);
     const picker = getRegistrationDeadlinePicker(root);
-    const td = button.closest('[data-reg-deadline-cell]');
+    const td = button.closest('[data-reg-date-cell], [data-reg-deadline-cell]');
     const tr = button.closest('tr');
-    const url = button.dataset.deadlineUrl || tr?.dataset?.deadlineUrl;
+    const dateField = button.dataset.dateField || td?.dataset?.regDateField || 'deadline';
+    const rowUrlKey = dateField === 'evaluation_date' ? 'evaluationDateUrl' : 'deadlineUrl';
+    const url = button.dataset.dateUrl || button.dataset.deadlineUrl || tr?.dataset?.[rowUrlKey];
     if (!root || !editor || !wrap || !td || !tr || !url) return;
 
     closeRegistrationStatusEditor(root);
@@ -615,11 +723,15 @@
     editor.setAttribute('autocorrect', 'off');
     editor.setAttribute('autocapitalize', 'off');
     button.classList.add('is-editing');
-    const isoValue = button.dataset.deadlineValue || td.dataset.deadlineValue || '';
+    const isoValue = button.dataset.dateValue || button.dataset.deadlineValue || td.dataset.dateValue || td.dataset.deadlineValue || '';
     editor.value = deadlineDisplayFromIso(isoValue);
     editor.dataset.previousValue = isoValue;
     editor.dataset.deadlineUrl = url;
     editor.dataset.projectId = tr.dataset.projectId || '';
+    editor.dataset.dateField = dateField;
+    editor.dataset.datePostField = button.dataset.datePostField || (dateField === 'deadline' ? 'deadline' : dateField);
+    editor.dataset.dateResponseField = button.dataset.dateResponseField || 'deadline';
+    editor.dataset.dateResponseLabelField = button.dataset.dateResponseLabelField || 'deadlineLabel';
     if (picker) {
       picker.value = isoValue;
       picker.disabled = true;
@@ -677,9 +789,9 @@
     return data;
   }
 
-  async function postRegistrationDeadline(url, deadlineValue) {
+  async function postRegistrationDeadline(url, deadlineValue, fieldName) {
     const body = new FormData();
-    body.append('deadline', deadlineValue);
+    body.append(fieldName || 'deadline', deadlineValue);
     const response = await fetch(url, {
       method: 'POST',
       headers: {
@@ -708,7 +820,7 @@
       openRegistrationManagerEditor(managerBtn);
       return;
     }
-    const deadlineBtn = e.target.closest('button[data-registration-deadline]');
+    const deadlineBtn = e.target.closest('button[data-registration-date], button[data-registration-deadline]');
     if (deadlineBtn && root.contains(deadlineBtn)) {
       openRegistrationDeadlineEditor(deadlineBtn);
       return;
@@ -744,7 +856,7 @@
     }
     const deadlineWrap = getRegistrationDeadlineEditorWrap(root);
     if (deadlineWrap && !deadlineWrap.classList.contains('d-none')) {
-      if (deadlineWrap.contains(e.target) || e.target.closest('button[data-registration-deadline]')) return;
+      if (deadlineWrap.contains(e.target) || e.target.closest('button[data-registration-date], button[data-registration-deadline]')) return;
       commitAndCloseRegistrationDeadlineEditor(root);
     }
   });
@@ -1007,7 +1119,7 @@
     if (!btn || !root.contains(btn)) return;
 
     // Панель теперь общая для трёх таблиц
-    const panel = btn.closest('#registrations-actions, #work-actions, #legal-entities-actions');
+    const panel = btn.closest('#registrations-actions, #project-schedule-actions, #work-actions, #legal-entities-actions');
     if (!panel) return;
 
     const action = btn.dataset.panelAction; // "up" | "down" | "edit" | "delete"
@@ -1052,6 +1164,19 @@
         .map(ch => ch.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'])
         .filter(Boolean);
       if (action === 'down') urls = urls.reverse();
+      if (name === 'project-schedule-select') {
+        const selectedIds = checked.map(ch => String(ch.value));
+        for (let i = 0; i < urls.length; i++) {
+          const isLast = i === urls.length - 1;
+          if (isLast) {
+            await replaceProjectScheduleWrapFromResponse(urls[i], selectedIds);
+          } else {
+            await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
+          }
+        }
+        ensureActionsVisibility(name);
+        return;
+      }
       for (let i = 0; i < urls.length; i++) {
         const isLast = i === urls.length - 1;
         if (isLast) {
@@ -1100,6 +1225,8 @@
   document.body.addEventListener('htmx:afterSettle', function (e) {
     if (!(e.target && e.target.id === 'projects-pane')) return;
     initProjectRegistryColPicker();
+    bindProjectScheduleScrollGaps(e.target);
+    scheduleProjectScheduleScrollGapsUpdate();
     const last = window.__tableSelLast;
     if (!last) return;
     const ids = (window.__tableSel && window.__tableSel[last]) || [];

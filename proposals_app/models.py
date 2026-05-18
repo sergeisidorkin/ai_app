@@ -430,7 +430,6 @@ class ProposalRegistrationProduct(models.Model):
         ordering = ["rank", "id"]
         verbose_name = "Продукт ТКП"
         verbose_name_plural = "Продукты ТКП"
-        unique_together = [("proposal", "product")]
 
     def __str__(self):
         return f"{self.proposal.short_uid} — {self.product.short_name} (#{self.rank})"

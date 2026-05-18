@@ -21,6 +21,7 @@
     return pane()?.querySelector(`input.form-check-input[data-actions-id="${CSS.escape(id)}"]`) || null;
   }
   function getNameForPanel(panel) {
+    if (panel?.dataset?.targetName) return panel.dataset.targetName;
     const master = getMasterForPanel(panel);
     return master?.dataset?.targetName || null;
   }
@@ -84,7 +85,7 @@
     if (name === 'registration-select') updateRegWorkspaceBtn();
   }
   window.__refreshProjectsSelectionState = function() {
-    ['registration-select', 'contract-select', 'work-select', 'legal-select'].forEach(syncSelectionToVisible);
+    ['registration-select', 'contract-select', 'project-schedule-select', 'work-select', 'legal-select'].forEach(syncSelectionToVisible);
   };
 
   function getDeleteConfirmationMessage(name, count) {
@@ -92,6 +93,44 @@
       return `Удалить ${count} строк(у/и) из "Объем услуг"? Будут также удалены связанные строки в "Юридические лица" и "Исполнители".`;
     }
     return `Удалить ${count} строк(у/и)?`;
+  }
+
+  function getProjectScheduleFilterValue() {
+    const root = pane();
+    const selected = root?.querySelector('.js-project-schedule-filter:checked');
+    const value = selected?.value || (window.__projectScheduleFilter && window.__projectScheduleFilter[0]) || '';
+    return value === '__all__' ? '' : value;
+  }
+
+  function prepareProjectScheduleWrap(wrap, selectedIds) {
+    const projectId = getProjectScheduleFilterValue();
+    const selectedSet = new Set((selectedIds || []).map(String));
+    wrap.querySelectorAll('table.project-schedule-table tbody tr').forEach((row) => {
+      const visible = !!projectId && (row.dataset.projectId || '') === projectId;
+      row.classList.toggle('d-none', !visible);
+      const checkbox = row.querySelector('input[name="project-schedule-select"]');
+      if (checkbox) checkbox.checked = visible && selectedSet.has(String(checkbox.value));
+      row.classList.toggle('table-active', !!(checkbox && checkbox.checked));
+    });
+  }
+
+  async function replaceProjectScheduleWrapFromResponse(url, selectedIds) {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'X-CSRFToken': csrftoken,
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+    });
+    if (!response.ok) throw new Error('Не удалось обновить график проекта.');
+    const html = await response.text();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const nextWrap = doc.querySelector('.project-schedule-table-wrap');
+    const currentWrap = pane()?.querySelector('.project-schedule-table-wrap');
+    if (!nextWrap || !currentWrap) throw new Error('Не удалось обновить график проекта.');
+    prepareProjectScheduleWrap(nextWrap, selectedIds);
+    currentWrap.replaceWith(nextWrap);
+    syncSelectionToVisible('project-schedule-select');
   }
 
   function updateRegWorkspaceBtn() {
@@ -150,7 +189,7 @@
     if (!btn || !root.contains(btn)) return;
 
     // Панель теперь общая для трёх таблиц
-    const panel = btn.closest('#registrations-actions, #work-actions, #legal-entities-actions');
+    const panel = btn.closest('#registrations-actions, #project-schedule-actions, #work-actions, #legal-entities-actions');
     if (!panel) return;
 
     const action = btn.dataset.panelAction; // "up" | "down" | "edit" | "delete"
@@ -195,6 +234,19 @@
         .map(ch => ch.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'])
         .filter(Boolean);
       if (action === 'down') urls = urls.reverse();
+      if (name === 'project-schedule-select') {
+        const selectedIds = checked.map(ch => String(ch.value));
+        for (let i = 0; i < urls.length; i++) {
+          const isLast = i === urls.length - 1;
+          if (isLast) {
+            await replaceProjectScheduleWrapFromResponse(urls[i], selectedIds);
+          } else {
+            await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
+          }
+        }
+        ensureActionsVisibility(name);
+        return;
+      }
       for (let i = 0; i < urls.length; i++) {
         const isLast = i === urls.length - 1;
         if (isLast) {

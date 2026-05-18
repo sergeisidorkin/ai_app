@@ -800,14 +800,18 @@ def _proposal_payment_schedule(proposal) -> list[dict[str, object]]:
         result.extend(_payment_schedule_payment_paragraphs(proposal))
         return result
 
-    payload_by_product_id = {
-        str(payload.get("product_id") or ""): payload
-        for payload in stage_payloads
-        if str(payload.get("product_id") or "").strip()
-    }
+    payload_by_product_id = {}
+    for payload in stage_payloads:
+        product_id = str(payload.get("product_id") or "").strip()
+        if product_id and product_id not in payload_by_product_id:
+            payload_by_product_id[product_id] = payload
     for index, product in enumerate(products, start=1):
         product_id = str(getattr(product, "pk", "") or "")
-        source = payload_by_product_id.get(product_id) or (stage_payloads[index - 1] if index - 1 < len(stage_payloads) else {})
+        indexed_source = stage_payloads[index - 1] if index - 1 < len(stage_payloads) else {}
+        if indexed_source and (not product_id or str(indexed_source.get("product_id") or "") == product_id):
+            source = indexed_source
+        else:
+            source = payload_by_product_id.get(product_id) or indexed_source
         result.append({"runs": [{"text": f"Этап {index} — {_payment_schedule_product_name(product)}:"}]})
         result.extend(_payment_schedule_payment_paragraphs(source))
     return result

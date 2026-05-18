@@ -15,7 +15,7 @@
     hx-target="#policy-pane"
     hx-swap="outerHTML"
     id="product-form">
-  <div class="modal-body">
+  <div class="modal-body modal-body-scroll">
     {% csrf_token %}
     <script type="application/json" id="product-service-meta">{{ product_service_meta_json|safe }}</script>
     <div class="mb-3">

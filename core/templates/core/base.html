@@ -24,7 +24,7 @@
 
     <link rel="stylesheet" href="{% static 'gantt_engine/dhtmlxgantt.css' %}?v=20260511-1">
     <!-- ваши глобальные стили -->
-    <link rel="stylesheet" href="{% static 'core/css/site.css' %}?v=20260512-18">
+    <link rel="stylesheet" href="{% static 'core/css/site.css' %}?v=20260515-8">
     <link rel="stylesheet" href="{% static 'vendor/intl-tel-input/css/intlTelInput.css' %}?v=20260421-1">
 
     {# ---------- FAVICONS (под твои имена файлов) ---------- #}
@@ -103,6 +103,7 @@
         if (!modalEl || !window.bootstrap) return;
         if (
           modalEl.id === 'contracts-modal'
+          || modalEl.id === 'projects-modal'
           || modalEl.id === 'contract-templates-modal'
           || modalEl.id === 'contract-requisites-modal'
         ) return;
@@ -146,13 +147,14 @@
         <script defer src="{% static 'gantt_engine/gantt-resources.js' %}?v=20260512-11"></script>
         <script defer src="{% static 'core/js/ui-prefs-restore.js' %}?v=20260423-2"></script>
         <script defer src="{% static 'core/js/selectable-tables.js' %}"></script>
-        <script defer src="{% static 'core/js/policy-panels.js' %}?v=20260512-27"></script>
+        <script defer src="{% static 'core/js/policy-panels.js' %}?v=20260515-7"></script>
         <script defer src="{% static 'core/js/classifiers-panels.js' %}?v=20260425-1"></script>
         <script defer src="{% static 'core/js/contacts-panels.js' %}?v=20260420-30"></script>
         <script defer src="{% static 'core/js/group-panels.js' %}"></script>
         <script defer src="{% static 'core/js/experts-panels.js' %}"></script>
         <script defer src="{% static 'core/js/users-panels.js' %}"></script>
-        <script defer src="{% static 'core/js/projects-panels.js' %}"></script>
+        <script defer src="{% static 'core/js/projects-panels.js' %}?v=20260515-1"></script>
+        <script defer src="{% static 'core/js/project-schedule-gantt.js' %}?v=20260515-8"></script>
         <script defer src="{% static 'core/js/selectable-tables-projects.js' %}"></script>
         <script src="{% static 'core/js/datepickers.js' %}"></script>
         <script src="{% static 'core/js/requests-panels.js' %}"></script>
