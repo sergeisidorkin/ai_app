@@ -29,7 +29,7 @@ from yandexdisk_app.workspace import (
 
 from .api import NextcloudApiClient, NextcloudApiError
 from .models import NextcloudUserLink
-from .provisioning import ensure_nextcloud_account
+from .provisioning import _should_manage_in_nextcloud, ensure_nextcloud_account
 
 logger = logging.getLogger(__name__)
 
@@ -482,7 +482,10 @@ def grant_project_workspace_editor_access_for_performers(
             pk__in=normalized_ids,
             participation_response=Performer.ParticipationResponse.CONFIRMED,
             employee__user__isnull=False,
+            employee__user__is_active=True,
+            employee__user__is_staff=True,
         )
+        .exclude(employee__user__email="")
         .order_by("registration_id", "employee__user_id", "id")
     )
     workspace_by_project_id = {
@@ -502,7 +505,10 @@ def grant_project_workspace_editor_access_for_performers(
         if share_key in seen:
             continue
         seen.add(share_key)
-        link = _ensure_nextcloud_link_for_user(performer.employee.user, client=client)
+        user = performer.employee.user
+        if not _should_manage_in_nextcloud(user):
+            continue
+        link = _ensure_nextcloud_link_for_user(user, client=client)
         if not link or not link.nextcloud_user_id:
             raise NextcloudApiError("Не удалось определить Nextcloud-пользователя исполнителя проекта.")
         client.ensure_user_share(
@@ -527,11 +533,16 @@ def _confirmed_project_performer_users(project):
             registration=project,
             participation_response=Performer.ParticipationResponse.CONFIRMED,
             employee__user__isnull=False,
+            employee__user__is_active=True,
+            employee__user__is_staff=True,
         )
+        .exclude(employee__user__email="")
         .order_by("employee__user_id", "id")
     )
     for performer in performers:
         user = performer.employee.user
+        if not _should_manage_in_nextcloud(user):
+            continue
         if user.pk in seen_user_ids:
             continue
         seen_user_ids.add(user.pk)

@@ -261,7 +261,12 @@ def _proposal_service_composition(proposal) -> str:
     return proposal.service_composition or ""
 
 
-def _proposal_scope_of_work(proposal) -> list[dict[str, str] | str]:
+def _proposal_scope_of_work(proposal) -> list[dict[str, object] | str]:
+    def source_value(source, key, default=None):
+        if isinstance(source, dict):
+            return source.get(key, default)
+        return getattr(source, key, default)
+
     def plain_text_to_html(value):
         text = str(value or "").strip()
         if not text:
@@ -283,40 +288,79 @@ def _proposal_scope_of_work(proposal) -> list[dict[str, str] | str]:
             return None
         return {"html": plain_text_to_html(plain_text)}
 
-    mode = str(getattr(proposal, "service_composition_mode", "") or "sections").strip()
-    if mode == "customer_tz":
-        stored = getattr(proposal, "service_customer_tz_editor_state", {}) or {}
-        item = build_item(
-            stored.get("html") if isinstance(stored, dict) else "",
-            stored.get("plain_text") if isinstance(stored, dict) else getattr(proposal, "service_composition_customer_tz", ""),
-        )
-        if item is None:
-            fallback = build_item("", getattr(proposal, "service_composition_customer_tz", ""))
-            if fallback is None:
-                return []
-            return fallback if isinstance(fallback, list) else [fallback]
-        return item if isinstance(item, list) else [item]
-
-    result: list[dict[str, str] | str] = []
-    stored_sections = getattr(proposal, "service_sections_editor_state", []) or []
-    if isinstance(stored_sections, list):
-        for section in stored_sections:
-            if not isinstance(section, dict):
-                continue
-            item = build_item(section.get("html"), section.get("plain_text"))
+    def items_from_source(source) -> list[dict[str, object] | str]:
+        mode = str(source_value(source, "service_composition_mode", "") or "sections").strip()
+        if mode == "customer_tz":
+            stored = source_value(source, "service_customer_tz_editor_state", {}) or {}
+            item = build_item(
+                stored.get("html") if isinstance(stored, dict) else "",
+                stored.get("plain_text")
+                if isinstance(stored, dict)
+                else source_value(source, "service_composition_customer_tz", ""),
+            )
             if item is None:
-                continue
+                fallback = build_item("", source_value(source, "service_composition_customer_tz", ""))
+                if fallback is None:
+                    return []
+                return fallback if isinstance(fallback, list) else [fallback]
             if isinstance(item, list):
-                result.extend(item)
-            else:
-                result.append(item)
-    if result:
-        return result
+                return item
+            return [item]
 
-    fallback = build_item("", getattr(proposal, "service_composition", ""))
-    if fallback is None:
-        return []
-    return fallback if isinstance(fallback, list) else [fallback]
+        result: list[dict[str, object] | str] = []
+        stored_sections = source_value(source, "service_sections_editor_state", []) or []
+        if isinstance(stored_sections, list):
+            for section in stored_sections:
+                if not isinstance(section, dict):
+                    continue
+                item = build_item(section.get("html"), section.get("plain_text"))
+                if item is None:
+                    continue
+                if isinstance(item, list):
+                    result.extend(item)
+                else:
+                    result.append(item)
+        if result:
+            return result
+
+        fallback = build_item("", source_value(source, "service_composition", ""))
+        if fallback is None:
+            return []
+        return fallback if isinstance(fallback, list) else [fallback]
+
+    def strong_line(text):
+        return {"runs": [{"text": text, "character_style_id": "Strong"}]}
+
+    products = list(proposal.ordered_products()) if getattr(proposal, "pk", None) else []
+    if not products and getattr(proposal, "type_id", None):
+        products = [proposal.type]
+    if len(products) <= 1:
+        source = proposal
+        stage_payloads = [item for item in (getattr(proposal, "stage_payloads_json", None) or []) if isinstance(item, dict)]
+        if stage_payloads:
+            source = stage_payloads[0]
+        return [strong_line("Состав услуг:")] + items_from_source(source)
+
+    stage_payloads = [item for item in (getattr(proposal, "stage_payloads_json", None) or []) if isinstance(item, dict)]
+    payload_by_product_id = {}
+    for payload in stage_payloads:
+        product_id = str(payload.get("product_id") or "").strip()
+        if product_id and product_id not in payload_by_product_id:
+            payload_by_product_id[product_id] = payload
+
+    result: list[dict[str, object] | str] = []
+    for index, product in enumerate(products, start=1):
+        product_id = str(getattr(product, "pk", "") or "")
+        indexed_source = stage_payloads[index - 1] if index - 1 < len(stage_payloads) else {}
+        if indexed_source and (not product_id or str(indexed_source.get("product_id") or "") == product_id):
+            source = indexed_source
+        else:
+            source = payload_by_product_id.get(product_id) or indexed_source
+        product_name = _service_goal_report_value(getattr(product, "pk", None), "product_name")
+        result.append({"runs": [{"text": f"ЭТАП {index} — {product_name}.", "bold": True}]})
+        result.append(strong_line("Состав услуг по этапу:"))
+        result.extend(items_from_source(source))
+    return result
 
 
 PROPOSAL_TRAVEL_EXPENSES_LABEL = "Командировочные расходы, евро"
@@ -623,6 +667,20 @@ def _proposal_preliminary_report_term_month(proposal) -> str:
     return f"{_format_decimal(months, precision=1, strip_trailing_zeros=True)} {suffix}"
 
 
+def _proposal_stages(proposal) -> str:
+    products = list(proposal.ordered_products()) if hasattr(proposal, "ordered_products") else []
+    if not products and getattr(proposal, "type_id", None):
+        products = [proposal.type]
+    count = len(products)
+    if count == 1:
+        suffix = "этап"
+    elif 2 <= count <= 4:
+        suffix = "этапа"
+    else:
+        suffix = "этапов"
+    return f"{count} {suffix}"
+
+
 def _proposal_preliminary_report_date(proposal) -> str:
     return _format_date(proposal.preliminary_report_date)
 
@@ -706,6 +764,24 @@ def _payment_schedule_product_name(product) -> str:
         or str(getattr(product, "short_name", "") or "").strip()
         or str(product or "").strip()
     )
+
+
+def _proposal_product_name_list(proposal) -> list[dict[str, object]]:
+    products = list(proposal.ordered_products()) if getattr(proposal, "pk", None) else []
+    if not products and getattr(proposal, "type_id", None):
+        products = [proposal.type]
+
+    total = len(products)
+    result: list[dict[str, object]] = []
+    for index, product in enumerate(products, start=1):
+        product_name = _service_goal_report_value(getattr(product, "pk", None), "product_name")
+        if total == 1:
+            text = f"{product_name}."
+        else:
+            ending = "." if index == total else ";"
+            text = f"Этап {index} — {product_name}{ending}"
+        result.append({"runs": [{"text": text}]})
+    return result
 
 
 def _payment_schedule_values(source) -> dict[str, str]:
@@ -888,6 +964,7 @@ COMPUTED_MAP = {
     "{{tkp_preliminary}}": _proposal_tkp_preliminary,
     "{{preliminary_payment_percentage_full}}": _proposal_preliminary_payment_percentage_full,
     "{{preliminary_report_term_month}}": _proposal_preliminary_report_term_month,
+    "{{stages}}": _proposal_stages,
     "{{owner_country_full_name}}": _proposal_asset_owner_country_full_name,
     "{{country_full_name}}": _proposal_country_full_name,
 }
@@ -896,6 +973,7 @@ COMPUTED_LIST_MAP = {
     "[[actives_name]]": _proposal_actives_name_list,
     "[[scope_of_work]]": _proposal_scope_of_work,
     "[[payment_schedule]]": _proposal_payment_schedule,
+    "[[product_name]]": _proposal_product_name_list,
 }
 
 COMPUTED_TABLE_MAP = {

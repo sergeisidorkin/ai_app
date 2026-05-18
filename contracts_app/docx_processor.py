@@ -269,6 +269,19 @@ def _set_shading_property(r_pr, color_value: str | None) -> None:
         r_pr.remove(existing)
 
 
+def _set_character_style_property(r_pr, style_id: str | None) -> None:
+    style_id = str(style_id or "").strip()
+    if not style_id:
+        return
+    existing = r_pr.find(qn("w:rStyle"))
+    if existing is None:
+        from docx.oxml import OxmlElement
+
+        existing = OxmlElement("w:rStyle")
+        r_pr.insert(0, existing)
+    existing.set(qn("w:val"), style_id)
+
+
 def _set_font_property(r_pr, font_name: str | None) -> None:
     existing = r_pr.find(qn("w:rFonts"))
     if font_name:
@@ -320,6 +333,7 @@ def _append_formatted_run(
 
     run_element = OxmlElement("w:r")
     r_pr = deepcopy(source_rPr) if source_rPr is not None else OxmlElement("w:rPr")
+    _set_character_style_property(r_pr, run_data.get("character_style_id"))
     _set_on_off_property(r_pr, "b", run_data.get("bold"))
     _set_on_off_property(r_pr, "i", run_data.get("italic"))
     _set_on_off_property(r_pr, "u", run_data.get("underline"))

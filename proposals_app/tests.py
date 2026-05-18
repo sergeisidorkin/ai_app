@@ -174,6 +174,7 @@ class ProposalDocumentGenerationTests(TestCase):
             service_goal="Проведение due diligence",
             service_goal_genitive="Проведения due diligence",
             report_title='Due Diligence ООО "Приморское"',
+            product_name="Технический аудит",
             position=1,
         )
 
@@ -187,6 +188,9 @@ class ProposalDocumentGenerationTests(TestCase):
         template_doc.add_paragraph("Титул ТКП: {{tkp_preliminary}}")
         template_doc.add_paragraph("Предварительная оплата всего: {{preliminary_payment_percentage_full}}")
         template_doc.add_paragraph("Срок до Предварительного отчёта: {{preliminary_report_term_month}}")
+        template_doc.add_paragraph("Этапов: {{stages}}")
+        template_doc.add_paragraph("Продукт:")
+        template_doc.add_paragraph("[[product_name]]")
         template_doc.add_paragraph("Состав услуг:")
         template_doc.add_paragraph("[[scope_of_work]]")
         template_doc.add_paragraph("Расчёт вознаграждения:")
@@ -261,22 +265,34 @@ class ProposalDocumentGenerationTests(TestCase):
             position=8,
         )
         ProposalVariable.objects.create(
+            key="{{stages}}",
+            description="Число этапов оказания услуг в формате «N этапа(ов)»",
+            is_computed=True,
+            position=9,
+        )
+        ProposalVariable.objects.create(
             key="[[actives_name]]",
             description="Список наименований активов",
             is_computed=True,
-            position=9,
+            position=10,
+        )
+        ProposalVariable.objects.create(
+            key="[[product_name]]",
+            description="Наименование продукта",
+            is_computed=True,
+            position=11,
         )
         ProposalVariable.objects.create(
             key="[[scope_of_work]]",
             description="Состав оказываемых услуг",
             is_computed=True,
-            position=10,
+            position=12,
         )
         ProposalVariable.objects.create(
             key="[[budget_table]]",
             description="Расчёт вознаграждения за оказание услуг",
             is_computed=True,
-            position=11,
+            position=13,
         )
         ProposalAsset.objects.create(
             proposal=self.proposal,
@@ -609,6 +625,9 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertIn("Титул ТКП: (предварительное)", full_text)
         self.assertIn("Предварительная оплата всего: 70%", full_text)
         self.assertIn("Срок до Предварительного отчёта: 4,5 месяца", full_text)
+        self.assertIn("Этапов: 1 этап", full_text)
+        self.assertIn("Продукт:", full_text)
+        self.assertIn("Технический аудит.", full_text)
         self.assertIn("Состав услуг:", full_text)
         self.assertIn("Этап 1 и описание", full_text)
         self.assertIn("Красный текст", full_text)
@@ -752,6 +771,8 @@ class ProposalDocumentGenerationTests(TestCase):
         )
 
         generated_doc = Document(BytesIO(generated_bytes))
+        scope_header = next(paragraph for paragraph in generated_doc.paragraphs if paragraph.text == "Состав услуг:")
+        self.assertIn('w:rStyle w:val="Strong"', scope_header._element.xml)
         scope_paragraphs = [
             paragraph
             for paragraph in generated_doc.paragraphs
@@ -3204,6 +3225,7 @@ class ProposalRegistrationFormTests(TestCase):
             service_goal="Проверка актива",
             service_goal_genitive="Подготовки коммерческого предложения",
             report_title="ТКП по проекту DD",
+            product_name="Технический аудит",
             position=1,
         )
         variables = [
@@ -3309,7 +3331,15 @@ class ProposalRegistrationFormTests(TestCase):
                 is_computed=True,
             ),
             ProposalVariable(
+                key="{{stages}}",
+                is_computed=True,
+            ),
+            ProposalVariable(
                 key="[[scope_of_work]]",
+                is_computed=True,
+            ),
+            ProposalVariable(
+                key="[[product_name]]",
                 is_computed=True,
             ),
             ProposalVariable(
@@ -3349,11 +3379,20 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(replacements["{{tkp_preliminary}}"], "(предварительное)")
         self.assertEqual(replacements["{{preliminary_payment_percentage_full}}"], "70%")
         self.assertEqual(replacements["{{preliminary_report_term_month}}"], "4,5 месяца")
+        self.assertEqual(replacements["{{stages}}"], "1 этап")
         self.assertEqual(replacements["{{owner_country_full_name}}"], "Российская Федерация")
         self.assertEqual(replacements["{{year}}"], "2026")
         self.assertEqual(replacements["{{day}}"], "09")
         self.assertEqual(replacements["{{month}}"], "апреля")
-        self.assertEqual(lists["[[scope_of_work]]"], [{"html": "<p><strong>Этап 1</strong></p>"}, {"html": "<p><u>Этап 2</u></p>"}])
+        self.assertEqual(
+            lists["[[scope_of_work]]"],
+            [
+                {"runs": [{"text": "Состав услуг:", "character_style_id": "Strong"}]},
+                {"html": "<p><strong>Этап 1</strong></p>"},
+                {"html": "<p><u>Этап 2</u></p>"},
+            ],
+        )
+        self.assertEqual(lists["[[product_name]]"], [{"runs": [{"text": "Технический аудит."}]}])
         self.assertEqual(lists["[[actives_name]]"], [])
         self.assertEqual(tables, {})
 
@@ -3443,6 +3482,121 @@ class ProposalRegistrationFormTests(TestCase):
             [ProposalVariable(key="{{preliminary_payment_percentage_full}}", is_computed=True)],
         )
         self.assertEqual(replacements["{{preliminary_payment_percentage_full}}"], "70%")
+
+    def test_resolve_stages_uses_ordered_product_count_with_ru_suffix(self):
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        expectations = {
+            1: "1 этап",
+            2: "2 этапа",
+            4: "4 этапа",
+            5: "5 этапов",
+        }
+
+        for count, expected in expectations.items():
+            with self.subTest(count=count):
+                products = [
+                    Product.objects.create(
+                        short_name=f"P{count}-{index}",
+                        name_en=f"Product {count}-{index}",
+                        name_ru=f"Продукт {count}-{index}",
+                        position=100 + count * 10 + index,
+                    )
+                    for index in range(1, count + 1)
+                ]
+                proposal = ProposalRegistration.objects.create(
+                    number=7000 + count,
+                    group_member=group_member,
+                    type=products[0],
+                    year=2026,
+                    customer='ООО "Заказчик"',
+                )
+                if count > 1:
+                    for index, product in enumerate(products, start=1):
+                        ProposalRegistrationProduct.objects.create(
+                            proposal=proposal,
+                            product=product,
+                            rank=index,
+                        )
+
+                replacements, _, _ = resolve_variables(
+                    proposal,
+                    [ProposalVariable(key="{{stages}}", is_computed=True)],
+                )
+
+                self.assertEqual(replacements["{{stages}}"], expected)
+
+    def test_resolve_product_name_list_uses_stage_order_and_punctuation(self):
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        products = [
+            Product.objects.create(
+                short_name="PN-DD",
+                name_en="Due Diligence",
+                name_ru="ДД",
+                position=1,
+            ),
+            Product.objects.create(
+                short_name="PN-JORC",
+                name_en="JORC Report",
+                name_ru="JORC",
+                position=2,
+            ),
+            Product.objects.create(
+                short_name="PN-VAL",
+                name_en="Valuation",
+                name_ru="Оценка",
+                position=3,
+            ),
+        ]
+        for product, product_name in zip(
+            products,
+            ["Технический аудит", "Отчёт JORC", "Оценка активов"],
+            strict=True,
+        ):
+            ServiceGoalReport.objects.create(
+                product=product,
+                product_name=product_name,
+                position=1,
+            )
+        proposal = ProposalRegistration.objects.create(
+            number=7010,
+            group_member=group_member,
+            type=products[0],
+            year=2026,
+            customer='ООО "Заказчик"',
+        )
+        for index, product in enumerate(products, start=1):
+            ProposalRegistrationProduct.objects.create(
+                proposal=proposal,
+                product=product,
+                rank=index,
+            )
+
+        _, lists, _ = resolve_variables(
+            proposal,
+            [ProposalVariable(key="[[product_name]]", is_computed=True)],
+        )
+
+        texts = [item["runs"][0]["text"] for item in lists["[[product_name]]"]]
+        self.assertEqual(
+            texts,
+            [
+                "Этап 1 — Технический аудит;",
+                "Этап 2 — Отчёт JORC;",
+                "Этап 3 — Оценка активов.",
+            ],
+        )
 
     def test_resolve_payment_schedule_for_single_product_has_no_header_or_indent(self):
         product = Product.objects.create(
@@ -3731,7 +3885,13 @@ class ProposalRegistrationFormTests(TestCase):
             [ProposalVariable(key="[[scope_of_work]]", is_computed=True)],
         )
 
-        self.assertEqual(lists["[[scope_of_work]]"], [{"html": "<p><strong>Текст ТЗ заказчика</strong></p>"}])
+        self.assertEqual(
+            lists["[[scope_of_work]]"],
+            [
+                {"runs": [{"text": "Состав услуг:", "character_style_id": "Strong"}]},
+                {"html": "<p><strong>Текст ТЗ заказчика</strong></p>"},
+            ],
+        )
 
     def test_form_saves_assets_from_payload(self):
         country = OKSMCountry.objects.create(
@@ -4610,6 +4770,7 @@ class ProposalRegistrationFormTests(TestCase):
             service_goal="Цель первого этапа",
             service_goal_genitive="Подготовки первого этапа",
             report_title="ТКП этап 1",
+            product_name="Первый продукт",
             position=1,
         )
         ServiceGoalReport.objects.create(
@@ -4617,6 +4778,7 @@ class ProposalRegistrationFormTests(TestCase):
             service_goal="Цель второго этапа",
             service_goal_genitive="Подготовки второго этапа",
             report_title="ТКП этап 2",
+            product_name="Второй продукт",
             position=1,
         )
         totals_payload = json.dumps(
@@ -4758,7 +4920,17 @@ class ProposalRegistrationFormTests(TestCase):
 
         self.assertEqual(proposal.type_id, second_product.pk)
         self.assertEqual(replacements["{{service_goal_genitive}}"], "Подготовки второго этапа")
-        self.assertEqual(lists["[[scope_of_work]]"], [{"html": "<p><strong>Scope 2</strong></p>"}])
+        self.assertEqual(
+            lists["[[scope_of_work]]"],
+            [
+                {"runs": [{"text": "ЭТАП 1 — Первый продукт.", "bold": True}]},
+                {"runs": [{"text": "Состав услуг по этапу:", "character_style_id": "Strong"}]},
+                {"html": "<p>Scope 1</p>"},
+                {"runs": [{"text": "ЭТАП 2 — Второй продукт.", "bold": True}]},
+                {"runs": [{"text": "Состав услуг по этапу:", "character_style_id": "Strong"}]},
+                {"html": "<p><strong>Scope 2</strong></p>"},
+            ],
+        )
         budget_rows = tables["[[budget_table]]"]["rows"]
         self.assertEqual(budget_rows[1][0]["text"], "Summary expert")
         self.assertEqual(budget_rows[1][1]["text"], "Сводная роль, SUM")
