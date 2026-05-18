@@ -182,7 +182,8 @@ def create_basic_project_workspace_stream(
         else [_sanitize(name) for name in REGISTRATION_STANDARD_FOLDERS]
     )
 
-    total = 4 + len(folder_paths)
+    confirmed_performer_users = _confirmed_project_performer_users(project)
+    total = 4 + len(folder_paths) + len(confirmed_performer_users)
     current = 0
     owner_user_id = client.username
 
@@ -191,7 +192,6 @@ def create_basic_project_workspace_stream(
         if manager_link is None:
             yield WorkspaceResult(False, "Не удалось определить Nextcloud-пользователя руководителя проекта.")
             return
-
         projects_root_path = yield from _ensure_folder_with_heartbeat(
             client, owner_user_id, _join_path(base, _sanitize(PROJECTS_SECTION_FOLDER)), current, total,
         )
@@ -227,6 +227,19 @@ def create_basic_project_workspace_stream(
         )
         current += 1
         yield {"current": current, "total": total}
+
+        for performer_user in confirmed_performer_users:
+            performer_link = _ensure_nextcloud_link_for_user(performer_user, client=client)
+            if not performer_link or not performer_link.nextcloud_user_id:
+                raise NextcloudApiError("Не удалось определить Nextcloud-пользователя исполнителя проекта.")
+            client.ensure_user_share(
+                owner_user_id,
+                project_path,
+                performer_link.nextcloud_user_id,
+                permissions=NextcloudApiClient.EDITOR_PERMISSIONS,
+            )
+            current += 1
+            yield {"current": current, "total": total}
     except NextcloudApiError as exc:
         yield WorkspaceResult(False, str(exc))
         return
@@ -444,17 +457,104 @@ def _resolve_project_manager_nextcloud_link(
     if match is None:
         return None
 
-    existing_link = NextcloudUserLink.objects.filter(user=match.user).first()
+    return _ensure_nextcloud_link_for_user(match.user, client=client, display_name=_employee_full_name(match))
+
+
+def grant_project_workspace_editor_access_for_performers(
+    performer_ids,
+    *,
+    client: NextcloudApiClient | None = None,
+) -> int:
+    from projects_app.models import Performer
+
+    normalized_ids = sorted({int(value) for value in performer_ids or [] if str(value).strip()})
+    if not normalized_ids:
+        return 0
+
+    client = client or NextcloudApiClient()
+    if not client.is_configured:
+        raise NextcloudApiError("Nextcloud не настроен для предоставления доступа к рабочему пространству проекта.")
+
+    performers = (
+        Performer.objects
+        .select_related("employee", "employee__user", "registration")
+        .filter(
+            pk__in=normalized_ids,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+            employee__user__isnull=False,
+        )
+        .order_by("registration_id", "employee__user_id", "id")
+    )
+    workspace_by_project_id = {
+        workspace.project_id: workspace
+        for workspace in ProjectWorkspace.objects.filter(
+            project_id__in={performer.registration_id for performer in performers}
+        )
+    }
+
+    granted = 0
+    seen = set()
+    for performer in performers:
+        workspace = workspace_by_project_id.get(performer.registration_id)
+        if not workspace or not workspace.disk_path:
+            continue
+        share_key = (workspace.project_id, performer.employee.user_id)
+        if share_key in seen:
+            continue
+        seen.add(share_key)
+        link = _ensure_nextcloud_link_for_user(performer.employee.user, client=client)
+        if not link or not link.nextcloud_user_id:
+            raise NextcloudApiError("Не удалось определить Nextcloud-пользователя исполнителя проекта.")
+        client.ensure_user_share(
+            client.username,
+            workspace.disk_path,
+            link.nextcloud_user_id,
+            permissions=NextcloudApiClient.EDITOR_PERMISSIONS,
+        )
+        granted += 1
+    return granted
+
+
+def _confirmed_project_performer_users(project):
+    from projects_app.models import Performer
+
+    users = []
+    seen_user_ids = set()
+    performers = (
+        Performer.objects
+        .select_related("employee", "employee__user")
+        .filter(
+            registration=project,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+            employee__user__isnull=False,
+        )
+        .order_by("employee__user_id", "id")
+    )
+    for performer in performers:
+        user = performer.employee.user
+        if user.pk in seen_user_ids:
+            continue
+        seen_user_ids.add(user.pk)
+        users.append(user)
+    return users
+
+
+def _ensure_nextcloud_link_for_user(user, *, client: NextcloudApiClient, display_name: str | None = None):
+    existing_link = NextcloudUserLink.objects.filter(user=user).first()
     if existing_link and existing_link.nextcloud_user_id:
         client.enable_user(existing_link.nextcloud_user_id)
-        client.set_user_email(existing_link.nextcloud_user_id, (match.user.email or "").strip())
-        client.set_user_display_name(existing_link.nextcloud_user_id, _employee_full_name(match))
+        client.set_user_email(existing_link.nextcloud_user_id, (user.email or "").strip())
+        client.set_user_display_name(existing_link.nextcloud_user_id, display_name or _user_display_name(user))
         return existing_link
 
-    link = ensure_nextcloud_account(match.user, client=client)
+    link = ensure_nextcloud_account(user, client=client)
     if link and link.nextcloud_user_id:
         return link
     return None
+
+
+def _user_display_name(user) -> str:
+    return " ".join(part for part in [user.first_name, user.last_name] if part).strip() or user.get_username()
 
 
 def _employee_full_name(employee: Employee) -> str:
