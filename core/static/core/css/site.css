@@ -5113,6 +5113,9 @@ body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor 
 #proposals-pane .proposal-commercial-table .proposal-commercial-days-group,
 #proposals-pane .proposal-commercial-table .proposal-commercial-day-header {
   text-align: center;
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
 }
 
 #proposals-pane .proposal-commercial-table .proposal-commercial-rate-header,
@@ -5219,6 +5222,8 @@ body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor 
 
 #proposals-pane .proposal-commercial-table .proposal-commercial-rate,
 #proposals-pane .proposal-commercial-table .proposal-commercial-day-count,
+#proposals-pane .proposal-commercial-table .proposal-commercial-stage-day-count,
+#proposals-pane .proposal-commercial-table .proposal-commercial-summary-total-day-count,
 #proposals-pane .proposal-commercial-table .proposal-commercial-total {
   width: 100%;
   min-width: 0;
@@ -5226,7 +5231,9 @@ body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor 
   text-align: right;
 }
 
-#proposals-pane .proposal-commercial-table .proposal-commercial-day-count {
+#proposals-pane .proposal-commercial-table .proposal-commercial-day-count,
+#proposals-pane .proposal-commercial-table .proposal-commercial-stage-day-count,
+#proposals-pane .proposal-commercial-table .proposal-commercial-summary-total-day-count {
   width: calc(100% - 1px);
   box-sizing: border-box;
   margin-right: 1px;
