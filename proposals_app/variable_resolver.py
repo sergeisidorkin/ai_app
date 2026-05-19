@@ -666,12 +666,21 @@ def _proposal_multistage_budget_table(proposal) -> dict | None:
                 }
             )
 
-    for source in source_rows:
-        stage_counts = source["stage_asset_day_counts"]
-        asset_totals = [
-            source["asset_day_counts"][asset_index] if asset_index < len(source["asset_day_counts"]) else Decimal("0")
+    def effective_asset_totals(source: dict[str, object]) -> list[Decimal]:
+        saved_totals = list(source.get("asset_day_counts") or [])
+        while len(saved_totals) < asset_count:
+            saved_totals.append(Decimal("0"))
+        if any(value for value in saved_totals):
+            return saved_totals[:asset_count]
+        stage_counts = source.get("stage_asset_day_counts") or []
+        return [
+            sum(stage_counts[stage_index][asset_index] for stage_index in range(stage_count))
             for asset_index in range(asset_count)
         ]
+
+    for source in source_rows:
+        stage_counts = source["stage_asset_day_counts"]
+        asset_totals = effective_asset_totals(source)
         total_days = sum(asset_totals, Decimal("0"))
         rate = _proposal_day_decimal(source["rate_eur_per_day"])
         row_total = (rate * total_days) if rate is not None and total_days else source["fallback_total"]
@@ -746,10 +755,7 @@ def _proposal_multistage_budget_table(proposal) -> dict | None:
             ]
         )
 
-    summary_total_days = sum(
-        sum(source["asset_day_counts"], Decimal("0"))
-        for source in source_rows
-    )
+    summary_total_days = sum(sum(effective_asset_totals(source), Decimal("0")) for source in source_rows)
     append_fixed_row(
         PROPOSAL_SUMMARY_TOTAL_LABEL,
         day_values=flatten_stage_values(displayed_stage_day_totals),

@@ -1017,8 +1017,8 @@ class ProposalDocumentGenerationTests(TestCase):
             professional_status="Партнер",
             service_name="",
             rate_eur_per_day="100",
-            asset_day_counts=["3"],
-            total_eur_without_vat="999",
+            asset_day_counts=[""],
+            total_eur_without_vat="0",
             position=1,
         )
 
