@@ -624,6 +624,61 @@ class NextcloudWorkspaceTests(TestCase):
             permissions=15,
         )
 
+    def test_grant_project_workspace_editor_access_skips_ineligible_nextcloud_users(self):
+        ProjectWorkspace.objects.create(
+            project=self.project,
+            disk_path="/Corporate Root/03 Проекты/2026/Проект 6001 DD Проект Nextcloud",
+            created_by=self.creator,
+        )
+        users = [
+            User.objects.create_user(
+                username="inactive-performer@example.com",
+                email="inactive-performer@example.com",
+                password="Secret123!",
+                is_staff=True,
+                is_active=False,
+            ),
+            User.objects.create_user(
+                username="external-performer@example.com",
+                email="external-performer@example.com",
+                password="Secret123!",
+                is_staff=False,
+                is_active=True,
+            ),
+            User.objects.create_user(
+                username="missing-email-performer",
+                email="",
+                password="Secret123!",
+                is_staff=True,
+                is_active=True,
+            ),
+        ]
+        performer_ids = []
+        for user in users:
+            employee = Employee.objects.create(user=user)
+            performer = Performer.objects.create(
+                registration=self.project,
+                employee=employee,
+                executor=user.username,
+                participation_response=Performer.ParticipationResponse.CONFIRMED,
+            )
+            performer_ids.append(performer.pk)
+            NextcloudUserLink.objects.create(
+                user=user,
+                nextcloud_user_id=f"ncstaff-{user.pk}",
+                nextcloud_username=f"ncstaff-{user.pk}",
+                nextcloud_email=user.email,
+            )
+        client = Mock()
+        client.is_configured = True
+        client.username = "cloud-admin"
+
+        granted = grant_project_workspace_editor_access_for_performers(performer_ids, client=client)
+
+        self.assertEqual(granted, 0)
+        client.enable_user.assert_not_called()
+        client.ensure_user_share.assert_not_called()
+
     def test_create_basic_project_workspace_accepts_slash_as_root_path(self):
         settings_obj = CloudStorageSettings.get_solo()
         settings_obj.nextcloud_root_path = "/"

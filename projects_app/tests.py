@@ -766,6 +766,39 @@ class ProjectRegistrationFormViewTests(TestCase):
         self.assertContains(response, first.short_uid)
         self.assertContains(response, second.short_uid)
 
+    def test_projects_registry_customer_details_are_hidden_by_default_in_colpicker(self):
+        response = self.client.get(reverse("projects_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        default_hidden_columns = [
+            "country",
+            "identifier",
+            "registration-number",
+            "region",
+            "date",
+            "asset-owner-country",
+            "asset-owner-identifier",
+            "asset-owner-reg-number",
+            "asset-owner-region",
+            "asset-owner-date",
+        ]
+        for column in default_hidden_columns:
+            self.assertContains(
+                response,
+                f'id="registration-col-{column}" data-default-hidden="true"',
+                html=False,
+            )
+        self.assertContains(
+            response,
+            'id="registration-col-customer" checked',
+            html=False,
+        )
+        self.assertContains(
+            response,
+            'id="registration-col-asset-owner" checked',
+            html=False,
+        )
+
     def test_registration_launch_moves_not_started_project_to_in_progress(self):
         registration = ProjectRegistration.objects.create(
             number=6201,
