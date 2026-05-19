@@ -3668,7 +3668,7 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(replacements["{{tkp_preliminary}}"], "(предварительное)")
         self.assertEqual(replacements["{{preliminary_payment_percentage_full}}"], "70%")
         self.assertEqual(replacements["{{preliminary_report_term_month}}"], "4,5 месяца")
-        self.assertEqual(replacements["{{final_report_term_month}}"], "1 мес.")
+        self.assertEqual(replacements["{{final_report_term_month}}"], "5,7 мес.")
         self.assertEqual(replacements["{{stages}}"], "1 этап")
         self.assertEqual(replacements["{{owner_country_full_name}}"], "Российская Федерация")
         self.assertEqual(replacements["{{year}}"], "2026")
