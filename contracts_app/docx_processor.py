@@ -371,6 +371,56 @@ def _apply_paragraph_style(p_pr, style_id: str | None) -> None:
     p_style.set(qn("w:val"), style_id)
 
 
+def _resolve_character_style_id(paragraph, style_ref: str | None) -> str:
+    style_ref = str(style_ref or "").strip()
+    if not style_ref:
+        return ""
+    style_names = [style_ref]
+    if style_ref in {"Strong", "Сильное выделение"}:
+        style_names = ["Сильное выделение", "Strong"]
+    document = getattr(getattr(paragraph, "part", None), "document", None)
+    styles = getattr(document, "styles", None)
+    if styles is None:
+        return style_ref
+    try:
+        for style_name in style_names:
+            for style in styles:
+                if getattr(style, "name", "") == style_name:
+                    return getattr(style, "style_id", "") or style_ref
+        for style in styles:
+            if getattr(style, "style_id", "") == style_ref:
+                return style_ref
+    except Exception:
+        return style_ref
+    return style_ref
+
+
+def _resolve_rich_item_character_styles(paragraph, rich_items: list[dict[str, object]]) -> list[dict[str, object]]:
+    resolved_items: list[dict[str, object]] = []
+    for item in rich_items:
+        if not isinstance(item, dict):
+            resolved_items.append(item)
+            continue
+        resolved_item = dict(item)
+        runs = resolved_item.get("runs")
+        if isinstance(runs, list):
+            resolved_runs = []
+            for run in runs:
+                if not isinstance(run, dict):
+                    resolved_runs.append(run)
+                    continue
+                resolved_run = dict(run)
+                if resolved_run.get("character_style_id"):
+                    resolved_run["character_style_id"] = _resolve_character_style_id(
+                        paragraph,
+                        str(resolved_run.get("character_style_id") or ""),
+                    )
+                resolved_runs.append(resolved_run)
+            resolved_item["runs"] = resolved_runs
+        resolved_items.append(resolved_item)
+    return resolved_items
+
+
 def _apply_paragraph_left_indent(p_pr, left_indent_cm) -> None:
     if left_indent_cm in (None, ""):
         return
@@ -631,7 +681,7 @@ def _replace_list_in_paragraph(
         _insert_rich_paragraphs(
             anchor,
             parent,
-            rich_items,
+            _resolve_rich_item_character_styles(paragraph, rich_items),
             bullet_num_id=bullet_num_id,
             multilevel_num_id=multilevel_num_id,
             bullet_style_id=bullet_style_id,
