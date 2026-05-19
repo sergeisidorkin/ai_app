@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import sys
+import calendar
 from html import escape
 
-from datetime import date
-from decimal import Decimal, InvalidOperation
+from datetime import date, timedelta
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from policy_app.models import ServiceGoalReport
 
@@ -329,7 +330,13 @@ def _proposal_scope_of_work(proposal) -> list[dict[str, object] | str]:
         return fallback if isinstance(fallback, list) else [fallback]
 
     def strong_line(text):
-        return {"runs": [{"text": text, "character_style_id": "Strong"}]}
+        return {"runs": [{"text": text, "character_style_id": "Сильное выделение"}]}
+
+    def evaluation_date_line(source):
+        value = _format_date(source_value(source, "evaluation_date", ""))
+        if not value:
+            return None
+        return {"runs": [{"text": f"Дата оценки: {value}."}]}
 
     products = list(proposal.ordered_products()) if getattr(proposal, "pk", None) else []
     if not products and getattr(proposal, "type_id", None):
@@ -360,6 +367,9 @@ def _proposal_scope_of_work(proposal) -> list[dict[str, object] | str]:
         result.append({"runs": [{"text": f"ЭТАП {index} — {product_name}.", "bold": True}]})
         result.append(strong_line("Состав услуг по этапу:"))
         result.extend(items_from_source(source))
+        date_line = evaluation_date_line(source)
+        if date_line is not None:
+            result.append(date_line)
     return result
 
 
@@ -631,6 +641,7 @@ def _proposal_multistage_budget_table(proposal) -> dict | None:
                 str(getattr(item, "job_title", "") or "").strip(),
             )
             bucket = grouped_rows.get(key)
+            raw_asset_day_counts = list(getattr(item, "asset_day_counts", []) or [])
             source_rows.append(
                 {
                     "specialist": key[0],
@@ -642,7 +653,11 @@ def _proposal_multistage_budget_table(proposal) -> dict | None:
                         if bucket is not None
                         else [[Decimal("0") for _ in range(asset_count)] for _ in range(stage_count)]
                     ),
-                    "asset_day_counts": normalized_day_values(getattr(item, "asset_day_counts", []) or []),
+                    "asset_day_counts": normalized_day_values(raw_asset_day_counts),
+                    "has_saved_day_count_values": any(
+                        value not in (None, "") and str(value).strip() != ""
+                        for value in raw_asset_day_counts
+                    ),
                     "fallback_total": _proposal_day_decimal(getattr(item, "total_eur_without_vat", None)) or Decimal("0"),
                 }
             )
@@ -662,6 +677,7 @@ def _proposal_multistage_budget_table(proposal) -> dict | None:
                         sum(stage_counts[stage_index][asset_index] for stage_index in range(stage_count))
                         for asset_index in range(asset_count)
                     ],
+                    "has_saved_day_count_values": True,
                     "fallback_total": bucket["fallback_total"],
                 }
             )
@@ -670,13 +686,16 @@ def _proposal_multistage_budget_table(proposal) -> dict | None:
         saved_totals = list(source.get("asset_day_counts") or [])
         while len(saved_totals) < asset_count:
             saved_totals.append(Decimal("0"))
-        if any(value for value in saved_totals):
+        if any(value for value in saved_totals) or source.get("has_saved_day_count_values"):
             return saved_totals[:asset_count]
         stage_counts = source.get("stage_asset_day_counts") or []
-        return [
+        stage_totals = [
             sum(stage_counts[stage_index][asset_index] for stage_index in range(stage_count))
             for asset_index in range(asset_count)
         ]
+        if source.get("fallback_total") != Decimal("0"):
+            return saved_totals[:asset_count]
+        return stage_totals if sum(stage_totals, Decimal("0")) else saved_totals[:asset_count]
 
     for source in source_rows:
         stage_counts = source["stage_asset_day_counts"]
@@ -1027,8 +1046,90 @@ def _proposal_evaluation_date(proposal) -> str:
     return _format_date(proposal.evaluation_date)
 
 
+def _parse_proposal_date(value) -> date | None:
+    if not value:
+        return None
+    if isinstance(value, date):
+        return value
+    text = str(value or "").strip()
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y"):
+        try:
+            return date.fromisoformat(text) if fmt == "%Y-%m-%d" else date(
+                int(text[6:10]),
+                int(text[3:5]),
+                int(text[0:2]),
+            )
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _add_whole_months(value: date, months: int) -> date:
+    month_index = value.month - 1 + months
+    year = value.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(value.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def _add_decimal_months(value: date, months: Decimal) -> date:
+    safe_months = max(months, Decimal("0"))
+    whole_months = int(safe_months)
+    fractional_days = int(((safe_months - whole_months) * Decimal("30")) + Decimal("0.5"))
+    return _add_whole_months(value, whole_months) + timedelta(days=fractional_days)
+
+
+def _subtract_decimal_months(value: date, months: Decimal) -> date:
+    safe_months = max(months, Decimal("0"))
+    whole_months = int(safe_months)
+    fractional_days = int(((safe_months - whole_months) * Decimal("30")) + Decimal("0.5"))
+    base = value - timedelta(days=fractional_days)
+    return _add_whole_months(base, -whole_months)
+
+
+def _subtract_decimal_weeks(value: date, weeks: Decimal) -> date:
+    safe_weeks = max(weeks, Decimal("0"))
+    return value - timedelta(days=int((safe_weeks * Decimal("7")) + Decimal("0.5")))
+
+
+def _add_decimal_weeks(value: date, weeks: Decimal) -> date:
+    safe_weeks = max(weeks, Decimal("0"))
+    return value + timedelta(days=int((safe_weeks * Decimal("7")) + Decimal("0.5")))
+
+
+def _proposal_base_start_date() -> date:
+    current = _today() + timedelta(days=14)
+    previous_monday = current - timedelta(days=current.weekday())
+    next_monday = previous_monday + timedelta(days=7)
+    if (current - previous_monday) <= (next_monday - current):
+        return previous_monday
+    return next_monday
+
+
+def _decimal_months_between(start: date, end: date) -> Decimal:
+    if end <= start:
+        return Decimal("0")
+    whole_months = (end.year - start.year) * 12 + (end.month - start.month)
+    whole_date = _add_whole_months(start, whole_months)
+    while whole_months > 0 and whole_date > end:
+        whole_months -= 1
+        whole_date = _add_whole_months(start, whole_months)
+    remainder_days = max(0, (end - whole_date).days)
+    return Decimal(whole_months) + (Decimal(remainder_days) / Decimal("30"))
+
+
 def _proposal_service_term_months(proposal) -> str:
     return _format_decimal(proposal.service_term_months, precision=1)
+
+
+def _format_month_term_short(months: Decimal) -> str:
+    rounded = months.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+    return f"{_format_decimal(rounded, precision=1, strip_trailing_zeros=True)} мес."
+
+
+def _format_week_term_short(weeks: Decimal) -> str:
+    rounded = weeks.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+    return f"{_format_decimal(rounded, precision=1, strip_trailing_zeros=True)} нед."
 
 
 def _proposal_preliminary_report_term_month(proposal) -> str:
@@ -1045,6 +1146,54 @@ def _proposal_preliminary_report_term_month(proposal) -> str:
     else:
         suffix = "месяцев"
     return f"{_format_decimal(months, precision=1, strip_trailing_zeros=True)} {suffix}"
+
+
+def _proposal_last_stage_final_report_date(proposal) -> date | None:
+    stage_payloads = [
+        item
+        for item in (getattr(proposal, "stage_payloads_json", None) or [])
+        if isinstance(item, dict)
+    ]
+    for payload in reversed(stage_payloads):
+        parsed = _parse_proposal_date(payload.get("final_report_date"))
+        if parsed:
+            return parsed
+    return _parse_proposal_date(getattr(proposal, "final_report_date", None))
+
+
+def _proposal_first_stage_start_date(proposal) -> date | None:
+    stage_payloads = [
+        item
+        for item in (getattr(proposal, "stage_payloads_json", None) or [])
+        if isinstance(item, dict)
+    ]
+    sources = stage_payloads or [proposal]
+    source = sources[0]
+    if isinstance(source, dict):
+        preliminary_report_date = _parse_proposal_date(source.get("preliminary_report_date"))
+        final_report_date = _parse_proposal_date(source.get("final_report_date"))
+        service_term_months = _parse_decimal(source.get("service_term_months"))
+        final_report_term_weeks = _parse_decimal(source.get("final_report_term_weeks"))
+    else:
+        preliminary_report_date = _parse_proposal_date(getattr(source, "preliminary_report_date", None))
+        final_report_date = _parse_proposal_date(getattr(source, "final_report_date", None))
+        service_term_months = _parse_decimal(getattr(source, "service_term_months", None))
+        final_report_term_weeks = _parse_decimal(getattr(source, "final_report_term_weeks", None))
+
+    if not preliminary_report_date and final_report_date and final_report_term_weeks is not None:
+        preliminary_report_date = _subtract_decimal_weeks(final_report_date, final_report_term_weeks)
+    if preliminary_report_date and service_term_months is not None:
+        return _subtract_decimal_months(preliminary_report_date, service_term_months)
+    return None
+
+
+def _proposal_final_report_term_month(proposal) -> str:
+    final_report_date = _proposal_last_stage_final_report_date(proposal)
+    if not final_report_date:
+        return ""
+    start_date = _proposal_first_stage_start_date(proposal) or _proposal_base_start_date()
+    months = _decimal_months_between(start_date, final_report_date)
+    return _format_month_term_short(months)
 
 
 def _proposal_stages(proposal) -> str:
@@ -1078,7 +1227,15 @@ def _proposal_report_languages(proposal) -> str:
 
 
 def _proposal_service_cost(proposal) -> str:
-    return _format_money(proposal.service_cost)
+    service_cost = _parse_decimal(getattr(proposal, "service_cost", None))
+    if service_cost not in (None, Decimal("0")):
+        return _format_money(service_cost)
+    totals_state = getattr(proposal, "commercial_totals_json", {}) or {}
+    contract_total = _parse_decimal(totals_state.get("contract_total"))
+    if contract_total not in (None, Decimal("0")):
+        return _format_money(contract_total)
+    contract_total_auto = _parse_decimal(totals_state.get("contract_total_auto"))
+    return _format_money(contract_total_auto)
 
 
 def _proposal_currency(proposal) -> str:
@@ -1123,6 +1280,135 @@ def _proposal_final_report_term_days(proposal) -> str:
     return str(proposal.final_report_term_days or "")
 
 
+def _source_value(source, key: str, attr: str | None = None):
+    if isinstance(source, dict):
+        return source.get(key)
+    return getattr(source, attr or key, None)
+
+
+def _proposal_stage_term_sources(proposal) -> list[dict[str, object]]:
+    products = list(proposal.ordered_products()) if getattr(proposal, "pk", None) else []
+    if not products and getattr(proposal, "type_id", None):
+        products = [proposal.type]
+    stage_payloads = [
+        item
+        for item in (getattr(proposal, "stage_payloads_json", None) or [])
+        if isinstance(item, dict)
+    ]
+    if not products and stage_payloads:
+        products = [None for _ in stage_payloads]
+    if len(products) <= 1:
+        return [{"product": products[0] if products else getattr(proposal, "type", None), "source": stage_payloads[0] if stage_payloads else proposal}]
+
+    payload_by_product_id = {}
+    for payload in stage_payloads:
+        product_id = str(payload.get("product_id") or "").strip()
+        if product_id and product_id not in payload_by_product_id:
+            payload_by_product_id[product_id] = payload
+
+    result = []
+    for index, product in enumerate(products, start=1):
+        product_id = str(getattr(product, "pk", "") or "")
+        indexed_source = stage_payloads[index - 1] if index - 1 < len(stage_payloads) else {}
+        if indexed_source and (not product_id or str(indexed_source.get("product_id") or "") == product_id):
+            source = indexed_source
+        else:
+            source = payload_by_product_id.get(product_id) or indexed_source or proposal
+        result.append({"product": product, "source": source})
+    return result
+
+
+def _proposal_stage_term_values(source, fallback_start_date: date | None = None) -> dict[str, object]:
+    months = _parse_decimal(_source_value(source, "service_term_months")) or Decimal("0")
+    weeks = _parse_decimal(_source_value(source, "final_report_term_weeks")) or Decimal("0")
+    preliminary_date = _parse_proposal_date(_source_value(source, "preliminary_report_date"))
+    final_date = _parse_proposal_date(_source_value(source, "final_report_date"))
+
+    start_date = None
+    if preliminary_date:
+        start_date = _subtract_decimal_months(preliminary_date, months)
+    elif final_date:
+        preliminary_date = _subtract_decimal_weeks(final_date, weeks)
+        start_date = _subtract_decimal_months(preliminary_date, months)
+    elif fallback_start_date:
+        start_date = fallback_start_date
+
+    if start_date and not preliminary_date:
+        preliminary_date = _add_decimal_months(start_date, months)
+    if preliminary_date and not final_date:
+        final_date = _add_decimal_weeks(preliminary_date, weeks)
+
+    if start_date and preliminary_date:
+        months = _decimal_months_between(start_date, preliminary_date)
+    if preliminary_date and final_date:
+        weeks = Decimal(max(0, (final_date - preliminary_date).days)) / Decimal("7")
+    total_months = _decimal_months_between(start_date, final_date) if start_date and final_date else Decimal("0")
+    return {
+        "start_date": start_date,
+        "preliminary_date": preliminary_date,
+        "final_date": final_date,
+        "preliminary_months": months,
+        "final_weeks": weeks,
+        "total_months": total_months,
+        "next_stage_delay_days": _parse_decimal(_source_value(source, "next_stage_delay_days")) or Decimal("0"),
+    }
+
+
+def _proposal_stage_terms(proposal) -> list[dict[str, object]]:
+    sources = _proposal_stage_term_sources(proposal)
+    result: list[dict[str, object]] = []
+    rolling_start_date = _proposal_first_stage_start_date(proposal) or _proposal_base_start_date()
+    has_multiple_stages = len(sources) > 1
+    bullet_format = {"list_type": "bullet"}
+
+    for index, item in enumerate(sources, start=1):
+        values = _proposal_stage_term_values(item["source"], rolling_start_date)
+        if has_multiple_stages:
+            result.append(
+                {
+                    "runs": [
+                        {
+                            "text": f"Этап {index}: {_format_month_term_short(values['total_months'])}",
+                        }
+                    ]
+                }
+            )
+        result.append(
+            {
+                "runs": [
+                    {
+                        "text": (
+                            "сдача Предварительного отчёта — в течение "
+                            f"{_format_month_term_short(values['preliminary_months'])} до "
+                            f"{_format_date(values['preliminary_date'])},"
+                        )
+                    }
+                ],
+                **bullet_format,
+            }
+        )
+        result.append(
+            {
+                "runs": [
+                    {
+                        "text": (
+                            "сдача Итогового отчёта — в течение "
+                            f"{_format_week_term_short(values['final_weeks'])} до "
+                            f"{_format_date(values['final_date'])}."
+                        )
+                    }
+                ],
+                **bullet_format,
+            }
+        )
+
+        stage_end_date = values["final_date"] or values["preliminary_date"] or values["start_date"]
+        if stage_end_date:
+            rolling_start_date = stage_end_date + timedelta(days=int(values["next_stage_delay_days"]))
+
+    return result
+
+
 def _payment_schedule_decimal(value) -> Decimal:
     try:
         return Decimal(str(value if value not in (None, "") else "0"))
@@ -1146,21 +1432,21 @@ def _payment_schedule_product_name(product) -> str:
     )
 
 
-def _proposal_product_name_list(proposal) -> list[dict[str, object]]:
+def _proposal_product_name_list(proposal) -> list[str]:
     products = list(proposal.ordered_products()) if getattr(proposal, "pk", None) else []
     if not products and getattr(proposal, "type_id", None):
         products = [proposal.type]
 
     total = len(products)
-    result: list[dict[str, object]] = []
+    result: list[str] = []
     for index, product in enumerate(products, start=1):
-        product_name = _service_goal_report_value(getattr(product, "pk", None), "product_name")
+        product_name = _payment_schedule_product_name(product)
         if total == 1:
             text = f"{product_name}."
         else:
             ending = "." if index == total else ";"
             text = f"Этап {index} — {product_name}{ending}"
-        result.append({"runs": [{"text": text}]})
+        result.append(text)
     return result
 
 
@@ -1313,12 +1599,15 @@ FIELD_MAP = {
     ("proposals", "registry", "purpose"): _proposal_purpose,
     ("proposals", "registry", "service_composition"): _proposal_service_composition,
     ("proposals", "registry", "evaluation_date"): _proposal_evaluation_date,
+    ("proposals", "registry", "effective_date"): _proposal_evaluation_date,
     ("proposals", "registry", "term"): _proposal_service_term_months,
     ("proposals", "registry", "preliminary_report_date"): _proposal_preliminary_report_date,
     ("proposals", "registry", "final_report_term_weeks"): _proposal_final_report_term_weeks,
+    ("proposals", "registry", "final_report_term_month"): _proposal_final_report_term_month,
     ("proposals", "registry", "final_report_date"): _proposal_final_report_date,
     ("proposals", "registry", "report_languages"): _proposal_report_languages,
     ("proposals", "registry", "service_cost"): _proposal_service_cost,
+    ("proposals", "registry", "total_price"): _proposal_service_cost,
     ("proposals", "registry", "currency"): _proposal_currency,
     ("proposals", "registry", "advance_percent"): _proposal_advance_percent,
     ("proposals", "registry", "advance_term"): _proposal_advance_term_days,
@@ -1344,9 +1633,12 @@ COMPUTED_MAP = {
     "{{tkp_preliminary}}": _proposal_tkp_preliminary,
     "{{preliminary_payment_percentage_full}}": _proposal_preliminary_payment_percentage_full,
     "{{preliminary_report_term_month}}": _proposal_preliminary_report_term_month,
+    "{{final_report_term_month}}": _proposal_final_report_term_month,
     "{{stages}}": _proposal_stages,
     "{{owner_country_full_name}}": _proposal_asset_owner_country_full_name,
     "{{country_full_name}}": _proposal_country_full_name,
+    "{{effective_date}}": _proposal_evaluation_date,
+    "{{total_price}}": _proposal_service_cost,
 }
 
 COMPUTED_LIST_MAP = {
@@ -1354,6 +1646,7 @@ COMPUTED_LIST_MAP = {
     "[[scope_of_work]]": _proposal_scope_of_work,
     "[[payment_schedule]]": _proposal_payment_schedule,
     "[[product_name]]": _proposal_product_name_list,
+    "[[stage_terms]]": _proposal_stage_terms,
 }
 
 COMPUTED_TABLE_MAP = {
@@ -1363,6 +1656,10 @@ COMPUTED_TABLE_MAP = {
 VARIABLE_ALIASES = {
     "{{client_country_full_name}}": ["{{country_full_name}}"],
     "{{country_full_name}}": ["{{client_country_full_name}}"],
+    "{{evaluation_date}}": ["{{effective_date}}"],
+    "{{effective_date}}": ["{{evaluation_date}}"],
+    "{{service_cost}}": ["{{total_price}}"],
+    "{{total_price}}": ["{{service_cost}}"],
 }
 
 

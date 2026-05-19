@@ -367,7 +367,9 @@
               </thead>
               <tbody id="proposal-stage-terms-tbody">
                 {% for stage in form.stage_rows %}
-                  <tr class="proposal-stage-terms-row" data-proposal-stage-key="{{ stage.rank }}">
+                  <tr class="proposal-stage-terms-row"
+                      data-proposal-stage-key="{{ stage.rank }}"
+                      data-product-id="{{ stage.product_id|default:'' }}">
                     <td class="proposal-terms-stage-col">
                       <input type="text" class="form-control readonly-field proposal-stage-label-input" value="Этап {{ stage.rank }}" readonly tabindex="-1">
                     </td>

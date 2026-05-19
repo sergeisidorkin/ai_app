@@ -19,6 +19,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from docx import Document
+from docx.enum.style import WD_STYLE_TYPE
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
@@ -634,6 +635,10 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertIn("Этап 2", full_text)
         self.assertIn("Месторождение Приморское", full_text)
         self.assertIn("Фабрика Приморская", full_text)
+        product_paragraph = next(paragraph for paragraph in generated_doc.paragraphs if paragraph.text == "Технический аудит.")
+        self.assertTrue(
+            "w:numPr" in product_paragraph._element.xml or "w:pStyle" in product_paragraph._element.xml
+        )
         scope_paragraph = next(paragraph for paragraph in generated_doc.paragraphs if paragraph.text == "Этап 1 и описание")
         self.assertTrue(any(run.bold for run in scope_paragraph.runs if "Этап 1" in run.text))
         red_paragraph = next(paragraph for paragraph in generated_doc.paragraphs if paragraph.text == "Красный текст")
@@ -754,6 +759,10 @@ class ProposalDocumentGenerationTests(TestCase):
             service_composition="Первый абзац\n\nВторой абзац",
         )
         template_doc = Document()
+        try:
+            strong_style = template_doc.styles.add_style("Сильное выделение", WD_STYLE_TYPE.CHARACTER)
+        except ValueError:
+            strong_style = next(style for style in template_doc.styles if style.name == "Сильное выделение")
         template_doc.add_paragraph("[[scope_of_work]]")
         buffer = BytesIO()
         template_doc.save(buffer)
@@ -772,7 +781,7 @@ class ProposalDocumentGenerationTests(TestCase):
 
         generated_doc = Document(BytesIO(generated_bytes))
         scope_header = next(paragraph for paragraph in generated_doc.paragraphs if paragraph.text == "Состав услуг:")
-        self.assertIn('w:rStyle w:val="Strong"', scope_header._element.xml)
+        self.assertIn(f'w:rStyle w:val="{strong_style.style_id}"', scope_header._element.xml)
         scope_paragraphs = [
             paragraph
             for paragraph in generated_doc.paragraphs
@@ -1021,6 +1030,17 @@ class ProposalDocumentGenerationTests(TestCase):
             total_eur_without_vat="0",
             position=1,
         )
+        ProposalCommercialOffer.objects.create(
+            proposal=proposal,
+            specialist="Иванов И.И.",
+            job_title="Геолог",
+            professional_status="Партнер",
+            service_name="",
+            rate_eur_per_day="100",
+            asset_day_counts=[""],
+            total_eur_without_vat="555",
+            position=2,
+        )
 
         _, _, tables = resolve_variables(
             proposal,
@@ -1046,6 +1066,9 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertEqual(data_row[4]["text"], "2")
         self.assertEqual(data_row[5]["text"], "3")
         self.assertEqual(data_row[6]["text"], "300,00")
+        manual_total_row = table_spec["rows"][2]
+        self.assertEqual(manual_total_row[5]["text"], "")
+        self.assertEqual(manual_total_row[6]["text"], "555,00")
 
     def test_resolve_budget_table_uses_multistage_summary_for_multiple_assets(self):
         second_product = Product.objects.create(
@@ -1120,8 +1143,8 @@ class ProposalDocumentGenerationTests(TestCase):
             professional_status="Партнер",
             service_name="",
             rate_eur_per_day="100",
-            asset_day_counts=["4", "6"],
-            total_eur_without_vat="999",
+            asset_day_counts=["", ""],
+            total_eur_without_vat="0",
             position=1,
         )
 
@@ -1142,6 +1165,69 @@ class ProposalDocumentGenerationTests(TestCase):
         data_row = table_spec["rows"][2]
         self.assertEqual([cell["text"] for cell in data_row[3:8]], ["1", "2", "3", "4", "10"])
         self.assertEqual(data_row[8]["text"], "1\u00a0000,00")
+
+    def test_resolve_service_cost_uses_commercial_contract_total_when_saved_value_is_empty(self):
+        proposal = ProposalRegistration.objects.create(
+            number=4447,
+            group_member=self.group_member,
+            type=self.product,
+            name="Стоимость из коммерческих итогов",
+            year=2026,
+            status=ProposalRegistration.ProposalStatus.PRELIMINARY,
+            customer='ООО "Приморское"',
+            service_cost=None,
+            commercial_totals_json={
+                "contract_total": "1234567.89",
+                "contract_total_auto": "1200000",
+            },
+        )
+
+        replacements, _, _ = resolve_variables(
+            proposal,
+            [
+                ProposalVariable(
+                    key="{{total_price}}",
+                    source_section="proposals",
+                    source_table="registry",
+                    source_column="service_cost",
+                )
+            ],
+        )
+
+        self.assertEqual(replacements["{{total_price}}"], "1\u00a0234\u00a0567,89")
+
+    def test_resolve_total_price_is_available_as_service_cost_alias(self):
+        proposal = ProposalRegistration.objects.create(
+            number=4448,
+            group_member=self.group_member,
+            type=self.product,
+            name="Алиас стоимости",
+            year=2026,
+            status=ProposalRegistration.ProposalStatus.PRELIMINARY,
+            customer='ООО "Приморское"',
+            service_cost=None,
+            commercial_totals_json={"contract_total": "7654321"},
+        )
+
+        replacements, _, _ = resolve_variables(
+            proposal,
+            [
+                ProposalVariable(
+                    key="{{service_cost}}",
+                    source_section="proposals",
+                    source_table="registry",
+                    source_column="service_cost",
+                )
+            ],
+        )
+        self.assertEqual(replacements["{{service_cost}}"], "7\u00a0654\u00a0321,00")
+        self.assertEqual(replacements["{{total_price}}"], "7\u00a0654\u00a0321,00")
+
+        replacements, _, _ = resolve_variables(
+            proposal,
+            [ProposalVariable(key="{{total_price}}", is_computed=True)],
+        )
+        self.assertEqual(replacements["{{total_price}}"], "7\u00a0654\u00a0321,00")
 
     def test_process_template_inserts_budget_table(self):
         template_doc = Document()
@@ -3529,6 +3615,10 @@ class ProposalRegistrationFormTests(TestCase):
                 is_computed=True,
             ),
             ProposalVariable(
+                key="{{final_report_term_month}}",
+                is_computed=True,
+            ),
+            ProposalVariable(
                 key="{{stages}}",
                 is_computed=True,
             ),
@@ -3560,6 +3650,7 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(replacements["{{purpose}}"], "Проверка актива")
         self.assertEqual(replacements["{{service_cost}}"], "1\u00a0250\u00a0000,50")
         self.assertEqual(replacements["{{evaluation_date}}"], "01.04.2026")
+        self.assertEqual(replacements["{{effective_date}}"], "01.04.2026")
         self.assertEqual(replacements["{{final_report_term_weeks}}"], "2,0")
         self.assertEqual(replacements["{{status}}"], "Предварительное")
         self.assertEqual(replacements["{{advance_percent}}"], "50%")
@@ -3577,6 +3668,7 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(replacements["{{tkp_preliminary}}"], "(предварительное)")
         self.assertEqual(replacements["{{preliminary_payment_percentage_full}}"], "70%")
         self.assertEqual(replacements["{{preliminary_report_term_month}}"], "4,5 месяца")
+        self.assertEqual(replacements["{{final_report_term_month}}"], "5,7 мес.")
         self.assertEqual(replacements["{{stages}}"], "1 этап")
         self.assertEqual(replacements["{{owner_country_full_name}}"], "Российская Федерация")
         self.assertEqual(replacements["{{year}}"], "2026")
@@ -3585,12 +3677,12 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(
             lists["[[scope_of_work]]"],
             [
-                {"runs": [{"text": "Состав услуг:", "character_style_id": "Strong"}]},
+                {"runs": [{"text": "Состав услуг:", "character_style_id": "Сильное выделение"}]},
                 {"html": "<p><strong>Этап 1</strong></p>"},
                 {"html": "<p><u>Этап 2</u></p>"},
             ],
         )
-        self.assertEqual(lists["[[product_name]]"], [{"runs": [{"text": "Технический аудит."}]}])
+        self.assertEqual(lists["[[product_name]]"], ["Технический аудит."])
         self.assertEqual(lists["[[actives_name]]"], [])
         self.assertEqual(tables, {})
 
@@ -3729,6 +3821,28 @@ class ProposalRegistrationFormTests(TestCase):
 
                 self.assertEqual(replacements["{{stages}}"], expected)
 
+    def test_resolve_final_report_term_month_uses_last_stage_final_report_date(self):
+        proposal = ProposalRegistration(
+            final_report_date=date(2026, 4, 1),
+            stage_payloads_json=[
+                {
+                    "rank": 1,
+                    "service_term_months": "1.0",
+                    "preliminary_report_date": "19.02.2026",
+                    "final_report_date": "01.04.2026",
+                },
+                {"rank": 2, "final_report_date": "04.05.2026"},
+            ],
+        )
+
+        with patch("proposals_app.variable_resolver._today", return_value=date(2030, 1, 5)):
+            replacements, _, _ = resolve_variables(
+                proposal,
+                [ProposalVariable(key="{{final_report_term_month}}", is_computed=True)],
+            )
+
+        self.assertEqual(replacements["{{final_report_term_month}}"], "3,5 мес.")
+
     def test_resolve_product_name_list_uses_stage_order_and_punctuation(self):
         group_member = GroupMember.objects.create(
             short_name="IMC Montan",
@@ -3786,9 +3900,8 @@ class ProposalRegistrationFormTests(TestCase):
             [ProposalVariable(key="[[product_name]]", is_computed=True)],
         )
 
-        texts = [item["runs"][0]["text"] for item in lists["[[product_name]]"]]
         self.assertEqual(
-            texts,
+            lists["[[product_name]]"],
             [
                 "Этап 1 — Технический аудит;",
                 "Этап 2 — Отчёт JORC;",
@@ -3837,6 +3950,125 @@ class ProposalRegistrationFormTests(TestCase):
                 "Акта №\u00a02 на оставшуюся сумму.",
             ],
         )
+
+    def test_resolve_stage_terms_for_single_product_has_only_bullet_lines(self):
+        product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        proposal = ProposalRegistration(
+            type=product,
+            service_term_months="1.0",
+            preliminary_report_date=date(2026, 2, 19),
+            final_report_term_weeks="2.0",
+            final_report_date=date(2026, 3, 5),
+        )
+
+        _, lists, _ = resolve_variables(
+            proposal,
+            [ProposalVariable(key="[[stage_terms]]", is_computed=True)],
+        )
+        items = lists["[[stage_terms]]"]
+        texts = [item["runs"][0]["text"] for item in items]
+
+        self.assertEqual(
+            texts,
+            [
+                "сдача Предварительного отчёта — в течение 1 мес. до 19.02.2026,",
+                "сдача Итогового отчёта — в течение 2 нед. до 05.03.2026.",
+            ],
+        )
+        self.assertEqual(items[0]["list_type"], "bullet")
+        self.assertEqual(items[1]["list_type"], "bullet")
+
+    def test_resolve_stage_terms_for_multistage_uses_stage_dates(self):
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        first_product = Product.objects.create(
+            short_name="TDD",
+            name_en="Technical Due Diligence",
+            name_ru="ТДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        second_product = Product.objects.create(
+            short_name="JORC",
+            name_en="JORC Report",
+            name_ru="JORC",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Оптимизация",
+            position=2,
+        )
+        proposal = ProposalRegistration.objects.create(
+            number=3333,
+            group_member=group_member,
+            type=second_product,
+            name="Поэтапные сроки",
+            year=2026,
+            stage_payloads_json=[
+                {
+                    "rank": 1,
+                    "product_id": first_product.pk,
+                    "service_term_months": "1.0",
+                    "preliminary_report_date": "19.02.2026",
+                    "final_report_term_weeks": "2.0",
+                    "final_report_date": "05.03.2026",
+                },
+                {
+                    "rank": 2,
+                    "product_id": second_product.pk,
+                    "service_term_months": "2.0",
+                    "preliminary_report_date": "05.05.2026",
+                    "final_report_term_weeks": "3.0",
+                    "final_report_date": "26.05.2026",
+                },
+            ],
+        )
+        ProposalRegistrationProduct.objects.bulk_create(
+            [
+                ProposalRegistrationProduct(proposal=proposal, product=first_product, rank=1),
+                ProposalRegistrationProduct(proposal=proposal, product=second_product, rank=2),
+            ]
+        )
+
+        with patch("proposals_app.variable_resolver._today", return_value=date(2030, 1, 5)):
+            _, lists, _ = resolve_variables(
+                proposal,
+                [ProposalVariable(key="[[stage_terms]]", is_computed=True)],
+            )
+        items = lists["[[stage_terms]]"]
+        texts = [item["runs"][0]["text"] for item in items]
+
+        self.assertEqual(
+            texts,
+            [
+                "Этап 1: 1,5 мес.",
+                "сдача Предварительного отчёта — в течение 1 мес. до 19.02.2026,",
+                "сдача Итогового отчёта — в течение 2 нед. до 05.03.2026.",
+                "Этап 2: 2,7 мес.",
+                "сдача Предварительного отчёта — в течение 2 мес. до 05.05.2026,",
+                "сдача Итогового отчёта — в течение 3 нед. до 26.05.2026.",
+            ],
+        )
+        self.assertNotIn("list_type", items[0])
+        self.assertEqual(items[1]["list_type"], "bullet")
+        self.assertEqual(items[2]["list_type"], "bullet")
+        self.assertNotIn("list_type", items[3])
+        self.assertEqual(items[4]["list_type"], "bullet")
+        self.assertEqual(items[5]["list_type"], "bullet")
 
     def test_resolve_payment_schedule_for_common_multistage_schedule(self):
         group_member = GroupMember.objects.create(
@@ -4086,7 +4318,7 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(
             lists["[[scope_of_work]]"],
             [
-                {"runs": [{"text": "Состав услуг:", "character_style_id": "Strong"}]},
+                {"runs": [{"text": "Состав услуг:", "character_style_id": "Сильное выделение"}]},
                 {"html": "<p><strong>Текст ТЗ заказчика</strong></p>"},
             ],
         )
@@ -5122,11 +5354,13 @@ class ProposalRegistrationFormTests(TestCase):
             lists["[[scope_of_work]]"],
             [
                 {"runs": [{"text": "ЭТАП 1 — Первый продукт.", "bold": True}]},
-                {"runs": [{"text": "Состав услуг по этапу:", "character_style_id": "Strong"}]},
+                {"runs": [{"text": "Состав услуг по этапу:", "character_style_id": "Сильное выделение"}]},
                 {"html": "<p>Scope 1</p>"},
+                {"runs": [{"text": "Дата оценки: 01.01.2026."}]},
                 {"runs": [{"text": "ЭТАП 2 — Второй продукт.", "bold": True}]},
-                {"runs": [{"text": "Состав услуг по этапу:", "character_style_id": "Strong"}]},
+                {"runs": [{"text": "Состав услуг по этапу:", "character_style_id": "Сильное выделение"}]},
                 {"html": "<p><strong>Scope 2</strong></p>"},
+                {"runs": [{"text": "Дата оценки: 05.02.2026."}]},
             ],
         )
         budget_rows = tables["[[budget_table]]"]["rows"]
@@ -6104,6 +6338,8 @@ class ProposalFormContextTests(TestCase):
         self.assertContains(response, "proposal-stage-delay-add", html=False)
         self.assertContains(response, "proposal-stage-delay-remove", html=False)
         self.assertContains(response, 'name="next_stage_delay_days"', html=False)
+        self.assertContains(response, f'data-product-id="{first_product.pk}"', html=False)
+        self.assertContains(response, f'data-product-id="{second_product.pk}"', html=False)
         self.assertContains(response, "Лаг", html=False)
 
 

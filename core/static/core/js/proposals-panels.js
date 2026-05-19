@@ -7848,14 +7848,37 @@
         summaryApi.replaceRows(summaryPayload.rows, { reason: 'summary-sync' });
       }
 
+      let summaryCommercialSyncQueued = false;
+
+      function scheduleSummaryCommercialBlockSync() {
+        if (summaryCommercialSyncQueued) return;
+        summaryCommercialSyncQueued = true;
+        window.setTimeout(function () {
+          summaryCommercialSyncQueued = false;
+          syncSummaryCommercialBlock();
+        }, 0);
+      }
+
       function bindSummaryCommercialSync() {
         getCommercialBlocks().forEach(function (block) {
           if (block.dataset.summarySyncBound === '1') return;
           block.dataset.summarySyncBound = '1';
           block.addEventListener('proposal-commercial-changed', function () {
-            syncSummaryCommercialBlock();
+            scheduleSummaryCommercialBlockSync();
           });
         });
+        if (form.dataset.summaryAssetSyncBound !== '1') {
+          form.dataset.summaryAssetSyncBound = '1';
+          form.addEventListener('proposal-assets-changed', function () {
+            scheduleSummaryCommercialBlockSync();
+          });
+        }
+        if (form.dataset.summaryProductSyncBound !== '1') {
+          form.dataset.summaryProductSyncBound = '1';
+          form.addEventListener('proposal-stage-products-changed', function () {
+            scheduleSummaryCommercialBlockSync();
+          });
+        }
       }
 
       function syncStageTerms() {
