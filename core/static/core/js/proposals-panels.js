@@ -4397,6 +4397,83 @@
       });
     }
 
+    function getSummaryStageLabels() {
+      if (!isSummaryCommercialBlock) return [];
+      return getStageCommercialBlocks().map(function (block, index) {
+        const title = String(block.querySelector('.proposal-stage-block-title')?.textContent || '').trim();
+        const prefix = 'Коммерческое предложение:';
+        const label = title.startsWith(prefix) ? title.slice(prefix.length).trim() : '';
+        return label || ('Этап ' + (index + 1));
+      });
+    }
+
+    function shouldRenderSummaryStageDays() {
+      return isSummaryCommercialBlock && getSummaryStageLabels().length > 1;
+    }
+
+    function normalizeSummaryAssetDayCounts(values, assetCount) {
+      const normalized = Array.isArray(values)
+        ? values.slice(0, assetCount).map(function (value) { return String(value ?? '').trim(); })
+        : [];
+      while (normalized.length < assetCount) normalized.push('');
+      return normalized;
+    }
+
+    function normalizeSummaryStageDayCounts(values, stageCount, assetCount) {
+      const source = Array.isArray(values) ? values : [];
+      return Array.from({ length: stageCount }, function (_stage, stageIndex) {
+        return normalizeSummaryAssetDayCounts(source[stageIndex] || [], assetCount);
+      });
+    }
+
+    function sumDayCountValues(values) {
+      return (Array.isArray(values) ? values : []).reduce(function (sum, value) {
+        const parsed = parseFloat(rawMoney(value || ''));
+        return sum + (Number.isFinite(parsed) ? parsed : 0);
+      }, 0);
+    }
+
+    function formatSummaryTotalDayValue(value) {
+      if (!Number.isFinite(value) || value <= 0) return '';
+      return Number.isInteger(value) ? String(value) : fmtMoney(value.toFixed(2));
+    }
+
+    function readSummaryJsonArray(row, key) {
+      try {
+        const data = JSON.parse(row?.dataset?.[key] || '[]');
+        return Array.isArray(data) ? data : [];
+      } catch (error) {
+        return [];
+      }
+    }
+
+    function getSummaryDayColumnSpecs(assetRows) {
+      const stageLabels = getSummaryStageLabels();
+      const assetCount = Math.max(assetRows.length, 1);
+      const hasMultipleAssets = assetRows.length > 1;
+      const assetLabels = assetRows.length
+        ? getAssetLabels(assetRows)
+        : Array.from({ length: assetCount }, function (_item, index) { return 'Актив ' + (index + 1); });
+      const specs = [];
+      stageLabels.forEach(function (stageLabel, stageIndex) {
+        assetLabels.forEach(function (assetLabel, assetIndex) {
+          specs.push({
+            kind: 'stage',
+            stageIndex: stageIndex,
+            assetIndex: assetIndex,
+            label: hasMultipleAssets ? assetLabel : (stageLabel + ': кол-во дней'),
+            measureLabel: hasMultipleAssets ? assetLabel : (stageLabel + ': кол-во дней'),
+          });
+        });
+      });
+      specs.push({
+        kind: 'total-days',
+        label: 'Всего',
+        measureLabel: hasMultipleAssets ? 'Кол-во дней' : 'Всего',
+      });
+      return specs;
+    }
+
     let dayHeaderMeasureEl = null;
 
     function measureCommercialDayLabelWidth(label) {
@@ -4419,6 +4496,11 @@
     }
 
     function getCommercialDayColumnWidths(assetRows) {
+      if (shouldRenderSummaryStageDays()) {
+        return getSummaryDayColumnSpecs(assetRows).map(function (spec) {
+          return measureCommercialDayLabelWidth(spec.measureLabel || spec.label) + 36;
+        });
+      }
       const labels = getAssetLabels(assetRows);
       if (labels.length <= 1) return [];
       return labels.map(function (label) {
@@ -4447,7 +4529,11 @@
       for (let i = 0; i < 5; i += 1) cols.push({});
       cols.push({ width: '10.5rem' });
 
-      if (assetRows.length <= 1) {
+      if (shouldRenderSummaryStageDays()) {
+        dayWidths.forEach(function (widthPx) {
+          cols.push({ widthPx: widthPx });
+        });
+      } else if (assetRows.length <= 1) {
         cols.push({ width: '10.5rem' });
       } else {
         dayWidths.forEach(function (widthPx) {
@@ -4478,6 +4564,70 @@
     function renderHeader(assetRows) {
       const labels = getAssetLabels(assetRows);
       renderCommercialColGroup(assetRows);
+      if (shouldRenderSummaryStageDays()) {
+        const stageLabels = getSummaryStageLabels();
+        const assetCount = Math.max(assetRows.length, 1);
+        const hasMultipleAssets = assetRows.length > 1;
+        if (!hasMultipleAssets) {
+          thead.innerHTML = ''
+            + '<tr>'
+            + '<th class="proposal-assets-check-col"></th>'
+            + '<th>Специалист</th>'
+            + '<th>Специальность</th>'
+            + '<th>Профессиональный статус</th>'
+            + '<th>Услуги</th>'
+            + '<th class="proposal-commercial-rate-header">Ставка, евро / день</th>'
+            + stageLabels.map(function (stageLabel) {
+              return '<th class="proposal-commercial-days-group proposal-commercial-day-header proposal-commercial-days-header proposal-commercial-days-header-multi">'
+                + escapeHtml(stageLabel) + ': кол-во дней</th>';
+            }).join('')
+            + '<th class="proposal-commercial-day-header proposal-commercial-total-days-header">Всего</th>'
+            + '<th class="proposal-commercial-total-header">Итого, евро без НДС</th>'
+            + '</tr>';
+
+          const widths = getCommercialDayColumnWidths(assetRows);
+          Array.from(thead.querySelectorAll('.proposal-commercial-day-header')).forEach(function (header, index) {
+            applyCommercialDayColumnWidth(header, widths[index]);
+          });
+          return;
+        }
+        const assetLabels = assetRows.length
+          ? labels
+          : Array.from({ length: assetCount }, function (_item, index) { return 'Актив ' + (index + 1); });
+        thead.innerHTML = ''
+          + '<tr>'
+          + '<th class="proposal-assets-check-col" rowspan="2"></th>'
+          + '<th rowspan="2">Специалист</th>'
+          + '<th rowspan="2">Специальность</th>'
+          + '<th rowspan="2">Профессиональный статус</th>'
+          + '<th rowspan="2">Услуги</th>'
+          + '<th class="proposal-commercial-rate-header" rowspan="2">Ставка, евро / день</th>'
+          + stageLabels.map(function (stageLabel) {
+            return '<th class="proposal-commercial-days-group proposal-commercial-days-group-subheaders proposal-commercial-days-header proposal-commercial-days-header-multi" colspan="' + assetCount + '">'
+              + escapeHtml(stageLabel) + ': кол-во дней</th>';
+          }).join('')
+          + '<th class="proposal-commercial-days-group proposal-commercial-days-group-subheaders proposal-commercial-days-header proposal-commercial-days-header-multi" colspan="1">Кол-во дней</th>'
+          + '<th class="proposal-commercial-total-header" rowspan="2">Итого, евро без НДС</th>'
+          + '</tr>'
+          + '<tr>'
+          + stageLabels.map(function () {
+            return assetLabels.map(function (label) {
+              return '<th class="proposal-commercial-day-header">' + escapeHtml(label) + '</th>';
+            }).join('');
+          }).join('')
+          + '<th class="proposal-commercial-day-header proposal-commercial-total-days-header">Всего</th>'
+          + '</tr>';
+
+        const widths = getCommercialDayColumnWidths(assetRows);
+        Array.from(thead.querySelectorAll('.proposal-commercial-day-header')).forEach(function (header, index) {
+          applyCommercialDayColumnWidth(header, widths[index]);
+        });
+        Array.from(thead.querySelectorAll('.proposal-commercial-days-group')).forEach(function (header) {
+          const width = measureCommercialDayLabelWidth(header.textContent || '') + 36;
+          applyCommercialDayColumnWidth(header, width);
+        });
+        return;
+      }
       if (labels.length <= 1) {
         thead.innerHTML = ''
           + '<tr>'
@@ -4534,6 +4684,7 @@
     function recalcRowTotal(row) {
       if (!row) return;
       if (isFixedRow(row)) return;
+      if (isSummaryCommercialBlock) return;
       const rateInput = row.querySelector('.proposal-commercial-rate');
       const totalInput = row.querySelector('.proposal-commercial-total');
       if (!rateInput || !totalInput) return;
@@ -4552,10 +4703,26 @@
       totalInput.value = fmtMoney((rate * totalDays).toFixed(2));
     }
 
+    function recalcSummaryCommercialRowTotal(row) {
+      if (!isSummaryCommercialBlock || !row || isFixedRow(row)) return;
+      const rate = parseFloat(rawMoney(row.querySelector('.proposal-commercial-rate')?.value || ''));
+      const totalDays = sumDayCountValues(readSummaryJsonArray(row, 'summaryAssetDayCounts'));
+      const totalInput = row.querySelector('.proposal-commercial-total');
+      if (!totalInput) return;
+      totalInput.value = Number.isFinite(rate) && totalDays > 0
+        ? fmtMoney((rate * totalDays).toFixed(2))
+        : '';
+    }
+
     function recalcTravelRowTotal(row) {
       if (!row || !isTravelRow(row)) return;
       const totalInput = row.querySelector('.proposal-commercial-total');
       if (!totalInput) return;
+      if (shouldRenderSummaryStageDays()) {
+        const preservedRaw = rawMoney(row.dataset.preservedActualTotalRaw || '');
+        totalInput.value = preservedRaw ? fmtMoney(preservedRaw) : '';
+        return;
+      }
       if (getTravelExpensesMode(row) !== PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION) {
         const preservedRaw = rawMoney(row.dataset.preservedActualTotalRaw || '');
         totalInput.value = preservedRaw ? fmtMoney(preservedRaw) : '';
@@ -4588,6 +4755,47 @@
 
       const totalCell = row.querySelector('.proposal-commercial-total-cell');
       if (!totalCell) return;
+
+      if (shouldRenderSummaryStageDays()) {
+        const assetCount = Math.max(assetRows.length, 1);
+        const stageLabels = getSummaryStageLabels();
+        const normalizedAssetValues = normalizeSummaryAssetDayCounts(sourceValues, assetCount);
+        const normalizedStageValues = normalizeSummaryStageDayCounts(
+          options?.stageDayCounts,
+          stageLabels.length,
+          assetCount
+        );
+        row.dataset.summaryAssetDayCounts = JSON.stringify(normalizedAssetValues);
+        row.dataset.summaryStageDayCounts = JSON.stringify(normalizedStageValues);
+
+        const specs = getSummaryDayColumnSpecs(assetRows);
+        specs.forEach(function (spec, index) {
+          const dayCell = createProposalTableCell('proposal-commercial-day-cell');
+          applyCommercialDayColumnWidth(dayCell, dayColumnWidths[index]);
+          const input = document.createElement('input');
+          input.type = 'text';
+          input.className = 'form-control readonly-field '
+            + (spec.kind === 'total-days'
+              ? 'proposal-commercial-summary-total-day-count'
+              : 'proposal-commercial-stage-day-count');
+          input.readOnly = true;
+          input.tabIndex = -1;
+          if (spec.kind === 'total-days') {
+            const totalDays = sumDayCountValues(normalizedAssetValues);
+            input.value = formatSummaryTotalDayValue(totalDays);
+          } else {
+            input.value = normalizedStageValues[spec.stageIndex]?.[spec.assetIndex] || '';
+          }
+          input.style.width = '100%';
+          input.style.minWidth = '0';
+          input.style.maxWidth = '100%';
+          input.style.boxSizing = 'border-box';
+          dayCell.appendChild(input);
+          row.insertBefore(dayCell, totalCell);
+        });
+        recalcSummaryCommercialRowTotal(row);
+        return;
+      }
 
       if (!assetRows.length) {
         const placeholderCell = createProposalTableCell('proposal-commercial-day-placeholder-cell');
@@ -4664,7 +4872,12 @@
           professional_status: '',
           service_name: PROPOSAL_TRAVEL_EXPENSES_LABEL,
           rate_eur_per_day: '',
-          asset_day_counts: getDayInputs(row).map(function (input) { return (input.value || '').trim(); }),
+          asset_day_counts: isSummaryCommercialBlock
+            ? readSummaryJsonArray(row, 'summaryAssetDayCounts')
+            : getDayInputs(row).map(function (input) { return (input.value || '').trim(); }),
+          stage_asset_day_counts: isSummaryCommercialBlock
+            ? readSummaryJsonArray(row, 'summaryStageDayCounts')
+            : undefined,
           total_eur_without_vat: rawMoney(row.querySelector('.proposal-commercial-total')?.value || ''),
         };
       }
@@ -4674,7 +4887,12 @@
         professional_status: (row.querySelector('.proposal-commercial-status')?.value || '').trim(),
         service_name: (row.querySelector('.proposal-commercial-service')?.value || '').trim(),
         rate_eur_per_day: rawMoney(row.querySelector('.proposal-commercial-rate')?.value || ''),
-        asset_day_counts: getDayInputs(row).map(function (input) { return (input.value || '').trim(); }),
+        asset_day_counts: isSummaryCommercialBlock
+          ? readSummaryJsonArray(row, 'summaryAssetDayCounts')
+          : getDayInputs(row).map(function (input) { return (input.value || '').trim(); }),
+        stage_asset_day_counts: isSummaryCommercialBlock
+          ? readSummaryJsonArray(row, 'summaryStageDayCounts')
+          : undefined,
         total_eur_without_vat: rawMoney(row.querySelector('.proposal-commercial-total')?.value || ''),
       };
     }
@@ -4683,19 +4901,39 @@
       const dataRows = getDataRows();
       const assetCount = Math.max(getAssetRows().length, 1);
       const dayCounts = Array.from({ length: assetCount }, function () { return 0; });
+      const stageCount = getSummaryStageLabels().length;
+      const stageDayCounts = Array.from({ length: stageCount }, function () {
+        return Array.from({ length: assetCount }, function () { return 0; });
+      });
       let total = 0;
 
       dataRows.forEach(function (row) {
-        getDayInputs(row).forEach(function (input, index) {
-          const value = parseInt((input.value || '').trim(), 10);
-          if (Number.isFinite(value)) dayCounts[index] += value;
-        });
+        if (isSummaryCommercialBlock) {
+          normalizeSummaryAssetDayCounts(readSummaryJsonArray(row, 'summaryAssetDayCounts'), assetCount).forEach(function (value, index) {
+            const parsed = parseInt(String(value || '').trim(), 10);
+            if (Number.isFinite(parsed)) dayCounts[index] += parsed;
+          });
+          normalizeSummaryStageDayCounts(readSummaryJsonArray(row, 'summaryStageDayCounts'), stageCount, assetCount).forEach(function (stageValues, stageIndex) {
+            stageValues.forEach(function (value, assetIndex) {
+              const parsed = parseInt(String(value || '').trim(), 10);
+              if (Number.isFinite(parsed)) stageDayCounts[stageIndex][assetIndex] += parsed;
+            });
+          });
+        } else {
+          getDayInputs(row).forEach(function (input, index) {
+            const value = parseInt((input.value || '').trim(), 10);
+            if (Number.isFinite(value)) dayCounts[index] += value;
+          });
+        }
         const rowTotal = parseFloat(rawMoney(row.querySelector('.proposal-commercial-total')?.value || ''));
         if (Number.isFinite(rowTotal)) total += rowTotal;
       });
 
       return {
         asset_day_counts: dayCounts.map(function (value) { return value > 0 ? String(value) : ''; }),
+        stage_asset_day_counts: stageDayCounts.map(function (stageValues) {
+          return stageValues.map(function (value) { return value > 0 ? String(value) : ''; });
+        }),
         total_eur_without_vat: total > 0 ? fmtMoney(total.toFixed(2)) : '',
       };
     }
@@ -4703,6 +4941,10 @@
     function computeTravelRowTotalValue() {
       const travelRow = tbody.querySelector('tr[data-travel-expenses-row="1"]');
       if (!travelRow) return 0;
+      if (shouldRenderSummaryStageDays()) {
+        const value = parseFloat(rawMoney(travelRow.querySelector('.proposal-commercial-total')?.value || ''));
+        return Number.isFinite(value) ? value : 0;
+      }
       return getDayInputs(travelRow).reduce(function (sum, input) {
         const value = parseFloat(rawMoney(input.value || ''));
         return sum + (Number.isFinite(value) ? value : 0);
@@ -4780,7 +5022,10 @@
       const summaryRow = tbody.querySelector('tr[data-summary-row="1"]');
       if (!summaryRow) return;
       const summary = computeSummaryValues();
-      syncDayCells(summaryRow, getAssetRows(), summary.asset_day_counts, { readOnly: true });
+      syncDayCells(summaryRow, getAssetRows(), summary.asset_day_counts, {
+        readOnly: true,
+        stageDayCounts: summary.stage_asset_day_counts,
+      });
       const totalInput = summaryRow.querySelector('.proposal-commercial-total');
       if (totalInput) totalInput.value = summary.total_eur_without_vat;
     }
@@ -4896,7 +5141,10 @@
       }
       if (rate) rate.value = data.rate_eur_per_day ? fmtMoney(data.rate_eur_per_day) : '';
       if (total) total.value = data.total_eur_without_vat ? fmtMoney(data.total_eur_without_vat) : '';
-      syncDayCells(row, getAssetRows(), data.asset_day_counts || [], { readOnly: isSummaryCommercialBlock });
+      syncDayCells(row, getAssetRows(), data.asset_day_counts || [], {
+        readOnly: isSummaryCommercialBlock,
+        stageDayCounts: data.stage_asset_day_counts || [],
+      });
       recalcRowTotal(row);
     }
 
@@ -5048,7 +5296,10 @@
       totalTd.appendChild(totalInput);
       row.appendChild(totalTd);
 
-      syncDayCells(row, getAssetRows(), data.asset_day_counts || [], { readOnly: isSummaryCommercialBlock });
+      syncDayCells(row, getAssetRows(), data.asset_day_counts || [], {
+        readOnly: isSummaryCommercialBlock,
+        stageDayCounts: data.stage_asset_day_counts || [],
+      });
 
       [statusInput].forEach(function (input) {
         if (isSummaryCommercialBlock) return;
@@ -5140,7 +5391,10 @@
       totalTd.appendChild(totalInput);
       row.appendChild(totalTd);
 
-      syncDayCells(row, getAssetRows(), data.asset_day_counts || [], { readOnly: isSummaryCommercialBlock });
+      syncDayCells(row, getAssetRows(), data.asset_day_counts || [], {
+        readOnly: isSummaryCommercialBlock,
+        stageDayCounts: data.stage_asset_day_counts || [],
+      });
 
       if (!isSummaryCommercialBlock) {
         rateSelect.addEventListener('change', function () {
@@ -5554,6 +5808,7 @@
         return servicesStore ? servicesStore.getRows() : getRows().map(serializeRow).filter(Boolean);
       },
       replaceRows: function (rowsData, meta) {
+        renderHeader(getAssetRows());
         if (servicesStore) {
           servicesStore.commitCommercialRows(rowsData || [], { ...(meta || {}), source: 'commercial-view' });
           return;
@@ -7418,16 +7673,21 @@
 
       function buildSummaryCommercialRows() {
         const assetCount = Math.max(getAssetRows().length, 1);
+        const commercialBlocks = getCommercialBlocks();
+        const stageCount = commercialBlocks.length;
         const groupedRows = [];
         const groupedByKey = new Map();
         const preferredOrder = getSummaryCommercialRowOrder();
         const travelDayTotals = Array.from({ length: assetCount }, function () { return 0; });
+        const travelStageDayTotals = Array.from({ length: stageCount }, function () {
+          return Array.from({ length: assetCount }, function () { return 0; });
+        });
         let travelTotal = 0;
         let hasTravelCalculation = false;
         let hasTravelActual = false;
         let hasTravelData = false;
 
-        getCommercialBlocks().forEach(function (block) {
+        commercialBlocks.forEach(function (block, stageIndex) {
           const api = attachProposalCommercialTable(block, assetsApi);
           const rows = Array.isArray(api?.getSerializedRows?.()) ? api.getSerializedRows() : [];
           const totalsState = parseCommercialTotalsPayload(block);
@@ -7445,6 +7705,9 @@
                   const numericValue = parseFloat(rawMoney(value || ''));
                   if (Number.isFinite(numericValue)) {
                     travelDayTotals[index] += numericValue;
+                    if (travelStageDayTotals[stageIndex]) {
+                      travelStageDayTotals[stageIndex][index] += numericValue;
+                    }
                     hasTravelData = true;
                   }
                 });
@@ -7466,6 +7729,9 @@
                 service_name: '',
                 rate_eur_per_day: String(row?.rate_eur_per_day || '').trim(),
                 asset_day_counts: Array.from({ length: assetCount }, function () { return 0; }),
+                stage_asset_day_counts: Array.from({ length: stageCount }, function () {
+                  return Array.from({ length: assetCount }, function () { return 0; });
+                }),
                 total_eur_without_vat: 0,
               };
               groupedByKey.set(key, bucket);
@@ -7475,6 +7741,9 @@
               const numericValue = parseInt(String(value || '').trim(), 10);
               if (Number.isFinite(numericValue)) {
                 bucket.asset_day_counts[index] += numericValue;
+                if (bucket.stage_asset_day_counts[stageIndex]) {
+                  bucket.stage_asset_day_counts[stageIndex][index] += numericValue;
+                }
               }
             });
             const totalValue = parseFloat(rawMoney(row?.total_eur_without_vat || ''));
@@ -7485,6 +7754,13 @@
         });
 
         const rows = groupedRows.map(function (bucket, index) {
+          const rateValue = parseFloat(rawMoney(bucket.rate_eur_per_day || ''));
+          const totalDays = bucket.asset_day_counts.reduce(function (sum, value) {
+            return sum + (Number.isFinite(value) ? value : 0);
+          }, 0);
+          const calculatedTotal = Number.isFinite(rateValue) && totalDays > 0
+            ? rateValue * totalDays
+            : bucket.total_eur_without_vat;
           return {
             specialist: bucket.specialist,
             job_title: bucket.job_title,
@@ -7492,7 +7768,10 @@
             service_name: '',
             rate_eur_per_day: bucket.rate_eur_per_day,
             asset_day_counts: bucket.asset_day_counts.map(function (value) { return value > 0 ? String(value) : ''; }),
-            total_eur_without_vat: bucket.total_eur_without_vat > 0 ? bucket.total_eur_without_vat.toFixed(2) : '',
+            stage_asset_day_counts: bucket.stage_asset_day_counts.map(function (stageValues) {
+              return stageValues.map(function (value) { return value > 0 ? String(value) : ''; });
+            }),
+            total_eur_without_vat: calculatedTotal > 0 ? calculatedTotal.toFixed(2) : '',
             __summaryOrderIndex: index,
           };
         });
@@ -7514,6 +7793,7 @@
             service_name: row.service_name,
             rate_eur_per_day: row.rate_eur_per_day,
             asset_day_counts: row.asset_day_counts,
+            stage_asset_day_counts: row.stage_asset_day_counts,
             total_eur_without_vat: row.total_eur_without_vat,
           };
         });
@@ -7533,6 +7813,13 @@
             asset_day_counts: travelMode === PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION
               ? travelDayTotals.map(function (value) { return value > 0 ? fmtMoney(value.toFixed(2)) : ''; })
               : Array.from({ length: assetCount }, function () { return ''; }),
+            stage_asset_day_counts: travelMode === PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION
+              ? travelStageDayTotals.map(function (stageValues) {
+                return stageValues.map(function (value) { return value > 0 ? fmtMoney(value.toFixed(2)) : ''; });
+              })
+              : Array.from({ length: stageCount }, function () {
+                return Array.from({ length: assetCount }, function () { return ''; });
+              }),
             total_eur_without_vat: travelTotal > 0 ? travelTotal.toFixed(2) : '',
           });
         }

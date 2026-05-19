@@ -945,6 +945,204 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertEqual(len(data_row), 5)
         self.assertEqual(data_row[3]["text"], "2")
 
+    def test_resolve_budget_table_uses_multistage_summary_for_single_asset(self):
+        second_product = Product.objects.create(
+            short_name="TDD",
+            name_en="Technical Due Diligence",
+            name_ru="ТДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Оптимизация",
+            position=2,
+        )
+        proposal = ProposalRegistration.objects.create(
+            number=4445,
+            group_member=self.group_member,
+            type=second_product,
+            name="Мультиэтапное ТКП",
+            year=2026,
+            status=ProposalRegistration.ProposalStatus.PRELIMINARY,
+            customer='ООО "Приморское"',
+            commercial_totals_json={
+                "exchange_rate": "100",
+                "discount_percent": "0",
+                "contract_total": "100000",
+            },
+            stage_payloads_json=[
+                {
+                    "rank": 1,
+                    "product_id": self.product.pk,
+                    "commercial_totals_json": {"travel_expenses_mode": "actual"},
+                    "commercial_offer_payload": [
+                        {
+                            "specialist": "Иванов И.И.",
+                            "job_title": "Геолог",
+                            "professional_status": "Партнер",
+                            "service_name": "Этап 1",
+                            "rate_eur_per_day": "100",
+                            "asset_day_counts": ["1"],
+                            "total_eur_without_vat": "100",
+                        }
+                    ],
+                },
+                {
+                    "rank": 2,
+                    "product_id": second_product.pk,
+                    "commercial_totals_json": {"travel_expenses_mode": "actual"},
+                    "commercial_offer_payload": [
+                        {
+                            "specialist": "Иванов И.И.",
+                            "job_title": "Геолог",
+                            "professional_status": "Партнер",
+                            "service_name": "Этап 2",
+                            "rate_eur_per_day": "100",
+                            "asset_day_counts": ["2"],
+                            "total_eur_without_vat": "200",
+                        }
+                    ],
+                },
+            ],
+        )
+        ProposalRegistrationProduct.objects.bulk_create(
+            [
+                ProposalRegistrationProduct(proposal=proposal, product=self.product, rank=1),
+                ProposalRegistrationProduct(proposal=proposal, product=second_product, rank=2),
+            ]
+        )
+        ProposalAsset.objects.create(proposal=proposal, short_name="Актив 1", position=1)
+        ProposalCommercialOffer.objects.create(
+            proposal=proposal,
+            specialist="Иванов И.И.",
+            job_title="Геолог",
+            professional_status="Партнер",
+            service_name="",
+            rate_eur_per_day="100",
+            asset_day_counts=["3"],
+            total_eur_without_vat="999",
+            position=1,
+        )
+
+        _, _, tables = resolve_variables(
+            proposal,
+            [ProposalVariable(key="[[budget_table]]", is_computed=True)],
+        )
+
+        table_spec = tables["[[budget_table]]"]
+        header_texts = [cell["text"] for cell in table_spec["rows"][0]]
+        self.assertEqual(
+            header_texts,
+            [
+                "Специалист",
+                "Должность/направление",
+                "Ставка,\n€/дн",
+                "Этап 1 DD: кол-во дней",
+                "Этап 2 TDD: кол-во дней",
+                "Всего",
+                "Итого,\n€ без НДС",
+            ],
+        )
+        data_row = table_spec["rows"][1]
+        self.assertEqual(data_row[3]["text"], "1")
+        self.assertEqual(data_row[4]["text"], "2")
+        self.assertEqual(data_row[5]["text"], "3")
+        self.assertEqual(data_row[6]["text"], "300,00")
+
+    def test_resolve_budget_table_uses_multistage_summary_for_multiple_assets(self):
+        second_product = Product.objects.create(
+            short_name="TDD",
+            name_en="Technical Due Diligence",
+            name_ru="ТДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Оптимизация",
+            position=2,
+        )
+        proposal = ProposalRegistration.objects.create(
+            number=4446,
+            group_member=self.group_member,
+            type=second_product,
+            name="Мультиэтапное ТКП",
+            year=2026,
+            status=ProposalRegistration.ProposalStatus.PRELIMINARY,
+            customer='ООО "Приморское"',
+            commercial_totals_json={
+                "exchange_rate": "100",
+                "discount_percent": "0",
+                "contract_total": "100000",
+            },
+            stage_payloads_json=[
+                {
+                    "rank": 1,
+                    "product_id": self.product.pk,
+                    "commercial_totals_json": {"travel_expenses_mode": "actual"},
+                    "commercial_offer_payload": [
+                        {
+                            "specialist": "Иванов И.И.",
+                            "job_title": "Геолог",
+                            "professional_status": "Партнер",
+                            "service_name": "Этап 1",
+                            "rate_eur_per_day": "100",
+                            "asset_day_counts": ["1", "2"],
+                            "total_eur_without_vat": "300",
+                        }
+                    ],
+                },
+                {
+                    "rank": 2,
+                    "product_id": second_product.pk,
+                    "commercial_totals_json": {"travel_expenses_mode": "actual"},
+                    "commercial_offer_payload": [
+                        {
+                            "specialist": "Иванов И.И.",
+                            "job_title": "Геолог",
+                            "professional_status": "Партнер",
+                            "service_name": "Этап 2",
+                            "rate_eur_per_day": "100",
+                            "asset_day_counts": ["3", "4"],
+                            "total_eur_without_vat": "700",
+                        }
+                    ],
+                },
+            ],
+        )
+        ProposalRegistrationProduct.objects.bulk_create(
+            [
+                ProposalRegistrationProduct(proposal=proposal, product=self.product, rank=1),
+                ProposalRegistrationProduct(proposal=proposal, product=second_product, rank=2),
+            ]
+        )
+        ProposalAsset.objects.create(proposal=proposal, short_name="Актив 1", position=1)
+        ProposalAsset.objects.create(proposal=proposal, short_name="Актив 2", position=2)
+        ProposalCommercialOffer.objects.create(
+            proposal=proposal,
+            specialist="Иванов И.И.",
+            job_title="Геолог",
+            professional_status="Партнер",
+            service_name="",
+            rate_eur_per_day="100",
+            asset_day_counts=["4", "6"],
+            total_eur_without_vat="999",
+            position=1,
+        )
+
+        _, _, tables = resolve_variables(
+            proposal,
+            [ProposalVariable(key="[[budget_table]]", is_computed=True)],
+        )
+
+        table_spec = tables["[[budget_table]]"]
+        first_header = table_spec["rows"][0]
+        second_header = table_spec["rows"][1]
+        self.assertEqual(first_header[3]["text"], "Этап 1 DD: кол-во дней")
+        self.assertEqual(first_header[3]["colspan"], 2)
+        self.assertEqual(first_header[4]["text"], "Этап 2 TDD: кол-во дней")
+        self.assertEqual(first_header[4]["colspan"], 2)
+        self.assertEqual(first_header[5]["text"], "Кол-во дней")
+        self.assertEqual([cell["text"] for cell in second_header], ["Актив 1", "Актив 2", "Актив 1", "Актив 2", "Всего"])
+        data_row = table_spec["rows"][2]
+        self.assertEqual([cell["text"] for cell in data_row[3:8]], ["1", "2", "3", "4", "10"])
+        self.assertEqual(data_row[8]["text"], "1\u00a0000,00")
+
     def test_process_template_inserts_budget_table(self):
         template_doc = Document()
         template_doc.add_paragraph("[[budget_table]]")

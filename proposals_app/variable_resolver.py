@@ -418,6 +418,17 @@ def _proposal_multi_asset_column_widths_pct(asset_count: int) -> list[float]:
     return [float(width) for width in widths]
 
 
+def _proposal_multistage_column_widths_pct(day_column_count: int) -> list[float]:
+    if day_column_count <= 0:
+        return []
+    fixed_columns = [Decimal("15.5"), Decimal("40"), Decimal("7")]
+    trailing_columns = [Decimal("10")]
+    fixed_total = sum(fixed_columns + trailing_columns, Decimal("0"))
+    day_width = (Decimal("100.0") - fixed_total) / Decimal(str(day_column_count))
+    widths = fixed_columns + [day_width] * day_column_count + trailing_columns
+    return [float(width) for width in widths]
+
+
 def _normalize_proposal_travel_expenses_mode(value) -> str:
     mode = str(value or "").strip()
     if mode in {PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL, PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION}:
@@ -431,7 +442,370 @@ def _round_to_hundred_thousand(value: Decimal | None) -> Decimal | None:
     return (value // Decimal("100000")) * Decimal("100000")
 
 
+def _proposal_day_decimal(value) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    return _parse_decimal(str(value).strip().replace(",", "."))
+
+
+def _format_day_count(value) -> str:
+    parsed = _proposal_day_decimal(value)
+    if parsed is None or parsed == Decimal("0"):
+        return ""
+    return _format_decimal(parsed, precision=2, strip_trailing_zeros=True)
+
+
+def _proposal_multistage_budget_table(proposal) -> dict | None:
+    stage_payloads = [item for item in (getattr(proposal, "stage_payloads_json", None) or []) if isinstance(item, dict)]
+    products = list(proposal.ordered_products()) if hasattr(proposal, "ordered_products") else []
+    if len(stage_payloads) <= 1 and len(products) <= 1:
+        return None
+    if not stage_payloads:
+        return None
+
+    offers = list(proposal.commercial_offers.order_by("position", "id"))
+    saved_travel_offer = next(
+        (
+            item
+            for item in offers
+            if _is_proposal_travel_expenses_name(getattr(item, "service_name", ""))
+        ),
+        None,
+    )
+    saved_regular_offers = [
+        item
+        for item in offers
+        if not _is_proposal_travel_expenses_name(getattr(item, "service_name", ""))
+    ]
+    asset_labels = [
+        str(getattr(asset, "short_name", "") or "").strip()
+        for asset in proposal.assets.order_by("position", "id")
+    ]
+    max_asset_count = max(
+        [
+            len(item.get("asset_day_counts") or [])
+            for stage in stage_payloads
+            for item in (stage.get("commercial_offer_payload") or [])
+            if isinstance(item, dict)
+        ],
+        default=0,
+    )
+    asset_count = max(len(asset_labels), max_asset_count, 1)
+    show_asset_columns = asset_count > 1
+    while len(asset_labels) < asset_count:
+        asset_labels.append(f"Актив {len(asset_labels) + 1}")
+    asset_labels = [label or f"Актив {index + 1}" for index, label in enumerate(asset_labels)]
+
+    stage_count = len(stage_payloads)
+    day_column_count = stage_count * (asset_count if show_asset_columns else 1) + 1
+
+    def product_for_stage(index: int, payload: dict):
+        if index < len(products):
+            return products[index]
+        product_id = str(payload.get("product_id") or "").strip()
+        return next((product for product in products if str(getattr(product, "pk", "") or "") == product_id), None)
+
+    stage_labels = []
+    for index, payload in enumerate(stage_payloads, start=1):
+        product = product_for_stage(index - 1, payload)
+        short_name = str(getattr(product, "short_name", "") or "").strip()
+        stage_labels.append(f"Этап {index} {short_name}".strip())
+
+    def header_cell(text, **extra):
+        return {
+            "text": text,
+            "bold": True,
+            "align": extra.pop("align", "center"),
+            "header": True,
+            "vertical_align": "center",
+            "no_wrap": True,
+            **extra,
+        }
+
+    if show_asset_columns:
+        rows: list[list[dict[str, object]]] = [
+            [
+                header_cell("Специалист", align="left", rowspan=2),
+                header_cell("Должность/направление", align="left", rowspan=2),
+                header_cell("Ставка,\n€/дн", align="right", rowspan=2),
+                *[
+                    header_cell(f"{label}: кол-во дней", colspan=asset_count)
+                    for label in stage_labels
+                ],
+                header_cell("Кол-во дней", colspan=1),
+                header_cell("Итого,\n€ без НДС", align="right", rowspan=2),
+            ],
+            [
+                *[
+                    header_cell(asset_label)
+                    for _stage_label in stage_labels
+                    for asset_label in asset_labels
+                ],
+                header_cell("Всего"),
+            ],
+        ]
+    else:
+        rows = [
+            [
+                header_cell("Специалист", align="left"),
+                header_cell("Должность/направление", align="left"),
+                header_cell("Ставка,\n€/дн", align="right"),
+                *[header_cell(f"{label}: кол-во дней") for label in stage_labels],
+                header_cell("Всего"),
+                header_cell("Итого,\n€ без НДС", align="right"),
+            ]
+        ]
+
+    grouped_rows: dict[tuple[str, str], dict[str, object]] = {}
+    grouped_order: list[tuple[str, str]] = []
+    stage_day_totals = [[Decimal("0") for _ in range(asset_count)] for _ in range(stage_count)]
+    travel_stage_day_totals = [[Decimal("0") for _ in range(asset_count)] for _ in range(stage_count)]
+    travel_total = Decimal("0")
+    has_travel_calculation = False
+    has_travel_actual = False
+    has_travel_data = False
+
+    def normalized_day_values(raw_values) -> list[Decimal]:
+        values = []
+        for raw_value in list(raw_values or [])[:asset_count]:
+            values.append(_proposal_day_decimal(raw_value) or Decimal("0"))
+        while len(values) < asset_count:
+            values.append(Decimal("0"))
+        return values
+
+    for stage_index, stage in enumerate(stage_payloads):
+        totals_state = stage.get("commercial_totals_json") or {}
+        travel_mode = (
+            _normalize_proposal_travel_expenses_mode(totals_state.get("travel_expenses_mode"))
+            or PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL
+        )
+        for item in stage.get("commercial_offer_payload") or []:
+            if not isinstance(item, dict):
+                continue
+            day_values = normalized_day_values(item.get("asset_day_counts") or [])
+            if _is_proposal_travel_expenses_name(item.get("service_name") or ""):
+                item_total = _proposal_day_decimal(item.get("total_eur_without_vat")) or Decimal("0")
+                travel_total += item_total
+                if item_total or any(value for value in day_values):
+                    has_travel_data = True
+                if travel_mode == PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION:
+                    has_travel_calculation = True
+                    for asset_index, value in enumerate(day_values):
+                        travel_stage_day_totals[stage_index][asset_index] += value
+                else:
+                    has_travel_actual = True
+                continue
+
+            key = (
+                str(item.get("specialist") or "").strip(),
+                str(item.get("job_title") or "").strip(),
+            )
+            if key not in grouped_rows:
+                grouped_rows[key] = {
+                    "specialist": key[0],
+                    "job_title": key[1],
+                    "professional_status": str(item.get("professional_status") or "").strip(),
+                    "rate_eur_per_day": item.get("rate_eur_per_day"),
+                    "stage_asset_day_counts": [[Decimal("0") for _ in range(asset_count)] for _ in range(stage_count)],
+                    "fallback_total": Decimal("0"),
+                }
+                grouped_order.append(key)
+            bucket = grouped_rows[key]
+            for asset_index, value in enumerate(day_values):
+                bucket["stage_asset_day_counts"][stage_index][asset_index] += value
+                stage_day_totals[stage_index][asset_index] += value
+            bucket["fallback_total"] += _proposal_day_decimal(item.get("total_eur_without_vat")) or Decimal("0")
+
+    if saved_travel_offer is not None:
+        has_travel_data = True
+        saved_travel_total = _proposal_day_decimal(getattr(saved_travel_offer, "total_eur_without_vat", None))
+        if saved_travel_total is not None:
+            travel_total = saved_travel_total
+
+    summary_total = Decimal("0")
+    if saved_regular_offers:
+        source_rows = []
+        for item in saved_regular_offers:
+            key = (
+                str(getattr(item, "specialist", "") or "").strip(),
+                str(getattr(item, "job_title", "") or "").strip(),
+            )
+            bucket = grouped_rows.get(key)
+            source_rows.append(
+                {
+                    "specialist": key[0],
+                    "job_title": key[1],
+                    "professional_status": str(getattr(item, "professional_status", "") or "").strip(),
+                    "rate_eur_per_day": getattr(item, "rate_eur_per_day", None),
+                    "stage_asset_day_counts": (
+                        bucket["stage_asset_day_counts"]
+                        if bucket is not None
+                        else [[Decimal("0") for _ in range(asset_count)] for _ in range(stage_count)]
+                    ),
+                    "asset_day_counts": normalized_day_values(getattr(item, "asset_day_counts", []) or []),
+                    "fallback_total": _proposal_day_decimal(getattr(item, "total_eur_without_vat", None)) or Decimal("0"),
+                }
+            )
+    else:
+        source_rows = []
+        for key in grouped_order:
+            bucket = grouped_rows[key]
+            stage_counts = bucket["stage_asset_day_counts"]
+            source_rows.append(
+                {
+                    "specialist": str(bucket["specialist"] or "").strip(),
+                    "job_title": str(bucket["job_title"] or "").strip(),
+                    "professional_status": str(bucket["professional_status"] or "").strip(),
+                    "rate_eur_per_day": bucket["rate_eur_per_day"],
+                    "stage_asset_day_counts": stage_counts,
+                    "asset_day_counts": [
+                        sum(stage_counts[stage_index][asset_index] for stage_index in range(stage_count))
+                        for asset_index in range(asset_count)
+                    ],
+                    "fallback_total": bucket["fallback_total"],
+                }
+            )
+
+    for source in source_rows:
+        stage_counts = source["stage_asset_day_counts"]
+        asset_totals = [
+            source["asset_day_counts"][asset_index] if asset_index < len(source["asset_day_counts"]) else Decimal("0")
+            for asset_index in range(asset_count)
+        ]
+        total_days = sum(asset_totals, Decimal("0"))
+        rate = _proposal_day_decimal(source["rate_eur_per_day"])
+        row_total = (rate * total_days) if rate is not None and total_days else source["fallback_total"]
+        summary_total += row_total
+        direction = ", ".join(
+            value
+            for value in [
+                str(source["job_title"] or "").strip(),
+                str(source["professional_status"] or "").strip(),
+            ]
+            if value
+        )
+        rows.append(
+            [
+                {"text": str(source["specialist"] or "").strip()},
+                {"text": direction, "no_wrap": True},
+                {"text": _format_money(rate), "align": "right"},
+                *[
+                    {"text": _format_day_count(stage_counts[stage_index][asset_index]), "align": "right"}
+                    for stage_index in range(stage_count)
+                    for asset_index in (range(asset_count) if show_asset_columns else [0])
+                ],
+                {"text": _format_day_count(total_days), "align": "right"},
+                {"text": _format_money(row_total), "align": "right"},
+            ]
+        )
+
+    displayed_stage_day_totals = [[Decimal("0") for _ in range(asset_count)] for _ in range(stage_count)]
+    for source in source_rows:
+        stage_counts = source["stage_asset_day_counts"]
+        for stage_index in range(stage_count):
+            for asset_index in range(asset_count):
+                displayed_stage_day_totals[stage_index][asset_index] += stage_counts[stage_index][asset_index]
+
+    totals_state = getattr(proposal, "commercial_totals_json", {}) or {}
+    travel_expenses_mode = (
+        PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION
+        if has_travel_calculation and not has_travel_actual
+        else PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL
+    )
+    if not has_travel_data:
+        travel_expenses_mode = _normalize_proposal_travel_expenses_mode(totals_state.get("travel_expenses_mode")) or travel_expenses_mode
+
+    def flatten_stage_values(matrix, *, include_values=True) -> list[str]:
+        if not include_values:
+            return ["" for _ in range(stage_count * (asset_count if show_asset_columns else 1))]
+        return [
+            _format_day_count(matrix[stage_index][asset_index])
+            for stage_index in range(stage_count)
+            for asset_index in (range(asset_count) if show_asset_columns else [0])
+        ]
+
+    def append_fixed_row(label, *, rate="", day_values=None, total="", total_days=None):
+        current_day_values = list(day_values or [])
+        while len(current_day_values) < stage_count * (asset_count if show_asset_columns else 1):
+            current_day_values.append("")
+        total_days_text = (
+            _format_day_count(total_days)
+            if total_days is not None
+            else _format_day_count(sum((_proposal_day_decimal(value) or Decimal("0")) for value in current_day_values))
+        )
+        rows.append(
+            [
+                {"text": label, "colspan": 2, "bold": True},
+                {"text": str(rate or ""), "align": "right"},
+                *[
+                    {"text": str(value or ""), "align": "right"}
+                    for value in current_day_values
+                ],
+                {"text": total_days_text, "align": "right"},
+                {"text": str(total or ""), "align": "right"},
+            ]
+        )
+
+    summary_total_days = sum(
+        sum(source["asset_day_counts"], Decimal("0"))
+        for source in source_rows
+    )
+    append_fixed_row(
+        PROPOSAL_SUMMARY_TOTAL_LABEL,
+        day_values=flatten_stage_values(displayed_stage_day_totals),
+        total=_format_money(summary_total),
+        total_days=summary_total_days,
+    )
+    if has_travel_data:
+        append_fixed_row(
+            PROPOSAL_TRAVEL_EXPENSES_LABEL,
+            rate="расчёт" if travel_expenses_mode == PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION else "по факту",
+            day_values=flatten_stage_values(
+                travel_stage_day_totals,
+                include_values=travel_expenses_mode == PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION,
+            ),
+            total=_format_money(travel_total),
+        )
+    summary_with_travel_total = summary_total + travel_total
+    exchange_rate = _parse_decimal(totals_state.get("exchange_rate"))
+    discount_percent = _parse_decimal(totals_state.get("discount_percent"))
+    rub_total = (summary_with_travel_total * exchange_rate) if exchange_rate is not None else None
+    discounted_total = (
+        rub_total - (rub_total * (discount_percent / Decimal("100")))
+        if rub_total is not None and discount_percent is not None
+        else rub_total
+    )
+    contract_total = _parse_decimal(totals_state.get("contract_total"))
+    contract_total_auto = _parse_decimal(totals_state.get("contract_total_auto"))
+    if contract_total in (None, Decimal("0")):
+        contract_total = contract_total_auto or _round_to_hundred_thousand(discounted_total)
+
+    append_fixed_row(PROPOSAL_SUMMARY_WITH_TRAVEL_TOTAL_LABEL, total=_format_money(summary_with_travel_total))
+    append_fixed_row(
+        PROPOSAL_RUB_TOTAL_LABEL,
+        rate=_format_decimal(exchange_rate, precision=4, strip_trailing_zeros=True),
+        total=_format_money(rub_total),
+    )
+    append_fixed_row(
+        PROPOSAL_RUB_DISCOUNTED_LABEL,
+        rate=_format_percent(discount_percent, strip_trailing_zeros=True),
+        total=_format_money(discounted_total),
+    )
+    append_fixed_row(PROPOSAL_CONTRACT_TOTAL_LABEL, total=_format_money(contract_total))
+
+    return {
+        "rows": rows,
+        "font_size_pt": 7,
+        "style": "Table Grid",
+        "column_widths_pct": _proposal_multistage_column_widths_pct(day_column_count),
+    }
+
+
 def _proposal_budget_table(proposal) -> dict:
+    multistage_table = _proposal_multistage_budget_table(proposal)
+    if multistage_table is not None:
+        return multistage_table
+
     offers = list(proposal.commercial_offers.order_by("position", "id"))
     travel_offer = next(
         (
