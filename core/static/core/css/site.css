@@ -6727,6 +6727,14 @@ html.proposal-progress-cursor * {
   width: auto !important;
 }
 
+#performers-main-section .performers-table col.col-short-number {
+  width: 88px !important;
+}
+
+#performers-main-section .performers-table col.col-number {
+  width: 100px !important;
+}
+
 #performers-main-section .performers-table col.col-active,
 #performers-main-section .performers-table col.col-typical {
   width: auto !important;
@@ -6748,6 +6756,16 @@ html.proposal-progress-cursor * {
 
 #performers-main-section .performers-table thead th:nth-child(2),
 #performers-main-section .performers-table tbody td:nth-child(2) {
+  width: 88px !important;
+  min-width: 88px !important;
+  max-width: 88px !important;
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+#performers-main-section .performers-table thead th:nth-child(3),
+#performers-main-section .performers-table tbody td:nth-child(3) {
   width: 100px !important;
   min-width: 100px !important;
   max-width: 100px !important;
@@ -6756,10 +6774,10 @@ html.proposal-progress-cursor * {
   text-overflow: ellipsis !important;
 }
 
-#performers-main-section .performers-table thead th:nth-child(3),
-#performers-main-section .performers-table tbody td:nth-child(3),
 #performers-main-section .performers-table thead th:nth-child(4),
-#performers-main-section .performers-table tbody td:nth-child(4) {
+#performers-main-section .performers-table tbody td:nth-child(4),
+#performers-main-section .performers-table thead th:nth-child(5),
+#performers-main-section .performers-table tbody td:nth-child(5) {
   width: auto !important;
   min-width: 0 !important;
   max-width: none !important;
@@ -6768,7 +6786,7 @@ html.proposal-progress-cursor * {
   text-overflow: clip !important;
 }
 
-#performers-main-section .performers-table tbody td:nth-child(5) {
+#performers-main-section .performers-table tbody td:nth-child(6) {
   white-space: nowrap !important;
   overflow: visible !important;
   text-overflow: clip !important;
@@ -6798,11 +6816,15 @@ html.proposal-progress-cursor * {
   width: 30px !important;
 }
 
+#participation-confirmation-section .performers-table col.col-short-number {
+  width: 88px !important;
+}
+
 #participation-confirmation-section .performers-table col.col-number {
   width: 100px !important;
 }
 
-#participation-confirmation-section .performers-table col:not(.col-checkbox):not(.col-number) {
+#participation-confirmation-section .performers-table col:not(.col-checkbox):not(.col-short-number):not(.col-number) {
   width: auto !important;
 }
 
@@ -6822,6 +6844,16 @@ html.proposal-progress-cursor * {
 
 #participation-confirmation-section .performers-table thead th:nth-child(2),
 #participation-confirmation-section .performers-table tbody td:nth-child(2) {
+  width: 88px !important;
+  min-width: 88px !important;
+  max-width: 88px !important;
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+#participation-confirmation-section .performers-table thead th:nth-child(3),
+#participation-confirmation-section .performers-table tbody td:nth-child(3) {
   width: 100px !important;
   min-width: 100px !important;
   max-width: 100px !important;
@@ -6830,8 +6862,8 @@ html.proposal-progress-cursor * {
   text-overflow: ellipsis !important;
 }
 
-#participation-confirmation-section .performers-table thead th:nth-child(n+3),
-#participation-confirmation-section .performers-table tbody td:nth-child(n+3) {
+#participation-confirmation-section .performers-table thead th:nth-child(n+4),
+#participation-confirmation-section .performers-table tbody td:nth-child(n+4) {
   width: auto !important;
   min-width: 0 !important;
   max-width: none !important;
@@ -7073,7 +7105,7 @@ html.proposal-progress-cursor * {
   cursor: not-allowed;
 }
 
-#contract-conclusion-section .performers-table col:not(.col-checkbox):not(.col-number) {
+#contract-conclusion-section .performers-table col:not(.col-checkbox):not(.col-contract-number):not(.col-number) {
   width: auto !important;
 }
 
@@ -7086,6 +7118,24 @@ html.proposal-progress-cursor * {
 
 #contract-conclusion-section .performers-table thead th:nth-child(2),
 #contract-conclusion-section .performers-table tbody td:nth-child(2) {
+  width: 80px !important;
+  min-width: 80px !important;
+  max-width: 80px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#contract-conclusion-section .performers-table tbody td:nth-child(2) > .clf-id-droid-mono {
+  display: block !important;
+  width: 80px !important;
+  max-width: 80px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#contract-conclusion-section .performers-table thead th:nth-child(3),
+#contract-conclusion-section .performers-table tbody td:nth-child(3) {
   width: 100px !important;
   min-width: 100px !important;
   max-width: 100px !important;
@@ -7094,8 +7144,8 @@ html.proposal-progress-cursor * {
   text-overflow: ellipsis !important;
 }
 
-#contract-conclusion-section .performers-table thead th:nth-child(n+3),
-#contract-conclusion-section .performers-table tbody td:nth-child(n+3) {
+#contract-conclusion-section .performers-table thead th:nth-child(n+4),
+#contract-conclusion-section .performers-table tbody td:nth-child(n+4) {
   width: auto !important;
   min-width: 0 !important;
   max-width: none !important;
@@ -7221,11 +7271,48 @@ html.proposal-progress-cursor * {
 }
 
 #contracts-pane table.contracts-table col:nth-child(2),
-#contracts-pane table.signing-table col:nth-child(2),
+#contracts-pane table.contracts-table col.col-contract-number,
 #contracts-pane table.contracts-table thead th:nth-child(2),
-#contracts-pane table.contracts-table tbody td:nth-child(2),
+#contracts-pane table.contracts-table tbody td:nth-child(2) {
+  width: 80px !important;
+  min-width: 80px !important;
+  max-width: 80px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#contracts-pane table.contracts-table tbody td:nth-child(2) > .clf-id-droid-mono {
+  display: block !important;
+  width: 80px !important;
+  max-width: 80px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#contracts-pane table.signing-table col:nth-child(2),
+#contracts-pane table.signing-table col.col-contract-number,
 #contracts-pane table.signing-table thead th:nth-child(2),
 #contracts-pane table.signing-table tbody td:nth-child(2) {
+  width: 80px !important;
+  min-width: 80px !important;
+  max-width: 80px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#contracts-pane table.signing-table tbody td:nth-child(2) > .clf-id-droid-mono {
+  display: block !important;
+  width: 80px !important;
+  max-width: 80px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#contracts-pane table.signing-table col:nth-child(3),
+#contracts-pane table.signing-table thead th:nth-child(3),
+#contracts-pane table.signing-table tbody td:nth-child(3) {
   width: 100px !important;
   min-width: 100px !important;
   max-width: 100px !important;
@@ -7277,10 +7364,19 @@ html.proposal-progress-cursor * {
   border-top: 1px solid var(--bs-border-color) !important;
 }
 
-#participation-confirmation-section .performers-table > tbody > tr.group-cont > .cell-group-val,
-#contract-conclusion-section       .performers-table > tbody > tr.group-cont > .cell-group-val,
+#contract-conclusion-section       .performers-table:not(#contract-drafting-table) > tbody > tr.group-cont > .cell-group-val,
 #info-request-approval-section     .performers-table > tbody > tr.group-cont > .cell-group-val {
   border-top-color: transparent !important;
+  visibility: hidden;
+}
+
+#participation-confirmation-section .performers-table > tbody > tr.group-cont > .cell-group-val,
+#contract-drafting-table > tbody > tr.group-cont > .cell-group-val {
+  border-top-color: transparent !important;
+}
+
+#participation-confirmation-section .performers-table > tbody > tr.group-cont > .cell-group-val.cell-group-repeated,
+#contract-drafting-table > tbody > tr.group-cont > .cell-group-val.cell-group-repeated {
   visibility: hidden;
 }
 

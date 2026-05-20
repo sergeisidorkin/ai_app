@@ -1,6 +1,8 @@
 import logging
 from collections import defaultdict
+from datetime import date, datetime
 from decimal import Decimal
+from html import escape as html_escape
 
 from django.db import transaction
 from django.db.models import Count, Prefetch
@@ -150,7 +152,292 @@ def _display_project_type(project):
     return product.display_name or product.name_ru or product.name_en or product.short_name or "—"
 
 
-def _service_line(performer):
+def _project_label_identifier(project):
+    short_uid = (getattr(project, "short_uid", "") or "").strip()
+    if len(short_uid) >= 7:
+        return f"{project.formatted_number}{short_uid[-3:]}"
+    return f"{project.formatted_number}{project.group_order_number}{project.group_alpha2}"
+
+
+def _project_label(project):
+    project_label_parts = [_project_label_identifier(project)]
+    if project.type_short_display:
+        project_label_parts.append(project.type_short_display)
+    if project.name:
+        project_label_parts.append(project.name)
+    return " ".join(part for part in project_label_parts if part)
+
+
+def _unique_project_labels(projects):
+    labels = []
+    seen = set()
+    for project in projects:
+        if not project:
+            continue
+        label = _project_label(project)
+        if label and label not in seen:
+            labels.append(label)
+            seen.add(label)
+    return labels
+
+
+def _join_unique(values, default="—"):
+    items = []
+    seen = set()
+    for value in values:
+        value = (value or "").strip()
+        if value and value not in seen:
+            items.append(value)
+            seen.add(value)
+    return ", ".join(items) if items else default
+
+
+def _product_stage_lines(projects):
+    items = []
+    seen = set()
+    for project in projects:
+        if not project:
+            continue
+        stage = int(getattr(project, "agreement_sequence", 0) or 1)
+        products = project.ordered_products()
+        if not products:
+            key = (project.pk, stage, getattr(project, "type_short_display", ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append(
+                {
+                    "stage": stage,
+                    "project_id": project.pk or 0,
+                    "line": f"Этап {stage}: {project.type_short_display or '—'} {_display_project_type(project)}".strip(),
+                }
+            )
+            continue
+        for index, product in enumerate(products):
+            short_name = (getattr(product, "short_name", "") or "").strip()
+            display_name = (getattr(product, "display_name", "") or "").strip()
+            key = (project.pk, stage, getattr(product, "pk", None), index)
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append(
+                {
+                    "stage": stage,
+                    "project_id": project.pk or 0,
+                    "line": f"Этап {stage}: {short_name} {display_name}".strip(),
+                }
+            )
+    items.sort(key=lambda item: (item["stage"], item["project_id"], item["line"]))
+    return [item["line"] for item in items]
+
+
+def _project_stage(project):
+    return int(getattr(project, "agreement_sequence", 0) or 1)
+
+
+def _ordered_projects(projects):
+    return sorted(
+        [project for project in projects if project],
+        key=lambda project: (_project_stage(project), project.pk or 0),
+    )
+
+
+def _combined_project_label(projects, fallback_project=None):
+    ordered = _ordered_projects(projects)
+    if not ordered:
+        return _project_label(fallback_project) if fallback_project else ""
+    if len(ordered) == 1:
+        return _project_label(ordered[0])
+
+    identifiers = []
+    types = []
+    names = []
+    for project in ordered:
+        identifier = _project_label_identifier(project)
+        if identifier and identifier not in identifiers:
+            identifiers.append(identifier)
+        project_type = (getattr(project, "type_short_display", "") or "").strip()
+        if project_type and project_type not in types:
+            types.append(project_type)
+        name = (getattr(project, "name", "") or "").strip()
+        if name and name not in names:
+            names.append(name)
+
+    label_parts = []
+    if identifiers:
+        label_parts.append(identifiers[0] if len(identifiers) == 1 else "; ".join(identifiers))
+    if types:
+        label_parts.append("-".join(types))
+    if names:
+        label_parts.append(names[0] if len(names) == 1 else "; ".join(names))
+    return " ".join(label_parts)
+
+
+def _formatted_date(value):
+    if not value:
+        return ""
+    if isinstance(value, datetime):
+        value = value.date()
+    if isinstance(value, date):
+        return value.strftime("%d.%m.%Y")
+    raw = str(value).strip()
+    if not raw:
+        return ""
+    for candidate in (raw[:10], raw):
+        try:
+            return datetime.fromisoformat(candidate).date().strftime("%d.%m.%Y")
+        except ValueError:
+            pass
+    for fmt in ("%d.%m.%Y", "%d.%m.%y"):
+        try:
+            return datetime.strptime(raw, fmt).date().strftime("%d.%m.%Y")
+        except ValueError:
+            pass
+    return raw
+
+
+def _date_sort_value(value):
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    raw = str(value).strip()
+    if not raw:
+        return None
+    for candidate in (raw[:10], raw):
+        try:
+            return datetime.fromisoformat(candidate).date()
+        except ValueError:
+            pass
+    for fmt in ("%d.%m.%Y", "%d.%m.%y"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            pass
+    return None
+
+
+def _project_manager_display(projects):
+    stage_managers = []
+    for project in _ordered_projects(projects):
+        manager = _short_fio(getattr(project, "project_manager", "")) or "—"
+        stage_managers.append((_project_stage(project), manager))
+    if not stage_managers:
+        return "—", "—"
+    unique_managers = {manager for _stage, manager in stage_managers}
+    if len(unique_managers) == 1:
+        manager = stage_managers[0][1]
+        return manager, html_escape(manager)
+    lines = [f"Этап {stage}: {manager}" for stage, manager in stage_managers]
+    return "\n".join(lines), _service_list_html(lines)
+
+
+def _stage_lines_display(lines):
+    lines = [line for line in lines if line]
+    if not lines:
+        return "—", "—"
+    text_value = "\n".join(f"- {line}" for line in lines)
+    html_value = "<ul>" + "".join(f"<li>{html_escape(line)}</li>" for line in lines) + "</ul>"
+    return text_value, html_value
+
+
+def _product_stage_line(project):
+    lines = _product_stage_lines([project])
+    return lines[0] if lines else f"Этап {_project_stage(project)}: —"
+
+
+def _service_list_html(lines):
+    items = [line for line in lines if line]
+    if not items:
+        items = ["Без детализации"]
+    return "<ul>" + "".join(f"<li>{html_escape(item)}</li>" for item in items) + "</ul>"
+
+
+def _services_list_html(projects, performers):
+    ordered_projects = _ordered_projects(projects)
+    if len(ordered_projects) <= 1:
+        return _service_list_html(_service_line(performer) for performer in performers)
+
+    performers_by_project = defaultdict(list)
+    for performer in performers:
+        if getattr(performer, "registration_id", None):
+            performers_by_project[performer.registration_id].append(performer)
+
+    parts = []
+    for project in ordered_projects:
+        project_performers = performers_by_project.get(project.pk, [])
+        if not project_performers:
+            continue
+        parts.append(f"<p>{html_escape(_product_stage_line(project))}</p>")
+        parts.append(_service_list_html(_service_line(performer) for performer in project_performers))
+    return "".join(parts) if parts else _service_list_html(_service_line(performer) for performer in performers)
+
+
+def _gantt_task_deadline_values(project, performers):
+    payload = getattr(project, "gantt_data", None)
+    tasks = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(tasks, list):
+        return []
+
+    performer_ids = {str(p.pk) for p in performers if getattr(p, "pk", None)}
+    exact_values = [
+        task.get("deadline")
+        for task in tasks
+        if isinstance(task, dict) and str(task.get("performer_id") or "") in performer_ids and task.get("deadline")
+    ]
+    if exact_values:
+        return exact_values
+
+    section_ids = {str(p.typical_section_id) for p in performers if getattr(p, "typical_section_id", None)}
+    work_item_ids = {str(p.work_item_id) for p in performers if getattr(p, "work_item_id", None)}
+    asset_names = {(p.asset_name or "").strip() for p in performers if (p.asset_name or "").strip()}
+    values = []
+    for task in tasks:
+        if not isinstance(task, dict) or not task.get("deadline"):
+            continue
+        if str(task.get("typical_section_id") or "") not in section_ids:
+            continue
+        task_work_item = str(task.get("work_volume_id") or "")
+        task_asset = (task.get("asset_name") or "").strip()
+        if work_item_ids and task_work_item in work_item_ids:
+            values.append(task.get("deadline"))
+        elif asset_names and task_asset in asset_names:
+            values.append(task.get("deadline"))
+    return values
+
+
+def _latest_deadline_for_project(project, performers):
+    values = _gantt_task_deadline_values(project, performers)
+    dated_values = [(sort_value, value) for value in values if (sort_value := _date_sort_value(value))]
+    if dated_values:
+        _sort_value, raw_value = max(dated_values, key=lambda item: item[0])
+        return _formatted_date(raw_value)
+    return _formatted_date(getattr(project, "deadline", None)) or "—"
+
+
+def _project_deadline_display(projects, performers):
+    performers_by_project = defaultdict(list)
+    for performer in performers:
+        if getattr(performer, "registration_id", None):
+            performers_by_project[performer.registration_id].append(performer)
+
+    ordered = _ordered_projects(projects)
+    if not ordered:
+        return "—", "—"
+    if len(ordered) == 1:
+        deadline = _latest_deadline_for_project(ordered[0], performers_by_project.get(ordered[0].pk, []))
+        return deadline, html_escape(deadline)
+
+    lines = [
+        f"Этап {_project_stage(project)}: {_latest_deadline_for_project(project, performers_by_project.get(project.pk, []))}"
+        for project in ordered
+    ]
+    return "\n".join(lines), _service_list_html(lines)
+
+
+def _service_line(performer, *, include_project=False):
     asset_name = (performer.asset_name or "").strip()
     section_label = (
         getattr(performer.typical_section, "name_ru", "") or
@@ -158,12 +445,16 @@ def _service_line(performer):
         ""
     ).strip()
     if asset_name and section_label:
-        return f"{asset_name}: {section_label}"
-    if asset_name:
-        return asset_name
-    if section_label:
-        return section_label
-    return "Без детализации"
+        line = f"{asset_name}: {section_label}"
+    elif asset_name:
+        line = asset_name
+    elif section_label:
+        line = section_label
+    else:
+        line = "Без детализации"
+    if include_project and getattr(performer, "registration", None):
+        return f"{performer.registration.short_uid}: {line}"
+    return line
 
 
 def build_notification_counters(user):
@@ -202,22 +493,42 @@ def get_notification_queryset_for_user(user):
 
 
 def _build_participation_payload(*, recipient, project, performers, request_sent_at, deadline_at, duration_hours, sender=None, template_type="participation_confirmation"):
+    projects = []
+    seen_project_ids = set()
+    for performer in performers:
+        performer_project = getattr(performer, "registration", None)
+        if not performer_project or performer_project.pk in seen_project_ids:
+            continue
+        projects.append(performer_project)
+        seen_project_ids.add(performer_project.pk)
+    if not projects and project:
+        projects = [project]
+    project_labels = _unique_project_labels(projects)
     services = [_service_line(performer) for performer in performers]
     agreed_amount = sum((performer.agreed_amount or Decimal("0")) for performer in performers)
-    project_label_parts = [project.short_uid]
-    if project.type_short_display:
-        project_label_parts.append(project.type_short_display)
-    if project.name:
-        project_label_parts.append(project.name)
-    project_label = " ".join(part for part in project_label_parts if part)
+    project_label = _combined_project_label(projects, project)
     recipient_name = _user_full_name(recipient)
-    project_manager = (project.project_manager or "—").strip() or "—"
-    deadline_label = project.deadline.strftime("%d.%m.%Y") if project.deadline else "—"
+    project_manager, project_manager_html = _project_manager_display(projects)
+    deadline_label, deadline_label_html = _project_deadline_display(projects, performers)
+    project_type_display = _join_unique(
+        getattr(p, "type_short_display", "") or _display_project_type(p)
+        for p in projects
+    )
+    project_stage_lines = _product_stage_lines(projects)
+    project_stages_display, project_stages_html = _stage_lines_display(project_stage_lines)
+    project_number = ""
+    project_numbers = {
+        getattr(p, "formatted_number", "")
+        for p in projects
+        if getattr(p, "formatted_number", "")
+    }
+    if len(project_numbers) == 1:
+        project_number = next(iter(project_numbers))
     deadline_at_label = timezone.localtime(deadline_at).strftime("%H:%M %d.%m.%Y") if deadline_at else "—"
     sent_at_label = timezone.localtime(request_sent_at).strftime("%d.%m.%Y %H:%M")
     title_text = f"Запрос подтверждения участия в проекте {project_label}".strip()
 
-    services_html = "<ul>" + "".join(f"<li>{s}</li>" for s in services) + "</ul>" if services else "<ul><li>Без детализации</li></ul>"
+    services_html = _services_list_html(projects, performers)
 
     currency_code = ""
     for p in performers:
@@ -229,8 +540,12 @@ def _build_participation_payload(*, recipient, project, performers, request_sent
         "recipient_name": recipient_name,
         "project_label": project_label,
         "project_manager": project_manager,
+        "project_manager_html": project_manager_html,
         "project_deadline": deadline_label,
-        "project_type": _display_project_type(project),
+        "project_deadline_html": deadline_label_html,
+        "project_stages": project_stages_html,
+        # Backward compatibility for existing user templates that still use {project_type}.
+        "project_type": project_type_display,
         "services_list": services_html,
         "agreed_amount": _display_amount(agreed_amount),
         "currency_code": currency_code,
@@ -243,7 +558,15 @@ def _build_participation_payload(*, recipient, project, performers, request_sent
         from letters_app.services import get_effective_template, render_template, render_subject
         tpl = get_effective_template(template_type, sender)
         if tpl:
-            content_text = render_template(tpl.body_html, template_vars, safe_keys={"services_list"})
+            content_text = render_template(
+                tpl.body_html,
+                {
+                    **template_vars,
+                    "project_manager": project_manager_html,
+                    "project_deadline": deadline_label_html,
+                },
+                safe_keys={"services_list", "project_stages", "project_manager", "project_deadline"},
+            )
             if tpl.subject_template:
                 title_text = render_subject(tpl.subject_template, template_vars)
     except Exception:
@@ -256,7 +579,8 @@ def _build_participation_payload(*, recipient, project, performers, request_sent
             f"Приглашаем вас принять участие в новом проекте IMC Montan Group — {project_label}.",
             f"Руководитель проекта: {project_manager}.",
             f"Срок завершения проекта: {deadline_label}.",
-            f"Тип проекта: {_display_project_type(project)}.",
+            "Этапы проекта и продукты:",
+            project_stages_display,
             "Предлагаемый состав услуг (разделов):",
         ]
         for service in services:
@@ -279,9 +603,18 @@ def _build_participation_payload(*, recipient, project, performers, request_sent
     payload = {
         "recipient_name": recipient_name,
         "project_label": project_label,
+        "project_ids": [p.pk for p in projects if p],
+        "project_labels": project_labels,
+        "project_number": project_number,
+        "project_types": [
+            getattr(p, "type_short_display", "") or _display_project_type(p)
+            for p in projects
+        ],
+        "project_stages": project_stage_lines,
+        "project_stages_display": project_stages_display,
         "project_manager": project_manager,
         "project_deadline_display": deadline_label,
-        "project_type_display": _display_project_type(project),
+        "project_type_display": project_type_display,
         "services": services,
         "agreed_amount_display": _display_amount(agreed_amount),
         "duration_hours": duration_hours,
@@ -310,14 +643,28 @@ def create_participation_notifications(
 
     grouped = defaultdict(list)
     for performer in performers:
-        grouped[(performer.registration_id, performer.employee_id)].append(performer)
+        if performer.participation_batch_id:
+            key = ("participation_batch", performer.participation_batch_id, performer.employee_id)
+        else:
+            key = ("registration", performer.registration_id, performer.employee_id)
+        grouped[key].append(performer)
 
     created = []
     system_email_jobs = []
     connected_email_jobs = []
     should_create_notifications = DELIVERY_CHANNEL_SYSTEM in delivery_channels
     with transaction.atomic():
-        for (_registration_id, _employee_id), grouped_performers in grouped.items():
+        for _group_key, grouped_performers in grouped.items():
+            grouped_performers = sorted(
+                grouped_performers,
+                key=lambda p: (
+                    p.registration.number if p.registration_id else 0,
+                    p.registration_id or 0,
+                    p.asset_name or "",
+                    p.position or 0,
+                    p.pk,
+                ),
+            )
             first = grouped_performers[0]
             recipient = first.employee.user
             project = first.registration
@@ -944,13 +1291,17 @@ def create_contract_notifications(
 
     grouped = defaultdict(list)
     for performer in performers:
-        grouped[(performer.registration_id, performer.employee_id)].append(performer)
+        if performer.contract_batch_id:
+            key = ("contract_batch", performer.contract_batch_id, performer.employee_id)
+        else:
+            key = ("registration", performer.registration_id, performer.employee_id)
+        grouped[key].append(performer)
 
     created = []
     system_email_jobs = []
     connected_email_jobs = []
     should_create_notifications = DELIVERY_CHANNEL_SYSTEM in delivery_channels
-    for (_registration_id, _employee_id), grouped_performers in grouped.items():
+    for _group_key, grouped_performers in grouped.items():
         first = grouped_performers[0]
         recipient = first.employee.user
         project = first.registration

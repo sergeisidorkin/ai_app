@@ -1,3 +1,6 @@
+import uuid
+from datetime import timedelta
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -19,8 +22,14 @@ from notifications_app.email_delivery import (
     send_notification_email,
 )
 from notifications_app.models import Notification, NotificationPerformerLink
-from notifications_app.services import normalize_delivery_channels, process_participation_notification
-from projects_app.models import Performer, ProjectRegistration
+from notifications_app.services import (
+    create_contract_notifications,
+    create_participation_notifications,
+    normalize_delivery_channels,
+    process_participation_notification,
+)
+from policy_app.models import Product
+from projects_app.models import Performer, ProjectRegistration, ProjectRegistrationProduct
 from users_app.forms import FREELANCER_LABEL
 from users_app.models import Employee
 
@@ -118,6 +127,229 @@ class DomainSMTPEmailBackendTests(SimpleTestCase):
         )
 
 
+class ParticipationBatchNotificationTests(TestCase):
+    def setUp(self):
+        self.sender = get_user_model().objects.create_user(
+            username="sender@example.com",
+            password="secret",
+            is_staff=True,
+        )
+        self.recipient = get_user_model().objects.create_user(
+            username="recipient@example.com",
+            email="recipient@example.com",
+            password="secret",
+            first_name="Петр",
+            is_staff=True,
+        )
+        self.employee = Employee.objects.create(
+            user=self.recipient,
+            patronymic="Петрович",
+        )
+        self.product_a = Product.objects.create(
+            short_name="RFR",
+            name_en="Red Flag Review",
+            name_ru="Red Flag Review",
+            display_name="Red Flag Review",
+        )
+        self.product_b = Product.objects.create(
+            short_name="TDD",
+            name_en="Technical Due Diligence",
+            name_ru="Technical Due Diligence",
+            display_name="Technical Due Diligence",
+        )
+        self.project_a = ProjectRegistration.objects.create(
+            number=8123,
+            name="Тест 55",
+            year=2026,
+            project_manager="Иванов Иван Иванович",
+        )
+        self.project_b = ProjectRegistration.objects.create(
+            number=8123,
+            name="Тест 55",
+            year=2026,
+            project_manager="Петров Петр Петрович",
+        )
+        ProjectRegistrationProduct.objects.create(registration=self.project_a, product=self.product_a, rank=1)
+        ProjectRegistrationProduct.objects.create(registration=self.project_b, product=self.product_b, rank=1)
+        self.project_a.refresh_from_db()
+        self.project_b.refresh_from_db()
+        self.batch_id = uuid.uuid4()
+        self.performer_a = Performer.objects.create(
+            registration=self.project_a,
+            employee=self.employee,
+            executor="Петров Петр Петрович",
+            asset_name="Актив A",
+            agreed_amount=Decimal("100.00"),
+            participation_batch_id=self.batch_id,
+        )
+        self.performer_b = Performer.objects.create(
+            registration=self.project_b,
+            employee=self.employee,
+            executor="Петров Петр Петрович",
+            asset_name="Актив B",
+            agreed_amount=Decimal("200.00"),
+            participation_batch_id=self.batch_id,
+        )
+        self.project_a.gantt_data = {
+            "data": [
+                {
+                    "id": "managed-performer-a",
+                    "managed_source": "performer",
+                    "performer_id": self.performer_a.pk,
+                    "deadline": "2026-05-10",
+                },
+                {
+                    "id": "managed-performer-a-later",
+                    "managed_source": "performer",
+                    "performer_id": self.performer_a.pk,
+                    "deadline": "2026-05-12",
+                },
+            ],
+        }
+        self.project_b.gantt_data = {
+            "data": [
+                {
+                    "id": "managed-performer-b",
+                    "managed_source": "performer",
+                    "performer_id": self.performer_b.pk,
+                    "deadline": "2026-06-15",
+                },
+            ],
+        }
+        self.project_a.save(update_fields=["gantt_data"])
+        self.project_b.save(update_fields=["gantt_data"])
+
+    def test_create_participation_notifications_groups_by_participation_batch(self):
+        request_sent_at = timezone.now()
+
+        create_participation_notifications(
+            performers=[self.performer_a, self.performer_b],
+            sender=self.sender,
+            request_sent_at=request_sent_at,
+            deadline_at=request_sent_at + timedelta(hours=4),
+            duration_hours=4,
+            delivery_channels=["system"],
+        )
+
+        notification = Notification.objects.get()
+        linked_ids = set(notification.performer_links.values_list("performer_id", flat=True))
+        payload = notification.payload
+        self.assertEqual(linked_ids, {self.performer_a.pk, self.performer_b.pk})
+        self.assertEqual(payload["project_number"], "8123")
+        self.assertEqual(set(payload["project_ids"]), {self.project_a.pk, self.project_b.pk})
+        self.assertEqual(len(payload["project_labels"]), 2)
+        self.assertEqual(payload["project_label"], "81230RU RFR-TDD Тест 55")
+        self.assertIn("81230RU RFR Тест 55", payload["project_labels"])
+        self.assertIn("81230RU TDD Тест 55", payload["project_labels"])
+        self.assertNotIn(self.project_a.short_uid, payload["project_label"])
+        self.assertNotIn("; 81230RU", payload["project_label"])
+        self.assertEqual(
+            payload["project_stages"],
+            [
+                "Этап 1: RFR Red Flag Review",
+                "Этап 2: TDD Technical Due Diligence",
+            ],
+        )
+        self.assertEqual(payload["project_manager"], "Этап 1: Иванов И.И.\nЭтап 2: Петров П.П.")
+        self.assertEqual(payload["project_deadline_display"], "Этап 1: 12.05.2026\nЭтап 2: 15.06.2026")
+        self.assertIn(
+            "<p>Руководитель проекта: <ul><li>Этап 1: Иванов И.И.</li><li>Этап 2: Петров П.П.</li></ul></p>",
+            notification.content_text,
+        )
+        self.assertIn(
+            "<p>Срок завершения проекта: <ul><li>Этап 1: 12.05.2026</li><li>Этап 2: 15.06.2026</li></ul></p>",
+            notification.content_text,
+        )
+        self.assertIn(
+            "<p>Этапы проекта и продукты:</p><ul><li>Этап 1: RFR Red Flag Review</li>"
+            "<li>Этап 2: TDD Technical Due Diligence</li></ul>",
+            notification.content_text,
+        )
+        self.assertIn("<p>Этап 1: RFR Red Flag Review</p><ul><li>Актив A</li></ul>", notification.content_text)
+        self.assertIn("<p>Этап 2: TDD Technical Due Diligence</p><ul><li>Актив B</li></ul>", notification.content_text)
+        self.assertEqual(payload["agreed_amount_display"], "300,00")
+
+    def test_single_project_stage_stays_on_template_line(self):
+        request_sent_at = timezone.now()
+
+        create_participation_notifications(
+            performers=[self.performer_a],
+            sender=self.sender,
+            request_sent_at=request_sent_at,
+            deadline_at=request_sent_at + timedelta(hours=4),
+            duration_hours=4,
+            delivery_channels=["system"],
+        )
+
+        notification = Notification.objects.get()
+        self.assertIn(
+            "<p>Этапы проекта и продукты:</p><ul><li>Этап 1: RFR Red Flag Review</li></ul>",
+            notification.content_text,
+        )
+        self.assertNotIn("Этапы проекта и продукты: Этап 1: RFR Red Flag Review", notification.content_text)
+        self.assertIn("<ul><li>Актив A</li></ul>", notification.content_text)
+        self.assertNotIn("<p>Этап 1: RFR Red Flag Review</p><ul><li>Актив A</li></ul>", notification.content_text)
+
+    def test_create_contract_notifications_groups_by_contract_batch(self):
+        request_sent_at = timezone.now()
+        contract_batch_id = uuid.uuid4()
+        Performer.objects.filter(pk__in=[self.performer_a.pk, self.performer_b.pk]).update(
+            contract_batch_id=contract_batch_id,
+        )
+        self.performer_a.refresh_from_db()
+        self.performer_b.refresh_from_db()
+
+        create_contract_notifications(
+            performers=[self.performer_a, self.performer_b],
+            sender=self.sender,
+            request_sent_at=request_sent_at,
+            deadline_at=request_sent_at + timedelta(hours=4),
+            duration_hours=4,
+            delivery_channels=["system"],
+        )
+
+        notification = Notification.objects.get()
+        linked_ids = set(notification.performer_links.values_list("performer_id", flat=True))
+        self.assertEqual(linked_ids, {self.performer_a.pk, self.performer_b.pk})
+
+    @patch("nextcloud_app.workspace.grant_project_workspace_editor_access_for_performers")
+    @patch("worktime_app.services.ensure_confirmed_assignments_for_performers")
+    def test_processing_batch_notification_updates_all_linked_performers(
+        self,
+        mocked_assignments,
+        mocked_nextcloud,
+    ):
+        notification = Notification.objects.create(
+            notification_type=Notification.NotificationType.PROJECT_PARTICIPATION_CONFIRMATION,
+            recipient=self.recipient,
+            sender=self.sender,
+            project=self.project_a,
+            title_text="Подтвердите участие",
+        )
+        NotificationPerformerLink.objects.create(
+            notification=notification,
+            performer=self.performer_a,
+            position=1,
+        )
+        NotificationPerformerLink.objects.create(
+            notification=notification,
+            performer=self.performer_b,
+            position=2,
+        )
+
+        process_participation_notification(
+            notification,
+            self.recipient,
+            Notification.ActionChoice.CONFIRMED,
+        )
+
+        self.performer_a.refresh_from_db()
+        self.performer_b.refresh_from_db()
+        self.assertEqual(self.performer_a.participation_response, Performer.ParticipationResponse.CONFIRMED)
+        self.assertEqual(self.performer_b.participation_response, Performer.ParticipationResponse.CONFIRMED)
+        mocked_assignments.assert_called_once_with([self.performer_a.pk, self.performer_b.pk])
+
+
 class ParticipationNotificationContractPrefillTests(TestCase):
     def setUp(self):
         self.actor = get_user_model().objects.create_user(
@@ -208,6 +440,49 @@ class ParticipationNotificationContractPrefillTests(TestCase):
         self.assertEqual(self.performer.contract_date, timezone.localdate(self.notification.action_at))
         self.assertEqual(self.performer.contract_signing_note, "Разрабатывается проект договора")
         mocked_assignments.assert_called_once_with([self.performer.pk])
+
+    @patch("worktime_app.services.ensure_confirmed_assignments_for_performers")
+    def test_confirming_participation_prefills_one_contract_batch_for_participation_batch(self, mocked_assignments):
+        product_b = Product.objects.create(
+            short_name="TDD",
+            name_en="Technical Due Diligence",
+            name_ru="ТДД",
+        )
+        second_project = ProjectRegistration.objects.create(
+            number=self.project.number,
+            group_member=self.project_group,
+            type=product_b,
+            name="Договорный проект",
+            year=2026,
+        )
+        participation_batch_id = uuid.uuid4()
+        self.performer.participation_batch_id = participation_batch_id
+        self.performer.save(update_fields=["participation_batch_id"])
+        second_performer = Performer.objects.create(
+            registration=second_project,
+            employee=self.employee,
+            executor=self.performer.executor,
+            participation_batch_id=participation_batch_id,
+        )
+        NotificationPerformerLink.objects.create(
+            notification=self.notification,
+            performer=second_performer,
+        )
+
+        process_participation_notification(
+            self.notification,
+            self.expert_user,
+            Notification.ActionChoice.CONFIRMED,
+        )
+
+        self.performer.refresh_from_db()
+        second_performer.refresh_from_db()
+        self.assertEqual(self.performer.participation_response, Performer.ParticipationResponse.CONFIRMED)
+        self.assertEqual(second_performer.participation_response, Performer.ParticipationResponse.CONFIRMED)
+        self.assertIsNotNone(self.performer.contract_batch_id)
+        self.assertEqual(self.performer.contract_batch_id, second_performer.contract_batch_id)
+        self.assertEqual(self.performer.contract_number, second_performer.contract_number)
+        mocked_assignments.assert_called_once_with([self.performer.pk, second_performer.pk])
 
     @override_settings(
         NEXTCLOUD_PROVISIONING_BASE_URL="https://cloud.example.com",

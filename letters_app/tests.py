@@ -18,6 +18,14 @@ class LetterTemplateRenderTests(TestCase):
 
         self.assertEqual(rendered, "<p>Направляем 333300RU DD Приморское</p>")
 
+    def test_render_template_supports_square_bracket_variables(self):
+        rendered = render_template(
+            "<p>[project_stages]</p>",
+            {"project_stages": "Этап 1: RFR Red Flag Review"},
+        )
+
+        self.assertEqual(rendered, "<p>Этап 1: RFR Red Flag Review</p>")
+
     def test_render_subject_supports_double_brace_variables(self):
         rendered = render_subject(
             "ТКП {{tkp_id}}",
@@ -28,6 +36,28 @@ class LetterTemplateRenderTests(TestCase):
 
 
 class LetterTemplateVariablesTests(TestCase):
+    def test_participation_variables_use_project_stages(self):
+        variables = [key for key, _desc in LetterTemplate.TEMPLATE_VARIABLES["participation_confirmation"]]
+
+        self.assertIn("[project_stages]", variables)
+        self.assertIn("[project_manager]", variables)
+        self.assertIn("[project_deadline]", variables)
+        self.assertIn("[services_list]", variables)
+        self.assertNotIn("{project_type}", variables)
+        self.assertNotIn("{project_manager}", variables)
+        self.assertNotIn("{project_deadline}", variables)
+        self.assertNotIn("{services_list}", variables)
+
+        direction_variables = [key for key, _desc in LetterTemplate.TEMPLATE_VARIABLES["direction_confirmation"]]
+        self.assertIn("[project_stages]", direction_variables)
+        self.assertIn("[project_manager]", direction_variables)
+        self.assertIn("[project_deadline]", direction_variables)
+        self.assertIn("[services_list]", direction_variables)
+        self.assertNotIn("{project_type}", direction_variables)
+        self.assertNotIn("{project_manager}", direction_variables)
+        self.assertNotIn("{project_deadline}", direction_variables)
+        self.assertNotIn("{services_list}", direction_variables)
+
     def test_contract_sending_variables_use_docx_and_pdf_links(self):
         variables = [key for key, _desc in LetterTemplate.TEMPLATE_VARIABLES["contract_sending"]]
 

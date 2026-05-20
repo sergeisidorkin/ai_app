@@ -57,7 +57,8 @@
   <table class="table table-sm align-middle performers-table mb-0">
     <colgroup>
       <col class="col-checkbox">  <!-- чекбокс -->
-      <col class="col-number">    <!-- Номер (4444RU) -->
+      <col class="col-short-number"> <!-- Номер (44440RU) -->
+      <col class="col-number">    <!-- Проект ID -->
       <col class="col-type">      <!-- Продукт -->
       <col class="col-name">      <!-- Название -->
       <col class="col-active">    <!-- Актив -->
@@ -89,7 +90,8 @@
           </div>
         {% endif %}
       </th>
-      <th class="text-nowrap">Проект</th>
+      <th class="text-nowrap">Номер</th>
+      <th class="text-nowrap">Этап</th>
       <th class="text-nowrap">Продукт</th>
       <th class="text-nowrap">Название</th>
       <th>Наименование актива</th>
@@ -129,6 +131,7 @@
             </div>
           {% endif %}
         </td>
+        <td class="text-nowrap">{% if p.registration %}<span class="clf-id-droid-mono">{{ p.registration.formatted_number }}{{ p.registration.short_uid|slice:"-3:" }}</span>{% endif %}</td>
         <td class="text-nowrap">{% if p.registration %}<span class="clf-id-droid-mono">{{ p.registration.short_uid }}</span>{% endif %}</td>
         <td class="text-nowrap">
           {{ p.section_product_short_display|default:"—" }}
@@ -161,13 +164,13 @@
         {% endif %}
       </tr>
     {% empty %}
-      <tr><td colspan="{% if is_expert %}9{% else %}15{% endif %}" class="text-muted">Пока нет данных.</td></tr>
+      <tr><td colspan="{% if is_expert %}10{% else %}16{% endif %}" class="text-muted">Пока нет данных.</td></tr>
     {% endfor %}
     </tbody>
     {% if not is_expert %}
       <tfoot>
         <tr class="fw-semibold" id="perf-totals-row" style="border-top:1.5px solid #000;">
-          <td colspan="9" style="border-bottom:none; padding-bottom:0;"></td>
+          <td colspan="10" style="border-bottom:none; padding-bottom:0;"></td>
           <td class="text-nowrap text-end" id="perf-total-actual" style="border-bottom:none; padding-bottom:0;"></td>
           <td class="perf-spacer" style="border-bottom:none; padding-bottom:0;"></td>
           <td class="text-nowrap text-end" id="perf-total-estimated" style="border-bottom:none; padding-bottom:0;"></td>
@@ -260,6 +263,7 @@
     <table class="table table-sm align-middle performers-table">
       <colgroup>
         <col class="col-checkbox">
+        <col class="col-short-number">
         <col class="col-number">
         <col class="col-type">
         <col class="col-name">
@@ -286,8 +290,9 @@
             </div>
           {% endif %}
         </th>
-        <th class="text-nowrap">Проект</th>
-        <th class="text-nowrap">Тип</th>
+        <th class="text-nowrap">Номер</th>
+        <th class="text-nowrap">Этап</th>
+        <th class="text-nowrap">Продукт</th>
         <th class="text-nowrap">Название</th>
         <th>Исполнитель</th>
         <th>Грейд</th>
@@ -315,6 +320,11 @@
         {% if row.is_snapshot %}
         <tr class="snapshot-row"
             data-project-id="{{ row.registration_id }}"
+            data-project-number="{% if row.registration %}{{ row.registration.formatted_number }}{% endif %}"
+            data-project-type="{% if row.registration %}{{ row.registration.type_short_display }}{% endif %}"
+            data-project-stage="{% if row.registration %}{{ row.registration.agreement_sequence|default:0 }}{% endif %}"
+            data-recipient-id="{{ row.employee_id|default:'' }}"
+            data-participation-batch-id=""
             data-executor="{{ row.executor }}"
             data-asset-name="{{ row.asset_name }}">
           <td class="text-nowrap cell-group-val">
@@ -324,8 +334,9 @@
               </div>
             {% endif %}
           </td>
-          <td class="text-nowrap cell-group-val">{% if row.registration %}<span class="clf-id-droid-mono">{{ row.registration.short_uid }}</span>{% endif %}</td>
-          <td class="text-nowrap cell-group-val">
+          <td class="text-nowrap cell-group-val cell-number-val">{% if row.registration %}<span class="clf-id-droid-mono">{{ row.registration.formatted_number }}{{ row.registration.short_uid|slice:"-3:" }}</span>{% endif %}</td>
+          <td class="text-nowrap cell-group-val cell-project-val">{% if row.registration %}<span class="clf-id-droid-mono">{{ row.registration.short_uid }}</span>{% endif %}</td>
+          <td class="text-nowrap cell-group-val cell-type-val">
             {{ row.registration.type_short_display }}
           </td>
           <td class="text-truncate cell-group-val">{{ row.registration.name }}</td>
@@ -343,6 +354,11 @@
         </tr>
         {% else %}
         <tr data-project-id="{{ row.registration_id }}"
+            data-project-number="{% if row.registration %}{{ row.registration.formatted_number }}{% endif %}"
+            data-project-type="{% if row.registration %}{{ row.registration.type_short_display }}{% endif %}"
+            data-project-stage="{% if row.registration %}{{ row.registration.agreement_sequence|default:0 }}{% endif %}"
+            data-recipient-id="{{ row.employee_id|default:'' }}"
+            data-participation-batch-id="{{ row.participation_batch_id|default:'' }}"
             data-executor="{{ row.executor }}"
             data-asset-name="{{ row.asset_name }}">
           <td class="text-nowrap cell-group-val">
@@ -359,8 +375,9 @@
               </div>
             {% endif %}
           </td>
-          <td class="text-nowrap cell-group-val">{% if row.registration %}<span class="clf-id-droid-mono">{{ row.registration.short_uid }}</span>{% endif %}</td>
-          <td class="text-nowrap cell-group-val">
+          <td class="text-nowrap cell-group-val cell-number-val">{% if row.registration %}<span class="clf-id-droid-mono">{{ row.registration.formatted_number }}{{ row.registration.short_uid|slice:"-3:" }}</span>{% endif %}</td>
+          <td class="text-nowrap cell-group-val cell-project-val">{% if row.registration %}<span class="clf-id-droid-mono">{{ row.registration.short_uid }}</span>{% endif %}</td>
+          <td class="text-nowrap cell-group-val cell-type-val">
             {{ row.registration.type_short_display }}
           </td>
           <td class="text-truncate cell-group-val">{{ row.registration.name }}</td>
@@ -378,7 +395,7 @@
         </tr>
         {% endif %}
       {% empty %}
-        <tr><td colspan="13" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="14" class="text-muted">Пока нет данных.</td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -386,7 +403,9 @@
     {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
       <div id="participation-request-actions"
            class="d-flex align-items-stretch gap-2 products-actions-row"
-           data-request-url="{% url 'participation_request' %}">
+           data-request-url="{% url 'participation_request' %}"
+           data-merge-url="{% url 'participation_batch_merge' %}"
+           data-split-url="{% url 'participation_batch_split' %}">
         <div class="btn-group">
           <button type="button"
                   id="participation-request-btn"
@@ -403,6 +422,12 @@
             <i class="bi bi-gear"></i>
           </button>
         </div>
+        <button type="button"
+                id="participation-batch-action-btn"
+                class="btn btn-outline-primary btn-sm d-none"
+                disabled>
+          Объединить
+        </button>
       </div>
 
       <div class="modal fade" id="participation-request-modal" tabindex="-1" aria-hidden="true">

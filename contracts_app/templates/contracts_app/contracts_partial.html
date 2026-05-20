@@ -38,7 +38,7 @@
   <table class="table table-sm align-middle contracts-table mb-0">
     <colgroup>
       <col style="width:36px">
-      <col>
+      <col class="col-contract-number">
       <col>
       <col>
       <col>
@@ -67,7 +67,8 @@
           </div>
         {% endif %}
       </th>
-      <th class="text-nowrap">Проект</th>
+      <th class="text-nowrap">Номер</th>
+      <th class="text-nowrap">Этап</th>
       <th class="text-nowrap">Группа</th>
       <th class="text-nowrap">Тип</th>
       <th class="text-nowrap">Название</th>
@@ -102,10 +103,11 @@
             </div>
           {% endif %}
         </td>
-        <td class="text-nowrap">{% if p.registration %}<span class="clf-id-droid-mono">{{ p.registration.short_uid }}</span>{% endif %}</td>
+        <td class="text-nowrap">{% if p.contract_number_display %}<span class="clf-id-droid-mono">{{ p.contract_number_display }}</span>{% endif %}</td>
+        <td class="text-nowrap">{% if p.contract_stage_display %}<span class="clf-id-droid-mono">{{ p.contract_stage_display }}</span>{% endif %}</td>
         <td class="text-nowrap">{{ p.contract_group_display|default:"—" }}</td>
         <td class="text-nowrap">
-          {{ p.registration.type_short_display }}
+          {% if p.contract_type_display %}{{ p.contract_type_display }}{% else %}{{ p.registration.type_short_display }}{% endif %}
         </td>
         <td class="text-truncate" style="max-width:200px;">{{ p.registration.name }}</td>
         <td class="text-nowrap">{{ p.executor|short_fio }}</td>
@@ -114,13 +116,13 @@
         <td class="text-nowrap text-end pe-4">{% if p.total_price != None %}{{ p.total_price|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% else %}—{% endif %}</td>
         <td class="text-nowrap">{{ p.contract_date|date:"d.m.Y"|default:"—" }}</td>
         <td class="text-nowrap">{% if p.contract_term_days != None %}{{ p.contract_term_days }} дн.{% else %}—{% endif %}</td>
-        <td class="text-nowrap">{% if p.registration.deadline %}{{ p.registration.deadline|date:"d.m.Y" }}{% else %}—{% endif %}</td>
+        <td class="text-nowrap">{{ p.contract_project_deadline_display|default:"—" }}</td>
         <td class="text-nowrap">{% if p.prepayment != None %}{{ p.prepayment|floatformat:"0" }}%{% else %}—{% endif %}</td>
         <td class="text-nowrap">{% if p.final_payment != None %}{{ p.final_payment|floatformat:"0" }}%{% else %}—{% endif %}</td>
         <td class="text-nowrap">{{ p.responsible_name|short_fio|default:"—" }}</td>
       </tr>
     {% empty %}
-      <tr><td colspan="15" class="text-muted">Пока нет данных.</td></tr>
+      <tr><td colspan="16" class="text-muted">Пока нет данных.</td></tr>
     {% endfor %}
     </tbody>
   </table>
@@ -139,7 +141,7 @@
   </div>
 {% endif %}
 
-{% include "contracts_app/contract_conclusion_section.html" with contract_performers=contract_conclusion_performers contract_projects=contract_conclusion_projects %}
+{% include "contracts_app/contract_conclusion_section.html" with contract_drafting_performers=contract_drafting_performers contract_dispatch_performers=contract_dispatch_performers contract_projects=contract_conclusion_projects %}
 {% endif %}
 
 <div class="d-flex align-items-center gap-3 mb-3 {% if not is_expert %}mt-4 {% endif %}table-section-header flex-wrap">
@@ -179,13 +181,12 @@
   <table class="table table-sm align-middle signing-table">
     <colgroup>
       <col style="width:36px">
-      <col>
+      <col class="col-contract-number">
       <col>
       <col>
       <col>
       <col>
       <col style="min-width:140px">
-      <col>
       <col>
       <col>
       <col>
@@ -215,7 +216,7 @@
           {% endif %}
         {% endif %}
       </th>
-      <th class="text-nowrap">Проект</th>
+      <th class="text-nowrap">Номер</th>
       <th class="text-nowrap">Тип</th>
       <th class="text-nowrap">Название</th>
       <th class="text-nowrap">Исполнитель</th>
@@ -275,9 +276,9 @@
             {% endif %}
           {% endif %}
         </td>
-        <td class="text-nowrap">{% if p.registration %}<span class="clf-id-droid-mono">{{ p.registration.short_uid }}</span>{% endif %}</td>
+        <td class="text-nowrap">{% if p.contract_number_display %}<span class="clf-id-droid-mono">{{ p.contract_number_display }}</span>{% endif %}</td>
         <td class="text-nowrap">
-          {{ p.registration.type_short_display }}
+          {% if p.contract_type_display %}{{ p.contract_type_display }}{% else %}{{ p.registration.type_short_display }}{% endif %}
         </td>
         <td class="text-truncate" style="max-width:200px;">{{ p.registration.name }}</td>
         <td class="text-nowrap">{{ p.executor|short_fio }}</td>

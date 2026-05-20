@@ -484,7 +484,7 @@ def _insert_rich_paragraphs(
         elif list_type == "ordered" and multilevel_num_id:
             num_pr = OxmlElement("w:numPr")
             ilvl = OxmlElement("w:ilvl")
-            ilvl.set(qn("w:val"), str(max(0, min(list_level, 2))))
+            ilvl.set(qn("w:val"), str(max(0, min(list_level, 3))))
             num_id = OxmlElement("w:numId")
             num_id.set(qn("w:val"), multilevel_num_id)
             num_pr.append(ilvl)
@@ -1173,9 +1173,9 @@ def _ensure_bullet_numbering(doc) -> str:
 
 
 def _ensure_multilevel_numbering(doc) -> str:
-    """Create a new 3-level decimal numbering definition and return its ``numId``.
+    """Create a new 4-level decimal numbering definition and return its ``numId``.
 
-    Levels: ``1.``, ``1.1``, ``1.1.1`` with increasing indentation.
+    Levels: ``1.``, ``1.1``, ``1.1.1``, ``1.1.1.1`` with increasing indentation.
     """
     from docx.oxml import OxmlElement
 
@@ -1202,6 +1202,7 @@ def _ensure_multilevel_numbering(doc) -> str:
         {"ilvl": "0", "fmt": "decimal", "text": "%1.", "indent": "360", "hanging": "360"},
         {"ilvl": "1", "fmt": "decimal", "text": "%1.%2", "indent": "720", "hanging": "360"},
         {"ilvl": "2", "fmt": "decimal", "text": "%1.%2.%3", "indent": "1080", "hanging": "360"},
+        {"ilvl": "3", "fmt": "decimal", "text": "%1.%2.%3.%4", "indent": "1440", "hanging": "360"},
     ]
     for ld in level_defs:
         lvl = OxmlElement("w:lvl")

@@ -691,7 +691,38 @@ def _computed_actives_name(_ep, _p, all_performers) -> list[str]:
     return result
 
 
-def _computed_chapters_name(_ep, _p, all_performers):
+def _project_stage(project):
+    return int(getattr(project, "agreement_sequence", 0) or 1)
+
+
+def _project_product_display(project) -> str:
+    if not project:
+        return ""
+    products = project.ordered_products()
+    product = products[0] if products else getattr(project, "type", None)
+    short_name = (getattr(product, "short_name", "") or "").strip()
+    display_name = (
+        (getattr(product, "display_name", "") or "").strip()
+        or (getattr(product, "name_ru", "") or "").strip()
+        or (getattr(product, "name_en", "") or "").strip()
+    )
+    return f"{short_name} {display_name}".strip()
+
+
+def _ordered_batch_projects(all_performers):
+    projects = []
+    seen = set()
+    for performer in all_performers or []:
+        project = getattr(performer, "registration", None)
+        if not project or project.pk in seen:
+            continue
+        seen.add(project.pk)
+        projects.append(project)
+    projects.sort(key=lambda project: (_project_stage(project), project.pk or 0))
+    return projects
+
+
+def _chapters_name_items_for_performers(all_performers, *, force_asset_level=False):
     """Build a multi-level numbered list: assets → sections → subsections.
 
     Returns ``list[tuple[int, str]]`` where int is nesting level (0, 1, 2).
@@ -723,7 +754,7 @@ def _computed_chapters_name(_ep, _p, all_performers):
             if lines:
                 subsections_map.setdefault(ss.section_id, []).extend(lines)
 
-    multi_asset = len(assets_sections) > 1
+    multi_asset = force_asset_level and bool(assets_sections) or len(assets_sections) > 1
     items: list[tuple[int, str]] = []
 
     for asset_name, sections in assets_sections.items():
@@ -739,15 +770,60 @@ def _computed_chapters_name(_ep, _p, all_performers):
     return items
 
 
+def _computed_chapters_name(_ep, _p, all_performers):
+    """Build a multi-level list for contract sections.
+
+    For a single stage, preserve the legacy assets → sections → subsections
+    hierarchy. For a multi-stage batch, add stage headings and render the same
+    hierarchy under each stage.
+    """
+    projects = _ordered_batch_projects(all_performers)
+    if len(projects) <= 1:
+        return _chapters_name_items_for_performers(all_performers)
+
+    project_ids = {project.pk for project in projects}
+    items = []
+    for project in projects:
+        stage = _project_stage(project)
+        product_display = _project_product_display(project)
+        items.append((0, f"Этап {stage}: {product_display}".strip()))
+        stage_items = _chapters_name_items_for_performers(
+            [
+                performer
+                for performer in all_performers
+                if getattr(performer, "registration_id", None) == project.pk
+                or getattr(getattr(performer, "registration", None), "pk", None) == project.pk
+            ],
+            force_asset_level=True,
+        )
+        items.extend((level + 1, text) for level, text in stage_items)
+
+    return items if project_ids else _chapters_name_items_for_performers(all_performers)
+
+
 def _computed_number_of_contract(_ep, performer, _all_performers) -> str:
     return performer.contract_number or ""
 
 
-def _computed_contract_name(_ep, performer, _all_performers) -> str:
+def _computed_contract_name(_ep, performer, all_performers) -> str:
     from contracts_app.models import ContractSubject
-    product_id = getattr(getattr(performer, "typical_section", None), "product_id", None)
+
+    selected_performer = performer
+    projects = _ordered_batch_projects(all_performers)
+    if len(projects) > 1:
+        last_project = projects[-1]
+        selected_performer = next(
+            (
+                p for p in all_performers
+                if getattr(p, "registration_id", None) == last_project.pk
+                or getattr(getattr(p, "registration", None), "pk", None) == last_project.pk
+            ),
+            performer,
+        )
+
+    product_id = getattr(getattr(selected_performer, "typical_section", None), "product_id", None)
     if not product_id:
-        product_id = getattr(getattr(performer, "registration", None), "type_id", None)
+        product_id = getattr(getattr(selected_performer, "registration", None), "type_id", None)
     if not product_id:
         return ""
     cs = ContractSubject.objects.filter(product_id=product_id).first()

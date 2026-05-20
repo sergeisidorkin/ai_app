@@ -1687,6 +1687,7 @@ def _performers_context(user=None):
             "typical_section__expertise_direction",
             "employee",
             "employee__user",
+            "currency",
         )
         .prefetch_related(registration_products_prefetch)
         .annotate(executor_trim=Trim("executor"))
@@ -1838,6 +1839,8 @@ def _performers_context(user=None):
                 registration_id=p.registration_id,
                 registration=p.registration,
                 executor=snap.executor_name,
+                employee_id=snap.employee_id,
+                participation_batch_id=None,
                 asset_name=p.asset_name,
                 typical_section=p.typical_section,
                 request_sent_at=snap.request_sent_at,
@@ -1858,6 +1861,9 @@ def _performers_context(user=None):
         else:
             status_order = 2
         return (
+            getattr(getattr(r, "registration", None), "number", 0) or 0,
+            str(getattr(r, "participation_batch_id", "") or ""),
+            getattr(r, "employee_id", None) or 0,
             r.registration_id or 0,
             r.executor or "",
             status_order,
@@ -2151,6 +2157,123 @@ def _parse_request_sent_at(raw_value: str):
     if timezone.is_naive(value):
         value = timezone.make_aware(value, timezone.get_current_timezone())
     return value.replace(second=0, microsecond=0)
+
+
+def _parse_performer_ids_from_request(request):
+    raw_ids = request.POST.getlist("performer_ids[]") or request.POST.getlist("performer_ids")
+    if not raw_ids:
+        raise ValueError("Не выбраны строки.")
+    try:
+        performer_ids = sorted({int(value) for value in raw_ids if str(value).strip()})
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Передан некорректный список строк.") from exc
+    if not performer_ids:
+        raise ValueError("Не выбраны строки.")
+    return performer_ids
+
+
+def _participation_batch_queryset():
+    return (
+        Performer.objects
+        .select_related(
+            "registration",
+            "registration__type",
+            "typical_section",
+            "typical_section__expertise_direction",
+            "employee",
+            "employee__user",
+            "currency",
+        )
+        .order_by("registration__number", "registration_id", "employee_id", "asset_name", "position", "id")
+    )
+
+
+def _load_participation_batch_performers(performer_ids, *, expand_existing_batches=False):
+    performers = list(_participation_batch_queryset().filter(pk__in=performer_ids))
+    if len(performers) != len(performer_ids):
+        raise ValueError("Часть выбранных строк не найдена.")
+    if expand_existing_batches:
+        batch_ids = {p.participation_batch_id for p in performers if p.participation_batch_id}
+        if batch_ids:
+            expanded = list(_participation_batch_queryset().filter(participation_batch_id__in=batch_ids))
+            by_id = {p.pk: p for p in performers}
+            by_id.update({p.pk: p for p in expanded})
+            performers = sorted(
+                by_id.values(),
+                key=lambda p: (
+                    p.registration.number if p.registration_id else 0,
+                    p.registration_id or 0,
+                    p.employee_id or 0,
+                    p.position or 0,
+                    p.pk,
+                ),
+            )
+    return performers
+
+
+def _active_participation_notification_state(performer_ids, *, actor=None):
+    if not performer_ids:
+        return set(), set()
+    from notifications_app.models import Notification, NotificationPerformerLink
+
+    actor_id = getattr(actor, "pk", None)
+    blocking_ids = set()
+    actor_direction_ids = set()
+    links = (
+        NotificationPerformerLink.objects
+        .select_related("notification")
+        .filter(
+            performer_id__in=performer_ids,
+            notification__notification_type=Notification.NotificationType.PROJECT_PARTICIPATION_CONFIRMATION,
+            notification__is_processed=False,
+        )
+    )
+    for link in links:
+        notification = link.notification
+        payload = notification.payload if isinstance(notification.payload, dict) else {}
+        is_actor_direction = (
+            actor_id
+            and notification.recipient_id == actor_id
+            and payload.get("letter_template_type") == "direction_confirmation"
+        )
+        if is_actor_direction:
+            actor_direction_ids.add(link.performer_id)
+        else:
+            blocking_ids.add(link.performer_id)
+    return blocking_ids, actor_direction_ids
+
+
+def _validate_participation_batch_rows(performers, *, require_unsent=True, actor=None):
+    if not performers:
+        raise ValueError("Не выбраны строки.")
+    missing_employee = [p for p in performers if not p.employee_id]
+    if missing_employee:
+        names = ", ".join(sorted({(p.executor or f"#{p.pk}").strip() for p in missing_employee}))
+        raise ValueError(f"Для части строк не найден сотрудник-получатель: {names}.")
+    employee_ids = {p.employee_id for p in performers}
+    if len(employee_ids) != 1:
+        raise ValueError("Объединять можно только строки одного исполнителя или руководителя направления.")
+    numbers = {p.registration.number for p in performers if p.registration_id}
+    if len(numbers) != 1:
+        raise ValueError("Объединять можно только строки внутри одного четырехзначного номера проекта.")
+    if require_unsent:
+        performer_ids = [p.pk for p in performers]
+        blocking_active_ids, actor_direction_ids = _active_participation_notification_state(performer_ids, actor=actor)
+        sent_rows = [
+            p
+            for p in performers
+            if p.participation_request_sent_at and p.pk not in actor_direction_ids
+        ]
+        if sent_rows:
+            raise ValueError("Нельзя объединять или разъединять строки, по которым уже отправлен запрос подтверждения.")
+        if blocking_active_ids:
+            raise ValueError("Нельзя менять батч, по которому уже есть активное уведомление.")
+
+
+def _participation_base_batch_key(performer):
+    if performer.participation_batch_id:
+        return ("batch", str(performer.participation_batch_id))
+    return ("registration", performer.registration_id, performer.employee_id)
 
 
 def _round_up_to_hour(value):
@@ -2653,15 +2776,67 @@ def performer_form_edit(request, pk: int):
 @login_required
 @user_passes_test(staff_required)
 @require_POST
-def participation_request(request):
-    raw_ids = request.POST.getlist("performer_ids[]") or request.POST.getlist("performer_ids")
-    if not raw_ids:
-        return JsonResponse({"ok": False, "error": "Не выбраны строки для запроса."}, status=400)
-
+def participation_batch_merge(request):
     try:
-        performer_ids = sorted({int(value) for value in raw_ids if str(value).strip()})
-    except (TypeError, ValueError):
-        return JsonResponse({"ok": False, "error": "Передан некорректный список строк."}, status=400)
+        performer_ids = _parse_performer_ids_from_request(request)
+        performers = _load_participation_batch_performers(performer_ids, expand_existing_batches=True)
+        _validate_participation_batch_rows(performers, require_unsent=True, actor=request.user)
+        base_keys = {_participation_base_batch_key(p) for p in performers}
+        if len(base_keys) <= 1:
+            raise ValueError("Для объединения выберите несколько батчей одного получателя внутри одного номера проекта.")
+        batch_id = uuid.uuid4()
+        ids = [p.pk for p in performers]
+        updated = Performer.objects.filter(pk__in=ids).update(participation_batch_id=batch_id)
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "updated": updated,
+            "batch_id": str(batch_id),
+            "performer_ids": ids,
+        }
+    )
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def participation_batch_split(request):
+    try:
+        performer_ids = _parse_performer_ids_from_request(request)
+        selected = _load_participation_batch_performers(performer_ids)
+        batch_ids = {p.participation_batch_id for p in selected if p.participation_batch_id}
+        if len(batch_ids) != 1:
+            raise ValueError("Для разъединения выберите один объединенный батч.")
+        performers = list(_participation_batch_queryset().filter(participation_batch_id__in=batch_ids))
+        _validate_participation_batch_rows(performers, require_unsent=True, actor=request.user)
+        ids = [p.pk for p in performers]
+        updated = Performer.objects.filter(pk__in=ids).update(participation_batch_id=None)
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "updated": updated,
+            "performer_ids": ids,
+        }
+    )
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def participation_request(request):
+    try:
+        performer_ids = _parse_performer_ids_from_request(request)
+    except ValueError as exc:
+        message = str(exc)
+        if message == "Не выбраны строки.":
+            message = "Не выбраны строки для запроса."
+        return JsonResponse({"ok": False, "error": message}, status=400)
 
     try:
         duration_hours = int(request.POST.get("duration_hours") or 0)
@@ -2682,20 +2857,14 @@ def participation_request(request):
         return JsonResponse({"ok": False, "error": str(exc)}, status=400)
 
     deadline_at = _round_up_to_hour(request_sent_at + timedelta(hours=duration_hours))
-    selected_performers = list(
-        Performer.objects
-        .select_related(
-            "registration",
-            "registration__type",
-            "typical_section",
-            "employee",
-            "employee__user",
+    try:
+        selected_performers = _load_participation_batch_performers(
+            performer_ids,
+            expand_existing_batches=True,
         )
-        .filter(pk__in=performer_ids)
-        .order_by("position", "id")
-    )
-    if len(selected_performers) != len(performer_ids):
-        return JsonResponse({"ok": False, "error": "Часть выбранных строк не найдена."}, status=400)
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+    performer_ids = [performer.pk for performer in selected_performers]
 
     try:
         with transaction.atomic():
@@ -2793,6 +2962,7 @@ def contract_request(request):
     )
     if len(selected_performers) != len(performer_ids):
         return JsonResponse({"ok": False, "error": "Часть выбранных строк не найдена."}, status=400)
+    selected_performers = _expand_contract_batch_performers(selected_performers)
 
     try:
         with transaction.atomic():
@@ -3259,6 +3429,61 @@ def contract_project_target_folder_save(request):
     return JsonResponse({"ok": True})
 
 
+def _expand_contract_batch_performers(performers):
+    performer_list = list(performers)
+    group_filter = Q()
+    selected_without_group = []
+    has_group = False
+    for performer in performer_list:
+        if performer.participation_batch_id:
+            addendum_number = getattr(performer, "contract_addendum_number", None) or 0
+            number_filter = Q(contract_addendum_number=addendum_number)
+            if not addendum_number:
+                number_filter |= Q(contract_addendum_number__isnull=True)
+            group_filter |= Q(
+                participation_batch_id=performer.participation_batch_id,
+                contract_batch_id__isnull=False,
+                contract_is_addendum=bool(getattr(performer, "contract_is_addendum", False)),
+            ) & number_filter
+            has_group = True
+        elif performer.contract_batch_id:
+            group_filter |= Q(contract_batch_id=performer.contract_batch_id)
+            has_group = True
+        else:
+            selected_without_group.append(performer.pk)
+    if not has_group:
+        return performer_list
+
+    expanded = list(
+        Performer.objects
+        .filter(group_filter)
+        .select_related(
+            "registration",
+            "registration__type",
+            "typical_section",
+            "employee",
+            "employee__user",
+            "currency",
+        )
+        .order_by("registration_id", "executor", "position", "id")
+    )
+    if selected_without_group:
+        expanded.extend(
+            Performer.objects
+            .filter(pk__in=selected_without_group)
+            .select_related(
+                "registration",
+                "registration__type",
+                "typical_section",
+                "employee",
+                "employee__user",
+                "currency",
+            )
+            .order_by("registration_id", "executor", "position", "id")
+        )
+    return expanded
+
+
 @login_required
 @user_passes_test(staff_required)
 @require_POST
@@ -3280,6 +3505,7 @@ def sign_contract_documents(request):
     )
     if len(performers) != len(performer_ids):
         return JsonResponse({"ok": False, "error": "Часть выбранных строк не найдена."}, status=400)
+    performers = _expand_contract_batch_performers(performers)
 
     if not is_onlyoffice_conversion_configured():
         return JsonResponse(
@@ -3299,7 +3525,14 @@ def sign_contract_documents(request):
         if not folder:
             errors.append(f"Для {label} не задана папка проекта договора.")
             continue
-        key = (performer.registration_id, performer.executor, normalize_cloud_path(folder), docx_name)
+        key = (
+            performer.participation_batch_id or performer.contract_batch_id or performer.registration_id,
+            bool(getattr(performer, "contract_is_addendum", False)),
+            getattr(performer, "contract_addendum_number", None) or 0,
+            performer.executor,
+            normalize_cloud_path(folder),
+            docx_name,
+        )
         grouped.setdefault(key, []).append(performer)
 
     updated_ids: set[int] = set()
@@ -3384,6 +3617,7 @@ def sign_performer_contract_documents(request):
     )
     if len(performers) != len(performer_ids):
         return JsonResponse({"ok": False, "error": "Часть выбранных строк не найдена."}, status=400)
+    performers = _expand_contract_batch_performers(performers)
 
     if not is_onlyoffice_conversion_configured():
         return JsonResponse(
@@ -3411,7 +3645,14 @@ def sign_performer_contract_documents(request):
         if not has_performer_facsimile:
             errors.append(_contract_performer_facsimile_missing_message(label, performer))
             continue
-        key = (performer.registration_id, performer.executor, normalize_cloud_path(folder), docx_name)
+        key = (
+            performer.participation_batch_id or performer.contract_batch_id or performer.registration_id,
+            bool(getattr(performer, "contract_is_addendum", False)),
+            getattr(performer, "contract_addendum_number", None) or 0,
+            performer.executor,
+            normalize_cloud_path(folder),
+            docx_name,
+        )
         grouped.setdefault(key, []).append(performer)
 
     updated_ids: set[int] = set()
@@ -3518,17 +3759,46 @@ def create_contract_project(request):
     except (TypeError, ValueError):
         return JsonResponse({"ok": False, "error": "Некорректные ID."}, status=400)
 
-    performers = list(
+    base_performer_qs = (
         Performer.objects
-        .filter(pk__in=ids, contract_sent_at__isnull=True)
         .select_related(
             "registration", "registration__type", "registration__country",
             "typical_section", "employee", "contract_group_member",
         )
+    )
+    performers = list(
+        base_performer_qs
+        .filter(pk__in=ids, contract_sent_at__isnull=True)
         .order_by("position", "id")
     )
     if not performers:
         return JsonResponse({"ok": False, "error": "Нет доступных строк для создания проекта договора."}, status=400)
+    participation_batch_ids = {p.participation_batch_id for p in performers if p.participation_batch_id}
+    if participation_batch_ids:
+        by_id = {p.pk: p for p in performers}
+        expanded = list(
+            base_performer_qs
+            .filter(
+                participation_batch_id__in=participation_batch_ids,
+                contract_sent_at__isnull=True,
+                participation_response=Performer.ParticipationResponse.CONFIRMED,
+                employee__employment=FREELANCER_LABEL,
+            )
+            .exclude(executor="")
+            .order_by("registration__agreement_sequence", "registration_id", "position", "id")
+        )
+        by_id.update({p.pk: p for p in expanded})
+        performers = sorted(
+            by_id.values(),
+            key=lambda p: (
+                str(p.participation_batch_id or ""),
+                p.registration.number if p.registration_id else 0,
+                p.registration.agreement_sequence if p.registration_id else 0,
+                p.registration_id or 0,
+                p.position or 0,
+                p.pk,
+            ),
+        )
 
     try:
         disk_root = get_selected_root_path(request.user)
@@ -3569,9 +3839,9 @@ def create_contract_project(request):
         ):
             expert_cache[ep.employee_id] = ep
 
-    def _contract_project_file_name(perf, original_name):
+    def _contract_project_file_name(perf, original_name, batch_performers=None):
         ext = os.path.splitext(original_name or "")[1] or ".docx"
-        return build_contract_file_name(perf, extension=ext)
+        return build_contract_file_name(perf, extension=ext, batch_performers=batch_performers)
 
     def _ensure_cloud_folder_path(path):
         normalized = normalize_cloud_path(path)
@@ -3723,8 +3993,13 @@ def create_contract_project(request):
     unique_entries = []
     executor_to_ids = {}
     executor_to_perfs = {}
+    def _contract_creation_group_key(perf):
+        if perf.participation_batch_id:
+            return ("participation_batch", str(perf.participation_batch_id), perf.executor)
+        return ("registration", perf.registration_id, perf.executor)
+
     for perf in performers:
-        key = (perf.registration_id, perf.executor)
+        key = _contract_creation_group_key(perf)
         executor_to_ids.setdefault(key, []).append(perf.pk)
         executor_to_perfs.setdefault(key, []).append(perf)
         if key in seen_executors:
@@ -3751,7 +4026,7 @@ def create_contract_project(request):
 
             for perf in unique_entries:
                 project = perf.registration
-                key = (perf.registration_id, perf.executor)
+                key = _contract_creation_group_key(perf)
                 all_perfs_for_executor = executor_to_perfs[key]
                 selected_folder_performer = next(
                     (
@@ -3835,18 +4110,19 @@ def create_contract_project(request):
                 created_ids.extend(executor_to_ids[key])
 
                 now_dt = timezone.now()
-                reg_id, executor_val = key
+                _group_kind, group_value, executor_val = key
                 if selected_folder_performer is not None:
                     is_addendum = bool(existing_folder_performer.contract_is_addendum)
                     addendum_number = existing_folder_performer.contract_addendum_number
                 else:
+                    existing_batch_filter = Q(executor=executor_val)
+                    if perf.participation_batch_id:
+                        existing_batch_filter &= Q(participation_batch_id=perf.participation_batch_id)
+                    else:
+                        existing_batch_filter &= Q(registration_id=group_value)
                     existing_batch_count = (
                         Performer.objects
-                        .filter(
-                            registration_id=reg_id,
-                            executor=executor_val,
-                            contract_batch_id__isnull=False,
-                        )
+                        .filter(existing_batch_filter, contract_batch_id__isnull=False)
                         .filter(Q(contract_project_created=True) | ~Q(contract_project_disk_folder=""))
                         .values("contract_batch_id")
                         .distinct()
@@ -3856,14 +4132,14 @@ def create_contract_project(request):
                     addendum_number = existing_batch_count if is_addendum else None
 
                 if is_addendum:
+                    first_performer_filter = Q(executor=executor_val)
+                    if perf.participation_batch_id:
+                        first_performer_filter &= Q(participation_batch_id=perf.participation_batch_id)
+                    else:
+                        first_performer_filter &= Q(registration_id=group_value)
                     first_performer = (
                         Performer.objects
-                        .filter(
-                            registration_id=reg_id,
-                            executor=executor_val,
-                            contract_batch_id__isnull=False,
-                            contract_is_addendum=False,
-                        )
+                        .filter(first_performer_filter, contract_batch_id__isnull=False, contract_is_addendum=False)
                         .filter(Q(contract_project_created=True) | ~Q(contract_project_disk_folder=""))
                         .order_by("contract_sent_at", "id")
                         .first()
@@ -3934,7 +4210,11 @@ def create_contract_project(request):
                                 )
 
                         original_name = tmpl.file.name.split("/")[-1]
-                        upload_name = _contract_project_file_name(perf, original_name)
+                        upload_name = _contract_project_file_name(
+                            perf,
+                            original_name,
+                            batch_performers=all_perfs_for_executor,
+                        )
                         upload_path = f"{folder_path}/{upload_name}"
                         if not cloud_upload_file(request.user, upload_path, file_data):
                             errors.append(f"Загрузка файла: {upload_name} → {folder_name}")

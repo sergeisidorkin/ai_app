@@ -60,6 +60,21 @@
     });
   }
 
+  function rememberParticipationCollapseButtonState() {
+    var root = pane();
+    var section = root ? root.querySelector('#participation-confirmation-section') : null;
+    if (!section) return;
+    var assetToggle = section.querySelector('#participation-asset-toggle');
+    var sectionToggle = section.querySelector('#participation-section-toggle');
+    if (assetToggle) {
+      window.__participationAssetCollapsed = assetToggle.classList.contains('active');
+    }
+    if (sectionToggle) {
+      window.__participationSectionCollapsed = sectionToggle.classList.contains('active');
+    }
+    saveCollapsePrefs();
+  }
+
   function pane() { return document.getElementById('performers-pane'); }
   function contractPane() {
     var contractsRoot = document.getElementById('contracts-pane');
@@ -165,6 +180,9 @@
   function getParticipationRequestBtn() {
     return pane()?.querySelector('#participation-request-btn');
   }
+  function getParticipationBatchActionBtn() {
+    return pane()?.querySelector('#participation-batch-action-btn');
+  }
   function getParticipationRequestPanel() {
     return pane()?.querySelector('#participation-request-actions');
   }
@@ -188,6 +206,58 @@
       .map((row) => row.querySelector('input[name="participation-select"]'))
       .filter((checkbox) => checkbox && !checkbox.disabled);
   }
+  function getParticipationRecipientKey(row) {
+    return row?.dataset?.recipientId || row?.dataset?.executor || '';
+  }
+  function getParticipationBaseGroupKey(row) {
+    return (row?.dataset?.projectId || '') + '||' + getParticipationRecipientKey(row);
+  }
+  function getParticipationGroupKey(row) {
+    var batchId = row?.dataset?.participationBatchId || '';
+    if (batchId) return 'batch||' + batchId;
+    return 'base||' + getParticipationBaseGroupKey(row);
+  }
+  function getSelectedParticipationRequestIds() {
+    const selectedGroups = new Set();
+    getVisibleParticipationChecks()
+      .filter((checkbox) => checkbox.checked && checkbox.dataset.requestSent !== '1')
+      .forEach((checkbox) => selectedGroups.add(getParticipationGroupKey(checkbox.closest('tr'))));
+
+    const ids = new Set();
+    getParticipationRows().forEach((row) => {
+      if (!selectedGroups.has(getParticipationGroupKey(row))) return;
+      const checkbox = row.querySelector('input[name="participation-select"]');
+      if (checkbox && !checkbox.disabled && checkbox.dataset.requestSent !== '1') ids.add(checkbox.value);
+    });
+    return Array.from(ids);
+  }
+  function getParticipationBatchActionState() {
+    const selected = getVisibleParticipationChecks()
+      .filter((checkbox) => checkbox.checked && checkbox.dataset.requestSent !== '1');
+    if (!selected.length) return { mode: '', ids: [] };
+
+    const rows = selected.map((checkbox) => checkbox.closest('tr')).filter(Boolean);
+    const numbers = new Set(rows.map((row) => row.dataset.projectNumber || ''));
+    const recipients = new Set(rows.map((row) => row.dataset.recipientId || ''));
+    if (numbers.size !== 1 || recipients.size !== 1 || numbers.has('') || recipients.has('')) {
+      return { mode: '', ids: [] };
+    }
+
+    const batchIds = new Set(rows.map((row) => row.dataset.participationBatchId || '').filter(Boolean));
+    const ids = selected.map((checkbox) => checkbox.value);
+    if (batchIds.size === 1) {
+      return { mode: 'split', ids };
+    }
+    if (batchIds.size > 1) {
+      return { mode: '', ids: [] };
+    }
+
+    const baseGroups = new Set(rows.map(getParticipationBaseGroupKey));
+    if (baseGroups.size > 1) {
+      return { mode: 'merge', ids };
+    }
+    return { mode: '', ids: [] };
+  }
   function updateParticipationState() {
     const boxes = getVisibleParticipationChecks();
     const checkedCount = boxes.filter(b => b.checked).length;
@@ -200,6 +270,16 @@
 
     const requestBtn = getParticipationRequestBtn();
     if (requestBtn) requestBtn.disabled = checkedCount === 0;
+
+    const batchActionBtn = getParticipationBatchActionBtn();
+    if (batchActionBtn) {
+      const actionState = getParticipationBatchActionState();
+      const visible = !!actionState.mode;
+      batchActionBtn.classList.toggle('d-none', !visible);
+      batchActionBtn.disabled = !visible;
+      batchActionBtn.dataset.mode = actionState.mode || '';
+      batchActionBtn.textContent = actionState.mode === 'split' ? 'Разъединить' : 'Объединить';
+    }
 
     const controls = getParticipationDeadlineControls();
     if (controls) {
@@ -313,9 +393,13 @@
       .filter((checkbox) => checkbox && !checkbox.disabled);
   }
   function getContractGroupKey(row, includeBatch) {
-    var baseKey = (row?.dataset?.projectId || '') + '||' + (row?.dataset?.executor || '');
-    var batchId = includeBatch ? (row?.dataset?.contractBatchId || '') : '';
-    return batchId ? baseKey + '||' + batchId : baseKey;
+    if (includeBatch) {
+      var participationBatchId = row?.dataset?.participationBatchId || '';
+      if (participationBatchId) return 'participation-batch||' + participationBatchId;
+      var batchId = row?.dataset?.contractBatchId || '';
+      if (batchId) return 'batch||' + batchId;
+    }
+    return (row?.dataset?.projectId || '') + '||' + (row?.dataset?.executor || '');
   }
   function getSelectedContractDispatchIds() {
     const selectedGroups = new Set();
@@ -421,7 +505,9 @@
     var bodies = Array.from(sectionEl.querySelectorAll('table.performers-table tbody'));
     bodies.forEach(function(tbody) {
       var rows = Array.from(tbody.querySelectorAll('tr[data-project-id]'));
-      var isContractDispatchTable = tbody.closest('table')?.id === 'contract-dispatch-table';
+      var table = tbody.closest('table');
+      var isContractDispatchTable = table?.id === 'contract-dispatch-table';
+      var isContractDraftingTable = table?.id === 'contract-drafting-table';
       if (isContractDispatchTable) {
         rows.forEach(function(row) {
           if (row.classList.contains('contract-dispatch-collapsed')) {
@@ -432,22 +518,39 @@
       var prevGroupKey = null;
       var prevAssetKey = null;
       var prevDetailTexts = null;
-      var includeContractBatchInGroup = tbody.closest('table')?.id === 'contract-dispatch-table';
+      var prevGroupTexts = null;
+      var includeContractBatchInGroup = isContractDispatchTable || isContractDraftingTable;
+      var isParticipationTable = !!tbody.closest('#participation-confirmation-section');
       rows.forEach(function(row) {
         row.classList.remove('group-first', 'group-cont', 'asset-cont');
+        var groupCells = row.querySelectorAll('.cell-group-val');
+        groupCells.forEach(function(c) { c.classList.remove('cell-group-repeated'); });
         var detailCells = row.querySelectorAll('.cell-detail-val');
         detailCells.forEach(function(c) { c.classList.remove('cell-repeated'); });
         if (isFilterHidden(row)) return;
-        var groupKey = getContractGroupKey(row, includeContractBatchInGroup);
+        var groupKey = isParticipationTable
+          ? getParticipationGroupKey(row)
+          : getContractGroupKey(row, includeContractBatchInGroup);
         var assetKey = groupKey + '||' + (row.dataset.assetName || '');
         if (groupKey !== prevGroupKey) {
           row.classList.add('group-first');
           prevDetailTexts = null;
+          prevGroupTexts = null;
         } else {
           row.classList.add('group-cont');
           if (assetKey === prevAssetKey) {
             row.classList.add('asset-cont');
           }
+        }
+        var curGroupTexts = [];
+        if (isParticipationTable || isContractDraftingTable) {
+          groupCells.forEach(function(c, i) {
+            var txt = c.textContent.trim();
+            curGroupTexts.push(txt);
+            if (prevGroupTexts && prevGroupTexts[i] === txt) {
+              c.classList.add('cell-group-repeated');
+            }
+          });
         }
         var curDetailTexts = [];
         detailCells.forEach(function(c, i) {
@@ -460,6 +563,7 @@
         prevGroupKey = groupKey;
         prevAssetKey = assetKey;
         prevDetailTexts = curDetailTexts;
+        prevGroupTexts = curGroupTexts;
       });
 
       if (isContractDispatchTable) {
@@ -594,6 +698,16 @@
         td.innerHTML = td.dataset.originalTypical;
         delete td.dataset.originalTypical;
       }
+      var projectTd = row.querySelector('.cell-project-val');
+      if (projectTd && projectTd.dataset.originalProject !== undefined) {
+        projectTd.innerHTML = projectTd.dataset.originalProject;
+        delete projectTd.dataset.originalProject;
+      }
+      var typeTd = row.querySelector('.cell-type-val');
+      if (typeTd && typeTd.dataset.originalType !== undefined) {
+        typeTd.innerHTML = typeTd.dataset.originalType;
+        delete typeTd.dataset.originalType;
+      }
       if (row.classList.contains('section-collapsed')) {
         row.classList.remove('section-collapsed');
         var pid = row.dataset.projectId || '';
@@ -604,12 +718,55 @@
     });
   }
 
+  function participationCollapsedTypeLabel(rows) {
+    var byProject = new Map();
+    rows.forEach(function(row) {
+      var projectId = row.dataset.projectId || '';
+      var projectType = (row.dataset.projectType || '').trim();
+      if (!projectId || !projectType || byProject.has(projectId)) return;
+      var stage = parseInt(row.dataset.projectStage || '0', 10);
+      byProject.set(projectId, {
+        stage: Number.isFinite(stage) ? stage : 0,
+        projectId: projectId,
+        type: projectType,
+      });
+    });
+    return Array.from(byProject.values())
+      .sort(function(a, b) {
+        if (a.stage !== b.stage) return a.stage - b.stage;
+        return String(a.projectId).localeCompare(String(b.projectId), undefined, { numeric: true });
+      })
+      .map(function(item) { return item.type; })
+      .join('-');
+  }
+
+  function applyCollapsedParticipationProjectType(currentFirst, currentRows) {
+    if (!currentFirst || !currentRows || currentRows.length < 2) return;
+    var batchId = currentFirst.dataset.participationBatchId || '';
+    if (!batchId) return;
+    var projectIds = new Set(currentRows.map(function(row) { return row.dataset.projectId || ''; }).filter(Boolean));
+    if (projectIds.size <= 1) return;
+
+    var projectTd = currentFirst.querySelector('.cell-project-val');
+    if (projectTd) {
+      projectTd.dataset.originalProject = projectTd.innerHTML;
+      projectTd.textContent = '';
+    }
+    var typeTd = currentFirst.querySelector('.cell-type-val');
+    var typeLabel = participationCollapsedTypeLabel(currentRows);
+    if (typeTd && typeLabel) {
+      typeTd.dataset.originalType = typeTd.innerHTML;
+      typeTd.textContent = typeLabel;
+    }
+  }
+
   function collapseParticipationSections(sectionEl) {
     if (!sectionEl) return;
     var tbody = sectionEl.querySelector('table.performers-table tbody');
     if (!tbody) return;
     var rows = Array.from(tbody.querySelectorAll('tr[data-project-id]'));
     var currentFirst = null;
+    var currentRows = [];
     var currentCount = 0;
     function finishGroup() {
       if (!currentFirst) return;
@@ -618,14 +775,17 @@
         td.dataset.originalTypical = td.innerHTML;
         td.textContent = pluralSections(currentCount);
       }
+      applyCollapsedParticipationProjectType(currentFirst, currentRows);
     }
     rows.forEach(function(row) {
       if (row.classList.contains('d-none')) return;
       if (!row.classList.contains('asset-cont')) {
         finishGroup();
         currentFirst = row;
+        currentRows = [row];
         currentCount = 1;
       } else {
+        currentRows.push(row);
         currentCount++;
         row.classList.add('d-none', 'section-collapsed');
       }
@@ -731,6 +891,16 @@
         typicalTd.innerHTML = typicalTd.dataset.originalTypicalAsset;
         delete typicalTd.dataset.originalTypicalAsset;
       }
+      var projectTd = row.querySelector('.cell-project-val');
+      if (projectTd && projectTd.dataset.originalProject !== undefined) {
+        projectTd.innerHTML = projectTd.dataset.originalProject;
+        delete projectTd.dataset.originalProject;
+      }
+      var typeTd = row.querySelector('.cell-type-val');
+      if (typeTd && typeTd.dataset.originalType !== undefined) {
+        typeTd.innerHTML = typeTd.dataset.originalType;
+        delete typeTd.dataset.originalType;
+      }
       if (row.classList.contains('asset-collapsed')) {
         row.classList.remove('asset-collapsed');
         var pid = row.dataset.projectId || '';
@@ -763,6 +933,7 @@
         assetSet.add(r.dataset.assetName || '');
         totalSections++;
       });
+      var visibleGroupRows = groupRows.filter(function(r) { return !r.classList.contains('d-none'); });
       for (var k = 1; k < groupRows.length; k++) {
         if (!groupRows[k].classList.contains('d-none')) {
           groupRows[k].classList.add('d-none', 'asset-collapsed');
@@ -778,6 +949,7 @@
         typicalTd.dataset.originalTypicalAsset = typicalTd.innerHTML;
         typicalTd.textContent = pluralSections(totalSections);
       }
+      applyCollapsedParticipationProjectType(row, visibleGroupRows);
       i = j;
     }
     applyRowGrouping(sectionEl);
@@ -983,6 +1155,16 @@
         td.innerHTML = td.dataset.originalTypical;
         delete td.dataset.originalTypical;
       }
+      var projectTd = row.querySelector('.cell-project-val');
+      if (projectTd && projectTd.dataset.originalProject !== undefined) {
+        projectTd.innerHTML = projectTd.dataset.originalProject;
+        delete projectTd.dataset.originalProject;
+      }
+      var typeTd = row.querySelector('.cell-type-val');
+      if (typeTd && typeTd.dataset.originalType !== undefined) {
+        typeTd.innerHTML = typeTd.dataset.originalType;
+        delete typeTd.dataset.originalType;
+      }
       if (row.classList.contains('section-collapsed')) {
         row.classList.remove('section-collapsed');
         var pid = row.dataset.projectId || '';
@@ -1014,6 +1196,16 @@
       if (typicalTd && typicalTd.dataset.originalTypicalAsset !== undefined) {
         typicalTd.innerHTML = typicalTd.dataset.originalTypicalAsset;
         delete typicalTd.dataset.originalTypicalAsset;
+      }
+      var projectTd = row.querySelector('.cell-project-val');
+      if (projectTd && projectTd.dataset.originalProject !== undefined) {
+        projectTd.innerHTML = projectTd.dataset.originalProject;
+        delete projectTd.dataset.originalProject;
+      }
+      var typeTd = row.querySelector('.cell-type-val');
+      if (typeTd && typeTd.dataset.originalType !== undefined) {
+        typeTd.innerHTML = typeTd.dataset.originalType;
+        delete typeTd.dataset.originalType;
       }
       if (row.classList.contains('asset-collapsed')) {
         row.classList.remove('asset-collapsed');
@@ -1888,10 +2080,47 @@
       return;
     }
 
+    const participationBatchActionBtn = e.target.closest('#participation-batch-action-btn');
+    if (participationBatchActionBtn && root.contains(participationBatchActionBtn)) {
+      const actionState = getParticipationBatchActionState();
+      if (!actionState.mode || participationBatchActionBtn.disabled) return;
+
+      const requestPanel = getParticipationRequestPanel();
+      const url = actionState.mode === 'split'
+        ? requestPanel?.dataset?.splitUrl
+        : requestPanel?.dataset?.mergeUrl;
+      if (!url) return;
+
+      const formData = new FormData();
+      actionState.ids.forEach((id) => formData.append('performer_ids[]', id));
+
+      participationBatchActionBtn.disabled = true;
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'X-CSRFToken': csrftoken },
+          body: formData,
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+          throw new Error(data?.error || 'Не удалось изменить объединение батча.');
+        }
+        rememberParticipationCollapseButtonState();
+        window.__tableSel['participation-select'] = [];
+        window.__tableSelLast = null;
+        document.body.dispatchEvent(new Event('performers-updated'));
+      } catch (err) {
+        alert(err.message || 'Не удалось изменить объединение батча.');
+        updateParticipationState();
+      }
+      return;
+    }
+
     const requestBtn = e.target.closest('#participation-request-btn');
     if (requestBtn && root.contains(requestBtn)) {
       const checked = getVisibleParticipationChecks().filter((cb) => cb.checked && cb.dataset.requestSent !== '1');
-      if (!checked.length || requestBtn.disabled) return;
+      const performerIds = getSelectedParticipationRequestIds();
+      if (!checked.length || !performerIds.length || requestBtn.disabled) return;
 
       const requestPanel = getParticipationRequestPanel();
       const requestUrl = requestPanel?.dataset?.requestUrl;
@@ -1912,7 +2141,7 @@
       if (!requestUrl) return;
 
       const formData = new FormData();
-      checked.forEach((cb) => formData.append('performer_ids[]', cb.value));
+      performerIds.forEach((id) => formData.append('performer_ids[]', id));
       formData.append('duration_hours', String(durationHours));
       formData.append('request_sent_at', sentAtInput?.value || '');
       selectedChannels.forEach((value) => formData.append('delivery_channels[]', value));
