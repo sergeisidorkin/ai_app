@@ -26,6 +26,7 @@ def render_template(body_html, variables: dict, safe_keys=frozenset()) -> str:
         replacement = str(value) if key in safe_keys else _html_escape(str(value))
         result = result.replace("{{" + key + "}}", replacement)
         result = result.replace("{" + key + "}", replacement)
+        result = result.replace("[" + key + "]", replacement)
     return result
 
 
@@ -35,4 +36,5 @@ def render_subject(subject_template, variables: dict) -> str:
     for key, value in variables.items():
         result = result.replace("{{" + key + "}}", str(value))
         result = result.replace("{" + key + "}", str(value))
+        result = result.replace("[" + key + "]", str(value))
     return result

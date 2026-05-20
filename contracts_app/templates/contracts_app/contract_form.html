@@ -17,9 +17,9 @@
 
     <div class="row g-3">
       <div class="col-md-3">
-        <label class="form-label">Проект</label>
+        <label class="form-label">Номер</label>
         <input type="text" class="form-control readonly-field" readonly tabindex="-1"
-               value="{% if performer.registration %}{{ performer.registration.short_uid }}{% endif %}">
+               value="{{ performer.contract_number_display }}">
       </div>
       <div class="col-md-3">
         <label class="form-label">Группа</label>
@@ -31,13 +31,37 @@
       <div class="col-md-3">
         <label class="form-label">Тип</label>
         <input type="text" class="form-control readonly-field" readonly tabindex="-1"
-               value="{{ performer.registration.type_short_display }}">
+               value="{% if performer.contract_type_display %}{{ performer.contract_type_display }}{% else %}{{ performer.registration.type_short_display }}{% endif %}">
       </div>
       <div class="col-md-3">
         <label class="form-label">Название</label>
         <input type="text" class="form-control readonly-field" readonly tabindex="-1"
                value="{{ performer.registration.name }}">
       </div>
+
+      {% for stage_row in performer.contract_stage_rows %}
+        <div class="col-md-6">
+          {% if forloop.first %}<label class="form-label">Этап</label>{% endif %}
+          <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+                 value="{{ stage_row.stage }}">
+        </div>
+        <div class="col-md-6">
+          {% if forloop.first %}<label class="form-label">Продукт</label>{% endif %}
+          <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+                 value="{{ stage_row.product }}">
+        </div>
+      {% empty %}
+        <div class="col-md-6">
+          <label class="form-label">Этап</label>
+          <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+                 value="{% if performer.registration %}{{ performer.registration.short_uid }}{% endif %}">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Продукт</label>
+          <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+                 value="{% if performer.registration %}{{ performer.registration.type_short_display }}{% endif %}">
+        </div>
+      {% endfor %}
 
       <div class="col-md-6">
         <label class="form-label">Исполнитель</label>
@@ -67,13 +91,13 @@
         <label class="form-label">Срок</label>
         <input type="text" class="form-control readonly-field" id="contracts-term-days-field"
                readonly tabindex="-1"
-               data-deadline="{% if performer.registration.deadline %}{{ performer.registration.deadline|date:'Y-m-d' }}{% endif %}"
+               data-deadline="{{ performer.contract_project_deadline_iso }}"
                value="{% if performer.contract_term_days != None %}{{ performer.contract_term_days }} дн.{% else %}—{% endif %}">
       </div>
       <div class="col-md-3">
         <label class="form-label">Дедлайн</label>
         <input type="text" class="form-control readonly-field" readonly tabindex="-1"
-               value="{% if performer.registration.deadline %}{{ performer.registration.deadline|date:'d.m.Y' }}{% else %}—{% endif %}">
+               value="{{ performer.contract_project_deadline_display|default:'—' }}">
       </div>
 
       <div class="col-md-3">

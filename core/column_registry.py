@@ -347,6 +347,7 @@ COLUMN_REGISTRY = {
             "performers": {
                 "label": "Исполнители",
                 "columns": {
+                    "number": "Номер",
                     "project": "Проект",
                     "type": "Тип",
                     "name": "Название",
@@ -365,6 +366,7 @@ COLUMN_REGISTRY = {
             "participation_confirmation": {
                 "label": "Подтверждение участия",
                 "columns": {
+                    "number": "Номер",
                     "project": "Проект",
                     "type": "Тип",
                     "name": "Название",
@@ -382,7 +384,8 @@ COLUMN_REGISTRY = {
             "contract_conclusion": {
                 "label": "Составление проекта договора",
                 "columns": {
-                    "project": "Проект",
+                    "number": "Номер",
+                    "project": "Этап",
                     "type": "Тип",
                     "name": "Название",
                     "performer": "Исполнитель",
@@ -398,7 +401,8 @@ COLUMN_REGISTRY = {
             "contract_dispatch": {
                 "label": "Отправка проекта договора",
                 "columns": {
-                    "project": "Проект",
+                    "number": "Номер",
+                    "project": "Этап",
                     "type": "Тип",
                     "name": "Название",
                     "performer": "Исполнитель",

@@ -1095,6 +1095,7 @@ class Performer(models.Model):
     contract_number = models.CharField("Номер договора", max_length=100, blank=True, default="")
     participation_request_sent_at = models.DateTimeField("Дата отправки запроса", null=True, blank=True)
     participation_deadline_at = models.DateTimeField("Срок подтверждения", null=True, blank=True)
+    participation_batch_id = models.UUIDField("ID батча подтверждения участия", null=True, blank=True, db_index=True)
     participation_response = models.CharField(
         "Ответ на запрос",
         max_length=20,
@@ -1216,6 +1217,7 @@ class Performer(models.Model):
             self.participation_deadline_at = None
             self.participation_response = ""
             self.participation_response_at = None
+            self.participation_batch_id = None
         if self.prepayment is not None:
             self.final_payment = Decimal("100") - Decimal(str(self.prepayment))
         super().save(*args, **kwargs)

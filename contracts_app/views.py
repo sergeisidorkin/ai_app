@@ -320,6 +320,203 @@ def _attach_contract_group_members(performers):
     return performer_list
 
 
+def _contract_stage(project):
+    return int(getattr(project, "agreement_sequence", 0) or 1)
+
+
+def _contract_batch_type_display(performers):
+    items = []
+    seen = set()
+    for performer in performers:
+        project = getattr(performer, "registration", None)
+        if not project:
+            continue
+        project_type = (getattr(project, "type_short_display", "") or "").strip()
+        if not project_type or project_type in seen:
+            continue
+        seen.add(project_type)
+        items.append((_contract_stage(project), project.pk or 0, project_type))
+    items.sort(key=lambda item: (item[0], item[1], item[2]))
+    return "-".join(item[2] for item in items)
+
+
+def _contract_batch_deadline_display(performers):
+    deadlines = [
+        performer.registration.deadline
+        for performer in performers
+        if getattr(performer, "registration", None) and performer.registration.deadline
+    ]
+    if not deadlines:
+        return ""
+    return max(deadlines).strftime("%d.%m.%Y")
+
+
+def _contract_batch_deadline_iso(performers):
+    deadlines = [
+        performer.registration.deadline
+        for performer in performers
+        if getattr(performer, "registration", None) and performer.registration.deadline
+    ]
+    return max(deadlines).isoformat() if deadlines else ""
+
+
+def _contract_number_display(project):
+    if not project:
+        return ""
+    short_uid = (getattr(project, "short_uid", "") or "").strip()
+    suffix = short_uid[-3:] if len(short_uid) >= 3 else f"{project.group_order_number}{project.group_alpha2}"
+    return f"{project.formatted_number}{suffix}"
+
+
+def _contract_product_display(project):
+    product_type = (getattr(project, "type_short_display", "") or "").strip()
+    products = project.ordered_products() if project else []
+    if products:
+        product = products[0]
+        short_name = (getattr(product, "short_name", "") or "").strip()
+        display_name = (
+            (getattr(product, "display_name", "") or "").strip()
+            or (getattr(product, "name_ru", "") or "").strip()
+            or (getattr(product, "name_en", "") or "").strip()
+        )
+        if short_name and display_name:
+            return f"{short_name} {display_name}"
+        return short_name or display_name or product_type
+    return product_type
+
+
+def _contract_batch_stage_rows(performers):
+    items = []
+    seen = set()
+    for performer in performers:
+        project = getattr(performer, "registration", None)
+        if not project or project.pk in seen:
+            continue
+        seen.add(project.pk)
+        items.append(
+            {
+                "sort_key": (_contract_stage(project), project.pk or 0),
+                "stage": project.short_uid,
+                "product": _contract_product_display(project),
+            }
+        )
+    items.sort(key=lambda item: item["sort_key"])
+    return [
+        {"stage": item["stage"], "product": item["product"]}
+        for item in items
+    ]
+
+
+def _contract_representative_key(performer):
+    if performer.participation_batch_id:
+        return (
+            "participation_batch",
+            performer.participation_batch_id,
+            bool(getattr(performer, "contract_is_addendum", False)),
+            getattr(performer, "contract_addendum_number", None) or 0,
+        )
+    if performer.contract_batch_id:
+        return ("contract_batch", performer.contract_batch_id)
+    return ("performer", performer.pk)
+
+
+def _contract_representative_filter(performer):
+    if performer.participation_batch_id:
+        addendum_number = getattr(performer, "contract_addendum_number", None) or 0
+        number_filter = Q(contract_addendum_number=addendum_number)
+        if not addendum_number:
+            number_filter |= Q(contract_addendum_number__isnull=True)
+        return Q(
+            participation_batch_id=performer.participation_batch_id,
+            contract_batch_id__isnull=False,
+            contract_is_addendum=bool(getattr(performer, "contract_is_addendum", False)),
+        ) & number_filter
+    if performer.contract_batch_id:
+        return Q(contract_batch_id=performer.contract_batch_id)
+    return Q(pk=performer.pk)
+
+
+def _contract_representative_rows(performers):
+    representatives = []
+    representatives_by_key = {}
+    for performer in performers:
+        key = _contract_representative_key(performer)
+        representative = representatives_by_key.get(key)
+        if representative is None:
+            representatives_by_key[key] = performer
+            representatives.append(performer)
+            continue
+        if (
+            not (representative.contract_signing_note or "").strip()
+            and (performer.contract_signing_note or "").strip()
+        ):
+            representative.contract_signing_note = performer.contract_signing_note
+    return representatives
+
+
+def _attach_contract_batch_display_fields(performers):
+    performer_list = list(performers)
+    contract_batch_ids = {performer.contract_batch_id for performer in performer_list if performer.contract_batch_id}
+    participation_batch_ids = {
+        performer.participation_batch_id
+        for performer in performer_list
+        if performer.participation_batch_id
+    }
+    batch_map = {}
+    if contract_batch_ids:
+        rows = (
+            Performer.objects
+            .select_related("registration", "registration__type")
+            .filter(contract_batch_id__in=contract_batch_ids)
+            .order_by("registration__agreement_sequence", "registration_id", "position", "id")
+        )
+        for performer in rows:
+            batch_map.setdefault(("contract_batch", performer.contract_batch_id), []).append(performer)
+    if participation_batch_ids:
+        rows = (
+            Performer.objects
+            .select_related("registration", "registration__type")
+            .filter(
+                participation_batch_id__in=participation_batch_ids,
+                participation_response=Performer.ParticipationResponse.CONFIRMED,
+                employee__employment=FREELANCER_LABEL,
+            )
+            .order_by("registration__agreement_sequence", "registration_id", "position", "id")
+        )
+        for performer in rows:
+            batch_map.setdefault(_contract_representative_key(performer), []).append(performer)
+
+    for performer in performer_list:
+        batch_performers = batch_map.get(_contract_representative_key(performer), [performer])
+        stage_rows = _contract_batch_stage_rows(batch_performers)
+        is_multi_stage = len(stage_rows) > 1
+        first_project = getattr(performer, "registration", None)
+        performer.contract_type_display = (
+            _contract_batch_type_display(batch_performers)
+            or getattr(getattr(performer, "registration", None), "type_short_display", "")
+        )
+        performer.contract_number_display = _contract_number_display(first_project)
+        performer.contract_stage_display = "" if is_multi_stage else (first_project.short_uid if first_project else "")
+        performer.contract_stage_rows = stage_rows
+        performer.contract_project_deadline_display = (
+            _contract_batch_deadline_display(batch_performers)
+            or (
+                performer.registration.deadline.strftime("%d.%m.%Y")
+                if getattr(performer, "registration", None) and performer.registration.deadline
+                else ""
+            )
+        )
+        performer.contract_project_deadline_iso = (
+            _contract_batch_deadline_iso(batch_performers)
+            or (
+                performer.registration.deadline.isoformat()
+                if getattr(performer, "registration", None) and performer.registration.deadline
+                else ""
+            )
+        )
+    return performer_list
+
+
 def _contracts_context(user=None):
     active_participation_statuses = ["Не начат", "В работе"]
     registration_products_prefetch = models.Prefetch(
@@ -338,7 +535,7 @@ def _contracts_context(user=None):
             .order_by("rank", "id")
         ),
     )
-    contract_conclusion_performers = (
+    contract_conclusion_performers_qs = (
         Performer.objects
         .select_related(
             "registration",
@@ -367,7 +564,7 @@ def _contracts_context(user=None):
         .order_by("registration_id", "executor", "contract_sent_order", "contract_batch_id", "asset_name", "position", "id")
     )
     contract_conclusion_project_ids = (
-        contract_conclusion_performers
+        contract_conclusion_performers_qs
         .values_list("registration_id", flat=True)
         .distinct()
     )
@@ -417,35 +614,18 @@ def _contracts_context(user=None):
             else:
                 all_performers = all_performers.none()
 
-    seen_batches = set()
-    contract_representatives = {}
-    contracts = []
-    for p in all_performers:
-        batch_id = p.contract_batch_id
-        if batch_id not in seen_batches:
-            seen_batches.add(p.contract_batch_id)
-            contract_representatives[batch_id] = p
-            contracts.append(p)
-            continue
-        representative = contract_representatives.get(batch_id)
-        if (
-            representative
-            and not (representative.contract_signing_note or "").strip()
-            and (p.contract_signing_note or "").strip()
-        ):
-            representative.contract_signing_note = p.contract_signing_note
+    all_performers = list(all_performers)
+    contracts = _contract_representative_rows(all_performers)
 
     price_map = {}
-    for row in (
-        Performer.objects
-        .filter(contract_batch_id__isnull=False, agreed_amount__isnull=False)
-        .values("contract_batch_id")
-        .annotate(total_agreed=Sum("agreed_amount"))
-    ):
-        price_map[row["contract_batch_id"]] = row["total_agreed"]
-
+    for performer in all_performers:
+        if performer.agreed_amount is None:
+            continue
+        key = _contract_representative_key(performer)
+        price_map[key] = (price_map.get(key) or 0) + performer.agreed_amount
     for p in contracts:
-        p.total_price = price_map.get(p.contract_batch_id)
+        p.total_price = price_map.get(_contract_representative_key(p))
+    _attach_contract_batch_display_fields(contracts)
     _attach_contract_group_members(contracts)
     _attach_contract_responsible_names(contracts)
     _attach_contract_return_comment_counts(contracts)
@@ -500,13 +680,16 @@ def _contracts_context(user=None):
         .order_by("-number", "-id")
     )
 
-    contract_conclusion_performers = list(contract_conclusion_performers)
-    _attach_contract_folder_urls([*contract_conclusion_performers, *contracts], user)
+    contract_drafting_performers = _attach_contract_batch_display_fields(list(contract_conclusion_performers_qs))
+    contract_dispatch_performers = _contract_representative_rows(contract_drafting_performers)
+    contract_dispatch_performers = _attach_contract_batch_display_fields(contract_dispatch_performers)
+    _attach_contract_folder_urls([*contract_drafting_performers, *contract_dispatch_performers, *contracts], user)
 
     return {
         "contracts": contracts,
         "contract_projects": contract_projects,
-        "contract_conclusion_performers": contract_conclusion_performers,
+        "contract_drafting_performers": contract_drafting_performers,
+        "contract_dispatch_performers": contract_dispatch_performers,
         "contract_conclusion_projects": contract_conclusion_projects,
         "contract_request_sent_initial": contract_request_sent_initial,
         "batch_badge_map": batch_badge_map,
@@ -1506,15 +1689,15 @@ def contract_form_edit(request, pk):
         pk=pk,
         contract_batch_id__isnull=False,
     )
+    _attach_contract_batch_display_fields([performer])
     _attach_contract_group_members([performer])
     if request.method == "POST":
         form = ContractEditForm(request.POST, instance=performer)
         if form.is_valid():
             obj = form.save()
-            if obj.contract_batch_id:
-                Performer.objects.filter(
-                    contract_batch_id=obj.contract_batch_id,
-                ).exclude(pk=obj.pk).update(
+            group_filter = _contract_representative_filter(obj)
+            if obj.contract_batch_id or obj.participation_batch_id:
+                Performer.objects.filter(group_filter).exclude(pk=obj.pk).update(
                     contract_group_member_id=obj.contract_group_member_id,
                     contract_number=obj.contract_number,
                     contract_date=obj.contract_date,
@@ -1531,18 +1714,14 @@ def contract_form_edit(request, pk):
             group_member_initial=getattr(performer, "contract_group_member_default", None),
         )
 
-    batch_filter = (
-        Q(contract_batch_id=performer.contract_batch_id)
-        if performer.contract_batch_id
-        else Q(registration_id=performer.registration_id, executor=performer.executor, contract_batch_id__isnull=False)
-    )
     total_price = (
         Performer.objects
-        .filter(batch_filter, agreed_amount__isnull=False)
+        .filter(_contract_representative_filter(performer), agreed_amount__isnull=False)
         .aggregate(total=Sum("agreed_amount"))
         .get("total")
     )
     performer.total_price = total_price
+    _attach_contract_batch_display_fields([performer])
     _attach_contract_group_members([performer])
     _attach_contract_responsible_names([performer])
 

@@ -5,7 +5,7 @@ import uuid
 from decimal import Decimal
 from importlib import import_module
 from io import BytesIO
-from datetime import date
+from datetime import date, timedelta
 
 from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -23,7 +23,7 @@ from contacts_app.models import CitizenshipRecord, PersonRecord
 from core.models import CloudStorageSettings
 from contracts_app.models import ContractTemplate
 from nextcloud_app.models import NextcloudUserLink
-from notifications_app.models import Notification
+from notifications_app.models import Notification, NotificationPerformerLink
 from policy_app.models import (
     DIRECTOR_GROUP,
     DIRECTION_DIRECTOR_GROUP,
@@ -46,6 +46,7 @@ from projects_app.models import (
 )
 from projects_app.forms import ContractConditionsForm, LegalEntityForm, PerformerForm, ProjectRegistrationForm, WorkVolumeForm
 from group_app.models import GroupMember, OrgUnit
+from users_app.forms import FREELANCER_LABEL
 from users_app.models import Employee
 from unittest.mock import call, patch
 
@@ -53,6 +54,153 @@ from unittest.mock import call, patch
 TEST_CONTRACT_IMAGE_PNG_BYTES = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMBAAZ/qh8AAAAASUVORK5CYII="
 )
+
+
+class ParticipationBatchViewTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="staff@example.com",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.recipient_user = get_user_model().objects.create_user(
+            username="expert-batch@example.com",
+            email="expert-batch@example.com",
+            password="secret",
+            is_staff=True,
+        )
+        self.employee = Employee.objects.create(user=self.recipient_user)
+        self.project_a = ProjectRegistration.objects.create(number=8234, name="Продукт A", year=2026)
+        self.project_b = ProjectRegistration.objects.create(number=8234, name="Продукт B", year=2026)
+        self.other_number_project = ProjectRegistration.objects.create(number=8235, name="Другой номер", year=2026)
+        self.project_a.refresh_from_db()
+        self.project_b.refresh_from_db()
+        self.performer_a = Performer.objects.create(
+            registration=self.project_a,
+            employee=self.employee,
+            executor="Иванов Иван Иванович",
+            asset_name="Актив A",
+        )
+        self.performer_b = Performer.objects.create(
+            registration=self.project_b,
+            employee=self.employee,
+            executor="Иванов Иван Иванович",
+            asset_name="Актив B",
+        )
+        self.performer_other_number = Performer.objects.create(
+            registration=self.other_number_project,
+            employee=self.employee,
+            executor="Иванов Иван Иванович",
+        )
+
+    def test_participation_batch_merge_and_split(self):
+        response = self.client.post(
+            reverse("participation_batch_merge"),
+            {"performer_ids": [str(self.performer_a.pk), str(self.performer_b.pk)]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.performer_a.refresh_from_db()
+        self.performer_b.refresh_from_db()
+        self.assertIsNotNone(self.performer_a.participation_batch_id)
+        self.assertEqual(self.performer_a.participation_batch_id, self.performer_b.participation_batch_id)
+
+        response = self.client.post(
+            reverse("participation_batch_split"),
+            {"performer_ids": [str(self.performer_a.pk)]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.performer_a.refresh_from_db()
+        self.performer_b.refresh_from_db()
+        self.assertIsNone(self.performer_a.participation_batch_id)
+        self.assertIsNone(self.performer_b.participation_batch_id)
+
+    def test_participation_batch_merge_rejects_different_numbers(self):
+        response = self.client.post(
+            reverse("participation_batch_merge"),
+            {"performer_ids": [str(self.performer_a.pk), str(self.performer_other_number.pk)]},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("одного четырехзначного номера", response.json()["error"])
+
+    def test_participation_request_expands_saved_batch(self):
+        batch_id = uuid.uuid4()
+        Performer.objects.filter(pk__in=[self.performer_a.pk, self.performer_b.pk]).update(
+            participation_batch_id=batch_id,
+        )
+        request_sent_at = timezone.localtime().replace(second=0, microsecond=0)
+
+        with patch("projects_app.views.create_participation_notifications") as mocked_notifications:
+            mocked_notifications.return_value = {
+                "delivery_channels": ("system",),
+                "email_delivery": {"requested": False, "attempted": 0, "sent": 0, "failed": 0, "errors": []},
+            }
+            response = self.client.post(
+                reverse("participation_request"),
+                {
+                    "performer_ids": [str(self.performer_a.pk)],
+                    "duration_hours": "4",
+                    "request_sent_at": request_sent_at.isoformat(timespec="minutes"),
+                    "delivery_channels": ["system"],
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        sent_ids = {performer.pk for performer in mocked_notifications.call_args.kwargs["performers"]}
+        self.assertEqual(sent_ids, {self.performer_a.pk, self.performer_b.pk})
+        self.performer_a.refresh_from_db()
+        self.performer_b.refresh_from_db()
+        self.assertIsNotNone(self.performer_a.participation_request_sent_at)
+        self.assertEqual(self.performer_a.participation_request_sent_at, self.performer_b.participation_request_sent_at)
+
+    def test_direction_recipient_can_rebatch_active_direction_notification_rows(self):
+        sent_at = timezone.now()
+        Performer.objects.filter(pk__in=[self.performer_a.pk, self.performer_b.pk]).update(
+            participation_request_sent_at=sent_at,
+            participation_deadline_at=sent_at + timedelta(hours=4),
+        )
+        notification = Notification.objects.create(
+            notification_type=Notification.NotificationType.PROJECT_PARTICIPATION_CONFIRMATION,
+            recipient=self.recipient_user,
+            sender=self.user,
+            project=self.project_a,
+            title_text="Подтверждение по направлению",
+            payload={"letter_template_type": "direction_confirmation"},
+        )
+        NotificationPerformerLink.objects.create(notification=notification, performer=self.performer_a, position=1)
+        NotificationPerformerLink.objects.create(notification=notification, performer=self.performer_b, position=2)
+
+        response = self.client.post(
+            reverse("participation_batch_merge"),
+            {"performer_ids": [str(self.performer_a.pk), str(self.performer_b.pk)]},
+        )
+        self.assertEqual(response.status_code, 400)
+
+        self.client.force_login(self.recipient_user)
+        response = self.client.post(
+            reverse("participation_batch_merge"),
+            {"performer_ids": [str(self.performer_a.pk), str(self.performer_b.pk)]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.performer_a.refresh_from_db()
+        self.performer_b.refresh_from_db()
+        self.assertIsNotNone(self.performer_a.participation_batch_id)
+        self.assertEqual(self.performer_a.participation_batch_id, self.performer_b.participation_batch_id)
+
+        response = self.client.post(
+            reverse("participation_batch_split"),
+            {"performer_ids": [str(self.performer_a.pk)]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.performer_a.refresh_from_db()
+        self.performer_b.refresh_from_db()
+        self.assertIsNone(self.performer_a.participation_batch_id)
+        self.assertIsNone(self.performer_b.participation_batch_id)
 
 
 class SourceDataTargetFolderViewTests(TestCase):
@@ -3394,6 +3542,68 @@ class NextcloudContractProjectFlowTests(TestCase):
         self.assertFalse(self.performer.contract_is_addendum)
         self.assertEqual(self.performer.contract_number, "CUSTOM-42")
         self.assertEqual(self.performer.contract_date, date(2026, 4, 15))
+
+    @patch("nextcloud_app.provisioning.ensure_nextcloud_account")
+    @patch("contracts_app.variable_resolver.resolve_variables", return_value=({}, {}))
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_user_share")
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_public_link_share", return_value="https://cloud.example.com/s/public-doc")
+    @patch("nextcloud_app.api.NextcloudApiClient.upload_file", return_value=True)
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_folder", return_value="/Corporate Root/02 Договоры/2026/5002 DD Контрактный проект/02 Исполнители/000 Иванов ИИ")
+    @patch("nextcloud_app.api.NextcloudApiClient.list_resources", return_value=[])
+    def test_create_contract_project_expands_participation_batch(
+        self,
+        mocked_list_resources,
+        mocked_ensure_folder,
+        mocked_upload_file,
+        mocked_public_share,
+        mocked_ensure_user_share,
+        mocked_resolve_variables,
+        mocked_ensure_nextcloud_account,
+    ):
+        batch_id = uuid.uuid4()
+        self.employee.employment = FREELANCER_LABEL
+        self.employee.save(update_fields=["employment"])
+        second_project = ProjectRegistration.objects.create(
+            number=self.project.number,
+            type=self.product,
+            name="Контрактный проект 2",
+            year=2026,
+        )
+        second_performer = Performer.objects.create(
+            registration=second_project,
+            employee=self.employee,
+            executor=self.performer.executor,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+            participation_batch_id=batch_id,
+        )
+        self.performer.participation_response = Performer.ParticipationResponse.CONFIRMED
+        self.performer.participation_batch_id = batch_id
+        self.performer.save(update_fields=["participation_response", "participation_batch_id"])
+        mocked_ensure_nextcloud_account.side_effect = lambda user, client=None: (
+            self.executor_link if user.pk == self.recipient_user.pk else self.lawyer_link
+        )
+
+        response = self.client.post(
+            reverse("create_contract_project"),
+            {"performer_ids[]": [self.performer.pk]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        chunks = [json.loads(chunk.decode("utf-8").strip()) for chunk in response.streaming_content]
+        self.assertEqual(chunks[-1]["ok"], True, chunks)
+        self.performer.refresh_from_db()
+        second_performer.refresh_from_db()
+        self.project.refresh_from_db()
+        from contracts_app.services import contract_project_number_display
+
+        expected_docx_name = f"Договор {contract_project_number_display(self.project)}_Иванов ИИ.docx"
+        self.assertIsNotNone(self.performer.contract_batch_id)
+        self.assertEqual(self.performer.contract_batch_id, second_performer.contract_batch_id)
+        self.assertEqual(self.performer.contract_file, expected_docx_name)
+        self.assertEqual(second_performer.contract_file, expected_docx_name)
+        self.assertIn(expected_docx_name, mocked_upload_file.call_args.args[1])
+        self.assertTrue(self.performer.contract_project_created)
+        self.assertTrue(second_performer.contract_project_created)
 
     @patch("nextcloud_app.provisioning.ensure_nextcloud_account")
     @patch("contracts_app.variable_resolver.resolve_variables", return_value=({}, {}))

@@ -39,6 +39,7 @@
     <table id="contract-drafting-table" class="table table-sm align-middle performers-table">
       <colgroup>
         <col class="col-checkbox">
+        <col class="col-contract-number">
         <col class="col-number">
         <col class="col-type">
         <col class="col-name">
@@ -63,7 +64,8 @@
             </div>
           {% endif %}
         </th>
-        <th class="text-nowrap">Проект</th>
+        <th class="text-nowrap">Номер</th>
+        <th class="text-nowrap">Этап</th>
         <th class="text-nowrap">Тип</th>
         <th class="text-nowrap">Название</th>
         <th>Исполнитель</th>
@@ -87,10 +89,13 @@
       </tr>
       </thead>
       <tbody>
-      {% for p in contract_performers %}
+      {% for p in contract_drafting_performers %}
         <tr data-project-id="{{ p.registration_id }}"
+            data-project-type="{% if p.registration %}{{ p.registration.type_short_display }}{% endif %}"
+            data-project-stage="{% if p.registration %}{{ p.registration.agreement_sequence|default:0 }}{% endif %}"
             data-contract-status="{{ p.contract_signing_note|default:'—' }}"
             data-contract-batch-id="{{ p.contract_batch_id|default:'' }}"
+            data-participation-batch-id="{{ p.participation_batch_id|default:'' }}"
             data-executor="{{ p.executor }}"
             data-executor-short="{{ p.executor|short_fio_no_dots }}"
             data-asset-name="{{ p.asset_name }}"
@@ -112,8 +117,9 @@
               </div>
             {% endif %}
           </td>
-          <td class="text-nowrap cell-group-val">{% if p.registration %}<span class="clf-id-droid-mono">{{ p.registration.short_uid }}</span>{% endif %}</td>
-          <td class="text-nowrap cell-group-val">
+          <td class="text-nowrap cell-group-val">{% if p.contract_number_display %}<span class="clf-id-droid-mono">{{ p.contract_number_display }}</span>{% endif %}</td>
+          <td class="text-nowrap cell-group-val cell-project-val">{% if p.registration %}<span class="clf-id-droid-mono">{{ p.registration.short_uid }}</span>{% endif %}</td>
+          <td class="text-nowrap cell-group-val cell-type-val">
             {{ p.registration.type_short_display }}
           </td>
           <td class="text-truncate cell-group-val">{{ p.registration.name }}</td>
@@ -175,7 +181,7 @@
           </td>
         </tr>
       {% empty %}
-        <tr><td colspan="12" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="13" class="text-muted">Пока нет данных.</td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -240,6 +246,7 @@
     <table id="contract-dispatch-table" class="table table-sm align-middle performers-table">
       <colgroup>
         <col class="col-checkbox">
+        <col class="col-contract-number">
         <col class="col-number">
         <col class="col-type">
         <col class="col-name">
@@ -263,7 +270,8 @@
             </div>
           {% endif %}
         </th>
-        <th class="text-nowrap">Проект</th>
+        <th class="text-nowrap">Номер</th>
+        <th class="text-nowrap">Этап</th>
         <th class="text-nowrap">Тип</th>
         <th class="text-nowrap">Название</th>
         <th>Исполнитель</th>
@@ -276,10 +284,11 @@
       </tr>
       </thead>
       <tbody>
-      {% for p in contract_performers %}
+      {% for p in contract_dispatch_performers %}
         <tr data-project-id="{{ p.registration_id }}"
             data-contract-status="{{ p.contract_signing_note|default:'—' }}"
             data-contract-batch-id="{{ p.contract_batch_id|default:'' }}"
+            data-participation-batch-id="{{ p.participation_batch_id|default:'' }}"
             data-executor="{{ p.executor }}"
             data-executor-short="{{ p.executor|short_fio_no_dots }}"
             data-asset-name="{{ p.asset_name }}"
@@ -301,9 +310,10 @@
               </div>
             {% endif %}
           </td>
-          <td class="text-nowrap cell-group-val">{% if p.registration %}<span class="clf-id-droid-mono">{{ p.registration.short_uid }}</span>{% endif %}</td>
+          <td class="text-nowrap cell-group-val">{% if p.contract_number_display %}<span class="clf-id-droid-mono">{{ p.contract_number_display }}</span>{% endif %}</td>
+          <td class="text-nowrap cell-group-val">{% if p.contract_stage_display %}<span class="clf-id-droid-mono">{{ p.contract_stage_display }}</span>{% endif %}</td>
           <td class="text-nowrap cell-group-val">
-            {{ p.registration.type_short_display }}
+            {% if p.contract_type_display %}{{ p.contract_type_display }}{% else %}{{ p.registration.type_short_display }}{% endif %}
           </td>
           <td class="text-truncate cell-group-val">{{ p.registration.name }}</td>
           <td class="text-nowrap cell-group-val">{{ p.executor|short_fio }}</td>
@@ -315,7 +325,7 @@
           <td class="cell-detail-val">{{ p.contract_response_status|default:"—" }}</td>
         </tr>
       {% empty %}
-        <tr><td colspan="11" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="12" class="text-muted">Пока нет данных.</td></tr>
       {% endfor %}
       </tbody>
     </table>

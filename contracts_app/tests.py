@@ -22,15 +22,23 @@ from contacts_app.models import CitizenshipRecord, PersonRecord
 from core.models import CloudStorageSettings
 from contracts_app.docx_processor import process_template
 from contracts_app.forms import ContractTemplateForm
-from contracts_app.models import ContractReturnComment, ContractTemplate, ContractVariable
+from contracts_app.models import ContractReturnComment, ContractSubject, ContractTemplate, ContractVariable
 from contracts_app.variable_resolver import resolve_variables
 from experts_app.models import ExpertContractDetails, ExpertProfile
 from group_app.models import GroupMember, OrgUnit
 from nextcloud_app.api import NextcloudApiError, NextcloudShare
 from nextcloud_app.models import NextcloudUserLink
 from notifications_app.models import Notification, NotificationPerformerLink
-from policy_app.models import ADMIN_GROUP, DEPARTMENT_HEAD_GROUP, EXPERT_GROUP, LAWYER_GROUP, Product
-from projects_app.models import Performer, ProjectRegistration
+from policy_app.models import (
+    ADMIN_GROUP,
+    DEPARTMENT_HEAD_GROUP,
+    EXPERT_GROUP,
+    LAWYER_GROUP,
+    Product,
+    SectionStructure,
+    TypicalSection,
+)
+from projects_app.models import Performer, ProjectRegistration, ProjectRegistrationProduct
 from users_app.forms import FREELANCER_LABEL
 from users_app.models import Employee
 
@@ -206,6 +214,179 @@ class ContractsCloudLabelTests(TestCase):
         self.assertNotIn("Дата отправки запроса", contract_request_modal)
         self.assertNotIn('id="contract-request-sent-at"', contract_request_modal)
 
+    def test_contracts_partial_displays_multi_stage_contract_batch_as_single_row(self):
+        product_b = Product.objects.create(
+            short_name="TDD",
+            name_en="Technical Due Diligence",
+            name_ru="ТДД",
+            display_name="Technical Due Diligence",
+        )
+        self.product.short_name = "RFR"
+        self.product.display_name = "Due Diligence"
+        self.product.save(update_fields=["short_name", "display_name"])
+        self.project.name = "Тест 55"
+        self.project.deadline = date(2026, 5, 10)
+        self.project.save(update_fields=["name", "deadline"])
+        ProjectRegistrationProduct.objects.create(registration=self.project, product=self.product, rank=1)
+        second_project = ProjectRegistration.objects.create(
+            number=self.project.number,
+            type=product_b,
+            name="Тест 55",
+            year=2026,
+            deadline=date(2026, 6, 15),
+        )
+        ProjectRegistrationProduct.objects.create(registration=second_project, product=product_b, rank=1)
+        self.project.refresh_from_db()
+        second_project.refresh_from_db()
+        participation_batch_id = uuid.uuid4()
+        self.performer.participation_batch_id = participation_batch_id
+        self.performer.save(update_fields=["participation_batch_id"])
+        Performer.objects.create(
+            registration=second_project,
+            employee=self.employee,
+            executor=self.performer.executor,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+            participation_batch_id=participation_batch_id,
+            contract_batch_id=uuid.uuid4(),
+            contract_number=self.performer.contract_number,
+            contract_file=self.performer.contract_file,
+            contract_project_disk_folder=self.performer.contract_project_disk_folder,
+            agreed_amount=100,
+        )
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        correction_table_start = content.index('class="table table-sm align-middle contracts-table mb-0"')
+        correction_table = content[
+            correction_table_start:
+            content.index("</table>", correction_table_start)
+        ]
+        self.assertEqual(correction_table.count("<tr data-project-id="), 1)
+        self.assertIn('<th class="text-nowrap">Номер</th>', correction_table)
+        self.assertIn('<th class="text-nowrap">Этап</th>', correction_table)
+        self.assertIn("RFR-TDD", correction_table)
+        self.assertIn("15.06.2026", correction_table)
+        self.assertIn("70010RU", correction_table)
+        self.assertNotIn(f">{self.project.short_uid}<", correction_table)
+        self.assertNotIn(f">{second_project.short_uid}<", correction_table)
+
+        drafting_table = content[
+            content.index('id="contract-drafting-table"'):
+            content.index('id="contract-dispatch-table"')
+        ]
+        self.assertEqual(drafting_table.count("<tr data-project-id="), 2)
+        self.assertIn("RFR", drafting_table)
+        self.assertIn("TDD", drafting_table)
+        self.assertIn("70010RU", drafting_table)
+        self.assertIn(f">{self.project.short_uid}<", drafting_table)
+        self.assertIn(f">{second_project.short_uid}<", drafting_table)
+
+        dispatch_table_start = content.index('id="contract-dispatch-table"')
+        dispatch_table = content[
+            dispatch_table_start:
+            content.index("</table>", dispatch_table_start)
+        ]
+        self.assertEqual(dispatch_table.count("<tr data-project-id="), 1)
+        self.assertIn("RFR-TDD", dispatch_table)
+        self.assertIn("70010RU", dispatch_table)
+        self.assertNotIn(f">{self.project.short_uid}<", dispatch_table)
+        self.assertNotIn(f">{second_project.short_uid}<", dispatch_table)
+
+        signing_table_start = content.index('class="table table-sm align-middle signing-table"')
+        signing_table = content[
+            signing_table_start:
+            content.index("</table>", signing_table_start)
+        ]
+        self.assertEqual(signing_table.count("<tr data-project-id="), 1)
+        self.assertIn("RFR-TDD", signing_table)
+        self.assertIn("70010RU", signing_table)
+        self.assertNotIn(f">{self.project.short_uid}<", signing_table)
+        self.assertNotIn(f">{second_project.short_uid}<", signing_table)
+
+        form_response = self.client.get(reverse("contracts_edit", args=[self.performer.pk]))
+        self.assertEqual(form_response.status_code, 200)
+        form_content = form_response.content.decode("utf-8")
+        self.assertContains(form_response, '<label class="form-label">Номер</label>', html=False)
+        self.assertContains(form_response, '<label class="form-label">Этап</label>', html=False)
+        self.assertContains(form_response, '<label class="form-label">Продукт</label>', html=False)
+        self.assertNotContains(form_response, '<label class="form-label">Проект</label>', html=False)
+        self.assertIn('value="70010RU"', form_content)
+        self.assertIn(f'value="{self.project.short_uid}"', form_content)
+        self.assertIn(f'value="{second_project.short_uid}"', form_content)
+        self.assertIn('value="RFR Due Diligence"', form_content)
+        self.assertIn('value="TDD Technical Due Diligence"', form_content)
+        self.assertIn('data-deadline="2026-06-15"', form_content)
+
+    def test_contract_drafting_displays_multi_stage_participation_batch_as_detail_rows(self):
+        product_b = Product.objects.create(
+            short_name="TDD",
+            name_en="Technical Due Diligence",
+            name_ru="ТДД",
+            display_name="Technical Due Diligence",
+        )
+        self.product.short_name = "RFR"
+        self.product.display_name = "Due Diligence"
+        self.product.save(update_fields=["short_name", "display_name"])
+        self.project.name = "Тест 56"
+        self.project.deadline = date(2026, 5, 10)
+        self.project.save(update_fields=["name", "deadline"])
+        ProjectRegistrationProduct.objects.create(registration=self.project, product=self.product, rank=1)
+        second_project = ProjectRegistration.objects.create(
+            number=self.project.number,
+            type=product_b,
+            name="Тест 56",
+            year=2026,
+            deadline=date(2026, 6, 15),
+        )
+        ProjectRegistrationProduct.objects.create(registration=second_project, product=product_b, rank=1)
+        self.project.refresh_from_db()
+        second_project.refresh_from_db()
+        participation_batch_id = uuid.uuid4()
+        self.performer.contract_batch_id = None
+        self.performer.contract_file = ""
+        self.performer.contract_project_link = ""
+        self.performer.contract_project_disk_folder = ""
+        self.performer.participation_batch_id = participation_batch_id
+        self.performer.save(update_fields=[
+            "contract_batch_id",
+            "contract_file",
+            "contract_project_link",
+            "contract_project_disk_folder",
+            "participation_batch_id",
+        ])
+        Performer.objects.create(
+            registration=second_project,
+            employee=self.employee,
+            executor=self.performer.executor,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+            participation_batch_id=participation_batch_id,
+            agreed_amount=100,
+        )
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        drafting_table = content[
+            content.index('id="contract-drafting-table"'):
+            content.index('id="contract-dispatch-table"')
+        ]
+        self.assertEqual(drafting_table.count("<tr data-project-id="), 2)
+        self.assertIn("RFR", drafting_table)
+        self.assertIn("TDD", drafting_table)
+        self.assertIn("70010RU", drafting_table)
+        self.assertIn(f">{self.project.short_uid}<", drafting_table)
+        self.assertIn(f">{second_project.short_uid}<", drafting_table)
+        dispatch_table_start = content.index('id="contract-dispatch-table"')
+        dispatch_table = content[
+            dispatch_table_start:
+            content.index("</table>", dispatch_table_start)
+        ]
+        self.assertEqual(dispatch_table.count("<tr data-project-id="), 1)
+        self.assertIn("RFR-TDD", dispatch_table)
+
     def test_contract_conclusion_column_registry_excludes_grade(self):
         from core.column_registry import get_column_choices
 
@@ -305,11 +486,57 @@ class ContractsCloudLabelTests(TestCase):
             f"Договор {self.project.short_uid}_Иванов ИИ_ДС1.docx",
         )
 
+    def test_contract_adjustment_prefills_multi_stage_file_name_with_number_display(self):
+        from contracts_app.services import contract_project_number_display, prefill_contract_adjustment_fields
+
+        product_b = Product.objects.create(
+            short_name="TDD",
+            name_en="Technical Due Diligence",
+            name_ru="ТДД",
+        )
+        second_project = ProjectRegistration.objects.create(
+            number=self.project.number,
+            group_member=self.group_member,
+            type=product_b,
+            name=self.project.name,
+            year=2026,
+        )
+        self.project.refresh_from_db()
+        participation_batch_id = uuid.uuid4()
+        self.performer.participation_batch_id = participation_batch_id
+        self.performer.contract_batch_id = None
+        self.performer.contract_file = ""
+        self.performer.contract_project_disk_folder = ""
+        self.performer.contract_project_created = False
+        self.performer.save(update_fields=[
+            "participation_batch_id",
+            "contract_batch_id",
+            "contract_file",
+            "contract_project_disk_folder",
+            "contract_project_created",
+        ])
+        Performer.objects.create(
+            registration=second_project,
+            employee=self.employee,
+            executor=self.performer.executor,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+            participation_batch_id=participation_batch_id,
+        )
+
+        prefill_contract_adjustment_fields([self.performer.pk], confirmed_at=timezone.now())
+
+        self.performer.refresh_from_db()
+        self.assertEqual(
+            self.performer.contract_file,
+            f"Договор {contract_project_number_display(self.project)}_Иванов ИИ.docx",
+        )
+
     def test_contract_dispatch_column_registry_excludes_signing_note(self):
         from core.column_registry import get_column_choices
 
         choices = get_column_choices("projects", "contract_dispatch")
 
+        self.assertIn(("project", "Этап"), choices)
         self.assertNotIn(("signing", "Подписание"), choices)
 
     @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
@@ -1047,6 +1274,49 @@ class ContractsCloudLabelTests(TestCase):
         self.assertEqual(self.performer.contract_pdf_file_id, "pdf-file-id")
 
     @override_settings(ONLYOFFICE_DOCUMENT_SERVER_URL="https://docs.example.com")
+    def test_sign_contract_documents_expands_selected_row_to_contract_batch(self):
+        participation_batch_id = uuid.uuid4()
+        self.performer.participation_batch_id = participation_batch_id
+        self.performer.save(update_fields=["participation_batch_id"])
+        sibling = Performer.objects.create(
+            registration=self.project,
+            employee=self.employee,
+            executor=self.performer.executor,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+            participation_batch_id=participation_batch_id,
+            contract_batch_id=uuid.uuid4(),
+            contract_file=self.performer.contract_file,
+            contract_project_disk_folder=self.performer.contract_project_disk_folder,
+        )
+
+        with (
+            patch("projects_app.views.convert_docx_source_to_pdf", return_value=b"%PDF-1.4") as mocked_convert,
+            patch("projects_app.views.cloud_upload_file", return_value=True),
+            patch("projects_app.views.cloud_publish_resource", return_value="https://cloud.example.com/s/contract-pdf"),
+            patch("projects_app.views._resolve_contract_project_nextcloud_file_id", return_value="pdf-file-id"),
+        ):
+            response = self.client.post(
+                reverse("sign_contract_documents"),
+                {"performer_ids[]": [self.performer.pk]},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["generated"], 1)
+        self.assertCountEqual(
+            [item["id"] for item in data["updates"]],
+            [self.performer.pk, sibling.pk],
+        )
+        mocked_convert.assert_called_once()
+        self.performer.refresh_from_db()
+        sibling.refresh_from_db()
+        self.assertEqual(self.performer.contract_pdf_file, "Договор 7001_Иванов ИИ.pdf")
+        self.assertEqual(sibling.contract_pdf_file, "Договор 7001_Иванов ИИ.pdf")
+        self.assertEqual(self.performer.contract_pdf_link, "https://cloud.example.com/s/contract-pdf")
+        self.assertEqual(sibling.contract_pdf_link, "https://cloud.example.com/s/contract-pdf")
+
+    @override_settings(ONLYOFFICE_DOCUMENT_SERVER_URL="https://docs.example.com")
     def test_sign_performer_contract_documents_generates_signed_pdf_and_public_link(self):
         signed_at = timezone.now().replace(microsecond=0)
         self.performer.contract_deadline_at = signed_at + timedelta(days=1)
@@ -1093,6 +1363,56 @@ class ContractsCloudLabelTests(TestCase):
         self.assertEqual(self.performer.contract_signing_date, signed_at)
         self.assertEqual(self.performer.contract_conclusion_status, "В срок")
         self.assertEqual(self.performer.contract_signing_note, "Договор подписан факсимиле")
+
+    @override_settings(ONLYOFFICE_DOCUMENT_SERVER_URL="https://docs.example.com")
+    def test_sign_performer_contract_documents_expands_selected_row_to_contract_batch(self):
+        signed_at = timezone.now().replace(microsecond=0)
+        self.performer.contract_deadline_at = signed_at + timedelta(days=1)
+        participation_batch_id = uuid.uuid4()
+        self.performer.participation_batch_id = participation_batch_id
+        self.performer.save(update_fields=["contract_deadline_at", "participation_batch_id"])
+        sibling = Performer.objects.create(
+            registration=self.project,
+            employee=self.employee,
+            executor=self.performer.executor,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+            participation_batch_id=participation_batch_id,
+            contract_batch_id=uuid.uuid4(),
+            contract_file=self.performer.contract_file,
+            contract_project_disk_folder=self.performer.contract_project_disk_folder,
+            contract_deadline_at=signed_at + timedelta(days=1),
+        )
+
+        with (
+            patch("projects_app.views.timezone.now", return_value=signed_at),
+            patch("projects_app.views._load_performer_facsimile_bytes", return_value=b"facsimile"),
+            patch("projects_app.views.convert_docx_source_to_pdf", return_value=b"%PDF-1.4") as mocked_convert,
+            patch("projects_app.views.cloud_upload_file", return_value=True),
+            patch("projects_app.views.cloud_publish_resource", return_value="https://cloud.example.com/s/signed-contract-pdf"),
+            patch("projects_app.views._resolve_contract_project_nextcloud_file_id", return_value="signed-pdf-file-id"),
+        ):
+            response = self.client.post(
+                reverse("sign_performer_contract_documents"),
+                {"performer_ids[]": [self.performer.pk]},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["generated"], 1)
+        self.assertCountEqual(
+            [item["id"] for item in data["updates"]],
+            [self.performer.pk, sibling.pk],
+        )
+        mocked_convert.assert_called_once()
+        self.performer.refresh_from_db()
+        sibling.refresh_from_db()
+        self.assertEqual(self.performer.contract_signed_pdf_file, "Договор 7001_Иванов ИИ_п.pdf")
+        self.assertEqual(sibling.contract_signed_pdf_file, "Договор 7001_Иванов ИИ_п.pdf")
+        self.assertEqual(self.performer.contract_signing_date, signed_at)
+        self.assertEqual(sibling.contract_signing_date, signed_at)
+        self.assertEqual(self.performer.contract_signing_note, "Договор подписан факсимиле")
+        self.assertEqual(sibling.contract_signing_note, "Договор подписан факсимиле")
 
     @override_settings(ONLYOFFICE_DOCUMENT_SERVER_URL="https://docs.example.com")
     def test_sign_performer_contract_documents_returns_clear_error_without_facsimile(self):
@@ -1889,6 +2209,14 @@ class ContractVariableBindingDisplayTests(TestCase):
         self.assertTrue(variable.is_computed)
         self.assertEqual(variable.binding_display, "Расчётное поле")
 
+    def test_chapters_name_variable_description_mentions_stages(self):
+        variable = ContractVariable.objects.get(key="[[chapters_name]]")
+
+        self.assertEqual(
+            variable.description,
+            "Многоуровневый список: этапы, активы, разделы, подразделы",
+        )
+
 
 class ContractVariableResolverTests(TestCase):
     def test_contract_details_variables_resolve_from_expert_contract_details(self):
@@ -2097,6 +2425,160 @@ class ContractVariableResolverTests(TestCase):
 
         self.assertEqual(lists, {})
         self.assertEqual(replacements["{{deadline_ru}}"], "20 мая 2026 г.")
+
+    def test_multi_stage_batch_chapters_name_groups_by_stage_and_contract_name_uses_last_stage(self):
+        product_a = Product.objects.create(
+            short_name="RFR",
+            display_name="Red Flag Review",
+            name_en="Red Flag Review",
+            name_ru="РФР",
+        )
+        product_b = Product.objects.create(
+            short_name="TDD",
+            display_name="Technical Due Diligence",
+            name_en="Technical Due Diligence",
+            name_ru="ТДД",
+        )
+        project_a = ProjectRegistration.objects.create(
+            number=7010,
+            type=product_a,
+            name="Multi-stage contract",
+            year=2026,
+        )
+        project_b = ProjectRegistration.objects.create(
+            number=7010,
+            type=product_b,
+            name="Multi-stage contract",
+            year=2026,
+        )
+        project_a.refresh_from_db()
+        project_b.refresh_from_db()
+        section_a = TypicalSection.objects.create(
+            product=product_a,
+            code="RFR-01",
+            short_name="Market",
+            name_en="Market",
+            name_ru="Рынок",
+        )
+        section_b = TypicalSection.objects.create(
+            product=product_b,
+            code="TDD-01",
+            short_name="Tech",
+            name_en="Technology",
+            name_ru="Технология",
+        )
+        SectionStructure.objects.create(
+            product=product_a,
+            section=section_a,
+            subsections="Обзор рынка",
+            position=1,
+        )
+        SectionStructure.objects.create(
+            product=product_b,
+            section=section_b,
+            subsections="Анализ технологии",
+            position=1,
+        )
+        ContractSubject.objects.create(
+            product=product_a,
+            subject_text="предмет RFR",
+            position=1,
+        )
+        ContractSubject.objects.create(
+            product=product_b,
+            subject_text="предмет TDD",
+            position=2,
+        )
+        performer_a = Performer.objects.create(
+            registration=project_a,
+            executor="Иванов Иван Иванович",
+            asset_name="Карьер",
+            typical_section=section_a,
+        )
+        performer_b = Performer.objects.create(
+            registration=project_b,
+            executor="Иванов Иван Иванович",
+            asset_name="Фабрика",
+            typical_section=section_b,
+        )
+        variables = [
+            ContractVariable(key="[[chapters_name]]", is_computed=True),
+            ContractVariable(key="{{contract_name}}", is_computed=True),
+        ]
+
+        replacements, lists = resolve_variables(
+            performer_a,
+            variables,
+            all_performers=[performer_a, performer_b],
+        )
+
+        self.assertEqual(replacements["{{contract_name}}"], "предмет TDD")
+        self.assertEqual(
+            lists["[[chapters_name]]"],
+            [
+                (0, "Этап 1: RFR Red Flag Review"),
+                (1, "Карьер"),
+                (2, "Рынок"),
+                (3, "Обзор рынка"),
+                (0, "Этап 2: TDD Technical Due Diligence"),
+                (1, "Фабрика"),
+                (2, "Технология"),
+                (3, "Анализ технологии"),
+            ],
+        )
+
+    def test_single_stage_chapters_name_and_contract_name_keep_legacy_behavior(self):
+        product = Product.objects.create(
+            short_name="DD",
+            display_name="Due Diligence",
+            name_en="Due Diligence",
+            name_ru="ДД",
+        )
+        project = ProjectRegistration.objects.create(
+            number=7011,
+            type=product,
+            name="Single-stage contract",
+            year=2026,
+        )
+        section = TypicalSection.objects.create(
+            product=product,
+            code="DD-01",
+            short_name="Market",
+            name_en="Market",
+            name_ru="Рынок",
+        )
+        SectionStructure.objects.create(
+            product=product,
+            section=section,
+            subsections="Обзор рынка",
+            position=1,
+        )
+        ContractSubject.objects.create(
+            product=product,
+            subject_text="предмет DD",
+            position=1,
+        )
+        performer = Performer.objects.create(
+            registration=project,
+            executor="Иванов Иван Иванович",
+            asset_name="Карьер",
+            typical_section=section,
+        )
+        variables = [
+            ContractVariable(key="[[chapters_name]]", is_computed=True),
+            ContractVariable(key="{{contract_name}}", is_computed=True),
+        ]
+
+        replacements, lists = resolve_variables(performer, variables)
+
+        self.assertEqual(replacements["{{contract_name}}"], "предмет DD")
+        self.assertEqual(
+            lists["[[chapters_name]]"],
+            [
+                (0, "Рынок"),
+                (1, "Обзор рынка"),
+            ],
+        )
 
     def test_contacts_short_name_falls_back_to_performer_employee_person_record(self):
         user = get_user_model().objects.create_user(

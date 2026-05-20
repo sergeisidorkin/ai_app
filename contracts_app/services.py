@@ -46,9 +46,37 @@ def contract_kind_label(*, is_addendum=False, addendum_number=None):
     return "Договор"
 
 
-def build_contract_file_name(performer, *, extension=".docx", is_addendum=None, addendum_number=None):
+def contract_project_number_display(project):
+    if not project:
+        return ""
+    short_uid = (getattr(project, "short_uid", "") or "").strip()
+    suffix = short_uid[-3:] if len(short_uid) >= 3 else f"{project.group_order_number}{project.group_alpha2}"
+    return f"{project.formatted_number}{suffix}"
+
+
+def _has_multiple_contract_stages(performers):
+    stage_keys = set()
+    for performer in performers or []:
+        project = getattr(performer, "registration", None)
+        if not project:
+            continue
+        stage_keys.add(getattr(project, "pk", None) or getattr(project, "short_uid", ""))
+    return len(stage_keys) > 1
+
+
+def build_contract_file_name(
+    performer,
+    *,
+    extension=".docx",
+    is_addendum=None,
+    addendum_number=None,
+    batch_performers=None,
+):
     project = getattr(performer, "registration", None)
-    project_id = str(getattr(project, "short_uid", "") or "") if project else ""
+    if batch_performers is not None and _has_multiple_contract_stages(batch_performers):
+        project_id = contract_project_number_display(project)
+    else:
+        project_id = str(getattr(project, "short_uid", "") or "") if project else ""
     project_prefix = project_id or "Unknown"
     executor_name = contract_executor_short_name(getattr(performer, "executor", ""))
     ext = extension if str(extension or "").startswith(".") else f".{extension or 'docx'}"
@@ -198,22 +226,27 @@ def prefill_contract_adjustment_fields(performer_ids, *, confirmed_at=None):
     default_groups = default_contract_group_members(performers)
     grouped = {}
     for performer in performers:
-        key = (performer.registration_id, normalize_contract_person_name(performer.executor))
+        executor = normalize_contract_person_name(performer.executor)
+        if performer.participation_batch_id:
+            key = ("participation_batch", performer.participation_batch_id, executor)
+        else:
+            key = ("registration", performer.registration_id, executor)
         grouped.setdefault(key, []).append(performer)
 
     updated = 0
-    for (registration_id, executor), group_performers in grouped.items():
+    for (group_kind, group_value, executor), group_performers in grouped.items():
+        batch_filter = models.Q(executor=executor)
+        if group_kind == "participation_batch":
+            batch_filter &= models.Q(participation_batch_id=group_value)
+        else:
+            batch_filter &= models.Q(registration_id=group_value)
+
         pending_batch_id = next((p.contract_batch_id for p in group_performers if p.contract_batch_id), None)
         if not pending_batch_id:
             existing_pending = (
                 Performer.objects
-                .filter(
-                    registration_id=registration_id,
-                    executor=executor,
-                    contract_batch_id__isnull=False,
-                    contract_project_created=False,
-                    contract_project_disk_folder="",
-                )
+                .filter(batch_filter, contract_batch_id__isnull=False)
+                .filter(contract_project_created=False, contract_project_disk_folder="")
                 .order_by("position", "id")
                 .first()
             )
@@ -221,11 +254,7 @@ def prefill_contract_adjustment_fields(performer_ids, *, confirmed_at=None):
 
         created_batches = (
             Performer.objects
-            .filter(
-                registration_id=registration_id,
-                executor=executor,
-                contract_batch_id__isnull=False,
-            )
+            .filter(batch_filter, contract_batch_id__isnull=False)
             .filter(models.Q(contract_project_created=True) | ~models.Q(contract_project_disk_folder=""))
             .values("contract_batch_id")
             .distinct()
@@ -238,12 +267,7 @@ def prefill_contract_adjustment_fields(performer_ids, *, confirmed_at=None):
         if is_addendum:
             first_performer = (
                 Performer.objects
-                .filter(
-                    registration_id=registration_id,
-                    executor=executor,
-                    contract_batch_id__isnull=False,
-                    contract_is_addendum=False,
-                )
+                .filter(batch_filter, contract_batch_id__isnull=False, contract_is_addendum=False)
                 .filter(models.Q(contract_project_created=True) | ~models.Q(contract_project_disk_folder=""))
                 .order_by("contract_sent_at", "id")
                 .first()
@@ -252,17 +276,30 @@ def prefill_contract_adjustment_fields(performer_ids, *, confirmed_at=None):
                 base_date = first_performer.contract_sent_at
 
         representative = group_performers[0]
+        file_name_performers = group_performers
+        if group_kind == "participation_batch":
+            file_name_performers = list(
+                Performer.objects
+                .select_related("registration")
+                .filter(
+                    batch_filter,
+                    participation_response=Performer.ParticipationResponse.CONFIRMED,
+                    employee__employment=FREELANCER_LABEL,
+                )
+                .order_by("registration__agreement_sequence", "registration_id", "position", "id")
+            ) or group_performers
         generated_number = build_contract_number(representative, base_date, addendum_number)
         generated_file = build_contract_file_name(
             representative,
             is_addendum=is_addendum,
             addendum_number=addendum_number,
+            batch_performers=file_name_performers,
         )
         contract_date = timezone.localtime(confirmed_at).date()
 
         for performer in group_performers:
             update_fields = {}
-            if not performer.contract_batch_id:
+            if performer.contract_batch_id != pending_batch_id:
                 update_fields["contract_batch_id"] = pending_batch_id
             if performer.contract_is_addendum != is_addendum:
                 update_fields["contract_is_addendum"] = is_addendum
