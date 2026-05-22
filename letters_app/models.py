@@ -18,6 +18,7 @@ class LetterTemplate(models.Model):
         ("scan_sending", "Отправка скана сотрудника"),
         ("project_start", "Начало проекта"),
         ("request_approval", "Согласование запроса"),
+        ("payment_request", "Заявка на оплату"),
     ]
 
     TEMPLATE_CARD_TITLES = {
@@ -28,6 +29,7 @@ class LetterTemplate(models.Model):
         "scan_sending": "Шаблон отправки скана сотрудника",
         "project_start": "Шаблон уведомления о начале проекта",
         "request_approval": "Шаблон согласования запроса",
+        "payment_request": "Шаблон заявки на оплату",
     }
 
     TEMPLATE_VARIABLES = {
@@ -110,6 +112,13 @@ class LetterTemplate(models.Model):
             ("{services_list}", "Список разделов исполнителя с указанием активов"),
             ("{duration_hours}", "Срок для принятия решения (часов)"),
             ("{deadline_at}", "Крайний срок ответа"),
+        ],
+        "payment_request": [
+            ("{recipient_name_lawer}", "Имя Отчество пользователя с ролью «Юрист»"),
+            ("{number_of_request}", "Номер заявки"),
+            ("{sender}", "Отправитель заявки"),
+            ("{payment_date}", "Период отправки заявки на оплату"),
+            ("[payment_request]", "Информация о запрашиваемом платеже исполнителю"),
         ],
     }
 

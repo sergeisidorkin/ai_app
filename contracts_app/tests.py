@@ -319,6 +319,55 @@ class ContractsCloudLabelTests(TestCase):
         self.assertIn('value="TDD Technical Due Diligence"', form_content)
         self.assertIn('data-deadline="2026-06-15"', form_content)
 
+    def test_participation_batch_contract_rows_are_separate_by_executor(self):
+        participation_batch_id = uuid.uuid4()
+        self.performer.participation_batch_id = participation_batch_id
+        self.performer.agreed_amount = 100
+        self.performer.save(update_fields=["participation_batch_id", "agreed_amount"])
+        other_executor = Performer.objects.create(
+            registration=self.project,
+            employee=self.employee,
+            executor="Петров Петр Петрович",
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+            participation_batch_id=participation_batch_id,
+            contract_batch_id=uuid.uuid4(),
+            contract_number="OTHER-1",
+            contract_date=date(2026, 5, 8),
+            contract_file="other.docx",
+            agreed_amount=200,
+        )
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        contracts_table = content[
+            content.index('class="table table-sm align-middle contracts-table mb-0"'):
+            content.index('id="contracts-edit-btn"')
+        ]
+        self.assertEqual(contracts_table.count("<tr data-project-id="), 2)
+        self.assertIn("Иванов И.И.", contracts_table)
+        self.assertIn("Петров П.П.", contracts_table)
+        self.assertIn("100", contracts_table)
+        self.assertIn("200", contracts_table)
+
+        edit_response = self.client.post(
+            reverse("contracts_edit", args=[self.performer.pk]),
+            {
+                "contract_number": "CUSTOM-42",
+                "contract_date": "2026-05-07",
+                "prepayment": "30",
+                "contract_file": "custom.docx",
+            },
+        )
+
+        self.assertEqual(edit_response.status_code, 200)
+        other_executor.refresh_from_db()
+        self.assertEqual(other_executor.contract_number, "OTHER-1")
+        self.assertEqual(other_executor.contract_date, date(2026, 5, 8))
+        self.assertIsNone(other_executor.prepayment)
+        self.assertEqual(other_executor.contract_file, "other.docx")
+
     def test_contract_drafting_displays_multi_stage_participation_batch_as_detail_rows(self):
         product_b = Product.objects.create(
             short_name="TDD",
@@ -2624,3 +2673,77 @@ class ContractVariableResolverTests(TestCase):
 
         self.assertEqual(lists, {})
         self.assertEqual(replacements["{{short_name}}"], "Петров П.П.")
+
+
+class ContractsExecutionPartialTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="contracts-execution-admin",
+            password="secret",
+            is_staff=True,
+        )
+        admin_group, _ = Group.objects.get_or_create(name=ADMIN_GROUP)
+        self.user.groups.add(admin_group)
+        self.client.force_login(self.user)
+
+        product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        self.project = ProjectRegistration.objects.create(
+            number=8001,
+            type=product,
+            name="Проект исполнения договора",
+            year=2026,
+        )
+        self.performer = Performer.objects.create(
+            registration=self.project,
+            employee=Employee.objects.create(user=self.user),
+            executor="Иванов Иван Иванович",
+            contract_batch_id=uuid.uuid4(),
+            contract_number="EXEC-1",
+            contract_signing_note="Договор подписан факсимиле",
+        )
+
+    def test_home_page_lists_performer_execution_after_conclusion(self):
+        response = self.client.get(reverse("home"))
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        conclusion_index = content.index('data-contracts-section="in-progress"')
+        execution_index = content.index('data-contracts-section="performer-execution"')
+        self.assertLess(conclusion_index, execution_index)
+        self.assertIn("'performer-execution':", content)
+        self.assertIn("исполнение договора", content)
+        self.assertContains(response, 'id="contracts-content-performer-execution"', html=False)
+
+    def test_contracts_execution_partial_renders_payment_request_table(self):
+        response = self.client.get(reverse("contracts_execution_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Заявки на оплату")
+        content = response.content.decode("utf-8")
+        self.assertIn('id="contracts-payment-request-section"', content)
+        self.assertIn('class="payment-request-section payment-request-section--contracts"', content)
+        self.assertIn(f'data-performer-id="{self.performer.pk}"', content)
+        self.assertIn("payment-request-paid-toggle-icon", content)
+        self.assertIn('data-payment-paid-toggle-url="/projects/performers/payment-paid-toggle/"', content)
+        self.assertNotIn("Заключение договора", content)
+        self.assertNotIn("payment-request-signing-status-cell", content)
+        self.assertNotIn("payment-request-paid-toggle-header", content)
+        section_start = content.index('id="contracts-payment-request-section"')
+        section = content[section_start:section_start + 20000]
+        self.assertEqual(section.count("payment-request-group-header"), 4)
+        self.assertEqual(section.count("payment-request-paid-date-cell"), 2)
+        self.assertIn('data-payment-paid-date="advance"', section)
+        self.assertIn('data-payment-paid-date="final"', section)
+        self.assertNotIn("Отправить заявку", section)
+        self.assertNotIn('id="contracts-payment-request-send-btn"', section)
+        self.assertNotIn("js-payment-request-actions", section)
+        self.assertRegex(section, r'id="contracts-payment-request-master"[^>]*\sdisabled')
+        self.assertRegex(section, rf'id="contracts-payment-request-sel-{self.performer.pk}"[^>]*\sdisabled')
+

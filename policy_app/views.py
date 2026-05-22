@@ -6,6 +6,12 @@ import calendar
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from zipfile import BadZipFile
+
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Alignment, Font
+from openpyxl.utils import get_column_letter
+from openpyxl.utils.exceptions import InvalidFileException
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required, user_passes_test
@@ -94,6 +100,12 @@ TYPICAL_SERVICE_COMPOSITION_CSV_HEADERS = [
     "Раздел (услуга)",
     "Состав услуг",
 ]
+TYPICAL_SERVICE_COMPOSITION_XLSX_HEADERS = [
+    "Продукт",
+    "Раздел (услуга)",
+    "Состав услуг",
+]
+TYPICAL_SERVICE_COMPOSITION_EDITOR_STATE_HEADER = "Состояние редактора (JSON)"
 TYPICAL_SERVICE_TERM_CSV_HEADERS = [
     "Продукт",
     "Сроки предоставления исходных данных, нед.",
@@ -1583,14 +1595,7 @@ def typical_service_composition_csv_upload(request):
     if len(rows) < 2:
         return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
 
-    products_by_name = {_csv_lookup_key(p.short_name): p for p in Product.objects.all()}
-    sections_by_product = defaultdict(dict)
-    for section in TypicalSection.objects.select_related("product").all():
-        lookup = sections_by_product[section.product_id]
-        for label in (section.name_ru, section.name_en, section.code, section.short_name, section.short_name_ru):
-            key = _csv_lookup_key(label)
-            if key:
-                lookup.setdefault(key, section)
+    products_by_name, sections_by_product = _typical_service_composition_import_lookups()
 
     created = 0
     warnings = []
@@ -1636,6 +1641,52 @@ def typical_service_composition_csv_upload(request):
     return JsonResponse({"ok": True, "created": created, "warnings": warnings})
 
 
+def _typical_service_composition_import_lookups():
+    products_by_name = {_csv_lookup_key(p.short_name): p for p in Product.objects.all()}
+    sections_by_product = defaultdict(dict)
+    for section in TypicalSection.objects.select_related("product").all():
+        lookup = sections_by_product[section.product_id]
+        for label in (section.name_ru, section.name_en, section.code, section.short_name, section.short_name_ru):
+            key = _csv_lookup_key(label)
+            if key:
+                lookup.setdefault(key, section)
+    return products_by_name, sections_by_product
+
+
+def _normalize_typical_service_composition_editor_state(value, plain_text=""):
+    if isinstance(value, str):
+        raw = value.strip()
+        if raw:
+            try:
+                parsed = json.loads(raw)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                parsed = {}
+        else:
+            parsed = {}
+    elif isinstance(value, dict):
+        parsed = value
+    else:
+        parsed = {}
+
+    fallback_plain_text = str(plain_text or "").strip()
+    return {
+        "html": str(parsed.get("html") or "").strip(),
+        "plain_text": str(parsed.get("plain_text") or fallback_plain_text).strip(),
+    }
+
+
+def _xlsx_cell_value(cell):
+    return str(cell.value or "").strip()
+
+
+def _find_header_column(headers, header_name):
+    lookup_name = _csv_lookup_key(header_name)
+    for idx, value in enumerate(headers, start=1):
+        if _csv_lookup_key(value) == lookup_name:
+            return idx
+    return None
+
+
 @login_required
 @user_passes_test(staff_required)
 @require_http_methods(["GET"])
@@ -1658,6 +1709,141 @@ def typical_service_composition_csv_download(request):
     response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
     response["Content-Disposition"] = 'attachment; filename="typical_service_compositions.csv"'
     return response
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def typical_service_composition_xlsx_download(request):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Типовой состав услуг"
+
+    hidden_state_col = len(TYPICAL_SERVICE_COMPOSITION_XLSX_HEADERS) + 1
+    ws.append(TYPICAL_SERVICE_COMPOSITION_XLSX_HEADERS + [TYPICAL_SERVICE_COMPOSITION_EDITOR_STATE_HEADER])
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+    compositions = TypicalServiceComposition.objects.select_related("product", "section").all()
+    for composition in compositions:
+        editor_state = _normalize_typical_service_composition_editor_state(
+            composition.service_composition_editor_state,
+            composition.service_composition,
+        )
+        ws.append(
+            [
+                composition.product.short_name,
+                composition.section.name_ru or composition.section.name_en,
+                editor_state["plain_text"] or composition.service_composition,
+                json.dumps(editor_state, ensure_ascii=False),
+            ]
+        )
+
+    widths = {
+        1: 18,
+        2: 28,
+        3: 80,
+        hidden_state_col: 80,
+    }
+    for col_idx, width in widths.items():
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
+    ws.column_dimensions[get_column_letter(hidden_state_col)].hidden = True
+    ws.freeze_panes = "A2"
+
+    for row in ws.iter_rows(min_row=2):
+        for cell in row:
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    response = HttpResponse(
+        output.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = 'attachment; filename="typical_service_compositions.xlsx"'
+    return response
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def typical_service_composition_xlsx_upload(request):
+    xlsx_file = request.FILES.get("xlsx_file") or request.FILES.get("csv_file")
+    if not xlsx_file:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+    if not xlsx_file.name.lower().endswith(".xlsx"):
+        return JsonResponse({"ok": False, "error": "Допустимы только файлы XLSX."}, status=400)
+
+    try:
+        wb = load_workbook(xlsx_file, data_only=False)
+    except (BadZipFile, InvalidFileException, OSError, ValueError) as exc:
+        return JsonResponse({"ok": False, "error": f"Не удалось прочитать XLSX: {exc}"}, status=400)
+
+    ws = wb.active
+    if ws.max_row < 2:
+        return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
+
+    headers = [_xlsx_cell_value(cell) for cell in ws[1]]
+    editor_state_col = _find_header_column(headers, TYPICAL_SERVICE_COMPOSITION_EDITOR_STATE_HEADER)
+
+    products_by_name, sections_by_product = _typical_service_composition_import_lookups()
+    created = 0
+    warnings = []
+
+    for row_idx in range(2, ws.max_row + 1):
+        product_name = _xlsx_cell_value(ws.cell(row=row_idx, column=1))
+        section_name = _xlsx_cell_value(ws.cell(row=row_idx, column=2))
+        service_composition = _xlsx_cell_value(ws.cell(row=row_idx, column=3))
+        editor_state_raw = (
+            ws.cell(row=row_idx, column=editor_state_col).value
+            if editor_state_col
+            else None
+        )
+
+        if not any([product_name, section_name, service_composition, str(editor_state_raw or "").strip()]):
+            continue
+
+        product = products_by_name.get(_csv_lookup_key(product_name))
+        if not product:
+            warnings.append(f"Строка {row_idx}: продукт «{product_name}» не найден. Доступные: {', '.join(products_by_name.keys())}.")
+            continue
+
+        section = sections_by_product[product.pk].get(_csv_lookup_key(section_name))
+        if not section:
+            warnings.append(f"Строка {row_idx}: раздел «{section_name}» не найден для продукта «{product.short_name}».")
+            continue
+
+        try:
+            editor_state = _normalize_typical_service_composition_editor_state(
+                editor_state_raw,
+                service_composition,
+            )
+            if (
+                editor_state_raw
+                and service_composition
+                and editor_state["plain_text"]
+                and editor_state["plain_text"] != service_composition
+            ):
+                editor_state = {"html": "", "plain_text": service_composition}
+                warnings.append(
+                    f"Строка {row_idx}: видимый текст отличается от скрытого состояния редактора; "
+                    "форматирование для этой строки сброшено."
+                )
+            service_composition_plain = editor_state["plain_text"] or service_composition
+            TypicalServiceComposition.objects.create(
+                product=product,
+                section=section,
+                service_composition=service_composition_plain,
+                service_composition_editor_state=editor_state,
+                position=_next_position(TypicalServiceComposition),
+            )
+            created += 1
+        except Exception as exc:
+            warnings.append(f"Строка {row_idx}: ошибка сохранения — {exc}")
+
+    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
 
 
 def _normalize_typical_service_composition_positions():

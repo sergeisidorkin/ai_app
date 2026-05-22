@@ -8,8 +8,9 @@ from django.test import Client, TestCase, override_settings
 
 from contacts_app.models import PersonRecord
 from core.models import CloudStorageSettings
-from group_app.models import GroupMember
-from policy_app.models import Product
+from experts_app.models import ExpertProfile
+from group_app.models import GroupMember, OrgUnit
+from policy_app.models import DEPARTMENT_HEAD_GROUP, Product
 from proposals_app.models import ProposalRegistration
 from projects_app.models import Performer, ProjectRegistration, RegistrationWorkspaceFolder
 from users_app.models import Employee
@@ -500,6 +501,40 @@ class NextcloudWorkspaceTests(TestCase):
             project_manager_prs_id=self.manager_person.formatted_id,
         )
 
+    def _create_direction_head(self, direction_name="Горное дело"):
+        company = GroupMember.objects.create(
+            short_name=f"Компания {direction_name}",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+        )
+        direction = OrgUnit.objects.create(
+            company=company,
+            department_name=direction_name,
+            unit_type="expertise",
+        )
+        head_user = User.objects.create_user(
+            username=f"head-{direction.pk}@example.com",
+            email=f"head-{direction.pk}@example.com",
+            password="Secret123!",
+            first_name="Анна",
+            last_name="Руководитель",
+            is_staff=True,
+            is_active=True,
+        )
+        head_employee = Employee.objects.create(
+            user=head_user,
+            department=direction,
+            role=DEPARTMENT_HEAD_GROUP,
+        )
+        NextcloudUserLink.objects.create(
+            user=head_user,
+            nextcloud_user_id=f"ncstaff-{head_user.pk}",
+            nextcloud_username=f"ncstaff-{head_user.pk}",
+            nextcloud_email=head_user.email,
+        )
+        return direction, head_user, head_employee
+
     def test_create_basic_project_workspace_creates_folders_and_grants_editor_access(self):
         project_folder = _build_project_folder_name(self.project)
         project_path = f"/Corporate Root/03 Проекты/2026/{project_folder}"
@@ -538,6 +573,7 @@ class NextcloudWorkspaceTests(TestCase):
         self.assertEqual(workspace.public_url, f"https://cloud.example.com/apps/files/files?dir={project_path}")
 
     def test_create_basic_project_workspace_grants_access_to_confirmed_performer(self):
+        direction, direction_head_user, _direction_head = self._create_direction_head()
         performer_user = User.objects.create_user(
             username="performer@example.com",
             email="performer@example.com",
@@ -553,6 +589,10 @@ class NextcloudWorkspaceTests(TestCase):
             employee=performer_employee,
             executor="Петров Петр Петрович",
             participation_response=Performer.ParticipationResponse.CONFIRMED,
+        )
+        ExpertProfile.objects.create(
+            employee=performer_employee,
+            expertise_direction=direction,
         )
         NextcloudUserLink.objects.create(
             user=performer_user,
@@ -578,6 +618,7 @@ class NextcloudWorkspaceTests(TestCase):
             [
                 call("cloud-admin", project_path, f"ncstaff-{self.manager.pk}", permissions=15),
                 call("cloud-admin", project_path, f"ncstaff-{performer_user.pk}", permissions=15),
+                call("cloud-admin", project_path, f"ncstaff-{direction_head_user.pk}", permissions=15),
             ]
         )
 
@@ -623,6 +664,112 @@ class NextcloudWorkspaceTests(TestCase):
             f"ncstaff-{performer_user.pk}",
             permissions=15,
         )
+
+    def test_grant_project_workspace_editor_access_for_confirmed_performer_and_direction_head(self):
+        direction, direction_head_user, _direction_head = self._create_direction_head()
+        performer_user = User.objects.create_user(
+            username="workspace-direction-performer@example.com",
+            email="workspace-direction-performer@example.com",
+            password="Secret123!",
+            first_name="Сергей",
+            last_name="Сергеев",
+            is_staff=True,
+            is_active=True,
+        )
+        performer_employee = Employee.objects.create(user=performer_user, patronymic="Сергеевич")
+        ExpertProfile.objects.create(
+            employee=performer_employee,
+            expertise_direction=direction,
+        )
+        performer = Performer.objects.create(
+            registration=self.project,
+            employee=performer_employee,
+            executor="Сергеев Сергей Сергеевич",
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+        )
+        NextcloudUserLink.objects.create(
+            user=performer_user,
+            nextcloud_user_id=f"ncstaff-{performer_user.pk}",
+            nextcloud_username=f"ncstaff-{performer_user.pk}",
+            nextcloud_email="workspace-direction-performer@example.com",
+        )
+        ProjectWorkspace.objects.create(
+            project=self.project,
+            disk_path="/Corporate Root/03 Проекты/2026/Проект 6001 DD Проект Nextcloud",
+            created_by=self.creator,
+        )
+        client = Mock()
+        client.is_configured = True
+        client.username = "cloud-admin"
+        client.ensure_user_share.return_value = Mock()
+
+        granted = grant_project_workspace_editor_access_for_performers([performer.pk], client=client)
+
+        self.assertEqual(granted, 2)
+        client.ensure_user_share.assert_has_calls(
+            [
+                call(
+                    "cloud-admin",
+                    "/Corporate Root/03 Проекты/2026/Проект 6001 DD Проект Nextcloud",
+                    f"ncstaff-{performer_user.pk}",
+                    permissions=15,
+                ),
+                call(
+                    "cloud-admin",
+                    "/Corporate Root/03 Проекты/2026/Проект 6001 DD Проект Nextcloud",
+                    f"ncstaff-{direction_head_user.pk}",
+                    permissions=15,
+                ),
+            ]
+        )
+
+    def test_grant_project_workspace_editor_access_deduplicates_direction_head_for_project(self):
+        direction, direction_head_user, _direction_head = self._create_direction_head()
+        ProjectWorkspace.objects.create(
+            project=self.project,
+            disk_path="/Corporate Root/03 Проекты/2026/Проект 6001 DD Проект Nextcloud",
+            created_by=self.creator,
+        )
+        performer_ids = []
+        for index in range(2):
+            performer_user = User.objects.create_user(
+                username=f"workspace-direction-performer-{index}@example.com",
+                email=f"workspace-direction-performer-{index}@example.com",
+                password="Secret123!",
+                is_staff=True,
+                is_active=True,
+            )
+            performer_employee = Employee.objects.create(user=performer_user)
+            ExpertProfile.objects.create(
+                employee=performer_employee,
+                expertise_direction=direction,
+            )
+            performer = Performer.objects.create(
+                registration=self.project,
+                employee=performer_employee,
+                executor=performer_user.username,
+                participation_response=Performer.ParticipationResponse.CONFIRMED,
+            )
+            performer_ids.append(performer.pk)
+            NextcloudUserLink.objects.create(
+                user=performer_user,
+                nextcloud_user_id=f"ncstaff-{performer_user.pk}",
+                nextcloud_username=f"ncstaff-{performer_user.pk}",
+                nextcloud_email=performer_user.email,
+            )
+        client = Mock()
+        client.is_configured = True
+        client.username = "cloud-admin"
+        client.ensure_user_share.return_value = Mock()
+
+        granted = grant_project_workspace_editor_access_for_performers(performer_ids, client=client)
+
+        self.assertEqual(granted, 3)
+        head_share_calls = [
+            share_call for share_call in client.ensure_user_share.call_args_list
+            if share_call.args[2] == f"ncstaff-{direction_head_user.pk}"
+        ]
+        self.assertEqual(len(head_share_calls), 1)
 
     def test_grant_project_workspace_editor_access_skips_ineligible_nextcloud_users(self):
         ProjectWorkspace.objects.create(

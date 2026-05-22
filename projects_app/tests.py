@@ -2616,9 +2616,11 @@ class WorkVolumePerformerCreationTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'id="projects-content-team" class="projects-section-content d-none"', html=False)
         self.assertContains(response, 'id="projects-content-info-request" class="projects-section-content d-none"', html=False)
+        self.assertContains(response, 'id="projects-content-performer-payments" class="projects-section-content d-none"', html=False)
         self.assertContains(response, 'id="performers-main-section"', html=False)
         self.assertContains(response, 'id="participation-confirmation-section"', html=False)
         self.assertContains(response, 'id="info-request-approval-section"', html=False)
+        self.assertContains(response, 'id="payment-request-section"', html=False)
 
         content = response.content.decode("utf-8")
         self.assertLess(
@@ -2633,6 +2635,455 @@ class WorkVolumePerformerCreationTests(TestCase):
             content.index('id="projects-content-info-request"'),
             content.index('id="info-request-approval-section"'),
         )
+        self.assertLess(
+            content.index('id="info-request-approval-section"'),
+            content.index('id="projects-content-performer-payments"'),
+        )
+        self.assertLess(
+            content.index('id="projects-content-performer-payments"'),
+            content.index('id="payment-request-section"'),
+        )
+
+    def test_home_page_lists_performer_payments_after_info_request(self):
+        response = self.client.get(reverse("home"))
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        info_request_index = content.index('data-projects-section="info-request"')
+        payments_index = content.index('data-projects-section="performer-payments"')
+        self.assertLess(info_request_index, payments_index)
+        self.assertIn("'performer-payments': 'Платежи исполнителям'", content)
+
+    def test_performers_partial_renders_payment_requests_from_signing_rows(self):
+        from classifiers_app.models import OKVCurrency
+
+        rub = OKVCurrency.objects.create(
+            code_numeric="643",
+            code_alpha="RUB",
+            name="Российский рубль",
+        )
+        contracted = Performer.objects.create(
+            registration=self.project,
+            employee=self.project_manager_employee,
+            executor=self.project_manager_name,
+            contract_batch_id=uuid.uuid4(),
+            contract_number="AGR-42",
+            contract_signing_note="Договор заключен",
+            prepayment=Decimal("30"),
+            final_payment=Decimal("70"),
+            agreed_amount=Decimal("1234567.89"),
+            currency=rub,
+        )
+        draft_only = Performer.objects.create(
+            registration=self.project,
+            employee=self.first_manager_employee,
+            executor=self.first_manager_name,
+        )
+
+        response = self.client.get(reverse("performers_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Заявки на оплату")
+        content = response.content.decode("utf-8")
+        section = content[
+            content.index('id="payment-request-section"'):
+            content.index("<script>", content.index('id="payment-request-section"'))
+        ]
+        for header in (
+            "Номер",
+            "Тип",
+            "Название",
+            "Исполнитель",
+            "Номер договора",
+            "Заключение договора",
+            "Цена",
+            "Аванс",
+            "Ок. пл.",
+            "Заявка на аванс",
+            "Заявка на ок. пл.",
+            "Оплата",
+            "Отправитель",
+        ):
+            self.assertIn(header, section)
+        self.assertNotIn(">Дата<", section)
+        self.assertNotIn("Ок. платеж", section)
+        self.assertIn("payment-request-signing-status-cell", section)
+        self.assertIn("Договор заключен", section)
+        self.assertEqual(section.count("payment-request-group-header"), 2)
+        self.assertEqual(section.count("payment-request-toggle-cell"), 2)
+        self.assertEqual(section.count("payment-request-toggle-header"), 2)
+        self.assertEqual(section.count("payment-request-paid-toggle-cell"), 2)
+        self.assertEqual(section.count("payment-request-paid-toggle-header"), 2)
+        self.assertNotIn("payment-request-paid-date-cell", section)
+        self.assertNotIn("payment-request-stage-inner", section)
+        self.assertEqual(section.count(">№<"), 2)
+        self.assertIn('data-payment-date="advance"', section)
+        self.assertIn('data-payment-date="final"', section)
+        self.assertNotIn('data-payment-paid-date="advance"', section)
+        self.assertNotIn('data-payment-paid-date="final"', section)
+        self.assertIn('data-payment-number="advance"', section)
+        self.assertIn('data-payment-number="final"', section)
+        self.assertIn('data-payment-sender', section)
+        self.assertIn('id="payment-request-send-btn"', section)
+        self.assertIn('id="payment-request-settings-btn"', section)
+        self.assertIn('id="payment-request-modal"', section)
+        self.assertIn('bi-toggle-off', section)
+        self.assertIn('data-payment-toggle="advance"', section)
+        self.assertIn('data-payment-toggle="final"', section)
+        self.assertIn('data-payment-paid-toggle="advance"', section)
+        self.assertIn('data-payment-paid-toggle="final"', section)
+        self.assertIn("payment-request-paid-toggle-icon", section)
+        self.assertIn('id="payment-request-project-filter-toggle"', section)
+        self.assertIn(f'id="payment-request-filter-{self.project.pk}"', section)
+        self.assertIn(f'id="payment-request-sel-{contracted.pk}"', section)
+        self.assertNotIn(f'id="payment-request-sel-{draft_only.pk}"', section)
+        self.assertIn("AGR-42", section)
+        self.assertIn("30%", section)
+        self.assertIn("70%", section)
+        self.assertIn("1\u00a0234\u00a0567,89 RUB", section)
+        self.assertIn('data-request-url="/projects/performers/payment-request/"', section)
+        self.assertNotIn('data-payment-paid-toggle-url="/projects/performers/payment-paid-toggle/"', section)
+        self.assertNotIn("payment-request-paid-toggle-icon is-interactive", section)
+        self.assertIn('data-advance-paid="0"', section)
+        self.assertIn('data-final-paid="0"', section)
+
+    def test_payment_paid_toggle_updates_performer_flags(self):
+        performer = Performer.objects.create(
+            registration=self.project,
+            employee=self.project_manager_employee,
+            executor=self.project_manager_name,
+            contract_batch_id=uuid.uuid4(),
+            contract_signing_note="Договор заключен",
+        )
+
+        enable_response = self.client.post(
+            reverse("payment_paid_toggle"),
+            {
+                "performer_id": str(performer.pk),
+                "kind": "advance",
+                "paid": "1",
+            },
+        )
+        self.assertEqual(enable_response.status_code, 200)
+        enable_payload = enable_response.json()
+        self.assertTrue(enable_payload["ok"])
+        self.assertTrue(enable_payload["paid_at"])
+        performer.refresh_from_db()
+        self.assertTrue(performer.advance_payment_paid)
+        self.assertIsNotNone(performer.advance_payment_paid_at)
+        self.assertFalse(performer.final_payment_paid)
+        self.assertIsNone(performer.final_payment_paid_at)
+
+        disable_response = self.client.post(
+            reverse("payment_paid_toggle"),
+            {
+                "performer_id": str(performer.pk),
+                "kind": "advance",
+                "paid": "0",
+            },
+        )
+        self.assertEqual(disable_response.status_code, 200)
+        disable_payload = disable_response.json()
+        self.assertFalse(disable_payload["paid"])
+        self.assertEqual(disable_payload["paid_at"], "")
+        performer.refresh_from_db()
+        self.assertFalse(performer.advance_payment_paid)
+        self.assertIsNone(performer.advance_payment_paid_at)
+
+        final_response = self.client.post(
+            reverse("payment_paid_toggle"),
+            {
+                "performer_id": str(performer.pk),
+                "kind": "final",
+                "paid": "1",
+            },
+        )
+        self.assertEqual(final_response.status_code, 200)
+        final_payload = final_response.json()
+        self.assertTrue(final_payload["paid_at"])
+        performer.refresh_from_db()
+        self.assertTrue(performer.final_payment_paid)
+        self.assertIsNotNone(performer.final_payment_paid_at)
+
+    def test_payment_paid_toggle_allows_zero_prepayment_advance(self):
+        performer = Performer.objects.create(
+            registration=self.project,
+            employee=self.project_manager_employee,
+            executor=self.project_manager_name,
+            contract_batch_id=uuid.uuid4(),
+            prepayment=Decimal("0"),
+        )
+        response = self.client.post(
+            reverse("payment_paid_toggle"),
+            {
+                "performer_id": str(performer.pk),
+                "kind": "advance",
+                "paid": "1",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+        performer.refresh_from_db()
+        self.assertTrue(performer.advance_payment_paid)
+
+    def test_payment_request_sender_display_formats_initials_without_space(self):
+        from projects_app.services.payment_request import payment_request_sender_display
+
+        user = get_user_model().objects.create_user(
+            username="payment-request-sender@example.com",
+            first_name="Иван",
+            last_name="Петров",
+        )
+        Employee.objects.create(user=user, patronymic="Петрович")
+        self.assertEqual(payment_request_sender_display(user), "Петров И.П.")
+
+    def test_payment_request_sends_notification(self):
+        from classifiers_app.models import OKVCurrency
+        from django.contrib.auth.models import Group
+        from notifications_app.models import Notification
+        from policy_app.models import LAWYER_GROUP
+
+        lawyer_group, _ = Group.objects.get_or_create(name=LAWYER_GROUP)
+        lawyer_user = get_user_model().objects.create_user(
+            username="payment-request-lawyer@example.com",
+            email="payment-request-lawyer@example.com",
+            password="secret",
+            first_name="Анна",
+            last_name="Юрина",
+            is_staff=True,
+        )
+        Employee.objects.create(user=lawyer_user, patronymic="Юрьевна")
+        lawyer_user.groups.add(lawyer_group)
+
+        rub = OKVCurrency.objects.create(
+            code_numeric="643",
+            code_alpha="RUB",
+            name="Российский рубль",
+        )
+        contracted = Performer.objects.create(
+            registration=self.project,
+            employee=self.project_manager_employee,
+            executor=self.project_manager_name,
+            contract_batch_id=uuid.uuid4(),
+            contract_number="AGR-42",
+            contract_signing_note="Договор заключен",
+            prepayment=Decimal("30"),
+            final_payment=Decimal("70"),
+            agreed_amount=Decimal("1000.00"),
+            currency=rub,
+        )
+        sent_at = timezone.localtime().replace(second=0, microsecond=0)
+        sent_at_value = sent_at.strftime("%Y-%m-%dT%H:%M")
+
+        response = self.client.post(
+            reverse("payment_request"),
+            {
+                "performer_ids[]": [str(contracted.pk)],
+                "delivery_channels[]": ["system"],
+                "request_sent_at": sent_at_value,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        request_number = data["request_number"]
+        self.assertIsInstance(request_number, int)
+        contracted.refresh_from_db()
+        self.assertIsNotNone(contracted.advance_payment_request_sent_at)
+        self.assertEqual(contracted.advance_payment_request_number, request_number)
+        self.assertEqual(contracted.advance_payment_request_sender, data["sender_display"])
+        self.assertIsNone(contracted.final_payment_request_sent_at)
+        self.assertEqual(
+            Notification.objects.filter(
+                notification_type=Notification.NotificationType.PROJECT_PAYMENT_REQUEST,
+            ).count(),
+            1,
+        )
+        notification = Notification.objects.get(
+            notification_type=Notification.NotificationType.PROJECT_PAYMENT_REQUEST,
+        )
+        self.assertEqual(notification.recipient_id, lawyer_user.pk)
+        self.assertIn(f"№{request_number}", notification.title_text)
+
+        response_final = self.client.post(
+            reverse("payment_request"),
+            {
+                "performer_ids[]": [str(contracted.pk)],
+                "delivery_channels[]": ["system"],
+                "request_sent_at": sent_at_value,
+            },
+        )
+        self.assertEqual(response_final.status_code, 200)
+        self.assertTrue(response_final.json()["ok"])
+        contracted.refresh_from_db()
+        self.assertIsNotNone(contracted.advance_payment_request_sent_at)
+        self.assertIsNotNone(contracted.final_payment_request_sent_at)
+
+    def test_payment_request_mixed_stages_in_one_batch(self):
+        from classifiers_app.models import OKVCurrency
+        from django.contrib.auth.models import Group
+        from notifications_app.models import Notification
+        from policy_app.models import LAWYER_GROUP
+
+        lawyer_group, _ = Group.objects.get_or_create(name=LAWYER_GROUP)
+        if not get_user_model().objects.filter(groups__name=LAWYER_GROUP, is_staff=True).exists():
+            lawyer_user = get_user_model().objects.create_user(
+                username="payment-request-lawyer-mixed@example.com",
+                email="payment-request-lawyer-mixed@example.com",
+                password="secret",
+                first_name="Анна",
+                last_name="Юрина",
+                is_staff=True,
+            )
+            Employee.objects.create(user=lawyer_user, patronymic="Юрьевна")
+            lawyer_user.groups.add(lawyer_group)
+
+        rub = OKVCurrency.objects.create(
+            code_numeric="643",
+            code_alpha="RUB",
+            name="Российский рубль",
+        )
+        advance_row = Performer.objects.create(
+            registration=self.project,
+            employee=self.project_manager_employee,
+            executor=self.project_manager_name,
+            contract_batch_id=uuid.uuid4(),
+            contract_number="AGR-ADV",
+            contract_signing_note="Договор заключен",
+            prepayment=Decimal("50"),
+            final_payment=Decimal("50"),
+            agreed_amount=Decimal("100000.00"),
+            currency=rub,
+        )
+        final_row = Performer.objects.create(
+            registration=self.project,
+            employee=self.first_manager_employee,
+            executor=self.first_manager_name,
+            contract_batch_id=uuid.uuid4(),
+            contract_number="AGR-FIN",
+            contract_signing_note="Договор заключен",
+            prepayment=Decimal("50"),
+            final_payment=Decimal("50"),
+            agreed_amount=Decimal("50000.00"),
+            currency=rub,
+            advance_payment_request_sent_at=timezone.now(),
+            advance_payment_request_number=99,
+        )
+        sent_at_value = timezone.localtime().replace(second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M")
+
+        response = self.client.post(
+            reverse("payment_request"),
+            {
+                "performer_ids[]": [str(advance_row.pk), str(final_row.pk)],
+                "delivery_channels[]": ["system"],
+                "request_sent_at": sent_at_value,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(len(data["row_updates"]), 2)
+        request_number = data["request_number"]
+        advance_row.refresh_from_db()
+        final_row.refresh_from_db()
+        self.assertEqual(advance_row.advance_payment_request_number, request_number)
+        self.assertEqual(final_row.final_payment_request_number, request_number)
+        self.assertEqual(
+            Notification.objects.filter(
+                notification_type=Notification.NotificationType.PROJECT_PAYMENT_REQUEST,
+            ).count(),
+            1,
+        )
+
+    def test_payment_request_zero_prepayment_sends_final_only(self):
+        from classifiers_app.models import OKVCurrency
+        from django.contrib.auth.models import Group
+        from policy_app.models import LAWYER_GROUP
+
+        lawyer_group, _ = Group.objects.get_or_create(name=LAWYER_GROUP)
+        if not get_user_model().objects.filter(groups__name=LAWYER_GROUP, is_staff=True).exists():
+            lawyer_user = get_user_model().objects.create_user(
+                username="payment-request-lawyer-zero@example.com",
+                email="payment-request-lawyer-zero@example.com",
+                password="secret",
+                first_name="Анна",
+                last_name="Юрина",
+                is_staff=True,
+            )
+            Employee.objects.create(user=lawyer_user, patronymic="Юрьевна")
+            lawyer_user.groups.add(lawyer_group)
+
+        rub = OKVCurrency.objects.create(
+            code_numeric="643",
+            code_alpha="RUB",
+            name="Российский рубль",
+        )
+        contracted = Performer.objects.create(
+            registration=self.project,
+            employee=self.project_manager_employee,
+            executor=self.project_manager_name,
+            contract_batch_id=uuid.uuid4(),
+            contract_number="AGR-0",
+            contract_signing_note="Договор заключен",
+            prepayment=Decimal("0"),
+            final_payment=Decimal("100"),
+            agreed_amount=Decimal("1000.00"),
+            currency=rub,
+        )
+        sent_at_value = timezone.localtime().replace(second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M")
+
+        response = self.client.post(
+            reverse("payment_request"),
+            {
+                "performer_ids[]": [str(contracted.pk)],
+                "delivery_channels[]": ["system"],
+                "request_sent_at": sent_at_value,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+        contracted.refresh_from_db()
+        self.assertIsNone(contracted.advance_payment_request_sent_at)
+        self.assertIsNotNone(contracted.final_payment_request_sent_at)
+
+    def test_performers_partial_renders_skipped_advance_toggle_for_zero_prepayment(self):
+        from classifiers_app.models import OKVCurrency
+
+        rub = OKVCurrency.objects.create(
+            code_numeric="643",
+            code_alpha="RUB",
+            name="Российский рубль",
+        )
+        contracted = Performer.objects.create(
+            registration=self.project,
+            employee=self.project_manager_employee,
+            executor=self.project_manager_name,
+            contract_batch_id=uuid.uuid4(),
+            contract_number="AGR-0",
+            contract_signing_note="Договор заключен",
+            prepayment=Decimal("0"),
+            final_payment=Decimal("100"),
+            agreed_amount=Decimal("1000.00"),
+            currency=rub,
+        )
+
+        response = self.client.get(reverse("performers_partial"))
+        content = response.content.decode("utf-8")
+        section = content[
+            content.index('id="payment-request-section"'):
+            content.index("<script>", content.index('id="payment-request-section"'))
+        ]
+        row_start = section.index(f'data-performer-id="{contracted.pk}"')
+        row_end = section.index("</tr>", row_start)
+        row_html = section[row_start:row_end]
+        self.assertIn('data-prepayment="0"', row_html)
+        self.assertEqual(row_html.count('is-skipped'), 2)
+        self.assertIn('data-payment-toggle="advance"', row_html)
+        self.assertIn('data-payment-paid-toggle="advance"', row_html)
+        self.assertIn('bi-toggle-on', row_html)
 
     def test_direction_director_uses_project_manager_executor_locking(self):
         Employee.objects.create(user=self.user, role=DIRECTION_DIRECTOR_GROUP)
@@ -3216,7 +3667,8 @@ class CloudStorageProjectRoutingTests(TestCase):
         response = self.client.get(reverse("performers_partial"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertNotContains(response, "Заключение договора")
+        self.assertNotContains(response, "Составление проекта договора")
+        self.assertNotContains(response, "Отправка проекта договора")
         self.assertNotContains(response, "create-contract-progress-modal")
 
     def test_performers_partial_uses_current_primary_cloud_label_in_source_data_modal(self):

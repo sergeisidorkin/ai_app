@@ -753,6 +753,120 @@ class ProposalDocumentGenerationTests(TestCase):
             )
             self.assertIn('w:lang w:val="ru-RU"', paragraph._element.xml)
 
+    def test_scope_of_work_preserves_custom_rich_list_markers(self):
+        template_doc = Document()
+        template_doc.add_paragraph("[[scope_of_work]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+
+        generated_bytes = process_template(
+            buffer.getvalue(),
+            {},
+            list_replacements={
+                "[[scope_of_work]]": [
+                    {
+                        "html": (
+                            '<ol><li data-list="dash">Пункт с дефисом</li>'
+                            '<li data-list="check">Пункт с галочкой</li></ol>'
+                        )
+                    }
+                ]
+            },
+            default_language_code="ru-RU",
+        )
+
+        generated_doc = Document(BytesIO(generated_bytes))
+        numbering_xml = generated_doc.part.numbering_part._element.xml
+        scope_paragraphs = [
+            paragraph
+            for paragraph in generated_doc.paragraphs
+            if paragraph.text in {"Пункт с дефисом", "Пункт с галочкой"}
+        ]
+
+        self.assertEqual(len(scope_paragraphs), 2)
+        self.assertIn('w:lvlText w:val="-"', numbering_xml)
+        self.assertIn('w:lvlText w:val="✓"', numbering_xml)
+        for paragraph in scope_paragraphs:
+            self.assertIn("w:numPr", paragraph._element.xml)
+            self.assertIn('w:lang w:val="ru-RU"', paragraph._element.xml)
+
+    def test_scope_of_work_preserves_quill_ordered_indent_levels(self):
+        template_doc = Document()
+        template_doc.add_paragraph("[[scope_of_work]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+
+        generated_bytes = process_template(
+            buffer.getvalue(),
+            {},
+            list_replacements={
+                "[[scope_of_work]]": [
+                    {
+                        "html": (
+                            '<ol><li data-list="ordered">Основной пункт</li>'
+                            '<li class="ql-indent-1" data-list="ordered">Подпункт буквой</li></ol>'
+                        )
+                    }
+                ]
+            },
+            default_language_code="ru-RU",
+        )
+
+        generated_doc = Document(BytesIO(generated_bytes))
+        numbering_xml = generated_doc.part.numbering_part._element.xml
+        paragraphs_by_text = {
+            paragraph.text: paragraph._element.xml
+            for paragraph in generated_doc.paragraphs
+            if paragraph.text in {"Основной пункт", "Подпункт буквой"}
+        }
+
+        self.assertIn('w:numFmt w:val="decimal"', numbering_xml)
+        self.assertIn('w:numFmt w:val="lowerLetter"', numbering_xml)
+        self.assertIn('w:lvlText w:val="%2)"', numbering_xml)
+        self.assertIn('w:ilvl w:val="0"', paragraphs_by_text["Основной пункт"])
+        self.assertIn('w:ilvl w:val="1"', paragraphs_by_text["Подпункт буквой"])
+
+    def test_scope_of_work_preserves_quill_marker_indent_levels(self):
+        template_doc = Document()
+        template_doc.add_paragraph("[[scope_of_work]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+
+        generated_bytes = process_template(
+            buffer.getvalue(),
+            {},
+            list_replacements={
+                "[[scope_of_work]]": [
+                    {
+                        "html": (
+                            '<ul><li data-list="bullet">Точка первого уровня</li>'
+                            '<li class="ql-indent-1" data-list="dash">Дефис второго уровня</li>'
+                            '<li class="ql-indent-2" data-list="check">Галочка третьего уровня</li></ul>'
+                        )
+                    }
+                ]
+            },
+            default_language_code="ru-RU",
+        )
+
+        generated_doc = Document(BytesIO(generated_bytes))
+        numbering_xml = generated_doc.part.numbering_part._element.xml
+        paragraphs_by_text = {
+            paragraph.text: paragraph._element.xml
+            for paragraph in generated_doc.paragraphs
+            if paragraph.text in {
+                "Точка первого уровня",
+                "Дефис второго уровня",
+                "Галочка третьего уровня",
+            }
+        }
+
+        self.assertIn('w:lvlText w:val="-"', numbering_xml)
+        self.assertIn('w:lvlText w:val="✓"', numbering_xml)
+        self.assertIn('w:ilvl w:val="0"', paragraphs_by_text["Точка первого уровня"])
+        self.assertIn('w:ilvl w:val="1"', paragraphs_by_text["Дефис второго уровня"])
+        self.assertIn('w:ilvl w:val="2"', paragraphs_by_text["Галочка третьего уровня"])
+
     def test_scope_of_work_plain_text_fallback_remains_plain_paragraphs(self):
         proposal = ProposalRegistration(
             service_composition_mode="sections",
@@ -3376,6 +3490,53 @@ class ProposalRegistrationFormTests(TestCase):
                 }
             ],
         )
+
+    def test_service_sections_editor_state_preserves_custom_list_markers(self):
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        editor_state = [
+            {
+                "code": "S-101",
+                "service_name": "Раздел 1",
+                "html": (
+                    '<ol><li data-list="dash">Этап с дефисом</li>'
+                    '<li data-list="check">Этап с галочкой</li></ol>'
+                ),
+                "plain_text": "Этап с дефисом\nЭтап с галочкой",
+            }
+        ]
+
+        form = ProposalRegistrationForm(
+            data={
+                "number": 3333,
+                "group_member": group_member.pk,
+                "type": product.pk,
+                "name": "Тестовое ТКП",
+                "kind": ProposalRegistration.ProposalKind.REGULAR,
+                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "year": 2026,
+                "service_sections_editor_state": json.dumps(editor_state, ensure_ascii=False),
+            }
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        proposal = form.save()
+
+        self.assertEqual(proposal.service_sections_editor_state, editor_state)
 
     def test_service_sections_payload_saves_code_by_selected_service(self):
         group_member = GroupMember.objects.create(

@@ -336,6 +336,10 @@ class HomePagePermissionsTests(TestCase):
         self.assertContains(response, 'id="contracts-content-performer-requisites"', html=False)
         self.assertLess(
             response.content.decode().index('data-contracts-section="in-progress"'),
+            response.content.decode().index('data-contracts-section="performer-execution"'),
+        )
+        self.assertLess(
+            response.content.decode().index('data-contracts-section="performer-execution"'),
             response.content.decode().index('data-contracts-section="performer-requisites"'),
         )
 

@@ -506,9 +506,9 @@
       <h5 class="table-section-title mb-0">
         <i class="bi bi-table me-2"></i> Согласование запроса
       </h5>
-      <div class="dropdown">
+      <div class="dropdown projects-radio-filter-dropdown">
         <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
-                id="info-request-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                id="info-request-project-filter-toggle" data-bs-toggle="dropdown" data-bs-display="static" aria-expanded="false">
           Проект: <span class="js-info-request-filter-label">—</span>
         </button>
         <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="info-request-project-filter-toggle" style="max-height: 240px; overflow-y: auto;">
@@ -795,6 +795,14 @@
   </div>
 </div>
 
+<div id="projects-content-performer-payments" class="projects-section-content d-none">
+  <div class="card shadow-sm">
+    <div class="card-body">
+      {% include "projects_app/payment_request_section.html" with payment_request_section_uid="payment-request" %}
+    </div>
+  </div>
+</div>
+
 <script>
 (function(){
   const FILTER_ALL = "__all__";
@@ -1014,6 +1022,9 @@
         } else {
           sync('');
         }
+      }
+      if (typeof window.__syncPaymentRequestFilter === 'function') {
+        window.__syncPaymentRequestFilter(pf);
       }
     });
 

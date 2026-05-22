@@ -6317,8 +6317,7 @@
     function updateColorPreviews() {
       toolbar.querySelectorAll('[data-color-preview]').forEach(function (preview) {
         const kind = preview.dataset.colorPreview;
-        const input = toolbar.querySelector('[data-color-source="' + kind + '"]');
-        if (input) preview.style.backgroundColor = input.value || '#000000';
+        preview.style.backgroundColor = getAppliedToolbarColor(kind);
       });
     }
 
@@ -6338,10 +6337,274 @@
       }).join('');
     }
 
+    const COLOR_DEFAULTS = {
+      color: '#000000',
+      background: '#ffffff',
+    };
+
+    function getColorDefault(kind) {
+      return COLOR_DEFAULTS[kind] || '#000000';
+    }
+
+    function getColorDatasetKey(kind, state) {
+      return state + (kind === 'background' ? 'BackgroundColor' : 'TextColor');
+    }
+
+    function clampColorChannel(value) {
+      return Math.max(0, Math.min(255, Math.round(Number(value) || 0)));
+    }
+
+    function clampUnit(value) {
+      return Math.max(0, Math.min(1, Number(value) || 0));
+    }
+
+    function hexToRgb(value) {
+      const hex = normalizeToolbarColor(value, '#000000').slice(1);
+      return {
+        r: parseInt(hex.slice(0, 2), 16) || 0,
+        g: parseInt(hex.slice(2, 4), 16) || 0,
+        b: parseInt(hex.slice(4, 6), 16) || 0,
+      };
+    }
+
+    function rgbToHex(rgb) {
+      return '#' + ['r', 'g', 'b'].map(function (channel) {
+        return clampColorChannel(rgb[channel]).toString(16).padStart(2, '0');
+      }).join('');
+    }
+
+    function rgbToHsv(rgb) {
+      const r = clampColorChannel(rgb.r) / 255;
+      const g = clampColorChannel(rgb.g) / 255;
+      const b = clampColorChannel(rgb.b) / 255;
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const delta = max - min;
+      let hue = 0;
+      if (delta) {
+        if (max === r) hue = ((g - b) / delta) % 6;
+        else if (max === g) hue = (b - r) / delta + 2;
+        else hue = (r - g) / delta + 4;
+        hue = Math.round(hue * 60);
+        if (hue < 0) hue += 360;
+      }
+      return {
+        h: hue,
+        s: max === 0 ? 0 : delta / max,
+        v: max,
+      };
+    }
+
+    function hsvToRgb(hsv) {
+      const h = ((Number(hsv.h) || 0) % 360 + 360) % 360;
+      const s = clampUnit(hsv.s);
+      const v = clampUnit(hsv.v);
+      const c = v * s;
+      const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+      const m = v - c;
+      let r1 = 0;
+      let g1 = 0;
+      let b1 = 0;
+      if (h < 60) {
+        r1 = c;
+        g1 = x;
+      } else if (h < 120) {
+        r1 = x;
+        g1 = c;
+      } else if (h < 180) {
+        g1 = c;
+        b1 = x;
+      } else if (h < 240) {
+        g1 = x;
+        b1 = c;
+      } else if (h < 300) {
+        r1 = x;
+        b1 = c;
+      } else {
+        r1 = c;
+        b1 = x;
+      }
+      return {
+        r: (r1 + m) * 255,
+        g: (g1 + m) * 255,
+        b: (b1 + m) * 255,
+      };
+    }
+
+    function getAppliedToolbarColor(kind) {
+      const key = getColorDatasetKey(kind, 'applied');
+      return normalizeToolbarColor(toolbar.dataset[key], getColorDefault(kind));
+    }
+
+    function getPendingToolbarColor(kind) {
+      const pendingKey = getColorDatasetKey(kind, 'pending');
+      return normalizeToolbarColor(toolbar.dataset[pendingKey], getAppliedToolbarColor(kind));
+    }
+
+    function updateColorPickerControls(kind, value) {
+      const rgb = hexToRgb(value);
+      const hsv = rgbToHsv(rgb);
+      const previousHue = Number(toolbar.dataset[getColorDatasetKey(kind, 'hue')]);
+      const hue = hsv.s === 0 && Number.isFinite(previousHue) ? previousHue : hsv.h;
+      toolbar.dataset[getColorDatasetKey(kind, 'hue')] = String(hue);
+
+      const hueInput = toolbar.querySelector('[data-color-hue="' + kind + '"]');
+      if (hueInput) {
+        hueInput.dataset.colorHueValue = String(Math.round(hue));
+        hueInput.setAttribute('aria-valuenow', String(Math.round(hue)));
+      }
+
+      const hueHandle = toolbar.querySelector('[data-color-hue-handle="' + kind + '"]');
+      if (hueHandle) hueHandle.style.left = (hue / 360 * 100) + '%';
+
+      toolbar.querySelectorAll('[data-color-rgb="' + kind + '"]').forEach(function (input) {
+        input.value = String(clampColorChannel(rgb[input.dataset.colorChannel]));
+      });
+
+      const sv = toolbar.querySelector('[data-color-sv="' + kind + '"]');
+      if (sv) sv.style.setProperty('--proposal-color-picker-hue', String(Math.round(hue)));
+
+      const handle = toolbar.querySelector('[data-color-sv-handle="' + kind + '"]');
+      if (handle) {
+        handle.style.left = (hsv.s * 100) + '%';
+        handle.style.top = ((1 - hsv.v) * 100) + '%';
+      }
+    }
+
+    function setToolbarColor(kind, value, commit) {
+      const normalized = normalizeToolbarColor(value, getColorDefault(kind));
+      toolbar.dataset[getColorDatasetKey(kind, 'pending')] = normalized;
+      if (commit) {
+        toolbar.dataset[getColorDatasetKey(kind, 'applied')] = normalized;
+      }
+      updateColorPickerControls(kind, normalized);
+      updateColorPreviews();
+      return normalized;
+    }
+
+    function closeColorPopovers(exceptKind) {
+      toolbar.querySelectorAll('[data-color-popover]').forEach(function (popover) {
+        const kind = popover.dataset.colorPopover;
+        const keepOpen = exceptKind && kind === exceptKind;
+        popover.hidden = !keepOpen;
+        const toggle = toolbar.querySelector('[data-color-toggle="' + kind + '"]');
+        if (toggle) toggle.setAttribute('aria-expanded', keepOpen ? 'true' : 'false');
+      });
+    }
+
+    function openColorPopover(kind) {
+      const popover = toolbar.querySelector('[data-color-popover="' + kind + '"]');
+      if (!popover) return;
+      const shouldOpen = popover.hidden;
+      closeColorPopovers(shouldOpen ? kind : null);
+      if (!shouldOpen) return;
+      setToolbarColor(kind, getAppliedToolbarColor(kind), false);
+    }
+
+    function commitToolbarColor(kind) {
+      setToolbarColor(kind, getPendingToolbarColor(kind), true);
+      closeColorPopovers();
+    }
+
+    function resetToolbarColor(kind) {
+      setToolbarColor(kind, getColorDefault(kind), false);
+    }
+
+    function initializeToolbarColors() {
+      ['color', 'background'].forEach(function (kind) {
+        setToolbarColor(kind, getColorDefault(kind), true);
+      });
+    }
+
+    function updateColorFromSv(kind, event) {
+      const sv = toolbar.querySelector('[data-color-sv="' + kind + '"]');
+      if (!sv) return;
+      const rect = sv.getBoundingClientRect();
+      const saturation = clampUnit((event.clientX - rect.left) / Math.max(1, rect.width));
+      const value = clampUnit(1 - ((event.clientY - rect.top) / Math.max(1, rect.height)));
+      const currentHsv = rgbToHsv(hexToRgb(getPendingToolbarColor(kind)));
+      let hue = Number(toolbar.dataset[getColorDatasetKey(kind, 'hue')]);
+      if (!Number.isFinite(hue)) hue = currentHsv.h;
+      setToolbarColor(kind, rgbToHex(hsvToRgb({ h: hue, s: saturation, v: value })), false);
+    }
+
+    function updateColorFromHue(kind, hue) {
+      const currentHsv = rgbToHsv(hexToRgb(getPendingToolbarColor(kind)));
+      const saturation = currentHsv.s > 0.01 ? currentHsv.s : 1;
+      const value = currentHsv.v > 0.01 ? currentHsv.v : 1;
+      setToolbarColor(kind, rgbToHex(hsvToRgb({
+        h: Number(hue) || 0,
+        s: saturation,
+        v: value,
+      })), false);
+    }
+
+    function updateColorFromHueStrip(kind, event) {
+      const strip = toolbar.querySelector('[data-color-hue="' + kind + '"]');
+      if (!strip) return;
+      const rect = strip.getBoundingClientRect();
+      const ratio = clampUnit((event.clientX - rect.left) / Math.max(1, rect.width));
+      updateColorFromHue(kind, ratio * 360);
+    }
+
+    function updateColorFromRgb(kind) {
+      const rgb = { r: 0, g: 0, b: 0 };
+      toolbar.querySelectorAll('[data-color-rgb="' + kind + '"]').forEach(function (input) {
+        rgb[input.dataset.colorChannel] = clampColorChannel(input.value);
+      });
+      setToolbarColor(kind, rgbToHex(rgb), false);
+    }
+
     function setToolbarButtonActive(button, isActive) {
       if (!button) return;
       button.classList.toggle('is-active', !!isActive);
       button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    }
+
+    const LIST_MARKER_TYPES = ['bullet', 'dash', 'check'];
+    const LIST_MARKER_LABELS = {
+      bullet: 'Точка',
+      dash: 'Дефис',
+      check: 'Галочка',
+    };
+    const LIST_MARKER_ICON_URLS = {
+      bullet: '/static/core/icons/list-ul2.svg',
+      dash: '/static/core/icons/list-dash.svg',
+      check: '/static/core/icons/list-check.svg',
+    };
+
+    function isListMarkerType(value) {
+      return LIST_MARKER_TYPES.includes(String(value || '').trim());
+    }
+
+    function renderListMarkerPrimaryIcon(primary, activeMarker) {
+      const iconSrc = LIST_MARKER_ICON_URLS[activeMarker] || LIST_MARKER_ICON_URLS.bullet;
+      const icon = primary.querySelector('[data-list-marker-icon]');
+      if (!icon || icon.tagName !== 'IMG') {
+        primary.innerHTML = '<img src="' + iconSrc + '" alt="" class="proposal-service-text-toolbar__icon" data-list-marker-icon>';
+      } else {
+        icon.src = iconSrc;
+        icon.className = 'proposal-service-text-toolbar__icon';
+      }
+    }
+
+    function updateListMarkerControl(listType) {
+      const activeMarker = isListMarkerType(listType)
+        ? String(listType)
+        : (isListMarkerType(toolbar.dataset.listMarker) ? toolbar.dataset.listMarker : 'bullet');
+      toolbar.dataset.listMarker = activeMarker;
+      const primary = toolbar.querySelector('[data-list-marker-primary]');
+      if (primary) {
+        primary.dataset.list = activeMarker;
+        primary.setAttribute('aria-label', LIST_MARKER_LABELS[activeMarker] || 'Маркированный список');
+        primary.setAttribute('title', LIST_MARKER_LABELS[activeMarker] || 'Маркированный список');
+        renderListMarkerPrimaryIcon(primary, activeMarker);
+      }
+      toolbar.querySelectorAll('[data-list-marker-option]').forEach(function (option) {
+        const isSelected = option.dataset.list === activeMarker;
+        option.classList.toggle('active', isSelected);
+        option.setAttribute('aria-current', isSelected ? 'true' : 'false');
+      });
     }
 
     function syncToolbarState() {
@@ -6358,24 +6621,40 @@
       toolbar.querySelectorAll('button[data-format]').forEach(function (button) {
         setToolbarButtonActive(button, !!format[button.dataset.format]);
       });
-      toolbar.querySelectorAll('button[data-list]').forEach(function (button) {
-        setToolbarButtonActive(button, (format.list || '') === button.dataset.list);
+      const currentList = String(format.list || '');
+      updateListMarkerControl(currentList);
+      toolbar.querySelectorAll('button[data-list]:not([data-list-marker-option])').forEach(function (button) {
+        setToolbarButtonActive(button, currentList === button.dataset.list);
       });
       toolbar.querySelectorAll('button[data-align]').forEach(function (button) {
         const align = format.align || 'left';
         setToolbarButtonActive(button, align === button.dataset.align);
       });
 
-      const colorInput = toolbar.querySelector('[data-color-source="color"]');
-      const backgroundInput = toolbar.querySelector('[data-color-source="background"]');
-      if (colorInput) colorInput.value = normalizeToolbarColor(format.color, '#000000');
-      if (backgroundInput) backgroundInput.value = normalizeToolbarColor(format.background, '#ffffff');
       updateColorPreviews();
     }
 
     function applyToolbarAction(event) {
-      if (!activeQuill) return;
+      const colorToggle = event.target.closest('button[data-color-toggle]');
+      if (colorToggle && toolbar.contains(colorToggle)) {
+        event.preventDefault();
+        openColorPopover(colorToggle.dataset.colorToggle);
+        return;
+      }
+      const colorCommit = event.target.closest('button[data-color-commit]');
+      if (colorCommit && toolbar.contains(colorCommit)) {
+        event.preventDefault();
+        commitToolbarColor(colorCommit.dataset.colorCommit);
+        return;
+      }
+      const colorReset = event.target.closest('button[data-color-reset]');
+      if (colorReset && toolbar.contains(colorReset)) {
+        event.preventDefault();
+        resetToolbarColor(colorReset.dataset.colorReset);
+        return;
+      }
       const button = event.target.closest('button[data-format], button[data-list], button[data-action], button[data-align], button[data-apply-color]');
+      if (!activeQuill) return;
       if (button && toolbar.contains(button)) {
         event.preventDefault();
         restoreSelection();
@@ -6389,7 +6668,9 @@
         if (button.dataset.list) {
           const listType = button.dataset.list;
           const currentList = activeQuill.getFormat().list || false;
-          activeQuill.format('list', currentList === listType ? false : listType);
+          const toggleCurrent = !button.dataset.listMarkerOption && currentList === listType;
+          if (isListMarkerType(listType)) updateListMarkerControl(listType);
+          activeQuill.format('list', toggleCurrent ? false : listType);
           syncToolbarState();
           return;
         }
@@ -6401,8 +6682,7 @@
         }
         if (button.dataset.applyColor) {
           const formatName = button.dataset.applyColor;
-          const input = toolbar.querySelector('[data-color-source="' + formatName + '"]');
-          activeQuill.format(formatName, input?.value || false);
+          activeQuill.format(formatName, getAppliedToolbarColor(formatName));
           syncToolbarState();
           return;
         }
@@ -6435,9 +6715,10 @@
     }
 
     function handleColorInput(event) {
-      const input = event.target.closest('input[data-color-source]');
-      if (!input || !toolbar.contains(input)) return;
-      updateColorPreviews();
+      const rgbInput = event.target.closest('[data-color-rgb]');
+      if (rgbInput && toolbar.contains(rgbInput)) {
+        updateColorFromRgb(rgbInput.dataset.colorRgb);
+      }
     }
 
     function persistDraftState() {
@@ -6528,6 +6809,7 @@
 
     function closeModal() {
       isOpen = false;
+      closeColorPopovers();
       modal.classList.add('d-none');
       modal.setAttribute('aria-hidden', 'true');
       document.body.classList.remove('proposal-service-text-modal-open');
@@ -6545,6 +6827,58 @@
     toolbar.addEventListener('click', applyToolbarAction);
     toolbar.addEventListener('change', applyToolbarSelect);
     toolbar.addEventListener('input', handleColorInput);
+
+    let colorDragKind = null;
+    toolbar.addEventListener('pointerdown', function (event) {
+      const hue = event.target.closest('[data-color-hue]');
+      if (hue && toolbar.contains(hue)) {
+        event.preventDefault();
+        colorDragKind = 'hue:' + hue.dataset.colorHue;
+        updateColorFromHueStrip(hue.dataset.colorHue, event);
+        return;
+      }
+      const sv = event.target.closest('[data-color-sv]');
+      if (!sv || !toolbar.contains(sv)) return;
+      event.preventDefault();
+      colorDragKind = sv.dataset.colorSv;
+      updateColorFromSv(colorDragKind, event);
+    });
+
+    document.addEventListener('pointermove', function (event) {
+      if (!colorDragKind) return;
+      event.preventDefault();
+      if (colorDragKind.indexOf('hue:') === 0) {
+        updateColorFromHueStrip(colorDragKind.slice(4), event);
+        return;
+      }
+      updateColorFromSv(colorDragKind, event);
+    });
+
+    document.addEventListener('pointerup', function () {
+      colorDragKind = null;
+    });
+
+    document.addEventListener('click', function (event) {
+      if (!toolbar.contains(event.target)) closeColorPopovers();
+    });
+
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') {
+        closeColorPopovers();
+        return;
+      }
+      const hue = event.target.closest && event.target.closest('[data-color-hue]');
+      if (!hue || !toolbar.contains(hue)) return;
+      const delta = event.key === 'ArrowRight' || event.key === 'ArrowUp'
+        ? 5
+        : (event.key === 'ArrowLeft' || event.key === 'ArrowDown' ? -5 : 0);
+      if (!delta) return;
+      event.preventDefault();
+      const current = Number(hue.dataset.colorHueValue) || 0;
+      updateColorFromHue(hue.dataset.colorHue, current + delta);
+    });
+
+    initializeToolbarColors();
     openBtn.addEventListener('click', openModal);
     closeBtn.addEventListener('click', closeModal);
     cancelBtn.addEventListener('click', closeModal);

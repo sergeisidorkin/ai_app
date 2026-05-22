@@ -3,6 +3,7 @@ from . import views
 
 urlpatterns = [
     path("partial/", views.contracts_partial, name="contracts_partial"),
+    path("execution/partial/", views.contracts_execution_partial, name="contracts_execution_partial"),
     path("development/partial/", views.contracts_development_partial, name="contracts_development_partial"),
     path(
         "development/projects/create/",

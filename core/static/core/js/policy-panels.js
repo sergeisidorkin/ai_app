@@ -9366,7 +9366,7 @@
     bootstrap.Modal.getOrCreateInstance(modalEl).show();
   }
 
-  async function handlePolicyCsvUpload(uploadUrl, file) {
+  async function handlePolicyTableUpload(uploadUrl, file) {
     var formData = new FormData();
     formData.append('csv_file', file);
     try {
@@ -9405,7 +9405,7 @@
       'sections-csv-upload-btn': 'sections-csv-file-input',
       'structures-csv-upload-btn': 'structures-csv-file-input',
       'tariffs-csv-upload-btn': 'tariffs-csv-file-input',
-      'typical-service-compositions-csv-upload-btn': 'typical-service-compositions-csv-file-input',
+      'typical-service-compositions-xlsx-upload-btn': 'typical-service-compositions-xlsx-file-input',
       'typical-service-terms-csv-upload-btn': 'typical-service-terms-csv-file-input',
     };
     for (var btnId in mapping) {
@@ -9425,14 +9425,14 @@
       'sections-csv-file-input': '/policy/policy/section/csv-upload/',
       'structures-csv-file-input': '/policy/policy/structure/csv-upload/',
       'tariffs-csv-file-input': '/policy/policy/tariff/csv-upload/',
-      'typical-service-compositions-csv-file-input': '/policy/policy/typical-service-composition/csv-upload/',
+      'typical-service-compositions-xlsx-file-input': '/policy/policy/typical-service-composition/xlsx-upload/',
       'typical-service-terms-csv-file-input': '/policy/policy/typical-service-term/csv-upload/',
     };
     var url = mapping[e.target.id];
     if (!url) return;
     var file = e.target.files[0];
     if (!file) return;
-    await handlePolicyCsvUpload(url, file);
+    await handlePolicyTableUpload(url, file);
   });
 
   // Восстановление выбора только для таблицы, где было действие

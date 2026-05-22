@@ -1,0 +1,19 @@
+{% load static %}
+<div class="card shadow-sm mt-3 mb-3">
+  <div class="card-body">
+
+    <div id="contracts-execution-pane"
+         hx-get="{% url 'contracts_execution_partial' %}"
+         hx-trigger="load, performers-updated from:body, contracts-execution-updated from:body"
+         hx-target="#contracts-execution-pane"
+         hx-swap="innerHTML"
+         hx-indicator="#contracts-execution-loading">
+      <div id="contracts-execution-loading" class="text-muted htmx-indicator d-inline-flex align-items-center gap-2">
+        <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+        <span>Загрузка…</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+<script src="{% static 'core/js/performers-panels.js' %}?v=20260521-7" defer></script>

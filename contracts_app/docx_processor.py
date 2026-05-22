@@ -35,6 +35,14 @@ _FONT_NAME_MAP = {
     "georgia": "Georgia",
     "times-new-roman": "Times New Roman",
 }
+_RICH_LIST_TYPES = {"ordered", "bullet", "dash", "check"}
+_UNORDERED_RICH_LIST_TYPES = {"bullet", "dash", "check"}
+_MAX_RICH_LIST_LEVEL = 8
+_MARKER_NUMBERING_DEFS = {
+    "bullet": {"texts": ["\u2022", "\u25e6", "\u25aa"], "font": "Segoe UI Symbol"},
+    "dash": {"texts": ["-"], "font": "Calibri"},
+    "check": {"texts": ["\u2713"], "font": "Segoe UI Symbol"},
+}
 
 
 def _parse_style_attr(value: str) -> dict[str, str]:
@@ -173,6 +181,14 @@ def _list_level(node) -> int:
     return 0
 
 
+def _clamp_list_level(value) -> int:
+    try:
+        level = int(value or 0)
+    except (TypeError, ValueError):
+        level = 0
+    return max(0, min(level, _MAX_RICH_LIST_LEVEL))
+
+
 def _build_rich_paragraph(node, *, list_type: str | None = None, list_level: int = 0) -> dict[str, object]:
     runs: list[dict[str, object]] = []
     _collect_rich_runs(node, {}, runs)
@@ -198,7 +214,7 @@ def _rich_paragraphs_from_html(html: str) -> list[dict[str, object]]:
         elif tag in {"ul", "ol"}:
             for li in child.findall("./li"):
                 item_list_type = str(li.get("data-list") or "").strip().lower()
-                if item_list_type not in {"ordered", "bullet"}:
+                if item_list_type not in _RICH_LIST_TYPES:
                     item_list_type = "ordered" if tag == "ol" else "bullet"
                 paragraphs.append(
                     _build_rich_paragraph(
@@ -451,8 +467,9 @@ def _insert_rich_paragraphs(
     parent,
     rich_items,
     *,
-    bullet_num_id: str,
+    marker_num_ids: dict[str, str],
     multilevel_num_id: str,
+    rich_ordered_num_id: str,
     bullet_style_id: str,
     list_paragraph_style_id: str,
     source_rPr,
@@ -466,27 +483,24 @@ def _insert_rich_paragraphs(
         new_p = OxmlElement("w:p")
         p_pr = OxmlElement("w:pPr")
         list_type = "" if render_plain else str(item.get("list_type") or "").strip()
-        list_level = 0 if render_plain else int(item.get("list_level") or 0)
-        if list_type == "bullet":
-            if bullet_style_id:
-                p_style = OxmlElement("w:pStyle")
-                p_style.set(qn("w:val"), bullet_style_id)
-                p_pr.append(p_style)
-            elif bullet_num_id:
+        list_level = 0 if render_plain else _clamp_list_level(item.get("list_level"))
+        if list_type in _UNORDERED_RICH_LIST_TYPES:
+            marker_num_id = marker_num_ids.get(list_type) or marker_num_ids.get("bullet", "")
+            if marker_num_id:
                 num_pr = OxmlElement("w:numPr")
                 ilvl = OxmlElement("w:ilvl")
-                ilvl.set(qn("w:val"), str(max(0, list_level)))
+                ilvl.set(qn("w:val"), str(list_level))
                 num_id = OxmlElement("w:numId")
-                num_id.set(qn("w:val"), bullet_num_id)
+                num_id.set(qn("w:val"), marker_num_id)
                 num_pr.append(ilvl)
                 num_pr.append(num_id)
                 p_pr.append(num_pr)
-        elif list_type == "ordered" and multilevel_num_id:
+        elif list_type == "ordered" and (rich_ordered_num_id or multilevel_num_id):
             num_pr = OxmlElement("w:numPr")
             ilvl = OxmlElement("w:ilvl")
-            ilvl.set(qn("w:val"), str(max(0, min(list_level, 3))))
+            ilvl.set(qn("w:val"), str(list_level))
             num_id = OxmlElement("w:numId")
-            num_id.set(qn("w:val"), multilevel_num_id)
+            num_id.set(qn("w:val"), rich_ordered_num_id or multilevel_num_id)
             num_pr.append(ilvl)
             num_pr.append(num_id)
             p_pr.append(num_pr)
@@ -599,12 +613,13 @@ def _replace_in_paragraph(
 def _replace_list_in_paragraph(
     paragraph,
     list_replacements: dict,
-    bullet_num_id: str,
+    marker_num_ids: dict[str, str],
     multilevel_num_id: str,
     bullet_style_id: str,
     list_paragraph_style_id: str = "",
     plain_list_keys: set[str] | None = None,
     default_language_code: str | None = None,
+    rich_ordered_num_id: str = "",
 ) -> bool:
     """If the paragraph contains a ``[[list_var]]`` placeholder, replace the
     entire paragraph with a list of items.  Returns True if replaced.
@@ -655,6 +670,7 @@ def _replace_list_in_paragraph(
 
     if is_multilevel and not multilevel_num_id:
         return False
+    bullet_num_id = marker_num_ids.get("bullet", "")
     if not is_rich and not is_multilevel and not is_plain_list and not bullet_num_id:
         return False
 
@@ -682,8 +698,9 @@ def _replace_list_in_paragraph(
             anchor,
             parent,
             _resolve_rich_item_character_styles(paragraph, rich_items),
-            bullet_num_id=bullet_num_id,
+            marker_num_ids=marker_num_ids,
             multilevel_num_id=multilevel_num_id,
+            rich_ordered_num_id=rich_ordered_num_id,
             bullet_style_id=bullet_style_id,
             list_paragraph_style_id=list_paragraph_style_id,
             source_rPr=source_rPr,
@@ -1108,8 +1125,14 @@ def _insert_abstract_num(numbering_elm, abstract_num):
         numbering_elm.append(abstract_num)
 
 
-def _ensure_bullet_numbering(doc) -> str:
-    """Create a new bullet numbering definition and return its ``numId``."""
+def _ensure_bullet_numbering(
+    doc,
+    *,
+    marker_text: str = "\u2022",
+    marker_texts: list[str] | tuple[str, ...] | None = None,
+    font_name: str = "Symbol",
+) -> str:
+    """Create a new multi-level marker numbering definition and return its ``numId``."""
     from docx.oxml import OxmlElement
 
     numbering_part = doc.part.numbering_part
@@ -1128,37 +1151,42 @@ def _ensure_bullet_numbering(doc) -> str:
     tmpl.set(qn("w:val"), _unique_nsid())
     abstract_num.append(tmpl)
     ml_type = OxmlElement("w:multiLevelType")
-    ml_type.set(qn("w:val"), "singleLevel")
+    ml_type.set(qn("w:val"), "multilevel")
     abstract_num.append(ml_type)
 
-    lvl = OxmlElement("w:lvl")
-    lvl.set(qn("w:ilvl"), "0")
-    start = OxmlElement("w:start")
-    start.set(qn("w:val"), "1")
-    lvl.append(start)
-    num_fmt = OxmlElement("w:numFmt")
-    num_fmt.set(qn("w:val"), "bullet")
-    lvl.append(num_fmt)
-    lvl_text = OxmlElement("w:lvlText")
-    lvl_text.set(qn("w:val"), "\u2022")
-    lvl.append(lvl_text)
-    lvl_jc = OxmlElement("w:lvlJc")
-    lvl_jc.set(qn("w:val"), "left")
-    lvl.append(lvl_jc)
-    pPr = OxmlElement("w:pPr")
-    ind = OxmlElement("w:ind")
-    ind.set(qn("w:left"), "720")
-    ind.set(qn("w:hanging"), "360")
-    pPr.append(ind)
-    lvl.append(pPr)
-    rPr = OxmlElement("w:rPr")
-    rFonts = OxmlElement("w:rFonts")
-    rFonts.set(qn("w:ascii"), "Symbol")
-    rFonts.set(qn("w:hAnsi"), "Symbol")
-    rFonts.set(qn("w:hint"), "default")
-    rPr.append(rFonts)
-    lvl.append(rPr)
-    abstract_num.append(lvl)
+    level_markers = [str(text) for text in (marker_texts or [marker_text]) if str(text)]
+    if not level_markers:
+        level_markers = [marker_text]
+    for level in range(_MAX_RICH_LIST_LEVEL + 1):
+        lvl = OxmlElement("w:lvl")
+        lvl.set(qn("w:ilvl"), str(level))
+        start = OxmlElement("w:start")
+        start.set(qn("w:val"), "1")
+        lvl.append(start)
+        num_fmt = OxmlElement("w:numFmt")
+        num_fmt.set(qn("w:val"), "bullet")
+        lvl.append(num_fmt)
+        lvl_text = OxmlElement("w:lvlText")
+        lvl_text.set(qn("w:val"), level_markers[level % len(level_markers)])
+        lvl.append(lvl_text)
+        lvl_jc = OxmlElement("w:lvlJc")
+        lvl_jc.set(qn("w:val"), "left")
+        lvl.append(lvl_jc)
+        pPr = OxmlElement("w:pPr")
+        ind = OxmlElement("w:ind")
+        ind.set(qn("w:left"), str(720 + level * 360))
+        ind.set(qn("w:hanging"), "360")
+        pPr.append(ind)
+        lvl.append(pPr)
+        if font_name:
+            rPr = OxmlElement("w:rPr")
+            rFonts = OxmlElement("w:rFonts")
+            rFonts.set(qn("w:ascii"), font_name)
+            rFonts.set(qn("w:hAnsi"), font_name)
+            rFonts.set(qn("w:hint"), "default")
+            rPr.append(rFonts)
+            lvl.append(rPr)
+        abstract_num.append(lvl)
 
     _insert_abstract_num(numbering_elm, abstract_num)
 
@@ -1170,6 +1198,22 @@ def _ensure_bullet_numbering(doc) -> str:
     numbering_elm.append(num_el)
 
     return new_num_id
+
+
+def _ensure_marker_numberings(doc) -> dict[str, str]:
+    """Create numbering definitions for all supported unordered rich list markers."""
+    num_ids: dict[str, str] = {}
+    for marker_type, marker_def in _MARKER_NUMBERING_DEFS.items():
+        try:
+            num_ids[marker_type] = _ensure_bullet_numbering(
+                doc,
+                marker_text=str(marker_def.get("text") or ""),
+                marker_texts=marker_def.get("texts"),
+                font_name=str(marker_def.get("font") or ""),
+            )
+        except Exception:
+            continue
+    return num_ids
 
 
 def _ensure_multilevel_numbering(doc) -> str:
@@ -1223,6 +1267,70 @@ def _ensure_multilevel_numbering(doc) -> str:
         ind = OxmlElement("w:ind")
         ind.set(qn("w:left"), ld["indent"])
         ind.set(qn("w:hanging"), ld["hanging"])
+        pPr.append(ind)
+        lvl.append(pPr)
+        abstract_num.append(lvl)
+
+    _insert_abstract_num(numbering_elm, abstract_num)
+
+    num_el = OxmlElement("w:num")
+    num_el.set(qn("w:numId"), new_num_id)
+    abstract_ref = OxmlElement("w:abstractNumId")
+    abstract_ref.set(qn("w:val"), new_abs_id)
+    num_el.append(abstract_ref)
+    numbering_elm.append(num_el)
+
+    return new_num_id
+
+
+def _ensure_quill_ordered_numbering(doc) -> str:
+    """Create numbering for Quill ordered lists: 1., a), i. by indent level."""
+    from docx.oxml import OxmlElement
+
+    numbering_part = doc.part.numbering_part
+    numbering_elm = numbering_part._element
+
+    new_abs_id = str(_max_abstract_num_id(numbering_elm) + 1)
+    new_num_id = str(_max_num_id(numbering_elm) + 1)
+
+    abstract_num = OxmlElement("w:abstractNum")
+    abstract_num.set(qn("w:abstractNumId"), new_abs_id)
+
+    nsid = OxmlElement("w:nsid")
+    nsid.set(qn("w:val"), _unique_nsid())
+    abstract_num.append(nsid)
+    tmpl = OxmlElement("w:tmpl")
+    tmpl.set(qn("w:val"), _unique_nsid())
+    abstract_num.append(tmpl)
+    ml_type = OxmlElement("w:multiLevelType")
+    ml_type.set(qn("w:val"), "multilevel")
+    abstract_num.append(ml_type)
+
+    level_formats = (
+        ("decimal", "."),
+        ("lowerLetter", ")"),
+        ("lowerRoman", "."),
+    )
+    for level in range(_MAX_RICH_LIST_LEVEL + 1):
+        number_format, suffix = level_formats[level % len(level_formats)]
+        lvl = OxmlElement("w:lvl")
+        lvl.set(qn("w:ilvl"), str(level))
+        start = OxmlElement("w:start")
+        start.set(qn("w:val"), "1")
+        lvl.append(start)
+        num_fmt = OxmlElement("w:numFmt")
+        num_fmt.set(qn("w:val"), number_format)
+        lvl.append(num_fmt)
+        lvl_text = OxmlElement("w:lvlText")
+        lvl_text.set(qn("w:val"), f"%{level + 1}{suffix}")
+        lvl.append(lvl_text)
+        lvl_jc = OxmlElement("w:lvlJc")
+        lvl_jc.set(qn("w:val"), "left")
+        lvl.append(lvl_jc)
+        pPr = OxmlElement("w:pPr")
+        ind = OxmlElement("w:ind")
+        ind.set(qn("w:left"), str(360 + level * 360))
+        ind.set(qn("w:hanging"), "360")
         pPr.append(ind)
         lvl.append(pPr)
         abstract_num.append(lvl)
@@ -1306,18 +1414,20 @@ def _process_paragraphs(
 def _process_list_paragraphs(
     paragraphs,
     list_replacements: dict,
-    bullet_num_id: str,
+    marker_num_ids: dict[str, str],
     multilevel_num_id: str,
     bullet_style_id: str,
     list_paragraph_style_id: str = "",
     plain_list_keys: set[str] | None = None,
     default_language_code: str | None = None,
+    rich_ordered_num_id: str = "",
 ) -> None:
     for para in list(paragraphs):
         _replace_list_in_paragraph(
             para, list_replacements,
-            bullet_num_id, multilevel_num_id, bullet_style_id,
+            marker_num_ids, multilevel_num_id, bullet_style_id,
             list_paragraph_style_id, plain_list_keys, default_language_code,
+            rich_ordered_num_id=rich_ordered_num_id,
         )
 
 
@@ -1326,13 +1436,15 @@ def _process_tables(
     replacements: dict[str, str],
     table_replacements: dict | None = None,
     list_replacements: dict | None = None,
-    bullet_num_id: str = "",
+    marker_num_ids: dict[str, str] | None = None,
     multilevel_num_id: str = "",
     bullet_style_id: str = "",
     list_paragraph_style_id: str = "",
     plain_list_keys: set[str] | None = None,
     default_language_code: str | None = None,
+    rich_ordered_num_id: str = "",
 ) -> None:
+    marker_num_ids = marker_num_ids or {}
     for table in tables:
         for row in table.rows:
             for cell in row.cells:
@@ -1345,14 +1457,16 @@ def _process_tables(
                 if list_replacements:
                     _process_list_paragraphs(
                         cell.paragraphs, list_replacements,
-                        bullet_num_id, multilevel_num_id, bullet_style_id,
+                        marker_num_ids, multilevel_num_id, bullet_style_id,
                         list_paragraph_style_id, plain_list_keys, default_language_code,
+                        rich_ordered_num_id=rich_ordered_num_id,
                     )
                 _process_paragraphs(cell.paragraphs, replacements, language_code=default_language_code)
                 _process_tables(
                     cell.tables, replacements, table_replacements, list_replacements,
-                    bullet_num_id, multilevel_num_id, bullet_style_id, list_paragraph_style_id,
+                    marker_num_ids, multilevel_num_id, bullet_style_id, list_paragraph_style_id,
                     plain_list_keys, default_language_code,
+                    rich_ordered_num_id=rich_ordered_num_id,
                 )
 
 
@@ -1682,8 +1796,9 @@ def process_template(
 
     doc = Document(BytesIO(file_bytes))
 
-    bullet_num_id = ""
+    marker_num_ids: dict[str, str] = {}
     multilevel_num_id = ""
+    rich_ordered_num_id = ""
     bullet_style_id = ""
     list_paragraph_style_id = ""
 
@@ -1695,27 +1810,30 @@ def process_template(
         )
 
     if list_replacements:
+        marker_num_ids = _ensure_marker_numberings(doc)
         try:
-            bullet_num_id = _ensure_bullet_numbering(doc)
+            multilevel_num_id = _ensure_multilevel_numbering(doc)
         except Exception:
             pass
         try:
-            multilevel_num_id = _ensure_multilevel_numbering(doc)
+            rich_ordered_num_id = _ensure_quill_ordered_numbering(doc)
         except Exception:
             pass
         bullet_style_id = _find_bullet_style_id(doc)
         list_paragraph_style_id = _find_list_paragraph_style_id(doc)
         _process_list_paragraphs(
             doc.paragraphs, list_replacements,
-            bullet_num_id, multilevel_num_id, bullet_style_id, list_paragraph_style_id,
+            marker_num_ids, multilevel_num_id, bullet_style_id, list_paragraph_style_id,
             plain_list_keys, default_language_code,
+            rich_ordered_num_id=rich_ordered_num_id,
         )
 
     _process_paragraphs(doc.paragraphs, replacements, language_code=default_language_code)
     _process_tables(
         doc.tables, replacements, table_replacements, list_replacements,
-        bullet_num_id, multilevel_num_id, bullet_style_id, list_paragraph_style_id,
+        marker_num_ids, multilevel_num_id, bullet_style_id, list_paragraph_style_id,
         plain_list_keys, default_language_code,
+        rich_ordered_num_id=rich_ordered_num_id,
     )
 
     for section in doc.sections:
@@ -1734,8 +1852,9 @@ def process_template(
                 if list_replacements:
                     _process_list_paragraphs(
                         header_footer.paragraphs, list_replacements,
-                        bullet_num_id, multilevel_num_id, bullet_style_id, list_paragraph_style_id,
+                        marker_num_ids, multilevel_num_id, bullet_style_id, list_paragraph_style_id,
                         plain_list_keys, default_language_code,
+                        rich_ordered_num_id=rich_ordered_num_id,
                     )
                 _process_paragraphs(
                     header_footer.paragraphs,
@@ -1744,8 +1863,9 @@ def process_template(
                 )
                 _process_tables(
                     header_footer.tables, replacements, table_replacements, list_replacements,
-                    bullet_num_id, multilevel_num_id, bullet_style_id, list_paragraph_style_id,
+                    marker_num_ids, multilevel_num_id, bullet_style_id, list_paragraph_style_id,
                     plain_list_keys, default_language_code,
+                    rich_ordered_num_id=rich_ordered_num_id,
                 )
 
     out = BytesIO()

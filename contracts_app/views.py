@@ -167,6 +167,7 @@ def _attach_contract_return_comment_counts(contracts):
 
 
 CONTRACTS_PARTIAL_TEMPLATE = "contracts_app/contracts_partial.html"
+CONTRACTS_EXECUTION_PARTIAL_TEMPLATE = "contracts_app/execution_partial.html"
 CONTRACTS_DEVELOPMENT_PARTIAL_TEMPLATE = "contracts_app/contracts_development_partial.html"
 CONTRACTS_PROJECT_REG_FORM_TEMPLATE = "contracts_app/contracts_project_registration_form.html"
 CT_PARTIAL_TEMPLATE = "contracts_app/contract_templates_partial.html"
@@ -412,6 +413,7 @@ def _contract_representative_key(performer):
         return (
             "participation_batch",
             performer.participation_batch_id,
+            _normalize_contract_person_name(getattr(performer, "executor", "")),
             bool(getattr(performer, "contract_is_addendum", False)),
             getattr(performer, "contract_addendum_number", None) or 0,
         )
@@ -428,6 +430,7 @@ def _contract_representative_filter(performer):
             number_filter |= Q(contract_addendum_number__isnull=True)
         return Q(
             participation_batch_id=performer.participation_batch_id,
+            executor=_normalize_contract_person_name(getattr(performer, "executor", "")),
             contract_batch_id__isnull=False,
             contract_is_addendum=bool(getattr(performer, "contract_is_addendum", False)),
         ) & number_filter
@@ -1065,6 +1068,18 @@ def _normalize_contract_development_positions():
 @require_http_methods(["GET"])
 def contracts_partial(request):
     return render(request, CONTRACTS_PARTIAL_TEMPLATE, _contracts_context(request.user))
+
+
+@login_required
+@require_http_methods(["GET"])
+def contracts_execution_partial(request):
+    from projects_app.views import _payment_request_context
+
+    return render(
+        request,
+        CONTRACTS_EXECUTION_PARTIAL_TEMPLATE,
+        _payment_request_context(request.user),
+    )
 
 
 @login_required

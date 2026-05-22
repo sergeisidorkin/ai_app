@@ -8,7 +8,8 @@ from django.db import transaction
 from django.db.models import Count, Prefetch
 from django.utils import timezone
 
-from policy_app.models import DEPARTMENT_HEAD_GROUP as DEPARTMENT_HEAD_ROLE
+from core.dates import MONTHS_RU_NOMINATIVE
+from policy_app.models import DEPARTMENT_HEAD_GROUP as DEPARTMENT_HEAD_ROLE, LAWYER_GROUP
 from projects_app.models import Performer
 
 from .email_delivery import EmailDeliveryError, send_notification_email
@@ -1126,6 +1127,14 @@ def _short_fio(full_name):
     return f"{last_name} {initials}".strip()
 
 
+def _payment_request_sender_display(user):
+    if not user:
+        return ""
+    from projects_app.services.payment_request import payment_request_sender_display
+
+    return payment_request_sender_display(user)
+
+
 def _build_contract_payload(*, recipient, project, performers, request_sent_at, deadline_at, duration_hours, sender=None):
     services = [_service_line(performer) for performer in performers]
     agreed_amount = sum((performer.agreed_amount or Decimal("0")) for performer in performers)
@@ -1358,6 +1367,329 @@ def create_contract_notifications(
                     "sender": sender,
                 }
             )
+
+    system_email_requested = DELIVERY_CHANNEL_SYSTEM_EMAIL in delivery_channels
+    connected_email_requested = DELIVERY_CHANNEL_CONNECTED_EMAIL in delivery_channels
+    email_delivery = {
+        "requested": system_email_requested or connected_email_requested,
+        "attempted": len(system_email_jobs) + len(connected_email_jobs),
+        "sent": 0,
+        "failed": 0,
+        "errors": [],
+        "channels": {
+            DELIVERY_CHANNEL_SYSTEM_EMAIL: _empty_email_delivery_summary(
+                delivery_channel=DELIVERY_CHANNEL_SYSTEM_EMAIL,
+                email_requested=system_email_requested,
+                attempted=len(system_email_jobs),
+            ),
+            DELIVERY_CHANNEL_CONNECTED_EMAIL: _empty_email_delivery_summary(
+                delivery_channel=DELIVERY_CHANNEL_CONNECTED_EMAIL,
+                email_requested=connected_email_requested,
+                attempted=len(connected_email_jobs),
+            ),
+        },
+    }
+    if system_email_jobs:
+        transaction.on_commit(
+            lambda: _update_email_delivery_summary(
+                aggregate=email_delivery,
+                channel_summary=email_delivery["channels"][DELIVERY_CHANNEL_SYSTEM_EMAIL],
+                delivered_summary=_deliver_notification_email_jobs(
+                    system_email_jobs,
+                    delivery_channel=DELIVERY_CHANNEL_SYSTEM_EMAIL,
+                    email_requested=system_email_requested,
+                ),
+            )
+        )
+    if connected_email_jobs:
+        transaction.on_commit(
+            lambda: _update_email_delivery_summary(
+                aggregate=email_delivery,
+                channel_summary=email_delivery["channels"][DELIVERY_CHANNEL_CONNECTED_EMAIL],
+                delivered_summary=_deliver_notification_email_jobs(
+                    connected_email_jobs,
+                    delivery_channel=DELIVERY_CHANNEL_CONNECTED_EMAIL,
+                    email_requested=connected_email_requested,
+                ),
+            )
+        )
+    return {
+        "notifications": created,
+        "delivery_channels": delivery_channels,
+        "email_delivery": email_delivery,
+    }
+
+
+def _resolve_lawyer_user():
+    from django.contrib.auth import get_user_model
+
+    User = get_user_model()
+    return (
+        User.objects
+        .filter(groups__name=LAWYER_GROUP, is_staff=True, is_active=True)
+        .order_by("pk")
+        .first()
+    )
+
+
+def _format_payment_date(request_sent_at):
+    local_dt = timezone.localtime(request_sent_at)
+    month_name = MONTHS_RU_NOMINATIVE[local_dt.month]
+    period_label = "середине" if local_dt.day < 15 else "конце"
+    return f"{period_label} месяца ({month_name} {local_dt.year} г.)"
+
+
+def _payment_request_is_advance_line(performer):
+    prepayment = performer.prepayment if performer.prepayment is not None else Decimal(0)
+    if prepayment == 0:
+        return False
+    return performer.advance_payment_request_sent_at is None
+
+
+def _format_payment_percent(percent):
+    if percent is None:
+        return "—"
+    value = Decimal(percent)
+    if value == value.to_integral_value():
+        return f"{int(value)}%"
+    normalized = value.normalize()
+    return f"{normalized}%"
+
+
+def _performer_currency_code(performer):
+    if performer.currency:
+        return (performer.currency.code_alpha or "").strip()
+    return ""
+
+
+def _performer_contract_price_display(performer, total_price):
+    currency_code = _performer_currency_code(performer)
+    if total_price in (None, ""):
+        return "—"
+    amount_display = _display_amount(total_price)
+    return f"{amount_display} {currency_code}".strip() if currency_code else amount_display
+
+
+def _build_payment_request_block(performer, *, total_price):
+    project = getattr(performer, "registration", None)
+    project_parts = [
+        (getattr(performer, "contract_number_display", "") or "").strip(),
+        (getattr(performer, "contract_type_display", "") or getattr(project, "type_short_display", "") or "").strip(),
+        (getattr(project, "name", "") or "").strip(),
+    ]
+    project_line = " ".join(part for part in project_parts if part)
+    executor_fio = _short_fio(performer.executor) or "—"
+    contract_number = (performer.contract_number or "").strip() or "—"
+    contract_price = _performer_contract_price_display(performer, total_price)
+
+    if _payment_request_is_advance_line(performer):
+        percent = performer.prepayment
+        payment_kind = "аванс"
+    else:
+        percent = performer.final_payment
+        payment_kind = "окончательный платеж"
+
+    pay_amount = None
+    if total_price not in (None, "") and percent is not None:
+        pay_amount = (Decimal(total_price) * Decimal(percent) / Decimal("100")).quantize(Decimal("0.01"))
+
+    currency_code = _performer_currency_code(performer)
+    if pay_amount is None:
+        pay_line = "—"
+    else:
+        pay_line = _performer_contract_price_display(performer, pay_amount)
+    percent_display = _format_payment_percent(percent)
+
+    return "\n".join(
+        [
+            f"Проект: {project_line or '—'}",
+            f"Исполнитель: {executor_fio}",
+            f"Номер договора: {contract_number}",
+            f"Цена договора: {contract_price}",
+            f"Оплатить: {pay_line} ({percent_display} {payment_kind})",
+        ]
+    )
+
+
+def _build_payment_request_display(performers):
+    from contracts_app.views import (
+        _attach_contract_batch_display_fields,
+        _contract_representative_key,
+        _contract_representative_rows,
+    )
+
+    performer_list = list(performers)
+    if not performer_list:
+        return "—"
+
+    price_map = {}
+    for performer in performer_list:
+        if performer.agreed_amount is None:
+            continue
+        key = _contract_representative_key(performer)
+        price_map[key] = (price_map.get(key) or Decimal(0)) + performer.agreed_amount
+
+    representatives = _contract_representative_rows(performer_list)
+    representatives = _attach_contract_batch_display_fields(representatives)
+    blocks = []
+    for performer in representatives:
+        key = _contract_representative_key(performer)
+        blocks.append(
+            _build_payment_request_block(
+                performer,
+                total_price=price_map.get(key),
+            )
+        )
+    return "\n\n".join(blocks) if blocks else "—"
+
+
+def _build_payment_request_payload(
+    *,
+    recipient,
+    project,
+    performers,
+    request_sent_at,
+    request_number,
+    sender=None,
+):
+    recipient_name_lawer = _user_full_name(recipient)
+    payment_date = _format_payment_date(request_sent_at)
+    payment_request = _build_payment_request_display(performers)
+    payment_request_html = html_escape(payment_request).replace("\n", "<br>")
+    number_of_request = str(request_number)
+    sender_display = _payment_request_sender_display(sender)
+
+    template_vars = {
+        "recipient_name_lawer": recipient_name_lawer,
+        "number_of_request": number_of_request,
+        "sender": sender_display,
+        "payment_date": payment_date,
+        "payment_request": payment_request,
+    }
+    title_text = f"Заявка на оплату №{number_of_request}".strip()
+    content_text = None
+    rendered_from_template = False
+    try:
+        from letters_app.services import (
+            get_letter_template_for_notification,
+            render_template,
+            render_subject,
+        )
+
+        tpl = get_letter_template_for_notification("payment_request", sender)
+        if tpl and (tpl.body_html or "").strip():
+            content_text = render_template(
+                tpl.body_html,
+                {**template_vars, "payment_request": payment_request_html},
+                safe_keys={"payment_request"},
+            )
+            rendered_from_template = True
+            if tpl.subject_template:
+                title_text = render_subject(tpl.subject_template, template_vars)
+    except Exception:
+        logger.exception("letters_app template lookup failed for payment_request, using fallback")
+
+    if not content_text:
+        content_lines = [
+            f"Добрый день, {recipient_name_lawer}",
+            "",
+            f"Просим произвести оплату в {payment_date}.",
+            "",
+            payment_request,
+            "",
+            "С уважением,",
+            "IMC Montan AI",
+        ]
+        content_text = "\n".join(content_lines).strip()
+
+    payload = {
+        "recipient_name_lawer": recipient_name_lawer,
+        "number_of_request": number_of_request,
+        "sender": sender_display,
+        "payment_date": payment_date,
+        "payment_request": payment_request,
+        "letter_template_type": "payment_request",
+        "rendered_from_template": rendered_from_template,
+        "request_sent_at_display": timezone.localtime(request_sent_at).strftime("%d.%m.%Y %H:%M"),
+    }
+    return title_text, content_text, payload
+
+
+@transaction.atomic
+def create_payment_request_notifications(
+    *,
+    performers,
+    letter_performers,
+    sender,
+    request_sent_at,
+    request_number,
+    delivery_channels=None,
+):
+    delivery_channels = normalize_delivery_channels(delivery_channels)
+    lawyer_user = _resolve_lawyer_user()
+    if not lawyer_user:
+        raise ValueError("Не найден пользователь с ролью «Юрист».")
+
+    performers = list(performers)
+    letter_performers = list(letter_performers)
+    project = letter_performers[0].registration if letter_performers else None
+
+    title_text, content_text, payload = _build_payment_request_payload(
+        recipient=lawyer_user,
+        project=project,
+        performers=letter_performers,
+        request_sent_at=request_sent_at,
+        request_number=request_number,
+        sender=sender,
+    )
+    created = []
+    system_email_jobs = []
+    connected_email_jobs = []
+    should_create_notifications = DELIVERY_CHANNEL_SYSTEM in delivery_channels
+    if should_create_notifications:
+        notification = Notification.objects.create(
+            notification_type=Notification.NotificationType.PROJECT_PAYMENT_REQUEST,
+            related_section=Notification.RelatedSection.PROJECTS,
+            recipient=lawyer_user,
+            sender=sender,
+            project=project,
+            title_text=title_text,
+            content_text=content_text,
+            payload=payload,
+            sent_at=request_sent_at,
+            deadline_at=None,
+            is_read=False,
+            is_processed=False,
+        )
+        NotificationPerformerLink.objects.bulk_create(
+            [
+                NotificationPerformerLink(
+                    notification=notification,
+                    performer=performer,
+                    position=index,
+                )
+                for index, performer in enumerate(performers, start=1)
+            ]
+        )
+        created.append(notification)
+    if DELIVERY_CHANNEL_SYSTEM_EMAIL in delivery_channels:
+        system_email_jobs.append(
+            {
+                "recipient": lawyer_user,
+                "subject": title_text,
+                "content": content_text,
+                "sender": sender,
+            }
+        )
+    if DELIVERY_CHANNEL_CONNECTED_EMAIL in delivery_channels:
+        connected_email_jobs.append(
+            {
+                "recipient": lawyer_user,
+                "subject": title_text,
+                "content": content_text,
+                "sender": sender,
+            }
+        )
 
     system_email_requested = DELIVERY_CHANNEL_SYSTEM_EMAIL in delivery_channels
     connected_email_requested = DELIVERY_CHANNEL_CONNECTED_EMAIL in delivery_channels
@@ -1649,9 +1981,24 @@ def serialize_notification_cards(notifications):
                 "document_link": payload.get("document_docx_link") or payload.get("document_link") or "",
                 "document_link_scan": payload.get("document_link_scan") or "",
                 "recipient_name_lawer": payload.get("recipient_name_lawer") or "",
-                "content_html": (notification.content_text or "")
-                    if (notification.content_text or "").lstrip().startswith("<")
-                    else "",
+                "payment_date": payload.get("payment_date") or "",
+                "payment_request": payload.get("payment_request") or "",
+                "content_html": (
+                    (notification.content_text or "")
+                    if (
+                        notification.notification_type
+                        == Notification.NotificationType.PROJECT_PAYMENT_REQUEST
+                        and (
+                            payload.get("rendered_from_template")
+                            or (notification.content_text or "").lstrip().startswith("<")
+                        )
+                    )
+                    else (
+                        (notification.content_text or "")
+                        if (notification.content_text or "").lstrip().startswith("<")
+                        else ""
+                    )
+                ),
                 "is_direction_confirmation": is_direction,
                 "show_self_confirm_button": show_self_confirm,
             }
