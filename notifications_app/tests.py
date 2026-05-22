@@ -2,9 +2,10 @@ import uuid
 from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
 from django.core import mail
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
@@ -14,7 +15,8 @@ from classifiers_app.models import OKSMCountry
 from contacts_app.models import CitizenshipRecord, PersonRecord
 from core.models import CloudStorageSettings
 from core.email_backend import DomainSMTPEmailBackend
-from group_app.models import GroupMember
+from experts_app.models import ExpertProfile
+from group_app.models import GroupMember, OrgUnit
 from nextcloud_app.models import NextcloudUserLink
 from notifications_app.email_delivery import (
     EmailDeliveryError,
@@ -22,13 +24,15 @@ from notifications_app.email_delivery import (
     send_notification_email,
 )
 from notifications_app.models import Notification, NotificationPerformerLink
+from letters_app.models import LetterTemplate
 from notifications_app.services import (
     create_contract_notifications,
     create_participation_notifications,
+    create_payment_request_notifications,
     normalize_delivery_channels,
     process_participation_notification,
 )
-from policy_app.models import Product
+from policy_app.models import DEPARTMENT_HEAD_GROUP, LAWYER_GROUP, Product
 from projects_app.models import Performer, ProjectRegistration, ProjectRegistrationProduct
 from users_app.forms import FREELANCER_LABEL
 from users_app.models import Employee
@@ -312,6 +316,227 @@ class ParticipationBatchNotificationTests(TestCase):
         linked_ids = set(notification.performer_links.values_list("performer_id", flat=True))
         self.assertEqual(linked_ids, {self.performer_a.pk, self.performer_b.pk})
 
+    def _ensure_lawyer_user(self):
+        lawyer_group, _ = Group.objects.get_or_create(name=LAWYER_GROUP)
+        lawyer = (
+            get_user_model().objects
+            .filter(groups__name=LAWYER_GROUP, is_staff=True, is_active=True)
+            .order_by("pk")
+            .first()
+        )
+        if lawyer:
+            return lawyer
+        lawyer = get_user_model().objects.create_user(
+            username="payment-lawyer@example.com",
+            email="payment-lawyer@example.com",
+            password="secret",
+            first_name="Анна",
+            last_name="Юрина",
+            is_staff=True,
+        )
+        Employee.objects.create(user=lawyer, patronymic="Юрьевна")
+        lawyer.groups.add(lawyer_group)
+        return lawyer
+
+    def test_create_payment_request_notifications_uses_payment_request_template(self):
+        lawyer = self._ensure_lawyer_user()
+        LetterTemplate.objects.create(
+            template_type="payment_request",
+            user=None,
+            subject_template="Заявка на оплату №{number_of_request}",
+            body_html=(
+                "<p>Добрый день, {recipient_name_lawer}</p>"
+                "<p>Просим произвести оплату в {payment_date}.</p>"
+                "<p>[payment_request]</p>"
+            ),
+            is_default=True,
+        )
+        request_sent_at = timezone.localtime().replace(day=10, hour=12, minute=0, second=0, microsecond=0)
+        contract_batch_id = uuid.uuid4()
+        Performer.objects.filter(pk__in=[self.performer_a.pk, self.performer_b.pk]).update(
+            contract_batch_id=contract_batch_id,
+            contract_number="IMC/8123-PP/02-26",
+            prepayment=Decimal("30"),
+            final_payment=Decimal("70"),
+        )
+        self.performer_a.refresh_from_db()
+        self.performer_b.refresh_from_db()
+
+        create_payment_request_notifications(
+            performers=[self.performer_a, self.performer_b],
+            letter_performers=[self.performer_a, self.performer_b],
+            sender=self.sender,
+            request_sent_at=request_sent_at,
+            request_number=7,
+            delivery_channels=["system"],
+        )
+
+        self.assertEqual(
+            Notification.objects.filter(
+                notification_type=Notification.NotificationType.PROJECT_PAYMENT_REQUEST,
+            ).count(),
+            1,
+        )
+        notification = Notification.objects.get(
+            notification_type=Notification.NotificationType.PROJECT_PAYMENT_REQUEST,
+        )
+        self.assertEqual(notification.recipient_id, lawyer.pk)
+        self.assertEqual(notification.title_text, "Заявка на оплату №7")
+        self.assertIn("Добрый день, Анна Юрьевна", notification.content_text)
+        self.assertIn("середине месяца", notification.content_text)
+        self.assertIn("Проект:", notification.content_text)
+        self.assertIn("Оплатить:", notification.content_text)
+        self.assertIn("30% аванс", notification.content_text)
+        self.assertEqual(notification.payload.get("letter_template_type"), "payment_request")
+        self.assertEqual(notification.payload.get("payment_date"), notification.payload["payment_date"])
+        self.assertIsNone(notification.deadline_at)
+        self.assertNotEqual(notification.recipient_id, self.recipient.pk)
+
+    def test_payment_request_payment_date_uses_end_of_month_after_15th(self):
+        self._ensure_lawyer_user()
+        request_sent_at = timezone.localtime().replace(day=20, hour=12, minute=0, second=0, microsecond=0)
+        contract_batch_id = uuid.uuid4()
+        Performer.objects.filter(pk=self.performer_a.pk).update(
+            contract_batch_id=contract_batch_id,
+            contract_number="IMC/8123-PP/02-26",
+            prepayment=Decimal("50"),
+            final_payment=Decimal("50"),
+            agreed_amount=Decimal("180000.00"),
+        )
+        self.performer_a.refresh_from_db()
+
+        create_payment_request_notifications(
+            performers=[self.performer_a],
+            letter_performers=[self.performer_a],
+            sender=self.sender,
+            request_sent_at=request_sent_at,
+            request_number=8,
+            delivery_channels=["system"],
+        )
+
+        notification = Notification.objects.get(
+            notification_type=Notification.NotificationType.PROJECT_PAYMENT_REQUEST,
+        )
+        self.assertEqual(notification.payload["number_of_request"], "8")
+        self.assertIn("конце месяца", notification.payload["payment_date"])
+        self.assertIn("90 000,00", notification.payload["payment_request"])
+        self.assertIn("50% аванс", notification.payload["payment_request"])
+
+    def test_payment_request_final_payment_line_after_advance_sent(self):
+        self._ensure_lawyer_user()
+        request_sent_at = timezone.localtime().replace(day=20, hour=12, minute=0, second=0, microsecond=0)
+        contract_batch_id = uuid.uuid4()
+        Performer.objects.filter(pk=self.performer_a.pk).update(
+            contract_batch_id=contract_batch_id,
+            contract_number="IMC/8123-PP/02-26",
+            prepayment=Decimal("50"),
+            final_payment=Decimal("50"),
+            agreed_amount=Decimal("180000.00"),
+            advance_payment_request_sent_at=request_sent_at - timedelta(days=1),
+        )
+        self.performer_a.refresh_from_db()
+
+        create_payment_request_notifications(
+            performers=[self.performer_a],
+            letter_performers=[self.performer_a],
+            sender=self.sender,
+            request_sent_at=request_sent_at,
+            request_number=9,
+            delivery_channels=["system"],
+        )
+
+        notification = Notification.objects.get(
+            notification_type=Notification.NotificationType.PROJECT_PAYMENT_REQUEST,
+        )
+        self.assertEqual(notification.title_text, "Заявка на оплату №9")
+        self.assertIn("90 000,00", notification.payload["payment_request"])
+        self.assertIn("50% окончательный платеж", notification.payload["payment_request"])
+        self.assertNotIn("аванс", notification.payload["payment_request"])
+
+    def test_payment_request_notification_uses_saved_letter_template(self):
+        from projects_app.services.payment_request import payment_request_sender_display
+
+        lawyer = self._ensure_lawyer_user()
+        self.sender.last_name = "Иванов"
+        self.sender.save(update_fields=["last_name"])
+        marker = "CUSTOM_PAYMENT_TEMPLATE_MARKER_XYZ"
+        LetterTemplate.objects.update_or_create(
+            template_type="payment_request",
+            user=self.sender,
+            defaults={
+                "subject_template": "Заявка №{number_of_request} тест",
+                "body_html": f"<p>{marker}</p><p>Дата: {{payment_date}}</p><p>[payment_request]</p>",
+                "is_default": False,
+            },
+        )
+        request_sent_at = timezone.now()
+        contract_batch_id = uuid.uuid4()
+        Performer.objects.filter(pk=self.performer_a.pk).update(
+            contract_batch_id=contract_batch_id,
+            contract_number="IMC/8123-PP/02-26",
+            prepayment=Decimal("30"),
+            final_payment=Decimal("70"),
+        )
+        self.performer_a.refresh_from_db()
+
+        create_payment_request_notifications(
+            performers=[self.performer_a],
+            letter_performers=[self.performer_a],
+            sender=self.sender,
+            request_sent_at=request_sent_at,
+            request_number=11,
+            delivery_channels=["system"],
+        )
+
+        notification = Notification.objects.get(
+            notification_type=Notification.NotificationType.PROJECT_PAYMENT_REQUEST,
+            recipient=lawyer,
+        )
+        self.assertIn(marker, notification.content_text)
+        self.assertTrue(notification.payload.get("rendered_from_template"))
+        self.assertEqual(notification.title_text, "Заявка №11 тест")
+        self.assertEqual(
+            notification.payload.get("sender"),
+            payment_request_sender_display(self.sender),
+        )
+
+    def test_payment_request_batch_creates_single_notification_for_multiple_rows(self):
+        self._ensure_lawyer_user()
+        request_sent_at = timezone.now()
+        batch_a = uuid.uuid4()
+        batch_b = uuid.uuid4()
+        Performer.objects.filter(pk=self.performer_a.pk).update(
+            contract_batch_id=batch_a,
+            contract_number="IMC/A/01",
+            prepayment=Decimal("50"),
+            final_payment=Decimal("50"),
+        )
+        Performer.objects.filter(pk=self.performer_b.pk).update(
+            contract_batch_id=batch_b,
+            contract_number="IMC/B/02",
+            prepayment=Decimal("50"),
+            final_payment=Decimal("50"),
+        )
+        self.performer_a.refresh_from_db()
+        self.performer_b.refresh_from_db()
+
+        create_payment_request_notifications(
+            performers=[self.performer_a, self.performer_b],
+            letter_performers=[self.performer_a, self.performer_b],
+            sender=self.sender,
+            request_sent_at=request_sent_at,
+            request_number=10,
+            delivery_channels=["system"],
+        )
+
+        notifications = Notification.objects.filter(
+            notification_type=Notification.NotificationType.PROJECT_PAYMENT_REQUEST,
+        )
+        self.assertEqual(notifications.count(), 1)
+        self.assertEqual(notifications.first().payload["number_of_request"], "10")
+        linked_ids = set(notifications.first().performer_links.values_list("performer_id", flat=True))
+        self.assertEqual(linked_ids, {self.performer_a.pk, self.performer_b.pk})
+
     @patch("nextcloud_app.workspace.grant_project_workspace_editor_access_for_performers")
     @patch("worktime_app.services.ensure_confirmed_assignments_for_performers")
     def test_processing_batch_notification_updates_all_linked_performers(
@@ -512,6 +737,35 @@ class ParticipationNotificationContractPrefillTests(TestCase):
             nextcloud_username=f"ncstaff-{self.expert_user.pk}",
             nextcloud_email=self.expert_user.email,
         )
+        direction = OrgUnit.objects.create(
+            company=self.project_group,
+            department_name="Горное дело",
+            unit_type="expertise",
+        )
+        ExpertProfile.objects.create(
+            employee=self.employee,
+            expertise_direction=direction,
+        )
+        direction_head_user = get_user_model().objects.create_user(
+            username="direction-head@example.com",
+            email="direction-head@example.com",
+            password="secret",
+            first_name="Анна",
+            last_name="Руководитель",
+            is_staff=True,
+            is_active=True,
+        )
+        Employee.objects.create(
+            user=direction_head_user,
+            department=direction,
+            role=DEPARTMENT_HEAD_GROUP,
+        )
+        NextcloudUserLink.objects.create(
+            user=direction_head_user,
+            nextcloud_user_id=f"ncstaff-{direction_head_user.pk}",
+            nextcloud_username=f"ncstaff-{direction_head_user.pk}",
+            nextcloud_email=direction_head_user.email,
+        )
         client = Mock()
         client.is_configured = True
         client.username = "cloud-admin"
@@ -525,10 +779,20 @@ class ParticipationNotificationContractPrefillTests(TestCase):
             Notification.ActionChoice.CONFIRMED,
         )
 
-        client.ensure_user_share.assert_called_once_with(
-            "cloud-admin",
-            "/Corporate Root/03 Проекты/2026/Проект 7001 Договорный проект",
-            f"ncstaff-{self.expert_user.pk}",
-            permissions=15,
+        client.ensure_user_share.assert_has_calls(
+            [
+                call(
+                    "cloud-admin",
+                    "/Corporate Root/03 Проекты/2026/Проект 7001 Договорный проект",
+                    f"ncstaff-{self.expert_user.pk}",
+                    permissions=15,
+                ),
+                call(
+                    "cloud-admin",
+                    "/Corporate Root/03 Проекты/2026/Проект 7001 Договорный проект",
+                    f"ncstaff-{direction_head_user.pk}",
+                    permissions=15,
+                ),
+            ]
         )
         mocked_assignments.assert_called_once_with([self.performer.pk])

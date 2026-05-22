@@ -403,6 +403,10 @@
                  data-projects-section="info-request">
                 Запрос информации
               </a>
+              <a href="#" class="list-group-item list-group-item-action"
+                 data-projects-section="performer-payments">
+                Платежи исполнителям
+              </a>
             </div>
           </aside>
 
@@ -413,7 +417,7 @@
                   <h5 class="mb-0 ps-3 fs-4 pt-2" id="projects-section-title">Проекты</h5>
                   <div class="dropdown pt-1" id="master-project-filter-dropdown" style="transform: translateY(3px);">
                     <button class="btn btn-primary btn-sm dropdown-toggle" type="button"
-                            id="master-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                            id="master-project-filter-toggle" data-bs-toggle="dropdown" data-bs-display="static" data-bs-auto-close="outside" aria-expanded="false">
                       Проекты: <span class="js-master-filter-label">Все</span>
                     </button>
                     <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="master-project-filter-toggle"
@@ -634,6 +638,10 @@
                  data-contracts-section="in-progress">
                 {{ APP_SECTION_LABELS.experts }}: заключение договора
               </a>
+              <a href="#" class="list-group-item list-group-item-action"
+                 data-contracts-section="performer-execution">
+                {{ APP_SECTION_LABELS.experts }}: исполнение договора
+              </a>
               {% if can_access_contract_requisites %}
               <a href="#" class="list-group-item list-group-item-action"
                  data-contracts-section="performer-requisites">
@@ -713,6 +721,9 @@
               <div id="contracts-content-in-progress" class="contracts-section-content{% if not is_expert %} d-none{% endif %}">
                 {% include "contracts_app/panel.html" %}
               </div>
+              <div id="contracts-content-performer-execution" class="contracts-section-content d-none">
+                {% include "contracts_app/execution_panel.html" %}
+              </div>
               {% if can_access_contract_requisites %}
               <div id="contracts-content-performer-requisites" class="contracts-section-content d-none">
                 {% include "contracts_app/contract_requisites_panel.html" %}
@@ -773,6 +784,10 @@
                  data-letters-section="request-approval">
                 Согласование запроса
               </a>
+              <a href="#" class="list-group-item list-group-item-action"
+                 data-letters-section="payment-request">
+                Заявка на оплату
+              </a>
             </div>
           </aside>
 
@@ -813,6 +828,9 @@
               </div>
               <div id="letters-content-request-approval" class="letters-section-content d-none"
                    data-letters-url="{% url 'letter_template_partial' 'request_approval' %}">
+              </div>
+              <div id="letters-content-payment-request" class="letters-section-content d-none"
+                   data-letters-url="{% url 'letter_template_partial' 'payment_request' %}">
               </div>
             </div>
           </div>
@@ -1846,6 +1864,7 @@
             'scope': 'Определение границ проекта',
             'team': 'Формирование команды',
             'info-request': 'Запрос информации',
+            'performer-payments': 'Платежи исполнителям',
           };
           var DEFAULT_PROJECTS_SECTION = 'launch';
           var sidebar = document.getElementById('projects-second-sidebar-list');
@@ -1900,6 +1919,7 @@
           var CONTRACTS_TITLES = {
             'in-development': 'Клиенты: заключение договора',
             'in-progress': '{{ APP_SECTION_LABELS.experts|escapejs }}: заключение договора',
+            'performer-execution': '{{ APP_SECTION_LABELS.experts|escapejs }}: исполнение договора',
             'performer-requisites': '{{ APP_SECTION_LABELS.experts|escapejs }}: реквизиты',
             'templates': 'Образцы шаблонов',
             'field-params': 'Параметры полей',
@@ -2237,6 +2257,9 @@
             if (masterDropdown) masterDropdown.classList.toggle('d-none', key !== 'in-progress');
             if (statusDropdown) statusDropdown.classList.toggle('d-none', key !== 'in-progress');
             if (key === 'in-progress') scheduleContractsMasterRefresh();
+            if (key === 'performer-execution') {
+              window.dispatchEvent(new CustomEvent('contracts:payment-request-shown'));
+            }
             window.dispatchEvent(new CustomEvent('contracts:section-shown', { detail: { section: key } }));
           }
 
@@ -2346,6 +2369,7 @@
             'scan-sending': 'Отправка скана сотрудника',
             'project-start': 'Начало проекта',
             'request-approval': 'Согласование запроса',
+            'payment-request': 'Заявка на оплату',
           };
 
           var sidebar = document.getElementById('letters-second-sidebar-list');

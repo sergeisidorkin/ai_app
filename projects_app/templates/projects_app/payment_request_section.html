@@ -1,0 +1,274 @@
+{% load projects_extras %}
+{% firstof payment_request_section_uid "payment-request" as uid %}
+<div id="{{ uid }}-section"
+     class="payment-request-section">
+  <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
+    <div class="d-flex align-items-center gap-3 flex-wrap">
+      <h5 class="table-section-title mb-0">
+        <i class="bi bi-table me-2"></i> Заявки на оплату
+      </h5>
+      <div class="dropdown projects-radio-filter-dropdown" id="{{ uid }}-project-filter-dropdown">
+        <button class="btn btn-outline-secondary btn-sm dropdown-toggle text-nowrap" type="button"
+                id="{{ uid }}-project-filter-toggle" data-bs-toggle="dropdown" data-bs-display="static" aria-expanded="false">
+          Проекты: <span class="js-payment-request-filter-label">Все</span>
+        </button>
+        <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="{{ uid }}-project-filter-toggle"
+             style="min-width: 100%; width: max-content; max-width: calc(100vw - 2rem); max-height: 240px; overflow-y: auto; overflow-x: auto; white-space: nowrap;">
+          <div class="form-check mb-2">
+            <input class="form-check-input js-payment-request-filter" type="checkbox"
+                   value="__all__" id="{{ uid }}-filter-all">
+            <label class="form-check-label text-nowrap" for="{{ uid }}-filter-all">Все проекты</label>
+          </div>
+          <hr class="dropdown-divider">
+          {% for project in payment_request_projects %}
+            <div class="form-check">
+              <input class="form-check-input js-payment-request-filter" type="checkbox"
+                     value="{{ project.id }}" id="{{ uid }}-filter-{{ project.id }}"
+                     data-summary-label="{{ project.short_uid }}"
+                     data-full-label="{{ project.short_uid }}{% if project.type_short_display %} {{ project.type_short_display }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}">
+              <label class="form-check-label text-nowrap" for="{{ uid }}-filter-{{ project.id }}">
+                {{ project.short_uid }}{% if project.type_short_display %} {{ project.type_short_display }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}
+              </label>
+            </div>
+          {% empty %}
+            <div class="text-muted small">Нет проектов</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="info-request-table-wrap">
+    <table class="table table-sm align-middle performers-table">
+      <colgroup>
+        <col class="col-checkbox">
+        <col class="col-number">
+        <col class="col-type">
+        <col class="col-name">
+        <col class="col-executor">
+        <col>
+        <col class="col-contract-signing-status-icon">
+        <col>
+        <col>
+        <col>
+        <col>
+        <col class="col-payment-number">
+        <col class="col-payment-date">
+        <col class="col-payment-toggle">
+        <col class="col-payment-paid-toggle">
+        <col class="col-payment-number">
+        <col class="col-payment-date">
+        <col class="col-payment-toggle">
+        <col class="col-payment-paid-toggle">
+        <col>
+      </colgroup>
+      <thead>
+      <tr>
+        <th class="col-checkbox">
+          {% if request.user.is_authenticated and request.user.is_staff %}
+            <div class="form-check m-0">
+              <input class="form-check-input js-payment-request-master"
+                     type="checkbox"
+                     id="{{ uid }}-master"
+                     {% if is_expert %}disabled{% endif %}
+                     aria-label="Выделить все строки заявок на оплату">
+            </div>
+          {% endif %}
+        </th>
+        <th class="text-nowrap">Номер</th>
+        <th class="text-nowrap">Тип</th>
+        <th class="text-nowrap">Название</th>
+        <th>Исполнитель</th>
+        <th class="text-nowrap">Номер договора</th>
+        <th class="reg-launch-cell payment-request-signing-status-cell"><span class="visually-hidden">Статус заключения договора</span></th>
+        <th class="text-nowrap">Заключение договора</th>
+        <th class="text-nowrap text-end pe-4">Цена</th>
+        <th class="text-nowrap">Аванс</th>
+        <th class="text-nowrap">Ок. пл.</th>
+        <th class="text-nowrap payment-request-number-header">№</th>
+        <th class="text-nowrap payment-request-group-header">Заявка на аванс</th>
+        <th class="payment-request-toggle-header" aria-hidden="true"></th>
+        <th class="text-nowrap payment-request-paid-toggle-header">Оплата</th>
+        <th class="text-nowrap payment-request-number-header">№</th>
+        <th class="text-nowrap payment-request-group-header">Заявка на ок. пл.</th>
+        <th class="payment-request-toggle-header" aria-hidden="true"></th>
+        <th class="text-nowrap payment-request-paid-toggle-header">Оплата</th>
+        <th class="text-nowrap">Отправитель</th>
+      </tr>
+      </thead>
+      <tbody>
+      {% for p in payment_request_performers %}
+        <tr data-project-id="{{ p.registration_id }}"
+            data-performer-id="{{ p.id }}"
+            data-executor="{{ p.executor }}"
+            data-prepayment="{% if p.prepayment != None %}{{ p.prepayment|floatformat:'0' }}{% endif %}"
+            data-advance-requested="{% if p.advance_payment_request_sent_at %}1{% else %}0{% endif %}"
+            data-final-requested="{% if p.final_payment_request_sent_at %}1{% else %}0{% endif %}"
+            data-advance-paid="{% if p.advance_payment_paid %}1{% else %}0{% endif %}"
+            data-final-paid="{% if p.final_payment_paid %}1{% else %}0{% endif %}">
+          <td class="text-nowrap cell-group-val">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+              <div class="form-check m-0">
+                <input class="form-check-input"
+                       type="checkbox"
+                       id="{{ uid }}-sel-{{ p.id }}"
+                       name="payment-request-select"
+                       value="{{ p.id }}"
+                       {% if is_expert %}disabled{% endif %}
+                       aria-label="Выделить строку заявки на оплату">
+              </div>
+            {% endif %}
+          </td>
+          <td class="text-nowrap cell-group-val">{% if p.contract_number_display %}<span class="clf-id-droid-mono">{{ p.contract_number_display }}</span>{% else %}&mdash;{% endif %}</td>
+          <td class="text-nowrap cell-group-val">
+            {% if p.contract_type_display %}{{ p.contract_type_display }}{% else %}{{ p.registration.type_short_display }}{% endif %}
+          </td>
+          <td class="text-truncate cell-group-val">{{ p.registration.name }}</td>
+          <td class="text-nowrap cell-group-val">{{ p.executor|short_fio }}</td>
+          <td class="text-nowrap cell-detail-val">{{ p.contract_number|default:"—" }}</td>
+          <td class="reg-launch-cell text-center cell-detail-val payment-request-signing-status-cell">
+            {% if p.contract_signing_note == "Разрабатывается проект договора" %}
+              <i class="bi bi-circle reg-launch-icon reg-launch-indicator reg-launch-status--work"
+                 title="{{ p.contract_signing_note }}"
+                 aria-label="Статус заключения договора: {{ p.contract_signing_note }}"></i>
+            {% elif p.contract_signing_note == "Отправлен проект договора" %}
+              <i class="bi bi-circle reg-launch-icon reg-launch-indicator reg-launch-status--review"
+                 title="{{ p.contract_signing_note }}"
+                 aria-label="Статус заключения договора: {{ p.contract_signing_note }}"></i>
+            {% elif p.contract_signing_note == "Договор подписан факсимиле" %}
+              <i class="bi bi-circle reg-launch-icon reg-launch-indicator reg-launch-status--done"
+                 title="{{ p.contract_signing_note }}"
+                 aria-label="Статус заключения договора: {{ p.contract_signing_note }}"></i>
+            {% endif %}
+          </td>
+          <td class="text-nowrap cell-detail-val">{{ p.contract_signing_note|default:"—" }}</td>
+          <td class="text-nowrap text-end pe-4 cell-detail-val">{% if p.total_price != None %}{{ p.total_price|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% else %}—{% endif %}</td>
+          <td class="text-nowrap cell-detail-val">{% if p.prepayment != None %}{{ p.prepayment|floatformat:'0' }}%{% else %}—{% endif %}</td>
+          <td class="text-nowrap cell-detail-val">{% if p.final_payment != None %}{{ p.final_payment|floatformat:'0' }}%{% else %}—{% endif %}</td>
+          <td class="text-nowrap payment-request-number-cell cell-detail-val"
+              data-payment-number="advance">{% if p.advance_payment_request_number %}{{ p.advance_payment_request_number }}{% endif %}</td>
+          <td class="text-nowrap payment-request-date-cell cell-detail-val"
+              data-payment-date="advance">{% if p.advance_payment_request_sent_at %}{{ p.advance_payment_request_sent_at|date:"d.m.Y H:i" }}{% endif %}</td>
+          <td class="text-nowrap payment-request-toggle-cell cell-detail-val">
+            <i class="bi payment-request-toggle-icon {% if p.advance_payment_request_sent_at %}bi-toggle-on is-on{% elif p.prepayment != None and p.prepayment == 0 %}bi-toggle-on is-on is-skipped{% else %}bi-toggle-off{% endif %}"
+               data-payment-toggle="advance"
+               aria-hidden="true"></i>
+          </td>
+          <td class="text-nowrap payment-request-paid-toggle-cell cell-detail-val">
+            {% if p.prepayment != None and p.prepayment == 0 %}
+              <i class="bi payment-request-paid-toggle-icon bi-toggle-on is-on is-skipped"
+                 data-payment-paid-toggle="advance"
+                 aria-hidden="true"></i>
+            {% else %}
+              <i class="bi payment-request-paid-toggle-icon {% if p.advance_payment_paid %}bi-toggle-on is-on{% else %}bi-toggle-off{% endif %}"
+                 data-payment-paid-toggle="advance"
+                 aria-hidden="true"></i>
+            {% endif %}
+          </td>
+          <td class="text-nowrap payment-request-number-cell cell-detail-val"
+              data-payment-number="final">{% if p.final_payment_request_number %}{{ p.final_payment_request_number }}{% endif %}</td>
+          <td class="text-nowrap payment-request-date-cell cell-detail-val"
+              data-payment-date="final">{% if p.final_payment_request_sent_at %}{{ p.final_payment_request_sent_at|date:"d.m.Y H:i" }}{% endif %}</td>
+          <td class="text-nowrap payment-request-toggle-cell cell-detail-val">
+            <i class="bi payment-request-toggle-icon {% if p.final_payment_request_sent_at %}bi-toggle-on is-on{% else %}bi-toggle-off{% endif %}"
+               data-payment-toggle="final"
+               aria-hidden="true"></i>
+          </td>
+          <td class="text-nowrap payment-request-paid-toggle-cell cell-detail-val">
+            <i class="bi payment-request-paid-toggle-icon {% if p.final_payment_paid %}bi-toggle-on is-on{% else %}bi-toggle-off{% endif %}"
+               data-payment-paid-toggle="final"
+               aria-hidden="true"></i>
+          </td>
+          <td class="text-nowrap payment-request-sender-cell cell-detail-val"
+              data-payment-sender>{% if p.final_payment_request_sender %}{{ p.final_payment_request_sender }}{% elif p.advance_payment_request_sender %}{{ p.advance_payment_request_sender }}{% endif %}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="20" class="text-muted">Пока нет данных.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+    <div class="js-payment-request-actions d-flex align-items-stretch gap-2 products-actions-row"
+         id="{{ uid }}-actions"
+         data-request-url="{% url 'payment_request' %}">
+        <div class="btn-group">
+          <button type="button"
+                  class="btn btn-primary btn-sm d-flex align-items-center js-payment-request-send-btn"
+                  id="{{ uid }}-send-btn"
+                  disabled>
+            <i class="bi bi-envelope-at me-2"></i>Отправить заявку
+          </button>
+          <button type="button"
+                  class="btn btn-primary btn-sm js-payment-request-settings-btn"
+                  id="{{ uid }}-settings-btn"
+                  data-bs-toggle="modal"
+                  data-bs-target="#{{ uid }}-modal"
+                  title="Настройки отправки заявки">
+            <i class="bi bi-gear"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="modal fade js-payment-request-modal" id="{{ uid }}-modal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title">Настройки отправки заявки</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+            </div>
+            <div class="modal-body">
+              <div class="mb-4">
+                <div class="fw-semibold mb-2">Способ отправки</div>
+                <div class="form-check">
+                  <input class="form-check-input js-payment-request-channel"
+                         type="checkbox"
+                         id="{{ uid }}-channel-system"
+                         value="system"
+                         checked>
+                  <label class="form-check-label" for="{{ uid }}-channel-system">
+                    Системные уведомления
+                  </label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input js-payment-request-channel"
+                         type="checkbox"
+                         id="{{ uid }}-channel-system-email"
+                         value="system_email">
+                  <label class="form-check-label" for="{{ uid }}-channel-system-email">
+                    Системная электронная почта
+                  </label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input js-payment-request-channel"
+                         type="checkbox"
+                         id="{{ uid }}-channel-connected-email"
+                         value="connected_email"
+                         {% if not has_active_smtp_connection %}disabled{% endif %}>
+                  <label class="form-check-label" for="{{ uid }}-channel-connected-email">
+                    Подключенная электронная почта
+                  </label>
+                </div>
+                {% if not has_active_smtp_connection %}
+                  <div class="form-text mt-1">
+                    Сначала настройте активное внешнее SMTP-подключение в разделе «Подключения».
+                  </div>
+                {% endif %}
+              </div>
+              <div class="mb-0">
+                <label for="{{ uid }}-sent-at" class="form-label">Дата отправки заявки</label>
+                <input type="datetime-local"
+                       id="{{ uid }}-sent-at"
+                       class="form-control js-payment-request-sent-at"
+                       value="{{ payment_request_sent_initial }}">
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Закрыть</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+</div>

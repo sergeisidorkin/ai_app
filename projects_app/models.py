@@ -1115,6 +1115,50 @@ class Performer(models.Model):
         default="",
     )
     info_approval_at = models.DateTimeField("Дата ответа на запрос согласования", null=True, blank=True)
+    advance_payment_request_sent_at = models.DateTimeField(
+        "Дата отправки заявки на аванс",
+        null=True,
+        blank=True,
+    )
+    advance_payment_request_number = models.PositiveIntegerField(
+        "Номер заявки на аванс",
+        null=True,
+        blank=True,
+    )
+    advance_payment_request_sender = models.CharField(
+        "Отправитель заявки на аванс",
+        max_length=255,
+        blank=True,
+        default="",
+    )
+    final_payment_request_sent_at = models.DateTimeField(
+        "Дата отправки заявки на окончательный платёж",
+        null=True,
+        blank=True,
+    )
+    final_payment_request_number = models.PositiveIntegerField(
+        "Номер заявки на окончательный платёж",
+        null=True,
+        blank=True,
+    )
+    final_payment_request_sender = models.CharField(
+        "Отправитель заявки на окончательный платёж",
+        max_length=255,
+        blank=True,
+        default="",
+    )
+    advance_payment_paid = models.BooleanField("Аванс оплачен", default=False)
+    advance_payment_paid_at = models.DateTimeField(
+        "Дата изменения оплаты аванса",
+        null=True,
+        blank=True,
+    )
+    final_payment_paid = models.BooleanField("Окончательный платёж оплачен", default=False)
+    final_payment_paid_at = models.DateTimeField(
+        "Дата изменения оплаты окончательного платежа",
+        null=True,
+        blank=True,
+    )
 
     contract_sent_at = models.DateTimeField("Дата отправки проекта договора", null=True, blank=True)
     contract_deadline_at = models.DateTimeField("Срок подписания договора", null=True, blank=True)
@@ -1297,6 +1341,18 @@ def sync_project_gantt_after_performer_save(sender, instance, **kwargs):
 @receiver(post_delete, sender=Performer)
 def sync_project_gantt_after_performer_delete(sender, instance, **kwargs):
     _sync_project_gantt_for_registration(instance.registration_id)
+
+
+class PaymentRequestCounter(models.Model):
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    last_number = models.PositiveIntegerField("Последний номер заявки", default=0)
+
+    class Meta:
+        verbose_name = "Счётчик заявок на оплату"
+        verbose_name_plural = "Счётчик заявок на оплату"
+
+    def __str__(self):
+        return f"№{self.last_number}"
 
 
 class PerformerParticipationSnapshot(models.Model):

@@ -1,4 +1,5 @@
 import copy
+from decimal import Decimal
 
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core import signing
@@ -95,6 +96,7 @@ from notifications_app.services import (
     create_contract_notifications,
     create_info_request_notifications,
     create_participation_notifications,
+    create_payment_request_notifications,
     normalize_delivery_channels,
 )
 from proposals_app.document_generation import (
@@ -1648,6 +1650,89 @@ def _bind_dynamic_performer_fields(form, *, data=None, instance=None):
         except Exception:
             pass
 
+def _payment_request_context(user=None, *, payment_request_performers_qs=None, project_products_prefetch=None):
+    from contracts_app.views import (
+        _attach_contract_batch_display_fields,
+        _contract_representative_key,
+        _contract_representative_rows,
+    )
+
+    if payment_request_performers_qs is None:
+        payment_request_performers_qs = (
+            Performer.objects
+            .select_related(
+                "registration",
+                "registration__type",
+                "typical_section",
+                "employee",
+                "employee__user",
+                "employee__person_record",
+                "currency",
+                "contract_group_member",
+            )
+            .filter(contract_batch_id__isnull=False)
+            .order_by("contract_batch_id", "position", "id")
+        )
+    if project_products_prefetch is None:
+        project_products_prefetch = models.Prefetch(
+            "product_links",
+            queryset=ProjectRegistrationProduct.objects.select_related("product").order_by("rank", "id"),
+        )
+
+    is_expert = False
+    has_active_smtp_connection = False
+    if user and getattr(user, "is_authenticated", False):
+        employee = getattr(user, "employee_profile", None)
+        employee_role = getattr(employee, "role", "")
+        is_expert = user.groups.filter(name=EXPERT_GROUP).exists() or employee_role == EXPERT_GROUP
+        if is_expert:
+            if employee:
+                expert_filter = Q(employee_id=employee.pk)
+                employee_full_name = Performer.employee_full_name(employee)
+                if employee_full_name:
+                    expert_filter |= Q(executor=employee_full_name)
+                payment_request_performers_qs = payment_request_performers_qs.filter(expert_filter)
+            else:
+                payment_request_performers_qs = payment_request_performers_qs.none()
+        has_active_smtp_connection = ExternalSMTPAccount.objects.filter(
+            user=user,
+            is_active=True,
+            use_for_notifications=True,
+        ).exists()
+
+    payment_request_source = list(payment_request_performers_qs)
+    payment_request_performers = _contract_representative_rows(payment_request_source)
+    payment_request_price_map = {}
+    for performer in payment_request_source:
+        if performer.agreed_amount is None:
+            continue
+        key = _contract_representative_key(performer)
+        payment_request_price_map[key] = (
+            payment_request_price_map.get(key) or 0
+        ) + performer.agreed_amount
+    for performer in payment_request_performers:
+        performer.total_price = payment_request_price_map.get(
+            _contract_representative_key(performer)
+        )
+    payment_request_performers = _attach_contract_batch_display_fields(payment_request_performers)
+    payment_request_project_ids = {p.registration_id for p in payment_request_performers}
+    payment_request_projects = (
+        ProjectRegistration.objects
+        .select_related("type")
+        .prefetch_related(project_products_prefetch)
+        .filter(id__in=payment_request_project_ids)
+        .order_by("-number", "-id")
+    )
+    payment_request_sent_initial = timezone.localtime().replace(second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M")
+
+    return {
+        "payment_request_performers": payment_request_performers,
+        "payment_request_projects": payment_request_projects,
+        "payment_request_sent_initial": payment_request_sent_initial,
+        "is_expert": is_expert,
+        "has_active_smtp_connection": has_active_smtp_connection,
+    }
+
 def _performers_context(user=None):
     expert_project_ids = _confirmed_project_ids_for_expert(user)
     is_expert = expert_project_ids is not None
@@ -1765,6 +1850,29 @@ def _performers_context(user=None):
         .filter(id__in=contract_project_ids)
         .order_by("-number", "-id")
     )
+    payment_request_performers_qs = (
+        Performer.objects
+        .select_related(
+            "registration",
+            "registration__type",
+            "typical_section",
+            "employee",
+            "employee__user",
+            "employee__person_record",
+            "currency",
+            "contract_group_member",
+        )
+        .filter(contract_batch_id__isnull=False)
+        .order_by("contract_batch_id", "position", "id")
+    )
+    payment_request_context = _payment_request_context(
+        user,
+        payment_request_performers_qs=payment_request_performers_qs,
+        project_products_prefetch=project_products_prefetch,
+    )
+    payment_request_performers = payment_request_context["payment_request_performers"]
+    payment_request_projects = payment_request_context["payment_request_projects"]
+    payment_request_sent_initial = payment_request_context["payment_request_sent_initial"]
     request_sent_initial = timezone.localtime().replace(second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M")
     performer_project_ids = performers.values_list("registration_id", flat=True).distinct()
     performer_projects = (
@@ -1883,6 +1991,9 @@ def _performers_context(user=None):
         "info_request_sent_initial": request_sent_initial,
         "contract_performers": contract_performers,
         "contract_projects": contract_projects,
+        "payment_request_performers": payment_request_performers,
+        "payment_request_projects": payment_request_projects,
+        "payment_request_sent_initial": payment_request_sent_initial,
         "contract_request_sent_initial": request_sent_initial,
         "primary_cloud_storage_label": get_primary_cloud_storage_label(),
         "user_is_direction_head": user_is_direction_head,
@@ -3062,6 +3173,182 @@ def info_request_approval(request):
             "deadline_at": timezone.localtime(deadline_at).strftime("%d.%m.%Y %H:%M"),
         }
     )
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def payment_request(request):
+    raw_ids = request.POST.getlist("performer_ids[]") or request.POST.getlist("performer_ids")
+    if not raw_ids:
+        return JsonResponse({"ok": False, "error": "Не выбраны строки для отправки заявки."}, status=400)
+
+    try:
+        performer_ids = sorted({int(value) for value in raw_ids if str(value).strip()})
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Передан некорректный список строк."}, status=400)
+
+    try:
+        request_sent_at = _parse_request_sent_at(request.POST.get("request_sent_at", "").strip())
+    except forms.ValidationError as exc:
+        return JsonResponse({"ok": False, "error": exc.message}, status=400)
+
+    raw_channels = request.POST.getlist("delivery_channels[]") or request.POST.getlist("delivery_channels")
+    try:
+        delivery_channels = normalize_delivery_channels(raw_channels)
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+
+    from projects_app.services.payment_request import (
+        allocate_payment_request_number,
+        payment_request_sender_display,
+        payment_request_stage,
+    )
+
+    letter_performers = list(
+        Performer.objects
+        .select_related(
+            "registration",
+            "registration__type",
+            "typical_section",
+            "employee",
+            "employee__user",
+            "currency",
+        )
+        .filter(pk__in=performer_ids)
+        .order_by("position", "id")
+    )
+    if len(letter_performers) != len(performer_ids):
+        return JsonResponse({"ok": False, "error": "Часть выбранных строк не найдена."}, status=400)
+
+    advance_letter_performers = []
+    final_letter_performers = []
+    row_updates = []
+    for performer in letter_performers:
+        stage = payment_request_stage(performer)
+        if stage is None:
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": "Часть выбранных строк уже полностью обработана.",
+                },
+                status=400,
+            )
+        row_updates.append({"id": performer.pk, "stage": stage})
+        if stage == "advance":
+            advance_letter_performers.append(performer)
+        else:
+            final_letter_performers.append(performer)
+
+    expanded_advance = (
+        _expand_contract_batch_performers(advance_letter_performers)
+        if advance_letter_performers
+        else []
+    )
+    expanded_final = (
+        _expand_contract_batch_performers(final_letter_performers)
+        if final_letter_performers
+        else []
+    )
+    selected_performers = []
+    seen_performer_ids = set()
+    for performer in expanded_advance + expanded_final:
+        if performer.pk in seen_performer_ids:
+            continue
+        seen_performer_ids.add(performer.pk)
+        selected_performers.append(performer)
+
+    sender_display = payment_request_sender_display(request.user)
+
+    try:
+        with transaction.atomic():
+            request_number = allocate_payment_request_number()
+            notification_result = create_payment_request_notifications(
+                performers=selected_performers,
+                letter_performers=letter_performers,
+                sender=request.user,
+                request_sent_at=request_sent_at,
+                request_number=request_number,
+                delivery_channels=delivery_channels,
+            )
+            updated = 0
+            if expanded_advance:
+                advance_ids = [performer.pk for performer in expanded_advance]
+                updated += Performer.objects.filter(pk__in=advance_ids).update(
+                    advance_payment_request_sent_at=request_sent_at,
+                    advance_payment_request_number=request_number,
+                    advance_payment_request_sender=sender_display,
+                )
+            if expanded_final:
+                final_ids = [performer.pk for performer in expanded_final]
+                updated += Performer.objects.filter(pk__in=final_ids).update(
+                    final_payment_request_sent_at=request_sent_at,
+                    final_payment_request_number=request_number,
+                    final_payment_request_sender=sender_display,
+                )
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "updated": updated,
+            "request_number": request_number,
+            "row_updates": row_updates,
+            "row_ids": performer_ids,
+            "sender_display": sender_display,
+            "request_sent_at": timezone.localtime(request_sent_at).strftime("%d.%m.%Y %H:%M"),
+            "delivery_channels": list(notification_result["delivery_channels"]),
+            "email_delivery": notification_result["email_delivery"],
+        }
+    )
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def payment_paid_toggle(request):
+    if _confirmed_project_ids_for_expert(request.user) is not None:
+        return JsonResponse({"ok": False, "error": "Недостаточно прав."}, status=403)
+
+    try:
+        performer_id = int(str(request.POST.get("performer_id", "")).strip())
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Некорректный идентификатор строки."}, status=400)
+
+    kind = str(request.POST.get("kind", "")).strip()
+    if kind not in {"advance", "final"}:
+        return JsonResponse({"ok": False, "error": "Некорректный тип оплаты."}, status=400)
+
+    raw_paid = str(request.POST.get("paid", "")).strip()
+    if raw_paid not in {"0", "1"}:
+        return JsonResponse({"ok": False, "error": "Некорректное значение оплаты."}, status=400)
+    paid = raw_paid == "1"
+
+    performer = get_object_or_404(Performer, pk=performer_id)
+
+    field_name = "advance_payment_paid" if kind == "advance" else "final_payment_paid"
+    paid_at_field = "advance_payment_paid_at" if kind == "advance" else "final_payment_paid_at"
+    setattr(performer, field_name, paid)
+    if paid:
+        paid_at = timezone.now()
+        setattr(performer, paid_at_field, paid_at)
+    else:
+        paid_at = None
+        setattr(performer, paid_at_field, None)
+    performer.save(update_fields=[field_name, paid_at_field])
+
+    return JsonResponse({
+        "ok": True,
+        "id": performer.pk,
+        "kind": kind,
+        "paid": paid,
+        "paid_at": (
+            timezone.localtime(paid_at).strftime("%d.%m.%Y %H:%M")
+            if paid_at
+            else ""
+        ),
+    })
 
 
 @login_required

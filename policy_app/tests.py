@@ -4,6 +4,8 @@ import io
 import json
 from decimal import Decimal
 
+from openpyxl import Workbook, load_workbook
+
 from django.contrib.auth import get_user_model
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
@@ -1198,8 +1200,8 @@ class TypicalServiceCompositionViewsTests(TestCase):
         self.assertContains(response, 'id="typical-service-compositions-table"', html=False)
         self.assertContains(response, 'class="policy-service-composition-cell"', html=False)
         self.assertContains(response, 'class="policy-service-composition-content"', html=False)
-        self.assertContains(response, 'id="typical-service-compositions-csv-download-btn"', html=False)
-        self.assertContains(response, 'id="typical-service-compositions-csv-upload-btn"', html=False)
+        self.assertContains(response, 'id="typical-service-compositions-xlsx-download-btn"', html=False)
+        self.assertContains(response, 'id="typical-service-compositions-xlsx-upload-btn"', html=False)
 
     def test_create_typical_service_composition_saves_row(self):
         editor_state = {
@@ -1223,6 +1225,29 @@ class TypicalServiceCompositionViewsTests(TestCase):
         self.assertEqual(item.service_composition, "Этап 1\nЭтап 2")
         self.assertEqual(item.service_composition_editor_state, editor_state)
         self.assertEqual(item.position, 1)
+
+    def test_create_typical_service_composition_preserves_custom_list_markers(self):
+        editor_state = {
+            "html": (
+                '<ol><li data-list="dash">Этап с дефисом</li>'
+                '<li data-list="check">Этап с галочкой</li></ol>'
+            ),
+            "plain_text": "Этап с дефисом\nЭтап с галочкой",
+        }
+        response = self.client.post(
+            reverse("typical_service_composition_form_create"),
+            {
+                "product": self.product.pk,
+                "section": self.section.pk,
+                "service_composition": "",
+                "service_composition_editor_state": json.dumps(editor_state, ensure_ascii=False),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        item = TypicalServiceComposition.objects.get()
+        self.assertEqual(item.service_composition, "Этап с дефисом\nЭтап с галочкой")
+        self.assertEqual(item.service_composition_editor_state, editor_state)
 
     def test_typical_service_composition_form_renders_product_options_with_display_name(self):
         response = self.client.get(reverse("typical_service_composition_form_create"))
@@ -1273,6 +1298,136 @@ class TypicalServiceCompositionViewsTests(TestCase):
             {"html": "", "plain_text": "Подготовка и выпуск отчета"},
         )
         self.assertEqual(item.position, 1)
+
+    def test_typical_service_composition_xlsx_download_preserves_editor_state(self):
+        editor_state = {
+            "html": (
+                '<p><strong>Подготовка</strong></p>'
+                '<ol><li data-list="dash">Анализ</li>'
+                '<li class="ql-indent-1" data-list="check">Выпуск отчета</li></ol>'
+            ),
+            "plain_text": "Подготовка\nАнализ\nВыпуск отчета",
+        }
+        TypicalServiceComposition.objects.create(
+            product=self.product,
+            section=self.section,
+            service_composition=editor_state["plain_text"],
+            service_composition_editor_state=editor_state,
+            position=1,
+        )
+
+        response = self.client.get(reverse("typical_service_composition_xlsx_download"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("typical_service_compositions.xlsx", response["Content-Disposition"])
+        workbook = load_workbook(io.BytesIO(response.content))
+        sheet = workbook.active
+        self.assertEqual(sheet["A1"].value, "Продукт")
+        self.assertEqual(sheet["B1"].value, "Раздел (услуга)")
+        self.assertEqual(sheet["C1"].value, "Состав услуг")
+        self.assertEqual(sheet["D1"].value, "Состояние редактора (JSON)")
+        self.assertTrue(sheet.column_dimensions["D"].hidden)
+        self.assertEqual(sheet["A2"].value, "TAX2")
+        self.assertEqual(sheet["B2"].value, "Раздел RU")
+        self.assertEqual(sheet["C2"].value, editor_state["plain_text"])
+        self.assertEqual(json.loads(sheet["D2"].value), editor_state)
+
+    def test_typical_service_composition_xlsx_upload_preserves_editor_state(self):
+        editor_state = {
+            "html": (
+                '<p><span style="color:#ff0000"><strong>Подготовка</strong></span></p>'
+                '<ol><li data-list="dash">Анализ</li>'
+                '<li class="ql-indent-1" data-list="check">Выпуск отчета</li></ol>'
+            ),
+            "plain_text": "Подготовка\nАнализ\nВыпуск отчета",
+        }
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(["Продукт", "Раздел (услуга)", "Состав услуг", "Состояние редактора (JSON)"])
+        sheet.column_dimensions["D"].hidden = True
+        sheet.append([
+            "TAX2",
+            "Раздел RU",
+            editor_state["plain_text"],
+            json.dumps(editor_state, ensure_ascii=False),
+        ])
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        xlsx_file = SimpleUploadedFile(
+            "typical_service_compositions.xlsx",
+            buffer.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        response = self.client.post(reverse("typical_service_composition_xlsx_upload"), {"xlsx_file": xlsx_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        self.assertEqual(response.json()["warnings"], [])
+        item = TypicalServiceComposition.objects.get()
+        self.assertEqual(item.product, self.product)
+        self.assertEqual(item.section, self.section)
+        self.assertEqual(item.service_composition, editor_state["plain_text"])
+        self.assertEqual(item.service_composition_editor_state, editor_state)
+
+    def test_typical_service_composition_xlsx_upload_falls_back_to_plain_text(self):
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(["Продукт", "Раздел (услуга)", "Состав услуг"])
+        sheet.append(["TAX2", "Раздел RU", "Подготовка без скрытого состояния"])
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        xlsx_file = SimpleUploadedFile(
+            "typical_service_compositions.xlsx",
+            buffer.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        response = self.client.post(reverse("typical_service_composition_xlsx_upload"), {"xlsx_file": xlsx_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        item = TypicalServiceComposition.objects.get()
+        self.assertEqual(item.service_composition, "Подготовка без скрытого состояния")
+        self.assertEqual(
+            item.service_composition_editor_state,
+            {"html": "", "plain_text": "Подготовка без скрытого состояния"},
+        )
+
+    def test_typical_service_composition_xlsx_upload_uses_visible_text_when_state_is_stale(self):
+        editor_state = {
+            "html": "<p><strong>Старый текст</strong></p>",
+            "plain_text": "Старый текст",
+        }
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(["Продукт", "Раздел (услуга)", "Состав услуг", "Состояние редактора (JSON)"])
+        sheet.column_dimensions["D"].hidden = True
+        sheet.append([
+            "TAX2",
+            "Раздел RU",
+            "Новый текст из Excel",
+            json.dumps(editor_state, ensure_ascii=False),
+        ])
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        xlsx_file = SimpleUploadedFile(
+            "typical_service_compositions.xlsx",
+            buffer.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        response = self.client.post(reverse("typical_service_composition_xlsx_upload"), {"xlsx_file": xlsx_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        self.assertEqual(len(response.json()["warnings"]), 1)
+        item = TypicalServiceComposition.objects.get()
+        self.assertEqual(item.service_composition, "Новый текст из Excel")
+        self.assertEqual(
+            item.service_composition_editor_state,
+            {"html": "", "plain_text": "Новый текст из Excel"},
+        )
 
     def test_create_typical_service_composition_rejects_section_from_other_product(self):
         response = self.client.post(

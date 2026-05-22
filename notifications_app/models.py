@@ -32,6 +32,10 @@ class Notification(models.Model):
             "employee_scan_sent",
             "Отправлен скан сотрудника",
         )
+        PROJECT_PAYMENT_REQUEST = (
+            "project_payment_request",
+            "Заявка на оплату",
+        )
 
     class RelatedSection(models.TextChoices):
         NONE = "none", "Не указан"

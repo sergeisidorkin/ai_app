@@ -16,6 +16,31 @@ def get_effective_template(template_type, user):
     ).first()
 
 
+def get_letter_template_for_notification(template_type, acting_user):
+    """Template for outbound notifications: prefer non-empty user draft, then shared default."""
+    if acting_user and getattr(acting_user, "is_authenticated", False):
+        user_tpl = LetterTemplate.objects.filter(
+            template_type=template_type,
+            user=acting_user,
+        ).first()
+        if user_tpl and (user_tpl.body_html or "").strip():
+            return user_tpl
+    shared_tpl = (
+        LetterTemplate.objects
+        .filter(template_type=template_type, user__isnull=True, is_default=True)
+        .order_by("-updated_at", "-pk")
+        .first()
+    )
+    if shared_tpl and (shared_tpl.body_html or "").strip():
+        return shared_tpl
+    return (
+        LetterTemplate.objects
+        .filter(template_type=template_type, is_default=True)
+        .order_by("-updated_at", "-pk")
+        .first()
+    )
+
+
 def render_template(body_html, variables: dict, safe_keys=frozenset()) -> str:
     """Replace {key} placeholders in *body_html* with HTML-escaped values from *variables*.
 

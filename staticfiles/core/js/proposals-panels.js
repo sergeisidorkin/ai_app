@@ -33,8 +33,58 @@
   const PROPOSAL_SEND_PREF_KEY = 'proposals:dispatch-send-settings';
   const PROPOSAL_KIND_FILTER_PREF_KEY = 'proposals:kind-filter';
   const PROPOSAL_STATUS_FILTER_PREF_KEY = 'proposals:status-filter';
+  const PROPOSAL_PAYMENT_VIEW_PREF_KEY = 'proposals:payment-schedule-view';
+  const PROPOSAL_PAYMENT_GANTT_SCALE_PREF_KEY = 'proposals:payment-schedule-gantt-scale';
+  const PROPOSAL_PAYMENT_GANTT_OPEN_GROUPS_PREF_KEY = 'proposals:payment-schedule-gantt-open-groups';
+  const PROPOSAL_PAYMENT_VIEW_TABLE = 'table';
+  const PROPOSAL_PAYMENT_VIEW_GANTT = 'gantt';
+  const PROPOSAL_PAYMENT_GANTT_SCALE_DAY = 'day';
+  const PROPOSAL_PAYMENT_GANTT_SCALE_WEEK = 'week';
+  const PROPOSAL_PAYMENT_GANTT_SCALE_MONTH = 'month';
+  const PROPOSAL_PAYMENT_GANTT_SCALE_QUARTER = 'quarter';
+  // The proposals' payment-schedule section owns its OWN Gantt instance built
+  // via window.GanttEngine.create(). No more shared singleton — see
+  // gantt_engine_app/static/gantt_engine/gantt-engine.js.
+  function getProposalPaymentGanttInstance() {
+    if (window.__proposalsPaymentGantt) return window.__proposalsPaymentGantt;
+    if (window.GanttEngine && typeof window.GanttEngine.create === 'function') {
+      const instance = window.GanttEngine.create();
+      if (instance) {
+        window.__proposalsPaymentGantt = instance;
+        return instance;
+      }
+    }
+    return null;
+  }
+
+  function disposeProposalPaymentGanttInstance() {
+    const gantt = window.__proposalsPaymentGantt;
+    if (!gantt) return;
+    try {
+      if (typeof gantt.clearAll === 'function') gantt.clearAll();
+    } catch (_) {
+      // A partially initialized DHTMLX instance can throw during cleanup.
+    }
+    if (window.GanttEngine && typeof window.GanttEngine.dispose === 'function') {
+      window.GanttEngine.dispose(gantt);
+    }
+    window.__proposalsPaymentGantt = null;
+  }
+
+  function proposalsGanttAttachEvent(eventName, handler) {
+    const g = getProposalPaymentGanttInstance();
+    if (!g || typeof g.attachEvent !== 'function') return null;
+    return g.attachEvent(eventName, handler);
+  }
   const PROPOSAL_KIND_FILTER_ALL = '__all__';
   const PROPOSAL_STATUS_FILTER_ALL = '__all__';
+  const PROPOSAL_STATUS_FILTER_OPTIONS = [
+    { value: 'preliminary', label: 'Предварительное' },
+    { value: 'final', label: 'Итоговое' },
+    { value: 'sent', label: 'Отправленное' },
+    { value: 'completed', label: 'Завершённое' },
+    { value: 'not_held', label: 'Несостоявшееся' },
+  ];
   const QUILL_JS = '/static/letters_app/vendor/quill/quill.min.js';
   const QUILL_CSS = '/static/letters_app/vendor/quill/quill.snow.css';
   let proposalQuillLoaded = false;
@@ -345,6 +395,895 @@
     });
   }
 
+  function parseProposalPaymentDate(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+
+    const dotMatch = raw.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+    if (dotMatch) {
+      const day = Number.parseInt(dotMatch[1], 10);
+      const month = Number.parseInt(dotMatch[2], 10) - 1;
+      const year = Number.parseInt(dotMatch[3], 10);
+      const date = new Date(year, month, day);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    const isoMatch = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (isoMatch) {
+      const year = Number.parseInt(isoMatch[1], 10);
+      const month = Number.parseInt(isoMatch[2], 10) - 1;
+      const day = Number.parseInt(isoMatch[3], 10);
+      const date = new Date(year, month, day);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    return null;
+  }
+
+  function addProposalPaymentDays(date, days) {
+    const next = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    next.setDate(next.getDate() + days);
+    return next;
+  }
+
+  function centerProposalPaymentDateInDay(date) {
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12, 0, 0, 0);
+  }
+
+  function parseProposalPaymentDecimal(value) {
+    const normalized = String(value || '').replace(/\s+/g, '').replace(',', '.');
+    const parsed = Number.parseFloat(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function parseProposalPaymentPercent(value) {
+    const parsed = parseProposalPaymentDecimal(String(value || '').replace('%', ''));
+    return parsed === null ? null : Math.max(0, Math.min(100, parsed));
+  }
+
+  function isProposalPaymentZeroPercent(value) {
+    return Number.isFinite(value) && value <= 0;
+  }
+
+  function parseProposalPaymentInteger(value) {
+    const parsed = parseProposalPaymentDecimal(value);
+    return parsed === null ? null : Math.round(parsed);
+  }
+
+  function addProposalPaymentMonths(date, months) {
+    const safeMonths = Number.isFinite(months) ? Math.max(months, 0) : 0;
+    const wholeMonths = Math.trunc(safeMonths);
+    const fractionalMonths = safeMonths - wholeMonths;
+    const targetMonthStart = new Date(date.getFullYear(), date.getMonth() + wholeMonths, 1);
+    const targetMonthEndDay = new Date(targetMonthStart.getFullYear(), targetMonthStart.getMonth() + 1, 0).getDate();
+    const day = Math.min(date.getDate(), targetMonthEndDay);
+    const wholeDate = new Date(targetMonthStart.getFullYear(), targetMonthStart.getMonth(), day);
+    return addProposalPaymentDays(wholeDate, Math.round(fractionalMonths * 30));
+  }
+
+  function addProposalPaymentWeeks(date, weeks) {
+    const safeWeeks = Number.isFinite(weeks) ? Math.max(weeks, 0) : 0;
+    return addProposalPaymentDays(date, Math.round(safeWeeks * 7));
+  }
+
+  function formatProposalPaymentDurationLabel(value, unit) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    const normalized = raw
+      .replace(/\s+/g, '')
+      .replace(/\.(?=\d)/, ',')
+      .replace(/,0$/, '');
+    return normalized ? normalized + ' ' + unit : '';
+  }
+
+  function formatProposalPaymentNumber(value) {
+    if (!Number.isFinite(value)) return '';
+    return String(Math.round(value * 10) / 10).replace('.', ',').replace(/,0$/, '');
+  }
+
+  function formatProposalPaymentMilestoneTooltip(task) {
+    const percent = formatProposalPaymentNumber(task.payment_percent);
+    const days = formatProposalPaymentNumber(task.payment_term_days);
+    if (!task.text || !percent || !days) return '';
+    return task.text + ': ' + percent + '% в течение ' + days + ' дн.';
+  }
+
+  function getProposalPaymentCellText(row, key) {
+    return String(row.querySelector('[data-col="' + key + '"]')?.textContent || '').trim();
+  }
+
+  function getProposalPaymentProgress(preliminaryDate, finalDate) {
+    const today = new Date();
+    const todayOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    if (finalDate && finalDate < todayOnly) return 1;
+    if (preliminaryDate && preliminaryDate < todayOnly) return 0.5;
+    return 0;
+  }
+
+  function pushProposalPaymentMilestone(tasks, links, options) {
+    if (!options.date) return null;
+    const taskId = options.id;
+    const isZeroPayment = isProposalPaymentZeroPercent(options.paymentPercent);
+    tasks.push({
+      id: taskId,
+      text: options.text,
+      start_date: centerProposalPaymentDateInDay(options.date),
+      duration: 0,
+      type: 'milestone',
+      milestone_kind: 'payment',
+      parent: options.parent,
+      bar_height: 17,
+      progress: options.date < new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()) ? 1 : 0,
+      proposal_id: options.proposalId,
+      tkp_id: options.tkpId || '',
+      stage: options.stage || '',
+      type_label: 'Веха',
+      payment_percent: options.paymentPercent,
+      payment_term_days: options.paymentTermDays,
+      is_zero_payment: isZeroPayment,
+      is_child: true,
+    });
+
+    if (options.previousId && !isZeroPayment) {
+      links.push({
+        id: 'proposal-payment-link-' + links.length,
+        source: options.previousId,
+        target: taskId,
+        type: '0',
+      });
+    }
+    return isZeroPayment ? null : taskId;
+  }
+
+  function pushProposalPaymentBar(tasks, links, options) {
+    if (!options.startDate || !options.endDate) return null;
+    const taskId = options.id;
+    const normalizedEndDate = options.endDate < options.startDate ? options.startDate : options.endDate;
+    tasks.push({
+      id: taskId,
+      text: options.text,
+      start_date: options.startDate,
+      end_date: addProposalPaymentDays(normalizedEndDate, 1),
+      parent: options.parent,
+      progress: getProposalPaymentProgress(null, normalizedEndDate),
+      proposal_id: options.proposalId,
+      tkp_id: options.tkpId || '',
+      stage: options.stage || '',
+      type_label: 'Отчет',
+      bar_label: options.barLabel || '',
+      hide_stage_bar_label: Boolean(options.hideStageBarLabel),
+      is_report_bar: true,
+      is_child: true,
+    });
+
+    if (options.previousId) {
+      links.push({
+        id: 'proposal-payment-link-' + links.length,
+        source: options.previousId,
+        target: taskId,
+        type: '0',
+      });
+    }
+    return taskId;
+  }
+
+  function getProposalPaymentGanttOpenGroups() {
+    const saved = window.UIPref
+      ? UIPref.get(PROPOSAL_PAYMENT_GANTT_OPEN_GROUPS_PREF_KEY, {})
+      : {};
+    return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+  }
+
+  function saveProposalPaymentGanttOpenGroups(openGroups) {
+    if (!window.UIPref || !openGroups || typeof openGroups !== 'object') return;
+    UIPref.set(PROPOSAL_PAYMENT_GANTT_OPEN_GROUPS_PREF_KEY, openGroups);
+  }
+
+  function setProposalPaymentGanttGroupOpenState(taskId, isOpen) {
+    const normalizedTaskId = String(taskId || '');
+    if (!normalizedTaskId) return;
+    const openGroups = getProposalPaymentGanttOpenGroups();
+    openGroups[normalizedTaskId] = Boolean(isOpen);
+    saveProposalPaymentGanttOpenGroups(openGroups);
+  }
+
+  function saveProposalPaymentCurrentGanttOpenGroups(gantt) {
+    if (!gantt || !window.UIPref || typeof gantt.eachTask !== 'function') return;
+    const openGroups = getProposalPaymentGanttOpenGroups();
+    try {
+      gantt.eachTask(function (task) {
+        if (!task?.is_group) return;
+        openGroups[String(task.id)] = Boolean(task.$open);
+      });
+      saveProposalPaymentGanttOpenGroups(openGroups);
+    } catch (error) {
+      // The singleton Gantt instance may not have proposal data yet.
+    }
+  }
+
+  function buildProposalPaymentGanttData(root) {
+    const rows = qa('#proposal-payment-schedule-table tbody tr[data-proposal-id]', root);
+    const proposalLabelById = new Map();
+    const stageLabelsByProposalId = new Map();
+    const tasks = [];
+    const links = [];
+    const openGroups = getProposalPaymentGanttOpenGroups();
+
+    rows.forEach((row, index) => {
+      const proposalId = String(row.dataset.proposalId || index + 1);
+      const stage = getProposalPaymentCellText(row, 'stage');
+      if (!stage) return;
+      if (!stageLabelsByProposalId.has(proposalId)) {
+        stageLabelsByProposalId.set(proposalId, new Set());
+      }
+      stageLabelsByProposalId.get(proposalId).add(stage);
+    });
+
+    rows.forEach((row, index) => {
+      const proposalId = String(row.dataset.proposalId || index + 1);
+      const currentTkpId = getProposalPaymentCellText(row, 'tkp-id');
+      const currentName = getProposalPaymentCellText(row, 'name');
+      if (currentTkpId || currentName) {
+        proposalLabelById.set(proposalId, {
+          tkpId: currentTkpId || proposalLabelById.get(proposalId)?.tkpId || '',
+          name: currentName || proposalLabelById.get(proposalId)?.name || '',
+        });
+      }
+
+      const startDate = parseProposalPaymentDate(getProposalPaymentCellText(row, 'start-date'));
+      if (!startDate) return;
+
+      const labels = proposalLabelById.get(proposalId) || {};
+      const stage = getProposalPaymentCellText(row, 'stage');
+      const type = getProposalPaymentCellText(row, 'type');
+      const preliminaryTermMonthsText = getProposalPaymentCellText(row, 'term');
+      const finalReportTermWeeksText = getProposalPaymentCellText(row, 'final-report-weeks');
+      const preliminaryDurationLabel = formatProposalPaymentDurationLabel(preliminaryTermMonthsText, 'мес.');
+      const finalReportDurationLabel = formatProposalPaymentDurationLabel(finalReportTermWeeksText, 'нед.');
+      const preliminaryTermMonths = parseProposalPaymentDecimal(preliminaryTermMonthsText);
+      const finalReportTermWeeks = parseProposalPaymentDecimal(finalReportTermWeeksText);
+      const advancePercent = parseProposalPaymentPercent(getProposalPaymentCellText(row, 'advance-percent'));
+      const preliminaryPaymentPercent = parseProposalPaymentPercent(getProposalPaymentCellText(row, 'preliminary-report-percent'));
+      const finalPaymentPercent = parseProposalPaymentPercent(getProposalPaymentCellText(row, 'final-report-percent'));
+      const advanceTermDays = parseProposalPaymentInteger(getProposalPaymentCellText(row, 'advance-term'));
+      const preliminaryPaymentTermDays = parseProposalPaymentInteger(getProposalPaymentCellText(row, 'preliminary-report-term'));
+      const finalPaymentTermDays = parseProposalPaymentInteger(getProposalPaymentCellText(row, 'final-report-term'));
+      const hideStageBarLabel = Boolean(stage && (stageLabelsByProposalId.get(proposalId)?.size || 0) <= 1);
+      const advanceDate = addProposalPaymentDays(startDate, advanceTermDays || 0);
+      const preliminaryDate = addProposalPaymentMonths(startDate, preliminaryTermMonths || 0);
+      const preliminaryPaymentDate = addProposalPaymentDays(preliminaryDate, preliminaryPaymentTermDays || 0);
+      const finalDate = addProposalPaymentWeeks(preliminaryDate, finalReportTermWeeks || 0);
+      const finalPaymentDate = addProposalPaymentDays(finalDate, finalPaymentTermDays || 0);
+      const groupStartDate = startDate;
+      const groupEndDate = finalDate;
+      const textParts = [
+        labels.tkpId || 'ТКП #' + proposalId,
+        stage,
+        labels.name || type,
+      ].filter(Boolean);
+      const groupTaskId = 'proposal-payment-' + proposalId + '-' + (index + 1);
+
+      tasks.push({
+        id: groupTaskId,
+        text: textParts.join(' · '),
+        start_date: groupStartDate,
+        end_date: addProposalPaymentDays(groupEndDate, 1),
+        progress: getProposalPaymentProgress(preliminaryDate, finalDate),
+        proposal_id: proposalId,
+        tkp_id: labels.tkpId || '',
+        stage: stage,
+        type_label: type,
+        hide_stage_bar_label: hideStageBarLabel,
+        is_group: true,
+        open: openGroups[groupTaskId] === true,
+      });
+
+      let previousMilestoneId = null;
+      previousMilestoneId = pushProposalPaymentMilestone(tasks, links, {
+        id: groupTaskId + '-advance',
+        parent: groupTaskId,
+        text: 'Предоплата',
+        date: advanceDate,
+        previousId: previousMilestoneId,
+        proposalId: proposalId,
+        tkpId: labels.tkpId || '',
+        stage: stage,
+        paymentPercent: advancePercent,
+        paymentTermDays: advanceTermDays,
+      }) || previousMilestoneId;
+      const preliminaryReportTaskId = pushProposalPaymentBar(tasks, links, {
+        id: groupTaskId + '-preliminary-report',
+        parent: groupTaskId,
+        text: 'Предварительный отчет',
+        startDate: startDate || advanceDate,
+        endDate: preliminaryDate,
+        previousId: previousMilestoneId,
+        proposalId: proposalId,
+        tkpId: labels.tkpId || '',
+        stage: stage,
+        barLabel: preliminaryDurationLabel,
+        hideStageBarLabel: hideStageBarLabel,
+      }) || previousMilestoneId;
+      previousMilestoneId = preliminaryReportTaskId || previousMilestoneId;
+      pushProposalPaymentMilestone(tasks, links, {
+        id: groupTaskId + '-preliminary-payment',
+        parent: groupTaskId,
+        text: 'Промежуточный платеж',
+        date: preliminaryPaymentDate,
+        previousId: preliminaryReportTaskId,
+        proposalId: proposalId,
+        tkpId: labels.tkpId || '',
+        stage: stage,
+        paymentPercent: preliminaryPaymentPercent,
+        paymentTermDays: preliminaryPaymentTermDays,
+      });
+      previousMilestoneId = pushProposalPaymentBar(tasks, links, {
+        id: groupTaskId + '-final-report',
+        parent: groupTaskId,
+        text: 'Итоговый отчет',
+        startDate: preliminaryDate || startDate,
+        endDate: finalDate,
+        previousId: previousMilestoneId,
+        proposalId: proposalId,
+        tkpId: labels.tkpId || '',
+        stage: stage,
+        barLabel: finalReportDurationLabel,
+        hideStageBarLabel: hideStageBarLabel,
+      }) || previousMilestoneId;
+      pushProposalPaymentMilestone(tasks, links, {
+        id: groupTaskId + '-final-payment',
+        parent: groupTaskId,
+        text: 'Окончательный платеж',
+        date: finalPaymentDate,
+        previousId: previousMilestoneId,
+        proposalId: proposalId,
+        tkpId: labels.tkpId || '',
+        stage: stage,
+        paymentPercent: finalPaymentPercent,
+        paymentTermDays: finalPaymentTermDays,
+      });
+    });
+
+    return { data: tasks, links: links };
+  }
+
+  function getProposalPaymentGanttScale(root) {
+    const activeButton = root?.querySelector('.js-proposal-payment-gantt-scale.active');
+    const savedScale = window.UIPref
+      ? UIPref.get(PROPOSAL_PAYMENT_GANTT_SCALE_PREF_KEY, PROPOSAL_PAYMENT_GANTT_SCALE_WEEK)
+      : PROPOSAL_PAYMENT_GANTT_SCALE_WEEK;
+    const scale = activeButton?.dataset?.scale || savedScale;
+    return [
+      PROPOSAL_PAYMENT_GANTT_SCALE_DAY,
+      PROPOSAL_PAYMENT_GANTT_SCALE_WEEK,
+      PROPOSAL_PAYMENT_GANTT_SCALE_MONTH,
+      PROPOSAL_PAYMENT_GANTT_SCALE_QUARTER,
+    ].includes(scale) ? scale : PROPOSAL_PAYMENT_GANTT_SCALE_WEEK;
+  }
+
+  function syncProposalPaymentGanttScaleButtons(root, scale) {
+    qa('.js-proposal-payment-gantt-scale', root).forEach((button) => {
+      const isActive = button.dataset.scale === scale;
+      button.classList.toggle('active', isActive);
+      button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    });
+  }
+
+  function applyProposalPaymentGanttScale(gantt, scale) {
+    if (gantt && gantt.config) gantt.config.$ganttEngineScale = scale;
+    const formatWeekRange = function (date) {
+      const end = addProposalPaymentDays(date, 6);
+      if (date.getMonth() === end.getMonth() && date.getFullYear() === end.getFullYear()) {
+        return gantt.date.date_to_str('%d')(date) + '-' + gantt.date.date_to_str('%d.%m')(end);
+      }
+      return gantt.date.date_to_str('%d.%m')(date) + '-' + gantt.date.date_to_str('%d.%m')(end);
+    };
+    const monthNames = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+    const shortMonthNames = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
+
+    if (scale === PROPOSAL_PAYMENT_GANTT_SCALE_DAY) {
+      gantt.config.scale_height = 54;
+      gantt.config.min_column_width = 36;
+      gantt.config.scales = [
+        { unit: 'month', step: 1, format: function (date) { return monthNames[date.getMonth()] + ' ' + date.getFullYear(); } },
+        { unit: 'day', step: 1, format: '%d' },
+      ];
+      return;
+    }
+
+    if (scale === PROPOSAL_PAYMENT_GANTT_SCALE_MONTH) {
+      gantt.config.scale_height = 54;
+      gantt.config.min_column_width = 64;
+      gantt.config.scales = [
+        { unit: 'year', step: 1, format: '%Y' },
+        { unit: 'month', step: 1, format: function (date) { return shortMonthNames[date.getMonth()]; } },
+      ];
+      return;
+    }
+
+    if (scale === PROPOSAL_PAYMENT_GANTT_SCALE_QUARTER) {
+      gantt.config.scale_height = 54;
+      gantt.config.min_column_width = 92;
+      gantt.config.scales = [
+        { unit: 'year', step: 1, format: '%Y' },
+        { unit: 'quarter', step: 1, format: function (date) { return 'Q' + (Math.floor(date.getMonth() / 3) + 1); } },
+      ];
+      return;
+    }
+
+    gantt.config.scale_height = 54;
+    gantt.config.min_column_width = 72;
+    gantt.config.scales = [
+      { unit: 'month', step: 1, format: function (date) { return monthNames[date.getMonth()] + ' ' + date.getFullYear(); } },
+      { unit: 'week', step: 1, format: formatWeekRange },
+    ];
+  }
+
+  function configureProposalPaymentGantt(root) {
+    const gantt = getProposalPaymentGanttInstance();
+    if (!gantt) return null;
+    const scale = getProposalPaymentGanttScale(root);
+    syncProposalPaymentGanttScaleButtons(root, scale);
+
+    gantt.config.readonly = true;
+    gantt.config.fit_tasks = true;
+    gantt.config.autosize = 'y';
+    gantt.config.row_height = 34;
+    gantt.config.bar_height = 20;
+    gantt.config.grid_width = 500;
+    gantt.config.select_task = true;
+    const formatGridDate = gantt.date.date_to_str('%d.%m.%y');
+    gantt.config.columns = [
+      { name: 'text', label: 'ТКП / Этап', tree: true, align: 'left', width: 340, resize: true },
+      { name: 'start_date', label: 'Начало', align: 'center', width: 92, resize: true, template: function (task) { return formatGridDate(task.start_date); } },
+      { name: 'end_date', label: 'Оконч.', align: 'center', width: 92, resize: true, template: function (task) {
+        if (task.type === 'milestone') return formatGridDate(task.start_date);
+        return formatGridDate(addProposalPaymentDays(task.end_date, -1));
+      } },
+      { name: 'type_label', label: 'Продукт', align: 'left', width: 90, template: function (task) { return escapeHtml(task.type_label || ''); } },
+    ];
+    applyProposalPaymentGanttScale(gantt, scale);
+    gantt.templates.task_text = function (start, end, task) {
+      if (task.type === 'milestone') return '';
+      if (window.GanttEngine &&
+        typeof window.GanttEngine.shouldShowTaskLabel === 'function' &&
+        !window.GanttEngine.shouldShowTaskLabel(gantt, start, end, task, { scale: scale })) {
+        return '';
+      }
+      if (task.bar_label) return escapeHtml(task.bar_label);
+      if (task.hide_stage_bar_label) return '';
+      return escapeHtml(task.stage || task.text || '');
+    };
+    gantt.templates.task_class = function (start, end, task) {
+      if (task.is_report_bar) return 'proposal-payment-gantt-report-bar';
+      if (task.type === 'milestone') {
+        // Preserves the special payment-milestone formatting (green diamond
+        // + halo) shared across all sections that emit a `milestone_kind`.
+        var kindClasses = (window.GanttEngine && typeof window.GanttEngine.classesForMilestoneKind === 'function')
+          ? window.GanttEngine.classesForMilestoneKind(task)
+          : '';
+        return kindClasses;
+      }
+      return '';
+    };
+    gantt.templates.grid_row_class = function (start, end, task) {
+      if (task.is_group) return 'proposal-payment-gantt-group-row';
+      if (task.is_child) return 'proposal-payment-gantt-child-row';
+      return '';
+    };
+    gantt.templates.link_class = function (link) {
+      try {
+        const sourceTask = gantt.getTask(link.source);
+        const targetTask = gantt.getTask(link.target);
+        return [
+          sourceTask?.type === 'milestone' ? 'proposal-payment-link-from-milestone' : '',
+          targetTask?.type === 'milestone' ? 'proposal-payment-link-to-milestone' : '',
+        ].filter(Boolean).join(' ');
+      } catch (error) {
+        return '';
+      }
+    };
+
+    return gantt;
+  }
+
+  function renderProposalPaymentGantt(root) {
+    const chart = root?.querySelector('#proposal-payment-gantt');
+    const empty = root?.querySelector('#proposal-payment-gantt-empty');
+    if (!chart || !empty) return;
+
+    if (!window.GanttEngine || typeof window.GanttEngine.create !== 'function') {
+      chart.classList.add('d-none');
+      empty.classList.remove('d-none');
+      empty.textContent = 'DHTMLX Gantt не загружен.';
+      return;
+    }
+
+    // Preserve user's open/closed group state from any currently rendered
+    // instance before we tear it down for a fresh mount.
+    const previous = window.__proposalsPaymentGantt;
+    if (previous && previous.$container) {
+      saveProposalPaymentCurrentGanttOpenGroups(previous);
+    }
+
+    const data = buildProposalPaymentGanttData(root);
+    if (!data.data.length) {
+      // No rows to draw — hide the chart and show the empty-state message, but
+      // KEEP the underlying Gantt instance alive (if any). Disposing here would
+      // invalidate any DOM closures that captured the instance and would force
+      // a destructor()/create cycle the next time data appears. The instance
+      // gets torn down only via the htmx:afterSwap handler when its host
+      // container leaves the document.
+      chart.classList.add('d-none');
+      empty.textContent = 'Нет строк с датами для построения диаграммы.';
+      empty.classList.remove('d-none');
+      return;
+    }
+
+    empty.classList.add('d-none');
+    chart.classList.remove('d-none');
+    const scale = getProposalPaymentGanttScale(root);
+    chart.classList.toggle('proposal-payment-gantt-scale-day', scale === PROPOSAL_PAYMENT_GANTT_SCALE_DAY);
+    chart.classList.toggle('proposal-payment-gantt-scale-week', scale === PROPOSAL_PAYMENT_GANTT_SCALE_WEEK);
+    chart.classList.toggle('proposal-payment-gantt-scale-month', scale === PROPOSAL_PAYMENT_GANTT_SCALE_MONTH);
+    chart.classList.toggle('proposal-payment-gantt-scale-quarter', scale === PROPOSAL_PAYMENT_GANTT_SCALE_QUARTER);
+    chart._proposalPaymentGanttTasks = data.data;
+    chart._proposalPaymentGanttLinks = data.links;
+
+    // (Re)mount path for the proposals' payment Gantt.
+    //
+    // IMPORTANT: we deliberately REUSE the existing instance instead of
+    // destructor()+create() on every re-render. Many DOM handlers in this file
+    // (row-hover, link-hover, active-row tracking, halo rendering, etc.) close
+    // over the `gantt` reference at bind time — destroying the instance under
+    // their feet would leave them operating on a corpse and DHTMLX would throw
+    // `Cannot read properties of undefined (reading 'getService')` from inside
+    // refreshData/render. Disposal only happens when the host container leaves
+    // the document (htmx:afterSwap handler near the bottom of this file).
+    //
+    // Calling `gantt.init(chart)` repeatedly on the same instance is supported
+    // by DHTMLX and rebuilds the UI inside `chart` without invalidating the
+    // instance's internal services ($services, $data, templates, config).
+    const existing = window.__proposalsPaymentGantt;
+    if (existing) {
+      const boundContainer = existing.$container || existing.$root
+        || (existing.$layout && existing.$layout.$container) || null;
+      if (boundContainer && boundContainer !== chart && !document.body.contains(boundContainer)) {
+        disposeProposalPaymentGanttInstance();
+      }
+    }
+    const gantt = configureProposalPaymentGantt(root);
+    if (!gantt) {
+      chart.classList.add('d-none');
+      empty.classList.remove('d-none');
+      empty.textContent = 'DHTMLX Gantt не загружен.';
+      return;
+    }
+    bindProposalPaymentGanttHaloRender(gantt);
+    bindProposalPaymentGanttOpenState(gantt);
+    chart.innerHTML = '';
+    gantt.init(chart);
+    gantt.clearAll();
+    gantt.parse(data);
+    gantt.render();
+    applyProposalPaymentMilestoneHaloSizes(chart, gantt, data.data);
+    applyProposalPaymentDayScaleMilestoneLinkBridges(chart, gantt, data.links);
+    bindProposalPaymentGanttRowHover(chart);
+    bindProposalPaymentGanttActiveRow(chart);
+    bindProposalPaymentGanttLinkHover(chart);
+  }
+
+  function getProposalPaymentMilestoneHaloSize(percent) {
+    if (!Number.isFinite(percent) || percent <= 0) return null;
+    const rowHeight = window.__proposalsPaymentGantt?.config?.row_height || 34;
+    const diamondSize = 12;
+    const maxSize = rowHeight * 2;
+    return Math.round(diamondSize + (Math.min(100, percent) / 100) * (maxSize - diamondSize));
+  }
+
+  function applyProposalPaymentMilestoneHaloSizes(chart, gantt, tasks) {
+    if (!chart || !gantt) return;
+    chart.querySelectorAll('.gantt-mk-payment-halo').forEach((node) => node.remove());
+    const isDayScale = chart.classList.contains('proposal-payment-gantt-scale-day');
+    tasks
+      .filter((task) => task.type === 'milestone' && task.milestone_kind === 'payment')
+      .forEach((task) => {
+        const size = getProposalPaymentMilestoneHaloSize(task.payment_percent);
+        const tooltip = formatProposalPaymentMilestoneTooltip(task);
+        const escapedTaskId = escapeProposalPaymentGanttSelectorValue(task.id);
+        chart
+          .querySelectorAll('.gantt_task_line.gantt-mk-payment[task_id="' + escapedTaskId + '"], .gantt_task_line.gantt-mk-payment[data-task-id="' + escapedTaskId + '"]')
+          .forEach((node) => {
+            if (isDayScale && task.start_date) {
+              const milestoneSize = 12;
+              const left = Math.round(gantt.posFromDate(task.start_date) - (milestoneSize / 2)) - 0.5;
+              node.style.left = left + 'px';
+              node.style.width = milestoneSize + 'px';
+            }
+            if (size && !task.is_zero_payment) {
+              const halo = document.createElement('div');
+              halo.className = 'gantt-mk-payment-halo';
+              halo.style.width = size + 'px';
+              halo.style.height = size + 'px';
+              node.insertBefore(halo, node.firstChild);
+            }
+            if (tooltip) {
+              node.setAttribute('title', tooltip);
+              node.querySelector('.gantt_task_content')?.setAttribute('title', tooltip);
+            }
+          });
+      });
+  }
+
+  function getProposalPaymentNumberStyle(node, property) {
+    const value = Number.parseFloat(node?.style?.[property] || '');
+    return Number.isFinite(value) ? value : null;
+  }
+
+  function applyProposalPaymentDayScaleMilestoneLinkBridges(chart, gantt, links) {
+    if (!chart || !gantt) return;
+    chart.querySelectorAll('.proposal-payment-milestone-link-bridge').forEach((node) => node.remove());
+    if (!chart.classList.contains('proposal-payment-gantt-scale-day') || !Array.isArray(links)) return;
+
+    links.forEach((link) => {
+      try {
+        const sourceTask = gantt.getTask(link.source);
+        const targetTask = gantt.getTask(link.target);
+        if (sourceTask?.type !== 'milestone' || targetTask?.type === 'milestone') return;
+
+        const linkNode = chart.querySelector('.gantt_task_link[link_id="' + escapeProposalPaymentGanttSelectorValue(link.id) + '"]');
+        const firstLine = linkNode?.querySelector('.gantt_line_wrapper');
+        const lineLeft = getProposalPaymentNumberStyle(firstLine, 'left');
+        const rowHeight = gantt.config.row_height || 34;
+        const sourceRight = Math.round(gantt.posFromDate(sourceTask.start_date) + 4);
+        if (lineLeft === null || lineLeft <= sourceRight) return;
+
+        const bridge = document.createElement('div');
+        bridge.className = 'proposal-payment-milestone-link-bridge';
+        bridge.dataset.linkId = String(link.id);
+        bridge.style.left = sourceRight + 'px';
+        bridge.style.top = Math.round(gantt.getTaskTop(sourceTask.id) + (rowHeight / 2)) + 'px';
+        bridge.style.width = (lineLeft - sourceRight + 9) + 'px';
+        linkNode?.parentElement?.appendChild(bridge);
+      } catch (error) {
+        // Links can briefly outlive tasks during Gantt smart rendering.
+      }
+    });
+  }
+
+  function setProposalPaymentBridgeHover(chart, linkId, isHovered) {
+    const escapedLinkId = escapeProposalPaymentGanttSelectorValue(linkId);
+    chart.querySelectorAll('.proposal-payment-milestone-link-bridge[data-link-id="' + escapedLinkId + '"]').forEach((node) => {
+      node.classList.toggle('proposal-payment-milestone-link-bridge-hover', isHovered);
+    });
+  }
+
+  function bindProposalPaymentGanttLinkHover(chart) {
+    if (!chart || chart.dataset.linkHoverBound === '1') return;
+    chart.dataset.linkHoverBound = '1';
+    chart.addEventListener('mouseover', (event) => {
+      const linkNode = event.target.closest?.('.gantt_task_link');
+      const linkId = linkNode?.getAttribute('link_id');
+      if (linkId) setProposalPaymentBridgeHover(chart, linkId, true);
+    });
+    chart.addEventListener('mouseout', (event) => {
+      const linkNode = event.target.closest?.('.gantt_task_link');
+      if (!linkNode) return;
+      const nextLinkNode = event.relatedTarget?.closest?.('.gantt_task_link');
+      if (nextLinkNode === linkNode) return;
+      const linkId = linkNode.getAttribute('link_id');
+      if (linkId) setProposalPaymentBridgeHover(chart, linkId, false);
+    });
+  }
+
+  function bindProposalPaymentGanttHaloRender(gantt) {
+    if (!gantt || gantt.$proposalPaymentHaloRenderEventId) return;
+    const applyHalos = function () {
+      const chart = document.getElementById('proposal-payment-gantt');
+      applyProposalPaymentMilestoneHaloSizes(chart, gantt, chart?._proposalPaymentGanttTasks || []);
+      applyProposalPaymentDayScaleMilestoneLinkBridges(chart, gantt, chart?._proposalPaymentGanttLinks || []);
+      if (chart?.dataset.activeTaskId) setProposalPaymentGanttActiveRow(chart, chart.dataset.activeTaskId);
+    };
+    gantt.$proposalPaymentHaloRenderEventId = proposalsGanttAttachEvent('onDataRender', function () {
+      requestAnimationFrame(applyHalos);
+    });
+    gantt.$proposalPaymentHaloScrollEventId = proposalsGanttAttachEvent('onGanttScroll', function () {
+      requestAnimationFrame(applyHalos);
+    });
+    gantt.$proposalPaymentHaloTaskClickEventId = proposalsGanttAttachEvent('onTaskClick', function (id) {
+      if (id !== undefined && id !== null && typeof gantt.selectTask === 'function') {
+        gantt.selectTask(id);
+      }
+      requestAnimationFrame(applyHalos);
+      return true;
+    });
+  }
+
+  function bindProposalPaymentGanttOpenState(gantt) {
+    if (!gantt || gantt.$proposalPaymentOpenStateEventIds) return;
+    gantt.$proposalPaymentOpenStateEventIds = [
+      proposalsGanttAttachEvent('onTaskOpened', function (id) {
+        try {
+          const task = gantt.getTask(id);
+          if (task?.is_group) setProposalPaymentGanttGroupOpenState(id, true);
+        } catch (error) {
+          // Ignore stale ids from a previous render.
+        }
+      }),
+      proposalsGanttAttachEvent('onTaskClosed', function (id) {
+        try {
+          const task = gantt.getTask(id);
+          if (task?.is_group) setProposalPaymentGanttGroupOpenState(id, false);
+        } catch (error) {
+          // Ignore stale ids from a previous render.
+        }
+      }),
+    ];
+  }
+
+  function getProposalPaymentGanttDomTaskId(element) {
+    const node = element?.closest?.('[data-task-id], [task_id]');
+    if (!node) return '';
+    return node.getAttribute('data-task-id') || node.getAttribute('task_id') || '';
+  }
+
+  function escapeProposalPaymentGanttSelectorValue(value) {
+    const raw = String(value || '');
+    if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(raw);
+    return raw.replace(/["\\]/g, '\\$&');
+  }
+
+  function setProposalPaymentGanttHoveredRow(chart, taskId) {
+    const normalizedTaskId = String(taskId || '');
+    chart.querySelectorAll('.proposal-payment-gantt-hover-row').forEach((node) => {
+      node.classList.remove('proposal-payment-gantt-hover-row');
+    });
+    if (!normalizedTaskId) return;
+
+    const escapedTaskId = escapeProposalPaymentGanttSelectorValue(normalizedTaskId);
+    const selector = '[data-task-id="' + escapedTaskId + '"], [task_id="' + escapedTaskId + '"]';
+    chart.querySelectorAll(selector).forEach((node) => {
+      if (!node.classList.contains('gantt_row') && !node.classList.contains('gantt_task_row') && !node.classList.contains('gantt_task_line')) return;
+      node.classList.add('proposal-payment-gantt-hover-row');
+    });
+  }
+
+  function setProposalPaymentGanttActiveRow(chart, taskId) {
+    const normalizedTaskId = String(taskId || '');
+    chart?.querySelectorAll('.proposal-payment-gantt-active-row').forEach((node) => {
+      node.classList.remove('proposal-payment-gantt-active-row');
+    });
+    if (!chart) return;
+    if (!normalizedTaskId) {
+      delete chart.dataset.activeTaskId;
+      return;
+    }
+    chart.dataset.activeTaskId = normalizedTaskId;
+
+    const escapedTaskId = escapeProposalPaymentGanttSelectorValue(normalizedTaskId);
+    const selector = '[data-task-id="' + escapedTaskId + '"], [task_id="' + escapedTaskId + '"]';
+    chart.querySelectorAll(selector).forEach((node) => {
+      if (!node.classList.contains('gantt_row') && !node.classList.contains('gantt_task_row') && !node.classList.contains('gantt_task_line')) return;
+      node.classList.add('proposal-payment-gantt-active-row');
+    });
+  }
+
+  function bindProposalPaymentGanttRowHover(chart) {
+    if (!chart || chart.dataset.rowHoverBound === '1') return;
+    chart.dataset.rowHoverBound = '1';
+    chart.addEventListener('mouseover', (event) => {
+      const taskId = getProposalPaymentGanttDomTaskId(event.target);
+      setProposalPaymentGanttHoveredRow(chart, taskId);
+    });
+    chart.addEventListener('mouseleave', () => {
+      setProposalPaymentGanttHoveredRow(chart, '');
+    });
+  }
+
+  function bindProposalPaymentGanttActiveRow(chart) {
+    if (!chart || chart.dataset.activeRowBound === '1') return;
+    chart.dataset.activeRowBound = '1';
+    const activateRow = (event) => {
+      const taskId = getProposalPaymentGanttDomTaskId(event.target);
+      if (!taskId) return;
+      setProposalPaymentGanttActiveRow(chart, taskId);
+      requestAnimationFrame(() => setProposalPaymentGanttActiveRow(chart, taskId));
+      window.setTimeout(() => setProposalPaymentGanttActiveRow(chart, taskId), 0);
+    };
+    chart.addEventListener('mousedown', activateRow, true);
+    chart.addEventListener('click', activateRow, true);
+  }
+
+  function clearProposalPaymentGanttSelection() {
+    const gantt = window.__proposalsPaymentGantt;
+    const chart = document.getElementById('proposal-payment-gantt');
+    setProposalPaymentGanttActiveRow(chart, '');
+    if (!gantt || typeof gantt.getSelectedId !== 'function' || typeof gantt.unselectTask !== 'function') return;
+    const selectedId = gantt.getSelectedId();
+    if (selectedId === undefined || selectedId === null || selectedId === '') return;
+    gantt.unselectTask(selectedId);
+  }
+
+  function bindProposalPaymentGanttSelectionReset(root) {
+    if (!root || root.dataset.ganttSelectionResetBound === '1') return;
+    root.dataset.ganttSelectionResetBound = '1';
+    document.addEventListener('click', (event) => {
+      const ganttWrap = root.querySelector('#proposal-payment-gantt-wrap');
+      const chart = root.querySelector('#proposal-payment-gantt');
+      if (!ganttWrap || ganttWrap.classList.contains('d-none')) return;
+      if (chart?.contains(event.target)) return;
+      clearProposalPaymentGanttSelection();
+    });
+  }
+
+  function setProposalPaymentScheduleView(root, view) {
+    const normalizedView = view === PROPOSAL_PAYMENT_VIEW_GANTT
+      ? PROPOSAL_PAYMENT_VIEW_GANTT
+      : PROPOSAL_PAYMENT_VIEW_TABLE;
+    const isGantt = normalizedView === PROPOSAL_PAYMENT_VIEW_GANTT;
+    const tableWrap = root.querySelector('.proposal-payment-schedule-table-wrap');
+    const ganttWrap = root.querySelector('#proposal-payment-gantt-wrap');
+    const colpickerControls = root.querySelector('#proposal-payment-colpicker-controls');
+    const scaleControls = root.querySelector('#proposal-payment-gantt-scale-controls');
+    const label = root.querySelector('.js-proposal-payment-view-label');
+
+    tableWrap?.classList.toggle('d-none', isGantt);
+    ganttWrap?.classList.toggle('d-none', !isGantt);
+    colpickerControls?.classList.toggle('d-none', isGantt);
+    scaleControls?.classList.toggle('d-none', !isGantt);
+    if (label) label.textContent = isGantt ? 'График' : 'Таблица';
+
+    qa('.js-proposal-payment-view', root).forEach((input) => {
+      input.checked = input.value === normalizedView;
+    });
+    if (window.UIPref) UIPref.set(PROPOSAL_PAYMENT_VIEW_PREF_KEY, normalizedView);
+    if (isGantt) requestAnimationFrame(() => renderProposalPaymentGantt(root));
+  }
+
+  function initProposalPaymentScheduleViewSwitch() {
+    const root = pane();
+    if (!root) return;
+
+    const dropdown = root.querySelector('#proposal-payment-view-dropdown');
+    if (!dropdown) return;
+    bindProposalFilterMenuWidth(dropdown);
+
+    if (dropdown.dataset.bound !== '1') {
+      dropdown.dataset.bound = '1';
+      dropdown.addEventListener('change', (event) => {
+        const input = event.target.closest('.js-proposal-payment-view');
+        if (!input) return;
+        setProposalPaymentScheduleView(root, input.value);
+        const menu = dropdown.querySelector('.dropdown-menu');
+        if (menu && window.bootstrap?.Dropdown) {
+          window.bootstrap.Dropdown.getOrCreateInstance(dropdown.querySelector('[data-bs-toggle="dropdown"]')).hide();
+        }
+      });
+    }
+
+    qa('.js-proposal-payment-gantt-scale', root).forEach((button) => {
+      if (button.dataset.bound === '1') return;
+      button.dataset.bound = '1';
+      button.addEventListener('click', () => {
+        const scale = button.dataset.scale || PROPOSAL_PAYMENT_GANTT_SCALE_WEEK;
+        if (window.UIPref) UIPref.set(PROPOSAL_PAYMENT_GANTT_SCALE_PREF_KEY, scale);
+        syncProposalPaymentGanttScaleButtons(root, scale);
+        if (root.querySelector('.js-proposal-payment-view:checked')?.value === PROPOSAL_PAYMENT_VIEW_GANTT) {
+          renderProposalPaymentGantt(root);
+        }
+      });
+    });
+
+    const savedView = window.UIPref ? UIPref.get(PROPOSAL_PAYMENT_VIEW_PREF_KEY, PROPOSAL_PAYMENT_VIEW_TABLE) : PROPOSAL_PAYMENT_VIEW_TABLE;
+    syncProposalPaymentGanttScaleButtons(root, getProposalPaymentGanttScale(root));
+    bindProposalPaymentGanttSelectionReset(root);
+    const checkedView = root.querySelector('.js-proposal-payment-view:checked')?.value || PROPOSAL_PAYMENT_VIEW_TABLE;
+    const initialView = [PROPOSAL_PAYMENT_VIEW_TABLE, PROPOSAL_PAYMENT_VIEW_GANTT].includes(savedView)
+      ? savedView
+      : checkedView;
+    setProposalPaymentScheduleView(root, initialView);
+  }
+
   function initProposalMasterFilters() {
     const root = pane();
     if (!root) return;
@@ -375,12 +1314,27 @@
 
     const availableStatuses = [];
     const seenStatuses = new Set();
+    const availableStatusLabels = new Map();
     rows.forEach((row) => {
       const statusValue = row.dataset.status || '';
       const statusText = row.dataset.statusLabel || statusValue;
-      if (!statusValue || seenStatuses.has(statusValue)) return;
-      seenStatuses.add(statusValue);
-      availableStatuses.push({ value: statusValue, label: statusText });
+      if (!statusValue) return;
+      if (!availableStatusLabels.has(statusValue)) {
+        availableStatusLabels.set(statusValue, statusText);
+      }
+    });
+    PROPOSAL_STATUS_FILTER_OPTIONS.forEach((item) => {
+      if (seenStatuses.has(item.value)) return;
+      seenStatuses.add(item.value);
+      availableStatuses.push({
+        value: item.value,
+        label: availableStatusLabels.get(item.value) || item.label,
+      });
+    });
+    availableStatusLabels.forEach((label, value) => {
+      if (seenStatuses.has(value)) return;
+      seenStatuses.add(value);
+      availableStatuses.push({ value: value, label: label });
     });
 
     kindListContainer.innerHTML = '';
@@ -712,6 +1666,23 @@
     };
 
     select.addEventListener('change', sync);
+    sync();
+  }
+
+  function attachProposalNumberDisplay(root) {
+    if (!root) return;
+    const input = root.querySelector('#proposal-number-input');
+    const display = root.querySelector('#proposal-number-display');
+    if (!input || !display || input.dataset.numberBound === '1') return;
+    input.dataset.numberBound = '1';
+
+    const sync = function () {
+      const raw = String(input.value || '').replace(/\D+/g, '').slice(0, 4);
+      display.textContent = raw ? raw.padStart(4, '0') : '';
+    };
+
+    input.addEventListener('input', sync);
+    input.addEventListener('change', sync);
     sync();
   }
 
@@ -1800,8 +2771,52 @@
     }
   }
 
+  function getProposalOwningForm(node) {
+    if (!node) return null;
+    if (node.matches?.('form[data-proposal-form]')) return node;
+    return node.closest?.('form[data-proposal-form]') || null;
+  }
+
+  function getProposalStageScope(node) {
+    if (!node) return null;
+    if (node.matches?.('[data-proposal-stage-root="1"]')) return node;
+    return node.closest?.('[data-proposal-stage-root="1"]') || null;
+  }
+
+  function getProposalScope(node) {
+    return getProposalStageScope(node) || getProposalOwningForm(node) || node;
+  }
+
+  function getProposalStageKey(node) {
+    return String(getProposalStageScope(node)?.dataset?.proposalStageKey || '').trim();
+  }
+
+  function getProposalStageRoots(form, stageKey) {
+    const key = String(stageKey || '').trim();
+    if (!form || !key) return [];
+    return Array.from(form.querySelectorAll('[data-proposal-stage-root="1"]')).filter(function (node) {
+      return String(node?.dataset?.proposalStageKey || '').trim() === key;
+    });
+  }
+
+  function getProposalStageRootByKind(form, stageKey, kind) {
+    return getProposalStageRoots(form, stageKey).find(function (node) {
+      return String(node?.dataset?.proposalStageKind || '').trim() === String(kind || '').trim();
+    }) || null;
+  }
+
   function getProposalTypeId(form) {
-    return (form?.querySelector('select[name="type"]')?.value || '').trim();
+    const stageScope = getProposalStageScope(form);
+    if (stageScope) {
+      const stageTypeInput = stageScope.querySelector?.('[data-proposal-stage-type]');
+      if (stageTypeInput) {
+        return String(stageTypeInput.value || '').trim();
+      }
+    }
+    const scope = getProposalOwningForm(form) || form;
+    const typeSelects = Array.from(scope?.querySelectorAll?.('select[name="type"]') || []);
+    if (!typeSelects.length) return '';
+    return String(typeSelects[typeSelects.length - 1]?.value || '').trim();
   }
 
   function getProposalTypicalSectionEntries(form) {
@@ -1993,7 +3008,8 @@
   function getProposalCommercialDayCounts(form, serviceName, currentValues, options) {
     const autofill = getProposalCommercialAutofill(form, serviceName);
     const defaultDays = Number.parseInt(autofill.serviceDaysTkp || 0, 10) || 0;
-    const assetsPayloadInput = form?.querySelector('#proposal-assets-payload');
+    const assetsPayloadInput = form?.querySelector('#proposal-assets-payload')
+      || getProposalOwningForm(form)?.querySelector('#proposal-assets-payload');
     let assetCount = 0;
     try {
       const rows = JSON.parse(assetsPayloadInput?.value || '[]');
@@ -2982,11 +3998,20 @@
 
   function attachProposalServicesStore(root) {
     if (!root) return null;
-    const form = root.closest('form[data-proposal-form]') || root;
-    const commercialInput = form.querySelector('#proposal-commercial-offer-payload');
-    const serviceInput = form.querySelector('#proposal-service-sections-payload');
+    const scope = getProposalScope(root);
+    const form = getProposalOwningForm(scope) || scope;
+    const stageKey = getProposalStageKey(scope);
+    const commercialRoot = stageKey ? getProposalStageRootByKind(form, stageKey, 'commercial') : scope;
+    const serviceRoot = stageKey ? getProposalStageRootByKind(form, stageKey, 'service') : scope;
+    const commercialInput = commercialRoot?.querySelector('#proposal-commercial-offer-payload');
+    const serviceInput = serviceRoot?.querySelector('#proposal-service-sections-payload');
     if (!commercialInput || !serviceInput) return null;
-    if (form.__proposalServicesStore) return form.__proposalServicesStore;
+    if (stageKey) {
+      form.__proposalStageServicesStores = form.__proposalStageServicesStores || {};
+      if (form.__proposalStageServicesStores[stageKey]) return form.__proposalStageServicesStores[stageKey];
+    } else if (form.__proposalServicesStore) {
+      return form.__proposalServicesStore;
+    }
 
     function parsePayload(input) {
       try {
@@ -3002,19 +4027,19 @@
         return normalizeProposalTravelExpensesRow(row);
       }
       const serviceName = String(row?.service_name || '').trim();
-      const autofill = getProposalCommercialAutofill(form, serviceName);
+      const autofill = getProposalCommercialAutofill(scope, serviceName);
       const specialty = autofill.jobTitle || String(row?.job_title || '').trim();
       const forceAutofill = options?.forceAutofill === true;
       const specialistValue = String(row?.specialist || '').trim();
       const statusValue = String(row?.professional_status || '').trim();
       const specialist = forceAutofill ? autofill.specialist : (specialistValue || autofill.specialist);
-      const specialistStatus = getProposalCommercialSpecialistStatus(form, serviceName, specialist);
+      const specialistStatus = getProposalCommercialSpecialistStatus(scope, serviceName, specialist);
       const currentRate = String(row?.rate_eur_per_day || '').trim();
-      const autofillRate = getProposalCommercialRateValue(form, serviceName, specialist);
+      const autofillRate = getProposalCommercialRateValue(scope, serviceName, specialist);
       const currentDayCounts = Array.isArray(row?.asset_day_counts)
         ? row.asset_day_counts.map(function (value) { return String(value ?? '').trim(); })
         : [];
-      const autofillDayCounts = getProposalCommercialDayCounts(form, serviceName, currentDayCounts, {
+      const autofillDayCounts = getProposalCommercialDayCounts(scope, serviceName, currentDayCounts, {
         replaceAll: forceAutofill,
       });
       return {
@@ -3024,7 +4049,7 @@
           ? (specialistStatus || autofill.professionalStatus)
           : (statusValue || specialistStatus || autofill.professionalStatus),
         service_name: serviceName,
-        code: getProposalTypicalSectionCode(form, serviceName) || String(row?.code || '').trim(),
+        code: getProposalTypicalSectionCode(scope, serviceName) || String(row?.code || '').trim(),
         rate_eur_per_day: forceAutofill ? (autofillRate || currentRate) : (currentRate || autofillRate),
         asset_day_counts: forceAutofill
           ? autofillDayCounts
@@ -3096,13 +4121,16 @@
         serviceRows: api.getServiceRows(),
         meta: meta || null,
       };
-      form.dispatchEvent(new CustomEvent('proposal-commercial-changed', { detail: detail }));
-      form.dispatchEvent(new CustomEvent('proposal-service-sections-changed', {
-        detail: {
-          rows: detail.serviceRows,
-          meta: meta || null,
-        },
-      }));
+      const eventTargets = stageKey ? getProposalStageRoots(form, stageKey) : [form];
+      eventTargets.forEach(function (target) {
+        target.dispatchEvent(new CustomEvent('proposal-commercial-changed', { detail: detail }));
+        target.dispatchEvent(new CustomEvent('proposal-service-sections-changed', {
+          detail: {
+            rows: detail.serviceRows,
+            meta: meta || null,
+          },
+        }));
+      });
       listeners.slice().forEach(function (listener) {
         listener(detail);
       });
@@ -3149,7 +4177,7 @@
       },
       replaceFromType: function (meta) {
         api.commitServiceRows(
-          getProposalTypicalSectionEntries(form).map(function (entry) {
+          getProposalTypicalSectionEntries(scope).map(function (entry) {
             return {
               service_name: (entry?.name || '').trim(),
               code: (entry?.code || '').trim(),
@@ -3177,28 +4205,91 @@
     };
 
     syncHiddenInputs();
-    form.__proposalServicesStore = api;
+    if (stageKey) {
+      form.__proposalStageServicesStores[stageKey] = api;
+    } else {
+      form.__proposalServicesStore = api;
+    }
     return api;
   }
 
   function attachProposalCommercialTable(root, assetsApi) {
     if (!root) return null;
-    const form = root.closest('form[data-proposal-form]') || root;
-    const servicesStore = attachProposalServicesStore(form);
-    const serviceCostInput = form.querySelector('[name="service_cost"]');
-    const table = form.querySelector('#proposal-commercial-table');
-    const payloadInput = form.querySelector('#proposal-commercial-offer-payload');
-    const totalsPayloadInput = form.querySelector('#proposal-commercial-totals-payload');
-    const thead = form.querySelector('#proposal-commercial-thead');
-    const tbody = form.querySelector('#proposal-commercial-tbody');
-    const addBtn = form.querySelector('#proposal-commercial-add-btn');
-    const actions = form.querySelector('#proposal-commercial-row-actions');
-    const upBtn = form.querySelector('#proposal-commercial-up-btn');
-    const downBtn = form.querySelector('#proposal-commercial-down-btn');
-    const deleteBtn = form.querySelector('#proposal-commercial-delete-btn');
-    if (!table || !payloadInput || !totalsPayloadInput || !thead || !tbody || !addBtn || !actions || !upBtn || !downBtn || !deleteBtn) return null;
-    if (form.dataset.commercialBound === '1') return form.__proposalCommercialTableApi || null;
-    form.dataset.commercialBound = '1';
+    const scope = getProposalScope(root);
+    const formRoot = getProposalOwningForm(scope) || scope;
+    const form = scope;
+    const isSummaryCommercialBlock = scope.dataset.proposalCommercialSummary === '1';
+    const servicesStore = isSummaryCommercialBlock ? null : attachProposalServicesStore(scope);
+    const serviceCostInput = formRoot.querySelector('[name="service_cost"]');
+    const table = scope.querySelector('#proposal-commercial-table');
+    const payloadInput = scope.querySelector('#proposal-commercial-offer-payload');
+    const totalsPayloadInput = scope.querySelector('#proposal-commercial-totals-payload');
+    const thead = scope.querySelector('#proposal-commercial-thead');
+    const tbody = scope.querySelector('#proposal-commercial-tbody');
+    const addBtn = scope.querySelector('#proposal-commercial-add-btn');
+    const actions = scope.querySelector('#proposal-commercial-row-actions');
+    const upBtn = scope.querySelector('#proposal-commercial-up-btn');
+    const downBtn = scope.querySelector('#proposal-commercial-down-btn');
+    const deleteBtn = scope.querySelector('#proposal-commercial-delete-btn');
+    if (
+      !table || !payloadInput || !totalsPayloadInput || !thead || !tbody
+      || (!isSummaryCommercialBlock && (!addBtn || !actions || !upBtn || !downBtn || !deleteBtn))
+    ) return null;
+    if (scope.dataset.commercialBound === '1') return scope.__proposalCommercialTableApi || null;
+    scope.dataset.commercialBound = '1';
+
+    function hasVisibleSummaryCommercialBlock() {
+      const summaryBlock = formRoot.querySelector('[data-proposal-commercial-summary="1"]');
+      return !!summaryBlock && !summaryBlock.classList.contains('d-none');
+    }
+
+    function getStageCommercialBlocks() {
+      return Array.from(
+        formRoot.querySelectorAll('#proposal-commercial-stages-container [data-proposal-stage-kind="commercial"]')
+      );
+    }
+
+    function getMasterCommercialBlock() {
+      return getStageCommercialBlocks()[0] || null;
+    }
+
+    function isCommercialRateMasterBlock() {
+      if (scope.dataset.proposalCommercialRateMaster === '1') return true;
+      return !isSummaryCommercialBlock && getMasterCommercialBlock() === scope;
+    }
+
+    function shouldSyncServiceCost() {
+      return isSummaryCommercialBlock ? hasVisibleSummaryCommercialBlock() : !hasVisibleSummaryCommercialBlock();
+    }
+
+    function readCommercialTotalsState(block) {
+      try {
+        return normalizeProposalCommercialTotalsState(
+          JSON.parse(block?.querySelector('#proposal-commercial-totals-payload')?.value || '{}')
+        );
+      } catch (error) {
+        return normalizeProposalCommercialTotalsState({});
+      }
+    }
+
+    function getCommercialRateStateFromBlock(block) {
+      if (!block) return null;
+      const totalsState = readCommercialTotalsState(block);
+      const rubTotalRow = block.querySelector('tr[data-rub-total-row="1"]');
+      const rateInput = rubTotalRow?.querySelector('.proposal-commercial-rate');
+      const serviceInput = rubTotalRow?.querySelector('.proposal-commercial-service-text');
+      return {
+        exchange_rate: rawMoney(rateInput?.value || totalsState.exchange_rate || ''),
+        rub_total_service_text: String(serviceInput?.value || totalsState.rub_total_service_text || '').trim(),
+      };
+    }
+
+    function getSharedCommercialRateState() {
+      if (isCommercialRateMasterBlock()) return null;
+      const masterBlock = getMasterCommercialBlock();
+      if (!masterBlock || masterBlock === scope) return null;
+      return getCommercialRateStateFromBlock(masterBlock);
+    }
 
     function parsePayload() {
       if (servicesStore) return servicesStore.getRows();
@@ -3258,10 +4349,36 @@
       totalsPayloadInput.value = JSON.stringify(normalizeProposalCommercialTotalsState(state));
     }
 
-    function getEditableRows() {
+    function applySharedCommercialRateState() {
+      const sharedState = getSharedCommercialRateState();
+      if (!sharedState) return;
+      const rubTotalRow = findFixedRow('tr[data-rub-total-row="1"]');
+      const serviceInput = rubTotalRow?.querySelector('.proposal-commercial-service-text');
+      const rateInput = rubTotalRow?.querySelector('.proposal-commercial-rate');
+      if (serviceInput && document.activeElement !== serviceInput) {
+        serviceInput.value = String(sharedState.rub_total_service_text || '').trim();
+      }
+      if (rateInput && document.activeElement !== rateInput) {
+        rateInput.value = sharedState.exchange_rate
+          ? formatProposalExchangeRateDisplay(sharedState.exchange_rate)
+          : '';
+      }
+      const currentState = parseTotalsPayload();
+      setTotalsPayload({
+        ...currentState,
+        exchange_rate: sharedState.exchange_rate,
+        rub_total_service_text: String(sharedState.rub_total_service_text || '').trim(),
+      });
+    }
+
+    function getDataRows() {
       return getRows().filter(function (row) {
         return !isFixedRow(row);
       });
+    }
+
+    function getEditableRows() {
+      return getDataRows();
     }
 
     function getSelectedRows() {
@@ -3278,6 +4395,83 @@
       return assetRows.map(function (row, index) {
         return (row.short_name || '').trim() || ('Актив ' + (index + 1));
       });
+    }
+
+    function getSummaryStageLabels() {
+      if (!isSummaryCommercialBlock) return [];
+      return getStageCommercialBlocks().map(function (block, index) {
+        const title = String(block.querySelector('.proposal-stage-block-title')?.textContent || '').trim();
+        const prefix = 'Коммерческое предложение:';
+        const label = title.startsWith(prefix) ? title.slice(prefix.length).trim() : '';
+        return label || ('Этап ' + (index + 1));
+      });
+    }
+
+    function shouldRenderSummaryStageDays() {
+      return isSummaryCommercialBlock && getSummaryStageLabels().length > 1;
+    }
+
+    function normalizeSummaryAssetDayCounts(values, assetCount) {
+      const normalized = Array.isArray(values)
+        ? values.slice(0, assetCount).map(function (value) { return String(value ?? '').trim(); })
+        : [];
+      while (normalized.length < assetCount) normalized.push('');
+      return normalized;
+    }
+
+    function normalizeSummaryStageDayCounts(values, stageCount, assetCount) {
+      const source = Array.isArray(values) ? values : [];
+      return Array.from({ length: stageCount }, function (_stage, stageIndex) {
+        return normalizeSummaryAssetDayCounts(source[stageIndex] || [], assetCount);
+      });
+    }
+
+    function sumDayCountValues(values) {
+      return (Array.isArray(values) ? values : []).reduce(function (sum, value) {
+        const parsed = parseFloat(rawMoney(value || ''));
+        return sum + (Number.isFinite(parsed) ? parsed : 0);
+      }, 0);
+    }
+
+    function formatSummaryTotalDayValue(value) {
+      if (!Number.isFinite(value) || value <= 0) return '';
+      return Number.isInteger(value) ? String(value) : fmtMoney(value.toFixed(2));
+    }
+
+    function readSummaryJsonArray(row, key) {
+      try {
+        const data = JSON.parse(row?.dataset?.[key] || '[]');
+        return Array.isArray(data) ? data : [];
+      } catch (error) {
+        return [];
+      }
+    }
+
+    function getSummaryDayColumnSpecs(assetRows) {
+      const stageLabels = getSummaryStageLabels();
+      const assetCount = Math.max(assetRows.length, 1);
+      const hasMultipleAssets = assetRows.length > 1;
+      const assetLabels = assetRows.length
+        ? getAssetLabels(assetRows)
+        : Array.from({ length: assetCount }, function (_item, index) { return 'Актив ' + (index + 1); });
+      const specs = [];
+      stageLabels.forEach(function (stageLabel, stageIndex) {
+        assetLabels.forEach(function (assetLabel, assetIndex) {
+          specs.push({
+            kind: 'stage',
+            stageIndex: stageIndex,
+            assetIndex: assetIndex,
+            label: hasMultipleAssets ? assetLabel : (stageLabel + ': кол-во дней'),
+            measureLabel: hasMultipleAssets ? assetLabel : (stageLabel + ': кол-во дней'),
+          });
+        });
+      });
+      specs.push({
+        kind: 'total-days',
+        label: 'Всего',
+        measureLabel: hasMultipleAssets ? 'Кол-во дней' : 'Всего',
+      });
+      return specs;
     }
 
     let dayHeaderMeasureEl = null;
@@ -3302,6 +4496,11 @@
     }
 
     function getCommercialDayColumnWidths(assetRows) {
+      if (shouldRenderSummaryStageDays()) {
+        return getSummaryDayColumnSpecs(assetRows).map(function (spec) {
+          return measureCommercialDayLabelWidth(spec.measureLabel || spec.label) + 36;
+        });
+      }
       const labels = getAssetLabels(assetRows);
       if (labels.length <= 1) return [];
       return labels.map(function (label) {
@@ -3330,7 +4529,11 @@
       for (let i = 0; i < 5; i += 1) cols.push({});
       cols.push({ width: '10.5rem' });
 
-      if (assetRows.length <= 1) {
+      if (shouldRenderSummaryStageDays()) {
+        dayWidths.forEach(function (widthPx) {
+          cols.push({ widthPx: widthPx });
+        });
+      } else if (assetRows.length <= 1) {
         cols.push({ width: '10.5rem' });
       } else {
         dayWidths.forEach(function (widthPx) {
@@ -3361,6 +4564,70 @@
     function renderHeader(assetRows) {
       const labels = getAssetLabels(assetRows);
       renderCommercialColGroup(assetRows);
+      if (shouldRenderSummaryStageDays()) {
+        const stageLabels = getSummaryStageLabels();
+        const assetCount = Math.max(assetRows.length, 1);
+        const hasMultipleAssets = assetRows.length > 1;
+        if (!hasMultipleAssets) {
+          thead.innerHTML = ''
+            + '<tr>'
+            + '<th class="proposal-assets-check-col"></th>'
+            + '<th>Специалист</th>'
+            + '<th>Специальность</th>'
+            + '<th>Профессиональный статус</th>'
+            + '<th>Услуги</th>'
+            + '<th class="proposal-commercial-rate-header">Ставка, евро / день</th>'
+            + stageLabels.map(function (stageLabel) {
+              return '<th class="proposal-commercial-days-group proposal-commercial-day-header proposal-commercial-days-header proposal-commercial-days-header-multi">'
+                + escapeHtml(stageLabel) + ': кол-во дней</th>';
+            }).join('')
+            + '<th class="proposal-commercial-day-header proposal-commercial-total-days-header">Всего</th>'
+            + '<th class="proposal-commercial-total-header">Итого, евро без НДС</th>'
+            + '</tr>';
+
+          const widths = getCommercialDayColumnWidths(assetRows);
+          Array.from(thead.querySelectorAll('.proposal-commercial-day-header')).forEach(function (header, index) {
+            applyCommercialDayColumnWidth(header, widths[index]);
+          });
+          return;
+        }
+        const assetLabels = assetRows.length
+          ? labels
+          : Array.from({ length: assetCount }, function (_item, index) { return 'Актив ' + (index + 1); });
+        thead.innerHTML = ''
+          + '<tr>'
+          + '<th class="proposal-assets-check-col" rowspan="2"></th>'
+          + '<th rowspan="2">Специалист</th>'
+          + '<th rowspan="2">Специальность</th>'
+          + '<th rowspan="2">Профессиональный статус</th>'
+          + '<th rowspan="2">Услуги</th>'
+          + '<th class="proposal-commercial-rate-header" rowspan="2">Ставка, евро / день</th>'
+          + stageLabels.map(function (stageLabel) {
+            return '<th class="proposal-commercial-days-group proposal-commercial-days-group-subheaders proposal-commercial-days-header proposal-commercial-days-header-multi" colspan="' + assetCount + '">'
+              + escapeHtml(stageLabel) + ': кол-во дней</th>';
+          }).join('')
+          + '<th class="proposal-commercial-days-group proposal-commercial-days-group-subheaders proposal-commercial-days-header proposal-commercial-days-header-multi" colspan="1">Кол-во дней</th>'
+          + '<th class="proposal-commercial-total-header" rowspan="2">Итого, евро без НДС</th>'
+          + '</tr>'
+          + '<tr>'
+          + stageLabels.map(function () {
+            return assetLabels.map(function (label) {
+              return '<th class="proposal-commercial-day-header">' + escapeHtml(label) + '</th>';
+            }).join('');
+          }).join('')
+          + '<th class="proposal-commercial-day-header proposal-commercial-total-days-header">Всего</th>'
+          + '</tr>';
+
+        const widths = getCommercialDayColumnWidths(assetRows);
+        Array.from(thead.querySelectorAll('.proposal-commercial-day-header')).forEach(function (header, index) {
+          applyCommercialDayColumnWidth(header, widths[index]);
+        });
+        Array.from(thead.querySelectorAll('.proposal-commercial-days-group')).forEach(function (header) {
+          const width = measureCommercialDayLabelWidth(header.textContent || '') + 36;
+          applyCommercialDayColumnWidth(header, width);
+        });
+        return;
+      }
       if (labels.length <= 1) {
         thead.innerHTML = ''
           + '<tr>'
@@ -3401,6 +4668,11 @@
 
     function syncActions() {
       const hasSelected = getSelectedRows().length > 0;
+      if (isSummaryCommercialBlock) {
+        if (upBtn) upBtn.disabled = !hasSelected;
+        if (downBtn) downBtn.disabled = !hasSelected;
+        return;
+      }
       actions.classList.toggle('d-none', !hasSelected);
       actions.classList.toggle('d-flex', hasSelected);
     }
@@ -3412,6 +4684,7 @@
     function recalcRowTotal(row) {
       if (!row) return;
       if (isFixedRow(row)) return;
+      if (isSummaryCommercialBlock) return;
       const rateInput = row.querySelector('.proposal-commercial-rate');
       const totalInput = row.querySelector('.proposal-commercial-total');
       if (!rateInput || !totalInput) return;
@@ -3430,10 +4703,26 @@
       totalInput.value = fmtMoney((rate * totalDays).toFixed(2));
     }
 
+    function recalcSummaryCommercialRowTotal(row) {
+      if (!isSummaryCommercialBlock || !row || isFixedRow(row)) return;
+      const rate = parseFloat(rawMoney(row.querySelector('.proposal-commercial-rate')?.value || ''));
+      const totalDays = sumDayCountValues(readSummaryJsonArray(row, 'summaryAssetDayCounts'));
+      const totalInput = row.querySelector('.proposal-commercial-total');
+      if (!totalInput) return;
+      totalInput.value = Number.isFinite(rate) && totalDays > 0
+        ? fmtMoney((rate * totalDays).toFixed(2))
+        : '';
+    }
+
     function recalcTravelRowTotal(row) {
       if (!row || !isTravelRow(row)) return;
       const totalInput = row.querySelector('.proposal-commercial-total');
       if (!totalInput) return;
+      if (shouldRenderSummaryStageDays()) {
+        const preservedRaw = rawMoney(row.dataset.preservedActualTotalRaw || '');
+        totalInput.value = preservedRaw ? fmtMoney(preservedRaw) : '';
+        return;
+      }
       if (getTravelExpensesMode(row) !== PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION) {
         const preservedRaw = rawMoney(row.dataset.preservedActualTotalRaw || '');
         totalInput.value = preservedRaw ? fmtMoney(preservedRaw) : '';
@@ -3467,6 +4756,47 @@
       const totalCell = row.querySelector('.proposal-commercial-total-cell');
       if (!totalCell) return;
 
+      if (shouldRenderSummaryStageDays()) {
+        const assetCount = Math.max(assetRows.length, 1);
+        const stageLabels = getSummaryStageLabels();
+        const normalizedAssetValues = normalizeSummaryAssetDayCounts(sourceValues, assetCount);
+        const normalizedStageValues = normalizeSummaryStageDayCounts(
+          options?.stageDayCounts,
+          stageLabels.length,
+          assetCount
+        );
+        row.dataset.summaryAssetDayCounts = JSON.stringify(normalizedAssetValues);
+        row.dataset.summaryStageDayCounts = JSON.stringify(normalizedStageValues);
+
+        const specs = getSummaryDayColumnSpecs(assetRows);
+        specs.forEach(function (spec, index) {
+          const dayCell = createProposalTableCell('proposal-commercial-day-cell');
+          applyCommercialDayColumnWidth(dayCell, dayColumnWidths[index]);
+          const input = document.createElement('input');
+          input.type = 'text';
+          input.className = 'form-control readonly-field '
+            + (spec.kind === 'total-days'
+              ? 'proposal-commercial-summary-total-day-count'
+              : 'proposal-commercial-stage-day-count');
+          input.readOnly = true;
+          input.tabIndex = -1;
+          if (spec.kind === 'total-days') {
+            const totalDays = sumDayCountValues(normalizedAssetValues);
+            input.value = formatSummaryTotalDayValue(totalDays);
+          } else {
+            input.value = normalizedStageValues[spec.stageIndex]?.[spec.assetIndex] || '';
+          }
+          input.style.width = '100%';
+          input.style.minWidth = '0';
+          input.style.maxWidth = '100%';
+          input.style.boxSizing = 'border-box';
+          dayCell.appendChild(input);
+          row.insertBefore(dayCell, totalCell);
+        });
+        recalcSummaryCommercialRowTotal(row);
+        return;
+      }
+
       if (!assetRows.length) {
         const placeholderCell = createProposalTableCell('proposal-commercial-day-placeholder-cell');
         placeholderCell.textContent = '—';
@@ -3475,7 +4805,7 @@
         return;
       }
 
-      if (isTravelExpenses && isReadOnly) {
+      if (isTravelExpenses && getTravelExpensesMode(row) !== PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION) {
         sourceValues = Array.from({ length: assetRows.length }, function () { return ''; });
       }
 
@@ -3542,7 +4872,12 @@
           professional_status: '',
           service_name: PROPOSAL_TRAVEL_EXPENSES_LABEL,
           rate_eur_per_day: '',
-          asset_day_counts: getDayInputs(row).map(function (input) { return (input.value || '').trim(); }),
+          asset_day_counts: isSummaryCommercialBlock
+            ? readSummaryJsonArray(row, 'summaryAssetDayCounts')
+            : getDayInputs(row).map(function (input) { return (input.value || '').trim(); }),
+          stage_asset_day_counts: isSummaryCommercialBlock
+            ? readSummaryJsonArray(row, 'summaryStageDayCounts')
+            : undefined,
           total_eur_without_vat: rawMoney(row.querySelector('.proposal-commercial-total')?.value || ''),
         };
       }
@@ -3552,28 +4887,53 @@
         professional_status: (row.querySelector('.proposal-commercial-status')?.value || '').trim(),
         service_name: (row.querySelector('.proposal-commercial-service')?.value || '').trim(),
         rate_eur_per_day: rawMoney(row.querySelector('.proposal-commercial-rate')?.value || ''),
-        asset_day_counts: getDayInputs(row).map(function (input) { return (input.value || '').trim(); }),
+        asset_day_counts: isSummaryCommercialBlock
+          ? readSummaryJsonArray(row, 'summaryAssetDayCounts')
+          : getDayInputs(row).map(function (input) { return (input.value || '').trim(); }),
+        stage_asset_day_counts: isSummaryCommercialBlock
+          ? readSummaryJsonArray(row, 'summaryStageDayCounts')
+          : undefined,
         total_eur_without_vat: rawMoney(row.querySelector('.proposal-commercial-total')?.value || ''),
       };
     }
 
     function computeSummaryValues() {
-      const editableRows = getEditableRows();
+      const dataRows = getDataRows();
       const assetCount = Math.max(getAssetRows().length, 1);
       const dayCounts = Array.from({ length: assetCount }, function () { return 0; });
+      const stageCount = getSummaryStageLabels().length;
+      const stageDayCounts = Array.from({ length: stageCount }, function () {
+        return Array.from({ length: assetCount }, function () { return 0; });
+      });
       let total = 0;
 
-      editableRows.forEach(function (row) {
-        getDayInputs(row).forEach(function (input, index) {
-          const value = parseInt((input.value || '').trim(), 10);
-          if (Number.isFinite(value)) dayCounts[index] += value;
-        });
+      dataRows.forEach(function (row) {
+        if (isSummaryCommercialBlock) {
+          normalizeSummaryAssetDayCounts(readSummaryJsonArray(row, 'summaryAssetDayCounts'), assetCount).forEach(function (value, index) {
+            const parsed = parseInt(String(value || '').trim(), 10);
+            if (Number.isFinite(parsed)) dayCounts[index] += parsed;
+          });
+          normalizeSummaryStageDayCounts(readSummaryJsonArray(row, 'summaryStageDayCounts'), stageCount, assetCount).forEach(function (stageValues, stageIndex) {
+            stageValues.forEach(function (value, assetIndex) {
+              const parsed = parseInt(String(value || '').trim(), 10);
+              if (Number.isFinite(parsed)) stageDayCounts[stageIndex][assetIndex] += parsed;
+            });
+          });
+        } else {
+          getDayInputs(row).forEach(function (input, index) {
+            const value = parseInt((input.value || '').trim(), 10);
+            if (Number.isFinite(value)) dayCounts[index] += value;
+          });
+        }
         const rowTotal = parseFloat(rawMoney(row.querySelector('.proposal-commercial-total')?.value || ''));
         if (Number.isFinite(rowTotal)) total += rowTotal;
       });
 
       return {
         asset_day_counts: dayCounts.map(function (value) { return value > 0 ? String(value) : ''; }),
+        stage_asset_day_counts: stageDayCounts.map(function (stageValues) {
+          return stageValues.map(function (value) { return value > 0 ? String(value) : ''; });
+        }),
         total_eur_without_vat: total > 0 ? fmtMoney(total.toFixed(2)) : '',
       };
     }
@@ -3581,6 +4941,10 @@
     function computeTravelRowTotalValue() {
       const travelRow = tbody.querySelector('tr[data-travel-expenses-row="1"]');
       if (!travelRow) return 0;
+      if (shouldRenderSummaryStageDays()) {
+        const value = parseFloat(rawMoney(travelRow.querySelector('.proposal-commercial-total')?.value || ''));
+        return Number.isFinite(value) ? value : 0;
+      }
       return getDayInputs(travelRow).reduce(function (sum, input) {
         const value = parseFloat(rawMoney(input.value || ''));
         return sum + (Number.isFinite(value) ? value : 0);
@@ -3626,6 +4990,7 @@
     }
 
     function computeCommercialFinancialTotals() {
+      applySharedCommercialRateState();
       const summaryTotal = parseFloat(rawMoney(
         findFixedRow('tr[data-summary-with-travel-row="1"]')?.querySelector('.proposal-commercial-total')?.value
         || findFixedRow('tr[data-summary-row="1"]')?.querySelector('.proposal-commercial-total')?.value
@@ -3657,7 +5022,10 @@
       const summaryRow = tbody.querySelector('tr[data-summary-row="1"]');
       if (!summaryRow) return;
       const summary = computeSummaryValues();
-      syncDayCells(summaryRow, getAssetRows(), summary.asset_day_counts, { readOnly: true });
+      syncDayCells(summaryRow, getAssetRows(), summary.asset_day_counts, {
+        readOnly: true,
+        stageDayCounts: summary.stage_asset_day_counts,
+      });
       const totalInput = summaryRow.querySelector('.proposal-commercial-total');
       if (totalInput) totalInput.value = summary.total_eur_without_vat;
     }
@@ -3674,6 +5042,7 @@
     }
 
     function syncServiceCostValue(valueRaw) {
+      if (!shouldSyncServiceCost()) return;
       if (!serviceCostInput || document.activeElement === serviceCostInput) return;
       serviceCostInput.value = valueRaw ? fmtMoney(valueRaw) : '';
     }
@@ -3730,6 +5099,11 @@
         travel_expenses_mode: getTravelExpensesMode(findFixedRow('tr[data-travel-expenses-row="1"]')),
       });
       syncAllFinancialServiceCellExpansions();
+      if (isCommercialRateMasterBlock()) {
+        formRoot.dispatchEvent(new CustomEvent('proposal-commercial-shared-rate-changed', {
+          detail: getCommercialRateStateFromBlock(scope),
+        }));
+      }
     }
 
     function updatePayload(meta) {
@@ -3767,7 +5141,10 @@
       }
       if (rate) rate.value = data.rate_eur_per_day ? fmtMoney(data.rate_eur_per_day) : '';
       if (total) total.value = data.total_eur_without_vat ? fmtMoney(data.total_eur_without_vat) : '';
-      syncDayCells(row, getAssetRows(), data.asset_day_counts || []);
+      syncDayCells(row, getAssetRows(), data.asset_day_counts || [], {
+        readOnly: isSummaryCommercialBlock,
+        stageDayCounts: data.stage_asset_day_counts || [],
+      });
       recalcRowTotal(row);
     }
 
@@ -3798,6 +5175,11 @@
         data.specialist || autofill.specialist || ''
       );
       specialistSelect.value = data.specialist || autofill.specialist || '';
+      if (isSummaryCommercialBlock) {
+        specialistSelect.disabled = true;
+        specialistSelect.tabIndex = -1;
+        specialistSelect.classList.add('readonly-field');
+      }
       specialistTd.appendChild(specialistSelect);
       row.appendChild(specialistTd);
 
@@ -3823,15 +5205,70 @@
         )
         || autofill.professionalStatus
         || '';
+      if (isSummaryCommercialBlock) {
+        statusInput.readOnly = true;
+        statusInput.tabIndex = -1;
+        statusInput.classList.add('readonly-field');
+      }
       statusTd.appendChild(statusInput);
       row.appendChild(statusTd);
 
       const serviceTd = createProposalTableCell();
-      const serviceSelect = document.createElement('select');
-      serviceSelect.className = 'form-select proposal-commercial-service';
-      syncProposalCommercialServiceSelect(serviceSelect, form, data.service_name || '');
-      serviceSelect.value = data.service_name || '';
-      serviceTd.appendChild(serviceSelect);
+      let serviceSelect = null;
+      if (isSummaryCommercialBlock) {
+        const serviceInput = document.createElement('input');
+        serviceInput.type = 'text';
+        serviceInput.className = 'form-control proposal-commercial-service readonly-field';
+        serviceInput.readOnly = true;
+        serviceInput.tabIndex = -1;
+        serviceInput.value = '';
+        serviceTd.appendChild(serviceInput);
+      } else {
+        serviceSelect = document.createElement('select');
+        serviceSelect.className = 'form-select proposal-commercial-service';
+        syncProposalCommercialServiceSelect(serviceSelect, form, data.service_name || '');
+        serviceSelect.value = data.service_name || '';
+        serviceTd.appendChild(serviceSelect);
+        serviceSelect.addEventListener('change', function () {
+          const serviceAutofill = getProposalCommercialAutofill(form, serviceSelect.value || '');
+          titleInput.value = serviceAutofill.jobTitle || '';
+          syncProposalCommercialSpecialistSelect(
+            specialistSelect,
+            form,
+            serviceSelect.value || '',
+            serviceAutofill.specialist || ''
+          );
+          specialistSelect.value = serviceAutofill.specialist || '';
+          statusInput.value = getProposalCommercialSpecialistStatus(
+            form,
+            serviceSelect.value || '',
+            specialistSelect.value || ''
+          ) || serviceAutofill.professionalStatus || '';
+          const rateValue = getProposalCommercialRateValue(
+            form,
+            serviceSelect.value || '',
+            specialistSelect.value || ''
+          );
+          rateInput.value = rateValue ? fmtMoney(rateValue) : '';
+          syncDayCells(
+            row,
+            getAssetRows(),
+            getProposalCommercialDayCounts(
+              form,
+              serviceSelect.value || '',
+              getDayInputs(row).map(function (input) { return input.value || ''; }),
+              { replaceAll: true }
+            )
+          );
+          recalcRowTotal(row);
+          updatePayload({ reason: 'row-edit', rowIndex: getRows().indexOf(row) });
+        });
+        serviceSelect.addEventListener('input', function () {
+          if (!serviceSelect.value) {
+            updatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
+          }
+        });
+      }
       row.appendChild(serviceTd);
 
       const rateTd = createProposalTableCell('proposal-commercial-rate-cell');
@@ -3840,6 +5277,11 @@
       rateInput.className = 'form-control js-money-input proposal-commercial-rate';
       rateInput.inputMode = 'decimal';
       rateInput.value = data.rate_eur_per_day ? fmtMoney(data.rate_eur_per_day) : '';
+      if (isSummaryCommercialBlock) {
+        rateInput.readOnly = true;
+        rateInput.tabIndex = -1;
+        rateInput.classList.add('readonly-field');
+      }
       rateTd.appendChild(rateInput);
       row.appendChild(rateTd);
 
@@ -3854,86 +5296,52 @@
       totalTd.appendChild(totalInput);
       row.appendChild(totalTd);
 
-      syncDayCells(row, getAssetRows(), data.asset_day_counts || []);
+      syncDayCells(row, getAssetRows(), data.asset_day_counts || [], {
+        readOnly: isSummaryCommercialBlock,
+        stageDayCounts: data.stage_asset_day_counts || [],
+      });
 
       [statusInput].forEach(function (input) {
+        if (isSummaryCommercialBlock) return;
         input.addEventListener('change', function () {
           updatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
         });
       });
-      statusInput.addEventListener('input', function () {
-        updatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
-      });
-      specialistSelect.addEventListener('change', function () {
-        const specialistStatus = getProposalCommercialSpecialistStatus(
-          form,
-          serviceSelect.value || '',
-          specialistSelect.value || ''
-        );
-        const rateValue = getProposalCommercialRateValue(
-          form,
-          serviceSelect.value || '',
-          specialistSelect.value || ''
-        );
-        if (specialistStatus) {
-          statusInput.value = specialistStatus;
-        } else if (!(specialistSelect.value || '').trim()) {
-          statusInput.value = '';
-        }
-        if (rateValue) {
-          rateInput.value = fmtMoney(rateValue);
-          recalcRowTotal(row);
-        }
-        updatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
-      });
-      serviceSelect.addEventListener('change', function () {
-        const serviceAutofill = getProposalCommercialAutofill(form, serviceSelect.value || '');
-        titleInput.value = serviceAutofill.jobTitle || '';
-        syncProposalCommercialSpecialistSelect(
-          specialistSelect,
-          form,
-          serviceSelect.value || '',
-          serviceAutofill.specialist || ''
-        );
-        specialistSelect.value = serviceAutofill.specialist || '';
-        statusInput.value = getProposalCommercialSpecialistStatus(
-          form,
-          serviceSelect.value || '',
-          specialistSelect.value || ''
-        ) || serviceAutofill.professionalStatus || '';
-        const rateValue = getProposalCommercialRateValue(
-          form,
-          serviceSelect.value || '',
-          specialistSelect.value || ''
-        );
-        rateInput.value = rateValue ? fmtMoney(rateValue) : '';
-        syncDayCells(
-          row,
-          getAssetRows(),
-          getProposalCommercialDayCounts(
+      if (!isSummaryCommercialBlock) {
+        statusInput.addEventListener('input', function () {
+          updatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
+        });
+        specialistSelect.addEventListener('change', function () {
+          const specialistStatus = getProposalCommercialSpecialistStatus(
             form,
             serviceSelect.value || '',
-            getDayInputs(row).map(function (input) { return input.value || ''; }),
-            { replaceAll: true }
-          )
-        );
-        recalcRowTotal(row);
-        updatePayload({ reason: 'row-edit', rowIndex: getRows().indexOf(row) });
-      });
-      serviceSelect.addEventListener('input', function () {
-        if (!serviceSelect.value) {
+            specialistSelect.value || ''
+          );
+          const rateValue = getProposalCommercialRateValue(
+            form,
+            serviceSelect.value || '',
+            specialistSelect.value || ''
+          );
+          if (specialistStatus) {
+            statusInput.value = specialistStatus;
+          } else if (!(specialistSelect.value || '').trim()) {
+            statusInput.value = '';
+          }
+          if (rateValue) {
+            rateInput.value = fmtMoney(rateValue);
+            recalcRowTotal(row);
+          }
           updatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
-        }
-      });
-
-      rateInput.addEventListener('change', function () {
-        recalcRowTotal(row);
-        updatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
-      });
-      rateInput.addEventListener('input', function () {
-        recalcRowTotal(row);
-        updatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
-      });
+        });
+        rateInput.addEventListener('change', function () {
+          recalcRowTotal(row);
+          updatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
+        });
+        rateInput.addEventListener('input', function () {
+          recalcRowTotal(row);
+          updatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
+        });
+      }
 
       attachMoneyInputs(row);
       recalcRowTotal(row);
@@ -3965,6 +5373,11 @@
         rateSelect.appendChild(option);
       });
       rateSelect.value = getTravelExpensesMode(row);
+      if (isSummaryCommercialBlock) {
+        rateSelect.disabled = true;
+        rateSelect.tabIndex = -1;
+        rateSelect.classList.add('readonly-field');
+      }
       rateTd.appendChild(rateSelect);
       row.appendChild(rateTd);
 
@@ -3978,20 +5391,25 @@
       totalTd.appendChild(totalInput);
       row.appendChild(totalTd);
 
-      syncDayCells(row, getAssetRows(), data.asset_day_counts || []);
-
-      rateSelect.addEventListener('change', function () {
-        row.dataset.travelExpensesMode = normalizeProposalTravelExpensesMode(rateSelect.value) || PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL;
-        if (getTravelExpensesMode(row) === PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL) {
-          row.dataset.preservedActualTotalRaw = '';
-        }
-        const nextValues = getTravelExpensesMode(row) === PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION
-          ? getDayInputs(row).map(function (input) { return input.value || ''; })
-          : [];
-        syncDayCells(row, getAssetRows(), nextValues);
-        recalcTravelRowTotal(row);
-        updatePayload({ reason: 'travel-expenses-mode-change' });
+      syncDayCells(row, getAssetRows(), data.asset_day_counts || [], {
+        readOnly: isSummaryCommercialBlock,
+        stageDayCounts: data.stage_asset_day_counts || [],
       });
+
+      if (!isSummaryCommercialBlock) {
+        rateSelect.addEventListener('change', function () {
+          row.dataset.travelExpensesMode = normalizeProposalTravelExpensesMode(rateSelect.value) || PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL;
+          if (getTravelExpensesMode(row) === PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL) {
+            row.dataset.preservedActualTotalRaw = '';
+          }
+          const nextValues = getTravelExpensesMode(row) === PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION
+            ? getDayInputs(row).map(function (input) { return input.value || ''; })
+            : [];
+          syncDayCells(row, getAssetRows(), nextValues);
+          recalcTravelRowTotal(row);
+          updatePayload({ reason: 'travel-expenses-mode-change' });
+        });
+      }
 
       attachMoneyInputs(row);
       recalcTravelRowTotal(row);
@@ -4079,7 +5497,7 @@
         serviceTd.colSpan = 1;
         const serviceWrap = document.createElement('div');
         serviceWrap.className = 'proposal-commercial-financial-service-wrap';
-        if (config.showCbrLink) {
+        if (config.showCbrLink && isCommercialRateMasterBlock()) {
           const serviceActions = document.createElement('div');
           serviceActions.className = 'proposal-commercial-service-actions';
           const serviceLink = document.createElement('a');
@@ -4135,12 +5553,18 @@
         serviceInput.type = 'text';
         serviceInput.className = 'form-control proposal-commercial-service-text';
         serviceInput.value = config.serviceStateKey ? (state[config.serviceStateKey] || '') : '';
-        serviceInput.addEventListener('input', function () {
-          syncCommercialFinancialRows();
-        });
-        serviceInput.addEventListener('change', function () {
-          syncCommercialFinancialRows();
-        });
+        if (config.showCbrLink && !isCommercialRateMasterBlock()) {
+          serviceInput.readOnly = true;
+          serviceInput.tabIndex = -1;
+          serviceInput.classList.add('readonly-field');
+        } else {
+          serviceInput.addEventListener('input', function () {
+            syncCommercialFinancialRows();
+          });
+          serviceInput.addEventListener('change', function () {
+            syncCommercialFinancialRows();
+          });
+        }
         serviceWrap.appendChild(serviceInput);
         serviceTd.appendChild(serviceWrap);
         row.appendChild(serviceTd);
@@ -4154,12 +5578,18 @@
         rateInput.dataset.moneyPrecision = '4';
         rateInput.inputMode = 'decimal';
         rateInput.value = state.exchange_rate ? formatProposalExchangeRateDisplay(state.exchange_rate) : '';
-        rateInput.addEventListener('input', function () {
-          syncCommercialFinancialRows();
-        });
-        rateInput.addEventListener('change', function () {
-          syncCommercialFinancialRows();
-        });
+        if (!isCommercialRateMasterBlock()) {
+          rateInput.readOnly = true;
+          rateInput.tabIndex = -1;
+          rateInput.classList.add('readonly-field');
+        } else {
+          rateInput.addEventListener('input', function () {
+            syncCommercialFinancialRows();
+          });
+          rateInput.addEventListener('change', function () {
+            syncCommercialFinancialRows();
+          });
+        }
         rateTd.appendChild(rateInput);
       } else if (config.rateMode === 'percent') {
         const rateInput = document.createElement('input');
@@ -4299,28 +5729,36 @@
       updatePayload({ reason: 'row-delete' });
     }
 
-    addBtn.addEventListener('click', function () {
-      const row = createRow({});
-      const firstFixedRow = getRows().find(function (item) { return isFixedRow(item); });
-      if (firstFixedRow) {
-        tbody.insertBefore(row, firstFixedRow);
-      } else {
-        tbody.appendChild(row);
-      }
-      updatePayload({ reason: 'row-add', rowIndex: getEditableRows().length - 1 });
-      row.querySelector('.proposal-commercial-specialist')?.focus();
-    });
+    if (!isSummaryCommercialBlock && addBtn) {
+      addBtn.addEventListener('click', function () {
+        const row = createRow({});
+        const firstFixedRow = getRows().find(function (item) { return isFixedRow(item); });
+        if (firstFixedRow) {
+          tbody.insertBefore(row, firstFixedRow);
+        } else {
+          tbody.appendChild(row);
+        }
+        updatePayload({ reason: 'row-add', rowIndex: getEditableRows().length - 1 });
+        row.querySelector('.proposal-commercial-specialist')?.focus();
+      });
+    }
 
-    upBtn.addEventListener('click', function () { moveSelected('up'); });
-    downBtn.addEventListener('click', function () { moveSelected('down'); });
-    deleteBtn.addEventListener('click', deleteSelected);
+    if (upBtn) {
+      upBtn.addEventListener('click', function () { moveSelected('up'); });
+    }
+    if (downBtn) {
+      downBtn.addEventListener('click', function () { moveSelected('down'); });
+    }
+    if (!isSummaryCommercialBlock && deleteBtn) {
+      deleteBtn.addEventListener('click', deleteSelected);
+    }
 
-    form.addEventListener('proposal-assets-changed', function (event) {
+    formRoot.addEventListener('proposal-assets-changed', function (event) {
       const rows = Array.isArray(event.detail?.rows) ? event.detail.rows : getAssetRows();
       const meta = event.detail?.meta || {};
       renderHeader(rows);
       getRows().forEach(function (row) {
-        if (meta.reason === 'row-add') {
+        if (meta.reason === 'row-add' && !isSummaryCommercialBlock) {
           syncDayCells(
             row,
             rows,
@@ -4341,15 +5779,25 @@
           syncSummaryWithTravelRowValues();
           return;
         }
-        syncDayCells(row, rows, undefined, { readOnly: isFixedRow(row) && !isTravelRow(row) });
+        syncDayCells(row, rows, undefined, { readOnly: isSummaryCommercialBlock || (isFixedRow(row) && !isTravelRow(row)) });
       });
       updatePayload({ reason: 'sync-asset-columns' });
     });
 
-    servicesStore.subscribe(function (detail) {
-      if (detail?.meta?.source === 'commercial-view') return;
-      renderRows(detail?.rows || []);
-    });
+    if (servicesStore) {
+      servicesStore.subscribe(function (detail) {
+        if (detail?.meta?.source === 'commercial-view') return;
+        renderRows(detail?.rows || []);
+      });
+    }
+    if (!scope.dataset.commercialSharedRateBound) {
+      scope.dataset.commercialSharedRateBound = '1';
+      formRoot.addEventListener('proposal-commercial-shared-rate-changed', function () {
+        if (isCommercialRateMasterBlock()) return;
+        applySharedCommercialRateState();
+        syncCommercialFinancialRows();
+      });
+    }
 
     renderHeader(getAssetRows());
     renderRows(parsePayload());
@@ -4360,6 +5808,7 @@
         return servicesStore ? servicesStore.getRows() : getRows().map(serializeRow).filter(Boolean);
       },
       replaceRows: function (rowsData, meta) {
+        renderHeader(getAssetRows());
         if (servicesStore) {
           servicesStore.commitCommercialRows(rowsData || [], { ...(meta || {}), source: 'commercial-view' });
           return;
@@ -4368,25 +5817,26 @@
         updatePayload(meta);
       },
     };
-    form.__proposalCommercialTableApi = api;
+    scope.__proposalCommercialTableApi = api;
     return api;
   }
 
   function attachProposalServiceSectionsTable(root) {
     if (!root) return null;
-    const form = root.closest('form[data-proposal-form]') || root;
-    const servicesStore = attachProposalServicesStore(form);
-    const payloadInput = form.querySelector('#proposal-service-sections-payload');
-    const tbody = form.querySelector('#proposal-service-sections-tbody');
-    const addBtn = form.querySelector('#proposal-service-section-add-btn');
-    const actions = form.querySelector('#proposal-service-sections-row-actions');
-    const upBtn = form.querySelector('#proposal-service-section-up-btn');
-    const downBtn = form.querySelector('#proposal-service-section-down-btn');
-    const deleteBtn = form.querySelector('#proposal-service-section-delete-btn');
-    const masterCheck = form.querySelector('#proposal-service-sections-master-check');
+    const scope = getProposalScope(root);
+    const form = scope;
+    const servicesStore = attachProposalServicesStore(scope);
+    const payloadInput = scope.querySelector('#proposal-service-sections-payload');
+    const tbody = scope.querySelector('#proposal-service-sections-tbody');
+    const addBtn = scope.querySelector('#proposal-service-section-add-btn');
+    const actions = scope.querySelector('#proposal-service-sections-row-actions');
+    const upBtn = scope.querySelector('#proposal-service-section-up-btn');
+    const downBtn = scope.querySelector('#proposal-service-section-down-btn');
+    const deleteBtn = scope.querySelector('#proposal-service-section-delete-btn');
+    const masterCheck = scope.querySelector('#proposal-service-sections-master-check');
     if (!payloadInput || !tbody || !addBtn || !actions || !upBtn || !downBtn || !deleteBtn) return null;
-    if (form.dataset.serviceSectionsBound === '1') return form.__proposalServiceSectionsTableApi || null;
-    form.dataset.serviceSectionsBound = '1';
+    if (scope.dataset.serviceSectionsBound === '1') return scope.__proposalServiceSectionsTableApi || null;
+    scope.dataset.serviceSectionsBound = '1';
 
     function parsePayload() {
       if (servicesStore) return servicesStore.getServiceRows();
@@ -4544,19 +5994,12 @@
       syncActions();
     });
 
-    form.querySelector('select[name="type"]')?.addEventListener('change', function () {
-      if (servicesStore) {
-        servicesStore.replaceFromType({ reason: 'sync-services-by-type', source: 'type-change' });
-        return;
-      }
-    });
-
     if (servicesStore) {
       servicesStore.subscribe(function (detail) {
         if (detail?.meta?.source === 'service-view') return;
         renderRows(detail?.serviceRows || []);
       });
-      if (!servicesStore.getRows().length && getProposalTypeId(form)) {
+      if (!servicesStore.getRows().length && getProposalTypeId(scope)) {
         servicesStore.replaceFromType({ reason: 'autofill-service-sections-by-type', source: 'type-change' });
       }
       renderRows(servicesStore.getServiceRows());
@@ -4585,13 +6028,13 @@
         updatePayload(meta);
       },
     };
-    form.__proposalServiceSectionsTableApi = api;
+    scope.__proposalServiceSectionsTableApi = api;
     return api;
   }
 
   function attachProposalServiceTextEditor(root) {
     if (!root) return null;
-    const form = root.closest('form[data-proposal-form]') || root;
+    const form = getProposalScope(root);
     const openBtn = form.querySelector('#proposal-service-text-edit-btn');
     const modal = form.querySelector('#proposal-service-text-modal');
     const closeBtn = form.querySelector('#proposal-service-text-close-btn');
@@ -4874,8 +6317,7 @@
     function updateColorPreviews() {
       toolbar.querySelectorAll('[data-color-preview]').forEach(function (preview) {
         const kind = preview.dataset.colorPreview;
-        const input = toolbar.querySelector('[data-color-source="' + kind + '"]');
-        if (input) preview.style.backgroundColor = input.value || '#000000';
+        preview.style.backgroundColor = getAppliedToolbarColor(kind);
       });
     }
 
@@ -4895,10 +6337,274 @@
       }).join('');
     }
 
+    const COLOR_DEFAULTS = {
+      color: '#000000',
+      background: '#ffffff',
+    };
+
+    function getColorDefault(kind) {
+      return COLOR_DEFAULTS[kind] || '#000000';
+    }
+
+    function getColorDatasetKey(kind, state) {
+      return state + (kind === 'background' ? 'BackgroundColor' : 'TextColor');
+    }
+
+    function clampColorChannel(value) {
+      return Math.max(0, Math.min(255, Math.round(Number(value) || 0)));
+    }
+
+    function clampUnit(value) {
+      return Math.max(0, Math.min(1, Number(value) || 0));
+    }
+
+    function hexToRgb(value) {
+      const hex = normalizeToolbarColor(value, '#000000').slice(1);
+      return {
+        r: parseInt(hex.slice(0, 2), 16) || 0,
+        g: parseInt(hex.slice(2, 4), 16) || 0,
+        b: parseInt(hex.slice(4, 6), 16) || 0,
+      };
+    }
+
+    function rgbToHex(rgb) {
+      return '#' + ['r', 'g', 'b'].map(function (channel) {
+        return clampColorChannel(rgb[channel]).toString(16).padStart(2, '0');
+      }).join('');
+    }
+
+    function rgbToHsv(rgb) {
+      const r = clampColorChannel(rgb.r) / 255;
+      const g = clampColorChannel(rgb.g) / 255;
+      const b = clampColorChannel(rgb.b) / 255;
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const delta = max - min;
+      let hue = 0;
+      if (delta) {
+        if (max === r) hue = ((g - b) / delta) % 6;
+        else if (max === g) hue = (b - r) / delta + 2;
+        else hue = (r - g) / delta + 4;
+        hue = Math.round(hue * 60);
+        if (hue < 0) hue += 360;
+      }
+      return {
+        h: hue,
+        s: max === 0 ? 0 : delta / max,
+        v: max,
+      };
+    }
+
+    function hsvToRgb(hsv) {
+      const h = ((Number(hsv.h) || 0) % 360 + 360) % 360;
+      const s = clampUnit(hsv.s);
+      const v = clampUnit(hsv.v);
+      const c = v * s;
+      const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+      const m = v - c;
+      let r1 = 0;
+      let g1 = 0;
+      let b1 = 0;
+      if (h < 60) {
+        r1 = c;
+        g1 = x;
+      } else if (h < 120) {
+        r1 = x;
+        g1 = c;
+      } else if (h < 180) {
+        g1 = c;
+        b1 = x;
+      } else if (h < 240) {
+        g1 = x;
+        b1 = c;
+      } else if (h < 300) {
+        r1 = x;
+        b1 = c;
+      } else {
+        r1 = c;
+        b1 = x;
+      }
+      return {
+        r: (r1 + m) * 255,
+        g: (g1 + m) * 255,
+        b: (b1 + m) * 255,
+      };
+    }
+
+    function getAppliedToolbarColor(kind) {
+      const key = getColorDatasetKey(kind, 'applied');
+      return normalizeToolbarColor(toolbar.dataset[key], getColorDefault(kind));
+    }
+
+    function getPendingToolbarColor(kind) {
+      const pendingKey = getColorDatasetKey(kind, 'pending');
+      return normalizeToolbarColor(toolbar.dataset[pendingKey], getAppliedToolbarColor(kind));
+    }
+
+    function updateColorPickerControls(kind, value) {
+      const rgb = hexToRgb(value);
+      const hsv = rgbToHsv(rgb);
+      const previousHue = Number(toolbar.dataset[getColorDatasetKey(kind, 'hue')]);
+      const hue = hsv.s === 0 && Number.isFinite(previousHue) ? previousHue : hsv.h;
+      toolbar.dataset[getColorDatasetKey(kind, 'hue')] = String(hue);
+
+      const hueInput = toolbar.querySelector('[data-color-hue="' + kind + '"]');
+      if (hueInput) {
+        hueInput.dataset.colorHueValue = String(Math.round(hue));
+        hueInput.setAttribute('aria-valuenow', String(Math.round(hue)));
+      }
+
+      const hueHandle = toolbar.querySelector('[data-color-hue-handle="' + kind + '"]');
+      if (hueHandle) hueHandle.style.left = (hue / 360 * 100) + '%';
+
+      toolbar.querySelectorAll('[data-color-rgb="' + kind + '"]').forEach(function (input) {
+        input.value = String(clampColorChannel(rgb[input.dataset.colorChannel]));
+      });
+
+      const sv = toolbar.querySelector('[data-color-sv="' + kind + '"]');
+      if (sv) sv.style.setProperty('--proposal-color-picker-hue', String(Math.round(hue)));
+
+      const handle = toolbar.querySelector('[data-color-sv-handle="' + kind + '"]');
+      if (handle) {
+        handle.style.left = (hsv.s * 100) + '%';
+        handle.style.top = ((1 - hsv.v) * 100) + '%';
+      }
+    }
+
+    function setToolbarColor(kind, value, commit) {
+      const normalized = normalizeToolbarColor(value, getColorDefault(kind));
+      toolbar.dataset[getColorDatasetKey(kind, 'pending')] = normalized;
+      if (commit) {
+        toolbar.dataset[getColorDatasetKey(kind, 'applied')] = normalized;
+      }
+      updateColorPickerControls(kind, normalized);
+      updateColorPreviews();
+      return normalized;
+    }
+
+    function closeColorPopovers(exceptKind) {
+      toolbar.querySelectorAll('[data-color-popover]').forEach(function (popover) {
+        const kind = popover.dataset.colorPopover;
+        const keepOpen = exceptKind && kind === exceptKind;
+        popover.hidden = !keepOpen;
+        const toggle = toolbar.querySelector('[data-color-toggle="' + kind + '"]');
+        if (toggle) toggle.setAttribute('aria-expanded', keepOpen ? 'true' : 'false');
+      });
+    }
+
+    function openColorPopover(kind) {
+      const popover = toolbar.querySelector('[data-color-popover="' + kind + '"]');
+      if (!popover) return;
+      const shouldOpen = popover.hidden;
+      closeColorPopovers(shouldOpen ? kind : null);
+      if (!shouldOpen) return;
+      setToolbarColor(kind, getAppliedToolbarColor(kind), false);
+    }
+
+    function commitToolbarColor(kind) {
+      setToolbarColor(kind, getPendingToolbarColor(kind), true);
+      closeColorPopovers();
+    }
+
+    function resetToolbarColor(kind) {
+      setToolbarColor(kind, getColorDefault(kind), false);
+    }
+
+    function initializeToolbarColors() {
+      ['color', 'background'].forEach(function (kind) {
+        setToolbarColor(kind, getColorDefault(kind), true);
+      });
+    }
+
+    function updateColorFromSv(kind, event) {
+      const sv = toolbar.querySelector('[data-color-sv="' + kind + '"]');
+      if (!sv) return;
+      const rect = sv.getBoundingClientRect();
+      const saturation = clampUnit((event.clientX - rect.left) / Math.max(1, rect.width));
+      const value = clampUnit(1 - ((event.clientY - rect.top) / Math.max(1, rect.height)));
+      const currentHsv = rgbToHsv(hexToRgb(getPendingToolbarColor(kind)));
+      let hue = Number(toolbar.dataset[getColorDatasetKey(kind, 'hue')]);
+      if (!Number.isFinite(hue)) hue = currentHsv.h;
+      setToolbarColor(kind, rgbToHex(hsvToRgb({ h: hue, s: saturation, v: value })), false);
+    }
+
+    function updateColorFromHue(kind, hue) {
+      const currentHsv = rgbToHsv(hexToRgb(getPendingToolbarColor(kind)));
+      const saturation = currentHsv.s > 0.01 ? currentHsv.s : 1;
+      const value = currentHsv.v > 0.01 ? currentHsv.v : 1;
+      setToolbarColor(kind, rgbToHex(hsvToRgb({
+        h: Number(hue) || 0,
+        s: saturation,
+        v: value,
+      })), false);
+    }
+
+    function updateColorFromHueStrip(kind, event) {
+      const strip = toolbar.querySelector('[data-color-hue="' + kind + '"]');
+      if (!strip) return;
+      const rect = strip.getBoundingClientRect();
+      const ratio = clampUnit((event.clientX - rect.left) / Math.max(1, rect.width));
+      updateColorFromHue(kind, ratio * 360);
+    }
+
+    function updateColorFromRgb(kind) {
+      const rgb = { r: 0, g: 0, b: 0 };
+      toolbar.querySelectorAll('[data-color-rgb="' + kind + '"]').forEach(function (input) {
+        rgb[input.dataset.colorChannel] = clampColorChannel(input.value);
+      });
+      setToolbarColor(kind, rgbToHex(rgb), false);
+    }
+
     function setToolbarButtonActive(button, isActive) {
       if (!button) return;
       button.classList.toggle('is-active', !!isActive);
       button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    }
+
+    const LIST_MARKER_TYPES = ['bullet', 'dash', 'check'];
+    const LIST_MARKER_LABELS = {
+      bullet: 'Точка',
+      dash: 'Дефис',
+      check: 'Галочка',
+    };
+    const LIST_MARKER_ICON_URLS = {
+      bullet: '/static/core/icons/list-ul2.svg',
+      dash: '/static/core/icons/list-dash.svg',
+      check: '/static/core/icons/list-check.svg',
+    };
+
+    function isListMarkerType(value) {
+      return LIST_MARKER_TYPES.includes(String(value || '').trim());
+    }
+
+    function renderListMarkerPrimaryIcon(primary, activeMarker) {
+      const iconSrc = LIST_MARKER_ICON_URLS[activeMarker] || LIST_MARKER_ICON_URLS.bullet;
+      const icon = primary.querySelector('[data-list-marker-icon]');
+      if (!icon || icon.tagName !== 'IMG') {
+        primary.innerHTML = '<img src="' + iconSrc + '" alt="" class="proposal-service-text-toolbar__icon" data-list-marker-icon>';
+      } else {
+        icon.src = iconSrc;
+        icon.className = 'proposal-service-text-toolbar__icon';
+      }
+    }
+
+    function updateListMarkerControl(listType) {
+      const activeMarker = isListMarkerType(listType)
+        ? String(listType)
+        : (isListMarkerType(toolbar.dataset.listMarker) ? toolbar.dataset.listMarker : 'bullet');
+      toolbar.dataset.listMarker = activeMarker;
+      const primary = toolbar.querySelector('[data-list-marker-primary]');
+      if (primary) {
+        primary.dataset.list = activeMarker;
+        primary.setAttribute('aria-label', LIST_MARKER_LABELS[activeMarker] || 'Маркированный список');
+        primary.setAttribute('title', LIST_MARKER_LABELS[activeMarker] || 'Маркированный список');
+        renderListMarkerPrimaryIcon(primary, activeMarker);
+      }
+      toolbar.querySelectorAll('[data-list-marker-option]').forEach(function (option) {
+        const isSelected = option.dataset.list === activeMarker;
+        option.classList.toggle('active', isSelected);
+        option.setAttribute('aria-current', isSelected ? 'true' : 'false');
+      });
     }
 
     function syncToolbarState() {
@@ -4915,24 +6621,40 @@
       toolbar.querySelectorAll('button[data-format]').forEach(function (button) {
         setToolbarButtonActive(button, !!format[button.dataset.format]);
       });
-      toolbar.querySelectorAll('button[data-list]').forEach(function (button) {
-        setToolbarButtonActive(button, (format.list || '') === button.dataset.list);
+      const currentList = String(format.list || '');
+      updateListMarkerControl(currentList);
+      toolbar.querySelectorAll('button[data-list]:not([data-list-marker-option])').forEach(function (button) {
+        setToolbarButtonActive(button, currentList === button.dataset.list);
       });
       toolbar.querySelectorAll('button[data-align]').forEach(function (button) {
         const align = format.align || 'left';
         setToolbarButtonActive(button, align === button.dataset.align);
       });
 
-      const colorInput = toolbar.querySelector('[data-color-source="color"]');
-      const backgroundInput = toolbar.querySelector('[data-color-source="background"]');
-      if (colorInput) colorInput.value = normalizeToolbarColor(format.color, '#000000');
-      if (backgroundInput) backgroundInput.value = normalizeToolbarColor(format.background, '#ffffff');
       updateColorPreviews();
     }
 
     function applyToolbarAction(event) {
-      if (!activeQuill) return;
+      const colorToggle = event.target.closest('button[data-color-toggle]');
+      if (colorToggle && toolbar.contains(colorToggle)) {
+        event.preventDefault();
+        openColorPopover(colorToggle.dataset.colorToggle);
+        return;
+      }
+      const colorCommit = event.target.closest('button[data-color-commit]');
+      if (colorCommit && toolbar.contains(colorCommit)) {
+        event.preventDefault();
+        commitToolbarColor(colorCommit.dataset.colorCommit);
+        return;
+      }
+      const colorReset = event.target.closest('button[data-color-reset]');
+      if (colorReset && toolbar.contains(colorReset)) {
+        event.preventDefault();
+        resetToolbarColor(colorReset.dataset.colorReset);
+        return;
+      }
       const button = event.target.closest('button[data-format], button[data-list], button[data-action], button[data-align], button[data-apply-color]');
+      if (!activeQuill) return;
       if (button && toolbar.contains(button)) {
         event.preventDefault();
         restoreSelection();
@@ -4946,7 +6668,9 @@
         if (button.dataset.list) {
           const listType = button.dataset.list;
           const currentList = activeQuill.getFormat().list || false;
-          activeQuill.format('list', currentList === listType ? false : listType);
+          const toggleCurrent = !button.dataset.listMarkerOption && currentList === listType;
+          if (isListMarkerType(listType)) updateListMarkerControl(listType);
+          activeQuill.format('list', toggleCurrent ? false : listType);
           syncToolbarState();
           return;
         }
@@ -4958,8 +6682,7 @@
         }
         if (button.dataset.applyColor) {
           const formatName = button.dataset.applyColor;
-          const input = toolbar.querySelector('[data-color-source="' + formatName + '"]');
-          activeQuill.format(formatName, input?.value || false);
+          activeQuill.format(formatName, getAppliedToolbarColor(formatName));
           syncToolbarState();
           return;
         }
@@ -4992,9 +6715,10 @@
     }
 
     function handleColorInput(event) {
-      const input = event.target.closest('input[data-color-source]');
-      if (!input || !toolbar.contains(input)) return;
-      updateColorPreviews();
+      const rgbInput = event.target.closest('[data-color-rgb]');
+      if (rgbInput && toolbar.contains(rgbInput)) {
+        updateColorFromRgb(rgbInput.dataset.colorRgb);
+      }
     }
 
     function persistDraftState() {
@@ -5085,6 +6809,7 @@
 
     function closeModal() {
       isOpen = false;
+      closeColorPopovers();
       modal.classList.add('d-none');
       modal.setAttribute('aria-hidden', 'true');
       document.body.classList.remove('proposal-service-text-modal-open');
@@ -5102,6 +6827,58 @@
     toolbar.addEventListener('click', applyToolbarAction);
     toolbar.addEventListener('change', applyToolbarSelect);
     toolbar.addEventListener('input', handleColorInput);
+
+    let colorDragKind = null;
+    toolbar.addEventListener('pointerdown', function (event) {
+      const hue = event.target.closest('[data-color-hue]');
+      if (hue && toolbar.contains(hue)) {
+        event.preventDefault();
+        colorDragKind = 'hue:' + hue.dataset.colorHue;
+        updateColorFromHueStrip(hue.dataset.colorHue, event);
+        return;
+      }
+      const sv = event.target.closest('[data-color-sv]');
+      if (!sv || !toolbar.contains(sv)) return;
+      event.preventDefault();
+      colorDragKind = sv.dataset.colorSv;
+      updateColorFromSv(colorDragKind, event);
+    });
+
+    document.addEventListener('pointermove', function (event) {
+      if (!colorDragKind) return;
+      event.preventDefault();
+      if (colorDragKind.indexOf('hue:') === 0) {
+        updateColorFromHueStrip(colorDragKind.slice(4), event);
+        return;
+      }
+      updateColorFromSv(colorDragKind, event);
+    });
+
+    document.addEventListener('pointerup', function () {
+      colorDragKind = null;
+    });
+
+    document.addEventListener('click', function (event) {
+      if (!toolbar.contains(event.target)) closeColorPopovers();
+    });
+
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') {
+        closeColorPopovers();
+        return;
+      }
+      const hue = event.target.closest && event.target.closest('[data-color-hue]');
+      if (!hue || !toolbar.contains(hue)) return;
+      const delta = event.key === 'ArrowRight' || event.key === 'ArrowUp'
+        ? 5
+        : (event.key === 'ArrowLeft' || event.key === 'ArrowDown' ? -5 : 0);
+      if (!delta) return;
+      event.preventDefault();
+      const current = Number(hue.dataset.colorHueValue) || 0;
+      updateColorFromHue(hue.dataset.colorHue, current + delta);
+    });
+
+    initializeToolbarColors();
     openBtn.addEventListener('click', openModal);
     closeBtn.addEventListener('click', closeModal);
     cancelBtn.addEventListener('click', closeModal);
@@ -5331,6 +7108,13 @@
       return Number.isFinite(parsed) ? parsed : null;
     }
 
+    function parseProposalInteger(value) {
+      const raw = String(value || '').trim().replace(/\s+/g, '');
+      if (!raw || !/^[+-]?\d+$/.test(raw)) return null;
+      const parsed = Number.parseInt(raw, 10);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
     function parseProposalDate(value) {
       const raw = String(value || '').trim();
       if (!raw) return null;
@@ -5381,6 +7165,20 @@
       return addDays(wholeDate, fractionalDays);
     }
 
+    function subtractDecimalMonths(date, months) {
+      const safeMonths = Number.isFinite(months) ? Math.max(months, 0) : 0;
+      const wholeMonths = Math.trunc(safeMonths);
+      const fractionalMonths = safeMonths - wholeMonths;
+      const fractionalDays = Math.round(fractionalMonths * 30);
+      const baseDate = addDays(startOfDay(date), -fractionalDays);
+      const targetYear = baseDate.getFullYear();
+      const targetMonthIndex = baseDate.getMonth() - wholeMonths;
+      const targetMonthStart = new Date(targetYear, targetMonthIndex, 1);
+      const targetMonthEndDay = new Date(targetMonthStart.getFullYear(), targetMonthStart.getMonth() + 1, 0).getDate();
+      const day = Math.min(baseDate.getDate(), targetMonthEndDay);
+      return new Date(targetMonthStart.getFullYear(), targetMonthStart.getMonth(), day);
+    }
+
     function addDecimalWeeks(date, weeks) {
       const safeWeeks = Number.isFinite(weeks) ? Math.max(weeks, 0) : 0;
       return addDays(date, Math.round(safeWeeks * 7));
@@ -5405,8 +7203,29 @@
       return Number.isFinite(value) ? roundProposalDecimal(value).toFixed(1) : '';
     }
 
+    function normalizeProposalDecimalInputValue(input) {
+      if (!input) return null;
+      const parsed = parseProposalDecimal(input.value);
+      input.value = parsed === null ? '' : formatProposalDecimal(parsed);
+      return parsed;
+    }
+
+    function normalizeProposalIntegerInputValue(input) {
+      if (!input) return null;
+      const parsed = parseProposalInteger(input.value);
+      input.value = parsed === null ? '' : String(parsed);
+      return parsed;
+    }
+
     function getProposalBaseStartDate() {
       return getNearestMonday(addDays(new Date(), 14));
+    }
+
+    function getProposalDefaultEvaluationDate() {
+      const today = new Date();
+      const year = today.getFullYear();
+      const julyFirst = new Date(year, 6, 1);
+      return today < julyFirst ? new Date(year, 0, 1) : new Date(year, 5, 1);
     }
 
     function decimalMonthsBetween(start, end) {
@@ -5459,8 +7278,8 @@
       const finalReportWeeksInput = form.querySelector('[name="final_report_term_weeks"]');
       if (!preliminaryDateInput || !finalDateInput || !serviceTermInput || !finalReportWeeksInput) return;
 
-      const preliminaryMonths = parseProposalDecimal(serviceTermInput.value);
-      const finalWeeks = parseProposalDecimal(finalReportWeeksInput.value);
+      const preliminaryMonths = normalizeProposalDecimalInputValue(serviceTermInput);
+      const finalWeeks = normalizeProposalDecimalInputValue(finalReportWeeksInput);
       if (preliminaryMonths === null || finalWeeks === null) return;
 
       const preliminaryDateValue = String(preliminaryDateInput.value || '').trim();
@@ -5493,7 +7312,7 @@
       if (!preliminaryDateInput || !finalDateInput || !finalReportWeeksInput) return;
 
       const preliminaryDate = parseProposalDate(preliminaryDateInput.value);
-      const finalWeeks = parseProposalDecimal(finalReportWeeksInput.value);
+      const finalWeeks = normalizeProposalDecimalInputValue(finalReportWeeksInput);
       if (!preliminaryDate || finalWeeks === null) return;
       setDateFieldValue(finalDateInput, formatProposalDateIso(addDecimalWeeks(preliminaryDate, finalWeeks)));
     }
@@ -5505,7 +7324,7 @@
       if (!preliminaryDateInput || !finalDateInput || !finalReportWeeksInput) return;
 
       const finalDate = parseProposalDate(finalDateInput.value);
-      const finalWeeks = parseProposalDecimal(finalReportWeeksInput.value);
+      const finalWeeks = normalizeProposalDecimalInputValue(finalReportWeeksInput);
       if (!finalDate || finalWeeks === null) return;
       setDateFieldValue(preliminaryDateInput, formatProposalDateIso(subtractDecimalWeeks(finalDate, finalWeeks)));
     }
@@ -5537,11 +7356,29 @@
     let proposalReportTermsEditMode = false;
 
     function applyProposalReportTermsLockState() {
+      const lockIcons = qa('.js-proposal-report-terms-lock', form);
+      const stageRows = qa('.proposal-stage-terms-row', form);
+      if (stageRows.length) {
+        stageRows.forEach(function (row) {
+          setProposalReadonly(row.querySelector('.proposal-stage-preliminary-report-date'), proposalReportTermsEditMode, { lockPicker: true });
+          setProposalReadonly(row.querySelector('.proposal-stage-final-report-date'), proposalReportTermsEditMode, { lockPicker: true });
+          setProposalReadonly(row.querySelector('.proposal-stage-service-term-months'), !proposalReportTermsEditMode);
+          setProposalReadonly(row.querySelector('.proposal-stage-final-report-term-weeks'), !proposalReportTermsEditMode);
+        });
+        lockIcons.forEach(function (icon) {
+          icon.classList.toggle('bi-lock-fill', !proposalReportTermsEditMode);
+          icon.classList.toggle('bi-unlock-fill', proposalReportTermsEditMode);
+          icon.title = proposalReportTermsEditMode
+            ? 'Заблокировать ввод сроков'
+            : 'Разблокировать ввод сроков';
+        });
+        return;
+      }
+
       const preliminaryDateInput = form.querySelector('input[name="preliminary_report_date"]');
       const finalDateInput = form.querySelector('input[name="final_report_date"]');
       const serviceTermInput = form.querySelector('[name="service_term_months"]');
       const finalReportWeeksInput = form.querySelector('[name="final_report_term_weeks"]');
-      const lockIcons = qa('.js-proposal-report-terms-lock', form);
       if (!preliminaryDateInput || !finalDateInput || !serviceTermInput || !finalReportWeeksInput) return;
 
       if (proposalReportTermsEditMode) {
@@ -5560,6 +7397,1136 @@
           ? 'Заблокировать ввод сроков'
           : 'Разблокировать ввод сроков';
       });
+    }
+
+    function attachProposalStageProducts(assetsApi) {
+      const container = form.querySelector('#proposal-products-container');
+      const addBtn = form.querySelector('#proposal-add-product');
+      const metaEl = form.querySelector('#proposal-type-meta');
+      const serviceStagesContainer = form.querySelector('#proposal-service-stages-container');
+      const commercialStagesContainer = form.querySelector('#proposal-commercial-stages-container');
+      const paymentStagesContainer = form.querySelector('#proposal-payment-stages-container');
+      const termsTbody = form.querySelector('#proposal-stage-terms-tbody');
+      if (!container || !addBtn || !metaEl || !serviceStagesContainer || !commercialStagesContainer || !paymentStagesContainer || !termsTbody) return null;
+      if (form.dataset.stageProductsBound === '1') return form.__proposalStageProductsApi || null;
+      form.dataset.stageProductsBound = '1';
+
+      let meta = {};
+      try {
+        meta = JSON.parse(metaEl.textContent || '{}');
+      } catch (error) {
+        meta = {};
+      }
+      const products = Array.isArray(meta.products) ? meta.products : [];
+      const consultingTypes = Array.isArray(meta.consulting_types) ? meta.consulting_types : [];
+      const serviceCategories = Array.isArray(meta.service_categories) ? meta.service_categories : [];
+      const productById = new Map(products.map(function (product) { return [String(product.id), product]; }));
+      form.__proposalStageUidCounter = form.__proposalStageUidCounter || (getProductRowsInitialMaxStageUid() + 1);
+
+      function getProductRowsInitialMaxStageUid() {
+        return Array.from(container.querySelectorAll('.proposal-product-row')).reduce(function (maxValue, row, index) {
+          const raw = String(row.dataset.stageUid || (index + 1));
+          const numeric = Number.parseInt(raw, 10);
+          return Number.isFinite(numeric) ? Math.max(maxValue, numeric) : maxValue;
+        }, 0);
+      }
+
+      function nextStageUid() {
+        const uid = form.__proposalStageUidCounter || 1;
+        form.__proposalStageUidCounter = uid + 1;
+        return String(uid);
+      }
+
+      function getProductRows() {
+        return Array.from(container.querySelectorAll('.proposal-product-row'));
+      }
+
+      function getServiceBlocks() {
+        return Array.from(serviceStagesContainer.querySelectorAll('[data-proposal-stage-kind="service"]'));
+      }
+
+      function getCommercialBlocks() {
+        return Array.from(commercialStagesContainer.querySelectorAll('[data-proposal-stage-kind="commercial"]'));
+      }
+
+      function getPaymentBlocks() {
+        return Array.from(paymentStagesContainer.querySelectorAll('[data-proposal-stage-kind="payment"]'));
+      }
+
+      function getSummaryCommercialBlock() {
+        return commercialStagesContainer.querySelector('[data-proposal-stage-kind="commercial-summary"]');
+      }
+
+      function getStageTermRows() {
+        return Array.from(termsTbody.querySelectorAll('.proposal-stage-terms-row'));
+      }
+
+      function getStageDelayRows() {
+        return Array.from(termsTbody.querySelectorAll('.proposal-stage-delay-row'));
+      }
+
+      function createStageDelayRow(stageKey) {
+        const row = document.createElement('tr');
+        row.className = 'proposal-stage-delay-row d-none';
+        row.dataset.proposalDelayForStageKey = String(stageKey || '');
+        row.innerHTML = [
+          '<td class="proposal-terms-stage-col">',
+          '<input type="text" class="form-control readonly-field proposal-stage-label-input" value="Лаг" readonly tabindex="-1">',
+          '</td>',
+          '<td>',
+          '<div class="proposal-stage-delay-input-wrap">',
+          '<div class="proposal-stage-delay-number-shell">',
+          '<input type="number" name="next_stage_delay_days" step="1" inputmode="numeric" class="form-control proposal-stage-next-delay-days" value="">',
+          '<span class="proposal-stage-delay-unit" aria-hidden="true">дн.</span>',
+          '</div>',
+          '<button type="button" class="btn btn-sm proposal-stage-delay-remove" title="Удалить лаг" aria-label="Удалить лаг">&times;</button>',
+          '</td>',
+          '<td colspan="4"></td>',
+        ].join('');
+        return row;
+      }
+
+      function getStageDelayRowForTermRow(row) {
+        const nextRow = row?.nextElementSibling;
+        if (nextRow?.classList?.contains('proposal-stage-delay-row')) return nextRow;
+        return null;
+      }
+
+      function getStageDelayActionSlot(row) {
+        let slot = row.querySelector('.proposal-stage-delay-action-slot');
+        if (slot) return slot;
+        const finalInput = row.querySelector('.proposal-stage-final-report-date');
+        const finalCell = finalInput?.closest('td');
+        if (!finalCell) return null;
+        let wrap = finalCell.querySelector('.proposal-stage-final-report-wrap');
+        if (!wrap) {
+          wrap = document.createElement('div');
+          wrap.className = 'proposal-stage-final-report-wrap';
+          finalCell.appendChild(wrap);
+          wrap.appendChild(finalInput);
+        }
+        slot = document.createElement('span');
+        slot.className = 'proposal-stage-delay-action-slot';
+        wrap.appendChild(slot);
+        return slot;
+      }
+
+      function getTotalsRow() {
+        return termsTbody.querySelector('.proposal-stage-terms-total-row');
+      }
+
+      function getAssetRows() {
+        return assetsApi ? assetsApi.getSerializedRows() : [];
+      }
+
+      function uniqueValues(items) {
+        const seen = new Set();
+        return items.filter(function (item) {
+          const value = String(item || '').trim();
+          if (!value || seen.has(value)) return false;
+          seen.add(value);
+          return true;
+        });
+      }
+
+      function buildOptions(select, items, placeholder, selectedValue, mapper) {
+        if (!select) return;
+        const normalizedSelected = String(selectedValue || '');
+        select.innerHTML = '';
+        if (placeholder) {
+          const option = document.createElement('option');
+          option.value = '';
+          option.textContent = placeholder;
+          select.appendChild(option);
+        }
+        items.forEach(function (item) {
+          const option = document.createElement('option');
+          const mapped = mapper ? mapper(item) : { value: item, label: item };
+          option.value = String(mapped.value || '');
+          option.textContent = mapped.label || '';
+          select.appendChild(option);
+        });
+        select.value = normalizedSelected;
+        if (select.value !== normalizedSelected) select.value = '';
+      }
+
+      function filteredProducts(consultingType, serviceCategory, serviceSubtype) {
+        return products.filter(function (product) {
+          if (consultingType && product.consulting_type !== consultingType) return false;
+          if (serviceCategory && product.service_category !== serviceCategory) return false;
+          if (serviceSubtype && product.service_subtype !== serviceSubtype) return false;
+          return true;
+        });
+      }
+
+      function resetClonedStageBlock(block) {
+        block.querySelectorAll('tbody').forEach(function (tbody) {
+          tbody.innerHTML = '';
+        });
+        block.querySelectorAll('input[type="hidden"]').forEach(function (input) {
+          if (input.matches('[data-proposal-stage-type]')) {
+            input.value = '';
+            return;
+          }
+          if (input.name === 'service_composition_mode') {
+            input.value = 'sections';
+            return;
+          }
+          if (input.name === 'commercial_totals_payload') {
+            input.value = JSON.stringify(normalizeProposalCommercialTotalsState({}));
+            return;
+          }
+          input.value = '';
+        });
+        block.querySelectorAll('textarea').forEach(function (textarea) {
+          textarea.value = '';
+        });
+        block.querySelectorAll('input:not([type="hidden"])').forEach(function (input) {
+          if (input.classList.contains('proposal-stage-label-input')) return;
+          if (input.type === 'checkbox') {
+            input.checked = false;
+            return;
+          }
+          input.value = '';
+        });
+        delete block.__proposalServiceSectionsTableApi;
+        delete block.__proposalServiceTextEditorApi;
+        delete block.__proposalCommercialTableApi;
+        delete block.dataset.serviceSectionsBound;
+        delete block.dataset.serviceTextEditorBound;
+        delete block.dataset.commercialBound;
+        delete block.dataset.commercialSharedRateBound;
+        delete block.dataset.proposalCommercialRateMaster;
+        delete block.dataset.summarySyncBound;
+      }
+
+      function cloneStageBlock(block) {
+        const clone = block.cloneNode(true);
+        resetClonedStageBlock(clone);
+        return clone;
+      }
+
+      function cloneTermsRow(row) {
+        const clone = row.cloneNode(true);
+        delete clone.dataset.eventsBound;
+        delete clone.dataset.manualDateSource;
+        delete clone.dataset.forceDatesFromTerms;
+        clone.querySelectorAll('input').forEach(function (input) {
+          delete input.dataset.hasPicker;
+          if (!input.classList.contains('proposal-stage-label-input')) {
+            input.value = '';
+          }
+        });
+        return clone;
+      }
+
+      function ensureMirroredBlocks() {
+        let serviceBlocks = getServiceBlocks();
+        while (serviceBlocks.length < getProductRows().length && serviceBlocks.length) {
+          const clone = cloneStageBlock(serviceBlocks[serviceBlocks.length - 1]);
+          serviceStagesContainer.appendChild(clone);
+          serviceBlocks = getServiceBlocks();
+        }
+        while (serviceBlocks.length > getProductRows().length && serviceBlocks.length > 1) {
+          serviceBlocks[serviceBlocks.length - 1].remove();
+          serviceBlocks = getServiceBlocks();
+        }
+
+        let commercialBlocks = getCommercialBlocks();
+        while (commercialBlocks.length < getProductRows().length && commercialBlocks.length) {
+          const clone = cloneStageBlock(commercialBlocks[commercialBlocks.length - 1]);
+          const summaryCommercialBlock = getSummaryCommercialBlock();
+          if (summaryCommercialBlock) {
+            commercialStagesContainer.insertBefore(clone, summaryCommercialBlock);
+          } else {
+            commercialStagesContainer.appendChild(clone);
+          }
+          commercialBlocks = getCommercialBlocks();
+        }
+        while (commercialBlocks.length > getProductRows().length && commercialBlocks.length > 1) {
+          commercialBlocks[commercialBlocks.length - 1].remove();
+          commercialBlocks = getCommercialBlocks();
+        }
+
+        let paymentBlocks = getPaymentBlocks();
+        while (paymentBlocks.length < getProductRows().length && paymentBlocks.length) {
+          const clone = cloneStageBlock(paymentBlocks[paymentBlocks.length - 1]);
+          paymentStagesContainer.appendChild(clone);
+          paymentBlocks = getPaymentBlocks();
+        }
+        while (paymentBlocks.length > getProductRows().length && paymentBlocks.length > 1) {
+          paymentBlocks[paymentBlocks.length - 1].remove();
+          paymentBlocks = getPaymentBlocks();
+        }
+
+        let termRows = getStageTermRows();
+        while (termRows.length < getProductRows().length && termRows.length) {
+          termsTbody.insertBefore(cloneTermsRow(termRows[termRows.length - 1]), getTotalsRow());
+          termRows = getStageTermRows();
+        }
+        while (termRows.length > getProductRows().length && termRows.length > 1) {
+          termRows[termRows.length - 1].remove();
+          termRows = getStageTermRows();
+        }
+      }
+
+      function ensureStageDelayRows() {
+        const termRows = getStageTermRows();
+        const expectedDelayRows = new Set();
+        termRows.forEach(function (row, index) {
+          const isEligible = termRows.length > 1 && index < termRows.length - 1;
+          const actionSlot = getStageDelayActionSlot(row);
+
+          let delayRow = getStageDelayRowForTermRow(row);
+          if (isEligible) {
+            if (!delayRow) {
+              delayRow = createStageDelayRow(row.dataset.proposalStageKey || String(index + 1));
+              termsTbody.insertBefore(delayRow, row.nextSibling);
+            }
+            delayRow.dataset.proposalDelayForStageKey = row.dataset.proposalStageKey || String(index + 1);
+            expectedDelayRows.add(delayRow);
+            const button = actionSlot?.querySelector('.proposal-stage-delay-add') || document.createElement('button');
+            if (!button.classList.contains('proposal-stage-delay-add')) {
+              button.type = 'button';
+              button.className = 'btn btn-sm rounded-circle proposal-stage-delay-add';
+              button.innerHTML = '<i class="bi bi-plus" aria-hidden="true"></i>';
+              actionSlot?.appendChild(button);
+            }
+            button.title = 'Добавить задержку/наложение';
+            button.setAttribute('aria-label', 'Добавить задержку или наложение после этапа ' + (index + 1));
+            button.classList.remove('d-none');
+          } else {
+            if (actionSlot) actionSlot.innerHTML = '';
+            if (delayRow) delayRow.remove();
+          }
+        });
+
+        getStageDelayRows().forEach(function (row) {
+          if (!expectedDelayRows.has(row)) row.remove();
+        });
+      }
+
+      function syncStageLabels() {
+        const productRows = getProductRows();
+        const serviceBlocks = getServiceBlocks();
+        const commercialBlocks = getCommercialBlocks();
+        const paymentBlocks = getPaymentBlocks();
+        const termRows = getStageTermRows();
+        const hasMultipleStages = productRows.length > 1;
+        const summaryCommercialBlock = getSummaryCommercialBlock();
+        function buildStageLabel(rank, productId) {
+          const product = productById.get(String(productId || '').trim()) || null;
+          const shortLabel = String(product?.short_label || '').trim();
+          return shortLabel
+            ? 'Этап ' + rank + ' ' + shortLabel
+            : 'Этап ' + rank;
+        }
+        function buildStageTitle(baseTitle, rank, productId) {
+          if (!hasMultipleStages) return baseTitle;
+          return baseTitle + ': ' + buildStageLabel(rank, productId);
+        }
+        productRows.forEach(function (row, index) {
+          const rank = index + 1;
+          if (!row.dataset.stageUid) row.dataset.stageUid = nextStageUid();
+          const stageUid = row.dataset.stageUid;
+          const productId = String(row.querySelector('.proposal-product-select')?.value || '').trim();
+          row.querySelector('.proposal-product-badge').textContent = rank;
+          const serviceBlock = serviceBlocks[index];
+          const commercialBlock = commercialBlocks[index];
+          const paymentBlock = paymentBlocks[index];
+          const termRow = termRows[index];
+          [serviceBlock, commercialBlock].forEach(function (block) {
+            if (!block) return;
+            block.dataset.proposalStageKey = stageUid;
+            if (block.dataset.proposalStageKind === 'commercial') {
+              block.dataset.proposalCommercialRateMaster = index === 0 ? '1' : '0';
+            }
+            block.querySelectorAll('.proposal-stage-block-title').forEach(function (title) {
+              if (block.dataset.proposalStageKind === 'service') {
+                title.textContent = buildStageTitle('Состав услуг / техническое задание', rank, productId);
+              } else {
+                title.textContent = buildStageTitle('Коммерческое предложение', rank, productId);
+              }
+            });
+          });
+          if (paymentBlock) {
+            paymentBlock.dataset.proposalStageKey = stageUid;
+            paymentBlock.querySelectorAll('.proposal-payment-stage-title').forEach(function (title) {
+              title.textContent = buildStageLabel(rank, productId);
+            });
+            paymentBlock.classList.toggle('mt-4', index > 0);
+          }
+          if (termRow) {
+            termRow.dataset.proposalStageKey = stageUid;
+            const stageInput = termRow.querySelector('.proposal-stage-label-input');
+            if (stageInput) stageInput.value = 'Этап ' + rank;
+            const delayRow = getStageDelayRowForTermRow(termRow);
+            if (delayRow) delayRow.dataset.proposalDelayForStageKey = stageUid;
+          }
+        });
+        if (summaryCommercialBlock) {
+          summaryCommercialBlock.classList.toggle('d-none', !hasMultipleStages);
+          summaryCommercialBlock.dataset.proposalStageKey = 'summary';
+          summaryCommercialBlock.dataset.proposalCommercialRateMaster = '0';
+          summaryCommercialBlock.querySelectorAll('.proposal-stage-block-title').forEach(function (title) {
+            title.textContent = 'Коммерческое предложение: все этапы';
+          });
+        }
+        getTotalsRow()?.classList.toggle('d-none', productRows.length <= 1);
+      }
+
+      function bindProductRow(row) {
+        if (!row || row.dataset.eventsBound === '1') return;
+        if (!row.dataset.stageUid) row.dataset.stageUid = nextStageUid();
+        row.dataset.eventsBound = '1';
+        const consultingSelect = row.querySelector('.proposal-consulting-select');
+        const categorySelect = row.querySelector('.proposal-service-category-select');
+        const subtypeSelect = row.querySelector('.proposal-service-subtype-select');
+        const productSelect = row.querySelector('.proposal-product-select');
+
+        function syncRow(state) {
+          const selectedProduct = productById.get(String(state?.productId ?? productSelect?.value ?? ''));
+          let consultingValue = String(state?.consultingType ?? consultingSelect?.value ?? '');
+          let categoryValue = String(state?.serviceCategory ?? categorySelect?.value ?? '');
+          let subtypeValue = String(state?.serviceSubtype ?? subtypeSelect?.value ?? '');
+          let productValue = String(state?.productId ?? productSelect?.value ?? '');
+          if (selectedProduct) {
+            consultingValue = selectedProduct.consulting_type || consultingValue;
+            categoryValue = selectedProduct.service_category || categoryValue;
+            subtypeValue = selectedProduct.service_subtype || subtypeValue;
+            productValue = String(selectedProduct.id);
+          }
+          buildOptions(consultingSelect, consultingTypes, '— выберите вид консалтинга —', consultingValue);
+          consultingValue = consultingSelect?.value || '';
+          const categoryOptions = uniqueValues(filteredProducts(consultingValue, '', '').map(function (product) {
+            return product.service_category;
+          }));
+          const orderedCategories = serviceCategories.filter(function (value) { return categoryOptions.includes(value); });
+          const extraCategories = categoryOptions.filter(function (value) { return !orderedCategories.includes(value); });
+          buildOptions(
+            categorySelect,
+            orderedCategories.concat(extraCategories),
+            consultingValue ? '— выберите тип услуги —' : '— выберите вид консалтинга —',
+            categoryValue
+          );
+          categoryValue = categorySelect?.value || '';
+          const subtypeOptions = uniqueValues(filteredProducts(consultingValue, categoryValue, '').map(function (product) {
+            return product.service_subtype;
+          }));
+          buildOptions(
+            subtypeSelect,
+            subtypeOptions,
+            categoryValue ? '— выберите подтип услуги —' : '— выберите тип услуги —',
+            subtypeValue
+          );
+          subtypeValue = subtypeSelect?.value || '';
+          buildOptions(
+            productSelect,
+            filteredProducts(consultingValue, categoryValue, subtypeValue),
+            '— выберите продукт —',
+            productValue,
+            function (product) {
+              return { value: product.id, label: product.label };
+            }
+          );
+          const displayProduct = productById.get(String(productSelect?.value || ''));
+          const productDisplay = row.querySelector('.proposal-product-display');
+          if (productDisplay) {
+            productDisplay.textContent = displayProduct?.short_label || '— выберите продукт —';
+            productDisplay.classList.toggle('is-placeholder', !displayProduct);
+          }
+          row.dataset.selectedConsultingType = consultingValue;
+          row.dataset.selectedServiceCategory = categoryValue;
+          row.dataset.selectedServiceSubtype = subtypeValue;
+          row.dataset.selectedProductId = productSelect?.value || '';
+        }
+
+        consultingSelect?.addEventListener('change', function () {
+          syncRow({ consultingType: consultingSelect.value, serviceCategory: '', serviceSubtype: '', productId: '' });
+          syncStageContent();
+        });
+        categorySelect?.addEventListener('change', function () {
+          syncRow({ consultingType: consultingSelect?.value || '', serviceCategory: categorySelect.value, serviceSubtype: '', productId: '' });
+          syncStageContent();
+        });
+        subtypeSelect?.addEventListener('change', function () {
+          syncRow({ consultingType: consultingSelect?.value || '', serviceCategory: categorySelect?.value || '', serviceSubtype: subtypeSelect.value, productId: '' });
+          syncStageContent();
+        });
+        productSelect?.addEventListener('change', function () {
+          syncRow({ productId: productSelect.value });
+          syncStageContent();
+        });
+
+        syncRow({
+          consultingType: row.dataset.selectedConsultingType || '',
+          serviceCategory: row.dataset.selectedServiceCategory || '',
+          serviceSubtype: row.dataset.selectedServiceSubtype || '',
+          productId: row.dataset.selectedProductId || '',
+        });
+      }
+
+      function bindTermsRows() {
+        getStageTermRows().forEach(function (row) {
+          if (row.dataset.eventsBound === '1') return;
+          row.dataset.eventsBound = '1';
+          row.querySelectorAll('.js-date').forEach(function (input) {
+            initProposalDateInput(input);
+          });
+          const monthsInput = row.querySelector('.proposal-stage-service-term-months');
+          const weeksInput = row.querySelector('.proposal-stage-final-report-term-weeks');
+          normalizeProposalDecimalInputValue(monthsInput);
+          normalizeProposalDecimalInputValue(weeksInput);
+          ['input', 'change'].forEach(function (eventName) {
+            row.querySelector('.proposal-stage-evaluation-date')?.addEventListener(eventName, function () {
+              syncStageEvaluationDates(row.querySelector('.proposal-stage-evaluation-date')?.value || '');
+            });
+            monthsInput?.addEventListener(eventName, function () {
+              syncStageTerms();
+              if (eventName === 'change') normalizeProposalDecimalInputValue(monthsInput);
+            });
+            weeksInput?.addEventListener(eventName, function () {
+              syncStageTerms();
+              if (eventName === 'change') normalizeProposalDecimalInputValue(weeksInput);
+            });
+            row.querySelector('.proposal-stage-preliminary-report-date')?.addEventListener(eventName, function () {
+              if (!proposalReportTermsEditMode) {
+                row.dataset.manualDateSource = 'preliminary';
+                syncStageTerms();
+              }
+            });
+            row.querySelector('.proposal-stage-final-report-date')?.addEventListener(eventName, function () {
+              if (!proposalReportTermsEditMode) {
+                row.dataset.manualDateSource = 'final';
+                syncStageTerms();
+              }
+            });
+          });
+        });
+      }
+
+      function bindStageDelayRows() {
+        function forceRowsAfterDelayToRecalculate(delayRow) {
+          const termRows = getStageTermRows();
+          const sourceTermRow = delayRow?.previousElementSibling?.classList?.contains('proposal-stage-terms-row')
+            ? delayRow.previousElementSibling
+            : null;
+          const sourceIndex = termRows.indexOf(sourceTermRow);
+          if (sourceIndex < 0) return;
+          termRows.slice(sourceIndex + 1).forEach(function (termRow) {
+            termRow.dataset.forceDatesFromTerms = '1';
+          });
+        }
+
+        getStageDelayRows().forEach(function (row) {
+          if (row.dataset.eventsBound === '1') return;
+          row.dataset.eventsBound = '1';
+          const input = row.querySelector('.proposal-stage-next-delay-days');
+          ['input', 'change'].forEach(function (eventName) {
+            input?.addEventListener(eventName, function () {
+              if (eventName === 'change') normalizeProposalIntegerInputValue(input);
+              forceRowsAfterDelayToRecalculate(row);
+              syncStageTerms();
+            });
+          });
+        });
+      }
+
+      function getSharedEvaluationDateValue(preferredValue) {
+        const preferredDate = parseProposalDate(preferredValue);
+        if (preferredDate) return formatProposalDateIso(preferredDate);
+        const firstInput = getStageTermRows()[0]?.querySelector('.proposal-stage-evaluation-date');
+        const firstDate = parseProposalDate(firstInput?.value) || getProposalDefaultEvaluationDate();
+        return formatProposalDateIso(firstDate);
+      }
+
+      let isSyncingStageEvaluationDates = false;
+
+      function syncStageEvaluationDates(preferredValue) {
+        if (isSyncingStageEvaluationDates) return;
+        isSyncingStageEvaluationDates = true;
+        const sharedValue = getSharedEvaluationDateValue(preferredValue);
+        try {
+          getStageTermRows().forEach(function (row) {
+            const evaluationInput = row.querySelector('.proposal-stage-evaluation-date');
+            if (evaluationInput) {
+              setDateFieldValue(evaluationInput, sharedValue);
+            }
+          });
+        } finally {
+          isSyncingStageEvaluationDates = false;
+        }
+      }
+
+      function ensureStageEditorsInitialized() {
+        getServiceBlocks().forEach(function (block) {
+          attachProposalServiceSectionsTable(block);
+          attachProposalServiceTextEditor(block);
+        });
+        getCommercialBlocks().forEach(function (block) {
+          attachProposalCommercialTable(block, assetsApi);
+        });
+        const summaryCommercialBlock = getSummaryCommercialBlock();
+        if (summaryCommercialBlock) {
+          attachProposalCommercialTable(summaryCommercialBlock, assetsApi);
+        }
+      }
+
+      function parseCommercialTotalsPayload(block) {
+        try {
+          return normalizeProposalCommercialTotalsState(
+            JSON.parse(block?.querySelector('#proposal-commercial-totals-payload')?.value || '{}')
+          );
+        } catch (error) {
+          return normalizeProposalCommercialTotalsState({});
+        }
+      }
+
+      function parseCommercialOfferPayload(block) {
+        try {
+          const data = JSON.parse(block?.querySelector('#proposal-commercial-offer-payload')?.value || '[]');
+          return Array.isArray(data) ? data : [];
+        } catch (error) {
+          return [];
+        }
+      }
+
+      function getSummaryCommercialRowOrder() {
+        const summaryCommercialBlock = getSummaryCommercialBlock();
+        const rows = parseCommercialOfferPayload(summaryCommercialBlock);
+        const order = new Map();
+        rows.forEach(function (row, index) {
+          if (isProposalTravelExpensesRow(row)) return;
+          const key = String(row?.specialist || '').trim() + '\u0000' + String(row?.job_title || '').trim();
+          if (key && !order.has(key)) {
+            order.set(key, index);
+          }
+        });
+        return order;
+      }
+
+      function buildSummaryCommercialRows() {
+        const assetCount = Math.max(getAssetRows().length, 1);
+        const commercialBlocks = getCommercialBlocks();
+        const stageCount = commercialBlocks.length;
+        const groupedRows = [];
+        const groupedByKey = new Map();
+        const preferredOrder = getSummaryCommercialRowOrder();
+        const travelDayTotals = Array.from({ length: assetCount }, function () { return 0; });
+        const travelStageDayTotals = Array.from({ length: stageCount }, function () {
+          return Array.from({ length: assetCount }, function () { return 0; });
+        });
+        let travelTotal = 0;
+        let hasTravelCalculation = false;
+        let hasTravelActual = false;
+        let hasTravelData = false;
+
+        commercialBlocks.forEach(function (block, stageIndex) {
+          const api = attachProposalCommercialTable(block, assetsApi);
+          const rows = Array.isArray(api?.getSerializedRows?.()) ? api.getSerializedRows() : [];
+          const totalsState = parseCommercialTotalsPayload(block);
+          const travelMode = normalizeProposalTravelExpensesMode(totalsState.travel_expenses_mode) || PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL;
+          rows.forEach(function (row) {
+            if (isProposalTravelExpensesRow(row)) {
+              const totalValue = parseFloat(rawMoney(row?.total_eur_without_vat || ''));
+              if (Number.isFinite(totalValue)) {
+                travelTotal += totalValue;
+                hasTravelData = true;
+              }
+              if (travelMode === PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION) {
+                hasTravelCalculation = true;
+                (Array.isArray(row?.asset_day_counts) ? row.asset_day_counts : []).slice(0, assetCount).forEach(function (value, index) {
+                  const numericValue = parseFloat(rawMoney(value || ''));
+                  if (Number.isFinite(numericValue)) {
+                    travelDayTotals[index] += numericValue;
+                    if (travelStageDayTotals[stageIndex]) {
+                      travelStageDayTotals[stageIndex][index] += numericValue;
+                    }
+                    hasTravelData = true;
+                  }
+                });
+              } else if (totalValue || String(row?.total_eur_without_vat || '').trim()) {
+                hasTravelActual = true;
+              }
+              return;
+            }
+
+            const specialist = String(row?.specialist || '').trim();
+            const jobTitle = String(row?.job_title || '').trim();
+            const key = specialist + '\u0000' + jobTitle;
+            let bucket = groupedByKey.get(key);
+            if (!bucket) {
+              bucket = {
+                specialist: specialist,
+                job_title: jobTitle,
+                professional_status: String(row?.professional_status || '').trim(),
+                service_name: '',
+                rate_eur_per_day: String(row?.rate_eur_per_day || '').trim(),
+                asset_day_counts: Array.from({ length: assetCount }, function () { return 0; }),
+                stage_asset_day_counts: Array.from({ length: stageCount }, function () {
+                  return Array.from({ length: assetCount }, function () { return 0; });
+                }),
+                total_eur_without_vat: 0,
+              };
+              groupedByKey.set(key, bucket);
+              groupedRows.push(bucket);
+            }
+            (Array.isArray(row?.asset_day_counts) ? row.asset_day_counts : []).slice(0, assetCount).forEach(function (value, index) {
+              const numericValue = parseInt(String(value || '').trim(), 10);
+              if (Number.isFinite(numericValue)) {
+                bucket.asset_day_counts[index] += numericValue;
+                if (bucket.stage_asset_day_counts[stageIndex]) {
+                  bucket.stage_asset_day_counts[stageIndex][index] += numericValue;
+                }
+              }
+            });
+            const totalValue = parseFloat(rawMoney(row?.total_eur_without_vat || ''));
+            if (Number.isFinite(totalValue)) {
+              bucket.total_eur_without_vat += totalValue;
+            }
+          });
+        });
+
+        const rows = groupedRows.map(function (bucket, index) {
+          const rateValue = parseFloat(rawMoney(bucket.rate_eur_per_day || ''));
+          const totalDays = bucket.asset_day_counts.reduce(function (sum, value) {
+            return sum + (Number.isFinite(value) ? value : 0);
+          }, 0);
+          const calculatedTotal = Number.isFinite(rateValue) && totalDays > 0
+            ? rateValue * totalDays
+            : bucket.total_eur_without_vat;
+          return {
+            specialist: bucket.specialist,
+            job_title: bucket.job_title,
+            professional_status: bucket.professional_status,
+            service_name: '',
+            rate_eur_per_day: bucket.rate_eur_per_day,
+            asset_day_counts: bucket.asset_day_counts.map(function (value) { return value > 0 ? String(value) : ''; }),
+            stage_asset_day_counts: bucket.stage_asset_day_counts.map(function (stageValues) {
+              return stageValues.map(function (value) { return value > 0 ? String(value) : ''; });
+            }),
+            total_eur_without_vat: calculatedTotal > 0 ? calculatedTotal.toFixed(2) : '',
+            __summaryOrderIndex: index,
+          };
+        });
+
+        rows.sort(function (left, right) {
+          const leftKey = String(left?.specialist || '').trim() + '\u0000' + String(left?.job_title || '').trim();
+          const rightKey = String(right?.specialist || '').trim() + '\u0000' + String(right?.job_title || '').trim();
+          const leftOrder = preferredOrder.has(leftKey) ? preferredOrder.get(leftKey) : Number.MAX_SAFE_INTEGER;
+          const rightOrder = preferredOrder.has(rightKey) ? preferredOrder.get(rightKey) : Number.MAX_SAFE_INTEGER;
+          if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+          return (left.__summaryOrderIndex || 0) - (right.__summaryOrderIndex || 0);
+        });
+
+        const serializedRows = rows.map(function (row) {
+          return {
+            specialist: row.specialist,
+            job_title: row.job_title,
+            professional_status: row.professional_status,
+            service_name: row.service_name,
+            rate_eur_per_day: row.rate_eur_per_day,
+            asset_day_counts: row.asset_day_counts,
+            stage_asset_day_counts: row.stage_asset_day_counts,
+            total_eur_without_vat: row.total_eur_without_vat,
+          };
+        });
+
+        const travelMode = (
+          hasTravelCalculation && !hasTravelActual
+            ? PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION
+            : PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL
+        );
+        if (hasTravelData) {
+          serializedRows.push({
+            specialist: '',
+            job_title: '',
+            professional_status: '',
+            service_name: PROPOSAL_TRAVEL_EXPENSES_LABEL,
+            rate_eur_per_day: '',
+            asset_day_counts: travelMode === PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION
+              ? travelDayTotals.map(function (value) { return value > 0 ? fmtMoney(value.toFixed(2)) : ''; })
+              : Array.from({ length: assetCount }, function () { return ''; }),
+            stage_asset_day_counts: travelMode === PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION
+              ? travelStageDayTotals.map(function (stageValues) {
+                return stageValues.map(function (value) { return value > 0 ? fmtMoney(value.toFixed(2)) : ''; });
+              })
+              : Array.from({ length: stageCount }, function () {
+                return Array.from({ length: assetCount }, function () { return ''; });
+              }),
+            total_eur_without_vat: travelTotal > 0 ? travelTotal.toFixed(2) : '',
+          });
+        }
+
+        return {
+          rows: serializedRows,
+          travelMode: travelMode,
+        };
+      }
+
+      function syncSummaryCommercialBlock() {
+        const summaryCommercialBlock = getSummaryCommercialBlock();
+        const hasMultipleStages = getProductRows().length > 1;
+        if (!summaryCommercialBlock) return;
+        summaryCommercialBlock.classList.toggle('d-none', !hasMultipleStages);
+        if (!hasMultipleStages) return;
+        const summaryApi = attachProposalCommercialTable(summaryCommercialBlock, assetsApi);
+        if (!summaryApi) return;
+        const summaryPayload = buildSummaryCommercialRows();
+        const totalsInput = summaryCommercialBlock.querySelector('#proposal-commercial-totals-payload');
+        const totalsState = parseCommercialTotalsPayload(summaryCommercialBlock);
+        totalsState.travel_expenses_mode = summaryPayload.travelMode;
+        if (totalsInput) {
+          totalsInput.value = JSON.stringify(normalizeProposalCommercialTotalsState(totalsState));
+        }
+        summaryApi.replaceRows(summaryPayload.rows, { reason: 'summary-sync' });
+      }
+
+      let summaryCommercialSyncQueued = false;
+
+      function scheduleSummaryCommercialBlockSync() {
+        if (summaryCommercialSyncQueued) return;
+        summaryCommercialSyncQueued = true;
+        window.setTimeout(function () {
+          summaryCommercialSyncQueued = false;
+          syncSummaryCommercialBlock();
+        }, 0);
+      }
+
+      function bindSummaryCommercialSync() {
+        getCommercialBlocks().forEach(function (block) {
+          if (block.dataset.summarySyncBound === '1') return;
+          block.dataset.summarySyncBound = '1';
+          block.addEventListener('proposal-commercial-changed', function () {
+            scheduleSummaryCommercialBlockSync();
+          });
+        });
+        if (form.dataset.summaryAssetSyncBound !== '1') {
+          form.dataset.summaryAssetSyncBound = '1';
+          form.addEventListener('proposal-assets-changed', function () {
+            scheduleSummaryCommercialBlockSync();
+          });
+        }
+        if (form.dataset.summaryProductSyncBound !== '1') {
+          form.dataset.summaryProductSyncBound = '1';
+          form.addEventListener('proposal-stage-products-changed', function () {
+            scheduleSummaryCommercialBlockSync();
+          });
+        }
+      }
+
+      function syncStageTerms() {
+        const termRows = getStageTermRows();
+        const states = termRows.map(function (row) {
+          const monthsInput = row.querySelector('.proposal-stage-service-term-months');
+          const weeksInput = row.querySelector('.proposal-stage-final-report-term-weeks');
+          const delayInput = getStageDelayRowForTermRow(row)?.querySelector('.proposal-stage-next-delay-days');
+          const months = normalizeProposalDecimalInputValue(monthsInput);
+          const weeks = normalizeProposalDecimalInputValue(weeksInput);
+          return {
+            row: row,
+            monthsInput: monthsInput,
+            preliminaryInput: row.querySelector('.proposal-stage-preliminary-report-date'),
+            weeksInput: weeksInput,
+            finalInput: row.querySelector('.proposal-stage-final-report-date'),
+            delayInput: delayInput,
+            months: months,
+            weeks: weeks,
+            nextDelayDays: parseProposalInteger(delayInput?.value) || 0,
+            preliminaryDate: parseProposalDate(row.querySelector('.proposal-stage-preliminary-report-date')?.value),
+            finalDate: parseProposalDate(row.querySelector('.proposal-stage-final-report-date')?.value),
+            shouldForceDatesFromTerms: row.dataset.forceDatesFromTerms === '1',
+            manualDateSource: String(row.dataset.manualDateSource || '').trim(),
+            calculatedPreliminaryDate: null,
+            calculatedFinalDate: null,
+          };
+        });
+
+        function applyStateDates(state) {
+          setDateFieldValue(
+            state.preliminaryInput,
+            state.calculatedPreliminaryDate ? formatProposalDateIso(state.calculatedPreliminaryDate) : ''
+          );
+          setDateFieldValue(
+            state.finalInput,
+            state.calculatedFinalDate ? formatProposalDateIso(state.calculatedFinalDate) : ''
+          );
+        }
+
+        function applyNextStageDelay(date, state) {
+          if (!date) return date;
+          return state.nextDelayDays ? addDays(date, state.nextDelayDays) : date;
+        }
+
+        function computeForwardDates(startDate, state) {
+          if (state.months === null) {
+            state.calculatedPreliminaryDate = null;
+            state.calculatedFinalDate = null;
+            return applyNextStageDelay(startDate, state);
+          }
+          state.calculatedPreliminaryDate = addDecimalMonths(startDate, state.months);
+          if (state.weeks === null) {
+            state.calculatedFinalDate = null;
+            return applyNextStageDelay(state.calculatedPreliminaryDate, state);
+          }
+          state.calculatedFinalDate = addDecimalWeeks(state.calculatedPreliminaryDate, state.weeks);
+          return applyNextStageDelay(state.calculatedFinalDate, state);
+        }
+
+        if (proposalReportTermsEditMode) {
+          let startDate = form.__proposalStageBaseStartDate || getProposalBaseStartDate();
+          states.forEach(function (state) {
+            startDate = computeForwardDates(startDate, state);
+            applyStateDates(state);
+            delete state.row.dataset.forceDatesFromTerms;
+            delete state.row.dataset.manualDateSource;
+          });
+        } else {
+          let baseStartDate = form.__proposalStageBaseStartDate || getProposalBaseStartDate();
+          const manualIndex = states.findIndex(function (state) {
+            if (state.manualDateSource === 'preliminary') return !!state.preliminaryDate && state.months !== null;
+            if (state.manualDateSource === 'final') return !!state.finalDate && state.weeks !== null;
+            return false;
+          });
+
+          if (manualIndex >= 0) {
+            const manualState = states[manualIndex];
+            let manualStageStartDate = null;
+            if (manualState.manualDateSource === 'preliminary') {
+              manualState.calculatedPreliminaryDate = manualState.preliminaryDate;
+              manualState.calculatedFinalDate = manualState.weeks !== null
+                ? addDecimalWeeks(manualState.preliminaryDate, manualState.weeks)
+                : null;
+              manualStageStartDate = manualState.preliminaryDate && manualState.months !== null
+                ? subtractDecimalMonths(manualState.preliminaryDate, manualState.months)
+                : null;
+            } else {
+              manualState.calculatedFinalDate = manualState.finalDate;
+              manualState.calculatedPreliminaryDate = manualState.weeks !== null
+                ? subtractDecimalWeeks(manualState.finalDate, manualState.weeks)
+                : null;
+              manualStageStartDate = manualState.calculatedPreliminaryDate && manualState.months !== null
+                ? subtractDecimalMonths(manualState.calculatedPreliminaryDate, manualState.months)
+                : null;
+            }
+
+            let rollingStartDate = manualStageStartDate;
+
+            for (let index = manualIndex - 1; index >= 0; index -= 1) {
+              const state = states[index];
+              const stageEndDate = rollingStartDate && state.nextDelayDays
+                ? addDays(rollingStartDate, -state.nextDelayDays)
+                : rollingStartDate;
+              state.calculatedFinalDate = stageEndDate;
+              state.calculatedPreliminaryDate = stageEndDate && state.weeks !== null
+                ? subtractDecimalWeeks(stageEndDate, state.weeks)
+                : null;
+              rollingStartDate = state.calculatedPreliminaryDate && state.months !== null
+                ? subtractDecimalMonths(state.calculatedPreliminaryDate, state.months)
+                : rollingStartDate;
+            }
+
+            if (rollingStartDate) {
+              baseStartDate = rollingStartDate;
+              form.__proposalStageBaseStartDate = baseStartDate;
+            }
+
+            let forwardStartDate = applyNextStageDelay(
+              manualState.calculatedFinalDate || manualState.calculatedPreliminaryDate || manualStageStartDate || baseStartDate,
+              manualState
+            );
+            for (let index = manualIndex + 1; index < states.length; index += 1) {
+              const state = states[index];
+              forwardStartDate = computeForwardDates(forwardStartDate, state);
+            }
+
+            states.forEach(applyStateDates);
+          } else {
+            let startDate = baseStartDate;
+            states.forEach(function (state) {
+              const shouldComputeFromTerms = state.shouldForceDatesFromTerms || (!state.preliminaryDate && !state.finalDate);
+              if (shouldComputeFromTerms) {
+                startDate = computeForwardDates(startDate, state);
+                applyStateDates(state);
+              } else {
+                startDate = applyNextStageDelay(state.finalDate || state.preliminaryDate || startDate, state);
+              }
+            });
+          }
+
+          states.forEach(function (state) {
+            delete state.row.dataset.forceDatesFromTerms;
+            delete state.row.dataset.manualDateSource;
+          });
+        }
+        const totalsRow = getTotalsRow();
+        if (!totalsRow) return;
+        const totalMonths = termRows.reduce(function (sum, row) {
+          return sum + (parseProposalDecimal(row.querySelector('.proposal-stage-service-term-months')?.value) || 0);
+        }, 0);
+        const totalWeeks = termRows.reduce(function (sum, row) {
+          return sum + (parseProposalDecimal(row.querySelector('.proposal-stage-final-report-term-weeks')?.value) || 0);
+        }, 0);
+        const totalMonthsInput = totalsRow.querySelector('.proposal-stage-total-service-term-months');
+        const totalWeeksInput = totalsRow.querySelector('.proposal-stage-total-final-report-term-weeks');
+        if (totalMonthsInput) totalMonthsInput.value = termRows.length > 1 ? formatProposalDecimal(totalMonths) : '';
+        if (totalWeeksInput) totalWeeksInput.value = termRows.length > 1 ? formatProposalDecimal(totalWeeks) : '';
+      }
+
+      function syncStageContent() {
+        ensureMirroredBlocks();
+        syncStageLabels();
+        ensureStageDelayRows();
+        ensureStageEditorsInitialized();
+        bindSummaryCommercialSync();
+        bindTermsRows();
+        bindStageDelayRows();
+        getProductRows().forEach(function (row, index) {
+          const productId = String(row.querySelector('.proposal-product-select')?.value || '').trim();
+          const serviceBlock = getServiceBlocks()[index];
+          const commercialBlock = getCommercialBlocks()[index];
+          const termsRow = getStageTermRows()[index];
+          [serviceBlock, commercialBlock].forEach(function (block) {
+            if (!block) return;
+            const typeInput = block.querySelector('[data-proposal-stage-type]');
+            const previousProductId = String(typeInput?.value || '').trim();
+            if (typeInput) typeInput.value = productId;
+            const store = attachProposalServicesStore(block);
+            if (store && productId && (productId !== previousProductId || !store.getRows().length)) {
+              store.replaceFromType({ reason: 'stage-product-change', source: 'type-change' });
+            }
+          });
+          if (termsRow) {
+            const termEntry = getProposalTypicalServiceTermEntry(serviceBlock || row);
+            const evaluationInput = termsRow.querySelector('.proposal-stage-evaluation-date');
+            const monthsInput = termsRow.querySelector('.proposal-stage-service-term-months');
+            const weeksInput = termsRow.querySelector('.proposal-stage-final-report-term-weeks');
+            const previousProductId = String(termsRow.dataset.productId || '');
+            if (evaluationInput && (!String(evaluationInput.value || '').trim() || productId !== String(termsRow.dataset.productId || ''))) {
+              setDateFieldValue(evaluationInput, getSharedEvaluationDateValue());
+            }
+            if (termEntry && monthsInput && weeksInput) {
+              if (!String(monthsInput.value || '').trim() || productId !== previousProductId) {
+                monthsInput.value = formatProposalDecimal(parseProposalDecimal(termEntry.preliminary_report_months) || 0);
+              }
+              if (!String(weeksInput.value || '').trim() || productId !== previousProductId) {
+                weeksInput.value = formatProposalDecimal(parseProposalDecimal(termEntry.final_report_weeks) || 0);
+              }
+            }
+            if (productId !== previousProductId) {
+              termsRow.dataset.forceDatesFromTerms = '1';
+            }
+            termsRow.dataset.productId = productId;
+          }
+        });
+        syncStageEvaluationDates();
+        syncStageTerms();
+        applyProposalReportTermsLockState();
+        syncSummaryCommercialBlock();
+        syncPaymentScheduleMode();
+        form.dispatchEvent(new CustomEvent('proposal-stage-products-changed'));
+      }
+
+      termsTbody.addEventListener('click', function (event) {
+        const removeButton = event.target.closest('.proposal-stage-delay-remove');
+        if (removeButton) {
+          const delayRow = removeButton.closest('.proposal-stage-delay-row');
+          const delayInput = delayRow?.querySelector('.proposal-stage-next-delay-days');
+          if (!delayRow || !delayInput) return;
+          delayInput.value = '0';
+          delayRow.classList.add('d-none');
+          const termRows = getStageTermRows();
+          const sourceIndex = termRows.indexOf(delayRow.previousElementSibling);
+          if (sourceIndex >= 0) {
+            termRows.slice(sourceIndex + 1).forEach(function (termRow) {
+              termRow.dataset.forceDatesFromTerms = '1';
+            });
+          }
+          syncStageTerms();
+          return;
+        }
+
+        const addButton = event.target.closest('.proposal-stage-delay-add');
+        if (!addButton) return;
+        const termRow = addButton.closest('.proposal-stage-terms-row');
+        if (!termRow) return;
+        let delayRow = getStageDelayRowForTermRow(termRow);
+        if (!delayRow) {
+          delayRow = createStageDelayRow(termRow.dataset.proposalStageKey || '');
+          termsTbody.insertBefore(delayRow, termRow.nextSibling);
+        }
+        delayRow.classList.remove('d-none');
+        bindStageDelayRows();
+        syncStageTerms();
+        delayRow.querySelector('.proposal-stage-next-delay-days')?.focus();
+      });
+
+      addBtn.addEventListener('click', function () {
+        const firstRow = getProductRows()[0];
+        const lastRow = getProductRows()[getProductRows().length - 1];
+        const clone = lastRow ? lastRow.cloneNode(true) : null;
+        if (!clone) return;
+        const firstProductId = String(
+          firstRow?.querySelector('.proposal-product-select')?.value
+          || firstRow?.dataset?.selectedProductId
+          || ''
+        ).trim();
+        const copiedState = firstProductId ? {
+          consultingType: String(
+            firstRow?.querySelector('.proposal-consulting-select')?.value
+            || firstRow?.dataset?.selectedConsultingType
+            || ''
+          ).trim(),
+          serviceCategory: String(
+            firstRow?.querySelector('.proposal-service-category-select')?.value
+            || firstRow?.dataset?.selectedServiceCategory
+            || ''
+          ).trim(),
+          serviceSubtype: String(
+            firstRow?.querySelector('.proposal-service-subtype-select')?.value
+            || firstRow?.dataset?.selectedServiceSubtype
+            || ''
+          ).trim(),
+        } : null;
+        clone.dataset.stageUid = nextStageUid();
+        clone.dataset.selectedConsultingType = copiedState?.consultingType || '';
+        clone.dataset.selectedServiceCategory = copiedState?.serviceCategory || '';
+        clone.dataset.selectedServiceSubtype = copiedState?.serviceSubtype || '';
+        clone.dataset.selectedProductId = '';
+        delete clone.dataset.eventsBound;
+        container.appendChild(clone);
+        bindProductRow(clone);
+        syncStageContent();
+      });
+
+      container.addEventListener('click', function (event) {
+        const removeBtn = event.target.closest('.proposal-product-remove');
+        if (!removeBtn) return;
+        const rows = getProductRows();
+        const row = removeBtn.closest('.proposal-product-row');
+        if (!row) return;
+        if (rows.length === 1) {
+          row.dataset.selectedConsultingType = '';
+          row.dataset.selectedServiceCategory = '';
+          row.dataset.selectedServiceSubtype = '';
+          row.dataset.selectedProductId = '';
+          delete row.dataset.eventsBound;
+          row.querySelectorAll('select').forEach(function (select) { select.value = ''; });
+          bindProductRow(row);
+        } else {
+          row.remove();
+        }
+        syncStageContent();
+      });
+
+      getProductRows().forEach(bindProductRow);
+      syncStageContent();
+
+      const api = {
+        sync: syncStageContent,
+      };
+      form.__proposalStageProductsApi = api;
+      return api;
     }
 
     function initCompositeProposalField(options) {
@@ -5630,7 +8597,7 @@
       form.addEventListener('proposal-asset-owner-changed', syncSuffixFromAssetOwner);
       form.addEventListener('proposal-customer-changed', syncSuffixFromAssetOwner);
       form.querySelector('[name="asset_owner_matches_customer"]')?.addEventListener('change', syncSuffixFromAssetOwner);
-      form.querySelector('select[name="type"]')?.addEventListener('change', function () {
+      form.addEventListener('proposal-stage-products-changed', function () {
         syncPrefixFromType(true);
       });
 
@@ -5639,6 +8606,7 @@
       syncCombinedValue();
     }
 
+    attachProposalNumberDisplay(form);
     attachGroupSelectDisplay(form);
     attachReportLanguagesDropdown(form);
     attachCountryIdentifierSync(form);
@@ -5672,18 +8640,13 @@
     [
       'registration_date',
       'asset_owner_registration_date',
-      'evaluation_date',
-      'preliminary_report_date',
-      'final_report_date',
     ].forEach(function (fieldName) {
       initProposalDateInput(form.querySelector('input[name="' + fieldName + '"]'));
     });
     const assetsApi = attachProposalAssetsTable(form);
-    attachProposalServiceSectionsTable(form);
-    attachProposalServiceTextEditor(form);
+    const stageProductsApi = attachProposalStageProducts(assetsApi);
     const legalEntitiesApi = attachProposalLegalEntitiesTable(form);
     const objectsApi = attachProposalObjectsTable(form);
-    attachProposalCommercialTable(form, assetsApi);
     attachProposalAssetsToLegalEntitiesSync(form, assetsApi, legalEntitiesApi);
     attachProposalLegalEntitiesToObjectsSync(form, legalEntitiesApi, objectsApi);
     form.addEventListener('input', function (event) {
@@ -5695,36 +8658,8 @@
     qa('.js-proposal-report-terms-lock', form).forEach(function (icon) {
       icon.addEventListener('click', function () {
         proposalReportTermsEditMode = !proposalReportTermsEditMode;
-        applyProposalReportTermsLockState();
+        stageProductsApi?.sync();
       });
-    });
-    form.querySelector('select[name="type"]')?.addEventListener('change', function () {
-      syncProposalServiceTermMonths(true);
-      syncProposalReportDates(true);
-    });
-    form.querySelector('[name="service_term_months"]')?.addEventListener('input', function () {
-      syncProposalReportDates(true);
-    });
-    form.querySelector('[name="service_term_months"]')?.addEventListener('change', function () {
-      syncProposalReportDates(true);
-    });
-    form.querySelector('[name="final_report_term_weeks"]')?.addEventListener('input', function () {
-      syncProposalReportDates(true);
-    });
-    form.querySelector('[name="final_report_term_weeks"]')?.addEventListener('change', function () {
-      syncProposalReportDates(true);
-    });
-    form.querySelector('input[name="preliminary_report_date"]')?.addEventListener('input', function () {
-      if (!proposalReportTermsEditMode) syncProposalFinalDateFromPreliminary();
-    });
-    form.querySelector('input[name="preliminary_report_date"]')?.addEventListener('change', function () {
-      if (!proposalReportTermsEditMode) syncProposalFinalDateFromPreliminary();
-    });
-    form.querySelector('input[name="final_report_date"]')?.addEventListener('input', function () {
-      if (!proposalReportTermsEditMode) syncProposalPreliminaryDateFromFinal();
-    });
-    form.querySelector('input[name="final_report_date"]')?.addEventListener('change', function () {
-      if (!proposalReportTermsEditMode) syncProposalPreliminaryDateFromFinal();
     });
     form.querySelector('[name="asset_owner_matches_customer"]')?.addEventListener('change', function () {
       syncAssetOwnerFromCustomer('customer-sync');
@@ -5752,9 +8687,6 @@
         assetsApi?.fillEmptyRowsFromDefaults();
       }
     });
-    syncProposalServiceTermMonths(false);
-    applyProposalReportTermsLockState();
-    syncProposalReportDates(false);
     ['asset_owner', 'asset_owner_registration_number', 'asset_owner_registration_date'].forEach(function (fieldName) {
       form.querySelector('[name="' + fieldName + '"]')?.addEventListener('change', function () {
         form.dispatchEvent(new CustomEvent('proposal-asset-owner-changed', { detail: { reason: 'owner-change' } }));
@@ -5769,6 +8701,8 @@
     syncFinalReportPercent();
     syncAssetOwnerFromCustomer('customer-sync');
     assetsApi?.fillEmptyRowsFromDefaults();
+      applyProposalReportTermsLockState();
+    stageProductsApi?.sync();
   }
 
   function initProposalDispatchForm() {
@@ -6393,6 +9327,12 @@
     }
   });
 
+  document.addEventListener('shown.bs.tab', function () {
+    const root = pane();
+    if (!root || root.querySelector('.js-proposal-payment-view:checked')?.value !== PROPOSAL_PAYMENT_VIEW_GANTT) return;
+    requestAnimationFrame(() => renderProposalPaymentGantt(root));
+  });
+
   document.body.addEventListener('htmx:afterSettle', function (event) {
     if (!(event.target && event.target.id === 'proposals-pane')) return;
     const last = window.__tableSelLast;
@@ -6402,6 +9342,7 @@
     updateHeaderPath();
     syncAllSelectionStates();
     initProposalMasterFilters();
+    initProposalPaymentScheduleViewSwitch();
     initProposalForm();
     restoreProposalSendSettings();
     restoreVariableCollapseState();
@@ -6573,10 +9514,24 @@
     document.documentElement.classList.remove('proposal-progress-cursor');
   });
 
+  // If the proposals pane (or anything containing our payment-schedule chart)
+  // gets swapped out, the cached Gantt instance is left bound to a detached
+  // DOM node. Detect that and dispose so we don't leak the engine — a fresh
+  // instance is built lazily on the next renderProposalPaymentGantt().
+  document.body.addEventListener('htmx:afterSwap', function () {
+    const gantt = window.__proposalsPaymentGantt;
+    if (!gantt) return;
+    const boundContainer = gantt.$container || gantt.$root
+      || (gantt.$layout && gantt.$layout.$container) || null;
+    if (boundContainer && document.body.contains(boundContainer)) return;
+    disposeProposalPaymentGanttInstance();
+  });
+
   document.addEventListener('DOMContentLoaded', function () {
     updateHeaderPath();
     syncAllSelectionStates();
     initProposalMasterFilters();
+    initProposalPaymentScheduleViewSwitch();
     initProposalForm();
     restoreProposalSendSettings();
     if (typeof window.__proposalVarsExpanded === 'undefined') {

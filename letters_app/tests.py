@@ -65,6 +65,39 @@ class LetterTemplateVariablesTests(TestCase):
         self.assertIn("{document_pdf_link}", variables)
         self.assertNotIn("{document_link}", variables)
 
+    def test_payment_request_variables_include_payment_request_fields(self):
+        variables = [key for key, _desc in LetterTemplate.TEMPLATE_VARIABLES["payment_request"]]
+
+        self.assertEqual(
+            variables,
+            [
+                "{recipient_name_lawer}",
+                "{number_of_request}",
+                "{sender}",
+                "{payment_date}",
+                "[payment_request]",
+            ],
+        )
+
+    def test_payment_request_partial_renders_card_title(self):
+        LetterTemplate.objects.create(
+            template_type="payment_request",
+            user=None,
+            subject_template="Тема",
+            body_html="<p>Тело</p>",
+            is_default=True,
+        )
+        user_model = get_user_model()
+        user = user_model.objects.create_user(
+            username="letters-payment",
+            password="testpass123",
+            is_staff=True,
+        )
+        self.client.force_login(user)
+        response = self.client.get(reverse("letter_template_partial", args=["payment_request"]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Шаблон заявки на оплату")
+
 
 class LetterTemplatePermissionTests(TestCase):
     template_type = "participation_confirmation"

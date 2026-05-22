@@ -681,6 +681,27 @@ body .second-sidebar + .flex-grow-1 {
   z-index: 4010;
 }
 
+#projects .templates-bleed > .flex-grow-1 > .section-header {
+  z-index: 1020;
+  overflow: visible;
+}
+
+#master-project-filter-dropdown {
+  position: relative;
+}
+
+#master-project-filter-dropdown .dropdown-menu {
+  z-index: 7000;
+}
+
+#master-project-filter-dropdown .project-filter-menu.show {
+  position: absolute !important;
+  inset: auto auto auto 0 !important;
+  top: 100% !important;
+  transform: none !important;
+  margin-top: .25rem !important;
+}
+
 #master-policy-consulting-filter-dropdown .dropdown-menu,
 #master-policy-category-filter-dropdown .dropdown-menu,
 #master-policy-subtype-filter-dropdown .dropdown-menu,
@@ -801,6 +822,25 @@ body .second-sidebar + .flex-grow-1 {
 .project-filter-menu {
   width: max-content;
   min-width: 200px;
+}
+
+.projects-radio-filter-dropdown {
+  position: relative;
+}
+
+.projects-radio-filter-dropdown .project-filter-menu.show {
+  position: absolute !important;
+  inset: auto auto auto 0 !important;
+  top: 100% !important;
+  transform: none !important;
+  margin-top: .25rem !important;
+  z-index: 5000 !important;
+}
+
+.project-filter-menu.project-filter-menu-portal {
+  position: fixed !important;
+  transform: none !important;
+  z-index: 5000 !important;
 }
 
 .project-filter-menu .form-check {
@@ -990,6 +1030,7 @@ body .second-sidebar + .flex-grow-1 {
 
 #performers-main-section .form-check-input:disabled,
 #participation-confirmation-section .form-check-input:disabled,
+.payment-request-section .form-check-input:disabled,
 #contract-conclusion-section .form-check-input:disabled,
 #info-request-approval-section .form-check-input:disabled,
 .registration-table-wrap .form-check-input:disabled,
@@ -7333,22 +7374,318 @@ html.proposal-progress-cursor * {
   width: 100%;
 }
 
+#projects-content-info-request > .card,
+#projects-content-performer-payments > .card,
+#projects-content-info-request > .card > .card-body,
+#projects-content-performer-payments > .card > .card-body,
+#contracts-content-performer-execution > .card,
+#contracts-content-performer-execution > .card > .card-body,
+#contracts-execution-pane,
+#info-request-approval-section,
+.payment-request-section {
+  overflow: visible;
+}
+
+.payment-request-section {
+  --payment-request-table-scroll-offset-top: 0px;
+  --payment-request-table-margin-to-scroll: 10px;
+  --payment-request-table-action-gap: 30px;
+  --payment-request-table-scroll-action-gap: 11.75px;
+}
+
+/* Ниже .section-header (1020), чтобы мастер-фильтр «Проекты» не уходил под шапки таблиц */
+#projects .table-section-header,
+#contracts .table-section-header {
+  position: relative;
+  z-index: 1010;
+}
+
+/* Открытый фильтр в шапке таблицы — выше следующих шапок на странице */
+#projects-pane .table-section-header:has(.dropdown-menu.show),
+#contracts-execution-pane .table-section-header:has(.dropdown-menu.show) {
+  z-index: 1020;
+}
+
+#info-request-approval-section .project-filter-menu,
+.payment-request-section .project-filter-menu {
+  z-index: 1060;
+}
+
+.payment-request-section .info-request-table-wrap {
+  overflow-x: auto;
+  overflow-y: visible;
+  width: 100%;
+  padding-bottom: var(--payment-request-table-scroll-offset-top);
+}
+
+.payment-request-section .info-request-table-wrap > .performers-table {
+  width: max-content;
+  min-width: 100%;
+  margin-bottom: 0 !important;
+}
+
+.payment-request-section .info-request-table-wrap.has-horizontal-scroll > .performers-table {
+  margin-bottom: var(--payment-request-table-margin-to-scroll) !important;
+}
+
+.payment-request-section .info-request-table-wrap + .products-actions-row {
+  margin-top: var(--payment-request-table-action-gap) !important;
+}
+
+.payment-request-section .info-request-table-wrap.has-horizontal-scroll + .products-actions-row {
+  margin-top: var(--payment-request-table-scroll-action-gap) !important;
+}
+
 #info-request-approval-section .info-request-table-wrap > .performers-table {
   width: max-content;
   min-width: 100%;
 }
 
-#info-request-approval-section .performers-table thead th,
-#info-request-approval-section .performers-table tbody td {
+#info-request-approval-section .performers-table col.col-checkbox,
+.payment-request-section .performers-table col.col-checkbox {
+  width: 30px !important;
+}
+
+#info-request-approval-section .performers-table col.col-number {
+  width: 100px !important;
+}
+
+.payment-request-section .performers-table col.col-number {
+  width: 85px !important;
+}
+
+#info-request-approval-section .performers-table col:not(.col-checkbox):not(.col-number),
+#payment-request-section .performers-table col:not(.col-checkbox):not(.col-number):not(.col-payment-toggle):not(.col-payment-date):not(.col-contract-signing-status-icon):not(.col-payment-paid-toggle),
+#contracts-payment-request-section .performers-table col:not(.col-checkbox):not(.col-number):not(.col-payment-toggle):not(.col-payment-date) {
+  width: auto !important;
+}
+
+#info-request-approval-section .performers-table thead th:nth-child(1),
+#info-request-approval-section .performers-table tbody td:nth-child(1),
+.payment-request-section .performers-table thead th:nth-child(1),
+.payment-request-section .performers-table tbody td:nth-child(1) {
+  width: 30px !important;
+  min-width: 30px !important;
+  max-width: 30px !important;
+}
+
+#info-request-approval-section .performers-table thead th:nth-child(2),
+#info-request-approval-section .performers-table tbody td:nth-child(2) {
+  width: 100px !important;
+  min-width: 100px !important;
+  max-width: 100px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+.payment-request-section .performers-table thead th:nth-child(2),
+.payment-request-section .performers-table tbody td:nth-child(2) {
+  width: 85px !important;
+  min-width: 85px !important;
+  max-width: 85px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#info-request-approval-section .performers-table thead th:nth-child(n+3),
+#info-request-approval-section .performers-table tbody td:nth-child(n+3),
+.payment-request-section .performers-table thead th:nth-child(n+3),
+.payment-request-section .performers-table tbody td:nth-child(n+3) {
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
   white-space: nowrap !important;
   overflow: visible !important;
   text-overflow: clip !important;
 }
 
-#info-request-approval-section .performers-table .text-truncate {
+#info-request-approval-section .performers-table tbody td:nth-child(5),
+.payment-request-section .performers-table tbody td:nth-child(5) {
+  max-width: none !important;
+}
+
+#payment-request-section .performers-table .payment-request-signing-status-cell {
+  width: 40px !important;
+  min-width: 40px !important;
+  max-width: 40px !important;
+}
+
+#payment-request-section .performers-table .reg-launch-icon.reg-launch-indicator {
+  display: inline-block;
+  line-height: 1;
+  position: relative;
+  vertical-align: middle;
+  z-index: 0;
+}
+
+#payment-request-section .performers-table .reg-launch-icon.reg-launch-indicator::after {
+  background: var(--reg-launch-bg, #f8f9fa);
+  border-radius: 50%;
+  content: "";
+  height: .88em;
+  left: 50%;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: .88em;
+  z-index: -1;
+}
+
+#payment-request-section .performers-table .reg-launch-indicator {
+  color: var(--reg-launch-color, #6c757d) !important;
+}
+
+#payment-request-section .performers-table .reg-launch-status--work {
+  --reg-launch-color: var(--bs-primary);
+  --reg-launch-bg: #b8d6ff;
+}
+
+#payment-request-section .performers-table .reg-launch-status--done {
+  --reg-launch-color: #198754;
+  --reg-launch-bg: #8fd8a8;
+}
+
+#payment-request-section .performers-table .reg-launch-status--deferred {
+  --reg-launch-color: #adb5bd;
+  --reg-launch-bg: #e9ecef;
+}
+
+#payment-request-section .performers-table .reg-launch-status--review {
+  --reg-launch-color: #fd7e14;
+  --reg-launch-bg: #ffe4c2;
+}
+
+#info-request-approval-section .performers-table thead th,
+#info-request-approval-section .performers-table tbody td,
+.payment-request-section .performers-table thead th,
+.payment-request-section .performers-table tbody td {
   white-space: nowrap !important;
   overflow: visible !important;
   text-overflow: clip !important;
+}
+
+#info-request-approval-section .performers-table .text-truncate,
+.payment-request-section .performers-table .text-truncate {
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+.payment-request-section .performers-table tbody td.payment-request-date-cell,
+#contracts-payment-request-section .performers-table tbody td.payment-request-paid-date-cell {
+  text-align: left !important;
+}
+
+.payment-request-section .performers-table tbody td.payment-request-number-cell {
+  text-align: right;
+  padding-right: 5px;
+}
+
+.payment-request-section .performers-table thead th.payment-request-number-header {
+  text-align: right !important;
+  padding-right: 5px !important;
+}
+
+.payment-request-section .performers-table thead th.payment-request-group-header {
+  text-align: left;
+  font-weight: 600;
+}
+
+.payment-request-section .performers-table col.col-payment-toggle {
+  width: 1.5rem !important;
+}
+
+#payment-request-section .performers-table col.col-payment-paid-toggle {
+  width: 4rem !important;
+}
+
+#payment-request-section .performers-table tbody td.payment-request-date-cell,
+#payment-request-section .performers-table thead th.payment-request-group-header {
+  width: 140px !important;
+  min-width: 140px !important;
+  max-width: 140px !important;
+}
+
+#contracts-payment-request-section .performers-table tbody td.payment-request-date-cell,
+#contracts-payment-request-section .performers-table tbody td.payment-request-paid-date-cell,
+#contracts-payment-request-section .performers-table thead th.payment-request-group-header {
+  width: 140px !important;
+  min-width: 140px !important;
+  max-width: 140px !important;
+}
+
+.payment-request-section .performers-table col.col-payment-date {
+  width: 140px !important;
+}
+
+#payment-request-section .performers-table tbody td.payment-request-toggle-cell,
+#payment-request-section .performers-table thead th.payment-request-toggle-header {
+  width: 1.5rem !important;
+  min-width: 1.5rem !important;
+  max-width: 1.5rem !important;
+  padding: 0 !important;
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+#payment-request-section .performers-table tbody td.payment-request-paid-toggle-cell,
+#payment-request-section .performers-table thead th.payment-request-paid-toggle-header {
+  width: auto !important;
+  min-width: 4rem !important;
+  max-width: none !important;
+  padding-left: 0.25rem !important;
+  padding-right: 0.25rem !important;
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+#contracts-payment-request-section .performers-table tbody td.payment-request-toggle-cell,
+#contracts-payment-request-section .performers-table thead th.payment-request-toggle-header,
+#contracts-payment-request-section .performers-table tbody td.payment-request-paid-toggle-cell {
+  width: 1.5rem !important;
+  min-width: 1.5rem !important;
+  max-width: 1.5rem !important;
+  padding: 0 !important;
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+.payment-request-section .performers-table tbody td.payment-request-toggle-cell .payment-request-toggle-icon,
+.payment-request-section .performers-table tbody td.payment-request-paid-toggle-cell .payment-request-paid-toggle-icon {
+  display: inline-block;
+  font-size: 1.1rem;
+  line-height: 1;
+  vertical-align: middle;
+  margin-left: -0.05em;
+}
+
+.payment-request-section .payment-request-toggle-icon.bi-toggle-off,
+.payment-request-section .payment-request-paid-toggle-icon.bi-toggle-off {
+  color: #adb5bd;
+}
+
+.payment-request-section .payment-request-toggle-icon.is-on {
+  color: var(--bs-primary, #075D94);
+}
+
+.payment-request-section .payment-request-paid-toggle-icon.is-on {
+  color: #22c55e;
+}
+
+.payment-request-section .payment-request-paid-toggle-icon.is-interactive {
+  cursor: pointer;
+}
+
+#payment-request-section .payment-request-paid-toggle-icon {
+  pointer-events: none;
+}
+
+.payment-request-section .payment-request-paid-toggle-icon.is-skipped,
+.payment-request-section .payment-request-toggle-icon.is-skipped {
+  opacity: 0.45;
+  pointer-events: none;
 }
 
 #participation-confirmation-section .performers-table > tbody > tr > td,
@@ -7785,6 +8122,7 @@ body.proposal-service-text-modal-open {
 
 #proposals-pane .proposal-service-text-modal__toolbar,
 #policy-modal .proposal-service-text-modal__toolbar {
+  z-index: 30;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -7793,6 +8131,7 @@ body.proposal-service-text-modal-open {
   border-left: 0;
   border-right: 0;
   border-bottom: 1px solid #e9ecef;
+  overflow: visible;
 }
 
 #proposals-pane .proposal-service-text-toolbar,
@@ -7865,16 +8204,256 @@ body.proposal-service-text-modal-open {
   border-color: #86b7fe;
 }
 
+.letter-quill-toolbar.proposal-service-text-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+  align-items: center;
+}
+
+.letter-quill-toolbar .ql-formats {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  margin-right: 0;
+}
+
+.letter-quill-toolbar.ql-toolbar.ql-snow .ql-formats {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: .35rem !important;
+  margin-right: 0 !important;
+}
+
+.letter-quill-toolbar .proposal-service-text-toolbar__btn {
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #ced4da;
+  border-radius: .25rem;
+  background: #fff;
+  color: #212529;
+  box-shadow: none !important;
+}
+
+.letter-quill-toolbar .proposal-service-text-toolbar__btn.is-active {
+  color: #0a58ca;
+  background: #e7f1ff;
+  border-color: #86b7fe;
+}
+
+.letter-quill-toolbar.ql-toolbar.ql-snow button {
+  width: 2rem !important;
+  min-width: 2rem !important;
+  height: 2rem !important;
+  padding: 0 !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #ced4da !important;
+  border-radius: .25rem;
+  background: #fff !important;
+  color: #212529;
+  line-height: 1;
+  box-shadow: none !important;
+}
+
+.letter-quill-toolbar.ql-toolbar.ql-snow button:not(.dropdown-item):not([data-color-commit]):not([data-color-reset]):hover,
+.letter-quill-toolbar.ql-toolbar.ql-snow button:not(.dropdown-item):not([data-color-commit]):not([data-color-reset]):focus {
+  border-color: #86b7fe !important;
+  background: #f8fbff !important;
+}
+
+.letter-quill-toolbar.ql-toolbar.ql-snow button.ql-active:not(.dropdown-item),
+.letter-quill-toolbar.ql-toolbar.ql-snow button.is-active:not(.dropdown-item) {
+  color: #0a58ca;
+  background: #e7f1ff !important;
+  border-color: #86b7fe !important;
+}
+
+.letter-quill-toolbar.ql-toolbar.ql-snow button svg {
+  width: 1rem !important;
+  height: 1rem !important;
+}
+
+.letter-quill-toolbar.ql-toolbar.ql-snow button i {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+#proposals-pane .proposal-service-text-toolbar__list-split,
+#policy-modal .proposal-service-text-toolbar__list-split,
+.letter-quill-toolbar .proposal-service-text-toolbar__list-split {
+  position: relative;
+  z-index: 35;
+  display: inline-flex;
+  align-items: stretch;
+}
+
+#proposals-pane .proposal-service-text-toolbar__btn--list-primary,
+#policy-modal .proposal-service-text-toolbar__btn--list-primary,
+.letter-quill-toolbar .proposal-service-text-toolbar__btn--list-primary {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+#proposals-pane .proposal-service-text-toolbar__btn--list-toggle,
+#policy-modal .proposal-service-text-toolbar__btn--list-toggle,
+.letter-quill-toolbar .proposal-service-text-toolbar__btn--list-toggle {
+  min-width: 1.25rem;
+  width: 1.25rem;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: 0;
+}
+
+#proposals-pane .proposal-service-text-toolbar__btn--list-toggle::after,
+#policy-modal .proposal-service-text-toolbar__btn--list-toggle::after,
+.letter-quill-toolbar .proposal-service-text-toolbar__btn--list-toggle::after {
+  margin-left: 0;
+}
+
+.proposal-service-text-toolbar__list-menu {
+  z-index: 1060;
+  min-width: 8.5rem;
+  font-size: .875rem;
+  padding: .5rem 0;
+}
+
+.proposal-service-text-toolbar__list-menu li {
+  display: block;
+}
+
+.proposal-service-text-toolbar__list-menu .dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+}
+
+.proposal-service-text-toolbar__list-menu button.dropdown-item {
+  width: 100% !important;
+  min-width: 0 !important;
+  height: auto !important;
+  padding: .25rem 1rem !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: .5rem !important;
+  justify-content: flex-start !important;
+  float: none !important;
+  clear: both !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: #212529 !important;
+  line-height: 1.5;
+  box-shadow: none !important;
+}
+
+.proposal-service-text-toolbar__list-menu button.dropdown-item:hover,
+.proposal-service-text-toolbar__list-menu button.dropdown-item:focus {
+  background: #f8f9fa !important;
+  color: #212529 !important;
+  border-color: transparent !important;
+}
+
+.proposal-service-text-toolbar__list-menu button.dropdown-item.active,
+.proposal-service-text-toolbar__list-menu button.dropdown-item[aria-current="true"] {
+  background: #e9ecef !important;
+  color: #212529 !important;
+  border-color: transparent !important;
+}
+
+.letter-quill-toolbar.ql-toolbar.ql-snow .ql-formats.letter-quill-toolbar__list-group,
+.letter-quill-toolbar.ql-toolbar.ql-snow .ql-formats.letter-quill-toolbar__marker-group {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: .35rem !important;
+  margin-right: 0 !important;
+  float: none !important;
+  vertical-align: middle !important;
+}
+
+.letter-quill-toolbar.ql-toolbar.ql-snow .ql-formats.letter-quill-toolbar__list-group::after,
+.letter-quill-toolbar.ql-toolbar.ql-snow .ql-formats.letter-quill-toolbar__marker-group::after {
+  display: none !important;
+  content: none !important;
+  clear: none !important;
+}
+
+.letter-quill-toolbar.ql-toolbar.ql-snow .proposal-service-text-toolbar__list-split.dropdown {
+  position: relative !important;
+}
+
+.letter-quill-toolbar.ql-toolbar.ql-snow .proposal-service-text-toolbar__list-menu.dropdown-menu {
+  position: absolute !important;
+  top: 100% !important;
+  left: 0 !important;
+  right: auto !important;
+  bottom: auto !important;
+  margin-top: var(--bs-dropdown-spacer, .125rem) !important;
+  transform: none !important;
+  float: none !important;
+}
+
+.letter-quill-toolbar.ql-toolbar.ql-snow .proposal-service-text-toolbar__list-menu button.dropdown-item {
+  width: 100% !important;
+  min-width: 0 !important;
+  height: auto !important;
+  padding: .25rem 1rem !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: .5rem !important;
+  justify-content: flex-start !important;
+  float: none !important;
+  clear: both !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: #212529 !important;
+  line-height: 1.5 !important;
+  box-shadow: none !important;
+}
+
+.letter-quill-toolbar.ql-toolbar.ql-snow .proposal-service-text-toolbar__list-menu button.dropdown-item:hover,
+.letter-quill-toolbar.ql-toolbar.ql-snow .proposal-service-text-toolbar__list-menu button.dropdown-item:focus {
+  background: #f8f9fa !important;
+  color: #212529 !important;
+  border-color: transparent !important;
+}
+
+.letter-quill-toolbar.ql-toolbar.ql-snow .proposal-service-text-toolbar__list-menu button.dropdown-item.active,
+.letter-quill-toolbar.ql-toolbar.ql-snow .proposal-service-text-toolbar__list-menu button.dropdown-item[aria-current="true"] {
+  background: #e9ecef !important;
+  color: #212529 !important;
+  border-color: transparent !important;
+}
+
+#proposals-pane .proposal-service-text-toolbar__marker-preview,
+#policy-modal .proposal-service-text-toolbar__marker-preview,
+.letter-quill-toolbar .proposal-service-text-toolbar__marker-preview {
+  width: 1rem;
+  text-align: center;
+  font-weight: 600;
+}
+
 #proposals-pane .proposal-service-text-toolbar__icon,
-#policy-modal .proposal-service-text-toolbar__icon {
+#policy-modal .proposal-service-text-toolbar__icon,
+.letter-quill-toolbar .proposal-service-text-toolbar__icon {
   width: 1rem;
   height: 1rem;
+  max-width: 1rem;
+  max-height: 1rem;
   display: block;
   object-fit: contain;
 }
 
 #proposals-pane .proposal-service-text-toolbar__color-combo,
-#policy-modal .proposal-service-text-toolbar__color-combo {
+#policy-modal .proposal-service-text-toolbar__color-combo,
+.letter-quill-toolbar .proposal-service-text-toolbar__color-combo {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: .3rem;
@@ -7886,7 +8465,8 @@ body.proposal-service-text-modal-open {
 }
 
 #proposals-pane .proposal-service-text-toolbar__btn--combo,
-#policy-modal .proposal-service-text-toolbar__btn--combo {
+#policy-modal .proposal-service-text-toolbar__btn--combo,
+.letter-quill-toolbar .proposal-service-text-toolbar__btn--combo {
   min-width: auto;
   width: auto;
   padding: 0;
@@ -7895,13 +8475,15 @@ body.proposal-service-text-modal-open {
 }
 
 #proposals-pane .proposal-service-text-toolbar__color,
-#policy-modal .proposal-service-text-toolbar__color {
+#policy-modal .proposal-service-text-toolbar__color,
+.letter-quill-toolbar .proposal-service-text-toolbar__color {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: .95rem;
   height: .95rem;
   border: 0;
+  padding: 0;
   border-radius: .15rem;
   background: transparent;
   cursor: pointer;
@@ -7910,7 +8492,8 @@ body.proposal-service-text-modal-open {
 }
 
 #proposals-pane .proposal-service-text-toolbar__color input[type="color"],
-#policy-modal .proposal-service-text-toolbar__color input[type="color"] {
+#policy-modal .proposal-service-text-toolbar__color input[type="color"],
+.letter-quill-toolbar .proposal-service-text-toolbar__color input[type="color"] {
   position: absolute;
   opacity: 0;
   pointer-events: none;
@@ -7923,7 +8506,8 @@ body.proposal-service-text-modal-open {
 }
 
 #proposals-pane .proposal-service-text-toolbar__color-swatch,
-#policy-modal .proposal-service-text-toolbar__color-swatch {
+#policy-modal .proposal-service-text-toolbar__color-swatch,
+.letter-quill-toolbar .proposal-service-text-toolbar__color-swatch {
   width: .65rem;
   height: .65rem;
   border-radius: 50%;
@@ -7931,8 +8515,237 @@ body.proposal-service-text-modal-open {
   display: block;
 }
 
+#proposals-pane .proposal-service-text-toolbar__color-popover,
+#policy-modal .proposal-service-text-toolbar__color-popover,
+.letter-quill-toolbar .proposal-service-text-toolbar__color-popover {
+  position: absolute;
+  z-index: 1080;
+  top: calc(100% + .35rem);
+  right: 0;
+  width: 13rem;
+  padding: .5rem;
+  border: 1px solid #ced4da;
+  border-radius: .35rem;
+  background: #fff;
+  box-shadow: 0 .5rem 1rem rgba(0, 0, 0, .15);
+}
+
+#proposals-pane .proposal-service-text-toolbar__color-sv,
+#policy-modal .proposal-service-text-toolbar__color-sv,
+.letter-quill-toolbar .proposal-service-text-toolbar__color-sv {
+  --proposal-color-picker-hue: 0;
+  display: block;
+  position: relative;
+  width: 100%;
+  height: 8rem;
+  margin-bottom: .55rem;
+  border: 1px solid #ced4da;
+  border-radius: .25rem;
+  background:
+    linear-gradient(to top, #000, rgba(0, 0, 0, 0)),
+    linear-gradient(to right, #fff, hsl(var(--proposal-color-picker-hue), 100%, 50%));
+  cursor: crosshair;
+}
+
+#proposals-pane .proposal-service-text-toolbar__color-sv-handle,
+#policy-modal .proposal-service-text-toolbar__color-sv-handle,
+.letter-quill-toolbar .proposal-service-text-toolbar__color-sv-handle {
+  position: absolute;
+  width: .75rem;
+  height: .75rem;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .65);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+#proposals-pane .proposal-service-text-toolbar__color-hue,
+#policy-modal .proposal-service-text-toolbar__color-hue,
+.letter-quill-toolbar .proposal-service-text-toolbar__color-hue {
+  display: block;
+  position: relative;
+  width: 100%;
+  height: .9rem;
+  margin: 0 0 .65rem;
+  border: 1px solid #ced4da;
+  border-radius: 999px;
+  background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+  cursor: pointer;
+}
+
+#proposals-pane .proposal-service-text-toolbar__color-hue:focus,
+#policy-modal .proposal-service-text-toolbar__color-hue:focus,
+.letter-quill-toolbar .proposal-service-text-toolbar__color-hue:focus {
+  outline: 0;
+  box-shadow: 0 0 0 .2rem rgba(13, 110, 253, .25);
+}
+
+#proposals-pane .proposal-service-text-toolbar__color-hue-handle,
+#policy-modal .proposal-service-text-toolbar__color-hue-handle,
+.letter-quill-toolbar .proposal-service-text-toolbar__color-hue-handle {
+  position: absolute;
+  top: 50%;
+  width: .75rem;
+  height: 1.15rem;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .55);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+#proposals-pane .proposal-service-text-toolbar__color-rgb,
+#policy-modal .proposal-service-text-toolbar__color-rgb,
+.letter-quill-toolbar .proposal-service-text-toolbar__color-rgb {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: .4rem;
+  margin-bottom: .55rem;
+}
+
+#proposals-pane .proposal-service-text-toolbar__color-rgb label,
+#policy-modal .proposal-service-text-toolbar__color-rgb label,
+.letter-quill-toolbar .proposal-service-text-toolbar__color-rgb label {
+  display: grid;
+  gap: .2rem;
+  margin: 0;
+  color: #212529;
+  font-size: .75rem;
+  text-align: center;
+}
+
+#proposals-pane .proposal-service-text-toolbar__color-rgb input,
+#policy-modal .proposal-service-text-toolbar__color-rgb input,
+.letter-quill-toolbar .proposal-service-text-toolbar__color-rgb input {
+  width: 100%;
+  height: 2rem;
+  padding: .25rem;
+  border: 1px solid #ced4da;
+  border-radius: .25rem;
+  text-align: center;
+}
+
+#proposals-pane .proposal-service-text-toolbar__color-actions,
+#policy-modal .proposal-service-text-toolbar__color-actions,
+.letter-quill-toolbar .proposal-service-text-toolbar__color-actions {
+  display: flex;
+  align-items: stretch;
+  gap: .4rem;
+}
+
+#proposals-pane .proposal-service-text-toolbar__color-reset,
+#policy-modal .proposal-service-text-toolbar__color-reset,
+.letter-quill-toolbar .proposal-service-text-toolbar__color-reset {
+  width: 2rem;
+  flex: 0 0 2rem;
+  padding-right: 0;
+  padding-left: 0;
+}
+
+.letter-quill-toolbar.ql-toolbar.ql-snow .proposal-service-text-toolbar__btn--combo {
+  width: auto !important;
+  min-width: auto !important;
+  height: auto !important;
+  border: 0 !important;
+  background: transparent !important;
+}
+
+.letter-quill-toolbar.ql-toolbar.ql-snow .proposal-service-text-toolbar__btn--list-toggle {
+  width: 1.25rem !important;
+  min-width: 1.25rem !important;
+  border-left: 0 !important;
+}
+
+.letter-quill-toolbar.ql-toolbar.ql-snow .proposal-service-text-toolbar__btn--list-primary {
+  border-top-right-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  border-right-color: #ced4da !important;
+}
+
+.letter-quill-toolbar.ql-toolbar.ql-snow .proposal-service-text-toolbar__btn--list-toggle {
+  border-top-left-radius: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  border-left: 0 !important;
+}
+
+.letter-quill-toolbar.ql-toolbar.ql-snow .proposal-service-text-toolbar__color {
+  width: .95rem !important;
+  min-width: .95rem !important;
+  height: .95rem !important;
+  border: 0 !important;
+  background: transparent !important;
+}
+
+.letter-quill-toolbar.ql-toolbar.ql-snow .proposal-service-text-toolbar__color-actions .btn {
+  width: auto !important;
+  min-width: 0 !important;
+  height: 2rem !important;
+  padding: .25rem .5rem !important;
+  border-radius: .25rem;
+}
+
+.letter-quill-toolbar.ql-toolbar.ql-snow .proposal-service-text-toolbar__color-actions .btn-primary {
+  flex: 1 1 auto !important;
+  color: #fff !important;
+  background: var(--bs-primary, #075D94) !important;
+  border-color: var(--bs-primary, #075D94) !important;
+}
+
+.letter-quill-toolbar.ql-toolbar.ql-snow .proposal-service-text-toolbar__color-actions .btn-primary:hover,
+.letter-quill-toolbar.ql-toolbar.ql-snow .proposal-service-text-toolbar__color-actions .btn-primary:focus,
+.letter-quill-toolbar.ql-toolbar.ql-snow .proposal-service-text-toolbar__color-actions .btn-primary:focus-visible {
+  color: var(--bs-btn-hover-color, #fff) !important;
+  background-color: var(--bs-btn-hover-bg, #064f7e) !important;
+  border-color: var(--bs-btn-hover-border-color, #064a76) !important;
+}
+
+.letter-quill-toolbar.ql-toolbar.ql-snow .proposal-service-text-toolbar__color-actions .btn-outline-secondary {
+  color: #6c757d !important;
+  background: #fff !important;
+  border-color: #6c757d !important;
+}
+
+#proposals-pane .proposal-service-text-toolbar__color-reset:hover,
+#proposals-pane .proposal-service-text-toolbar__color-reset:focus,
+#proposals-pane .proposal-service-text-toolbar__color-reset:focus-visible,
+#policy-modal .proposal-service-text-toolbar__color-reset:hover,
+#policy-modal .proposal-service-text-toolbar__color-reset:focus,
+#policy-modal .proposal-service-text-toolbar__color-reset:focus-visible,
+.letter-quill-toolbar.ql-toolbar.ql-snow .proposal-service-text-toolbar__color-reset:hover,
+.letter-quill-toolbar.ql-toolbar.ql-snow .proposal-service-text-toolbar__color-reset:focus,
+.letter-quill-toolbar.ql-toolbar.ql-snow .proposal-service-text-toolbar__color-reset:focus-visible,
+.letter-quill-toolbar.ql-toolbar.ql-snow .proposal-service-text-toolbar__color-actions .btn-outline-secondary:hover,
+.letter-quill-toolbar.ql-toolbar.ql-snow .proposal-service-text-toolbar__color-actions .btn-outline-secondary:focus,
+.letter-quill-toolbar.ql-toolbar.ql-snow .proposal-service-text-toolbar__color-actions .btn-outline-secondary:focus-visible {
+  color: #6c757d !important;
+  background-color: #e9ecef !important;
+  border-color: #6c757d !important;
+}
+
+.letter-quill-toolbar.ql-toolbar.ql-snow .proposal-service-text-toolbar__color-reset {
+  width: 2rem !important;
+  min-width: 2rem !important;
+  flex: 0 0 2rem;
+}
+
+#proposals-pane .proposal-service-text-toolbar__color-popover input[type="color"],
+#policy-modal .proposal-service-text-toolbar__color-popover input[type="color"],
+.letter-quill-toolbar .proposal-service-text-toolbar__color-popover input[type="color"] {
+  display: block;
+  width: 100%;
+  height: 2.25rem;
+  margin-bottom: .5rem;
+  padding: .15rem;
+  border: 1px solid #ced4da;
+  border-radius: .25rem;
+  background: #fff;
+  cursor: pointer;
+}
+
 #proposals-pane .proposal-service-text-modal__body,
 #policy-modal .proposal-service-text-modal__body {
+  z-index: 1;
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
@@ -8112,6 +8925,34 @@ body.proposal-service-text-modal-open {
 #policy-modal .proposal-service-text-card__editor .ql-editor p {
   margin-top: 0;
   margin-bottom: 0;
+}
+
+.letter-template-preview li[data-list="bullet"] > .ql-ui::before {
+  content: "\2022" !important;
+}
+
+.ql-editor li[data-list="dash"] > .ql-ui::before,
+.letter-template-preview li[data-list="dash"] > .ql-ui::before {
+  content: "-" !important;
+}
+
+.ql-editor li[data-list="check"] > .ql-ui::before,
+.letter-template-preview li[data-list="check"] > .ql-ui::before {
+  content: "\2713" !important;
+}
+
+.letter-template-preview ol li[data-list="bullet"],
+.letter-template-preview ol li[data-list="dash"],
+.letter-template-preview ol li[data-list="check"] {
+  list-style-type: none;
+}
+
+.letter-template-preview li[data-list] > .ql-ui {
+  display: inline-block;
+  width: 1.25em;
+  margin-left: -1.25em;
+  margin-right: .25em;
+  text-align: center;
 }
 
 

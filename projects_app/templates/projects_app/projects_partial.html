@@ -13,7 +13,7 @@
       </h5>
     <div class="dropdown" id="reg-project-filter-dropdown">
       <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
-              id="reg-project-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+              id="reg-project-filter-toggle" data-bs-toggle="dropdown" data-bs-display="static" data-bs-auto-close="outside" aria-expanded="false">
         Проекты: <span class="js-reg-filter-label">Все</span>
       </button>
       <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="reg-project-filter-toggle" style="max-height: 240px; overflow-y: auto;">
@@ -2000,6 +2000,7 @@
         var perfPane = document.getElementById("performers-pane");
         if (perfPane) {
           perfPane.querySelectorAll("#performers-main-section table.performers-table tbody tr").forEach(function(r) { allRows.push(r); });
+          perfPane.querySelectorAll(".payment-request-section tbody tr[data-project-id]").forEach(function(r) { allRows.push(r); });
         }
         allRows.forEach(function(row) {
           var pid = row.dataset.projectId || "";
@@ -2031,6 +2032,10 @@
       var perfPane = document.getElementById("performers-pane");
       if (perfPane) {
         perfPane.querySelectorAll("#performers-main-section table.performers-table tbody tr").forEach(function(row) {
+          var pid = row.dataset.projectId || "";
+          row.classList.toggle("d-none", !showAll && values.indexOf(pid) === -1);
+        });
+        perfPane.querySelectorAll(".payment-request-section tbody tr[data-project-id]").forEach(function(row) {
           var pid = row.dataset.projectId || "";
           row.classList.toggle("d-none", !showAll && values.indexOf(pid) === -1);
         });
@@ -2153,8 +2158,10 @@
 
       window.__perfProjectFilter = isAll ? [FILTER_ALL] : values.slice();
       window.__participationProjectFilter = isAll ? [FILTER_ALL] : values.slice();
+      window.__paymentRequestsProjectFilter = isAll ? [FILTER_ALL] : values.slice();
       syncPerfFilter(values);
       if (typeof window.__syncParticipationProjectFilter === 'function') window.__syncParticipationProjectFilter(values);
+      if (typeof window.__syncPaymentRequestFilter === 'function') window.__syncPaymentRequestFilter(values);
     }
 
     masterChecks.forEach(function(cb) {

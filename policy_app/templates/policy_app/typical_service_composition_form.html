@@ -66,32 +66,76 @@
             </button>
           </div>
           <div class="proposal-service-text-toolbar__group">
-            <div class="proposal-service-text-toolbar__color-combo">
+            <div class="proposal-service-text-toolbar__color-combo" data-color-combo="color">
               <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn proposal-service-text-toolbar__btn--combo" data-apply-color="color" aria-label="Применить цвет текста" title="Применить цвет текста">
                 <i class="bi bi-palette"></i>
               </button>
-              <label class="proposal-service-text-toolbar__color" title="Выбрать цвет текста" aria-label="Выбрать цвет текста">
-                <input type="color" value="#000000" data-color-source="color">
+              <button type="button" class="proposal-service-text-toolbar__color" data-color-toggle="color" title="Выбрать цвет текста" aria-label="Выбрать цвет текста" aria-expanded="false">
                 <span class="proposal-service-text-toolbar__color-swatch" data-color-preview="color" style="background:#000000;"></span>
-              </label>
+              </button>
+              <div class="proposal-service-text-toolbar__color-popover" data-color-popover="color" hidden>
+                <div class="proposal-service-text-toolbar__color-sv" data-color-sv="color">
+                  <span class="proposal-service-text-toolbar__color-sv-handle" data-color-sv-handle="color"></span>
+                </div>
+                <div class="proposal-service-text-toolbar__color-hue" data-color-hue="color" role="slider" tabindex="0" aria-label="Оттенок цвета текста" aria-valuemin="0" aria-valuemax="360" aria-valuenow="0">
+                  <span class="proposal-service-text-toolbar__color-hue-handle" data-color-hue-handle="color"></span>
+                </div>
+                <div class="proposal-service-text-toolbar__color-rgb">
+                  <label><input type="number" min="0" max="255" value="0" data-color-rgb="color" data-color-channel="r"><span>R</span></label>
+                  <label><input type="number" min="0" max="255" value="0" data-color-rgb="color" data-color-channel="g"><span>G</span></label>
+                  <label><input type="number" min="0" max="255" value="0" data-color-rgb="color" data-color-channel="b"><span>B</span></label>
+                </div>
+                <div class="proposal-service-text-toolbar__color-actions">
+                  <button type="button" class="btn btn-primary btn-sm flex-grow-1" data-color-commit="color">Применить</button>
+                  <button type="button" class="btn btn-outline-secondary btn-sm proposal-service-text-toolbar__color-reset" data-color-reset="color" title="Сбросить цвет текста" aria-label="Сбросить цвет текста">
+                    <i class="bi bi-arrow-counterclockwise"></i>
+                  </button>
+                </div>
+              </div>
             </div>
-            <div class="proposal-service-text-toolbar__color-combo">
+            <div class="proposal-service-text-toolbar__color-combo" data-color-combo="background">
               <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn proposal-service-text-toolbar__btn--combo" data-apply-color="background" aria-label="Применить цвет фона" title="Применить цвет фона">
                 <i class="bi bi-paint-bucket"></i>
               </button>
-              <label class="proposal-service-text-toolbar__color" title="Выбрать цвет фона" aria-label="Выбрать цвет фона">
-                <input type="color" value="#ffffff" data-color-source="background">
+              <button type="button" class="proposal-service-text-toolbar__color" data-color-toggle="background" title="Выбрать цвет фона" aria-label="Выбрать цвет фона" aria-expanded="false">
                 <span class="proposal-service-text-toolbar__color-swatch" data-color-preview="background" style="background:#ffffff;"></span>
-              </label>
+              </button>
+              <div class="proposal-service-text-toolbar__color-popover" data-color-popover="background" hidden>
+                <div class="proposal-service-text-toolbar__color-sv" data-color-sv="background">
+                  <span class="proposal-service-text-toolbar__color-sv-handle" data-color-sv-handle="background"></span>
+                </div>
+                <div class="proposal-service-text-toolbar__color-hue" data-color-hue="background" role="slider" tabindex="0" aria-label="Оттенок цвета фона" aria-valuemin="0" aria-valuemax="360" aria-valuenow="0">
+                  <span class="proposal-service-text-toolbar__color-hue-handle" data-color-hue-handle="background"></span>
+                </div>
+                <div class="proposal-service-text-toolbar__color-rgb">
+                  <label><input type="number" min="0" max="255" value="255" data-color-rgb="background" data-color-channel="r"><span>R</span></label>
+                  <label><input type="number" min="0" max="255" value="255" data-color-rgb="background" data-color-channel="g"><span>G</span></label>
+                  <label><input type="number" min="0" max="255" value="255" data-color-rgb="background" data-color-channel="b"><span>B</span></label>
+                </div>
+                <div class="proposal-service-text-toolbar__color-actions">
+                  <button type="button" class="btn btn-primary btn-sm flex-grow-1" data-color-commit="background">Применить</button>
+                  <button type="button" class="btn btn-outline-secondary btn-sm proposal-service-text-toolbar__color-reset" data-color-reset="background" title="Сбросить цвет фона" aria-label="Сбросить цвет фона">
+                    <i class="bi bi-arrow-counterclockwise"></i>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
           <div class="proposal-service-text-toolbar__group">
             <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-list="ordered" aria-label="Нумерованный список">
-              <img src="{% static 'core/icons/list-1-2.svg' %}" alt="" class="proposal-service-text-toolbar__icon">
+              <img src="{% static 'core/icons/list-number.svg' %}" alt="" class="proposal-service-text-toolbar__icon">
             </button>
-            <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-list="bullet" aria-label="Маркированный список">
-              <img src="{% static 'core/icons/list-ul.svg' %}" alt="" class="proposal-service-text-toolbar__icon">
-            </button>
+            <div class="proposal-service-text-toolbar__list-split dropdown" data-list-marker-control>
+              <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn proposal-service-text-toolbar__btn--list-primary" data-list="bullet" data-list-marker-primary aria-label="Маркированный список" title="Маркированный список">
+                <img src="{% static 'core/icons/list-ul2.svg' %}" alt="" class="proposal-service-text-toolbar__icon" data-list-marker-icon>
+              </button>
+              <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn proposal-service-text-toolbar__btn--list-toggle dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Выбрать тип маркера"></button>
+              <ul class="dropdown-menu proposal-service-text-toolbar__list-menu">
+                <li><button type="button" class="dropdown-item" data-list="bullet" data-list-marker-option><span class="proposal-service-text-toolbar__marker-preview">•</span>Точка</button></li>
+                <li><button type="button" class="dropdown-item" data-list="dash" data-list-marker-option><span class="proposal-service-text-toolbar__marker-preview">-</span>Дефис</button></li>
+                <li><button type="button" class="dropdown-item" data-list="check" data-list-marker-option><span class="proposal-service-text-toolbar__marker-preview">✓</span>Галочка</button></li>
+              </ul>
+            </div>
           </div>
           <div class="proposal-service-text-toolbar__group">
             <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn" data-align="justify" aria-label="По ширине">
@@ -236,8 +280,7 @@
   function updateColorPreviews() {
     toolbar.querySelectorAll('[data-color-preview]').forEach(function (preview) {
       var kind = preview.dataset.colorPreview;
-      var input = toolbar.querySelector('[data-color-source="' + kind + '"]');
-      if (input) preview.style.backgroundColor = input.value || '#000000';
+      preview.style.backgroundColor = getAppliedToolbarColor(kind);
     });
   }
 
@@ -257,10 +300,274 @@
     }).join('');
   }
 
+  var COLOR_DEFAULTS = {
+    color: '#000000',
+    background: '#ffffff'
+  };
+
+  function getColorDefault(kind) {
+    return COLOR_DEFAULTS[kind] || '#000000';
+  }
+
+  function getColorDatasetKey(kind, state) {
+    return state + (kind === 'background' ? 'BackgroundColor' : 'TextColor');
+  }
+
+  function clampColorChannel(value) {
+    return Math.max(0, Math.min(255, Math.round(Number(value) || 0)));
+  }
+
+  function clampUnit(value) {
+    return Math.max(0, Math.min(1, Number(value) || 0));
+  }
+
+  function hexToRgb(value) {
+    var hex = normalizeToolbarColor(value, '#000000').slice(1);
+    return {
+      r: parseInt(hex.slice(0, 2), 16) || 0,
+      g: parseInt(hex.slice(2, 4), 16) || 0,
+      b: parseInt(hex.slice(4, 6), 16) || 0
+    };
+  }
+
+  function rgbToHex(rgb) {
+    return '#' + ['r', 'g', 'b'].map(function (channel) {
+      return clampColorChannel(rgb[channel]).toString(16).padStart(2, '0');
+    }).join('');
+  }
+
+  function rgbToHsv(rgb) {
+    var r = clampColorChannel(rgb.r) / 255;
+    var g = clampColorChannel(rgb.g) / 255;
+    var b = clampColorChannel(rgb.b) / 255;
+    var max = Math.max(r, g, b);
+    var min = Math.min(r, g, b);
+    var delta = max - min;
+    var hue = 0;
+    if (delta) {
+      if (max === r) hue = ((g - b) / delta) % 6;
+      else if (max === g) hue = (b - r) / delta + 2;
+      else hue = (r - g) / delta + 4;
+      hue = Math.round(hue * 60);
+      if (hue < 0) hue += 360;
+    }
+    return {
+      h: hue,
+      s: max === 0 ? 0 : delta / max,
+      v: max
+    };
+  }
+
+  function hsvToRgb(hsv) {
+    var h = ((Number(hsv.h) || 0) % 360 + 360) % 360;
+    var s = clampUnit(hsv.s);
+    var v = clampUnit(hsv.v);
+    var c = v * s;
+    var x = c * (1 - Math.abs((h / 60) % 2 - 1));
+    var m = v - c;
+    var r1 = 0;
+    var g1 = 0;
+    var b1 = 0;
+    if (h < 60) {
+      r1 = c;
+      g1 = x;
+    } else if (h < 120) {
+      r1 = x;
+      g1 = c;
+    } else if (h < 180) {
+      g1 = c;
+      b1 = x;
+    } else if (h < 240) {
+      g1 = x;
+      b1 = c;
+    } else if (h < 300) {
+      r1 = x;
+      b1 = c;
+    } else {
+      r1 = c;
+      b1 = x;
+    }
+    return {
+      r: (r1 + m) * 255,
+      g: (g1 + m) * 255,
+      b: (b1 + m) * 255
+    };
+  }
+
+  function getPendingToolbarColor(kind) {
+    var pendingKey = getColorDatasetKey(kind, 'pending');
+    return normalizeToolbarColor(toolbar.dataset[pendingKey], getAppliedToolbarColor(kind));
+  }
+
+  function updateColorPickerControls(kind, value) {
+    var rgb = hexToRgb(value);
+    var hsv = rgbToHsv(rgb);
+    var previousHue = Number(toolbar.dataset[getColorDatasetKey(kind, 'hue')]);
+    var hue = hsv.s === 0 && Number.isFinite(previousHue) ? previousHue : hsv.h;
+    toolbar.dataset[getColorDatasetKey(kind, 'hue')] = String(hue);
+
+    var hueInput = toolbar.querySelector('[data-color-hue="' + kind + '"]');
+    if (hueInput) {
+      hueInput.dataset.colorHueValue = String(Math.round(hue));
+      hueInput.setAttribute('aria-valuenow', String(Math.round(hue)));
+    }
+
+    var hueHandle = toolbar.querySelector('[data-color-hue-handle="' + kind + '"]');
+    if (hueHandle) hueHandle.style.left = (hue / 360 * 100) + '%';
+
+    toolbar.querySelectorAll('[data-color-rgb="' + kind + '"]').forEach(function (input) {
+      input.value = String(clampColorChannel(rgb[input.dataset.colorChannel]));
+    });
+
+    var sv = toolbar.querySelector('[data-color-sv="' + kind + '"]');
+    if (sv) sv.style.setProperty('--proposal-color-picker-hue', String(Math.round(hue)));
+
+    var handle = toolbar.querySelector('[data-color-sv-handle="' + kind + '"]');
+    if (handle) {
+      handle.style.left = (hsv.s * 100) + '%';
+      handle.style.top = ((1 - hsv.v) * 100) + '%';
+    }
+  }
+
+  function setToolbarColor(kind, value, commit) {
+    var normalized = normalizeToolbarColor(value, getColorDefault(kind));
+    toolbar.dataset[getColorDatasetKey(kind, 'pending')] = normalized;
+    if (commit) {
+      toolbar.dataset[getColorDatasetKey(kind, 'applied')] = normalized;
+    }
+    updateColorPickerControls(kind, normalized);
+    updateColorPreviews();
+    return normalized;
+  }
+
+  function getAppliedToolbarColor(kind) {
+    var key = getColorDatasetKey(kind, 'applied');
+    return normalizeToolbarColor(toolbar.dataset[key], getColorDefault(kind));
+  }
+
+  function closeColorPopovers(exceptKind) {
+    toolbar.querySelectorAll('[data-color-popover]').forEach(function (popover) {
+      var kind = popover.dataset.colorPopover;
+      var keepOpen = exceptKind && kind === exceptKind;
+      popover.hidden = !keepOpen;
+      var toggle = toolbar.querySelector('[data-color-toggle="' + kind + '"]');
+      if (toggle) toggle.setAttribute('aria-expanded', keepOpen ? 'true' : 'false');
+    });
+  }
+
+  function openColorPopover(kind) {
+    var popover = toolbar.querySelector('[data-color-popover="' + kind + '"]');
+    if (!popover) return;
+    var shouldOpen = popover.hidden;
+    closeColorPopovers(shouldOpen ? kind : null);
+    if (!shouldOpen) return;
+    setToolbarColor(kind, getAppliedToolbarColor(kind), false);
+  }
+
+  function commitToolbarColor(kind) {
+    setToolbarColor(kind, getPendingToolbarColor(kind), true);
+    closeColorPopovers();
+  }
+
+  function resetToolbarColor(kind) {
+    setToolbarColor(kind, getColorDefault(kind), false);
+  }
+
+  function initializeToolbarColors() {
+    ['color', 'background'].forEach(function (kind) {
+      setToolbarColor(kind, getColorDefault(kind), true);
+    });
+  }
+
+  function updateColorFromSv(kind, event) {
+    var sv = toolbar.querySelector('[data-color-sv="' + kind + '"]');
+    if (!sv) return;
+    var rect = sv.getBoundingClientRect();
+    var saturation = clampUnit((event.clientX - rect.left) / Math.max(1, rect.width));
+    var value = clampUnit(1 - ((event.clientY - rect.top) / Math.max(1, rect.height)));
+    var currentHsv = rgbToHsv(hexToRgb(getPendingToolbarColor(kind)));
+    var hue = Number(toolbar.dataset[getColorDatasetKey(kind, 'hue')]);
+    if (!Number.isFinite(hue)) hue = currentHsv.h;
+    setToolbarColor(kind, rgbToHex(hsvToRgb({ h: hue, s: saturation, v: value })), false);
+  }
+
+  function updateColorFromHue(kind, hue) {
+    var currentHsv = rgbToHsv(hexToRgb(getPendingToolbarColor(kind)));
+    var saturation = currentHsv.s > 0.01 ? currentHsv.s : 1;
+    var value = currentHsv.v > 0.01 ? currentHsv.v : 1;
+    setToolbarColor(kind, rgbToHex(hsvToRgb({
+      h: Number(hue) || 0,
+      s: saturation,
+      v: value
+    })), false);
+  }
+
+  function updateColorFromHueStrip(kind, event) {
+    var strip = toolbar.querySelector('[data-color-hue="' + kind + '"]');
+    if (!strip) return;
+    var rect = strip.getBoundingClientRect();
+    var ratio = clampUnit((event.clientX - rect.left) / Math.max(1, rect.width));
+    updateColorFromHue(kind, ratio * 360);
+  }
+
+  function updateColorFromRgb(kind) {
+    var rgb = { r: 0, g: 0, b: 0 };
+    toolbar.querySelectorAll('[data-color-rgb="' + kind + '"]').forEach(function (input) {
+      rgb[input.dataset.colorChannel] = clampColorChannel(input.value);
+    });
+    setToolbarColor(kind, rgbToHex(rgb), false);
+  }
+
   function setToolbarButtonActive(button, isActive) {
     if (!button) return;
     button.classList.toggle('is-active', !!isActive);
     button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  }
+
+  var LIST_MARKER_TYPES = ['bullet', 'dash', 'check'];
+  var LIST_MARKER_LABELS = {
+    bullet: 'Точка',
+    dash: 'Дефис',
+    check: 'Галочка'
+  };
+  var LIST_MARKER_ICON_URLS = {
+    bullet: '/static/core/icons/list-ul2.svg',
+    dash: '/static/core/icons/list-dash.svg',
+    check: '/static/core/icons/list-check.svg'
+  };
+
+  function isListMarkerType(value) {
+    return LIST_MARKER_TYPES.indexOf(String(value || '').trim()) !== -1;
+  }
+
+  function renderListMarkerPrimaryIcon(primary, activeMarker) {
+    var iconSrc = LIST_MARKER_ICON_URLS[activeMarker] || LIST_MARKER_ICON_URLS.bullet;
+    var icon = primary.querySelector('[data-list-marker-icon]');
+    if (!icon || icon.tagName !== 'IMG') {
+      primary.innerHTML = '<img src="' + iconSrc + '" alt="" class="proposal-service-text-toolbar__icon" data-list-marker-icon>';
+    } else {
+      icon.src = iconSrc;
+      icon.className = 'proposal-service-text-toolbar__icon';
+    }
+  }
+
+  function updateListMarkerControl(listType) {
+    var activeMarker = isListMarkerType(listType)
+      ? String(listType)
+      : (isListMarkerType(toolbar.dataset.listMarker) ? toolbar.dataset.listMarker : 'bullet');
+    toolbar.dataset.listMarker = activeMarker;
+    var primary = toolbar.querySelector('[data-list-marker-primary]');
+    if (primary) {
+      primary.dataset.list = activeMarker;
+      primary.setAttribute('aria-label', LIST_MARKER_LABELS[activeMarker] || 'Маркированный список');
+      primary.setAttribute('title', LIST_MARKER_LABELS[activeMarker] || 'Маркированный список');
+      renderListMarkerPrimaryIcon(primary, activeMarker);
+    }
+    toolbar.querySelectorAll('[data-list-marker-option]').forEach(function (option) {
+      var isSelected = option.dataset.list === activeMarker;
+      option.classList.toggle('active', isSelected);
+      option.setAttribute('aria-current', isSelected ? 'true' : 'false');
+    });
   }
 
   function syncToolbarState() {
@@ -277,18 +584,16 @@
     toolbar.querySelectorAll('button[data-format]').forEach(function (button) {
       setToolbarButtonActive(button, !!format[button.dataset.format]);
     });
-    toolbar.querySelectorAll('button[data-list]').forEach(function (button) {
-      setToolbarButtonActive(button, (format.list || '') === button.dataset.list);
+    var currentList = String(format.list || '');
+    updateListMarkerControl(currentList);
+    toolbar.querySelectorAll('button[data-list]:not([data-list-marker-option])').forEach(function (button) {
+      setToolbarButtonActive(button, currentList === button.dataset.list);
     });
     toolbar.querySelectorAll('button[data-align]').forEach(function (button) {
       var align = format.align || 'left';
       setToolbarButtonActive(button, align === button.dataset.align);
     });
 
-    var colorInput = toolbar.querySelector('[data-color-source="color"]');
-    var backgroundInput = toolbar.querySelector('[data-color-source="background"]');
-    if (colorInput) colorInput.value = normalizeToolbarColor(format.color, '#000000');
-    if (backgroundInput) backgroundInput.value = normalizeToolbarColor(format.background, '#ffffff');
     updateColorPreviews();
   }
 
@@ -356,6 +661,24 @@
   });
 
   toolbar.addEventListener('click', function (event) {
+    var colorToggle = event.target.closest('button[data-color-toggle]');
+    if (colorToggle && toolbar.contains(colorToggle)) {
+      event.preventDefault();
+      openColorPopover(colorToggle.dataset.colorToggle);
+      return;
+    }
+    var colorCommit = event.target.closest('button[data-color-commit]');
+    if (colorCommit && toolbar.contains(colorCommit)) {
+      event.preventDefault();
+      commitToolbarColor(colorCommit.dataset.colorCommit);
+      return;
+    }
+    var colorReset = event.target.closest('button[data-color-reset]');
+    if (colorReset && toolbar.contains(colorReset)) {
+      event.preventDefault();
+      resetToolbarColor(colorReset.dataset.colorReset);
+      return;
+    }
     var button = event.target.closest('button[data-format], button[data-list], button[data-action], button[data-align], button[data-apply-color]');
     if (!button || !activeQuill) return;
     event.preventDefault();
@@ -372,7 +695,9 @@
     if (button.dataset.list) {
       var listType = button.dataset.list;
       var currentList = activeQuill.getFormat().list || false;
-      activeQuill.format('list', currentList === listType ? false : listType);
+      var toggleCurrent = !button.dataset.listMarkerOption && currentList === listType;
+      if (isListMarkerType(listType)) updateListMarkerControl(listType);
+      activeQuill.format('list', toggleCurrent ? false : listType);
       queueSyncState();
       syncToolbarState();
       return;
@@ -385,8 +710,7 @@
       return;
     }
     if (button.dataset.applyColor) {
-      var colorInput = toolbar.querySelector('[data-color-source="' + button.dataset.applyColor + '"]');
-      activeQuill.format(button.dataset.applyColor, colorInput ? colorInput.value : false);
+      activeQuill.format(button.dataset.applyColor, getAppliedToolbarColor(button.dataset.applyColor));
       queueSyncState();
       syncToolbarState();
       return;
@@ -418,11 +742,63 @@
       syncToolbarState();
       return;
     }
-    var colorInput = event.target.closest('input[data-color-source]');
-    if (colorInput) {
-      updateColorPreviews();
-      queueSyncState();
+  });
+
+  toolbar.addEventListener('input', function (event) {
+    var rgbInput = event.target.closest('[data-color-rgb]');
+    if (rgbInput && toolbar.contains(rgbInput)) {
+      updateColorFromRgb(rgbInput.dataset.colorRgb);
     }
+  });
+
+  var colorDragKind = null;
+  toolbar.addEventListener('pointerdown', function (event) {
+    var hue = event.target.closest('[data-color-hue]');
+    if (hue && toolbar.contains(hue)) {
+      event.preventDefault();
+      colorDragKind = 'hue:' + hue.dataset.colorHue;
+      updateColorFromHueStrip(hue.dataset.colorHue, event);
+      return;
+    }
+    var sv = event.target.closest('[data-color-sv]');
+    if (!sv || !toolbar.contains(sv)) return;
+    event.preventDefault();
+    colorDragKind = sv.dataset.colorSv;
+    updateColorFromSv(colorDragKind, event);
+  });
+
+  document.addEventListener('pointermove', function (event) {
+    if (!colorDragKind) return;
+    event.preventDefault();
+    if (colorDragKind.indexOf('hue:') === 0) {
+      updateColorFromHueStrip(colorDragKind.slice(4), event);
+      return;
+    }
+    updateColorFromSv(colorDragKind, event);
+  });
+
+  document.addEventListener('pointerup', function () {
+    colorDragKind = null;
+  });
+
+  document.addEventListener('click', function (event) {
+    if (!toolbar.contains(event.target)) closeColorPopovers();
+  });
+
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') {
+      closeColorPopovers();
+      return;
+    }
+    var hue = event.target.closest && event.target.closest('[data-color-hue]');
+    if (!hue || !toolbar.contains(hue)) return;
+    var delta = event.key === 'ArrowRight' || event.key === 'ArrowUp'
+      ? 5
+      : (event.key === 'ArrowLeft' || event.key === 'ArrowDown' ? -5 : 0);
+    if (!delta) return;
+    event.preventDefault();
+    var current = Number(hue.dataset.colorHueValue) || 0;
+    updateColorFromHue(hue.dataset.colorHue, current + delta);
   });
 
   if (formEl) {
@@ -473,7 +849,7 @@
     editorEl.addEventListener('click', function () {
       activeQuill.focus();
     });
-    updateColorPreviews();
+    initializeToolbarColors();
     syncState();
     syncToolbarState();
   });

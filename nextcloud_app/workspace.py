@@ -12,7 +12,7 @@ from core.cloud_paths import (
     cloud_year_folder,
 )
 from core.cloud_storage import get_nextcloud_root_path, get_primary_cloud_storage_label
-from policy_app.models import DIRECTION_DIRECTOR_GROUP, PROJECTS_HEAD_GROUP
+from policy_app.models import DEPARTMENT_HEAD_GROUP, DIRECTION_DIRECTOR_GROUP, PROJECTS_HEAD_GROUP
 from users_app.models import Employee
 from yandexdisk_app.workspace import (
     DEFAULT_SOURCE_DATA_FOLDER,
@@ -43,6 +43,7 @@ _LINK_RETRY_WAIT_MAX = 35.0
 
 _HEARTBEAT_INTERVAL = 2.0
 _PROJECT_MANAGER_ROLES = (PROJECTS_HEAD_GROUP, DIRECTION_DIRECTOR_GROUP)
+_UNSET_EXPERTISE_DIRECTION_LABEL = "не установлено"
 
 
 def _heartbeat_sleep(seconds, progress, total):
@@ -475,7 +476,7 @@ def grant_project_workspace_editor_access_for_performers(
     if not client.is_configured:
         raise NextcloudApiError("Nextcloud не настроен для предоставления доступа к рабочему пространству проекта.")
 
-    performers = (
+    performers = list(
         Performer.objects
         .select_related("employee", "employee__user", "registration")
         .filter(
@@ -488,6 +489,7 @@ def grant_project_workspace_editor_access_for_performers(
         .exclude(employee__user__email="")
         .order_by("registration_id", "employee__user_id", "id")
     )
+    direction_head_by_employee_id = _direction_head_by_performer_employee(performers)
     workspace_by_project_id = {
         workspace.project_id: workspace
         for workspace in ProjectWorkspace.objects.filter(
@@ -501,23 +503,28 @@ def grant_project_workspace_editor_access_for_performers(
         workspace = workspace_by_project_id.get(performer.registration_id)
         if not workspace or not workspace.disk_path:
             continue
-        share_key = (workspace.project_id, performer.employee.user_id)
-        if share_key in seen:
-            continue
-        seen.add(share_key)
-        user = performer.employee.user
-        if not _should_manage_in_nextcloud(user):
-            continue
-        link = _ensure_nextcloud_link_for_user(user, client=client)
-        if not link or not link.nextcloud_user_id:
-            raise NextcloudApiError("Не удалось определить Nextcloud-пользователя исполнителя проекта.")
-        client.ensure_user_share(
-            client.username,
-            workspace.disk_path,
-            link.nextcloud_user_id,
-            permissions=NextcloudApiClient.EDITOR_PERMISSIONS,
-        )
-        granted += 1
+        access_users = [performer.employee.user]
+        direction_head = direction_head_by_employee_id.get(performer.employee_id)
+        if direction_head and direction_head.user_id:
+            access_users.append(direction_head.user)
+
+        for user in access_users:
+            share_key = (workspace.project_id, user.pk)
+            if share_key in seen:
+                continue
+            seen.add(share_key)
+            if not _should_manage_in_nextcloud(user):
+                continue
+            link = _ensure_nextcloud_link_for_user(user, client=client)
+            if not link or not link.nextcloud_user_id:
+                raise NextcloudApiError("Не удалось определить Nextcloud-пользователя участника проекта.")
+            client.ensure_user_share(
+                client.username,
+                workspace.disk_path,
+                link.nextcloud_user_id,
+                permissions=NextcloudApiClient.EDITOR_PERMISSIONS,
+            )
+            granted += 1
     return granted
 
 
@@ -539,15 +546,76 @@ def _confirmed_project_performer_users(project):
         .exclude(employee__user__email="")
         .order_by("employee__user_id", "id")
     )
+    direction_head_by_employee_id = _direction_head_by_performer_employee(performers)
     for performer in performers:
-        user = performer.employee.user
-        if not _should_manage_in_nextcloud(user):
-            continue
-        if user.pk in seen_user_ids:
-            continue
-        seen_user_ids.add(user.pk)
-        users.append(user)
+        access_users = [performer.employee.user]
+        direction_head = direction_head_by_employee_id.get(performer.employee_id)
+        if direction_head and direction_head.user_id:
+            access_users.append(direction_head.user)
+        for user in access_users:
+            if not _should_manage_in_nextcloud(user):
+                continue
+            if user.pk in seen_user_ids:
+                continue
+            seen_user_ids.add(user.pk)
+            users.append(user)
     return users
+
+
+def _direction_head_by_performer_employee(performers):
+    from experts_app.models import ExpertProfile
+
+    performer_list = list(performers)
+    employee_ids = {performer.employee_id for performer in performer_list if performer.employee_id}
+    if not employee_ids:
+        return {}
+
+    profile_direction_by_employee_id = {}
+    direction_ids = set()
+    profiles = (
+        ExpertProfile.objects
+        .select_related("expertise_direction")
+        .filter(employee_id__in=employee_ids, expertise_direction_id__isnull=False)
+    )
+    for profile in profiles:
+        if _is_unset_expertise_direction(profile.expertise_direction):
+            continue
+        profile_direction_by_employee_id[profile.employee_id] = profile.expertise_direction_id
+        direction_ids.add(profile.expertise_direction_id)
+    if not direction_ids:
+        return {}
+
+    head_by_direction_id = {}
+    heads = (
+        Employee.objects
+        .select_related("user")
+        .filter(
+            department_id__in=direction_ids,
+            role=DEPARTMENT_HEAD_GROUP,
+            user__is_active=True,
+            user__is_staff=True,
+        )
+        .exclude(user__email="")
+        .order_by("position", "id")
+    )
+    for head in heads:
+        head_by_direction_id.setdefault(head.department_id, head)
+
+    return {
+        employee_id: head_by_direction_id[direction_id]
+        for employee_id, direction_id in profile_direction_by_employee_id.items()
+        if direction_id in head_by_direction_id
+    }
+
+
+def _is_unset_expertise_direction(direction) -> bool:
+    if direction is None:
+        return True
+    labels = (
+        getattr(direction, "department_name", ""),
+        getattr(direction, "short_name", ""),
+    )
+    return any(str(label or "").strip().casefold() == _UNSET_EXPERTISE_DIRECTION_LABEL for label in labels)
 
 
 def _ensure_nextcloud_link_for_user(user, *, client: NextcloudApiClient, display_name: str | None = None):

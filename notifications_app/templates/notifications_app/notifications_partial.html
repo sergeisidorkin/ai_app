@@ -130,6 +130,15 @@
               </p>
               <p class="mb-0">С уважением,<br>IMC Montan AI</p>
               {% endif %}
+            {% elif notification.notification_type == "project_payment_request" %}
+              {% if card.content_html %}
+                {{ card.content_html|safe }}
+              {% else %}
+                <p class="mb-2">Добрый день, {{ card.recipient_name_lawer }}</p>
+                <p class="mb-2">Просим произвести оплату в {{ card.payment_date }}.</p>
+                <p class="mb-2" style="white-space: pre-line;">{{ card.payment_request }}</p>
+                <p class="mb-0">С уважением,<br>IMC Montan AI</p>
+              {% endif %}
             {% elif notification.notification_type == "employee_scan_sent" %}
               {% if card.content_html %}
                 {{ card.content_html|safe }}

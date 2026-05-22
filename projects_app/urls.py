@@ -45,6 +45,12 @@ urlpatterns = [
     path("projects/performers/request-confirmation/", views.participation_request, name="participation_request"),
     path("projects/performers/send-contract/", views.contract_request, name="contract_request"),
     path("projects/performers/request-info-approval/", views.info_request_approval, name="info_request_approval"),
+    path("projects/performers/payment-request/", views.payment_request, name="payment_request"),
+    path(
+        "projects/performers/payment-paid-toggle/",
+        views.payment_paid_toggle,
+        name="payment_paid_toggle",
+    ),
     path("projects/performers/create-workspace/", views.create_workspace, name="create_workspace"),
     path("projects/performers/create-source-data-workspace/", views.create_source_data_workspace, name="create_source_data_workspace"),
     path("projects/performers/source-data-target-folder/", views.source_data_target_folder_load, name="source_data_target_folder_load"),
