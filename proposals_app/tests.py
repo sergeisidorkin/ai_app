@@ -747,10 +747,14 @@ class ProposalDocumentGenerationTests(TestCase):
         scope_paragraphs = [paragraph for paragraph in generated_doc.paragraphs if paragraph.text in {"Первый пункт", "Второй пункт"}]
 
         self.assertEqual(len(scope_paragraphs), 2)
+        numbering_xml = generated_doc.part.numbering_part._element.xml
+        self.assertIn('w:rFonts w:ascii="Symbol"', numbering_xml)
+        self.assertIn("\uf0b7", numbering_xml)
+        self.assertNotIn("Segoe UI Symbol", numbering_xml)
         for paragraph in scope_paragraphs:
-            self.assertTrue(
-                "w:numPr" in paragraph._element.xml or "w:pStyle" in paragraph._element.xml
-            )
+            self.assertIn("w:numPr", paragraph._element.xml)
+            self.assertIn("w:pStyle", paragraph._element.xml)
+            self.assertIn("ListParagraph", paragraph._element.xml)
             self.assertIn('w:lang w:val="ru-RU"', paragraph._element.xml)
 
     def test_scope_of_work_preserves_custom_rich_list_markers(self):
@@ -785,10 +789,77 @@ class ProposalDocumentGenerationTests(TestCase):
 
         self.assertEqual(len(scope_paragraphs), 2)
         self.assertIn('w:lvlText w:val="-"', numbering_xml)
-        self.assertIn('w:lvlText w:val="✓"', numbering_xml)
+        self.assertIn('w:rFonts w:ascii="Wingdings"', numbering_xml)
+        self.assertNotIn("Segoe UI Symbol", numbering_xml)
         for paragraph in scope_paragraphs:
             self.assertIn("w:numPr", paragraph._element.xml)
+            self.assertIn("w:pStyle", paragraph._element.xml)
+            self.assertIn("ListParagraph", paragraph._element.xml)
             self.assertIn('w:lang w:val="ru-RU"', paragraph._element.xml)
+
+    def test_scope_of_work_preserves_ndash_list_marker(self):
+        template_doc = Document()
+        template_doc.add_paragraph("[[scope_of_work]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+
+        generated_bytes = process_template(
+            buffer.getvalue(),
+            {},
+            list_replacements={
+                "[[scope_of_work]]": [
+                    {"html": '<ul><li data-list="ndash">Пункт с тире</li></ul>'}
+                ]
+            },
+            default_language_code="ru-RU",
+        )
+
+        generated_doc = Document(BytesIO(generated_bytes))
+        numbering_xml = generated_doc.part.numbering_part._element.xml
+        paragraph = next(paragraph for paragraph in generated_doc.paragraphs if paragraph.text == "Пункт с тире")
+
+        self.assertIn("\u2013", numbering_xml)
+        self.assertIn("w:numPr", paragraph._element.xml)
+        self.assertIn("ListParagraph", paragraph._element.xml)
+
+    def test_scope_of_work_preserves_circle_and_square_list_markers(self):
+        template_doc = Document()
+        template_doc.add_paragraph("[[scope_of_work]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+
+        generated_bytes = process_template(
+            buffer.getvalue(),
+            {},
+            list_replacements={
+                "[[scope_of_work]]": [
+                    {
+                        "html": (
+                            '<ul><li data-list="circle">Пункт с кругом</li>'
+                            '<li data-list="square">Пункт с квадратом</li></ul>'
+                        )
+                    }
+                ]
+            },
+            default_language_code="ru-RU",
+        )
+
+        generated_doc = Document(BytesIO(generated_bytes))
+        numbering_xml = generated_doc.part.numbering_part._element.xml
+        paragraphs_by_text = {
+            paragraph.text: paragraph._element.xml
+            for paragraph in generated_doc.paragraphs
+            if paragraph.text in {"Пункт с кругом", "Пункт с квадратом"}
+        }
+
+        self.assertIn('w:lvlText w:val="o"', numbering_xml)
+        self.assertIn('w:rFonts w:ascii="Courier New"', numbering_xml)
+        self.assertIn("\uf0a7", numbering_xml)
+        self.assertIn('w:rFonts w:ascii="Wingdings"', numbering_xml)
+        self.assertEqual(len(paragraphs_by_text), 2)
+        for paragraph_xml in paragraphs_by_text.values():
+            self.assertIn("w:numPr", paragraph_xml)
+            self.assertIn("ListParagraph", paragraph_xml)
 
     def test_scope_of_work_preserves_quill_ordered_indent_levels(self):
         template_doc = Document()
@@ -862,10 +933,54 @@ class ProposalDocumentGenerationTests(TestCase):
         }
 
         self.assertIn('w:lvlText w:val="-"', numbering_xml)
-        self.assertIn('w:lvlText w:val="✓"', numbering_xml)
+        self.assertIn('w:rFonts w:ascii="Wingdings"', numbering_xml)
+        self.assertNotIn("Segoe UI Symbol", numbering_xml)
         self.assertIn('w:ilvl w:val="0"', paragraphs_by_text["Точка первого уровня"])
         self.assertIn('w:ilvl w:val="1"', paragraphs_by_text["Дефис второго уровня"])
         self.assertIn('w:ilvl w:val="2"', paragraphs_by_text["Галочка третьего уровня"])
+
+    def test_scope_of_work_multilevel_bullet_uses_word_default_marker_fonts(self):
+        template_doc = Document()
+        template_doc.add_paragraph("[[scope_of_work]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+
+        generated_bytes = process_template(
+            buffer.getvalue(),
+            {},
+            list_replacements={
+                "[[scope_of_work]]": [
+                    {
+                        "html": (
+                            '<ul><li data-list="bullet">Первый уровень</li>'
+                            '<li class="ql-indent-1" data-list="bullet">Второй уровень</li>'
+                            '<li class="ql-indent-2" data-list="bullet">Третий уровень</li></ul>'
+                        )
+                    }
+                ]
+            },
+            default_language_code="ru-RU",
+        )
+
+        generated_doc = Document(BytesIO(generated_bytes))
+        numbering_xml = generated_doc.part.numbering_part._element.xml
+        paragraphs_by_text = {
+            paragraph.text: paragraph._element.xml
+            for paragraph in generated_doc.paragraphs
+            if paragraph.text in {"Первый уровень", "Второй уровень", "Третий уровень"}
+        }
+
+        self.assertIn("\uf0b7", numbering_xml)
+        self.assertIn('w:lvlText w:val="o"', numbering_xml)
+        self.assertIn("\uf0a7", numbering_xml)
+        self.assertIn('w:rFonts w:ascii="Symbol"', numbering_xml)
+        self.assertIn('w:rFonts w:ascii="Courier New"', numbering_xml)
+        self.assertIn('w:rFonts w:ascii="Wingdings"', numbering_xml)
+        self.assertNotIn("\uf0e0", numbering_xml)
+        self.assertNotIn("\uf076", numbering_xml)
+        self.assertIn('w:ilvl w:val="0"', paragraphs_by_text["Первый уровень"])
+        self.assertIn('w:ilvl w:val="1"', paragraphs_by_text["Второй уровень"])
+        self.assertIn('w:ilvl w:val="2"', paragraphs_by_text["Третий уровень"])
 
     def test_scope_of_work_plain_text_fallback_remains_plain_paragraphs(self):
         proposal = ProposalRegistration(
@@ -3469,6 +3584,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
                 "status": ProposalRegistration.ProposalStatus.FINAL,
                 "year": 2026,
+                "service_sections_payload": '[{"service_name":"Раздел 1","code":"S-101"}]',
                 "service_sections_editor_state": (
                     '[{"code":"S-101","service_name":"Раздел 1","html":"<p><u>Этап 1</u></p>",'
                     '"plain_text":"Этап 1"}]'
@@ -3482,6 +3598,12 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(
             proposal.service_sections_editor_state,
             [
+                {
+                    "code": "DSC",
+                    "service_name": "Описание продукта",
+                    "html": "",
+                    "plain_text": "",
+                },
                 {
                     "code": "S-101",
                     "service_name": "Раздел 1",
@@ -3529,6 +3651,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
                 "status": ProposalRegistration.ProposalStatus.FINAL,
                 "year": 2026,
+                "service_sections_payload": '[{"service_name":"Раздел 1","code":"S-101"}]',
                 "service_sections_editor_state": json.dumps(editor_state, ensure_ascii=False),
             }
         )
@@ -3536,7 +3659,8 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertTrue(form.is_valid(), form.errors)
         proposal = form.save()
 
-        self.assertEqual(proposal.service_sections_editor_state, editor_state)
+        self.assertEqual(proposal.service_sections_editor_state[0]["code"], "DSC")
+        self.assertEqual(proposal.service_sections_editor_state[1:], editor_state)
 
     def test_service_sections_payload_saves_code_by_selected_service(self):
         group_member = GroupMember.objects.create(
@@ -3584,8 +3708,145 @@ class ProposalRegistrationFormTests(TestCase):
 
         self.assertEqual(
             proposal.service_sections_json,
-            [{"service_name": "Раздел 1", "code": "S-101"}],
+            [
+                {"service_name": "Описание продукта", "code": "DSC"},
+                {"service_name": "Раздел 1", "code": "S-101"},
+            ],
         )
+
+    def test_system_dsc_is_prepended_to_service_sections_and_removed_from_commercial_offer(self):
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        TypicalSection.objects.create(
+            product=product,
+            code="S-101",
+            short_name="service-1",
+            short_name_ru="Услуга 1",
+            name_en="Service 1",
+            name_ru="Раздел 1",
+            accounting_type="Раздел",
+            position=2,
+        )
+
+        form = ProposalRegistrationForm(
+            data={
+                "number": 3333,
+                "group_member": group_member.pk,
+                "type": product.pk,
+                "name": "Тестовое ТКП",
+                "kind": ProposalRegistration.ProposalKind.REGULAR,
+                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "year": 2026,
+                "service_sections_payload": '[{"service_name":"Раздел 1","code":"S-101"}]',
+                "service_sections_editor_state": (
+                    '[{"code":"DSC","service_name":"Описание продукта","html":"<p>Описание</p>",'
+                    '"plain_text":"Описание"}]'
+                ),
+                "commercial_offer_payload": json.dumps(
+                    [
+                        {
+                            "service_name": "Описание продукта",
+                            "is_system_dsc": True,
+                            "rate_eur_per_day": "10",
+                            "asset_day_counts": [1],
+                        },
+                        {"service_name": "Раздел 1", "rate_eur_per_day": "20", "asset_day_counts": [2]},
+                    ],
+                    ensure_ascii=False,
+                ),
+            }
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        proposal = form.save()
+        form.save_commercial_offers(proposal)
+
+        self.assertEqual(proposal.service_sections_json[0], {"service_name": "Описание продукта", "code": "DSC"})
+        self.assertEqual(proposal.service_sections_editor_state[0]["code"], "DSC")
+        self.assertEqual(proposal.service_sections_editor_state[0]["plain_text"], "Описание")
+        self.assertEqual([row.service_name for row in proposal.commercial_offers.all()], ["Раздел 1"])
+
+    def test_dsc_matching_does_not_drop_regular_section_with_same_name(self):
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        product = Product.objects.create(
+            short_name="DSC-NAME",
+            name_en="DSC name collision",
+            name_ru="Совпадение имени DSC",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        TypicalSection.objects.create(
+            product=product,
+            code="S-101",
+            short_name="service-1",
+            short_name_ru="Услуга 1",
+            name_en="Service 1",
+            name_ru="Описание продукта",
+            accounting_type="Раздел",
+            position=2,
+        )
+
+        form = ProposalRegistrationForm(
+            data={
+                "number": 3333,
+                "group_member": group_member.pk,
+                "type": product.pk,
+                "name": "Тестовое ТКП",
+                "kind": ProposalRegistration.ProposalKind.REGULAR,
+                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "year": 2026,
+                "service_sections_payload": json.dumps(
+                    [{"service_name": "Описание продукта", "code": "S-101"}],
+                    ensure_ascii=False,
+                ),
+                "commercial_offer_payload": json.dumps(
+                    [
+                        {
+                            "service_name": "Описание продукта",
+                            "code": "S-101",
+                            "rate_eur_per_day": "20",
+                            "asset_day_counts": [2],
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+            }
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        proposal = form.save()
+        form.save_commercial_offers(proposal)
+
+        self.assertEqual(
+            proposal.service_sections_json,
+            [
+                {"service_name": "Описание продукта", "code": "DSC"},
+                {"service_name": "Описание продукта", "code": "S-101"},
+            ],
+        )
+        self.assertEqual([row.service_name for row in proposal.commercial_offers.all()], ["Описание продукта"])
 
     def test_resolve_variables_for_new_registry_columns(self):
         country = OKSMCountry.objects.create(
@@ -5163,7 +5424,13 @@ class ProposalRegistrationFormTests(TestCase):
             [first_product.pk, second_product.pk],
         )
         self.assertEqual(proposal.ordered_product_ids, [first_product.pk, second_product.pk])
-        self.assertEqual(proposal.service_sections_json, [{"service_name": "Этап 2", "code": "2"}])
+        self.assertEqual(
+            proposal.service_sections_json,
+            [
+                {"service_name": "Описание продукта", "code": "DSC"},
+                {"service_name": "Этап 2", "code": "2"},
+            ],
+        )
         self.assertEqual(str(proposal.service_term_months), "2.0")
         self.assertEqual(str(proposal.final_report_term_weeks), "3.0")
         self.assertEqual(proposal.stage_payloads_json[-1]["product_id"], second_product.pk)
@@ -5418,8 +5685,28 @@ class ProposalRegistrationFormTests(TestCase):
         payload.setlist(
             "service_sections_editor_state",
             [
-                json.dumps([{"html": "<p>Scope 1</p>", "plain_text": "Scope 1"}], ensure_ascii=False),
-                json.dumps([{"html": "<p><strong>Scope 2</strong></p>", "plain_text": "Scope 2"}], ensure_ascii=False),
+                json.dumps(
+                    [
+                        {
+                            "code": "S1",
+                            "service_name": "Этап 1 услуга",
+                            "html": "<p>Scope 1</p>",
+                            "plain_text": "Scope 1",
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    [
+                        {
+                            "code": "S2",
+                            "service_name": "Этап 2 услуга",
+                            "html": "<p><strong>Scope 2</strong></p>",
+                            "plain_text": "Scope 2",
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
             ],
         )
         payload.setlist("service_customer_tz_editor_state", ["", ""])
@@ -6087,8 +6374,10 @@ class ProposalFormContextTests(TestCase):
         entries = response.context["typical_sections_json"][str(product.pk)]
         self.assertEqual(
             [item["name"] for item in entries],
-            ["Включенный раздел", "Исключенный раздел"],
+            ["Описание продукта", "Включенный раздел", "Исключенный раздел"],
         )
+        dsc_entry = next(item for item in entries if item["name"] == "Описание продукта")
+        self.assertTrue(dsc_entry["is_system_dsc"])
         excluded_entry = next(item for item in entries if item["name"] == "Исключенный раздел")
         self.assertTrue(excluded_entry["exclude_from_tkp_autofill"])
         included_entry = next(item for item in entries if item["name"] == "Включенный раздел")
@@ -6132,6 +6421,7 @@ class ProposalFormContextTests(TestCase):
         self.assertEqual(
             {item["name"]: item["accounting_type"] for item in entries},
             {
+                "Описание продукта": "Раздел",
                 "Раздел 1": "Раздел",
                 "Услуга 1": "Услуги",
             },
@@ -6271,7 +6561,11 @@ class ProposalFormContextTests(TestCase):
         response = self.client.get(reverse("proposal_form_create"))
 
         self.assertEqual(response.status_code, 200)
-        entry = response.context["typical_sections_json"][str(product.pk)][0]
+        entry = next(
+            item
+            for item in response.context["typical_sections_json"][str(product.pk)]
+            if item["name"] == section.name_ru
+        )
         self.assertEqual(entry["specialty_tariff_rate_eur"], "1000.00")
         self.assertEqual(entry["service_days_tkp"], 7)
         self.assertTrue(entry["specialty_is_director"])

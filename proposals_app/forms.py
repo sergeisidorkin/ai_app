@@ -11,7 +11,14 @@ from django.utils import timezone
 from classifiers_app.models import LegalEntityIdentifier, OKSMCountry, OKVCurrency, TerritorialDivision
 from contracts_app.forms import _ContractFileInput
 from group_app.models import GroupMember
-from policy_app.models import Product, TypicalSection
+from policy_app.models import (
+    Product,
+    SYSTEM_DSC_SECTION_CODE,
+    SYSTEM_DSC_SECTION_DEFAULTS,
+    TypicalSection,
+    ensure_system_dsc_section,
+    is_system_dsc_code,
+)
 
 
 sys.modules.setdefault("proposals_app.forms", sys.modules[__name__])
@@ -52,6 +59,28 @@ PROPOSAL_REPORT_LANGUAGE_ALIASES = {
     "chinese": "китайский",
     "китайский": "китайский",
 }
+
+
+def _proposal_is_dsc_payload_item(item, product=None):
+    if not isinstance(item, dict):
+        return False
+    if item.get("is_system_dsc") is True:
+        return True
+    if is_system_dsc_code(item.get("code")):
+        return True
+    return False
+
+
+def _proposal_system_dsc_payload(product):
+    if product is None:
+        return None
+    section = ensure_system_dsc_section(product)
+    if section is None:
+        return None
+    return {
+        "service_name": section.name_ru or SYSTEM_DSC_SECTION_DEFAULTS["name_ru"],
+        "code": section.code or SYSTEM_DSC_SECTION_CODE,
+    }
 
 NON_EDITABLE_PROPOSAL_STATUSES = {
     ProposalRegistration.ProposalStatus.SENT,
@@ -1307,6 +1336,24 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 payload = payload if isinstance(payload, dict) else {}
                 product_id = str(payload.get("product_id") or "")
                 product = product_map.get(product_id)
+                if product is not None:
+                    ensure_system_dsc_section(product)
+                service_sections_json = self._prepend_system_dsc_service_section(
+                    payload.get("service_sections_json") if isinstance(payload.get("service_sections_json"), list) else [],
+                    product,
+                )
+                service_sections_editor_state = self._normalize_editor_state_for_sections(
+                    payload.get("service_sections_editor_state")
+                    if isinstance(payload.get("service_sections_editor_state"), list)
+                    else [],
+                    product,
+                    service_sections_json,
+                )
+                commercial_offer_payload = [
+                    item
+                    for item in (payload.get("commercial_offer_payload") or [])
+                    if isinstance(item, dict) and not _proposal_is_dsc_payload_item(item, product)
+                ]
                 normalized_rows.append(
                     {
                         "rank": index,
@@ -1315,11 +1362,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                         "service_subtype": (getattr(product, "service_subtype_display", "") or "").strip(),
                         "product_id": product_id,
                         "product_short_label": (getattr(product, "short_name", "") or "").strip(),
-                        "service_sections_payload": json.dumps(payload.get("service_sections_json") or [], ensure_ascii=False),
-                        "service_sections_editor_state": json.dumps(
-                            payload.get("service_sections_editor_state") or [],
-                            ensure_ascii=False,
-                        ),
+                        "service_sections_payload": json.dumps(service_sections_json, ensure_ascii=False),
+                        "service_sections_editor_state": json.dumps(service_sections_editor_state, ensure_ascii=False),
                         "service_customer_tz_editor_state": json.dumps(
                             payload.get("service_customer_tz_editor_state") or {},
                             ensure_ascii=False,
@@ -1329,10 +1373,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                         "service_composition_customer_tz": str(payload.get("service_composition_customer_tz") or ""),
                         "service_composition_mode": str(payload.get("service_composition_mode") or "sections") or "sections",
                         "service_composition": str(payload.get("service_composition") or ""),
-                        "commercial_offer_payload": json.dumps(
-                            payload.get("commercial_offer_payload") or [],
-                            ensure_ascii=False,
-                        ),
+                        "commercial_offer_payload": json.dumps(commercial_offer_payload, ensure_ascii=False),
                         "commercial_totals_payload": json.dumps(
                             self._merge_stage_commercial_totals_payload(payload.get("commercial_totals_json") or {}),
                             ensure_ascii=False,
@@ -1373,7 +1414,22 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 return normalized_rows
 
         product = ordered_products[-1] if ordered_products else getattr(instance, "type", None)
-        commercial_rows = self._serialize_instance_commercial_rows()
+        if product is not None:
+            ensure_system_dsc_section(product)
+        service_sections_json = self._prepend_system_dsc_service_section(
+            instance.service_sections_json or [],
+            product,
+        )
+        service_sections_editor_state = self._normalize_editor_state_for_sections(
+            instance.service_sections_editor_state or [],
+            product,
+            service_sections_json,
+        )
+        commercial_rows = [
+            row
+            for row in self._serialize_instance_commercial_rows()
+            if not _proposal_is_dsc_payload_item(row, product)
+        ]
         return [
             {
                 "rank": 1,
@@ -1382,8 +1438,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 "service_subtype": (getattr(product, "service_subtype_display", "") or "").strip(),
                 "product_id": str(getattr(product, "pk", "") or ""),
                 "product_short_label": (getattr(product, "short_name", "") or "").strip(),
-                "service_sections_payload": json.dumps(instance.service_sections_json or [], ensure_ascii=False),
-                "service_sections_editor_state": json.dumps(instance.service_sections_editor_state or [], ensure_ascii=False),
+                "service_sections_payload": json.dumps(service_sections_json, ensure_ascii=False),
+                "service_sections_editor_state": json.dumps(service_sections_editor_state, ensure_ascii=False),
                 "service_customer_tz_editor_state": json.dumps(
                     instance.service_customer_tz_editor_state or {},
                     ensure_ascii=False,
@@ -1518,6 +1574,59 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             raise forms.ValidationError(f"Этап {row_index}: поле «{field_label}» передано в некорректном формате.")
         return value
 
+    def _prepend_system_dsc_service_section(self, items, product):
+        dsc_payload = _proposal_system_dsc_payload(product)
+        filtered = []
+        seen = set()
+        for item in items:
+            if _proposal_is_dsc_payload_item(item, product):
+                continue
+            key = (str(item.get("code") or "").strip() or str(item.get("service_name") or "").strip()).lower()
+            if key and key in seen:
+                continue
+            if key:
+                seen.add(key)
+            filtered.append(item)
+        return ([dsc_payload] if dsc_payload else []) + filtered
+
+    def _normalize_editor_state_for_sections(self, items, product, service_sections):
+        dsc_payload = _proposal_system_dsc_payload(product)
+        stored_by_key = {}
+        dsc_saved = {}
+        for item in items:
+            if _proposal_is_dsc_payload_item(item, product):
+                dsc_saved = item
+                continue
+            key = str(item.get("code") or item.get("service_name") or "").strip()
+            if key and key not in stored_by_key:
+                stored_by_key[key] = item
+
+        normalized = []
+        if dsc_payload:
+            normalized.append(
+                {
+                    "code": dsc_payload["code"],
+                    "service_name": dsc_payload["service_name"],
+                    "html": str(dsc_saved.get("html") or "").strip(),
+                    "plain_text": str(dsc_saved.get("plain_text") or "").strip(),
+                }
+            )
+
+        for section in service_sections:
+            if _proposal_is_dsc_payload_item(section, product):
+                continue
+            key = str(section.get("code") or section.get("service_name") or "").strip()
+            saved = stored_by_key.get(key) or stored_by_key.get(str(section.get("service_name") or "").strip()) or {}
+            normalized.append(
+                {
+                    "code": str(section.get("code") or "").strip(),
+                    "service_name": str(section.get("service_name") or "").strip(),
+                    "html": str(saved.get("html") or "").strip(),
+                    "plain_text": str(saved.get("plain_text") or "").strip(),
+                }
+            )
+        return normalized
+
     def _normalize_stage_service_sections(self, raw, *, row_index, product=None):
         items = self._load_stage_json(
             raw,
@@ -1543,12 +1652,12 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             normalized.append(
                 {
                     "service_name": service_name,
-                    "code": sections_by_name.get(service_name, "") or code,
+                    "code": code or sections_by_name.get(service_name, ""),
                 }
             )
-        return normalized
+        return self._prepend_system_dsc_service_section(normalized, product)
 
-    def _normalize_stage_editor_state(self, raw, *, row_index):
+    def _normalize_stage_editor_state(self, raw, *, row_index, product=None, service_sections=None):
         items = self._load_stage_json(
             raw,
             row_index=row_index,
@@ -1568,6 +1677,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     "plain_text": str(item.get("plain_text") or "").strip(),
                 }
             )
+        if product is not None and service_sections is not None:
+            return self._normalize_editor_state_for_sections(normalized, product, service_sections)
         return normalized
 
     def _normalize_stage_customer_tz_state(self, raw, *, row_index):
@@ -1595,7 +1706,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             raise forms.ValidationError(f"Сводный блок: поле «{field_label}» передано в некорректном формате.")
         return value
 
-    def _normalize_stage_commercial_rows(self, raw, *, row_index, totals_raw=""):
+    def _normalize_stage_commercial_rows(self, raw, *, row_index, totals_raw="", product=None):
         items = self._load_stage_json(
             raw,
             row_index=row_index,
@@ -1610,6 +1721,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         normalized = []
         for index, item in enumerate(items, start=1):
             if not isinstance(item, dict):
+                continue
+            if _proposal_is_dsc_payload_item(item, product):
                 continue
             specialist = str(item.get("specialist") or "").strip()
             job_title = str(item.get("job_title") or "").strip()
@@ -1736,6 +1849,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         normalized = []
         for index, item in enumerate(items, start=1):
             if not isinstance(item, dict):
+                continue
+            if _proposal_is_dsc_payload_item(item):
                 continue
             specialist = str(item.get("specialist") or "").strip()
             job_title = str(item.get("job_title") or "").strip()
@@ -2000,6 +2115,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             product = Product.objects.filter(pk=product_id).first()
             if product is None:
                 raise forms.ValidationError(f"Этап {rank}: выбранный продукт не найден.")
+            ensure_system_dsc_section(product)
             cleaned_product_ids.append(product_id)
 
             service_composition_mode = str(row.get("service_composition_mode") or "sections").strip() or "sections"
@@ -2048,20 +2164,25 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     field_label="Срок оплаты Итогового отчёта в календарных днях",
                 )
 
+            service_sections_json = self._normalize_stage_service_sections(
+                row.get("service_sections_payload"),
+                row_index=rank,
+                product=product,
+            )
+            service_sections_editor_state = self._normalize_stage_editor_state(
+                row.get("service_sections_editor_state"),
+                row_index=rank,
+                product=product,
+                service_sections=service_sections_json,
+            )
+
             stage_payloads.append(
                 {
                     "rank": rank,
                     "product": product,
                     "product_id": product_id,
-                    "service_sections_json": self._normalize_stage_service_sections(
-                        row.get("service_sections_payload"),
-                        row_index=rank,
-                        product=product,
-                    ),
-                    "service_sections_editor_state": self._normalize_stage_editor_state(
-                        row.get("service_sections_editor_state"),
-                        row_index=rank,
-                    ),
+                    "service_sections_json": service_sections_json,
+                    "service_sections_editor_state": service_sections_editor_state,
                     "service_customer_tz_editor_state": self._normalize_stage_customer_tz_state(
                         row.get("service_customer_tz_editor_state"),
                         row_index=rank,
@@ -2077,6 +2198,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                         row.get("commercial_offer_payload"),
                         row_index=rank,
                         totals_raw=row.get("commercial_totals_payload"),
+                        product=product,
                     ),
                     "commercial_totals_json": self._normalize_stage_commercial_totals(
                         row.get("commercial_totals_payload"),
@@ -2331,9 +2453,12 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
 
     def clean_service_sections_editor_state(self):
         raw = (self.cleaned_data.get("service_sections_editor_state") or "").strip()
+        type_obj = self.cleaned_data.get("type")
+        service_sections = getattr(self, "cleaned_service_sections", [])
         if not raw:
-            self.cleaned_service_sections_editor_state = []
-            return "[]"
+            normalized = self._normalize_editor_state_for_sections([], type_obj, service_sections) if type_obj else []
+            self.cleaned_service_sections_editor_state = normalized
+            return json.dumps(normalized, ensure_ascii=False)
         try:
             value = json.loads(raw)
         except (TypeError, ValueError, json.JSONDecodeError):
@@ -2352,6 +2477,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     "plain_text": str(item.get("plain_text") or "").strip(),
                 }
             )
+        if type_obj:
+            normalized = self._normalize_editor_state_for_sections(normalized, type_obj, service_sections)
         self.cleaned_service_sections_editor_state = normalized
         return json.dumps(normalized, ensure_ascii=False)
 
@@ -2383,9 +2510,22 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
 
     def clean_service_sections_payload(self):
         raw = (self.cleaned_data.get("service_sections_payload") or "").strip()
+        type_obj = self.cleaned_data.get("type")
         if not raw:
-            self.cleaned_service_sections = []
-            return "[]"
+            cleaned_rows = self._prepend_system_dsc_service_section([], type_obj)
+            for position, row in enumerate(cleaned_rows, start=1):
+                row["position"] = position
+            self.cleaned_service_sections = cleaned_rows
+            return json.dumps(
+                [
+                    {
+                        "service_name": item["service_name"],
+                        "code": item["code"],
+                    }
+                    for item in cleaned_rows
+                ],
+                ensure_ascii=False,
+            )
 
         try:
             rows = json.loads(raw)
@@ -2395,9 +2535,9 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         if not isinstance(rows, list):
             raise forms.ValidationError("Некорректный формат данных по составу услуг.")
 
-        type_obj = self.cleaned_data.get("type")
         sections_by_name = {}
         if type_obj:
+            ensure_system_dsc_section(type_obj)
             for section in TypicalSection.objects.filter(product=type_obj).order_by("position", "id"):
                 name_ru = (section.name_ru or "").strip()
                 if name_ru and name_ru not in sections_by_name:
@@ -2422,10 +2562,13 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 {
                     "position": len(cleaned_rows) + 1,
                     "service_name": service_name,
-                    "code": expected_code or code,
+                    "code": code or expected_code,
                 }
             )
 
+        cleaned_rows = self._prepend_system_dsc_service_section(cleaned_rows, type_obj)
+        for position, row in enumerate(cleaned_rows, start=1):
+            row["position"] = position
         self.cleaned_service_sections = cleaned_rows
         return json.dumps(
             [
@@ -2556,10 +2699,13 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             raise forms.ValidationError("Некорректный формат данных по коммерческому предложению.")
 
         travel_expenses_mode = self._extract_travel_expenses_mode_from_payload()
+        type_obj = self.cleaned_data.get("type")
         cleaned_rows = []
         for idx, row in enumerate(rows, start=1):
             if not isinstance(row, dict):
                 raise forms.ValidationError(f"Строка коммерческого предложения #{idx} передана в некорректном формате.")
+            if _proposal_is_dsc_payload_item(row, type_obj):
+                continue
 
             specialist = str(row.get("specialist") or "").strip()
             job_title = str(row.get("job_title") or "").strip()

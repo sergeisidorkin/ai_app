@@ -181,7 +181,7 @@ def _sections_for_asset(project, selected_asset, performer_qs=None):
         sections = []
         for perf in performer_qs:
             ts = getattr(perf, "typical_section", None)
-            if ts and ts.accounting_type == "Раздел" and ts.id not in ids:
+            if ts and not ts.is_system_dsc and ts.accounting_type == "Раздел" and ts.id not in ids:
                 ids.add(ts.id)
                 label = str(ts)
                 if ts.short_name_ru:
@@ -197,7 +197,7 @@ def _sections_for_asset(project, selected_asset, performer_qs=None):
         if perf_asset not in effective_set:
             continue
         ts = getattr(perf, "typical_section", None)
-        if ts and ts.accounting_type == "Раздел" and ts.id not in ids:
+        if ts and not ts.is_system_dsc and ts.accounting_type == "Раздел" and ts.id not in ids:
             ids.add(ts.id)
             label = str(ts)
             if ts.short_name_ru:
@@ -267,6 +267,8 @@ def _resolve_section(project: ProjectRegistration, section_id: Optional[str], as
         section = TypicalSection.objects.filter(
             pk=section_id,
             accounting_type="Раздел",
+        ).exclude(
+            Q(is_system=True) | Q(code__iexact="DSC")
         ).first()
         if section and project.has_product(section.product_id):
             return section
@@ -1494,6 +1496,7 @@ def _get_dh_expertise_section_ids(user, project):
         return set()
     return set(
         TypicalSection.objects.filter(expertise_dir_id=dept.expertise_id)
+        .exclude(Q(is_system=True) | Q(code__iexact="DSC"))
         .values_list("id", flat=True)
     )
 

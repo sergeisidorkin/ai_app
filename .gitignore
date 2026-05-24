@@ -21,3 +21,6 @@ deploy/mailu/*.pem
 office_addin_server/
 
 TPGR_Module_CP1251.bas
+
+# Local-only scripts
+generate_tkp.py

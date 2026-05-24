@@ -132,7 +132,10 @@
               <button type="button" class="btn btn-light btn-sm proposal-service-text-toolbar__btn proposal-service-text-toolbar__btn--list-toggle dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Выбрать тип маркера"></button>
               <ul class="dropdown-menu proposal-service-text-toolbar__list-menu">
                 <li><button type="button" class="dropdown-item" data-list="bullet" data-list-marker-option><span class="proposal-service-text-toolbar__marker-preview">•</span>Точка</button></li>
+                <li><button type="button" class="dropdown-item" data-list="circle" data-list-marker-option><span class="proposal-service-text-toolbar__marker-preview proposal-service-text-toolbar__marker-preview--circle">o</span>Круг</button></li>
+                <li><button type="button" class="dropdown-item" data-list="square" data-list-marker-option><span class="proposal-service-text-toolbar__marker-preview">▪</span>Квадрат</button></li>
                 <li><button type="button" class="dropdown-item" data-list="dash" data-list-marker-option><span class="proposal-service-text-toolbar__marker-preview">-</span>Дефис</button></li>
+                <li><button type="button" class="dropdown-item" data-list="ndash" data-list-marker-option><span class="proposal-service-text-toolbar__marker-preview">–</span>Тире</button></li>
                 <li><button type="button" class="dropdown-item" data-list="check" data-list-marker-option><span class="proposal-service-text-toolbar__marker-preview">✓</span>Галочка</button></li>
               </ul>
             </div>
@@ -524,15 +527,21 @@
     button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
   }
 
-  var LIST_MARKER_TYPES = ['bullet', 'dash', 'check'];
+  var LIST_MARKER_TYPES = ['bullet', 'circle', 'square', 'dash', 'ndash', 'check'];
   var LIST_MARKER_LABELS = {
     bullet: 'Точка',
+    circle: 'Круг',
+    square: 'Квадрат',
     dash: 'Дефис',
+    ndash: 'Тире',
     check: 'Галочка'
   };
   var LIST_MARKER_ICON_URLS = {
     bullet: '/static/core/icons/list-ul2.svg',
+    circle: '/static/core/icons/list-circle.svg',
+    square: '/static/core/icons/list-square.svg',
     dash: '/static/core/icons/list-dash.svg',
+    ndash: '/static/core/icons/list-ndash.svg',
     check: '/static/core/icons/list-check.svg'
   };
 

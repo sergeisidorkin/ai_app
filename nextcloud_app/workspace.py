@@ -292,6 +292,8 @@ def create_source_data_workspace_stream(
             info_approval_status=Performer.InfoApprovalStatus.APPROVED,
             typical_section__isnull=False,
         )
+        .exclude(typical_section__is_system=True)
+        .exclude(typical_section__code__iexact="DSC")
         .values_list("asset_name", "typical_section_id")
         .distinct()
     )
@@ -312,6 +314,8 @@ def create_source_data_workspace_stream(
     all_sections = list(
         TypicalSection.objects
         .filter(product_id__in=product_ids)
+        .exclude(is_system=True)
+        .exclude(code__iexact="DSC")
         .order_by("position", "id")
     ) if product_ids else []
     all_sections.sort(
