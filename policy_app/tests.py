@@ -1557,8 +1557,37 @@ class TypicalServiceCompositionViewsTests(TestCase):
         self.assertEqual(table.rows[1].cells[1].text, "TAX2")
         self.assertEqual(table.rows[1].cells[2].text, "Раздел RU")
         self.assertEqual(table.rows[1].cells[3].text, editor_state["plain_text"])
+        self.assertIn('w:tblW w:type="pct" w:w="5000"', table._tbl.xml)
+        for width in ("300", "650", "1150", "2900"):
+            self.assertIn(f'w:tcW w:type="pct" w:w="{width}"', table._tbl.xml)
         list_paragraphs = table.rows[1].cells[3].paragraphs[1:]
         self.assertTrue(all("w:numPr" in paragraph._element.xml for paragraph in list_paragraphs))
+
+    def test_typical_service_composition_docx_download_restarts_numbering_per_cell(self):
+        editor_state = {
+            "html": (
+                '<ol><li data-list="ordered">Первый пункт</li>'
+                '<li class="ql-indent-1" data-list="ordered">Подпункт</li></ol>'
+            ),
+            "plain_text": "Первый пункт\nПодпункт",
+        }
+        for position in (1, 2):
+            TypicalServiceComposition.objects.create(
+                product=self.product,
+                section=self.section,
+                service_composition=editor_state["plain_text"],
+                service_composition_editor_state=editor_state,
+                position=position,
+            )
+
+        response = self.client.get(reverse("typical_service_composition_docx_download"))
+
+        self.assertEqual(response.status_code, 200)
+        document = Document(io.BytesIO(response.content))
+        table = document.tables[0]
+        first_cell_num_id = table.rows[1].cells[3].paragraphs[0]._p.pPr.numPr.numId.val
+        second_cell_num_id = table.rows[2].cells[3].paragraphs[0]._p.pPr.numPr.numId.val
+        self.assertNotEqual(first_cell_num_id, second_cell_num_id)
 
     def test_typical_service_composition_docx_download_groups_rows_by_product(self):
         editor_state = {

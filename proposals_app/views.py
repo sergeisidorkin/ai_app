@@ -37,13 +37,14 @@ from policy_app.models import (
     Product,
     ServiceGoalReport,
     SpecialtyTariff,
+    SYSTEM_DSC_SECTION_CODE,
+    SYSTEM_DSC_SECTION_DEFAULTS,
     Tariff,
     TypicalSection,
     TypicalSectionSpecialty,
     TypicalServiceComposition,
     TypicalServiceTerm,
     build_consulting_catalog_meta,
-    ensure_system_dsc_section,
 )
 from projects_app.models import ProjectRegistration, ProjectRegistrationProduct, _sync_project_registration_primary_product
 from smtp_app.models import ExternalSMTPAccount
@@ -1446,6 +1447,30 @@ def _render_proposal_form(request, *, form, action, proposal=None):
             int(getattr(grade, "qualification_levels", 0) or 0),
         )
 
+    def _system_dsc_section_entry(product_id, section_tariff_map):
+        dsc_name = SYSTEM_DSC_SECTION_DEFAULTS["name_ru"]
+        section_tariff_days = int(
+            (section_tariff_map.get(product_id, {}).get(SYSTEM_DSC_SECTION_CODE))
+            or (section_tariff_map.get(product_id, {}).get(dsc_name))
+            or 0
+        )
+        return {
+            "name": dsc_name,
+            "code": SYSTEM_DSC_SECTION_CODE,
+            "is_system": True,
+            "is_system_dsc": True,
+            "accounting_type": SYSTEM_DSC_SECTION_DEFAULTS["accounting_type"],
+            "executor": "",
+            "exclude_from_tkp_autofill": bool(SYSTEM_DSC_SECTION_DEFAULTS["exclude_from_tkp_autofill"]),
+            "default_specialist": "",
+            "default_professional_status": "",
+            "default_base_rate_share": 0,
+            "specialty_tariff_rate_eur": "",
+            "service_days_tkp": section_tariff_days,
+            "specialty_is_director": True,
+            "specialist_options": [],
+        }
+
     specialty_candidates = {}
     specialty_defaults = {}
     expert_profiles = (
@@ -1529,9 +1554,10 @@ def _render_proposal_form(request, *, form, action, proposal=None):
             )
         specialty_candidates[specialty_name] = ordered_candidates
 
-    for product in Product.objects.order_by("position", "id").only("id", "position"):
-        ensure_system_dsc_section(product)
-
+    product_ids = [
+        str(product_id)
+        for product_id in Product.objects.order_by("position", "id").values_list("id", flat=True)
+    ]
     sections = list(
         TypicalSection.objects
         .select_related("product", "expertise_dir", "expertise_direction")
@@ -1617,9 +1643,13 @@ def _render_proposal_form(request, *, form, action, proposal=None):
             bucket[section_code] = int(tariff.service_days_tkp or 0)
         if section_name and section_name not in bucket:
             bucket[section_name] = int(tariff.service_days_tkp or 0)
+    for product_id in product_ids:
+        sections_map[product_id] = [_system_dsc_section_entry(product_id, section_tariff_map)]
     for section in sections:
         product_id = str(section.product_id or "")
         if not product_id or not section.name_ru:
+            continue
+        if section.is_system_dsc or (section.code or "").strip().upper() == SYSTEM_DSC_SECTION_CODE:
             continue
         bucket = sections_map.setdefault(product_id, [])
         if not any(item.get("name") == section.name_ru for item in bucket):

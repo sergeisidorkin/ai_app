@@ -681,6 +681,80 @@ body .second-sidebar + .flex-grow-1 {
   z-index: 4010;
 }
 
+#projects .templates-bleed > .flex-grow-1 > .section-header {
+  z-index: 1020;
+  overflow: visible;
+}
+
+#master-project-filter-dropdown {
+  position: relative;
+}
+
+#master-project-filter-dropdown .dropdown-menu {
+  z-index: 7000;
+}
+
+#master-project-filter-dropdown .project-filter-menu.show {
+  position: absolute !important;
+  inset: auto auto auto 0 !important;
+  top: 100% !important;
+  transform: none !important;
+  margin-top: .25rem !important;
+}
+
+#master-policy-consulting-filter-dropdown .dropdown-menu,
+#master-policy-category-filter-dropdown .dropdown-menu,
+#master-policy-subtype-filter-dropdown .dropdown-menu,
+#master-policy-product-filter-dropdown .dropdown-menu,
+#proposal-payment-view-dropdown .dropdown-menu {
+  z-index: 4010;
+  box-shadow: 1px 0 0 #e6e6e6, -1px 0 0 #e6e6e6, 0 3px 13px rgba(0,0,0,.08);
+}
+
+#master-policy-product-filter-dropdown .project-filter-menu {
+  max-width: none;
+}
+
+#proposal-payment-view-dropdown .project-filter-menu,
+#project-schedule-filter-dropdown .project-filter-menu,
+#project-schedule-view-dropdown .project-filter-menu {
+  padding-right: 0 !important;
+  padding-left: 0 !important;
+}
+
+#proposal-payment-view-dropdown .proposal-payment-view-option,
+#project-schedule-filter-dropdown .proposal-payment-view-option,
+#project-schedule-view-dropdown .proposal-payment-view-option {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  width: 100%;
+  min-width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: .35rem .75rem;
+  border-radius: .375rem;
+  cursor: pointer;
+}
+
+#proposal-payment-view-dropdown .proposal-payment-view-option:hover,
+#project-schedule-filter-dropdown .proposal-payment-view-option:hover,
+#project-schedule-view-dropdown .proposal-payment-view-option:hover {
+  background: #f8f9fa;
+}
+
+#proposal-payment-view-dropdown .proposal-payment-view-option .form-check-input,
+#project-schedule-filter-dropdown .proposal-payment-view-option .form-check-input,
+#project-schedule-view-dropdown .proposal-payment-view-option .form-check-input {
+  flex: 0 0 auto;
+  float: none;
+  margin: 0;
+}
+
+#master-policy-product-filter-dropdown .form-check-label {
+  white-space: nowrap;
+}
+
 #master-classifiers-bsn-filter-dropdown .dropdown-menu {
   z-index: 4010;
 }
@@ -745,37 +819,28 @@ body .second-sidebar + .flex-grow-1 {
   pointer-events: none;
 }
 
-#project-schedule-filter-dropdown .project-filter-menu {
-  padding-right: 0 !important;
-  padding-left: 0 !important;
-}
-
-#project-schedule-filter-dropdown .proposal-payment-view-option {
-  display: flex;
-  align-items: center;
-  gap: .5rem;
-  width: 100%;
-  min-width: 100%;
-  max-width: none;
-  margin: 0;
-  padding: .35rem .75rem;
-  border-radius: .375rem;
-  cursor: pointer;
-}
-
-#project-schedule-filter-dropdown .proposal-payment-view-option:hover {
-  background: #f8f9fa;
-}
-
-#project-schedule-filter-dropdown .proposal-payment-view-option .form-check-input {
-  flex: 0 0 auto;
-  float: none;
-  margin: 0;
-}
-
 .project-filter-menu {
   width: max-content;
   min-width: 200px;
+}
+
+.projects-radio-filter-dropdown {
+  position: relative;
+}
+
+.projects-radio-filter-dropdown .project-filter-menu.show {
+  position: absolute !important;
+  inset: auto auto auto 0 !important;
+  top: 100% !important;
+  transform: none !important;
+  margin-top: .25rem !important;
+  z-index: 5000 !important;
+}
+
+.project-filter-menu.project-filter-menu-portal {
+  position: fixed !important;
+  transform: none !important;
+  z-index: 5000 !important;
 }
 
 .project-filter-menu .form-check {
@@ -965,6 +1030,7 @@ body .second-sidebar + .flex-grow-1 {
 
 #performers-main-section .form-check-input:disabled,
 #participation-confirmation-section .form-check-input:disabled,
+.payment-request-section .form-check-input:disabled,
 #contract-conclusion-section .form-check-input:disabled,
 #info-request-approval-section .form-check-input:disabled,
 .registration-table-wrap .form-check-input:disabled,
@@ -973,16 +1039,23 @@ body .second-sidebar + .flex-grow-1 {
 .legal-table-wrap .form-check-input:disabled,
 .signing-table .form-check-input:disabled,
 #checklists-table-wrap .form-check-input:disabled,
-#policy-pane .consulting-directions-table .form-check-input:disabled {
+#policy-pane .consulting-directions-table .form-check-input:disabled,
+#policy-pane .typical-sections-table .form-check-input:disabled {
   background-color: #e9ecef !important;
   border-color: #d5dbe1 !important;
   opacity: 1 !important;
 }
 
 #policy-pane .consulting-directions-table .form-check-input,
-#policy-pane .consulting-directions-table .form-check-input:disabled {
+#policy-pane .consulting-directions-table .form-check-input:disabled,
+#policy-pane .typical-sections-table .form-check-input,
+#policy-pane .typical-sections-table .form-check-input:disabled {
   margin-left: 3px !important;
   margin-right: 3px !important;
+}
+
+#policy-pane .typical-section-dsc-code {
+  color: #adb5bd;
 }
 
 .signing-table tr[data-scan-sent="1"] td:first-child .form-check-input:disabled {
@@ -1728,7 +1801,7 @@ section#templates .alert.alert-info .text-muted {
 
 
 /* =========================
-   REG TABLE (Регистрация проекта)
+   REG TABLE (Реестр проектов)
    ========================= */
 
 /* 0) Первые 2 столбца фиксированы, остальные остаются адаптивными */
@@ -1736,18 +1809,28 @@ section#templates .alert.alert-info .text-muted {
 #projects-pane table.reg-table col.project-number { width: 70px !important; }
 #projects-pane table.reg-table col.agreement-type { width: 9%  !important; }
 #projects-pane table.reg-table col.group          { width: 4%  !important; }
+#projects-pane table.reg-table col.quick-edit     { width: 1%  !important; }
 #projects-pane table.reg-table col.project-id     { width: 6%  !important; }
 #projects-pane table.reg-table col.reg-type       { width: 4%  !important; }
 #projects-pane table.reg-table col.reg-name       { width: 13% !important; }
-#projects-pane table.reg-table col.reg-status     { width: 7%  !important; }
-#projects-pane table.reg-table col.reg-deadline   { width: 4%  !important; }
+#projects-pane table.reg-table col.reg-launch     { width: 44px !important; }
+#projects-pane table.reg-table col.reg-status     { width: 140px !important; }
+#projects-pane table.reg-table col.reg-deadline   { width: 150px !important; }
 #projects-pane table.reg-table col.reg-year       { width: 3%  !important; }
-#projects-pane table.reg-table col.reg-manager    { width: 10% !important; }
+#projects-pane table.reg-table col.reg-evaluation-date { width: 150px !important; }
+#projects-pane table.reg-table col.reg-manager    { width: 9% !important; }
 #projects-pane table.reg-table col.reg-customer   { width: 13% !important; }
 #projects-pane table.reg-table col.reg-country    { width: 5%  !important; }
 #projects-pane table.reg-table col.reg-identifier { width: 4%  !important; }
 #projects-pane table.reg-table col.reg-regnumber  { width: 7%  !important; }
+#projects-pane table.reg-table col.reg-region     { width: 7%  !important; }
 #projects-pane table.reg-table col.reg-regdate    { width: 5%  !important; }
+#projects-pane table.reg-table col.reg-asset-owner { width: 13% !important; }
+#projects-pane table.reg-table col.reg-asset-owner-country { width: 5% !important; }
+#projects-pane table.reg-table col.reg-asset-owner-identifier { width: 4% !important; }
+#projects-pane table.reg-table col.reg-asset-owner-regnumber { width: 7% !important; }
+#projects-pane table.reg-table col.reg-asset-owner-region { width: 7% !important; }
+#projects-pane table.reg-table col.reg-asset-owner-regdate { width: 5% !important; }
 
 /* 1) Таблица: занимает всю ширину, а при нехватке места расширяется под содержимое */
 #projects-pane .registration-table-wrap {
@@ -1777,6 +1860,30 @@ section#templates .alert.alert-info .text-muted {
   padding-bottom: calc(var(--bs-table-cell-padding-y) + 3px) !important; /* базово */
 }
 #projects-pane table.reg-table thead th.col-agreement-number {
+  white-space: nowrap !important;
+}
+
+#projects-pane table.reg-table thead th.proposal-split-header {
+  white-space: normal !important;
+}
+
+#projects-pane table.reg-table thead th.proposal-split-header .proposal-split-header-prefix {
+  display: block;
+  white-space: nowrap !important;
+}
+
+#projects-pane table.reg-table thead th.proposal-split-header .proposal-split-header-suffix {
+  display: block;
+  white-space: nowrap !important;
+}
+
+#projects-pane table.reg-table thead th.proposal-split-header-inline {
+  white-space: nowrap !important;
+}
+
+#projects-pane table.reg-table thead th.proposal-split-header-inline .proposal-split-header-prefix,
+#projects-pane table.reg-table thead th.proposal-split-header-inline .proposal-split-header-suffix {
+  display: inline;
   white-space: nowrap !important;
 }
 
@@ -1817,11 +1924,300 @@ section#templates .alert.alert-info .text-muted {
   text-overflow: clip !important;
 }
 
+#projects-pane .registration-table-wrap tr.registration-number-has-next > td {
+  border-bottom: 0 !important;
+}
+
+#projects-pane .registration-table-wrap tr.registration-number-has-next > td:nth-child(n+5) {
+  background-image: repeating-linear-gradient(
+    to right,
+    rgba(33, 37, 41, .22) 0,
+    rgba(33, 37, 41, .22) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  background-position: left bottom;
+  background-repeat: repeat-x;
+  background-size: 3px 1px;
+}
+
+#projects-pane .registration-table-wrap tr.registration-number-continuation > td {
+  border-top: 0 !important;
+}
+
 /* 4) Стилизация отдельных ячеек */
 #projects-pane table.reg-table tbody td.project-id-cell,
 #projects-pane .contract-table tbody td.completion-calc-cell {
   color: #a1a9b1 !important;
 }
+
+#projects-pane table.reg-table .project-quick-edit-col {
+  width: 1% !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  white-space: nowrap !important;
+  vertical-align: top !important;
+  text-align: center !important;
+}
+
+#projects-pane table.reg-table .reg-launch-cell {
+  width: 44px !important;
+  min-width: 44px !important;
+  max-width: 44px !important;
+  text-align: center !important;
+}
+
+#projects-pane table.reg-table tbody td.reg-launch-cell {
+  line-height: 1;
+  vertical-align: middle !important;
+}
+
+#projects-pane table.reg-table .reg-launch-btn,
+#projects-pane table.reg-table .reg-launch-icon {
+  color: var(--bs-primary);
+  font-size: 1rem;
+  line-height: 1;
+  text-decoration: none;
+  vertical-align: middle;
+}
+
+#projects-pane table.reg-table .reg-launch-btn .bi,
+#projects-pane table.reg-table .reg-launch-icon {
+  display: inline-block;
+  line-height: 1;
+  position: relative;
+  vertical-align: middle;
+  z-index: 0;
+}
+
+#projects-pane table.reg-table .reg-launch-btn:disabled,
+#projects-pane table.reg-table .reg-launch-icon.text-muted {
+  color: #ced4da !important;
+  opacity: 1;
+}
+
+#projects-pane table.reg-table .reg-launch-btn:disabled .bi-play-circle,
+#projects-pane table.reg-table .reg-launch-icon.text-muted {
+  background: none;
+}
+
+#projects-pane table.reg-table .reg-launch-btn:disabled .bi-play-circle::after,
+#projects-pane table.reg-table .reg-launch-icon.text-muted::after,
+#projects-pane table.reg-table .reg-launch-indicator .bi-circle::after,
+#projects-pane table.reg-table .reg-launch-icon.reg-launch-indicator::after {
+  background: var(--reg-launch-bg, #f8f9fa);
+  border-radius: 50%;
+  content: "";
+  height: .88em;
+  left: 50%;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: .88em;
+  z-index: -1;
+}
+
+#projects-pane table.reg-table .reg-launch-indicator {
+  color: var(--reg-launch-color, #6c757d) !important;
+}
+
+#projects-pane table.reg-table .reg-launch-btn.reg-launch-indicator:disabled {
+  color: var(--reg-launch-color, #6c757d) !important;
+}
+
+#projects-pane table.reg-table .reg-launch-indicator .bi-circle,
+#projects-pane table.reg-table .reg-launch-icon.reg-launch-indicator {
+  background: none;
+}
+
+#projects-pane table.reg-table .reg-launch-status--work {
+  --reg-launch-color: var(--bs-primary);
+  --reg-launch-bg: #b8d6ff;
+}
+
+#projects-pane table.reg-table .reg-launch-status--done {
+  --reg-launch-color: #198754;
+  --reg-launch-bg: #8fd8a8;
+}
+
+#projects-pane table.reg-table .reg-launch-status--deferred {
+  --reg-launch-color: #adb5bd;
+  --reg-launch-bg: #e9ecef;
+}
+
+#projects-pane table.reg-table .reg-launch-status--review {
+  --reg-launch-color: #fd7e14;
+  --reg-launch-bg: #ffe4c2;
+}
+
+#projects-pane table.reg-table .reg-launch-btn.is-pending {
+  color: #6c757d;
+  cursor: wait;
+}
+
+#projects-pane table.reg-table tbody td[data-reg-status-cell],
+#projects-pane table.reg-table tbody td[data-reg-manager-cell],
+#projects-pane table.reg-table tbody td[data-reg-deadline-cell],
+#projects-pane table.reg-table tbody td[data-reg-date-cell] {
+  min-width: 140px !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  position: relative;
+}
+
+#projects-pane table.reg-table tbody td[data-reg-deadline-cell] {
+  min-width: 150px !important;
+  width: 150px !important;
+}
+
+#projects-pane table.reg-table tbody td[data-reg-date-field="evaluation_date"] {
+  min-width: 150px !important;
+  width: 150px !important;
+}
+
+#projects-pane table.reg-table tbody td[data-reg-status-cell] {
+  width: 140px !important;
+}
+
+#projects-pane table.reg-table .reg-status-btn,
+#projects-pane table.reg-table .reg-manager-btn,
+#projects-pane table.reg-table .reg-deadline-btn {
+  border: 1.5px solid transparent;
+  border-radius: .25rem;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: .6rem;
+  justify-content: space-between;
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  left: 0;
+  right: 4px;
+  line-height: 1;
+  padding: 0 .625rem 0 var(--bs-table-cell-padding-x, .4rem) !important;
+  text-align: left;
+  text-decoration: none;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+#projects-pane table.reg-table .reg-status-btn::after,
+#projects-pane table.reg-table .reg-manager-btn::after {
+  content: "";
+  display: inline-block;
+  margin-left: auto;
+  width: .55rem;
+  height: .55rem;
+  flex: 0 0 .55rem;
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%236c757d' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: .55rem .55rem;
+  opacity: 0;
+}
+
+#projects-pane table.reg-table .reg-status-btn:hover,
+#projects-pane table.reg-table .reg-status-btn:focus-visible,
+#projects-pane table.reg-table .reg-status-btn.is-editing,
+#projects-pane table.reg-table .reg-manager-btn:hover,
+#projects-pane table.reg-table .reg-manager-btn:focus-visible,
+#projects-pane table.reg-table .reg-manager-btn.is-editing,
+#projects-pane table.reg-table .reg-deadline-btn:hover,
+#projects-pane table.reg-table .reg-deadline-btn:focus-visible,
+#projects-pane table.reg-table .reg-deadline-btn.is-editing {
+  background-color: #fff;
+  border-color: #ced4da;
+  box-shadow: 0 -2px 0 #fff, 0 2px 0 #fff;
+  color: inherit;
+  text-decoration: none;
+  z-index: 2;
+}
+
+#projects-pane table.reg-table .reg-status-btn:hover::after,
+#projects-pane table.reg-table .reg-status-btn:focus-visible::after,
+#projects-pane table.reg-table .reg-status-btn.is-editing::after,
+#projects-pane table.reg-table .reg-manager-btn:hover::after,
+#projects-pane table.reg-table .reg-manager-btn:focus-visible::after,
+#projects-pane table.reg-table .reg-manager-btn.is-editing::after {
+  opacity: 1;
+}
+
+#projects-pane #registration-status-editor,
+#projects-pane #registration-manager-editor {
+  border: 1.5px solid #ced4da;
+  border-radius: .25rem;
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%236c757d' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
+  background-position: right .625rem center;
+  background-size: .55rem .55rem;
+  box-shadow: 0 -2px 0 #fff, 0 2px 0 #fff;
+  font-size: inherit;
+  line-height: 1;
+  padding: 0 .625rem 0 var(--bs-table-cell-padding-x, .4rem);
+}
+
+#projects-pane #registration-deadline-editor-wrap {
+  background-color: #fff;
+  border: 1.5px solid #ced4da;
+  border-radius: .25rem;
+  box-shadow: 0 -2px 0 #fff, 0 2px 0 #fff;
+}
+
+#projects-pane #registration-deadline-editor {
+  background-color: transparent;
+  border: 0;
+  border-radius: .25rem;
+  box-shadow: none;
+  font-size: inherit;
+  height: calc(100% + 1px);
+  line-height: 1;
+  padding: 0 2rem 0 calc(.375rem + .25px);
+  position: relative;
+  top: -2px;
+  width: 100%;
+}
+
+#projects-pane #registration-deadline-editor:focus {
+  box-shadow: none;
+  outline: none;
+}
+
+#projects-pane #registration-deadline-editor::selection {
+  background: #9ec5fe;
+}
+
+#projects-pane #registration-deadline-editor-wrap .registration-deadline-editor-icon {
+  color: #6c757d;
+  pointer-events: none;
+  position: absolute;
+  right: .55rem;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+#projects-pane #registration-deadline-editor-wrap .registration-deadline-native-picker {
+  background: transparent;
+  border: 0;
+  cursor: default;
+  height: calc(100% - 4px);
+  opacity: 0;
+  padding: 0;
+  position: absolute;
+  right: .25rem;
+  top: 2px;
+  width: 2rem;
+}
+
+/* Legacy fallback if the wrapper is not present. */
+#projects-pane > #registration-deadline-editor {
+  border: 1.5px solid #ced4da;
+  border-radius: .25rem;
+  box-shadow: none;
+  font-size: inherit;
+  line-height: 1;
+  padding: 0 .375rem;
+}
+
 /* 6) Единый padding по краям 1-го столбца (и в шапке, и в теле) */
 #projects-pane table.reg-table > thead tr > :first-child,
 #projects-pane table.reg-table > tbody tr > :first-child{
@@ -2006,6 +2402,2629 @@ section#templates .alert.alert-info .text-muted {
   padding: 0 !important;
 }
 
+#proposals-pane .proposal-payment-schedule-table-wrap > table.proposals-table {
+  width: 100%;
+  min-width: 100%;
+}
+
+#proposals-pane .proposal-payment-gantt-wrap {
+  position: relative;
+  border: 1px solid transparent;
+  border-radius: .75rem;
+  background: #fff;
+  overflow: hidden;
+  min-height: 420px;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+#proposals-pane .proposal-payment-gantt-wrap::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 2px solid #dee2e6;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 5;
+}
+
+#proposals-pane .proposal-payment-gantt-toolbar {
+  padding: .75rem 1rem;
+  border-bottom: 1px solid #dee2e6;
+  background: #fff;
+}
+
+#proposals-pane #proposal-payment-gantt-scale-controls .btn.active,
+#proposals-pane #proposal-payment-gantt-scale-controls .btn.active:hover,
+#proposals-pane #proposal-payment-gantt-scale-controls .btn.active:focus {
+  color: #fff !important;
+  background: var(--bs-primary, #075D94) !important;
+  border-color: var(--bs-primary, #075D94) !important;
+}
+
+#proposals-pane .proposal-payment-gantt {
+  width: 100%;
+  min-height: 420px;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+#proposals-pane .proposal-payment-gantt-wrap .gantt_container,
+#proposals-pane .proposal-payment-gantt-wrap .gantt_grid,
+#proposals-pane .proposal-payment-gantt-wrap .gantt_task,
+#proposals-pane .proposal-payment-gantt-wrap .gantt_grid_scale,
+#proposals-pane .proposal-payment-gantt-wrap .gantt_task_scale,
+#proposals-pane .proposal-payment-gantt-wrap .gantt_grid_head_cell,
+#proposals-pane .proposal-payment-gantt-wrap .gantt_cell,
+#proposals-pane .proposal-payment-gantt-wrap .gantt_task_content,
+#proposals-pane .proposal-payment-gantt-wrap .gantt_scale_cell {
+  font-family: inherit !important;
+  font-size: inherit !important;
+}
+
+#proposals-pane .proposal-payment-gantt-wrap .gantt_task_content {
+  font-size: .86rem !important;
+}
+
+#proposals-pane .proposal-payment-gantt-empty {
+  padding: 1.25rem;
+  background: #fff;
+}
+
+#proposals-pane .proposal-payment-gantt-wrap .gantt_grid_scale,
+#proposals-pane .proposal-payment-gantt-wrap .gantt_task_scale {
+  background: #f8f9fa;
+}
+
+#proposals-pane .proposal-payment-gantt.proposal-payment-gantt-scale-week .gantt_scale_line:last-child .gantt_scale_cell {
+  font-size: .86rem !important;
+}
+
+#proposals-pane .proposal-payment-gantt-wrap .gantt_grid_head_text {
+  text-align: inherit;
+}
+
+#proposals-pane .proposal-payment-gantt-wrap .gantt_grid_head_cell:first-child {
+  text-align: left !important;
+  padding-left: 14px !important;
+}
+
+#proposals-pane .proposal-payment-gantt-wrap .gantt_grid_head_cell[data-column-name="type_label"],
+#proposals-pane .proposal-payment-gantt-wrap .gantt_cell[data-column-name="type_label"] {
+  text-align: left !important;
+  padding-left: 10px !important;
+}
+
+#proposals-pane .proposal-payment-gantt-wrap .gantt_cell_tree > .gantt_tree_content {
+  padding-left: 2px !important;
+}
+
+#proposals-pane .proposal-payment-gantt-wrap .gantt_row.proposal-payment-gantt-group-row .gantt_cell_tree > .gantt_tree_content {
+  padding-left: 2px !important;
+}
+
+#proposals-pane .proposal-payment-gantt-wrap .gantt_row.proposal-payment-gantt-child-row .gantt_cell_tree > .gantt_tree_content {
+  padding-left: 7px !important;
+}
+
+#proposals-pane .proposal-payment-gantt-wrap .gantt_tree_indent {
+  width: 8px !important;
+}
+
+#proposals-pane .proposal-payment-gantt-wrap .gantt_tree_icon.gantt_blank {
+  width: 4px !important;
+}
+
+#proposals-pane .proposal-payment-gantt-wrap .gantt_task_line {
+  border-radius: .45rem;
+  background: var(--bs-primary, #075D94);
+  border-color: #064d7a;
+}
+
+/* Generic milestone-kind visuals (not scoped to any section).
+ * Any Gantt instance can opt-in by emitting `task.milestone_kind` in its
+ * data and returning GanttEngine.classesForMilestoneKind(task) from
+ * gantt.templates.task_class. The matching halo div uses the kind class
+ * suffixed with "-halo" (e.g. .gantt-mk-payment-halo). */
+
+.gantt_task_line.gantt-mk-payment,
+.gantt_task_line.gantt_milestone.gantt-mk-payment,
+.gantt_milestone.gantt-mk-payment {
+  visibility: visible !important;
+  background: transparent !important;
+  border-color: transparent !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  z-index: 4 !important;
+  overflow: visible !important;
+}
+
+.gantt_task_line.gantt-mk-payment::before {
+  display: none !important;
+}
+
+.gantt-mk-payment .gantt_task_content {
+  position: absolute !important;
+  top: 50% !important;
+  left: 50% !important;
+  width: 12px !important;
+  height: 12px !important;
+  min-width: 12px !important;
+  min-height: 12px !important;
+  background: #2f9e77 !important;
+  border: 1px solid #247a5d !important;
+  transform: translate(-50%, -50%) rotate(45deg);
+  transform-origin: center center;
+  color: transparent !important;
+  overflow: hidden;
+  z-index: 2 !important;
+}
+
+.gantt-mk-payment.gantt-mk-payment-zero .gantt_task_content {
+  background: transparent !important;
+}
+
+.gantt-mk-payment.gantt-mk-payment-zero::before,
+.gantt-mk-payment.gantt-mk-payment-zero::after,
+.gantt-mk-payment.gantt-mk-payment-zero .gantt_task_content::before,
+.gantt-mk-payment.gantt-mk-payment-zero .gantt_task_content::after {
+  display: none !important;
+}
+
+.gantt-mk-payment-halo {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  border-radius: 50%;
+  background: rgba(7, 93, 148, .14);
+  border: 1px solid rgba(7, 93, 148, .18);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.gantt_task_line.gantt-mk-payment.gantt_selected,
+.gantt_task_line.gantt-mk-payment.gantt_selected:hover,
+.gantt_task_line.gantt-mk-payment.gantt_selected .gantt_task_content {
+  visibility: visible !important;
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.gantt_task_line.gantt-mk-payment.gantt_selected .gantt_task_content {
+  background: #2f9e77 !important;
+  border-color: #247a5d !important;
+  transform: translate(-50%, -50%) rotate(45deg) !important;
+}
+
+.gantt_task_line.gantt-mk-payment.gantt-mk-payment-zero.gantt_selected .gantt_task_content {
+  background: transparent !important;
+}
+
+.gantt_task_line.gantt-mk-payment.gantt_selected .gantt-mk-payment-halo {
+  display: block !important;
+  visibility: visible !important;
+}
+
+#proposals-pane .proposal-payment-gantt-wrap .gantt_task_link .gantt_line_wrapper,
+#proposals-pane .proposal-payment-gantt-wrap .gantt_task_link .gantt_link_corner,
+#proposals-pane .proposal-payment-gantt-wrap .gantt_task_link .gantt_link_arrow {
+  margin-top: 1px;
+}
+
+#proposals-pane .proposal-payment-gantt-wrap .gantt_task_link.proposal-payment-link-to-milestone .gantt_link_arrow {
+  z-index: 3;
+  background: transparent;
+  transform: translateX(-5px);
+}
+
+#proposals-pane .proposal-payment-gantt.proposal-payment-gantt-scale-day .gantt_task_link.proposal-payment-link-to-milestone .gantt_link_arrow {
+  transform: translateX(-8px);
+}
+
+#proposals-pane .proposal-payment-gantt.proposal-payment-gantt-scale-week .gantt_task_link.proposal-payment-link-to-milestone .gantt_link_arrow {
+  transform: translateX(-3px);
+}
+
+#proposals-pane .proposal-payment-gantt-wrap .gantt_task_link.proposal-payment-link-to-milestone .gantt_link_arrow::before {
+  position: relative;
+  z-index: 2;
+}
+
+#proposals-pane .proposal-payment-gantt-wrap .gantt_task_link.proposal-payment-link-to-milestone .gantt_link_arrow::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: -5px;
+  width: 10px;
+  height: 2px;
+  background: #fff;
+  transform: translateY(-50%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+#proposals-pane .proposal-payment-gantt-wrap .proposal-payment-milestone-link-bridge {
+  position: absolute;
+  height: 2px;
+  margin-top: -1px;
+  background: var(--dhx-gantt-link-background, #6c757d);
+  pointer-events: none;
+  z-index: 2;
+}
+
+#proposals-pane .proposal-payment-gantt-wrap .proposal-payment-milestone-link-bridge.proposal-payment-milestone-link-bridge-hover {
+  background: var(--dhx-gantt-link-background-hover, #343a40);
+}
+
+#proposals-pane .proposal-payment-gantt-wrap .gantt_task_progress {
+  background: #064d7a;
+}
+
+#proposals-pane .proposal-payment-gantt-wrap .gantt_task_line.proposal-payment-gantt-report-bar {
+  background: rgba(7, 93, 148, .36) !important;
+  border-color: rgba(7, 93, 148, .55) !important;
+}
+
+#proposals-pane .proposal-payment-gantt-wrap .gantt_task_line.proposal-payment-gantt-report-bar .gantt_task_progress {
+  background: rgba(7, 93, 148, .28) !important;
+}
+
+#proposals-pane .proposal-payment-gantt-wrap .gantt_grid_data .gantt_row.proposal-payment-gantt-hover-row,
+#proposals-pane .proposal-payment-gantt-wrap .gantt_task_bg .gantt_task_row.proposal-payment-gantt-hover-row {
+  background-color: #1c1d200b !important;
+}
+
+#proposals-pane .proposal-payment-gantt-wrap .gantt_grid_data .gantt_row.gantt_selected,
+#proposals-pane .proposal-payment-gantt-wrap .gantt_grid_data .gantt_row.odd.gantt_selected,
+#proposals-pane .proposal-payment-gantt-wrap .gantt_task_bg .gantt_task_row.gantt_selected,
+#proposals-pane .proposal-payment-gantt-wrap .gantt_task_bg .gantt_task_row.odd.gantt_selected,
+#proposals-pane .proposal-payment-gantt-wrap .gantt_grid_data .gantt_row.proposal-payment-gantt-active-row,
+#proposals-pane .proposal-payment-gantt-wrap .gantt_grid_data .gantt_row.odd.proposal-payment-gantt-active-row,
+#proposals-pane .proposal-payment-gantt-wrap .gantt_task_bg .gantt_task_row.proposal-payment-gantt-active-row,
+#proposals-pane .proposal-payment-gantt-wrap .gantt_task_bg .gantt_task_row.odd.proposal-payment-gantt-active-row {
+  background-color: rgba(var(--bs-primary-rgb, 7, 93, 148), .12) !important;
+}
+
+.typical-service-term-gantt-editor {
+  position: relative;
+  margin-top: 1rem;
+  border: 1px solid transparent;
+  border-radius: .75rem;
+  background: #fff;
+  overflow: hidden;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+body.typical-service-term-gantt-fullscreen-active {
+  overflow: hidden;
+}
+
+.typical-service-term-gantt-editor.typical-service-term-gantt-editor--fullscreen {
+  position: fixed;
+  inset: 0;
+  /* Flex column where every child sits at its own intrinsic height; the
+     gantt itself stays content-sized via dhtmlxGantt's `autosize: 'y'`
+     config so the bottom horizontal scrollbars travel right under the
+     last visible row (same as the in-flow non-fullscreen editor). When
+     the chart taller than the viewport, the editor itself scrolls and
+     the toolbar / footer stay pinned via `position: sticky` (see rules
+     below). `margin-top: auto` on the footer keeps it glued to the
+     bottom of the viewport when the content is short, and collapses to
+     `0` when the chart already fills the height (so the footer rides
+     right after the chart instead). */
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  border-radius: 0;
+  z-index: 1090;
+  overflow-y: auto;
+}
+
+.typical-service-term-gantt-editor.typical-service-term-gantt-editor--fullscreen .typical-service-term-gantt-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 120;
+  background: #fff;
+  flex: 0 0 auto;
+}
+
+.typical-service-term-gantt-editor.typical-service-term-gantt-editor--fullscreen .typical-service-term-gantt {
+  flex: 0 0 auto;
+}
+
+.typical-service-term-gantt-editor.typical-service-term-gantt-editor--fullscreen .typical-service-term-gantt-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 120;
+  background: #fff;
+  border-top: 1px solid #dee2e6;
+  flex: 0 0 auto;
+  margin-top: auto;
+}
+
+.typical-service-term-gantt-editor::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 2px solid #dee2e6;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.typical-service-term-gantt-editor.typical-service-term-gantt-editor--fullscreen::after {
+  display: none;
+}
+
+.typical-service-term-gantt-toolbar,
+.typical-service-term-gantt-footer {
+  padding: .75rem 1rem;
+  background: #fff;
+}
+
+.typical-service-term-gantt-toolbar {
+  border-bottom: 1px solid #dee2e6;
+}
+
+.typical-service-term-gantt-toolbar-controls {
+  row-gap: .5rem !important;
+}
+
+.typical-service-term-gantt-fullscreen-toggle,
+.typical-service-term-gantt-timebox-toggle,
+.typical-service-term-gantt-free-dates-toggle,
+.typical-service-term-gantt-calendar-days-toggle,
+.typical-service-term-gantt-hide-non-working-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(1.5em + .75rem + 2px);
+  min-width: calc(1.5em + .75rem + 2px);
+}
+
+.typical-service-term-gantt-free-dates-toggle {
+  width: calc(1.5em + .5rem + 2px);
+  min-width: calc(1.5em + .5rem + 2px);
+  margin-right: .35rem;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.typical-service-term-gantt-calendar-days-toggle {
+  margin-right: .15rem;
+}
+
+.typical-service-term-gantt-hide-non-working-toggle {
+  margin-right: .15rem;
+}
+
+.typical-service-term-gantt-hide-non-working-toggle:disabled,
+.typical-service-term-gantt-hide-non-working-toggle.disabled {
+  opacity: .45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.typical-service-term-gantt-project-bound {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  margin: 0;
+}
+
+.typical-service-term-gantt-project-bound .form-control {
+  width: 8.7rem;
+}
+
+.typical-service-term-gantt-footer {
+  border-top: 0;
+  padding-bottom: 1rem;
+}
+
+.typical-service-term-gantt-settings-btn {
+  display: inline-flex;
+  align-items: center;
+}
+
+.gantt-resources-panel {
+  border-top: 1px solid #dee2e6;
+  background: #fff;
+}
+
+.gantt-resources-panel-inner {
+  padding: 1rem;
+}
+
+.gantt-resources-table th,
+.gantt-resources-table td {
+  vertical-align: middle;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.gantt-resources-table .form-control,
+.gantt-resources-table .form-select {
+  min-height: calc(1.5em + .5rem + 2px);
+  padding-top: .25rem;
+  padding-bottom: .25rem;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.gantt-resources-table th:nth-child(2),
+.gantt-resources-table th:nth-child(3) {
+  min-width: 180px;
+}
+
+.gantt-resources-table th:nth-child(4) {
+  min-width: 190px;
+}
+
+.gantt-resources-table th:nth-child(5) {
+  min-width: 130px;
+}
+
+.gantt-resources-table th:nth-child(6),
+.gantt-resources-table th:nth-child(7) {
+  min-width: 145px;
+}
+
+.gantt-resources-task-list {
+  white-space: nowrap;
+}
+
+.gantt-resources-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .75rem 1rem;
+}
+
+.gantt-resources-modal-conflicts-field {
+  grid-column: 1 / -1;
+}
+
+.gantt-resources-modal .form-label {
+  margin-bottom: .5rem;
+  color: #212529;
+  font-size: 1rem;
+  font-weight: 450;
+  line-height: 1.5;
+}
+
+.gantt-resources-modal .form-control,
+.gantt-resources-modal .form-select {
+  min-height: calc(1.5em + .75rem + 2px);
+  padding: .375rem .75rem;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.gantt-resources-modal .form-select {
+  padding-right: 2.25rem;
+}
+
+.gantt-resources-assignments {
+  margin-top: .25rem;
+}
+
+.gantt-resources-modal .policy-gantt-links-editor {
+  border: 1px solid #dee2e6;
+  border-radius: .5rem;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  overflow: visible;
+  position: relative;
+}
+
+.gantt-resources-modal .policy-gantt-links-title {
+  color: #212529;
+  font-size: 1rem;
+  font-weight: 450;
+  line-height: 1.5;
+  margin-bottom: .5rem;
+}
+
+.gantt-resources-modal .policy-gantt-links-table {
+  margin-bottom: 0;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.gantt-resources-modal .policy-gantt-links-table th {
+  white-space: nowrap;
+  font-weight: 400;
+}
+
+.gantt-resources-modal .policy-gantt-links-table td {
+  vertical-align: middle;
+  padding-top: .45rem;
+  padding-bottom: .45rem;
+}
+
+.gantt-resources-modal .policy-gantt-links-check-col,
+.gantt-resources-modal .policy-gantt-links-check-cell {
+  width: 28px;
+  min-width: 28px;
+  max-width: 28px;
+  padding-left: .275rem !important;
+  padding-right: .275rem !important;
+  text-align: center !important;
+}
+
+.gantt-resources-modal .policy-gantt-links-check-wrap {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  margin: 0 !important;
+  width: 100%;
+  min-height: auto !important;
+}
+
+.gantt-resources-modal .gantt-resources-assignment-check {
+  float: none !important;
+  display: block !important;
+  width: 1em !important;
+  height: 1em !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border-radius: .25em !important;
+  box-shadow: none !important;
+}
+
+.gantt-resources-modal .policy-gantt-links-actions-row {
+  margin-top: .75rem;
+}
+
+.gantt-resources-modal .policy-gantt-links-add-btn {
+  border: 1px solid #ced4da;
+  background-color: #f8f9fa;
+  color: #495057;
+  font-size: 1rem;
+  padding: .375rem .75rem;
+}
+
+.gantt-resources-modal .policy-gantt-links-add-btn:hover,
+.gantt-resources-modal .policy-gantt-links-add-btn:focus {
+  background-color: #eef1f4;
+  color: #343a40;
+}
+
+.gantt-resources-modal .policy-gantt-links-up-btn,
+.gantt-resources-modal .policy-gantt-links-down-btn {
+  border-color: #ced4da !important;
+  background-color: #f8f9fa !important;
+  color: #495057 !important;
+}
+
+.gantt-resources-modal .policy-gantt-links-up-btn:hover,
+.gantt-resources-modal .policy-gantt-links-up-btn:focus,
+.gantt-resources-modal .policy-gantt-links-down-btn:hover,
+.gantt-resources-modal .policy-gantt-links-down-btn:focus {
+  border-color: #ced4da !important;
+  background-color: #eef1f4 !important;
+  color: #343a40 !important;
+}
+
+.gantt-resources-modal .policy-gantt-links-delete-btn {
+  border-color: #e6c9cf !important;
+  background-color: #fbf4f5 !important;
+  color: #b45d68 !important;
+}
+
+.gantt-resources-modal .policy-gantt-links-delete-btn:hover,
+.gantt-resources-modal .policy-gantt-links-delete-btn:focus {
+  border-color: #ddb8c0 !important;
+  background-color: #f8ecee !important;
+  color: #a14f59 !important;
+}
+
+.gantt-resources-assignment-task {
+  min-width: 260px;
+}
+
+.typical-service-term-gantt-resources-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(1.5em + .75rem + 2px);
+  min-width: calc(1.5em + .75rem + 2px);
+}
+
+.typical-service-term-gantt-resources-btn:not(.active):not([aria-pressed="true"]):hover,
+.typical-service-term-gantt-resources-btn:not(.active):not([aria-pressed="true"]):focus:hover {
+  color: #5f676e !important;
+  background-color: #f8f9fa !important;
+  border-color: #5f676e !important;
+}
+
+.typical-service-term-gantt-resources-btn:not(.active):not([aria-pressed="true"]):focus:not(:hover) {
+  color: #6c757d !important;
+  background-color: transparent !important;
+  border-color: #6c757d !important;
+}
+
+.typical-service-term-gantt-resources-btn.active,
+.typical-service-term-gantt-resources-btn[aria-pressed="true"] {
+  color: #6c757d !important;
+  background-color: #f1f3f5 !important;
+  border-color: #6c757d !important;
+}
+
+.typical-service-term-gantt-resources-btn.active:hover,
+.typical-service-term-gantt-resources-btn[aria-pressed="true"]:hover,
+.typical-service-term-gantt-resources-btn.active:focus:hover,
+.typical-service-term-gantt-resources-btn[aria-pressed="true"]:focus:hover {
+  color: #5f676e !important;
+  background-color: #e9ecef !important;
+  border-color: #5f676e !important;
+}
+
+.typical-service-term-gantt-resources-btn.active:focus:not(:hover),
+.typical-service-term-gantt-resources-btn[aria-pressed="true"]:focus:not(:hover) {
+  color: #6c757d !important;
+  background-color: #f1f3f5 !important;
+  border-color: #6c757d !important;
+}
+
+@media (max-width: 767.98px) {
+  .gantt-resources-modal-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.typical-service-term-gantt-message {
+  padding: .75rem 1rem;
+  border-bottom: 1px solid #dee2e6;
+  background: #fff;
+}
+
+.js-typical-service-term-gantt-scale.active,
+.js-typical-service-term-gantt-scale.active:hover,
+.js-typical-service-term-gantt-scale.active:focus {
+  color: #fff !important;
+  background: var(--bs-primary, #075D94) !important;
+  border-color: var(--bs-primary, #075D94) !important;
+}
+
+.typical-service-term-gantt-free-dates-toggle.active,
+.typical-service-term-gantt-free-dates-toggle.active:hover,
+.typical-service-term-gantt-free-dates-toggle.active:focus,
+.typical-service-term-gantt-timebox-toggle.active,
+.typical-service-term-gantt-timebox-toggle.active:hover,
+.typical-service-term-gantt-timebox-toggle.active:focus,
+.typical-service-term-gantt-calendar-days-toggle.active,
+.typical-service-term-gantt-calendar-days-toggle.active:hover,
+.typical-service-term-gantt-calendar-days-toggle.active:focus,
+.typical-service-term-gantt-hide-non-working-toggle.active,
+.typical-service-term-gantt-hide-non-working-toggle.active:hover,
+.typical-service-term-gantt-hide-non-working-toggle.active:focus {
+  color: #fff !important;
+  background: var(--bs-primary, #075D94) !important;
+  border-color: var(--bs-primary, #075D94) !important;
+}
+
+/* Non-working day shading inside the chart area. */
+.typical-service-term-gantt .gantt_data_area {
+  position: relative !important;
+  /* Confine the overlay's `mix-blend-mode: multiply` to the chart area so it
+     doesn't blend with anything outside the timeline. */
+  isolation: isolate;
+}
+
+.typical-service-term-gantt-non-working-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  /* The overlay uses `mix-blend-mode: multiply` so it darkens whatever
+     happens to be below it (white row background, hover/active highlight,
+     empty timeline area). That way we don't have to fight DHTMLX z-index
+     ordering — task bars and links keep their natural stacking on top while
+     the shading remains visible across the full visible timeline height. */
+  mix-blend-mode: multiply;
+  z-index: 1;
+}
+
+.typical-service-term-gantt-non-working-day-bg {
+  position: absolute;
+  top: 0;
+  /* Same lightness on every scale (Day, Week, Month, Quarter). The previous
+     darker shade for Day/Week was visually overpowering. */
+  background-color: rgba(108, 117, 125, .07);
+  pointer-events: none;
+}
+
+/* In calendar-days mode the stripes are hidden via JS removing the nodes;
+   this is a defensive override in case any stray DOM stays around. */
+.typical-service-term-gantt.typical-service-term-gantt-calendar-days
+  .typical-service-term-gantt-non-working-day-bg {
+  display: none;
+}
+
+/* Hidden day-level scale row used to drive non-working-time collapsing at
+   week/month/quarter scales. `splitSize` is overridden to allocate 0px of
+   header height to this row, but as a defensive measure we visually erase
+   its cell content too. */
+.typical-service-term-gantt .gantt_scale_cell.typical-service-term-gantt-hidden-day-cell {
+  border: 0 !important;
+  background: transparent !important;
+  color: transparent !important;
+  font-size: 0 !important;
+  line-height: 0 !important;
+  height: 0 !important;
+  overflow: hidden !important;
+}
+
+/* When the chart relies on the hidden day-level sub-scale (so that
+   non-working columns can be collapsed at week/month/quarter scales), the
+   chart background is broken into day cells too. We don't want a forest of
+   thin vertical lines in the timeline; the visible scale rows above already
+   provide week/month/quarter boundaries. */
+.typical-service-term-gantt.typical-service-term-gantt-hidden-day-cells .gantt_task_cell {
+  border-right-color: transparent !important;
+}
+.typical-service-term-gantt.typical-service-term-gantt-hidden-day-cells .gantt_task_row .gantt_task_cell + .gantt_task_cell {
+  border-left-color: transparent !important;
+}
+
+/* Synthetic gridlines drawn at week/month/quarter boundaries when the chart
+   uses day-grain background cells. Matches dhtmlxGantt's default cell border
+   colour so the lines blend in with the rest of the grid. */
+.typical-service-term-gantt-grid-line {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  background-color: #ebebeb;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.typical-service-term-gantt {
+  position: relative;
+  width: 100%;
+  height: auto;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+/* In fullscreen we no longer constrain `.typical-service-term-gantt` or
+   `.gantt_container` to fill the viewport — dhtmlxGantt's `autosize: 'y'`
+   keeps the chart sized to its actual content (scale + visible rows +
+   horizontal scrollbar row), so the bottom horizontal scrollbars travel
+   right under the last row when rows are collapsed/expanded. Overflow
+   beyond the viewport is handled by the editor's own scrollbar (set via
+   `overflow-y: auto` on the fullscreen editor block above) with the
+   toolbar and footer pinned via `position: sticky`. */
+
+/* dhtmlxGantt is configured with `autosize: 'y'`, so it sets the inner
+   .gantt_container height to fit the actual content (scale + visible rows +
+   horizontal scrollbar row). Avoid imposing extra `min-height` here — a forced
+   minimum bigger than the content height made dhtmlxGantt stretch the empty
+   `gantt_grid_data` area, leaving a large white gap between the last row and
+   the bottom horizontal scrollbar. */
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-project-boundary-line {
+  position: absolute;
+  top: 0;
+  width: 0;
+  border-left: 2px dashed #9aa3ab;
+  opacity: .9;
+  pointer-events: none;
+  z-index: auto !important;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-project-boundary-line--today {
+  border-left: 2px dashed var(--bs-primary, #075D94);
+  opacity: .95;
+}
+
+.typical-service-term-gantt-editor .gantt_container,
+.typical-service-term-gantt-editor .gantt_grid,
+.typical-service-term-gantt-editor .gantt_task,
+.typical-service-term-gantt-editor .gantt_grid_scale,
+.typical-service-term-gantt-editor .gantt_task_scale,
+.typical-service-term-gantt-editor .gantt_grid_head_cell,
+.typical-service-term-gantt-editor .gantt_cell,
+.typical-service-term-gantt-editor .gantt_task_content,
+.typical-service-term-gantt-editor .gantt_scale_cell {
+  font-family: inherit !important;
+  font-size: inherit !important;
+}
+
+.typical-service-term-gantt-editor .gantt_container {
+  border-bottom: 0 !important;
+}
+
+.typical-service-term-gantt-editor .gantt_layout_cell_border_bottom {
+  border-bottom: 0 !important;
+}
+
+.typical-service-term-gantt-editor .gantt_task_content {
+  font-size: .86rem !important;
+  padding: 0 6px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  box-sizing: border-box !important;
+}
+
+.typical-service-term-gantt-editor .gantt_grid_scale,
+.typical-service-term-gantt-editor .gantt_task_scale {
+  background: #f8f9fa;
+}
+
+.typical-service-term-gantt.typical-service-term-gantt-scale-week .gantt_scale_line:last-child .gantt_scale_cell,
+/* When the hidden day-level sub-scale is appended, the week row is no longer
+   the last child — keep the smaller font on the week labels. */
+.typical-service-term-gantt.typical-service-term-gantt-scale-week.typical-service-term-gantt-hidden-day-cells .gantt_scale_line:nth-last-child(2) .gantt_scale_cell {
+  font-size: .86rem !important;
+}
+
+.typical-service-term-gantt-editor .gantt_grid_head_text {
+  text-align: inherit;
+}
+
+.typical-service-term-gantt-editor .gantt_grid_head_cell:first-child {
+  text-align: center !important;
+  padding-left: 24px !important;
+  padding-right: 8px !important;
+  box-sizing: border-box;
+}
+
+.typical-service-term-gantt-editor .gantt_grid_head_cell:first-child .gantt_grid_head_text {
+  display: inline-block;
+  min-width: 7.2em;
+  max-width: 100%;
+  text-align: left;
+}
+
+.typical-service-term-gantt-editor .gantt_grid_head_cell:nth-child(2) {
+  text-align: left !important;
+  padding-left: 22px !important;
+}
+
+.typical-service-term-gantt-editor .gantt_grid_head_cell:nth-child(2) .gantt_grid_head_text {
+  display: block;
+  width: 100%;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-task-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .35rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-task-header-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-outline-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  padding-right: .8rem;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-outline-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  padding: 0;
+  border: 1px solid #ced4da;
+  border-radius: .2rem;
+  background: #fff;
+  color: #6c757d;
+  font-size: .72rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-outline-btn:hover,
+.typical-service-term-gantt-editor .typical-service-term-gantt-outline-btn:focus,
+.typical-service-term-gantt-editor .typical-service-term-gantt-outline-btn.active {
+  color: #fff;
+  background: var(--bs-primary, #075D94);
+  border-color: var(--bs-primary, #075D94);
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-value {
+  display: inline-block;
+  box-sizing: border-box;
+  font-variant-numeric: tabular-nums;
+  line-height: inherit;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--wbs,
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--predecessors {
+  max-width: 100%;
+  text-align: left;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--wbs {
+  max-width: 100%;
+  width: 7.2em;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--predecessors {
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--duration {
+  width: 2.2em;
+  max-width: 100%;
+  text-align: right;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--weekday-date {
+  white-space: nowrap;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-weekday-label {
+  color: #adb5bd;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--progress {
+  width: 3.4em;
+  max-width: 100%;
+  text-align: right;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--deadline {
+  width: 4.8em;
+  max-width: 100%;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--constraint {
+  width: 7.4em;
+  max-width: 100%;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--specialty,
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-value--executor {
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.typical-service-term-gantt-editor .gantt_grid_head_cell {
+  position: relative;
+  overflow: visible !important;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-column-collapse-btn {
+  position: absolute;
+  top: 1px;
+  right: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 14px;
+  padding: 2px 3px;
+  border: 0;
+  background: transparent;
+  color: #6c757d;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 35;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-column-collapse-btn .bi {
+  display: block;
+  line-height: 1;
+}
+
+.typical-service-term-gantt-editor .gantt_grid_head_cell.typical-service-term-gantt-grid-column--collapsible:hover > .typical-service-term-gantt-column-collapse-btn,
+.typical-service-term-gantt-editor .gantt_grid_head_cell.typical-service-term-gantt-grid-column--collapsible:focus-within > .typical-service-term-gantt-column-collapse-btn,
+.typical-service-term-gantt-editor .gantt_grid_head_cell.typical-service-term-gantt-grid-column--collapsed > .typical-service-term-gantt-column-collapse-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.typical-service-term-gantt-editor .gantt_grid_head_cell.typical-service-term-gantt-grid-column--collapsed > .typical-service-term-gantt-column-collapse-btn {
+  right: 0;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-column-collapse-btn:hover,
+.typical-service-term-gantt-editor .typical-service-term-gantt-column-collapse-btn:focus-visible {
+  color: var(--bs-primary, #075D94);
+  background: transparent;
+}
+
+.typical-service-term-gantt-editor .gantt_grid_head_cell.typical-service-term-gantt-grid-column--collapsed {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  border-right: 1px dashed var(--dhx-gantt-base-colors-border, #DFE0E1) !important;
+  color: transparent !important;
+}
+
+.typical-service-term-gantt-editor .gantt_grid_head_cell.typical-service-term-gantt-grid-column--collapsed .gantt_grid_head_text,
+.typical-service-term-gantt-editor .gantt_grid_head_cell.typical-service-term-gantt-grid-column--collapsed > :not(.typical-service-term-gantt-column-collapse-btn),
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_cell.typical-service-term-gantt-grid-column--collapsed > * {
+  visibility: hidden !important;
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  text-shadow: none !important;
+}
+
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_cell.typical-service-term-gantt-grid-column--collapsed {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  border-right: 1px dashed var(--dhx-gantt-base-colors-border, #DFE0E1) !important;
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  text-shadow: none !important;
+}
+
+.typical-service-term-gantt-editor .gantt_grid_scale .gantt_grid_head_cell.gantt_last_cell,
+.typical-service-term-gantt-editor .gantt_grid_scale .gantt_grid_head_cell:last-child {
+  border-right-color: transparent !important;
+}
+
+.typical-service-term-gantt-editor .gantt_grid_resize_wrap,
+.typical-service-term-gantt-editor .gantt_resizer {
+  cursor: col-resize !important;
+  position: relative !important;
+  overflow: visible !important;
+  background: transparent !important;
+  border-left: 0 !important;
+  border-right: 0 !important;
+}
+
+.typical-service-term-gantt-editor .gantt_grid_resize_wrap::after,
+.typical-service-term-gantt-editor .gantt_resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: #ced4da;
+  pointer-events: none;
+}
+
+.typical-service-term-gantt-editor .gantt_grid_resize_wrap:hover::after,
+.typical-service-term-gantt-editor .gantt_resizer:hover::after,
+.typical-service-term-gantt-editor .gantt_grid_resize_wrap.is-resizing::after,
+.typical-service-term-gantt-editor .gantt_resizer.is-resizing::after {
+  background: var(--bs-primary, #075D94);
+}
+
+.typical-service-term-gantt-editor .gantt_grid_scale .gantt_grid_column_resize_wrap {
+  cursor: col-resize !important;
+  width: 16px !important;
+  margin-left: -8px !important;
+  z-index: 4 !important;
+}
+
+.typical-service-term-gantt-editor .gantt_grid_column_resize_wrap .gantt_grid_column_resize {
+  width: 1px !important;
+  background: #ced4da !important;
+}
+
+.typical-service-term-gantt-editor .gantt_grid_column_resize_wrap:hover .gantt_grid_column_resize {
+  background: var(--bs-primary, #075D94) !important;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 16px;
+  margin-left: -8px;
+  cursor: col-resize;
+  z-index: 50;
+}
+
+/* Disable dhtmlx's native grid/timeline resizer in favour of the custom handle so it doesn't
+   intercept the drag and re-clamp the grid width based on its own logic. */
+.typical-service-term-gantt-editor .gantt_resizer,
+.typical-service-term-gantt-editor .gantt_grid_resize_wrap {
+  pointer-events: none !important;
+}
+
+/* Narrow mode (divider dragged below the column min_widths sum): dhtmlxGantt's
+   elastic_columns + scrollable branch keeps the inner .gantt_grid_scale / .gantt_grid_data
+   at the column min_widths sum while the outer grid cell shrinks freely. .gantt_grid is
+   `display: inline-block` so it would visually overflow the cell at its content width;
+   force it to the cell's width and enable horizontal scroll (so dhtmlx's scrollLeft works
+   to reveal the hidden columns), but hide the native scrollbar — the visible scroll handle
+   comes from the dedicated `gridScrollHor` cell positioned under the grid. */
+.typical-service-term-gantt-editor--grid-narrow .gantt_grid {
+  width: 100% !important;
+  overflow-x: scroll !important;
+  overflow-y: hidden !important;
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+}
+.typical-service-term-gantt-editor--grid-narrow .gantt_grid::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 7.5px;
+  width: 2px;
+  background: #ced4da;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-resizer:hover::after,
+.typical-service-term-gantt-editor .typical-service-term-gantt-grid-resizer.is-resizing::after {
+  background: var(--bs-primary, #075D94);
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-bottom-spacer,
+.typical-service-term-gantt-editor .typical-service-term-gantt-bottom-spacer::after {
+  background: transparent !important;
+  pointer-events: none !important;
+  cursor: default !important;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-column-resizer {
+  position: absolute;
+  top: 0;
+  right: -8px;
+  width: 16px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 20;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-column-resizer--last {
+  right: auto;
+  margin-left: -8px;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-column-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 8px;
+  width: 1px;
+  background: #ced4da;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-column-resizer--last::after {
+  left: 7.5px;
+  width: 2px;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt:not(.typical-service-term-gantt-column-resizing) .gantt_grid_head_cell:hover > .typical-service-term-gantt-column-resizer::after,
+.typical-service-term-gantt-editor .typical-service-term-gantt-column-resizer:hover::after,
+.typical-service-term-gantt-editor .typical-service-term-gantt-column-resizer.is-resizing::after {
+  background: var(--bs-primary, #075D94);
+}
+
+.typical-service-term-gantt-editor .gantt_task_line {
+  border-radius: .45rem;
+  background: var(--bs-primary, #075D94);
+  border-color: #064d7a;
+}
+
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-deadline-missed {
+  border-color: #dc3545 !important;
+  box-shadow: inset 0 0 0 2px rgba(220, 53, 69, .55);
+}
+
+.typical-service-term-gantt-editor .gantt_task_progress {
+  background: #064d7a;
+}
+
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-deadline-missed .gantt_task_progress {
+  background: rgba(220, 53, 69, .32) !important;
+}
+
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-1 {
+  background: rgba(7, 93, 148, .88);
+  border-color: rgba(7, 93, 148, .98);
+}
+
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-2 {
+  background: rgba(7, 93, 148, .70);
+  border-color: rgba(7, 93, 148, .84);
+}
+
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-3 {
+  background: rgba(91, 172, 219, .62);
+  border-color: rgba(56, 139, 190, .78);
+}
+
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-4 {
+  background: rgba(126, 196, 232, .50);
+  border-color: rgba(91, 172, 219, .66);
+}
+
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-5 {
+  background: rgba(173, 181, 189, .46);
+  border-color: rgba(146, 155, 164, .62);
+}
+
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-6 {
+  background: rgba(190, 196, 202, .38);
+  border-color: rgba(166, 174, 182, .54);
+}
+
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-7 {
+  background: rgba(206, 212, 218, .32);
+  border-color: rgba(181, 188, 195, .46);
+}
+
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-1 .gantt_task_progress {
+  background: rgba(4, 62, 99, .64);
+}
+
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-2 .gantt_task_progress {
+  background: rgba(5, 78, 124, .50);
+}
+
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-3 .gantt_task_progress {
+  background: rgba(48, 137, 190, .56);
+}
+
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-4 .gantt_task_progress {
+  background: rgba(76, 166, 216, .46);
+}
+
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-5 .gantt_task_progress {
+  background: rgba(133, 142, 151, .46);
+}
+
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-6 .gantt_task_progress {
+  background: rgba(153, 161, 169, .40);
+}
+
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-7 .gantt_task_progress {
+  background: rgba(171, 178, 185, .34);
+}
+
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-parent-bar .gantt_task_content {
+  display: flex;
+  align-items: center;
+  gap: .25rem;
+  padding-right: .35rem;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-task-text {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: inherit;
+  transform: translateY(-1px);
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-parent-lock {
+  margin-left: auto;
+  color: rgba(255, 255, 255, .96);
+  font-size: calc(.72rem - 1px);
+  line-height: 1;
+  flex: 0 0 auto;
+  pointer-events: none;
+  transform: translateY(-1px);
+}
+
+.typical-service-term-gantt-editor .gantt_task_deadline {
+  display: none !important;
+}
+
+.typical-service-term-gantt-editor .gantt_constraint_marker {
+  display: none !important;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-constraint-marker {
+  position: absolute;
+  width: 6px;
+  height: 12px;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-constraint-marker::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: #f0acd8;
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+  box-sizing: border-box;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-constraint-marker::after {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  background: #f4a1d8;
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-constraint-marker--finish::before {
+  clip-path: polygon(100% 0, 0 50%, 100% 100%);
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-constraint-marker--finish::after {
+  inset: 1px;
+  clip-path: polygon(100% 0, 0 50%, 100% 100%);
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-constraint-marker--finish {
+  transform: translateX(-6px);
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-deadline-marker {
+  position: absolute;
+  width: 12px;
+  height: 9px;
+  cursor: ew-resize;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 5;
+  transform: translateX(-50%);
+  transition: opacity .12s ease;
+  --dhx-gantt-progress-handle-background: var(--dhx-gantt-base-colors-icons, #A1A4A6);
+  --dhx-gantt-progress-handle-border: var(--dhx-gantt-base-colors-border, #DFE0E1);
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-deadline-marker--hover,
+.typical-service-term-gantt-editor .typical-service-term-gantt-deadline-marker--active,
+.typical-service-term-gantt-editor .typical-service-term-gantt-deadline-marker--dragging {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+body.typical-service-term-gantt-deadline-dragging,
+body.typical-service-term-gantt-deadline-dragging * {
+  cursor: ew-resize !important;
+  user-select: none !important;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-deadline-marker svg {
+  display: block;
+  width: 12px;
+  height: 9px;
+  transform: rotate(180deg);
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-deadline-marker--missed svg path {
+  fill: var(--dhx-gantt-progress-handle-background);
+  stroke: var(--dhx-gantt-progress-handle-border);
+}
+
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-3,
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-4,
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-5,
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-6,
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-level-7 {
+  color: #04466f;
+}
+
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-report-bar {
+  background: rgba(7, 93, 148, .36) !important;
+  border-color: rgba(7, 93, 148, .55) !important;
+}
+
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-report-bar .gantt_task_progress {
+  background: rgba(7, 93, 148, .28) !important;
+}
+
+.typical-service-term-gantt-editor .gantt_task_link .gantt_line_wrapper,
+.typical-service-term-gantt-editor .gantt_task_link .gantt_link_corner,
+.typical-service-term-gantt-editor .gantt_task_link .gantt_link_arrow {
+  margin-top: 1px;
+}
+
+.typical-service-term-gantt-editor .gantt_task_link.typical-service-term-gantt-link-to-milestone .gantt_link_arrow,
+.typical-service-term-gantt-editor .gantt_task_link.typical-service-term-gantt-link-from-milestone .gantt_line_wrapper {
+  z-index: 3;
+}
+
+.typical-service-term-gantt-editor {
+  --dhx-gantt-link-handle-offset: 9px;
+}
+
+.typical-service-term-gantt-editor .gantt_link_control {
+  width: calc(var(--dhx-gantt-link-handle-offset) + var(--dhx-gantt-link-handle-size)) !important;
+  height: var(--dhx-gantt-link-handle-size) !important;
+  line-height: var(--dhx-gantt-link-handle-size) !important;
+  z-index: 12 !important;
+}
+
+.typical-service-term-gantt-editor .gantt_link_control.task_left {
+  transform: translate(-100%, -50%) !important;
+  justify-content: flex-start !important;
+}
+
+.typical-service-term-gantt-editor .gantt_link_control.task_right {
+  transform: translate(100%, -50%) !important;
+  justify-content: flex-end !important;
+}
+
+.typical-service-term-gantt-editor .gantt_link_control .gantt_link_point {
+  position: relative !important;
+  inset: auto !important;
+  margin: 0 !important;
+  z-index: 13 !important;
+  background-color: var(--dhx-gantt-link-handle-background) !important;
+  border-color: var(--dhx-gantt-link-handle-border) !important;
+}
+
+.typical-service-term-gantt-editor .gantt_task_line.gantt_link_source {
+  --dhx-gantt-link-handle-background: #86b7fe;
+  --dhx-gantt-link-handle-border: var(--bs-primary, #075D94);
+  --dhx-gantt-link-handle-background-hover: #86b7fe;
+  --dhx-gantt-link-handle-border-hover: var(--bs-primary, #075D94);
+}
+
+.typical-service-term-gantt-editor .gantt_link_control .gantt_link_point:hover,
+.typical-service-term-gantt-editor .gantt_link_control .gantt_link_point:active,
+.typical-service-term-gantt-editor .gantt_link_control .gantt_link_point.typical-service-term-gantt-link-source-point,
+.typical-service-term-gantt-editor .gantt_link_control .gantt_link_point.typical-service-term-gantt-link-target-point,
+.typical-service-term-gantt-editor .gantt_task_line.gantt_link_target.link_start_allow .gantt_link_control.task_start_date .gantt_link_point,
+.typical-service-term-gantt-editor .gantt_task_line.gantt_link_target.link_finish_allow .gantt_link_control.task_end_date .gantt_link_point,
+.typical-service-term-gantt-editor .gantt_task_line.gantt_link_target .gantt_link_control .gantt_link_point:hover {
+  background-color: #86b7fe !important;
+  border-color: var(--bs-primary, #075D94) !important;
+}
+
+.gantt_link_direction.typical-service-term-gantt-link-direction {
+  border-bottom-color: var(--bs-primary, #075D94) !important;
+  border-bottom-style: dotted !important;
+  border-bottom-width: 2px !important;
+  margin-left: 0 !important;
+  margin-top: -1px !important;
+  transform-origin: 0 1px !important;
+}
+
+.gantt_drag_marker:has(> .gantt_link_tooltip) {
+  background: transparent !important;
+  z-index: 9999 !important;
+}
+
+.gantt_drag_marker {
+  z-index: 9999 !important;
+}
+
+.gantt_drag_marker.gantt_grid_dnd_marker {
+  overflow: visible !important;
+  z-index: 100001 !important;
+  filter: drop-shadow(0 0 2px rgba(25, 135, 84, .24));
+}
+
+.gantt_drag_marker.gantt_grid_dnd_marker .gantt_grid_dnd_marker_line {
+  position: relative !important;
+  height: 2px !important;
+  background-color: #198754 !important;
+  border-radius: 1px !important;
+  box-shadow:
+    0 0 0 1px rgba(25, 135, 84, 0.14),
+    0 0 4px rgba(25, 135, 84, 0.28) !important;
+  z-index: 100002 !important;
+}
+
+.gantt_drag_marker.gantt_grid_dnd_marker .gantt_grid_dnd_marker_line::before {
+  background: #fff !important;
+  border: 2px solid #198754 !important;
+  width: 10px !important;
+  height: 10px !important;
+  border-radius: 50% !important;
+  top: 50% !important;
+  left: 0 !important;
+  margin: 0 !important;
+  transform: translate(-50%, -50%) !important;
+  box-shadow: 0 0 0 2px rgba(25, 135, 84, .14) !important;
+  z-index: 100003 !important;
+}
+
+.gantt_drag_marker.gantt_grid_dnd_marker .gantt_grid_dnd_marker_line::after {
+  content: 'На том же уровне';
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  padding: 1px 6px;
+  border-radius: .375rem;
+  background: #198754;
+  color: #fff;
+  font-size: .72rem;
+  font-weight: 500;
+  letter-spacing: .01em;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 100003;
+}
+
+.gantt_drag_marker.gantt_grid_dnd_marker .gantt_grid_dnd_marker_folder {
+  background-color: rgba(7, 93, 148, 0.22) !important;
+  box-shadow:
+    inset 0 0 0 2px var(--bs-primary, #075D94),
+    0 0 0 1px rgba(7, 93, 148, 0.14),
+    0 0 5px rgba(7, 93, 148, 0.24) !important;
+  border-radius: 3px !important;
+  position: relative !important;
+  z-index: 100002 !important;
+}
+
+.gantt_drag_marker.gantt_grid_dnd_marker.typical-service-term-gantt-row-drag-deny .gantt_grid_dnd_marker_folder {
+  background-color: transparent !important;
+  box-shadow:
+    inset 0 0 0 2px #adb5bd,
+    0 0 0 2px rgba(173, 181, 189, 0.25) !important;
+}
+
+.gantt_drag_marker.gantt_grid_dnd_marker.typical-service-term-gantt-row-drag-deny .gantt_grid_dnd_marker_folder::after {
+  display: none !important;
+}
+
+.gantt_drag_marker.gantt_grid_dnd_marker .gantt_grid_dnd_marker_folder::after {
+  content: 'Как подзадача';
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  padding: 1px 6px;
+  border-radius: .375rem;
+  background: var(--bs-primary, #075D94);
+  color: #fff;
+  font-size: .72rem;
+  font-weight: 500;
+  letter-spacing: .01em;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 100003;
+}
+
+.gantt_drag_marker.typical-service-term-gantt-row-drag-preview {
+  opacity: 1 !important;
+  height: 34px !important;
+  background: rgba(255, 255, 255, 0.7) !important;
+  -webkit-backdrop-filter: blur(6px) !important;
+  backdrop-filter: blur(6px) !important;
+  border: 1px solid #adb5bd !important;
+  border-radius: .375rem !important;
+  box-shadow: 0 .25rem .75rem rgba(0, 0, 0, .15) !important;
+  overflow: hidden !important;
+  z-index: 100004 !important;
+}
+
+.gantt_drag_marker.typical-service-term-gantt-row-drag-preview .typical-service-term-gantt-row-drag-preview-content {
+  display: flex;
+  align-items: center;
+  gap: .25rem;
+  width: 100%;
+  height: 100%;
+  padding: 0 10px;
+  box-sizing: border-box;
+  color: #212529;
+  font-size: .9rem;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.gantt_drag_marker.typical-service-term-gantt-row-drag-preview .typical-service-term-gantt-row-drag-preview-wbs {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+}
+
+.gantt_drag_marker.typical-service-term-gantt-row-drag-preview .typical-service-term-gantt-row-drag-preview-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gantt_drag_marker.typical-service-term-gantt-row-drag-preview .gantt_row {
+  background: transparent !important;
+  border: none !important;
+  opacity: 1 !important;
+}
+
+.gantt_drag_marker.typical-service-term-gantt-row-drag-preview .gantt_row .gantt_cell {
+  border: none !important;
+  background: transparent !important;
+}
+
+.gantt_drag_marker.typical-service-term-gantt-row-drag-preview .gantt_row .gantt_cell:nth-child(n + 3) {
+  display: none !important;
+}
+
+.gantt_drag_marker.typical-service-term-gantt-row-drag-preview .gantt_add,
+.gantt_drag_marker.typical-service-term-gantt-row-drag-preview .gantt_tree_icon {
+  display: none !important;
+}
+
+.typical-service-term-gantt-editor .gantt_row {
+  position: relative;
+}
+
+.typical-service-term-gantt-editor .gantt_row > .gantt_cell:nth-child(2) {
+  padding-left: 2px !important;
+}
+
+.typical-service-term-gantt-editor .gantt_row > .gantt_cell:nth-child(2) .gantt_tree_icon {
+  width: 16px !important;
+  min-width: 16px !important;
+  margin-left: 0 !important;
+}
+
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row > .gantt_cell:first-child {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  padding-left: 24px !important;
+  padding-right: 8px !important;
+  box-sizing: border-box;
+}
+
+.typical-service-term-gantt-editor .gantt_tree_icon.gantt_blank {
+  width: 16px !important;
+}
+
+.typical-service-term-gantt-editor .gantt_row::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 10px;
+  height: 16px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 16'><circle cx='3' cy='3.5' r='1' fill='%23868e96'/><circle cx='3' cy='8' r='1' fill='%23868e96'/><circle cx='3' cy='12.5' r='1' fill='%23868e96'/><circle cx='7' cy='3.5' r='1' fill='%23868e96'/><circle cx='7' cy='8' r='1' fill='%23868e96'/><circle cx='7' cy='12.5' r='1' fill='%23868e96'/></svg>");
+  background-repeat: no-repeat;
+  background-position: center;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .12s ease;
+  z-index: 2;
+}
+
+.typical-service-term-gantt-editor .gantt_row:hover::before {
+  opacity: 0.85;
+}
+
+.typical-service-term-gantt-editor .gantt_row:hover {
+  cursor: grab;
+}
+
+body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor .gantt_grid_data .gantt_row.typical-service-term-gantt-hover-row:not(.gantt_selected):not(.typical-service-term-gantt-active-row),
+body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor .gantt_grid_data .gantt_row.odd.typical-service-term-gantt-hover-row:not(.gantt_selected):not(.typical-service-term-gantt-active-row),
+body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row.typical-service-term-gantt-hover-row:not(.gantt_selected):not(.typical-service-term-gantt-active-row),
+body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row.odd.typical-service-term-gantt-hover-row:not(.gantt_selected):not(.typical-service-term-gantt-active-row) {
+  background-color: transparent !important;
+}
+
+body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor .gantt_grid_data .gantt_row:not(.gantt_selected):not(.typical-service-term-gantt-active-row):hover,
+body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor .gantt_grid_data .gantt_row.odd:not(.gantt_selected):not(.typical-service-term-gantt-active-row):hover,
+body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row:not(.gantt_selected):not(.typical-service-term-gantt-active-row):hover,
+body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row.odd:not(.gantt_selected):not(.typical-service-term-gantt-active-row):hover {
+  background-color: transparent !important;
+}
+
+body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor .gantt_row::before,
+body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor .gantt_row:hover::before {
+  opacity: 0 !important;
+}
+
+.gantt_drag_marker.typical-service-term-gantt-row-drag-preview .gantt_row::before {
+  display: none !important;
+}
+
+.gantt_drag_marker.typical-service-term-gantt-row-drag-preview .gantt_row > .gantt_cell:nth-child(2) {
+  padding-left: 4px !important;
+}
+
+.typical-service-term-gantt-editor .gantt_link_tooltip,
+.gantt_link_tooltip {
+  font-size: .78rem !important;
+  font-weight: 400 !important;
+  line-height: 1.25 !important;
+  padding: 8px 12px !important;
+  border: 1px solid #dee2e6 !important;
+  border-radius: 8px !important;
+  background-color: rgba(255, 255, 255, 0.35) !important;
+  background-clip: padding-box !important;
+  -webkit-backdrop-filter: blur(5px);
+  backdrop-filter: blur(5px);
+  box-shadow: none !important;
+  overflow: hidden;
+}
+
+.typical-service-term-gantt-editor .gantt_link_tooltip b,
+.gantt_link_tooltip b {
+  font-weight: 400 !important;
+}
+
+.gantt_link_direction.typical-service-term-gantt-link-direction.typical-service-term-gantt-link-direction-deny {
+  border-bottom-color: var(--bs-danger, #dc3545) !important;
+}
+
+.typical-service-term-gantt-editor .gantt_task_line:not(.typical-service-term-gantt-link-source-bar).link_start_deny .gantt_link_control.task_start_date .gantt_link_point,
+.typical-service-term-gantt-editor .gantt_task_line:not(.typical-service-term-gantt-link-source-bar).link_finish_deny .gantt_link_control.task_end_date .gantt_link_point {
+  background-color: #f5c2c7 !important;
+  border-color: var(--bs-danger, #dc3545) !important;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt.typical-service-term-gantt-link-dragging .gantt_link_control div {
+  display: block !important;
+}
+
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-link-from-end .gantt_link_control.task_start_date,
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-link-from-start .gantt_link_control.task_end_date {
+  display: none !important;
+}
+
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-link-source-bar .gantt_link_control div {
+  --dhx-gantt-link-handle-background: #86b7fe !important;
+  --dhx-gantt-link-handle-border: var(--bs-primary, #075D94) !important;
+  --dhx-gantt-link-handle-background-hover: #86b7fe !important;
+  --dhx-gantt-link-handle-border-hover: var(--bs-primary, #075D94) !important;
+  background-color: #86b7fe !important;
+  border-color: var(--bs-primary, #075D94) !important;
+}
+
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row.typical-service-term-gantt-hover-row,
+.typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row.typical-service-term-gantt-hover-row {
+  background-color: #1c1d200b !important;
+}
+
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row.gantt_selected,
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row.odd.gantt_selected,
+.typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row.gantt_selected,
+.typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row.odd.gantt_selected,
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row.typical-service-term-gantt-active-row,
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row.odd.typical-service-term-gantt-active-row,
+.typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row.typical-service-term-gantt-active-row,
+.typical-service-term-gantt-editor .gantt_task_bg .gantt_task_row.odd.typical-service-term-gantt-active-row {
+  background-color: rgba(var(--bs-primary-rgb, 7, 93, 148), .12) !important;
+}
+
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row.gantt_selected .gantt_cell.typical-service-term-gantt-grid-column--collapsed,
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row.odd.gantt_selected .gantt_cell.typical-service-term-gantt-grid-column--collapsed,
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row.typical-service-term-gantt-active-row .gantt_cell.typical-service-term-gantt-grid-column--collapsed,
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row.odd.typical-service-term-gantt-active-row .gantt_cell.typical-service-term-gantt-grid-column--collapsed {
+  border-right: 1px dashed var(--dhx-gantt-base-colors-border, #DFE0E1) !important;
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  text-shadow: none !important;
+}
+
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row.gantt_selected .gantt_cell.typical-service-term-gantt-grid-column--collapsed > *,
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row.odd.gantt_selected .gantt_cell.typical-service-term-gantt-grid-column--collapsed > *,
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row.typical-service-term-gantt-active-row .gantt_cell.typical-service-term-gantt-grid-column--collapsed > *,
+.typical-service-term-gantt-editor .gantt_grid_data .gantt_row.odd.typical-service-term-gantt-active-row .gantt_cell.typical-service-term-gantt-grid-column--collapsed > * {
+  visibility: hidden !important;
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  text-shadow: none !important;
+}
+
+.typical-service-term-gantt-editor .gantt_task_line.gantt_milestone,
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-milestone {
+  visibility: visible !important;
+  background: transparent !important;
+  border-color: transparent !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.typical-service-term-gantt-editor .typical-service-term-gantt-milestone .gantt_task_content {
+  position: absolute !important;
+  top: 50% !important;
+  left: 50% !important;
+  width: 12px !important;
+  height: 12px !important;
+  min-width: 12px !important;
+  min-height: 12px !important;
+  background: rgba(7, 93, 148, .88) !important;
+  border: 1px solid rgba(4, 62, 99, .98) !important;
+  transform: translate(-50%, -50%) rotate(45deg);
+  transform-origin: center center;
+  color: transparent !important;
+  overflow: hidden;
+  padding: 0 !important;
+  box-sizing: border-box !important;
+}
+
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-milestone .gantt_task_progress_drag,
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-milestone .gantt_task_drag {
+  display: none !important;
+}
+
+.typical-service-term-gantt-editor .gantt_task_line.typical-service-term-gantt-parent-bar .gantt_task_progress_drag {
+  display: none !important;
+}
+
+.gantt_cal_cover {
+  z-index: 5000 !important;
+}
+
+.gantt_cal_light,
+.gantt_modal_box {
+  z-index: 5010 !important;
+}
+
+.gantt_modal_box.gantt-alert,
+.gantt_modal_box.gantt-confirm {
+  min-width: 480px !important;
+  width: min(480px, calc(100vw - 2rem)) !important;
+  max-width: calc(100vw - 2rem) !important;
+  border: 1px solid rgba(0, 0, 0, .175) !important;
+  border-radius: .5rem !important;
+  background: #fff !important;
+  color: #212529 !important;
+  box-shadow: 0 .5rem 1rem rgba(0, 0, 0, .15) !important;
+  font-family: inherit !important;
+  font-size: .95rem !important;
+  line-height: 1.5 !important;
+  overflow: hidden !important;
+  padding: 0 !important;
+}
+
+.gantt_modal_box.gantt-alert .gantt_popup_text,
+.gantt_modal_box.gantt-confirm .gantt_popup_text {
+  padding: 1.25rem 1.25rem !important;
+  font-size: .95rem !important;
+  background: #fff !important;
+}
+
+.gantt_modal_box.gantt-alert .gantt_popup_text b,
+.gantt_modal_box.gantt-confirm .gantt_popup_text b {
+  font-weight: 600 !important;
+}
+
+.gantt_modal_box.gantt-alert .gantt_popup_controls,
+.gantt_modal_box.gantt-confirm .gantt_popup_controls {
+  display: flex !important;
+  flex-direction: row !important;
+  justify-content: flex-end !important;
+  align-items: center !important;
+  gap: .5rem !important;
+  padding: .75rem 1.25rem 1.25rem !important;
+  background: #fff !important;
+  border-bottom-left-radius: .5rem !important;
+  border-bottom-right-radius: .5rem !important;
+  text-align: right !important;
+}
+
+.gantt_modal_box.gantt-alert .gantt_popup_button.gantt_popup_button,
+.gantt_modal_box.gantt-confirm .gantt_popup_button.gantt_popup_button {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-width: auto !important;
+  width: auto !important;
+  height: auto !important;
+  min-height: calc(1.5em + .75rem + 2px) !important;
+  padding: calc(.375rem - 1px) .75rem .375rem !important;
+  margin: 0 !important;
+  border: 1px solid #6c757d !important;
+  border-radius: .375rem !important;
+  background: #fff !important;
+  background-color: #fff !important;
+  color: #6c757d !important;
+  font-family: inherit !important;
+  font-size: 1rem !important;
+  font-weight: 450 !important;
+  line-height: 1.5 !important;
+  box-shadow: none !important;
+  text-transform: none !important;
+}
+
+.gantt_modal_box.gantt-alert .gantt_popup_button.gantt_popup_button > div,
+.gantt_modal_box.gantt-confirm .gantt_popup_button.gantt_popup_button > div {
+  display: inline !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  color: inherit !important;
+  font: inherit !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: none !important;
+  width: auto !important;
+  height: auto !important;
+  line-height: inherit !important;
+}
+
+.gantt_modal_box.gantt-alert .gantt_popup_button.gantt_popup_button:hover,
+.gantt_modal_box.gantt-confirm .gantt_popup_button.gantt_popup_button:hover {
+  background: #6c757d !important;
+  background-color: #6c757d !important;
+  border-color: #6c757d !important;
+  color: #fff !important;
+}
+
+.gantt_modal_box.gantt-alert .gantt_popup_button.gantt_popup_button.gantt_ok_button,
+.gantt_modal_box.gantt-confirm .gantt_popup_button.gantt_popup_button.gantt_ok_button {
+  border-color: #dc3545 !important;
+  background: #fff !important;
+  background-color: #fff !important;
+  color: #dc3545 !important;
+}
+
+.gantt_modal_box.gantt-alert .gantt_popup_button.gantt_popup_button.gantt_ok_button:hover,
+.gantt_modal_box.gantt-confirm .gantt_popup_button.gantt_popup_button.gantt_ok_button:hover {
+  background: #dc3545 !important;
+  background-color: #dc3545 !important;
+  border-color: #dc3545 !important;
+  color: #fff !important;
+}
+
+.gantt_modal_box.gantt-alert .gantt_popup_button.gantt_popup_button:focus,
+.gantt_modal_box.gantt-alert .gantt_popup_button.gantt_popup_button:focus-visible,
+.gantt_modal_box.gantt-confirm .gantt_popup_button.gantt_popup_button:focus,
+.gantt_modal_box.gantt-confirm .gantt_popup_button.gantt_popup_button:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.gantt_modal_box.gantt-alert .gantt_popup_button.gantt_popup_button:focus:not(:hover),
+.gantt_modal_box.gantt-alert .gantt_popup_button.gantt_popup_button:focus-visible:not(:hover),
+.gantt_modal_box.gantt-confirm .gantt_popup_button.gantt_popup_button:focus:not(:hover),
+.gantt_modal_box.gantt-confirm .gantt_popup_button.gantt_popup_button:focus-visible:not(:hover) {
+  border-color: #6c757d !important;
+  background-color: #fff !important;
+  color: #6c757d !important;
+}
+
+.gantt_modal_box.gantt-alert .gantt_popup_button.gantt_popup_button.gantt_ok_button:focus:not(:hover),
+.gantt_modal_box.gantt-alert .gantt_popup_button.gantt_popup_button.gantt_ok_button:focus-visible:not(:hover),
+.gantt_modal_box.gantt-confirm .gantt_popup_button.gantt_popup_button.gantt_ok_button:focus:not(:hover),
+.gantt_modal_box.gantt-confirm .gantt_popup_button.gantt_popup_button.gantt_ok_button:focus-visible:not(:hover) {
+  border-color: #dc3545 !important;
+  background-color: #fff !important;
+  color: #dc3545 !important;
+}
+
+.gantt_cal_light {
+  position: fixed !important;
+  top: 50% !important;
+  left: 50% !important;
+  right: auto !important;
+  bottom: auto !important;
+  transform: translate(-50%, -50%) !important;
+  max-height: calc(100vh - 3rem) !important;
+  overflow: auto !important;
+  width: min(800px, calc(100vw - 3.5rem)) !important;
+  min-width: min(500px, calc(100vw - 3.5rem)) !important;
+  max-width: min(800px, calc(100vw - 3.5rem)) !important;
+  border: 1px solid rgba(0, 0, 0, .175) !important;
+  border-radius: .5rem !important;
+  background: #fff !important;
+  color: #212529 !important;
+  box-shadow: 0 .5rem 1rem rgba(0, 0, 0, .15) !important;
+  font-family: inherit !important;
+  font-size: .95rem !important;
+  line-height: 1.5 !important;
+}
+
+.gantt_cal_light .gantt_cal_ltitle {
+  min-height: auto !important;
+  padding: 1rem 1rem !important;
+  border-bottom: 1px solid #dee2e6 !important;
+  border-top-left-radius: .5rem !important;
+  border-top-right-radius: .5rem !important;
+  background: #fff !important;
+  color: #212529 !important;
+  font-size: 1.25rem !important;
+  font-weight: 500 !important;
+  line-height: 1.5 !important;
+}
+
+.gantt_cal_light .gantt_cal_ltitle .dhx_title,
+.gantt_cal_light .gantt_cal_ltitle .gantt_title {
+  color: inherit !important;
+  font: inherit !important;
+}
+
+.gantt_cal_light .gantt_cal_ltitle_close_btn {
+  box-sizing: content-box !important;
+  display: block !important;
+  width: 1em !important;
+  height: 1em !important;
+  padding: .25em .25em !important;
+  border: 0 !important;
+  border-radius: .375rem !important;
+  background: transparent url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%23000'%3e%3cpath d='M.293.293a1 1 0 0 1 1.414 0L8 6.586 14.293.293a1 1 0 1 1 1.414 1.414L9.414 8l6.293 6.293a1 1 0 0 1-1.414 1.414L8 9.414l-6.293 6.293a1 1 0 0 1-1.414-1.414L6.586 8 .293 1.707a1 1 0 0 1 0-1.414z'/%3e%3c/svg%3e") center/.75em auto no-repeat !important;
+  color: #000 !important;
+  opacity: .5 !important;
+  text-decoration: none !important;
+  box-shadow: none !important;
+}
+
+.gantt_cal_light .gantt_cal_ltitle_close_btn::before {
+  content: "" !important;
+}
+
+.gantt_cal_light .gantt_cal_ltitle_close_btn:hover {
+  background: transparent url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%23000'%3e%3cpath d='M.293.293a1 1 0 0 1 1.414 0L8 6.586 14.293.293a1 1 0 1 1 1.414 1.414L9.414 8l6.293 6.293a1 1 0 0 1-1.414 1.414L8 9.414l-6.293 6.293a1 1 0 0 1-1.414-1.414L6.586 8 .293 1.707a1 1 0 0 1 0-1.414z'/%3e%3c/svg%3e") center/.75em auto no-repeat !important;
+  opacity: .75 !important;
+  text-decoration: none !important;
+}
+
+.gantt_cal_light .gantt_cal_larea {
+  padding: 1rem !important;
+  gap: .75rem !important;
+}
+
+.gantt_cal_light .gantt_wrap_section {
+  margin: 0 0 1rem !important;
+}
+
+.gantt_cal_light .gantt_wrap_section + .gantt_wrap_section {
+  margin-top: 0 !important;
+}
+
+.gantt_cal_light .gantt_cal_lsection {
+  margin: 1rem 0 .5rem !important;
+  padding: 0 !important;
+  color: #212529 !important;
+  font-size: 1rem !important;
+  font-weight: 450 !important;
+  font-family: inherit !important;
+  line-height: 1.5 !important;
+}
+
+.gantt_cal_light .gantt_cal_larea > .gantt_cal_lsection:first-child {
+  margin-top: 0 !important;
+}
+
+.gantt_cal_light .gantt_cal_lsection:has(+ .policy-gantt-assignment),
+.gantt_cal_light .gantt_cal_lsection:has(+ .policy-gantt-links),
+.gantt_cal_light .gantt_cal_lsection:has(+ .policy-gantt-period) {
+  display: none !important;
+}
+
+.gantt_cal_light .gantt_cal_lsection label {
+  display: inline-block !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  color: #212529 !important;
+  font-size: 1rem !important;
+  font-weight: 450 !important;
+  font-family: inherit !important;
+  line-height: 1.5 !important;
+}
+
+.gantt_cal_light .gantt_cal_ltext,
+.gantt_cal_light .gantt_section_time {
+  color: #212529 !important;
+  font-size: .95rem !important;
+}
+
+.gantt_cal_light textarea,
+.gantt_cal_light input,
+.gantt_cal_light select {
+  border: 1px solid #ced4da !important;
+  border-radius: .375rem !important;
+  background-color: #fff !important;
+  color: #212529 !important;
+  font-family: inherit !important;
+  font-size: 1rem !important;
+  font-weight: 400 !important;
+  line-height: 1.5 !important;
+  padding: .375rem .75rem !important;
+  box-shadow: none !important;
+}
+
+.gantt_cal_light input,
+.gantt_cal_light select {
+  min-height: calc(1.5em + .75rem + 2px) !important;
+}
+
+.gantt_cal_light select {
+  display: block !important;
+  width: 100% !important;
+  padding: .375rem 2.25rem .375rem .75rem !important;
+  appearance: none !important;
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e") !important;
+  background-repeat: no-repeat !important;
+  background-position: right .75rem center !important;
+  background-size: 16px 12px !important;
+}
+
+.gantt_cal_light .policy-gantt-task-name {
+  height: auto !important;
+  margin-top: 1rem !important;
+}
+
+.gantt_cal_light .policy-gantt-hidden-section-label {
+  display: none !important;
+}
+
+.gantt_cal_light .policy-gantt-task-name .d-none {
+  display: none !important;
+}
+
+.gantt_cal_light .policy-gantt-task-name-section-field {
+  margin-bottom: 1rem;
+}
+
+.gantt_cal_light .policy-gantt-task-name .form-label {
+  margin-bottom: .5rem !important;
+  color: #212529 !important;
+  font-size: 1rem !important;
+  font-weight: 450 !important;
+  line-height: 1.5 !important;
+}
+
+.gantt_cal_light .policy-gantt-task-name-text {
+  display: block !important;
+  width: 100% !important;
+  min-height: calc(1.5em + .75rem + 2px) !important;
+  height: calc(1.5em + .75rem + 2px) !important;
+  resize: vertical !important;
+}
+
+.gantt_cal_light .policy-gantt-task-name--single-field .policy-gantt-task-name-text {
+  min-height: calc((1.5em + .75rem + 2px) * 2 + 3rem) !important;
+  height: calc((1.5em + .75rem + 2px) * 2 + 3rem) !important;
+}
+
+.gantt_cal_light .policy-gantt-assignment {
+  height: auto !important;
+  margin-top: 1rem !important;
+}
+
+.gantt_cal_light .policy-gantt-assignment-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: end;
+}
+
+.gantt_cal_light .policy-gantt-period {
+  height: auto !important;
+  margin: 1rem 0 !important;
+}
+
+.gantt_cal_light .policy-gantt-period-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, .5fr);
+  gap: 1rem;
+  align-items: end;
+}
+
+.gantt_cal_light .policy-gantt-period-progress-field {
+  grid-column: 1 / 3;
+}
+
+.gantt_cal_light .policy-gantt-period-field .form-label {
+  margin-bottom: .5rem !important;
+  color: #212529 !important;
+  font-size: 1rem !important;
+  font-weight: 450 !important;
+  line-height: 1.5 !important;
+}
+
+.gantt_cal_light .policy-gantt-period-duration-months,
+.gantt_cal_light .policy-gantt-period-calendar-duration,
+.gantt_cal_light .policy-gantt-period-calendar-duration-months,
+.gantt_cal_light .policy-gantt-period-duration,
+.gantt_cal_light .policy-gantt-period-progress {
+  text-align: right;
+}
+
+.gantt_cal_light .policy-gantt-period-progress {
+  padding-right: .35rem !important;
+}
+
+.gantt_cal_light .policy-gantt-period-progress:not(.readonly-field) {
+  background-color: #fff !important;
+  color: #212529 !important;
+}
+
+.gantt_cal_light .policy-gantt-period-calendar-duration {
+  padding-right: 1.1rem !important;
+}
+
+.gantt_cal_light .policy-gantt-period-duration::-webkit-inner-spin-button,
+.gantt_cal_light .policy-gantt-period-duration::-webkit-outer-spin-button,
+.gantt_cal_light .policy-gantt-period-progress::-webkit-inner-spin-button,
+.gantt_cal_light .policy-gantt-period-progress::-webkit-outer-spin-button {
+  margin-left: .25rem;
+}
+
+.gantt_cal_light .policy-gantt-period-constraint-type-field {
+  grid-column: 3 / 5;
+}
+
+.gantt_cal_light .policy-gantt-links {
+  height: auto !important;
+  margin-top: 1rem !important;
+}
+
+.gantt_cal_light .policy-gantt-links-editor {
+  border: 1px solid #dee2e6;
+  border-radius: .5rem;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  overflow: visible;
+  position: relative;
+}
+
+.gantt_cal_light .policy-gantt-links-title {
+  color: #212529;
+  font-size: 1rem;
+  font-weight: 450;
+  line-height: 1.5;
+  margin-bottom: .5rem;
+}
+
+.gantt_cal_light .policy-gantt-links-table {
+  margin-bottom: 0;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.gantt_cal_light .policy-gantt-links-table th {
+  white-space: nowrap;
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gantt_cal_light .policy-gantt-links-table td {
+  vertical-align: middle;
+  padding-top: .45rem;
+  padding-bottom: .45rem;
+}
+
+.gantt_cal_light .policy-gantt-links-check-col,
+.gantt_cal_light .policy-gantt-links-check-cell {
+  width: 28px;
+  min-width: 28px;
+  max-width: 28px;
+  padding-left: .275rem !important;
+  padding-right: .275rem !important;
+  text-align: center !important;
+}
+
+.gantt_cal_light .policy-gantt-links-check-wrap {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  margin: 0 !important;
+  width: 100%;
+  min-height: auto !important;
+}
+
+.gantt_cal_light .policy-gantt-links-check {
+  float: none !important;
+  display: block !important;
+  width: 1em !important;
+  height: 1em !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border-radius: .25em !important;
+  box-shadow: none !important;
+}
+
+.gantt_cal_light .policy-gantt-links-table th:nth-child(2),
+.gantt_cal_light .policy-gantt-links-table td:nth-child(2) {
+  width: calc(100% - 28px - 9rem - 6rem);
+}
+
+.gantt_cal_light .policy-gantt-links-table th:nth-child(3),
+.gantt_cal_light .policy-gantt-links-table td:nth-child(3) {
+  width: 9rem;
+}
+
+.gantt_cal_light .policy-gantt-links-table th:nth-child(4),
+.gantt_cal_light .policy-gantt-links-table td:nth-child(4) {
+  width: 11rem;
+}
+
+.gantt_cal_light .policy-gantt-links-table th:nth-child(4) {
+  padding-left: 2.875rem;
+}
+
+.gantt_cal_light .policy-gantt-links-table td:nth-child(4) {
+  padding-left: 4px;
+}
+
+.gantt_cal_light .policy-gantt-links-lag-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.gantt_cal_light .policy-gantt-links-lag-wrap .policy-gantt-links-lag {
+  flex: 1 1 auto;
+}
+
+.gantt_cal_light .policy-gantt-links-lag-mode-btn {
+  flex: 0 0 auto;
+  width: auto;
+  height: 1.75rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #adb5bd;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  line-height: 1;
+}
+
+.gantt_cal_light .policy-gantt-links-lag-mode-fixed {
+  margin-right: 2px;
+}
+
+.gantt_cal_light .policy-gantt-links-lag-mode-auto {
+  margin-right: 8px;
+}
+
+.gantt_cal_light .policy-gantt-links-lag-mode-btn:hover,
+.gantt_cal_light .policy-gantt-links-lag-mode-btn:focus {
+  color: #6c757d;
+  text-decoration: none;
+}
+
+.gantt_cal_light .policy-gantt-links-lag-mode-btn--active {
+  color: var(--bs-primary, #075D94);
+}
+
+.gantt_cal_light .policy-gantt-links-lag-mode-btn--active:hover,
+.gantt_cal_light .policy-gantt-links-lag-mode-btn--active:focus {
+  color: #064d7a;
+}
+
+.gantt_cal_light .policy-gantt-links-lag-mode-btn:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.gantt_cal_light .policy-gantt-links-lag-mode-btn .bi {
+  font-size: 1rem;
+}
+
+.gantt_cal_light .policy-gantt-links-actions-row {
+  margin-top: .75rem;
+}
+
+.gantt_cal_light .policy-gantt-links-add-btn {
+  border: 1px solid #ced4da;
+  background-color: #f8f9fa;
+  color: #495057;
+  font-size: 1rem;
+  padding: .375rem .75rem;
+}
+
+.gantt_cal_light .policy-gantt-links-add-btn:hover,
+.gantt_cal_light .policy-gantt-links-add-btn:focus {
+  background-color: #eef1f4;
+  color: #343a40;
+}
+
+.gantt_cal_light .policy-gantt-links-up-btn,
+.gantt_cal_light .policy-gantt-links-down-btn {
+  border-color: #ced4da !important;
+  background-color: #f8f9fa !important;
+  color: #495057 !important;
+}
+
+.gantt_cal_light .policy-gantt-links-up-btn:hover,
+.gantt_cal_light .policy-gantt-links-up-btn:focus,
+.gantt_cal_light .policy-gantt-links-down-btn:hover,
+.gantt_cal_light .policy-gantt-links-down-btn:focus {
+  border-color: #ced4da !important;
+  background-color: #eef1f4 !important;
+  color: #343a40 !important;
+}
+
+.gantt_cal_light .policy-gantt-links-delete-btn {
+  border-color: #e6c9cf !important;
+  background-color: #fbf4f5 !important;
+  color: #b45d68 !important;
+}
+
+.gantt_cal_light .policy-gantt-links-delete-btn:hover,
+.gantt_cal_light .policy-gantt-links-delete-btn:focus {
+  border-color: #ddb8c0 !important;
+  background-color: #f8ecee !important;
+  color: #a14f59 !important;
+}
+
+.gantt_cal_light .policy-gantt-period-label-spacer {
+  visibility: hidden;
+}
+
+.gantt_cal_light input.readonly-field,
+.gantt_cal_light select.readonly-field,
+.gantt_cal_light textarea.readonly-field {
+  background-color: #f8f9fa !important;
+  color: #6c757d !important;
+  opacity: 1 !important;
+}
+
+.gantt_cal_light input.policy-gantt-period-progress:not([readonly]):not(:disabled) {
+  background-color: #fff !important;
+  color: #212529 !important;
+  opacity: 1 !important;
+}
+
+.gantt_cal_light .policy-gantt-period-parent-task .policy-gantt-period-start,
+.gantt_cal_light .policy-gantt-period-parent-task .policy-gantt-period-end,
+.gantt_cal_light .policy-gantt-period-parent-task .policy-gantt-period-duration {
+  pointer-events: none;
+}
+
+.gantt_cal_light .policy-gantt-period-lock {
+  cursor: pointer;
+  font-size: .85em;
+  vertical-align: baseline;
+  position: relative;
+  top: -1px;
+  color: #6c757d;
+  transition: color .15s;
+}
+
+.gantt_cal_light .policy-gantt-period-lock:hover {
+  color: #0d6efd;
+}
+
+.gantt_cal_light .policy-gantt-period-lock-fixed,
+.gantt_cal_light .policy-gantt-period-lock-fixed:hover {
+  cursor: default;
+  color: #6c757d;
+}
+
+.gantt_cal_light .policy-gantt-period-timebox-adjust {
+  cursor: pointer;
+  color: #adb5bd;
+  font-size: .85em;
+  vertical-align: baseline;
+  transition: color .15s;
+}
+
+.gantt_cal_light .policy-gantt-period-timebox-adjust:hover {
+  color: var(--bs-primary, #075D94) !important;
+}
+
+.gantt_cal_light .policy-gantt-period-timebox-adjust.policy-gantt-period-lock-fixed,
+.gantt_cal_light .policy-gantt-period-timebox-adjust.policy-gantt-period-lock-fixed:hover {
+  cursor: default;
+  color: #adb5bd !important;
+}
+
+.gantt_cal_light textarea:focus,
+.gantt_cal_light input:focus,
+.gantt_cal_light select:focus {
+  border-color: #86b7fe !important;
+  outline: 0 !important;
+  box-shadow: 0 0 0 .25rem rgba(13, 110, 253, .25) !important;
+}
+
+.gantt_cal_light .gantt_cal_lcontrols {
+  justify-content: flex-end !important;
+  gap: .5rem !important;
+  padding: .75rem 1rem !important;
+  border-top: 1px solid #dee2e6 !important;
+  background: #fff !important;
+}
+
+.gantt_cal_light .gantt_btn_set {
+  min-height: calc(1.5em + .75rem + 2px) !important;
+  padding: calc(.375rem - 1px) .75rem .375rem !important;
+  border: 1px solid #6c757d !important;
+  border-radius: .375rem !important;
+  background: #fff !important;
+  color: #6c757d !important;
+  font-family: inherit !important;
+  font-size: 1rem !important;
+  font-weight: 450 !important;
+  line-height: 1.5 !important;
+  box-shadow: none !important;
+}
+
+.gantt_cal_light .gantt_btn_set > [dhx_button],
+.gantt_cal_light .gantt_btn_set > [data-dhx-button] {
+  display: none !important;
+}
+
+.gantt_cal_light .gantt_btn_set:hover {
+  background: #6c757d !important;
+  border-color: #6c757d !important;
+  color: #fff !important;
+}
+
+.gantt_cal_light .gantt_save_btn_set {
+  border-color: var(--bs-primary, #075D94) !important;
+  background: var(--bs-primary, #075D94) !important;
+  color: #fff !important;
+}
+
+.gantt_cal_light .gantt_save_btn_set:hover {
+  border-color: #064d7a !important;
+  background: #064d7a !important;
+  color: #fff !important;
+}
+
+.gantt_cal_light .gantt_delete_btn_set {
+  border-color: #dc3545 !important;
+  background: #fff !important;
+  color: #dc3545 !important;
+}
+
+.gantt_cal_light .gantt_delete_btn_set:hover {
+  background: #dc3545 !important;
+  border-color: #dc3545 !important;
+  color: #fff !important;
+}
+
+#proposals-pane .proposal-payment-schedule-table-wrap tr.proposal-payment-stage-has-next > td {
+  border-bottom: 0 !important;
+}
+
+#proposals-pane .proposal-payment-schedule-table-wrap tr.proposal-payment-stage-has-next > td:nth-child(n+5) {
+  background-image: repeating-linear-gradient(
+    to right,
+    rgba(33, 37, 41, .22) 0,
+    rgba(33, 37, 41, .22) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  background-position: left bottom;
+  background-repeat: repeat-x;
+  background-size: 3px 1px;
+}
+
+#proposals-pane .proposal-payment-schedule-table-wrap tr.proposal-payment-stage-continuation > td {
+  border-top: 0 !important;
+}
+
+#proposals-pane .proposal-payment-schedule-table-wrap .proposal-id-cell .proposal-quick-edit {
+  padding-top: 0;
+  position: relative;
+  top: -2px;
+}
+
 #proposals-pane .proposal-dispatch-table-wrap {
   overflow-x: auto;
   overflow-y: visible;
@@ -2142,6 +5161,9 @@ section#templates .alert.alert-info .text-muted {
 #proposals-pane .proposal-commercial-table .proposal-commercial-days-group,
 #proposals-pane .proposal-commercial-table .proposal-commercial-day-header {
   text-align: center;
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
 }
 
 #proposals-pane .proposal-commercial-table .proposal-commercial-rate-header,
@@ -2248,6 +5270,8 @@ section#templates .alert.alert-info .text-muted {
 
 #proposals-pane .proposal-commercial-table .proposal-commercial-rate,
 #proposals-pane .proposal-commercial-table .proposal-commercial-day-count,
+#proposals-pane .proposal-commercial-table .proposal-commercial-stage-day-count,
+#proposals-pane .proposal-commercial-table .proposal-commercial-summary-total-day-count,
 #proposals-pane .proposal-commercial-table .proposal-commercial-total {
   width: 100%;
   min-width: 0;
@@ -2255,7 +5279,9 @@ section#templates .alert.alert-info .text-muted {
   text-align: right;
 }
 
-#proposals-pane .proposal-commercial-table .proposal-commercial-day-count {
+#proposals-pane .proposal-commercial-table .proposal-commercial-day-count,
+#proposals-pane .proposal-commercial-table .proposal-commercial-stage-day-count,
+#proposals-pane .proposal-commercial-table .proposal-commercial-summary-total-day-count {
   width: calc(100% - 1px);
   box-sizing: border-box;
   margin-right: 1px;
@@ -2586,6 +5612,12 @@ html.proposal-progress-cursor * {
   color: #868e96;
 }
 
+#proposals-pane .proposal-service-sections-table .form-check-input:disabled {
+  background-color: #f8f9fa !important;
+  border-color: #ced4da !important;
+  opacity: 1 !important;
+}
+
 #proposals-pane #proposal-assets-table .proposal-asset-short-cell,
 #proposals-pane #proposal-assets-table .proposal-asset-ler-wrap {
   min-width: 0;
@@ -2893,6 +5925,66 @@ html.proposal-progress-cursor * {
 #proposals-pane table.proposal-template-table > thead tr > :first-child .form-check-input,
 #proposals-pane table.proposal-template-table > tbody tr > :first-child .form-check-input {
   margin: 0 !important;
+}
+
+#proposals-pane table.proposals-table col.checkbox,
+#proposals-pane table.proposal-dispatch-table col.checkbox {
+  width: 30px !important;
+}
+
+#proposals-pane table.proposals-table col.proposal-number,
+#proposals-pane table.proposal-dispatch-table col.proposal-number {
+  width: 68px !important;
+}
+
+#proposals-pane table.proposals-table > thead tr > :first-child,
+#proposals-pane table.proposals-table > tbody tr > :first-child,
+#proposals-pane table.proposal-dispatch-table > thead tr > :first-child,
+#proposals-pane table.proposal-dispatch-table > tbody tr > :first-child,
+#proposals-pane table.proposal-template-table > thead tr > :first-child,
+#proposals-pane table.proposal-template-table > tbody tr > :first-child {
+  width: 30px !important;
+  min-width: 30px !important;
+  max-width: 30px !important;
+  text-align: center !important;
+  vertical-align: middle !important;
+  padding-left: .25rem !important;
+  padding-right: .25rem !important;
+}
+
+#proposals-pane table.proposals-table > thead tr > :nth-child(2),
+#proposals-pane table.proposals-table > tbody tr > :nth-child(2),
+#proposals-pane table.proposal-dispatch-table > thead tr > :nth-child(2),
+#proposals-pane table.proposal-dispatch-table > tbody tr > :nth-child(2),
+#proposals-pane table.proposal-template-table > thead tr > :nth-child(2),
+#proposals-pane table.proposal-template-table > tbody tr > :nth-child(2) {
+  width: 68px !important;
+  min-width: 68px !important;
+  max-width: 68px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#proposals-pane table.proposals-table > thead tr > :first-child .form-check,
+#proposals-pane table.proposals-table > tbody tr > :first-child .form-check,
+#proposals-pane table.proposal-dispatch-table > thead tr > :first-child .form-check,
+#proposals-pane table.proposal-dispatch-table > tbody tr > :first-child .form-check,
+#proposals-pane table.proposal-template-table > thead tr > :first-child .form-check,
+#proposals-pane table.proposal-template-table > tbody tr > :first-child .form-check {
+  width: 100%;
+  height: 100%;
+}
+
+#proposals-pane table.proposals-table > thead tr > :first-child .form-check-input,
+#proposals-pane table.proposals-table > tbody tr > :first-child .form-check-input,
+#proposals-pane table.proposal-dispatch-table > thead tr > :first-child .form-check-input,
+#proposals-pane table.proposal-dispatch-table > tbody tr > :first-child .form-check-input,
+#proposals-pane table.proposal-template-table > thead tr > :first-child .form-check-input,
+#proposals-pane table.proposal-template-table > tbody tr > :first-child .form-check-input {
+  float: none !important;
+  position: static !important;
+  transform: none !important;
 }
 
 #proposals-pane .readonly-field {
@@ -3320,6 +6412,94 @@ html.proposal-progress-cursor * {
   text-align: center;
 }
 
+#proposals-pane .proposal-stage-final-report-wrap {
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+}
+
+#proposals-pane .proposal-stage-final-report-wrap .proposal-stage-final-report-date {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+#proposals-pane .proposal-stage-delay-action-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 1.75rem;
+}
+
+#proposals-pane .proposal-stage-delay-action-slot:empty {
+  display: none;
+}
+
+#proposals-pane .proposal-stage-delay-add {
+  width: 1.75rem;
+  height: 1.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: #6c757d;
+  border: 1px solid #ced4da;
+  background-color: #f8f9fa;
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+#proposals-pane .proposal-stage-delay-add:hover,
+#proposals-pane .proposal-stage-delay-add:focus {
+  background-color: #eef1f4;
+  color: #343a40;
+  border-color: #ced4da;
+}
+
+#proposals-pane .proposal-stage-delay-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: .3rem;
+}
+
+#proposals-pane .proposal-stage-delay-number-shell {
+  position: relative;
+  flex: 0 0 8.5rem;
+}
+
+#proposals-pane .proposal-stage-delay-number-shell .proposal-stage-next-delay-days {
+  text-align: left;
+  padding-right: 2.8rem;
+}
+
+#proposals-pane .proposal-stage-delay-unit {
+  position: absolute;
+  top: 50%;
+  right: .9rem;
+  transform: translateY(-50%);
+  color: #6c757d;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 2;
+}
+
+#proposals-pane .proposal-stage-delay-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.75rem;
+  padding: 0;
+  color: #adb5bd;
+  border: none;
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+#proposals-pane .proposal-stage-delay-remove:hover {
+  color: #dc3545;
+}
+
 #proposals-pane .proposal-stage-terms-total-row td {
   background: transparent;
 }
@@ -3513,7 +6693,8 @@ html.proposal-progress-cursor * {
 .performer-quick-edit { cursor: pointer; opacity: .45; transition: opacity .15s; }
 .performer-quick-edit:hover { opacity: .85; }
 .proposal-quick-edit,
-.proposal-dispatch-quick-edit {
+.proposal-dispatch-quick-edit,
+.project-quick-edit {
   display: inline-block;
   vertical-align: middle;
   line-height: 1;
@@ -3523,7 +6704,8 @@ html.proposal-progress-cursor * {
   transition: opacity .15s;
 }
 .proposal-quick-edit:hover,
-.proposal-dispatch-quick-edit:hover { opacity: .85; }
+.proposal-dispatch-quick-edit:hover,
+.project-quick-edit:hover { opacity: .85; }
 .performer-locked-icon { opacity: .35; }
 
 .perf-nav-btn {
@@ -3599,6 +6781,14 @@ html.proposal-progress-cursor * {
   width: auto !important;
 }
 
+#performers-main-section .performers-table col.col-short-number {
+  width: 88px !important;
+}
+
+#performers-main-section .performers-table col.col-number {
+  width: 100px !important;
+}
+
 #performers-main-section .performers-table col.col-active,
 #performers-main-section .performers-table col.col-typical {
   width: auto !important;
@@ -3620,6 +6810,16 @@ html.proposal-progress-cursor * {
 
 #performers-main-section .performers-table thead th:nth-child(2),
 #performers-main-section .performers-table tbody td:nth-child(2) {
+  width: 88px !important;
+  min-width: 88px !important;
+  max-width: 88px !important;
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+#performers-main-section .performers-table thead th:nth-child(3),
+#performers-main-section .performers-table tbody td:nth-child(3) {
   width: 100px !important;
   min-width: 100px !important;
   max-width: 100px !important;
@@ -3628,10 +6828,10 @@ html.proposal-progress-cursor * {
   text-overflow: ellipsis !important;
 }
 
-#performers-main-section .performers-table thead th:nth-child(3),
-#performers-main-section .performers-table tbody td:nth-child(3),
 #performers-main-section .performers-table thead th:nth-child(4),
-#performers-main-section .performers-table tbody td:nth-child(4) {
+#performers-main-section .performers-table tbody td:nth-child(4),
+#performers-main-section .performers-table thead th:nth-child(5),
+#performers-main-section .performers-table tbody td:nth-child(5) {
   width: auto !important;
   min-width: 0 !important;
   max-width: none !important;
@@ -3640,7 +6840,7 @@ html.proposal-progress-cursor * {
   text-overflow: clip !important;
 }
 
-#performers-main-section .performers-table tbody td:nth-child(5) {
+#performers-main-section .performers-table tbody td:nth-child(6) {
   white-space: nowrap !important;
   overflow: visible !important;
   text-overflow: clip !important;
@@ -3670,11 +6870,15 @@ html.proposal-progress-cursor * {
   width: 30px !important;
 }
 
+#participation-confirmation-section .performers-table col.col-short-number {
+  width: 88px !important;
+}
+
 #participation-confirmation-section .performers-table col.col-number {
   width: 100px !important;
 }
 
-#participation-confirmation-section .performers-table col:not(.col-checkbox):not(.col-number) {
+#participation-confirmation-section .performers-table col:not(.col-checkbox):not(.col-short-number):not(.col-number) {
   width: auto !important;
 }
 
@@ -3694,6 +6898,16 @@ html.proposal-progress-cursor * {
 
 #participation-confirmation-section .performers-table thead th:nth-child(2),
 #participation-confirmation-section .performers-table tbody td:nth-child(2) {
+  width: 88px !important;
+  min-width: 88px !important;
+  max-width: 88px !important;
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+#participation-confirmation-section .performers-table thead th:nth-child(3),
+#participation-confirmation-section .performers-table tbody td:nth-child(3) {
   width: 100px !important;
   min-width: 100px !important;
   max-width: 100px !important;
@@ -3702,8 +6916,8 @@ html.proposal-progress-cursor * {
   text-overflow: ellipsis !important;
 }
 
-#participation-confirmation-section .performers-table thead th:nth-child(n+3),
-#participation-confirmation-section .performers-table tbody td:nth-child(n+3) {
+#participation-confirmation-section .performers-table thead th:nth-child(n+4),
+#participation-confirmation-section .performers-table tbody td:nth-child(n+4) {
   width: auto !important;
   min-width: 0 !important;
   max-width: none !important;
@@ -3776,7 +6990,176 @@ html.proposal-progress-cursor * {
   min-width: 100%;
 }
 
-#contract-conclusion-section .performers-table col:not(.col-checkbox):not(.col-number) {
+#projects-pane {
+  --project-schedule-table-scroll-offset-top: 0px;
+  --project-schedule-table-margin-to-scroll: 10px;
+  --project-schedule-table-action-gap: 30px;
+  --project-schedule-table-scroll-action-gap: 11.75px;
+}
+
+#projects-pane .project-schedule-scroll-wrap {
+  overflow-x: auto;
+  overflow-y: visible;
+  width: 100%;
+  padding-bottom: var(--project-schedule-table-scroll-offset-top);
+}
+
+#projects-pane .project-schedule-scroll-wrap > .project-schedule-table {
+  width: 100%;
+  min-width: 100%;
+  margin-bottom: 0 !important;
+}
+
+#projects-pane .project-schedule-scroll-wrap.has-horizontal-scroll > .project-schedule-table {
+  margin-bottom: var(--project-schedule-table-margin-to-scroll) !important;
+}
+
+#projects-pane .project-schedule-scroll-wrap + .products-actions-row {
+  margin-top: var(--project-schedule-table-action-gap) !important;
+}
+
+#projects-pane .project-schedule-scroll-wrap.has-horizontal-scroll + .products-actions-row {
+  margin-top: var(--project-schedule-table-scroll-action-gap) !important;
+}
+
+#projects-pane .project-schedule-table thead th:nth-child(7),
+#projects-pane .project-schedule-table tbody td:nth-child(7) {
+  white-space: nowrap !important;
+}
+
+/* "Задача" column: just content-sized — the cell expands exactly enough to
+   show the full task text on a single line, no further. No greedy growth,
+   no squeezing of neighbouring columns. The overlap regression we hit earlier
+   was caused by max-width:0 + width:100% on <col> (greedy) combined with a
+   min-width on the inner wrapper that exceeded the cell's allocated width.
+   Both are removed.
+
+   Ellipsis still triggers as a graceful fallback IF some outer constraint
+   (e.g. the page sidebar squeezing the panel below the table's natural sum
+   of column widths) shrinks the cell below its content width. In day-to-day
+   browser-window resizing the wrapper (.project-schedule-scroll-wrap) takes
+   the overflow as a horizontal scrollbar — that's the existing behaviour for
+   all other columns and matches how the table feels overall. */
+#projects-pane .project-schedule-table thead th.col-task,
+#projects-pane .project-schedule-table tbody td.col-task {
+  white-space: nowrap !important;
+}
+#projects-pane .project-schedule-table .col-task-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+#projects-pane .project-schedule-table .col-task-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Tree caret + indentation, mirroring the Gantt grid's expand/collapse UX.
+   --task-tree-level is set per row from the template (item.level). */
+#projects-pane .project-schedule-table .col-task-tree {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  /* 16px per nesting level, like the DHTMLX gantt_tree_indent default. */
+  padding-left: calc(var(--task-tree-level, 0) * 16px);
+}
+#projects-pane .project-schedule-table .col-task-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #495057;
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 2px;
+}
+#projects-pane .project-schedule-table .col-task-toggle:hover {
+  background: rgba(13, 110, 253, 0.1);
+  color: #0d6efd;
+}
+#projects-pane .project-schedule-table .col-task-toggle-spacer {
+  cursor: default;
+  pointer-events: none;
+}
+/* Collapsed state: rotate caret 90° counter-clockwise so it points right. */
+#projects-pane .project-schedule-table .col-task-toggle[aria-expanded="false"] .bi {
+  transform: rotate(-90deg);
+}
+#projects-pane .project-schedule-table .col-task-toggle .bi {
+  transition: transform 0.12s ease-out;
+}
+
+/* Rows hidden by the tree-collapse JS. We use a dedicated class instead of
+   d-none so that the existing project filter (which toggles d-none on
+   non-matching rows) can compose freely with collapse state. */
+#projects-pane .project-schedule-table tbody tr.project-schedule-row-collapsed-hidden {
+  display: none !important;
+}
+
+/* "Задача" column header: title shifted right so it lines up with the row
+   text (which is offset by the caret 16px + flex gap 6px = 22px), and the
+   1-2-3-4 outline buttons floated to the right edge — same layout & visual
+   styling as the Gantt grid header (see .typical-service-term-gantt-task-
+   header* rules above) for visual parity. */
+#projects-pane .project-schedule-table thead th.col-task .col-task-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .35rem;
+  width: 100%;
+  min-width: 0;
+}
+#projects-pane .project-schedule-table thead th.col-task .col-task-header-title {
+  padding-left: 22px;       /* matches row text offset (16px caret + 6px gap) */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#projects-pane .project-schedule-table thead th.col-task .col-task-outline-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  /* Push the 1/2/3/4 buttons a bit to the left so there's a visible gap
+     between the last button and the next column header ("Начало"). Same
+     value the Gantt grid header uses for parity. */
+  margin-right: .8rem;
+}
+#projects-pane .project-schedule-table thead th.col-task .col-task-outline-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  padding: 0;
+  border: 1px solid #ced4da;
+  border-radius: .2rem;
+  background: #fff;
+  color: #6c757d;
+  font-size: .72rem;
+  line-height: 1;
+  cursor: pointer;
+}
+#projects-pane .project-schedule-table thead th.col-task .col-task-outline-btn:hover,
+#projects-pane .project-schedule-table thead th.col-task .col-task-outline-btn:focus,
+#projects-pane .project-schedule-table thead th.col-task .col-task-outline-btn.active {
+  color: #fff;
+  background: var(--bs-primary, #075D94);
+  border-color: var(--bs-primary, #075D94);
+}
+#projects-pane .project-schedule-table thead th.col-task .col-task-outline-btn:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+#contract-conclusion-section .performers-table col:not(.col-checkbox):not(.col-contract-number):not(.col-number) {
   width: auto !important;
 }
 
@@ -3789,6 +7172,24 @@ html.proposal-progress-cursor * {
 
 #contract-conclusion-section .performers-table thead th:nth-child(2),
 #contract-conclusion-section .performers-table tbody td:nth-child(2) {
+  width: 80px !important;
+  min-width: 80px !important;
+  max-width: 80px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#contract-conclusion-section .performers-table tbody td:nth-child(2) > .clf-id-droid-mono {
+  display: block !important;
+  width: 80px !important;
+  max-width: 80px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#contract-conclusion-section .performers-table thead th:nth-child(3),
+#contract-conclusion-section .performers-table tbody td:nth-child(3) {
   width: 100px !important;
   min-width: 100px !important;
   max-width: 100px !important;
@@ -3797,8 +7198,8 @@ html.proposal-progress-cursor * {
   text-overflow: ellipsis !important;
 }
 
-#contract-conclusion-section .performers-table thead th:nth-child(n+3),
-#contract-conclusion-section .performers-table tbody td:nth-child(n+3) {
+#contract-conclusion-section .performers-table thead th:nth-child(n+4),
+#contract-conclusion-section .performers-table tbody td:nth-child(n+4) {
   width: auto !important;
   min-width: 0 !important;
   max-width: none !important;
@@ -3924,11 +7325,48 @@ html.proposal-progress-cursor * {
 }
 
 #contracts-pane table.contracts-table col:nth-child(2),
-#contracts-pane table.signing-table col:nth-child(2),
+#contracts-pane table.contracts-table col.col-contract-number,
 #contracts-pane table.contracts-table thead th:nth-child(2),
-#contracts-pane table.contracts-table tbody td:nth-child(2),
+#contracts-pane table.contracts-table tbody td:nth-child(2) {
+  width: 80px !important;
+  min-width: 80px !important;
+  max-width: 80px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#contracts-pane table.contracts-table tbody td:nth-child(2) > .clf-id-droid-mono {
+  display: block !important;
+  width: 80px !important;
+  max-width: 80px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#contracts-pane table.signing-table col:nth-child(2),
+#contracts-pane table.signing-table col.col-contract-number,
 #contracts-pane table.signing-table thead th:nth-child(2),
 #contracts-pane table.signing-table tbody td:nth-child(2) {
+  width: 80px !important;
+  min-width: 80px !important;
+  max-width: 80px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#contracts-pane table.signing-table tbody td:nth-child(2) > .clf-id-droid-mono {
+  display: block !important;
+  width: 80px !important;
+  max-width: 80px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#contracts-pane table.signing-table col:nth-child(3),
+#contracts-pane table.signing-table thead th:nth-child(3),
+#contracts-pane table.signing-table tbody td:nth-child(3) {
   width: 100px !important;
   min-width: 100px !important;
   max-width: 100px !important;
@@ -3949,22 +7387,318 @@ html.proposal-progress-cursor * {
   width: 100%;
 }
 
+#projects-content-info-request > .card,
+#projects-content-performer-payments > .card,
+#projects-content-info-request > .card > .card-body,
+#projects-content-performer-payments > .card > .card-body,
+#contracts-content-performer-execution > .card,
+#contracts-content-performer-execution > .card > .card-body,
+#contracts-execution-pane,
+#info-request-approval-section,
+.payment-request-section {
+  overflow: visible;
+}
+
+.payment-request-section {
+  --payment-request-table-scroll-offset-top: 0px;
+  --payment-request-table-margin-to-scroll: 10px;
+  --payment-request-table-action-gap: 30px;
+  --payment-request-table-scroll-action-gap: 11.75px;
+}
+
+/* Ниже .section-header (1020), чтобы мастер-фильтр «Проекты» не уходил под шапки таблиц */
+#projects .table-section-header,
+#contracts .table-section-header {
+  position: relative;
+  z-index: 1010;
+}
+
+/* Открытый фильтр в шапке таблицы — выше следующих шапок на странице */
+#projects-pane .table-section-header:has(.dropdown-menu.show),
+#contracts-execution-pane .table-section-header:has(.dropdown-menu.show) {
+  z-index: 1020;
+}
+
+#info-request-approval-section .project-filter-menu,
+.payment-request-section .project-filter-menu {
+  z-index: 1060;
+}
+
+.payment-request-section .info-request-table-wrap {
+  overflow-x: auto;
+  overflow-y: visible;
+  width: 100%;
+  padding-bottom: var(--payment-request-table-scroll-offset-top);
+}
+
+.payment-request-section .info-request-table-wrap > .performers-table {
+  width: max-content;
+  min-width: 100%;
+  margin-bottom: 0 !important;
+}
+
+.payment-request-section .info-request-table-wrap.has-horizontal-scroll > .performers-table {
+  margin-bottom: var(--payment-request-table-margin-to-scroll) !important;
+}
+
+.payment-request-section .info-request-table-wrap + .products-actions-row {
+  margin-top: var(--payment-request-table-action-gap) !important;
+}
+
+.payment-request-section .info-request-table-wrap.has-horizontal-scroll + .products-actions-row {
+  margin-top: var(--payment-request-table-scroll-action-gap) !important;
+}
+
 #info-request-approval-section .info-request-table-wrap > .performers-table {
   width: max-content;
   min-width: 100%;
 }
 
-#info-request-approval-section .performers-table thead th,
-#info-request-approval-section .performers-table tbody td {
+#info-request-approval-section .performers-table col.col-checkbox,
+.payment-request-section .performers-table col.col-checkbox {
+  width: 30px !important;
+}
+
+#info-request-approval-section .performers-table col.col-number {
+  width: 100px !important;
+}
+
+.payment-request-section .performers-table col.col-number {
+  width: 85px !important;
+}
+
+#info-request-approval-section .performers-table col:not(.col-checkbox):not(.col-number),
+#payment-request-section .performers-table col:not(.col-checkbox):not(.col-number):not(.col-payment-toggle):not(.col-payment-date):not(.col-contract-signing-status-icon):not(.col-payment-paid-toggle),
+#contracts-payment-request-section .performers-table col:not(.col-checkbox):not(.col-number):not(.col-payment-toggle):not(.col-payment-date) {
+  width: auto !important;
+}
+
+#info-request-approval-section .performers-table thead th:nth-child(1),
+#info-request-approval-section .performers-table tbody td:nth-child(1),
+.payment-request-section .performers-table thead th:nth-child(1),
+.payment-request-section .performers-table tbody td:nth-child(1) {
+  width: 30px !important;
+  min-width: 30px !important;
+  max-width: 30px !important;
+}
+
+#info-request-approval-section .performers-table thead th:nth-child(2),
+#info-request-approval-section .performers-table tbody td:nth-child(2) {
+  width: 100px !important;
+  min-width: 100px !important;
+  max-width: 100px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+.payment-request-section .performers-table thead th:nth-child(2),
+.payment-request-section .performers-table tbody td:nth-child(2) {
+  width: 85px !important;
+  min-width: 85px !important;
+  max-width: 85px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#info-request-approval-section .performers-table thead th:nth-child(n+3),
+#info-request-approval-section .performers-table tbody td:nth-child(n+3),
+.payment-request-section .performers-table thead th:nth-child(n+3),
+.payment-request-section .performers-table tbody td:nth-child(n+3) {
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
   white-space: nowrap !important;
   overflow: visible !important;
   text-overflow: clip !important;
 }
 
-#info-request-approval-section .performers-table .text-truncate {
+#info-request-approval-section .performers-table tbody td:nth-child(5),
+.payment-request-section .performers-table tbody td:nth-child(5) {
+  max-width: none !important;
+}
+
+#payment-request-section .performers-table .payment-request-signing-status-cell {
+  width: 40px !important;
+  min-width: 40px !important;
+  max-width: 40px !important;
+}
+
+#payment-request-section .performers-table .reg-launch-icon.reg-launch-indicator {
+  display: inline-block;
+  line-height: 1;
+  position: relative;
+  vertical-align: middle;
+  z-index: 0;
+}
+
+#payment-request-section .performers-table .reg-launch-icon.reg-launch-indicator::after {
+  background: var(--reg-launch-bg, #f8f9fa);
+  border-radius: 50%;
+  content: "";
+  height: .88em;
+  left: 50%;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: .88em;
+  z-index: -1;
+}
+
+#payment-request-section .performers-table .reg-launch-indicator {
+  color: var(--reg-launch-color, #6c757d) !important;
+}
+
+#payment-request-section .performers-table .reg-launch-status--work {
+  --reg-launch-color: var(--bs-primary);
+  --reg-launch-bg: #b8d6ff;
+}
+
+#payment-request-section .performers-table .reg-launch-status--done {
+  --reg-launch-color: #198754;
+  --reg-launch-bg: #8fd8a8;
+}
+
+#payment-request-section .performers-table .reg-launch-status--deferred {
+  --reg-launch-color: #adb5bd;
+  --reg-launch-bg: #e9ecef;
+}
+
+#payment-request-section .performers-table .reg-launch-status--review {
+  --reg-launch-color: #fd7e14;
+  --reg-launch-bg: #ffe4c2;
+}
+
+#info-request-approval-section .performers-table thead th,
+#info-request-approval-section .performers-table tbody td,
+.payment-request-section .performers-table thead th,
+.payment-request-section .performers-table tbody td {
   white-space: nowrap !important;
   overflow: visible !important;
   text-overflow: clip !important;
+}
+
+#info-request-approval-section .performers-table .text-truncate,
+.payment-request-section .performers-table .text-truncate {
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+.payment-request-section .performers-table tbody td.payment-request-date-cell,
+#contracts-payment-request-section .performers-table tbody td.payment-request-paid-date-cell {
+  text-align: left !important;
+}
+
+.payment-request-section .performers-table tbody td.payment-request-number-cell {
+  text-align: right;
+  padding-right: 5px;
+}
+
+.payment-request-section .performers-table thead th.payment-request-number-header {
+  text-align: right !important;
+  padding-right: 5px !important;
+}
+
+.payment-request-section .performers-table thead th.payment-request-group-header {
+  text-align: left;
+  font-weight: 600;
+}
+
+.payment-request-section .performers-table col.col-payment-toggle {
+  width: 1.5rem !important;
+}
+
+#payment-request-section .performers-table col.col-payment-paid-toggle {
+  width: 4rem !important;
+}
+
+#payment-request-section .performers-table tbody td.payment-request-date-cell,
+#payment-request-section .performers-table thead th.payment-request-group-header {
+  width: 140px !important;
+  min-width: 140px !important;
+  max-width: 140px !important;
+}
+
+#contracts-payment-request-section .performers-table tbody td.payment-request-date-cell,
+#contracts-payment-request-section .performers-table tbody td.payment-request-paid-date-cell,
+#contracts-payment-request-section .performers-table thead th.payment-request-group-header {
+  width: 140px !important;
+  min-width: 140px !important;
+  max-width: 140px !important;
+}
+
+.payment-request-section .performers-table col.col-payment-date {
+  width: 140px !important;
+}
+
+#payment-request-section .performers-table tbody td.payment-request-toggle-cell,
+#payment-request-section .performers-table thead th.payment-request-toggle-header {
+  width: 1.5rem !important;
+  min-width: 1.5rem !important;
+  max-width: 1.5rem !important;
+  padding: 0 !important;
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+#payment-request-section .performers-table tbody td.payment-request-paid-toggle-cell,
+#payment-request-section .performers-table thead th.payment-request-paid-toggle-header {
+  width: auto !important;
+  min-width: 4rem !important;
+  max-width: none !important;
+  padding-left: 0.25rem !important;
+  padding-right: 0.25rem !important;
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+#contracts-payment-request-section .performers-table tbody td.payment-request-toggle-cell,
+#contracts-payment-request-section .performers-table thead th.payment-request-toggle-header,
+#contracts-payment-request-section .performers-table tbody td.payment-request-paid-toggle-cell {
+  width: 1.5rem !important;
+  min-width: 1.5rem !important;
+  max-width: 1.5rem !important;
+  padding: 0 !important;
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+.payment-request-section .performers-table tbody td.payment-request-toggle-cell .payment-request-toggle-icon,
+.payment-request-section .performers-table tbody td.payment-request-paid-toggle-cell .payment-request-paid-toggle-icon {
+  display: inline-block;
+  font-size: 1.1rem;
+  line-height: 1;
+  vertical-align: middle;
+  margin-left: -0.05em;
+}
+
+.payment-request-section .payment-request-toggle-icon.bi-toggle-off,
+.payment-request-section .payment-request-paid-toggle-icon.bi-toggle-off {
+  color: #adb5bd;
+}
+
+.payment-request-section .payment-request-toggle-icon.is-on {
+  color: var(--bs-primary, #075D94);
+}
+
+.payment-request-section .payment-request-paid-toggle-icon.is-on {
+  color: #22c55e;
+}
+
+.payment-request-section .payment-request-paid-toggle-icon.is-interactive {
+  cursor: pointer;
+}
+
+#payment-request-section .payment-request-paid-toggle-icon {
+  pointer-events: none;
+}
+
+.payment-request-section .payment-request-paid-toggle-icon.is-skipped,
+.payment-request-section .payment-request-toggle-icon.is-skipped {
+  opacity: 0.45;
+  pointer-events: none;
 }
 
 #participation-confirmation-section .performers-table > tbody > tr > td,
@@ -3980,10 +7714,19 @@ html.proposal-progress-cursor * {
   border-top: 1px solid var(--bs-border-color) !important;
 }
 
-#participation-confirmation-section .performers-table > tbody > tr.group-cont > .cell-group-val,
-#contract-conclusion-section       .performers-table > tbody > tr.group-cont > .cell-group-val,
+#contract-conclusion-section       .performers-table:not(#contract-drafting-table) > tbody > tr.group-cont > .cell-group-val,
 #info-request-approval-section     .performers-table > tbody > tr.group-cont > .cell-group-val {
   border-top-color: transparent !important;
+  visibility: hidden;
+}
+
+#participation-confirmation-section .performers-table > tbody > tr.group-cont > .cell-group-val,
+#contract-drafting-table > tbody > tr.group-cont > .cell-group-val {
+  border-top-color: transparent !important;
+}
+
+#participation-confirmation-section .performers-table > tbody > tr.group-cont > .cell-group-val.cell-group-repeated,
+#contract-drafting-table > tbody > tr.group-cont > .cell-group-val.cell-group-repeated {
   visibility: hidden;
 }
 
@@ -5197,8 +8940,47 @@ body.proposal-service-text-modal-open {
   margin-bottom: 0;
 }
 
-.letter-template-preview li[data-list="bullet"] > .ql-ui::before {
+.letter-template-preview li[data-list="bullet"] > .ql-ui::before,
+.ql-editor li[data-list="bullet"] > .ql-ui::before {
   content: "\2022" !important;
+}
+
+.ql-editor li[data-list="bullet"].ql-indent-1 > .ql-ui::before,
+.ql-editor li[data-list="bullet"].ql-indent-4 > .ql-ui::before,
+.ql-editor li[data-list="bullet"].ql-indent-7 > .ql-ui::before,
+.letter-template-preview li[data-list="bullet"].ql-indent-1 > .ql-ui::before,
+.letter-template-preview li[data-list="bullet"].ql-indent-4 > .ql-ui::before,
+.letter-template-preview li[data-list="bullet"].ql-indent-7 > .ql-ui::before {
+  content: "o" !important;
+  font-family: "Courier New", Courier, monospace !important;
+}
+
+.ql-editor li[data-list="bullet"].ql-indent-2 > .ql-ui::before,
+.ql-editor li[data-list="bullet"].ql-indent-5 > .ql-ui::before,
+.ql-editor li[data-list="bullet"].ql-indent-8 > .ql-ui::before,
+.letter-template-preview li[data-list="bullet"].ql-indent-2 > .ql-ui::before,
+.letter-template-preview li[data-list="bullet"].ql-indent-5 > .ql-ui::before,
+.letter-template-preview li[data-list="bullet"].ql-indent-8 > .ql-ui::before {
+  content: "\25AA" !important;
+}
+
+.ql-editor li[data-list="bullet"].ql-indent-3 > .ql-ui::before,
+.ql-editor li[data-list="bullet"].ql-indent-6 > .ql-ui::before,
+.letter-template-preview li[data-list="bullet"].ql-indent-3 > .ql-ui::before,
+.letter-template-preview li[data-list="bullet"].ql-indent-6 > .ql-ui::before {
+  content: "\2022" !important;
+  font-family: inherit !important;
+}
+
+.ql-editor li[data-list="circle"] > .ql-ui::before,
+.letter-template-preview li[data-list="circle"] > .ql-ui::before {
+  content: "o" !important;
+  font-family: "Courier New", Courier, monospace !important;
+}
+
+.ql-editor li[data-list="square"] > .ql-ui::before,
+.letter-template-preview li[data-list="square"] > .ql-ui::before {
+  content: "\25AA" !important;
 }
 
 .ql-editor li[data-list="dash"] > .ql-ui::before,
@@ -5206,13 +8988,25 @@ body.proposal-service-text-modal-open {
   content: "-" !important;
 }
 
+.ql-editor li[data-list="ndash"] > .ql-ui::before,
+.letter-template-preview li[data-list="ndash"] > .ql-ui::before {
+  content: "\2013" !important;
+}
+
 .ql-editor li[data-list="check"] > .ql-ui::before,
 .letter-template-preview li[data-list="check"] > .ql-ui::before {
   content: "\2713" !important;
 }
 
+.proposal-service-text-toolbar__marker-preview--circle {
+  font-family: "Courier New", Courier, monospace;
+}
+
 .letter-template-preview ol li[data-list="bullet"],
+.letter-template-preview ol li[data-list="circle"],
+.letter-template-preview ol li[data-list="square"],
 .letter-template-preview ol li[data-list="dash"],
+.letter-template-preview ol li[data-list="ndash"],
 .letter-template-preview ol li[data-list="check"] {
   list-style-type: none;
 }

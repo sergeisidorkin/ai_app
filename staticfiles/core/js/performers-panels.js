@@ -60,7 +60,30 @@
     });
   }
 
+  function rememberParticipationCollapseButtonState() {
+    var root = pane();
+    var section = root ? root.querySelector('#participation-confirmation-section') : null;
+    if (!section) return;
+    var assetToggle = section.querySelector('#participation-asset-toggle');
+    var sectionToggle = section.querySelector('#participation-section-toggle');
+    if (assetToggle) {
+      window.__participationAssetCollapsed = assetToggle.classList.contains('active');
+    }
+    if (sectionToggle) {
+      window.__participationSectionCollapsed = sectionToggle.classList.contains('active');
+    }
+    saveCollapsePrefs();
+  }
+
   function pane() { return document.getElementById('performers-pane'); }
+  function updatePaymentRequestScrollGaps() {
+    qa('.payment-request-section .info-request-table-wrap', document).forEach(function(wrap) {
+      wrap.classList.toggle('has-horizontal-scroll', wrap.scrollWidth > wrap.clientWidth + 1);
+    });
+  }
+  function schedulePaymentRequestScrollGapsUpdate() {
+    window.requestAnimationFrame(updatePaymentRequestScrollGaps);
+  }
   function contractPane() {
     var contractsRoot = document.getElementById('contracts-pane');
     if (contractsRoot && contractsRoot.querySelector('#contract-conclusion-section')) return contractsRoot;
@@ -90,7 +113,74 @@
       menu.style.minWidth = Math.max(controlWidth, 200, contentWidth) + 'px';
     });
   };
+  window.bindProjectFilterMenuPortal = window.bindProjectFilterMenuPortal || function(dropdown) {
+    if (!dropdown || dropdown.dataset.projectMenuPortalBound === '1') return;
+    dropdown.dataset.projectMenuPortalBound = '1';
+    var menu = dropdown.querySelector('.project-filter-menu');
+    var button = dropdown.querySelector('.dropdown-toggle');
+    if (!menu || !button) return;
 
+    var originalParent = null;
+    var originalNext = null;
+
+    function placeMenu() {
+      if (!menu.classList.contains('show')) return;
+      var rect = button.getBoundingClientRect();
+      if (!rect.width && !rect.height) return;
+      var margin = 8;
+      var gap = 2;
+      var width = Math.ceil(menu.getBoundingClientRect().width || menu.offsetWidth || 200);
+      var left = Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin));
+      var top = rect.bottom + gap;
+
+      menu.classList.add('project-filter-menu-portal');
+      menu.style.position = 'fixed';
+      menu.style.left = left + 'px';
+      menu.style.top = top + 'px';
+      menu.style.right = 'auto';
+      menu.style.bottom = 'auto';
+      menu.style.transform = 'none';
+
+      var menuRect = menu.getBoundingClientRect();
+      if (menuRect.bottom > window.innerHeight - margin && rect.top > menuRect.height + margin) {
+        menu.style.top = Math.max(margin, rect.top - menuRect.height - gap) + 'px';
+      }
+    }
+
+    function returnMenu() {
+      menu.classList.remove('project-filter-menu-portal');
+      menu.style.removeProperty('position');
+      menu.style.removeProperty('left');
+      menu.style.removeProperty('top');
+      menu.style.removeProperty('right');
+      menu.style.removeProperty('bottom');
+      menu.style.removeProperty('transform');
+      if (originalParent && menu.parentNode !== originalParent) {
+        originalParent.insertBefore(menu, originalNext);
+      }
+    }
+
+    dropdown.addEventListener('shown.bs.dropdown', function() {
+      var instance = window.bootstrap && window.bootstrap.Dropdown.getInstance(button);
+      if (instance && instance._popper) {
+        instance._popper.destroy();
+        instance._popper = null;
+      }
+      originalParent = menu.parentNode;
+      originalNext = menu.nextSibling;
+      document.body.appendChild(menu);
+      placeMenu();
+      requestAnimationFrame(placeMenu);
+    });
+    dropdown.addEventListener('hidden.bs.dropdown', returnMenu);
+    window.addEventListener('resize', placeMenu);
+    window.addEventListener('scroll', function(e) {
+      if (!menu.classList.contains('show')) return;
+      var target = e.target;
+      if (target === menu || (target && target.nodeType === 1 && menu.contains(target))) return;
+      placeMenu();
+    }, true);
+  };
   function getCookie(name) {
     const m = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
     return m ? m.pop() : '';
@@ -165,6 +255,9 @@
   function getParticipationRequestBtn() {
     return pane()?.querySelector('#participation-request-btn');
   }
+  function getParticipationBatchActionBtn() {
+    return pane()?.querySelector('#participation-batch-action-btn');
+  }
   function getParticipationRequestPanel() {
     return pane()?.querySelector('#participation-request-actions');
   }
@@ -188,6 +281,58 @@
       .map((row) => row.querySelector('input[name="participation-select"]'))
       .filter((checkbox) => checkbox && !checkbox.disabled);
   }
+  function getParticipationRecipientKey(row) {
+    return row?.dataset?.recipientId || row?.dataset?.executor || '';
+  }
+  function getParticipationBaseGroupKey(row) {
+    return (row?.dataset?.projectId || '') + '||' + getParticipationRecipientKey(row);
+  }
+  function getParticipationGroupKey(row) {
+    var batchId = row?.dataset?.participationBatchId || '';
+    if (batchId) return 'batch||' + batchId;
+    return 'base||' + getParticipationBaseGroupKey(row);
+  }
+  function getSelectedParticipationRequestIds() {
+    const selectedGroups = new Set();
+    getVisibleParticipationChecks()
+      .filter((checkbox) => checkbox.checked && checkbox.dataset.requestSent !== '1')
+      .forEach((checkbox) => selectedGroups.add(getParticipationGroupKey(checkbox.closest('tr'))));
+
+    const ids = new Set();
+    getParticipationRows().forEach((row) => {
+      if (!selectedGroups.has(getParticipationGroupKey(row))) return;
+      const checkbox = row.querySelector('input[name="participation-select"]');
+      if (checkbox && !checkbox.disabled && checkbox.dataset.requestSent !== '1') ids.add(checkbox.value);
+    });
+    return Array.from(ids);
+  }
+  function getParticipationBatchActionState() {
+    const selected = getVisibleParticipationChecks()
+      .filter((checkbox) => checkbox.checked && checkbox.dataset.requestSent !== '1');
+    if (!selected.length) return { mode: '', ids: [] };
+
+    const rows = selected.map((checkbox) => checkbox.closest('tr')).filter(Boolean);
+    const numbers = new Set(rows.map((row) => row.dataset.projectNumber || ''));
+    const recipients = new Set(rows.map((row) => row.dataset.recipientId || ''));
+    if (numbers.size !== 1 || recipients.size !== 1 || numbers.has('') || recipients.has('')) {
+      return { mode: '', ids: [] };
+    }
+
+    const batchIds = new Set(rows.map((row) => row.dataset.participationBatchId || '').filter(Boolean));
+    const ids = selected.map((checkbox) => checkbox.value);
+    if (batchIds.size === 1) {
+      return { mode: 'split', ids };
+    }
+    if (batchIds.size > 1) {
+      return { mode: '', ids: [] };
+    }
+
+    const baseGroups = new Set(rows.map(getParticipationBaseGroupKey));
+    if (baseGroups.size > 1) {
+      return { mode: 'merge', ids };
+    }
+    return { mode: '', ids: [] };
+  }
   function updateParticipationState() {
     const boxes = getVisibleParticipationChecks();
     const checkedCount = boxes.filter(b => b.checked).length;
@@ -200,6 +345,16 @@
 
     const requestBtn = getParticipationRequestBtn();
     if (requestBtn) requestBtn.disabled = checkedCount === 0;
+
+    const batchActionBtn = getParticipationBatchActionBtn();
+    if (batchActionBtn) {
+      const actionState = getParticipationBatchActionState();
+      const visible = !!actionState.mode;
+      batchActionBtn.classList.toggle('d-none', !visible);
+      batchActionBtn.disabled = !visible;
+      batchActionBtn.dataset.mode = actionState.mode || '';
+      batchActionBtn.textContent = actionState.mode === 'split' ? 'Разъединить' : 'Объединить';
+    }
 
     const controls = getParticipationDeadlineControls();
     if (controls) {
@@ -233,6 +388,189 @@
       .map((row) => row.querySelector('input[name="info-request-select"]'))
       .filter((checkbox) => checkbox && !checkbox.disabled);
   }
+  function getPaymentRequestSections() {
+    return qa('.payment-request-section', document);
+  }
+  function findPaymentRequestSection(el) {
+    return el?.closest('.payment-request-section') || null;
+  }
+  function getPaymentRequestMaster(section) {
+    return section?.querySelector('.js-payment-request-master');
+  }
+  function getPaymentRequestRows(section) {
+    if (section) return qa('tbody tr[data-project-id]', section);
+    return qa('.payment-request-section tbody tr[data-project-id]', document);
+  }
+  function getPaymentRequestRowsForPerformer(performerId) {
+    return getPaymentRequestRows().filter((row) => row.dataset.performerId === String(performerId));
+  }
+  function getVisiblePaymentRequestChecks(section) {
+    const rows = section ? getPaymentRequestRows(section) : getPaymentRequestRows();
+    return rows
+      .filter((row) => !isFilterHidden(row))
+      .map((row) => row.querySelector('input[name="payment-request-select"]'))
+      .filter((checkbox) => checkbox && !checkbox.disabled);
+  }
+  function getPaymentRequestSendBtn(section) {
+    return section?.querySelector('.js-payment-request-send-btn');
+  }
+  function getPaymentRequestActionsPanel(section) {
+    return section?.querySelector('.js-payment-request-actions');
+  }
+  function getPaymentRequestChannels(section) {
+    return qa('.js-payment-request-channel', section || document);
+  }
+  function parsePaymentRequestPrepayment(row) {
+    const raw = row?.dataset?.prepayment;
+    if (raw === '' || raw === undefined) return null;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : null;
+  }
+  function isPaymentRequestAdvanceSkipped(row) {
+    return parsePaymentRequestPrepayment(row) === 0;
+  }
+  function isPaymentRequestAdvanceOn(row) {
+    return row?.dataset?.advanceRequested === '1' || isPaymentRequestAdvanceSkipped(row);
+  }
+  function isPaymentRequestFinalOn(row) {
+    return row?.dataset?.finalRequested === '1';
+  }
+  function isPaymentRequestComplete(row) {
+    return isPaymentRequestAdvanceOn(row) && isPaymentRequestFinalOn(row);
+  }
+  function getNextPaymentRequestStep(row) {
+    if (!row || isPaymentRequestComplete(row)) return null;
+    if (!isPaymentRequestAdvanceOn(row)) return 'advance';
+    if (!isPaymentRequestFinalOn(row)) return 'final';
+    return null;
+  }
+  function setPaymentRequestSentDate(row, kind, value) {
+    if (!row || (kind !== 'advance' && kind !== 'final')) return;
+    const cell = row.querySelector(`[data-payment-date="${kind}"]`);
+    if (!cell) return;
+    cell.textContent = value || '';
+  }
+  function setPaymentRequestNumber(row, kind, value) {
+    if (!row || (kind !== 'advance' && kind !== 'final')) return;
+    const cell = row.querySelector(`[data-payment-number="${kind}"]`);
+    if (!cell) return;
+    cell.textContent = value != null && value !== '' ? String(value) : '';
+  }
+  function setPaymentRequestSender(row, value) {
+    if (!row) return;
+    const cell = row.querySelector('[data-payment-sender]');
+    if (!cell) return;
+    cell.textContent = value || '';
+  }
+  function isPaymentPaidToggleInteractive(section) {
+    const target = section || getPaymentRequestSections().find((item) => item.dataset.paymentPaidToggleUrl);
+    return Boolean(target?.dataset?.paymentPaidToggleUrl);
+  }
+  function getPaymentPaidToggleUrl(section) {
+    const target = section || getPaymentRequestSections().find((item) => item.dataset.paymentPaidToggleUrl);
+    return target?.dataset?.paymentPaidToggleUrl || '';
+  }
+  function setPaymentPaidDate(row, kind, value) {
+    if (!row || (kind !== 'advance' && kind !== 'final')) return;
+    const cell = row.querySelector(`[data-payment-paid-date="${kind}"]`);
+    if (!cell) return;
+    cell.textContent = value || '';
+  }
+  function setPaymentPaidToggle(row, kind, on, options = {}) {
+    if (!row || (kind !== 'advance' && kind !== 'final')) return;
+    const skipped = Boolean(options.skipped)
+      || (kind === 'advance' && isPaymentRequestAdvanceSkipped(row));
+    if (skipped && kind === 'advance' && isPaymentRequestAdvanceSkipped(row)) {
+      on = true;
+    }
+    const datasetKey = kind === 'advance' ? 'advancePaid' : 'finalPaid';
+    row.dataset[datasetKey] = on ? '1' : '0';
+    const icon = row.querySelector(`[data-payment-paid-toggle="${kind}"]`);
+    if (!icon) return;
+    icon.classList.toggle('bi-toggle-off', !on);
+    icon.classList.toggle('bi-toggle-on', on);
+    icon.classList.toggle('is-on', on);
+    icon.classList.toggle('is-skipped', skipped);
+    if (skipped) {
+      icon.classList.remove('is-interactive');
+      icon.removeAttribute('role');
+      icon.setAttribute('aria-hidden', 'true');
+    }
+    const labelPrefix = kind === 'advance' ? 'Оплата аванса' : 'Оплата окончательного платежа';
+    icon.setAttribute('aria-label', `${labelPrefix}: ${on ? 'выполнена' : 'не выполнена'}`);
+    if (options.paidAt !== undefined) {
+      setPaymentPaidDate(row, kind, options.paidAt);
+    }
+  }
+  function setPaymentPaidToggleForPerformer(performerId, kind, on, options = {}) {
+    getPaymentRequestRowsForPerformer(performerId).forEach((row) => setPaymentPaidToggle(row, kind, on, options));
+  }
+  function setPaymentRequestToggle(row, kind, on, options = {}) {
+    if (!row || (kind !== 'advance' && kind !== 'final')) return;
+    const skipped = Boolean(options.skipped);
+    if (kind === 'advance') {
+      if (skipped) {
+        row.setAttribute('data-advance-requested', '0');
+      } else {
+        row.setAttribute('data-advance-requested', on ? '1' : '0');
+      }
+    } else {
+      row.setAttribute('data-final-requested', on ? '1' : '0');
+    }
+    const icon = row.querySelector(`[data-payment-toggle="${kind}"]`);
+    if (!icon) return;
+    icon.classList.toggle('bi-toggle-off', !on);
+    icon.classList.toggle('bi-toggle-on', on);
+    icon.classList.toggle('is-on', on);
+    if (kind === 'advance') {
+      icon.classList.toggle('is-skipped', skipped);
+    }
+  }
+  function initPaymentRequestRowState(row) {
+    if (!row) return;
+    if (isPaymentRequestAdvanceSkipped(row) && row.dataset.advanceRequested !== '1') {
+      setPaymentRequestToggle(row, 'advance', true, { skipped: true });
+      setPaymentPaidToggle(row, 'advance', true, { skipped: true });
+    }
+  }
+  function isContractsPaymentRequestSection(section) {
+    return section?.id === 'contracts-payment-request-section';
+  }
+  function applyPaymentRequestSentState() {
+    getPaymentRequestSections().forEach((section) => {
+      const hasActions = Boolean(getPaymentRequestActionsPanel(section));
+      const master = getPaymentRequestMaster(section);
+      if (isContractsPaymentRequestSection(section)) {
+        if (master) {
+          master.disabled = true;
+          master.checked = false;
+          master.indeterminate = false;
+        }
+      }
+      getPaymentRequestRows(section).forEach((row) => {
+        const checkbox = row.querySelector('input[name="payment-request-select"]');
+        if (!checkbox) return;
+        if (isContractsPaymentRequestSection(section)) {
+          checkbox.disabled = true;
+          checkbox.checked = false;
+          checkbox.title = '';
+          return;
+        }
+        if (isPaymentRequestComplete(row)) {
+          checkbox.disabled = true;
+          checkbox.checked = false;
+          checkbox.title = 'Строка недоступна: обе заявки уже отправлены';
+        } else if (hasActions) {
+          checkbox.disabled = false;
+          checkbox.title = '';
+        }
+      });
+    });
+  }
+  function syncPaymentRequestRowsState() {
+    getPaymentRequestRows().forEach(initPaymentRequestRowState);
+    applyPaymentRequestSentState();
+  }
   function getCreateSourceDataBtn() {
     return pane()?.querySelector('#create-source-data-btn');
   }
@@ -265,6 +603,22 @@
 
     const wsBtn = getCreateSourceDataBtn();
     if (wsBtn) wsBtn.disabled = !getSelectedInfoRequestProjectId();
+  }
+
+  function updatePaymentRequestState(section) {
+    const sections = section ? [section] : getPaymentRequestSections();
+    sections.forEach((sec) => {
+      const boxes = getVisiblePaymentRequestChecks(sec);
+      const checkedCount = boxes.filter(b => b.checked).length;
+      const master = getPaymentRequestMaster(sec);
+      if (master) {
+        master.checked = boxes.length > 0 && checkedCount === boxes.length;
+        master.indeterminate = checkedCount > 0 && checkedCount < boxes.length;
+      }
+      const sendBtn = getPaymentRequestSendBtn(sec);
+      if (sendBtn) sendBtn.disabled = checkedCount === 0;
+    });
+    updateRowHighlight('payment-request-select');
   }
 
   function getContractMaster() {
@@ -313,9 +667,13 @@
       .filter((checkbox) => checkbox && !checkbox.disabled);
   }
   function getContractGroupKey(row, includeBatch) {
-    var baseKey = (row?.dataset?.projectId || '') + '||' + (row?.dataset?.executor || '');
-    var batchId = includeBatch ? (row?.dataset?.contractBatchId || '') : '';
-    return batchId ? baseKey + '||' + batchId : baseKey;
+    if (includeBatch) {
+      var participationBatchId = row?.dataset?.participationBatchId || '';
+      if (participationBatchId) return 'participation-batch||' + participationBatchId;
+      var batchId = row?.dataset?.contractBatchId || '';
+      if (batchId) return 'batch||' + batchId;
+    }
+    return (row?.dataset?.projectId || '') + '||' + (row?.dataset?.executor || '');
   }
   function getSelectedContractDispatchIds() {
     const selectedGroups = new Set();
@@ -358,12 +716,17 @@
       const row = checkbox.closest('tr');
       if (row && isFilterHidden(row)) checkbox.checked = false;
     });
+    getRowChecks('payment-request-select').forEach((checkbox) => {
+      const row = checkbox.closest('tr');
+      if (row && isFilterHidden(row)) checkbox.checked = false;
+    });
     updatePerformerMasterState();
     updateRowHighlight('performer-select');
     ensurePerformerActionsVisibility();
     updateParticipationState();
     updateContractState();
     updateInfoRequestState();
+    updatePaymentRequestState();
   }
   window.__refreshPerformersSelectionState = refreshPerformersSelectionState;
 
@@ -421,7 +784,9 @@
     var bodies = Array.from(sectionEl.querySelectorAll('table.performers-table tbody'));
     bodies.forEach(function(tbody) {
       var rows = Array.from(tbody.querySelectorAll('tr[data-project-id]'));
-      var isContractDispatchTable = tbody.closest('table')?.id === 'contract-dispatch-table';
+      var table = tbody.closest('table');
+      var isContractDispatchTable = table?.id === 'contract-dispatch-table';
+      var isContractDraftingTable = table?.id === 'contract-drafting-table';
       if (isContractDispatchTable) {
         rows.forEach(function(row) {
           if (row.classList.contains('contract-dispatch-collapsed')) {
@@ -432,22 +797,39 @@
       var prevGroupKey = null;
       var prevAssetKey = null;
       var prevDetailTexts = null;
-      var includeContractBatchInGroup = tbody.closest('table')?.id === 'contract-dispatch-table';
+      var prevGroupTexts = null;
+      var includeContractBatchInGroup = isContractDispatchTable || isContractDraftingTable;
+      var isParticipationTable = !!tbody.closest('#participation-confirmation-section');
       rows.forEach(function(row) {
         row.classList.remove('group-first', 'group-cont', 'asset-cont');
+        var groupCells = row.querySelectorAll('.cell-group-val');
+        groupCells.forEach(function(c) { c.classList.remove('cell-group-repeated'); });
         var detailCells = row.querySelectorAll('.cell-detail-val');
         detailCells.forEach(function(c) { c.classList.remove('cell-repeated'); });
         if (isFilterHidden(row)) return;
-        var groupKey = getContractGroupKey(row, includeContractBatchInGroup);
+        var groupKey = isParticipationTable
+          ? getParticipationGroupKey(row)
+          : getContractGroupKey(row, includeContractBatchInGroup);
         var assetKey = groupKey + '||' + (row.dataset.assetName || '');
         if (groupKey !== prevGroupKey) {
           row.classList.add('group-first');
           prevDetailTexts = null;
+          prevGroupTexts = null;
         } else {
           row.classList.add('group-cont');
           if (assetKey === prevAssetKey) {
             row.classList.add('asset-cont');
           }
+        }
+        var curGroupTexts = [];
+        if (isParticipationTable || isContractDraftingTable) {
+          groupCells.forEach(function(c, i) {
+            var txt = c.textContent.trim();
+            curGroupTexts.push(txt);
+            if (prevGroupTexts && prevGroupTexts[i] === txt) {
+              c.classList.add('cell-group-repeated');
+            }
+          });
         }
         var curDetailTexts = [];
         detailCells.forEach(function(c, i) {
@@ -460,6 +842,7 @@
         prevGroupKey = groupKey;
         prevAssetKey = assetKey;
         prevDetailTexts = curDetailTexts;
+        prevGroupTexts = curGroupTexts;
       });
 
       if (isContractDispatchTable) {
@@ -594,6 +977,16 @@
         td.innerHTML = td.dataset.originalTypical;
         delete td.dataset.originalTypical;
       }
+      var projectTd = row.querySelector('.cell-project-val');
+      if (projectTd && projectTd.dataset.originalProject !== undefined) {
+        projectTd.innerHTML = projectTd.dataset.originalProject;
+        delete projectTd.dataset.originalProject;
+      }
+      var typeTd = row.querySelector('.cell-type-val');
+      if (typeTd && typeTd.dataset.originalType !== undefined) {
+        typeTd.innerHTML = typeTd.dataset.originalType;
+        delete typeTd.dataset.originalType;
+      }
       if (row.classList.contains('section-collapsed')) {
         row.classList.remove('section-collapsed');
         var pid = row.dataset.projectId || '';
@@ -604,12 +997,55 @@
     });
   }
 
+  function participationCollapsedTypeLabel(rows) {
+    var byProject = new Map();
+    rows.forEach(function(row) {
+      var projectId = row.dataset.projectId || '';
+      var projectType = (row.dataset.projectType || '').trim();
+      if (!projectId || !projectType || byProject.has(projectId)) return;
+      var stage = parseInt(row.dataset.projectStage || '0', 10);
+      byProject.set(projectId, {
+        stage: Number.isFinite(stage) ? stage : 0,
+        projectId: projectId,
+        type: projectType,
+      });
+    });
+    return Array.from(byProject.values())
+      .sort(function(a, b) {
+        if (a.stage !== b.stage) return a.stage - b.stage;
+        return String(a.projectId).localeCompare(String(b.projectId), undefined, { numeric: true });
+      })
+      .map(function(item) { return item.type; })
+      .join('-');
+  }
+
+  function applyCollapsedParticipationProjectType(currentFirst, currentRows) {
+    if (!currentFirst || !currentRows || currentRows.length < 2) return;
+    var batchId = currentFirst.dataset.participationBatchId || '';
+    if (!batchId) return;
+    var projectIds = new Set(currentRows.map(function(row) { return row.dataset.projectId || ''; }).filter(Boolean));
+    if (projectIds.size <= 1) return;
+
+    var projectTd = currentFirst.querySelector('.cell-project-val');
+    if (projectTd) {
+      projectTd.dataset.originalProject = projectTd.innerHTML;
+      projectTd.textContent = '';
+    }
+    var typeTd = currentFirst.querySelector('.cell-type-val');
+    var typeLabel = participationCollapsedTypeLabel(currentRows);
+    if (typeTd && typeLabel) {
+      typeTd.dataset.originalType = typeTd.innerHTML;
+      typeTd.textContent = typeLabel;
+    }
+  }
+
   function collapseParticipationSections(sectionEl) {
     if (!sectionEl) return;
     var tbody = sectionEl.querySelector('table.performers-table tbody');
     if (!tbody) return;
     var rows = Array.from(tbody.querySelectorAll('tr[data-project-id]'));
     var currentFirst = null;
+    var currentRows = [];
     var currentCount = 0;
     function finishGroup() {
       if (!currentFirst) return;
@@ -618,14 +1054,17 @@
         td.dataset.originalTypical = td.innerHTML;
         td.textContent = pluralSections(currentCount);
       }
+      applyCollapsedParticipationProjectType(currentFirst, currentRows);
     }
     rows.forEach(function(row) {
       if (row.classList.contains('d-none')) return;
       if (!row.classList.contains('asset-cont')) {
         finishGroup();
         currentFirst = row;
+        currentRows = [row];
         currentCount = 1;
       } else {
+        currentRows.push(row);
         currentCount++;
         row.classList.add('d-none', 'section-collapsed');
       }
@@ -731,6 +1170,16 @@
         typicalTd.innerHTML = typicalTd.dataset.originalTypicalAsset;
         delete typicalTd.dataset.originalTypicalAsset;
       }
+      var projectTd = row.querySelector('.cell-project-val');
+      if (projectTd && projectTd.dataset.originalProject !== undefined) {
+        projectTd.innerHTML = projectTd.dataset.originalProject;
+        delete projectTd.dataset.originalProject;
+      }
+      var typeTd = row.querySelector('.cell-type-val');
+      if (typeTd && typeTd.dataset.originalType !== undefined) {
+        typeTd.innerHTML = typeTd.dataset.originalType;
+        delete typeTd.dataset.originalType;
+      }
       if (row.classList.contains('asset-collapsed')) {
         row.classList.remove('asset-collapsed');
         var pid = row.dataset.projectId || '';
@@ -763,6 +1212,7 @@
         assetSet.add(r.dataset.assetName || '');
         totalSections++;
       });
+      var visibleGroupRows = groupRows.filter(function(r) { return !r.classList.contains('d-none'); });
       for (var k = 1; k < groupRows.length; k++) {
         if (!groupRows[k].classList.contains('d-none')) {
           groupRows[k].classList.add('d-none', 'asset-collapsed');
@@ -778,6 +1228,7 @@
         typicalTd.dataset.originalTypicalAsset = typicalTd.innerHTML;
         typicalTd.textContent = pluralSections(totalSections);
       }
+      applyCollapsedParticipationProjectType(row, visibleGroupRows);
       i = j;
     }
     applyRowGrouping(sectionEl);
@@ -983,6 +1434,16 @@
         td.innerHTML = td.dataset.originalTypical;
         delete td.dataset.originalTypical;
       }
+      var projectTd = row.querySelector('.cell-project-val');
+      if (projectTd && projectTd.dataset.originalProject !== undefined) {
+        projectTd.innerHTML = projectTd.dataset.originalProject;
+        delete projectTd.dataset.originalProject;
+      }
+      var typeTd = row.querySelector('.cell-type-val');
+      if (typeTd && typeTd.dataset.originalType !== undefined) {
+        typeTd.innerHTML = typeTd.dataset.originalType;
+        delete typeTd.dataset.originalType;
+      }
       if (row.classList.contains('section-collapsed')) {
         row.classList.remove('section-collapsed');
         var pid = row.dataset.projectId || '';
@@ -1014,6 +1475,16 @@
       if (typicalTd && typicalTd.dataset.originalTypicalAsset !== undefined) {
         typicalTd.innerHTML = typicalTd.dataset.originalTypicalAsset;
         delete typicalTd.dataset.originalTypicalAsset;
+      }
+      var projectTd = row.querySelector('.cell-project-val');
+      if (projectTd && projectTd.dataset.originalProject !== undefined) {
+        projectTd.innerHTML = projectTd.dataset.originalProject;
+        delete projectTd.dataset.originalProject;
+      }
+      var typeTd = row.querySelector('.cell-type-val');
+      if (typeTd && typeTd.dataset.originalType !== undefined) {
+        typeTd.innerHTML = typeTd.dataset.originalType;
+        delete typeTd.dataset.originalType;
       }
       if (row.classList.contains('asset-collapsed')) {
         row.classList.remove('asset-collapsed');
@@ -1423,6 +1894,7 @@
     if (!dropdown || !radios.length || !label || dropdown.dataset.bound === '1') return;
     dropdown.dataset.bound = '1';
     window.bindProjectFilterMenuWidth(dropdown);
+    window.bindProjectFilterMenuPortal(dropdown);
 
     function applyFilter(projectId) {
       window.__infoRequestProjectFilter = projectId ? [projectId] : [];
@@ -1473,7 +1945,347 @@
     selectProject('');
   }
 
+  function initPaymentRequestProjectFilter() {
+    getPaymentRequestSections().forEach(initPaymentRequestProjectFilterSection);
+  }
+
+  function initPaymentRequestProjectFilterSection(section) {
+    const FILTER_ALL = '__all__';
+    if (!section) return;
+
+    window.__paymentRequestsProjectFilter = window.__paymentRequestsProjectFilter || [FILTER_ALL];
+
+    const dropdown = section.querySelector('.js-payment-request-filter')?.closest('.dropdown');
+    const checks = section.querySelectorAll('.js-payment-request-filter');
+    const label = section.querySelector('.js-payment-request-filter-label');
+    const master = getPaymentRequestMaster(section);
+
+    if (!dropdown || !checks.length || !label || dropdown.dataset.bound === '1') return;
+    dropdown.dataset.bound = '1';
+    window.bindProjectFilterMenuWidth(dropdown);
+    window.bindProjectFilterMenuPortal(dropdown);
+
+    function normalizeValues(values) {
+      values = Array.isArray(values) && values.length ? values.slice() : [FILTER_ALL];
+      if (values.includes(FILTER_ALL)) return [FILTER_ALL];
+      return values;
+    }
+
+    function syncChecks(values) {
+      const set = new Set(normalizeValues(values));
+      checks.forEach((cb) => { cb.checked = set.has(cb.value); });
+    }
+
+    function updateLabel(values) {
+      const normalized = normalizeValues(values);
+      if (normalized.includes(FILTER_ALL) || !normalized.length) {
+        label.textContent = 'Все';
+        return;
+      }
+      if (normalized.length === 1) {
+        const selected = Array.from(checks).find((cb) => cb.value === normalized[0]);
+        label.textContent = selected
+          ? window.getProjectFilterSummaryLabel(selected, '1 проект')
+          : '1 проект';
+        return;
+      }
+      label.textContent = normalized.length + ' выбрано';
+    }
+
+    function getMasterConstraint() {
+      if (typeof window.__getMasterValues === 'function') {
+        return window.__getMasterValues();
+      }
+      const saved = window.__masterProjectFilter;
+      return Array.isArray(saved) && saved.length ? saved.slice() : [FILTER_ALL];
+    }
+
+    function resolveRowFilterValues(rawValues) {
+      const normalized = normalizeValues(rawValues);
+      const masterValues = getMasterConstraint();
+      if (normalized.includes(FILTER_ALL) && masterValues[0] !== FILTER_ALL) {
+        return masterValues.slice();
+      }
+      return normalized;
+    }
+
+    function filterRows(values) {
+      const normalized = resolveRowFilterValues(values);
+      window.__paymentRequestsProjectFilter = normalized;
+      const showAll = normalized.includes(FILTER_ALL) || !normalized.length;
+      const selectedProjects = new Set(normalized);
+      getPaymentRequestSections().forEach((paymentSection) => {
+        getPaymentRequestRows(paymentSection).forEach((row) => {
+          const pid = row.dataset.projectId || '';
+          const visible = showAll || selectedProjects.has(pid);
+          row.classList.toggle('d-none', !visible);
+          if (!visible) {
+            const checkbox = row.querySelector('input[name="payment-request-select"]');
+            if (checkbox) checkbox.checked = false;
+          }
+        });
+        const sectionMaster = getPaymentRequestMaster(paymentSection);
+        if (sectionMaster) {
+          sectionMaster.checked = false;
+          sectionMaster.indeterminate = false;
+        }
+      });
+      updatePaymentRequestState();
+    }
+
+    function applyConstrainedFilter(values) {
+      const masterValues = getMasterConstraint();
+      const set = new Set(masterValues);
+      const normalized = normalizeValues(values);
+      checks.forEach((cb) => {
+        if (cb.value === FILTER_ALL) {
+          cb.checked = normalized.includes(FILTER_ALL);
+          cb.disabled = false;
+        } else {
+          cb.checked = normalized.includes(cb.value);
+          cb.disabled = !set.has(cb.value);
+        }
+      });
+      updateLabel(normalized);
+      filterRows(normalized);
+    }
+
+    function applyFilter(values) {
+      const normalized = normalizeValues(values);
+      const masterValues = getMasterConstraint();
+      if (normalized.includes(FILTER_ALL) && masterValues[0] !== FILTER_ALL) {
+        window.__syncPaymentRequestFilter(masterValues);
+        return;
+      }
+      if (masterValues[0] !== FILTER_ALL) {
+        applyConstrainedFilter(normalized);
+        return;
+      }
+      checks.forEach((cb) => { cb.disabled = false; });
+      syncChecks(normalized);
+      updateLabel(normalized);
+      filterRows(normalized);
+    }
+
+    function normalizeSelection() {
+      let values = Array.from(checks)
+        .filter((cb) => cb.checked && !cb.disabled)
+        .map((cb) => cb.value);
+      if (!values.length) values = [FILTER_ALL];
+      if (values.includes(FILTER_ALL)) values = [FILTER_ALL];
+      return values;
+    }
+
+    window.__syncPaymentRequestFilter = function(values) {
+      const source = Array.isArray(values) && values.length ? values.slice() : [FILTER_ALL];
+      const isAll = source[0] === FILTER_ALL;
+      const isSingle = !isAll && source.length === 1;
+      const set = new Set(source);
+      getPaymentRequestSections().forEach((paymentSection) => {
+        const sectionChecks = paymentSection.querySelectorAll('.js-payment-request-filter');
+        const sectionLabel = paymentSection.querySelector('.js-payment-request-filter-label');
+        sectionChecks.forEach((cb) => {
+          if (isAll) {
+            cb.checked = cb.value === FILTER_ALL;
+            cb.disabled = false;
+          } else if (isSingle) {
+            cb.checked = cb.value === source[0];
+            cb.disabled = true;
+          } else if (cb.value === FILTER_ALL) {
+            cb.checked = true;
+            cb.disabled = false;
+          } else {
+            cb.checked = set.has(cb.value);
+            cb.disabled = !set.has(cb.value);
+          }
+        });
+        if (!sectionLabel) return;
+        if (isAll) {
+          sectionLabel.textContent = 'Все';
+        } else if (isSingle) {
+          const selected = Array.from(sectionChecks).find((cb) => cb.value === source[0]);
+          sectionLabel.textContent = window.getProjectFilterSummaryLabel(selected, '1 проект');
+        } else {
+          sectionLabel.textContent = 'Все';
+        }
+      });
+      filterRows(isAll ? [FILTER_ALL] : source);
+    };
+
+    checks.forEach((cb) => {
+      cb.addEventListener('change', (event) => {
+        const value = event.target.value;
+        if (value === FILTER_ALL && event.target.checked) {
+          applyFilter([FILTER_ALL]);
+          return;
+        }
+        if (value === FILTER_ALL && !event.target.checked) {
+          const firstProject = Array.from(checks).find((item) => item.value !== FILTER_ALL);
+          if (firstProject) firstProject.checked = true;
+        } else {
+          const allCheckbox = Array.from(checks).find((item) => item.value === FILTER_ALL);
+          if (allCheckbox && allCheckbox.checked) allCheckbox.checked = false;
+        }
+        applyFilter(normalizeSelection());
+      });
+    });
+
+    const masterValues = getMasterConstraint();
+    if (masterValues[0] !== FILTER_ALL) {
+      window.__syncPaymentRequestFilter(masterValues);
+    } else {
+      applyFilter(window.__paymentRequestsProjectFilter);
+    }
+  }
+
   document.addEventListener('click', async (e) => {
+    const paymentPaidToggleIcon = e.target.closest('[data-payment-paid-toggle]');
+    const paymentSectionFromToggle = paymentPaidToggleIcon ? findPaymentRequestSection(paymentPaidToggleIcon) : null;
+    if (paymentPaidToggleIcon && paymentSectionFromToggle) {
+      if (
+        !isPaymentPaidToggleInteractive(paymentSectionFromToggle)
+        || !paymentPaidToggleIcon.classList.contains('is-interactive')
+        || paymentPaidToggleIcon.classList.contains('is-skipped')
+      ) {
+        return;
+      }
+      const row = paymentPaidToggleIcon.closest('tr[data-performer-id]');
+      const kind = paymentPaidToggleIcon.dataset.paymentPaidToggle;
+      const toggleUrl = getPaymentPaidToggleUrl(paymentSectionFromToggle);
+      if (!row || (kind !== 'advance' && kind !== 'final') || !toggleUrl) return;
+
+      e.preventDefault();
+      const previousOn = paymentPaidToggleIcon.classList.contains('is-on');
+      const nextOn = !previousOn;
+      const previousPaidAt = row.querySelector(`[data-payment-paid-date="${kind}"]`)?.textContent || '';
+      setPaymentPaidToggleForPerformer(row.dataset.performerId, kind, nextOn, {
+        paidAt: nextOn ? previousPaidAt : '',
+      });
+
+      const formData = new FormData();
+      formData.append('performer_id', row.dataset.performerId);
+      formData.append('kind', kind);
+      formData.append('paid', nextOn ? '1' : '0');
+
+      paymentPaidToggleIcon.classList.add('is-pending');
+      try {
+        const response = await fetch(toggleUrl, {
+          method: 'POST',
+          headers: { 'X-CSRFToken': csrftoken },
+          body: formData,
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+          throw new Error(data?.error || 'Не удалось сохранить статус оплаты.');
+        }
+        if (typeof data.paid === 'boolean') {
+          setPaymentPaidToggleForPerformer(row.dataset.performerId, kind, data.paid, {
+            paidAt: data.paid_at || '',
+          });
+        }
+      } catch (err) {
+        setPaymentPaidToggleForPerformer(row.dataset.performerId, kind, previousOn, {
+          paidAt: previousPaidAt,
+        });
+        alert(err.message || 'Не удалось сохранить статус оплаты.');
+      } finally {
+        paymentPaidToggleIcon.classList.remove('is-pending');
+      }
+      return;
+    }
+
+    const paymentRequestSendBtn = e.target.closest('.js-payment-request-send-btn');
+    const paymentSectionFromSend = paymentRequestSendBtn ? findPaymentRequestSection(paymentRequestSendBtn) : null;
+    if (paymentRequestSendBtn && paymentSectionFromSend) {
+      const checked = getVisiblePaymentRequestChecks(paymentSectionFromSend).filter((cb) => cb.checked);
+      if (!checked.length || paymentRequestSendBtn.disabled) return;
+
+      const requestPanel = getPaymentRequestActionsPanel(paymentSectionFromSend);
+      const requestUrl = requestPanel?.dataset?.requestUrl;
+      const sentAtInput = paymentSectionFromSend.querySelector('.js-payment-request-sent-at');
+      const selectedChannels = getPaymentRequestChannels(paymentSectionFromSend).filter((cb) => cb.checked).map((cb) => cb.value);
+      if (!selectedChannels.length) {
+        alert('Выберите хотя бы один способ отправки.');
+        return;
+      }
+      if (!requestUrl) return;
+
+      const formData = new FormData();
+      checked.forEach((checkbox) => formData.append('performer_ids[]', checkbox.value));
+      formData.append('request_sent_at', sentAtInput?.value || '');
+      selectedChannels.forEach((value) => formData.append('delivery_channels[]', value));
+
+      paymentRequestSendBtn.disabled = true;
+      try {
+        const response = await fetch(requestUrl, {
+          method: 'POST',
+          headers: { 'X-CSRFToken': csrftoken },
+          body: formData,
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+          throw new Error(data?.error || 'Не удалось отправить заявку.');
+        }
+
+        const sentAtDisplay = data?.request_sent_at || '';
+        const requestNumber = data?.request_number;
+        const senderDisplay = data?.sender_display || '';
+        const rowUpdateMap = new Map(
+          (data?.row_updates || []).map((item) => [String(item.id), item.stage]),
+        );
+        getPaymentRequestRows().forEach((row) => {
+          const performerId = row.dataset.performerId;
+          const step = rowUpdateMap.get(String(performerId));
+          if (!step) return;
+          if (step === 'advance') {
+            setPaymentRequestToggle(row, 'advance', true);
+            setPaymentRequestSentDate(row, 'advance', sentAtDisplay);
+            setPaymentRequestNumber(row, 'advance', requestNumber);
+          } else if (step === 'final') {
+            setPaymentRequestToggle(row, 'final', true);
+            setPaymentRequestSentDate(row, 'final', sentAtDisplay);
+            setPaymentRequestNumber(row, 'final', requestNumber);
+          }
+          setPaymentRequestSender(row, senderDisplay);
+          const checkbox = row.querySelector('input[name="payment-request-select"]');
+          if (checkbox) checkbox.checked = false;
+        });
+        syncPaymentRequestRowsState();
+
+        const modalEl = paymentSectionFromSend.querySelector('.js-payment-request-modal');
+        const modal = modalEl ? window.bootstrap?.Modal.getInstance(modalEl) : null;
+        modal?.hide();
+
+        const emailDelivery = data?.email_delivery;
+        if (emailDelivery?.requested && emailDelivery?.failed > 0) {
+          const errorLines = (emailDelivery.errors || [])
+            .slice(0, 5)
+            .map((item) => {
+              const channelPrefix = item.channel_label ? `[${item.channel_label}] ` : '';
+              return `- ${channelPrefix}${item.recipient}: ${item.error}`;
+            });
+          const moreCount = Math.max((emailDelivery.errors || []).length - errorLines.length, 0);
+          const details = [
+            `Не удалось отправить ${emailDelivery.failed} из ${emailDelivery.attempted} email-писем.`,
+            ...errorLines,
+          ];
+          if (moreCount > 0) {
+            details.push(`- И еще ${moreCount} ошибок.`);
+          }
+          alert(details.join('\n'));
+        }
+
+        document.body.dispatchEvent(new Event('performers-updated'));
+        document.body.dispatchEvent(new Event('contracts-execution-updated'));
+        document.body.dispatchEvent(new Event('notifications-updated'));
+        updatePaymentRequestState();
+      } catch (err) {
+        alert(err.message || 'Не удалось отправить заявку.');
+        updatePaymentRequestState(paymentSectionFromSend);
+      }
+      return;
+    }
+
     const root = pane(); if (!root) return;
     const contractRoot = contractPane();
 
@@ -1888,10 +2700,47 @@
       return;
     }
 
+    const participationBatchActionBtn = e.target.closest('#participation-batch-action-btn');
+    if (participationBatchActionBtn && root.contains(participationBatchActionBtn)) {
+      const actionState = getParticipationBatchActionState();
+      if (!actionState.mode || participationBatchActionBtn.disabled) return;
+
+      const requestPanel = getParticipationRequestPanel();
+      const url = actionState.mode === 'split'
+        ? requestPanel?.dataset?.splitUrl
+        : requestPanel?.dataset?.mergeUrl;
+      if (!url) return;
+
+      const formData = new FormData();
+      actionState.ids.forEach((id) => formData.append('performer_ids[]', id));
+
+      participationBatchActionBtn.disabled = true;
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'X-CSRFToken': csrftoken },
+          body: formData,
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+          throw new Error(data?.error || 'Не удалось изменить объединение батча.');
+        }
+        rememberParticipationCollapseButtonState();
+        window.__tableSel['participation-select'] = [];
+        window.__tableSelLast = null;
+        document.body.dispatchEvent(new Event('performers-updated'));
+      } catch (err) {
+        alert(err.message || 'Не удалось изменить объединение батча.');
+        updateParticipationState();
+      }
+      return;
+    }
+
     const requestBtn = e.target.closest('#participation-request-btn');
     if (requestBtn && root.contains(requestBtn)) {
       const checked = getVisibleParticipationChecks().filter((cb) => cb.checked && cb.dataset.requestSent !== '1');
-      if (!checked.length || requestBtn.disabled) return;
+      const performerIds = getSelectedParticipationRequestIds();
+      if (!checked.length || !performerIds.length || requestBtn.disabled) return;
 
       const requestPanel = getParticipationRequestPanel();
       const requestUrl = requestPanel?.dataset?.requestUrl;
@@ -1912,7 +2761,7 @@
       if (!requestUrl) return;
 
       const formData = new FormData();
-      checked.forEach((cb) => formData.append('performer_ids[]', cb.value));
+      performerIds.forEach((id) => formData.append('performer_ids[]', id));
       formData.append('duration_hours', String(durationHours));
       formData.append('request_sent_at', sentAtInput?.value || '');
       selectedChannels.forEach((value) => formData.append('delivery_channels[]', value));
@@ -2018,6 +2867,38 @@
 
   // мастер-чекбокс
   document.addEventListener('change', (e) => {
+    const paymentRequestMaster = e.target.closest('.js-payment-request-master');
+    const paymentSectionFromMaster = paymentRequestMaster ? findPaymentRequestSection(paymentRequestMaster) : null;
+    if (paymentRequestMaster && paymentSectionFromMaster) {
+      getPaymentRequestRows(paymentSectionFromMaster).forEach((row) => {
+        if (isFilterHidden(row)) return;
+        const checkbox = row.querySelector('input[name="payment-request-select"]');
+        if (!checkbox || checkbox.disabled) return;
+        checkbox.checked = paymentRequestMaster.checked;
+      });
+      paymentRequestMaster.indeterminate = false;
+      updatePaymentRequestState(paymentSectionFromMaster);
+      return;
+    }
+
+    const paymentRequestRowCb = e.target.closest('tbody input.form-check-input[name="payment-request-select"]');
+    const paymentSectionFromRow = paymentRequestRowCb ? findPaymentRequestSection(paymentRequestRowCb) : null;
+    if (paymentRequestRowCb && paymentSectionFromRow) {
+      propagateGroupCheck(paymentRequestRowCb, 'payment-request-select');
+      updatePaymentRequestState(paymentSectionFromRow);
+      return;
+    }
+
+    const paymentRequestChannelCb = e.target.closest('.js-payment-request-channel');
+    const paymentSectionFromChannel = paymentRequestChannelCb ? findPaymentRequestSection(paymentRequestChannelCb) : null;
+    if (paymentRequestChannelCb && paymentSectionFromChannel) {
+      const checkedChannels = getPaymentRequestChannels(paymentSectionFromChannel).filter((cb) => cb.checked);
+      if (!checkedChannels.length) {
+        paymentRequestChannelCb.checked = true;
+      }
+      return;
+    }
+
     const root = pane(); if (!root) return;
     const contractRoot = contractPane();
 
@@ -2298,6 +3179,9 @@
         });
       }
       if (typeof window.__enforceMasterOnRows === 'function') window.__enforceMasterOnRows();
+      if (typeof window.__syncPaymentRequestFilter === 'function') {
+        window.__syncPaymentRequestFilter(window.__paymentRequestsProjectFilter || [FA]);
+      }
 
       // --- filter labels ---
       var projLabel = root.querySelector('.js-perf-filter-label');
@@ -2393,6 +3277,14 @@
     initCreateContractSettingsModal();
     try { delete window.__tableSel['info-request-select']; } catch(_) {}
 
+    var paymentRequestIds = (window.__tableSel && window.__tableSel['payment-request-select']) || [];
+    var paymentRequestSet = new Set(paymentRequestIds || []);
+    getRowChecks('payment-request-select').forEach(function(b) { b.checked = paymentRequestSet.has(String(b.value)); });
+    initPaymentRequestProjectFilter();
+    syncPaymentRequestRowsState();
+    updatePaymentRequestState();
+    try { delete window.__tableSel['payment-request-select']; } catch(_) {}
+
     applyRowGrouping(root.querySelector('#participation-confirmation-section'));
     applyParticipationSentState();
     reapplyParticipationCollapse();
@@ -2455,10 +3347,20 @@
     var root = pane(); if (!root) return;
     if (!(e.target === root || root.contains(e.target))) return;
     ensurePerformerActionsVisibility();
+    schedulePaymentRequestScrollGapsUpdate();
     if (typeof window.__perfScrollY === 'number') {
       window.scrollTo(0, window.__perfScrollY);
       delete window.__perfScrollY;
     }
+  });
+
+  document.body.addEventListener('htmx:afterSettle', function (e) {
+    var executionPane = document.getElementById('contracts-execution-pane');
+    if (!executionPane || e.target !== executionPane) return;
+    initPaymentRequestProjectFilter();
+    syncPaymentRequestRowsState();
+    updatePaymentRequestState();
+    schedulePaymentRequestScrollGapsUpdate();
   });
 
   // ---- Prev / Next navigation inside performers modal ----
@@ -2593,6 +3495,7 @@
     initParticipationProjectFilter();
     initContractProjectFilter();
     initInfoRequestProjectFilter();
+    initPaymentRequestProjectFilter();
     var root = pane();
     if (root) {
       applyRowGrouping(root.querySelector('#participation-confirmation-section'));
@@ -2604,8 +3507,10 @@
       reapplyContractCollapse();
       applyRowGrouping(root.querySelector('#info-request-approval-section'));
       reapplyInfoRequestCollapse();
+      updatePaymentRequestState();
       syncCollapseButtons();
     }
+    schedulePaymentRequestScrollGapsUpdate();
 
     const perfModal = document.getElementById('performers-modal');
     if (perfModal) {
@@ -2618,5 +3523,19 @@
         ensurePerformerActionsVisibility();
       });
     }
+  });
+
+  window.addEventListener('resize', schedulePaymentRequestScrollGapsUpdate);
+  window.addEventListener('load', schedulePaymentRequestScrollGapsUpdate);
+  window.addEventListener('projects:section-shown', function(e) {
+    if (e.detail && e.detail.section === 'performer-payments') {
+      schedulePaymentRequestScrollGapsUpdate();
+    }
+  });
+  window.addEventListener('contracts:payment-request-shown', function() {
+    initPaymentRequestProjectFilter();
+    syncPaymentRequestRowsState();
+    updatePaymentRequestState();
+    schedulePaymentRequestScrollGapsUpdate();
   });
 })();

@@ -42,6 +42,7 @@
   const PROPOSAL_PAYMENT_GANTT_SCALE_WEEK = 'week';
   const PROPOSAL_PAYMENT_GANTT_SCALE_MONTH = 'month';
   const PROPOSAL_PAYMENT_GANTT_SCALE_QUARTER = 'quarter';
+  const PROPOSAL_SYSTEM_DSC_CODE = 'DSC';
   // The proposals' payment-schedule section owns its OWN Gantt instance built
   // via window.GanttEngine.create(). No more shared singleton — see
   // gantt_engine_app/static/gantt_engine/gantt-engine.js.
@@ -2825,6 +2826,19 @@
     return Array.isArray(entries) ? entries : [];
   }
 
+  function isProposalSystemDscEntry(entry) {
+    return String(entry?.code || '').trim().toUpperCase() === PROPOSAL_SYSTEM_DSC_CODE
+      || entry?.is_system_dsc === true;
+  }
+
+  function isProposalSystemDscRow(row) {
+    return String(row?.code || '').trim().toUpperCase() === PROPOSAL_SYSTEM_DSC_CODE;
+  }
+
+  function getProposalSystemDscEntry(form) {
+    return getProposalTypicalSectionEntries(form).find(isProposalSystemDscEntry) || null;
+  }
+
   function getProposalServiceGoalReportEntry(form) {
     const entriesMap = getProposalServiceGoalReportsMap(form);
     const entry = entriesMap[getProposalTypeId(form)] || null;
@@ -2925,6 +2939,23 @@
 
   function getProposalTypicalSectionNames(form) {
     return getProposalTypicalSectionEntries(form)
+      .map(function (entry) { return (entry?.name || '').trim(); })
+      .filter(Boolean);
+  }
+
+  function getProposalCommercialSectionNames(form) {
+    return getProposalTypicalSectionEntries(form)
+      .filter(function (entry) { return !isProposalSystemDscEntry(entry); })
+      .map(function (entry) { return (entry?.name || '').trim(); })
+      .filter(Boolean);
+  }
+
+  function getProposalServiceSectionNames(form, selectedValue) {
+    const selected = String(selectedValue || '').trim();
+    return getProposalTypicalSectionEntries(form)
+      .filter(function (entry) {
+        return !isProposalSystemDscEntry(entry) || (entry?.name || '').trim() === selected;
+      })
       .map(function (entry) { return (entry?.name || '').trim(); })
       .filter(Boolean);
   }
@@ -3047,7 +3078,7 @@
   }
 
   function syncProposalCommercialServiceSelect(select, form, selectedValue) {
-    return syncOptionsSelect(select, getProposalTypicalSectionNames(form), selectedValue);
+    return syncOptionsSelect(select, getProposalCommercialSectionNames(form), selectedValue);
   }
 
   const PROPOSAL_TRAVEL_EXPENSES_LABEL = 'Командировочные расходы, евро';
@@ -3141,7 +3172,7 @@
   }
 
   function syncProposalServiceSectionSelect(select, form, selectedValue) {
-    return syncOptionsSelect(select, getProposalTypicalSectionNames(form), selectedValue);
+    return syncOptionsSelect(select, getProposalServiceSectionNames(form, selectedValue), selectedValue);
   }
 
   function attachProposalEntityTable(root, config) {
@@ -4058,20 +4089,47 @@
       };
     }
 
+    function systemDscServiceRow() {
+      const entry = getProposalSystemDscEntry(scope);
+      if (!entry) return null;
+      return {
+        service_name: String(entry.name || '').trim(),
+        code: String(entry.code || PROPOSAL_SYSTEM_DSC_CODE).trim() || PROPOSAL_SYSTEM_DSC_CODE,
+      };
+    }
+
+    function ensureSystemDscServiceRows(serviceRows) {
+      const dscRow = systemDscServiceRow();
+      const rowsList = Array.isArray(serviceRows) ? serviceRows : [];
+      const filtered = rowsList.filter(function (row) {
+        return !isProposalSystemDscRow(row);
+      });
+      return dscRow ? [dscRow, ...filtered] : filtered;
+    }
+
+    function commercialRowsFromStoreRows() {
+      return rows.filter(function (row) {
+        return !isProposalSystemDscRow(row);
+      });
+    }
+
     function buildMergedRows() {
       const commercialRows = parsePayload(commercialInput);
-      const serviceRows = parsePayload(serviceInput);
+      const serviceRows = ensureSystemDscServiceRows(parsePayload(serviceInput));
       const regularCommercialRows = commercialRows.filter(function (row) {
-        return !isProposalTravelExpensesRow(row);
+        return !isProposalTravelExpensesRow(row) && !isProposalSystemDscRow(row);
       });
       const travelRow = normalizeProposalTravelExpensesRow(
         commercialRows.find(isProposalTravelExpensesRow) || {}
       );
-      const count = Math.max(regularCommercialRows.length, serviceRows.length);
-      const rows = [];
+      const commercialServiceRows = serviceRows.filter(function (row) {
+        return !isProposalSystemDscRow(row);
+      });
+      const count = Math.max(regularCommercialRows.length, commercialServiceRows.length);
+      const rows = serviceRows.filter(isProposalSystemDscRow).map(normalizeRow);
       for (let index = 0; index < count; index += 1) {
         const commercialRow = regularCommercialRows[index] || {};
-        const serviceRow = serviceRows[index] || {};
+        const serviceRow = commercialServiceRows[index] || {};
         rows.push(normalizeRow({
           ...commercialRow,
           service_name: serviceRow.service_name ?? commercialRow.service_name ?? '',
@@ -4086,7 +4144,7 @@
     const listeners = [];
 
     function serializeCommercialRows() {
-      return rows.map(function (row) {
+      return commercialRowsFromStoreRows().map(function (row) {
         return {
           specialist: row.specialist,
           job_title: row.job_title,
@@ -4110,26 +4168,44 @@
       });
     }
 
+    function areServiceRowsEqual(leftRows, rightRows) {
+      const left = Array.isArray(leftRows) ? leftRows : [];
+      const right = Array.isArray(rightRows) ? rightRows : [];
+      if (left.length !== right.length) return false;
+      for (let index = 0; index < left.length; index += 1) {
+        if (String(left[index]?.service_name || '') !== String(right[index]?.service_name || '')) return false;
+        if (String(left[index]?.code || '') !== String(right[index]?.code || '')) return false;
+      }
+      return true;
+    }
+
     function syncHiddenInputs() {
       commercialInput.value = JSON.stringify(serializeCommercialRows());
       serviceInput.value = JSON.stringify(serializeServiceRows());
     }
 
-    function emit(meta) {
+    function emit(meta, options) {
+      const includeServiceSections = options?.includeServiceSections !== false;
+      const commercialRows = api.getCommercialRows();
+      const serviceRows = api.getServiceRows();
       const detail = {
-        rows: api.getRows(),
-        serviceRows: api.getServiceRows(),
+        rows: commercialRows,
+        commercialRows: commercialRows,
+        serviceRows: serviceRows,
+        serviceRowsChanged: includeServiceSections,
         meta: meta || null,
       };
       const eventTargets = stageKey ? getProposalStageRoots(form, stageKey) : [form];
       eventTargets.forEach(function (target) {
         target.dispatchEvent(new CustomEvent('proposal-commercial-changed', { detail: detail }));
-        target.dispatchEvent(new CustomEvent('proposal-service-sections-changed', {
-          detail: {
-            rows: detail.serviceRows,
-            meta: meta || null,
-          },
-        }));
+        if (includeServiceSections) {
+          target.dispatchEvent(new CustomEvent('proposal-service-sections-changed', {
+            detail: {
+              rows: detail.serviceRows,
+              meta: meta || null,
+            },
+          }));
+        }
       });
       listeners.slice().forEach(function (listener) {
         listener(detail);
@@ -4145,21 +4221,38 @@
           };
         });
       },
+      getCommercialRows: function () {
+        return commercialRowsFromStoreRows().map(function (row) {
+          return {
+            ...row,
+            asset_day_counts: row.asset_day_counts.slice(),
+          };
+        });
+      },
       getServiceRows: function () {
         return serializeServiceRows().map(function (row) { return { ...row }; });
       },
       commitCommercialRows: function (nextRows, meta) {
-        rows = (Array.isArray(nextRows) ? nextRows : []).map(normalizeRow);
+        const previousServiceRows = serializeServiceRows();
+        const currentSystemRows = rows.filter(isProposalSystemDscRow);
+        rows = [
+          ...currentSystemRows,
+          ...(Array.isArray(nextRows) ? nextRows : [])
+            .filter(function (row) { return !isProposalSystemDscRow(row); })
+            .map(normalizeRow),
+        ];
         if (!rows.some(isProposalTravelExpensesRow)) {
           rows.push(normalizeProposalTravelExpensesRow({}));
         }
         syncHiddenInputs();
-        emit(meta);
+        emit(meta, {
+          includeServiceSections: !areServiceRowsEqual(previousServiceRows, serializeServiceRows()),
+        });
       },
       commitServiceRows: function (nextRows, meta) {
         const currentRows = api.getRows();
         const currentTravelRow = currentRows.find(isProposalTravelExpensesRow) || normalizeProposalTravelExpensesRow({});
-        rows = (Array.isArray(nextRows) ? nextRows : []).map(function (row, index) {
+        rows = ensureSystemDscServiceRows(nextRows).map(function (row, index) {
           const currentRow = currentRows[index] || {};
           const nextServiceName = String(row?.service_name || '').trim();
           const currentServiceName = String(currentRow?.service_name || '').trim();
@@ -4173,7 +4266,7 @@
         });
         rows.push(normalizeProposalTravelExpensesRow(currentTravelRow));
         syncHiddenInputs();
-        emit(meta);
+        emit(meta, { includeServiceSections: true });
       },
       replaceFromType: function (meta) {
         api.commitServiceRows(
@@ -4292,7 +4385,7 @@
     }
 
     function parsePayload() {
-      if (servicesStore) return servicesStore.getRows();
+      if (servicesStore) return servicesStore.getCommercialRows();
       try {
         const data = JSON.parse(payloadInput.value || '[]');
         return Array.isArray(data) ? data : [];
@@ -4743,65 +4836,135 @@
       recalcRowTotal(row);
     }
 
+    function setCommercialDayInputLayout(input) {
+      if (!input) return;
+      if (input.style.width !== '100%') input.style.width = '100%';
+      if (input.style.minWidth !== '0px') input.style.minWidth = '0';
+      if (input.style.maxWidth !== '100%') input.style.maxWidth = '100%';
+      if (input.style.boxSizing !== 'border-box') input.style.boxSizing = 'border-box';
+    }
+
+    function setInputValue(input, value) {
+      const nextValue = String(value ?? '');
+      if (input && input.value !== nextValue) input.value = nextValue;
+    }
+
+    function setInputClassName(input, className) {
+      if (input && input.className !== className) input.className = className;
+    }
+
+    function setInputReadOnlyState(input, isReadOnly) {
+      if (!input) return;
+      if (input.readOnly !== !!isReadOnly) input.readOnly = !!isReadOnly;
+      const nextTabIndex = isReadOnly ? -1 : 0;
+      if (input.tabIndex !== nextTabIndex) input.tabIndex = nextTabIndex;
+    }
+
+    function bindCommercialDayInput(input, row) {
+      if (!input || input.dataset.commercialDayInputBound === '1') return;
+      input.dataset.commercialDayInputBound = '1';
+      input.addEventListener('change', function () {
+        syncCalculatedRowTotal(row);
+        flushScheduledUpdatePayload();
+      });
+      input.addEventListener('input', function () {
+        syncCalculatedRowTotal(row);
+        scheduleUpdatePayload();
+      });
+    }
+
+    function clearCommercialDayCells(row) {
+      row.querySelectorAll('.proposal-commercial-day-cell, .proposal-commercial-day-placeholder-cell').forEach(function (cell) {
+        cell.remove();
+      });
+    }
+
+    function syncPlaceholderDayCell(row, totalCell) {
+      const existingCells = Array.from(row.querySelectorAll('.proposal-commercial-day-cell'));
+      const existingPlaceholders = Array.from(row.querySelectorAll('.proposal-commercial-day-placeholder-cell'));
+      if (existingCells.length === 0 && existingPlaceholders.length === 1) {
+        existingPlaceholders[0].textContent = '—';
+        syncCalculatedRowTotal(row);
+        return true;
+      }
+      clearCommercialDayCells(row);
+      const placeholderCell = createProposalTableCell('proposal-commercial-day-placeholder-cell');
+      placeholderCell.textContent = '—';
+      row.insertBefore(placeholderCell, totalCell);
+      syncCalculatedRowTotal(row);
+      return true;
+    }
+
+    function syncSummaryDayCells(row, totalCell, assetRows, sourceValues, options) {
+      const assetCount = Math.max(assetRows.length, 1);
+      const stageLabels = getSummaryStageLabels();
+      const normalizedAssetValues = normalizeSummaryAssetDayCounts(sourceValues, assetCount);
+      const normalizedStageValues = normalizeSummaryStageDayCounts(
+        options?.stageDayCounts,
+        stageLabels.length,
+        assetCount
+      );
+      row.dataset.summaryAssetDayCounts = JSON.stringify(normalizedAssetValues);
+      row.dataset.summaryStageDayCounts = JSON.stringify(normalizedStageValues);
+
+      const specs = getSummaryDayColumnSpecs(assetRows);
+      const dayColumnWidths = getCommercialDayColumnWidths(assetRows);
+      let cells = Array.from(row.querySelectorAll('.proposal-commercial-day-cell'));
+      const canReuse = cells.length === specs.length
+        && row.querySelectorAll('.proposal-commercial-day-placeholder-cell').length === 0
+        && cells.every(function (cell) { return !!cell.querySelector('input'); });
+      if (!canReuse) {
+        clearCommercialDayCells(row);
+        cells = specs.map(function () {
+          const dayCell = createProposalTableCell('proposal-commercial-day-cell');
+          row.insertBefore(dayCell, totalCell);
+          return dayCell;
+        });
+      }
+
+      specs.forEach(function (spec, index) {
+        const dayCell = cells[index];
+        applyCommercialDayColumnWidth(dayCell, dayColumnWidths[index]);
+        let input = dayCell.querySelector('input');
+        if (!input) {
+          input = document.createElement('input');
+          dayCell.appendChild(input);
+        }
+        if (input.type !== 'text') input.type = 'text';
+        setInputClassName(
+          input,
+          'form-control readonly-field '
+            + (spec.kind === 'total-days'
+              ? 'proposal-commercial-summary-total-day-count'
+              : 'proposal-commercial-stage-day-count')
+        );
+        setInputReadOnlyState(input, true);
+        setInputValue(
+          input,
+          spec.kind === 'total-days'
+            ? formatSummaryTotalDayValue(sumDayCountValues(normalizedAssetValues))
+            : (normalizedStageValues[spec.stageIndex]?.[spec.assetIndex] || '')
+        );
+        setCommercialDayInputLayout(input);
+      });
+      recalcSummaryCommercialRowTotal(row);
+    }
+
     function syncDayCells(row, assetRows, values, options) {
       const isTravelExpenses = isTravelRow(row);
       const isReadOnly = options?.readOnly === true
         || (isTravelExpenses && getTravelExpensesMode(row) !== PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION);
       let sourceValues = Array.isArray(values) ? values : getDayInputs(row).map(function (input) { return input.value || ''; });
-      const dayColumnWidths = getCommercialDayColumnWidths(assetRows);
-      row.querySelectorAll('.proposal-commercial-day-cell, .proposal-commercial-day-placeholder-cell').forEach(function (cell) {
-        cell.remove();
-      });
-
       const totalCell = row.querySelector('.proposal-commercial-total-cell');
       if (!totalCell) return;
 
       if (shouldRenderSummaryStageDays()) {
-        const assetCount = Math.max(assetRows.length, 1);
-        const stageLabels = getSummaryStageLabels();
-        const normalizedAssetValues = normalizeSummaryAssetDayCounts(sourceValues, assetCount);
-        const normalizedStageValues = normalizeSummaryStageDayCounts(
-          options?.stageDayCounts,
-          stageLabels.length,
-          assetCount
-        );
-        row.dataset.summaryAssetDayCounts = JSON.stringify(normalizedAssetValues);
-        row.dataset.summaryStageDayCounts = JSON.stringify(normalizedStageValues);
-
-        const specs = getSummaryDayColumnSpecs(assetRows);
-        specs.forEach(function (spec, index) {
-          const dayCell = createProposalTableCell('proposal-commercial-day-cell');
-          applyCommercialDayColumnWidth(dayCell, dayColumnWidths[index]);
-          const input = document.createElement('input');
-          input.type = 'text';
-          input.className = 'form-control readonly-field '
-            + (spec.kind === 'total-days'
-              ? 'proposal-commercial-summary-total-day-count'
-              : 'proposal-commercial-stage-day-count');
-          input.readOnly = true;
-          input.tabIndex = -1;
-          if (spec.kind === 'total-days') {
-            const totalDays = sumDayCountValues(normalizedAssetValues);
-            input.value = formatSummaryTotalDayValue(totalDays);
-          } else {
-            input.value = normalizedStageValues[spec.stageIndex]?.[spec.assetIndex] || '';
-          }
-          input.style.width = '100%';
-          input.style.minWidth = '0';
-          input.style.maxWidth = '100%';
-          input.style.boxSizing = 'border-box';
-          dayCell.appendChild(input);
-          row.insertBefore(dayCell, totalCell);
-        });
-        recalcSummaryCommercialRowTotal(row);
+        syncSummaryDayCells(row, totalCell, assetRows, sourceValues, options);
         return;
       }
 
       if (!assetRows.length) {
-        const placeholderCell = createProposalTableCell('proposal-commercial-day-placeholder-cell');
-        placeholderCell.textContent = '—';
-        row.insertBefore(placeholderCell, totalCell);
-        syncCalculatedRowTotal(row);
+        syncPlaceholderDayCell(row, totalCell);
         return;
       }
 
@@ -4809,52 +4972,50 @@
         sourceValues = Array.from({ length: assetRows.length }, function () { return ''; });
       }
 
+      const dayColumnWidths = getCommercialDayColumnWidths(assetRows);
+      let cells = Array.from(row.querySelectorAll('.proposal-commercial-day-cell'));
+      const canReuse = cells.length === assetRows.length
+        && row.querySelectorAll('.proposal-commercial-day-placeholder-cell').length === 0
+        && cells.every(function (cell) { return !!cell.querySelector('input'); });
+      if (!canReuse) {
+        clearCommercialDayCells(row);
+        cells = assetRows.map(function () {
+          const dayCell = createProposalTableCell();
+          row.insertBefore(dayCell, totalCell);
+          return dayCell;
+        });
+      }
+
       assetRows.forEach(function (_assetRow, index) {
-        const dayCell = createProposalTableCell(
-          'proposal-commercial-day-cell' + (assetRows.length === 1 ? ' proposal-commercial-day-cell-single' : '')
-        );
+        const dayCell = cells[index];
+        dayCell.className = 'proposal-commercial-day-cell' + (assetRows.length === 1 ? ' proposal-commercial-day-cell-single' : '');
         applyCommercialDayColumnWidth(dayCell, dayColumnWidths[index]);
-        const input = document.createElement('input');
+        let input = dayCell.querySelector('input');
+        if (!input) {
+          input = document.createElement('input');
+          dayCell.appendChild(input);
+        }
         if (isTravelExpenses) {
-          input.type = 'text';
-          input.inputMode = 'decimal';
-          input.dataset.moneyPrecision = '2';
-          input.className = 'form-control js-money-input proposal-commercial-day-count proposal-commercial-travel-amount';
+          if (input.type !== 'text') input.type = 'text';
+          if (input.inputMode !== 'decimal') input.inputMode = 'decimal';
+          if (input.dataset.moneyPrecision !== '2') input.dataset.moneyPrecision = '2';
+          setInputClassName(
+            input,
+            'form-control js-money-input proposal-commercial-day-count proposal-commercial-travel-amount'
+              + (isReadOnly ? ' readonly-field' : '')
+          );
         } else {
-          input.type = 'number';
-          input.min = '0';
-          input.step = '1';
-          input.className = 'form-control proposal-commercial-day-count';
+          if (input.type !== 'number') input.type = 'number';
+          if (input.min !== '0') input.min = '0';
+          if (input.step !== '1') input.step = '1';
+          setInputClassName(input, 'form-control proposal-commercial-day-count' + (isReadOnly ? ' readonly-field' : ''));
         }
-        input.value = sourceValues[index] ?? '';
-        if (isReadOnly) {
-          input.readOnly = true;
-          input.tabIndex = -1;
-          input.classList.add('readonly-field');
-        }
-        if (dayColumnWidths[index]) {
-          input.style.width = '100%';
-          input.style.minWidth = '0';
-          input.style.maxWidth = '100%';
-          input.style.boxSizing = 'border-box';
-        } else {
-          input.style.width = '100%';
-          input.style.minWidth = '0';
-          input.style.maxWidth = '100%';
-          input.style.boxSizing = 'border-box';
-        }
+        setInputValue(input, sourceValues[index] ?? '');
+        setInputReadOnlyState(input, isReadOnly);
+        setCommercialDayInputLayout(input);
         if (!isReadOnly) {
-          input.addEventListener('change', function () {
-            syncCalculatedRowTotal(row);
-            updatePayload();
-          });
-          input.addEventListener('input', function () {
-            syncCalculatedRowTotal(row);
-            updatePayload();
-          });
+          bindCommercialDayInput(input, row);
         }
-        dayCell.appendChild(input);
-        row.insertBefore(dayCell, totalCell);
       });
 
       if (isTravelExpenses) attachMoneyInputs(row);
@@ -5106,7 +5267,54 @@
       }
     }
 
+    let scheduledPayloadFrame = null;
+    let scheduledPayloadMeta = null;
+
+    function mergePayloadMeta(meta) {
+      if (!meta) return;
+      scheduledPayloadMeta = {
+        ...(scheduledPayloadMeta || {}),
+        ...meta,
+      };
+    }
+
+    function cancelScheduledPayloadUpdate() {
+      if (scheduledPayloadFrame === null) return;
+      const cancelFrame = window.cancelAnimationFrame || window.clearTimeout;
+      cancelFrame(scheduledPayloadFrame);
+      scheduledPayloadFrame = null;
+      scheduledPayloadMeta = null;
+    }
+
+    function scheduleUpdatePayload(meta) {
+      mergePayloadMeta(meta);
+      if (scheduledPayloadFrame !== null) return;
+      const scheduleFrame = window.requestAnimationFrame || function (callback) { return window.setTimeout(callback, 0); };
+      scheduledPayloadFrame = scheduleFrame(function () {
+        const metaForUpdate = scheduledPayloadMeta;
+        scheduledPayloadFrame = null;
+        scheduledPayloadMeta = null;
+        updatePayload(metaForUpdate);
+      });
+    }
+
+    function flushScheduledUpdatePayload(meta) {
+      if (scheduledPayloadFrame === null && !scheduledPayloadMeta) {
+        if (meta) updatePayload(meta);
+        return;
+      }
+      const metaForUpdate = {
+        ...(scheduledPayloadMeta || {}),
+        ...(meta || {}),
+      };
+      cancelScheduledPayloadUpdate();
+      updatePayload(metaForUpdate);
+    }
+
     function updatePayload(meta) {
+      if (scheduledPayloadFrame !== null) {
+        cancelScheduledPayloadUpdate();
+      }
       recalcTravelRowTotal(tbody.querySelector('tr[data-travel-expenses-row="1"]'));
       const rows = getRows().map(serializeRow).filter(Boolean);
       syncSummaryRowValues();
@@ -5119,6 +5327,16 @@
       }
       payloadInput.value = JSON.stringify(rows);
       form.dispatchEvent(new CustomEvent('proposal-commercial-changed', { detail: { rows: rows, meta: meta || null } }));
+    }
+
+    if (scope.dataset.commercialPayloadFlushBound !== '1') {
+      scope.dataset.commercialPayloadFlushBound = '1';
+      formRoot.addEventListener('submit', function () {
+        flushScheduledUpdatePayload({ reason: 'form-submit-flush' });
+      }, true);
+      formRoot.addEventListener('htmx:beforeRequest', function () {
+        flushScheduledUpdatePayload({ reason: 'form-submit-flush' });
+      }, true);
     }
 
     function setRowData(row, data) {
@@ -5304,12 +5522,12 @@
       [statusInput].forEach(function (input) {
         if (isSummaryCommercialBlock) return;
         input.addEventListener('change', function () {
-          updatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
+          flushScheduledUpdatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
         });
       });
       if (!isSummaryCommercialBlock) {
         statusInput.addEventListener('input', function () {
-          updatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
+          scheduleUpdatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
         });
         specialistSelect.addEventListener('change', function () {
           const specialistStatus = getProposalCommercialSpecialistStatus(
@@ -5335,11 +5553,11 @@
         });
         rateInput.addEventListener('change', function () {
           recalcRowTotal(row);
-          updatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
+          flushScheduledUpdatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
         });
         rateInput.addEventListener('input', function () {
           recalcRowTotal(row);
-          updatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
+          scheduleUpdatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
         });
       }
 
@@ -5805,7 +6023,7 @@
 
     const api = {
       getSerializedRows: function () {
-        return servicesStore ? servicesStore.getRows() : getRows().map(serializeRow).filter(Boolean);
+        return servicesStore ? servicesStore.getCommercialRows() : getRows().map(serializeRow).filter(Boolean);
       },
       replaceRows: function (rowsData, meta) {
         renderHeader(getAssetRows());
@@ -5854,7 +6072,7 @@
 
     function getSelectedRows() {
       return getRows().filter(function (row) {
-        return !!row.querySelector('.proposal-service-section-check:checked');
+        return row.dataset.systemDsc !== '1' && !!row.querySelector('.proposal-service-section-check:checked');
       });
     }
 
@@ -5867,7 +6085,9 @@
 
     function syncMasterCheck() {
       if (!masterCheck) return;
-      const rows = getRows();
+      const rows = getRows().filter(function (row) {
+        return row.dataset.systemDsc !== '1';
+      });
       const selectedCount = getSelectedRows().length;
       masterCheck.indeterminate = selectedCount > 0 && selectedCount < rows.length;
       masterCheck.checked = rows.length > 0 && selectedCount === rows.length;
@@ -5900,6 +6120,10 @@
 
     function createRow(data) {
       const row = document.createElement('tr');
+      const isSystemDsc = isProposalSystemDscRow(data);
+      if (isSystemDsc) {
+        row.dataset.systemDsc = '1';
+      }
 
       const checkTd = createProposalTableCell('proposal-asset-check-cell');
       const checkWrap = document.createElement('div');
@@ -5909,17 +6133,32 @@
       checkbox.className = 'form-check-input proposal-service-section-check';
       checkbox.style.margin = '0';
       checkbox.style.float = 'none';
+      checkbox.disabled = isSystemDsc;
       checkbox.addEventListener('change', syncActions);
       checkWrap.appendChild(checkbox);
       checkTd.appendChild(checkWrap);
       row.appendChild(checkTd);
 
       const nameTd = createProposalTableCell();
-      const nameSelect = document.createElement('select');
-      nameSelect.className = 'form-select proposal-service-section-name';
-      syncProposalServiceSectionSelect(nameSelect, form, data.service_name || '');
-      nameSelect.value = data.service_name || '';
-      nameTd.appendChild(nameSelect);
+      let nameControl;
+      if (isSystemDsc) {
+        nameControl = document.createElement('input');
+        nameControl.type = 'text';
+        nameControl.className = 'form-control readonly-field proposal-service-section-name';
+        nameControl.readOnly = true;
+        nameControl.tabIndex = -1;
+        nameControl.value = data.service_name || '';
+      } else {
+        nameControl = document.createElement('select');
+        nameControl.className = 'form-select proposal-service-section-name';
+        syncProposalServiceSectionSelect(nameControl, form, data.service_name || '');
+        nameControl.value = data.service_name || '';
+        nameControl.addEventListener('change', function () {
+          syncCode(row);
+          updatePayload({ reason: 'row-edit', rowIndex: getRows().indexOf(row) });
+        });
+      }
+      nameTd.appendChild(nameControl);
       row.appendChild(nameTd);
 
       const codeTd = createProposalTableCell();
@@ -5931,11 +6170,6 @@
       codeInput.value = data.code || '';
       codeTd.appendChild(codeInput);
       row.appendChild(codeTd);
-
-      nameSelect.addEventListener('change', function () {
-        syncCode(row);
-        updatePayload({ reason: 'row-edit', rowIndex: getRows().indexOf(row) });
-      });
 
       syncCode(row);
       if (!codeInput.value && data.code) codeInput.value = data.code;
@@ -5955,6 +6189,7 @@
       if (direction === 'up') {
         for (let i = 1; i < rows.length; i += 1) {
           if (rows[i].querySelector('.proposal-service-section-check:checked') && !rows[i - 1].querySelector('.proposal-service-section-check:checked')) {
+            if (rows[i - 1].dataset.systemDsc === '1') continue;
             tbody.insertBefore(rows[i], rows[i - 1]);
           }
         }
@@ -5989,7 +6224,7 @@
       const checked = !!masterCheck.checked;
       getRows().forEach(function (row) {
         const checkbox = row.querySelector('.proposal-service-section-check');
-        if (checkbox) checkbox.checked = checked;
+        if (checkbox && !checkbox.disabled) checkbox.checked = checked;
       });
       syncActions();
     });
@@ -5997,9 +6232,13 @@
     if (servicesStore) {
       servicesStore.subscribe(function (detail) {
         if (detail?.meta?.source === 'service-view') return;
+        if (detail?.serviceRowsChanged === false) return;
         renderRows(detail?.serviceRows || []);
       });
-      if (!servicesStore.getRows().length && getProposalTypeId(scope)) {
+      if (
+        !servicesStore.getServiceRows().some(function (row) { return !isProposalSystemDscRow(row); })
+        && getProposalTypeId(scope)
+      ) {
         servicesStore.replaceFromType({ reason: 'autofill-service-sections-by-type', source: 'type-change' });
       }
       renderRows(servicesStore.getServiceRows());
@@ -6561,15 +6800,21 @@
       button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     }
 
-    const LIST_MARKER_TYPES = ['bullet', 'dash', 'check'];
+    const LIST_MARKER_TYPES = ['bullet', 'circle', 'square', 'dash', 'ndash', 'check'];
     const LIST_MARKER_LABELS = {
       bullet: 'Точка',
+      circle: 'Круг',
+      square: 'Квадрат',
       dash: 'Дефис',
+      ndash: 'Тире',
       check: 'Галочка',
     };
     const LIST_MARKER_ICON_URLS = {
       bullet: '/static/core/icons/list-ul2.svg',
+      circle: '/static/core/icons/list-circle.svg',
+      square: '/static/core/icons/list-square.svg',
       dash: '/static/core/icons/list-dash.svg',
+      ndash: '/static/core/icons/list-ndash.svg',
       check: '/static/core/icons/list-check.svg',
     };
 
@@ -7559,6 +7804,22 @@
         });
       }
 
+      function resetStageServiceCompositionEditorState(block) {
+        if (!block) return;
+        const stateInput = block.querySelector('[name="service_sections_editor_state"]');
+        const customerStateInput = block.querySelector('[name="service_customer_tz_editor_state"]');
+        const textarea = block.querySelector('[name="service_composition"]');
+        const customerTextarea = block.querySelector('[name="service_composition_customer_tz"]');
+        const modeInput = block.querySelector('[name="service_composition_mode"]');
+        const modeToggle = block.querySelector('#proposal-service-mode-toggle');
+        if (stateInput) stateInput.value = '[]';
+        if (customerStateInput) customerStateInput.value = '{}';
+        if (textarea) textarea.value = '';
+        if (customerTextarea) customerTextarea.value = '';
+        if (modeInput) modeInput.value = 'sections';
+        if (modeToggle) modeToggle.checked = false;
+      }
+
       function resetClonedStageBlock(block) {
         block.querySelectorAll('tbody').forEach(function (tbody) {
           tbody.innerHTML = '';
@@ -8187,10 +8448,11 @@
       function scheduleSummaryCommercialBlockSync() {
         if (summaryCommercialSyncQueued) return;
         summaryCommercialSyncQueued = true;
-        window.setTimeout(function () {
+        const scheduleFrame = window.requestAnimationFrame || function (callback) { return window.setTimeout(callback, 0); };
+        scheduleFrame(function () {
           summaryCommercialSyncQueued = false;
           syncSummaryCommercialBlock();
-        }, 0);
+        });
       }
 
       function bindSummaryCommercialSync() {
@@ -8386,13 +8648,25 @@
           const serviceBlock = getServiceBlocks()[index];
           const commercialBlock = getCommercialBlocks()[index];
           const termsRow = getStageTermRows()[index];
+          if (serviceBlock) {
+            const serviceTypeInput = serviceBlock.querySelector('[data-proposal-stage-type]');
+            const previousServiceProductId = String(serviceTypeInput?.value || '').trim();
+            if (productId !== previousServiceProductId) {
+              resetStageServiceCompositionEditorState(serviceBlock);
+            }
+          }
           [serviceBlock, commercialBlock].forEach(function (block) {
             if (!block) return;
             const typeInput = block.querySelector('[data-proposal-stage-type]');
             const previousProductId = String(typeInput?.value || '').trim();
             if (typeInput) typeInput.value = productId;
             const store = attachProposalServicesStore(block);
-            if (store && productId && (productId !== previousProductId || !store.getRows().length)) {
+            const hasRegularServiceRows = !!(
+              store && store.getServiceRows().some(function (serviceRow) {
+                return !isProposalSystemDscRow(serviceRow);
+              })
+            );
+            if (store && productId && (productId !== previousProductId || !hasRegularServiceRows)) {
               store.replaceFromType({ reason: 'stage-product-change', source: 'type-change' });
             }
           });
