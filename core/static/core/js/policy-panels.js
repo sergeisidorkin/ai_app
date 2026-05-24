@@ -94,9 +94,12 @@
       dataKey: 'productId',
     },
   };
-  window.__policyMasterFilters = window.__policyMasterFilters || (
-    P ? P.get(POLICY_FILTER_PREF_KEY, null) : null
-  ) || {};
+  function readPolicyMasterFilterPrefs() {
+    return P ? P.get(POLICY_FILTER_PREF_KEY, null) : null;
+  }
+
+  window.__policyMasterFilters = window.__policyMasterFilters
+    || filterStateWithDefaults(readPolicyMasterFilterPrefs());
   window.__policyTypicalServiceCompositionWrapActive =
     typeof window.__policyTypicalServiceCompositionWrapActive === 'boolean'
       ? window.__policyTypicalServiceCompositionWrapActive
@@ -1256,7 +1259,8 @@
     syncTypicalServiceTermGanttEditButton();
   }
 
-  function applyPolicyMasterFilters(root, rows, products, requestedState) {
+  function applyPolicyMasterFilters(root, rows, products, requestedState, options) {
+    options = options || {};
     const state = filterStateWithDefaults(requestedState);
     POLICY_FILTER_ORDER.forEach(function (key) {
       const checks = getPolicyFilterChecks(key);
@@ -1295,7 +1299,9 @@
       updatePolicyFilterLabel(key, state[key]);
     });
     window.__policyMasterFilters = state;
-    if (P) P.set(POLICY_FILTER_PREF_KEY, state);
+    if (P && options.persist !== false && rows.length) {
+      P.set(POLICY_FILTER_PREF_KEY, state);
+    }
     syncAllPolicySelectionStates(root);
   }
 
@@ -1309,9 +1315,10 @@
     if (missing) return;
 
     const rows = qa('tr[data-policy-filter-row="1"]', root);
+    if (!rows.length) return;
     const products = getPolicyProductCatalog(root);
     renderPolicyFilterOptions(buildPolicyFilterOptions(rows, products));
-    const savedState = filterStateWithDefaults(window.__policyMasterFilters);
+    const savedState = filterStateWithDefaults(readPolicyMasterFilterPrefs() || window.__policyMasterFilters);
 
     POLICY_FILTER_ORDER.forEach(function (key) {
       const checks = getPolicyFilterChecks(key);

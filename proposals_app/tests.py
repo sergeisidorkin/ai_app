@@ -6382,6 +6382,7 @@ class ProposalFormContextTests(TestCase):
         self.assertTrue(excluded_entry["exclude_from_tkp_autofill"])
         included_entry = next(item for item in entries if item["name"] == "Включенный раздел")
         self.assertFalse(included_entry["exclude_from_tkp_autofill"])
+        self.assertFalse(TypicalSection.objects.filter(product=product, code="DSC").exists())
 
     def test_typical_sections_json_exposes_accounting_type_for_tz_editor(self):
         product = Product.objects.create(

@@ -18,10 +18,13 @@ from contracts_app.docx_processor import (
     _find_list_paragraph_style_id,
     _insert_rich_paragraphs,
     _rich_paragraphs_from_html,
+    _set_cell_width_pct,
+    _set_table_fixed_pct_widths,
 )
 
 
 DOCX_HEADERS = ["ID", "Продукт", "Раздел (услуга)", "Состав услуг"]
+DOCX_COLUMN_WIDTHS_PCT = [6, 13, 23, 58]
 _LIST_TYPES = {"ordered", "bullet", "circle", "square", "dash", "ndash", "check"}
 _BULLET_MARKER_MAP = {
     "\uf0b7": "bullet",
@@ -41,14 +44,6 @@ _BULLET_MARKER_MAP = {
 def build_typical_service_compositions_docx(rows: list[dict[str, object]]) -> bytes:
     document = Document()
     marker_num_ids = _ensure_marker_numberings(document)
-    try:
-        multilevel_num_id = _ensure_multilevel_numbering(document)
-    except Exception:
-        multilevel_num_id = ""
-    try:
-        rich_ordered_num_id = _ensure_quill_ordered_numbering(document)
-    except Exception:
-        rich_ordered_num_id = ""
     bullet_style_id = _find_bullet_style_id(document)
     list_paragraph_style_id = _find_list_paragraph_style_id(document)
     builtin_list_paragraph_style_id = _find_builtin_list_paragraph_style_id(document)
@@ -62,6 +57,7 @@ def build_typical_service_compositions_docx(rows: list[dict[str, object]]) -> by
         document.add_heading(product_name or "—", level=1)
         table = document.add_table(rows=1, cols=len(DOCX_HEADERS))
         table.style = "Table Grid"
+        _set_table_fixed_pct_widths(table, DOCX_COLUMN_WIDTHS_PCT)
         _write_table_header_row(table)
 
         for item in product_rows:
@@ -70,16 +66,16 @@ def build_typical_service_compositions_docx(rows: list[dict[str, object]]) -> by
             cells[1].text = product_name
             cells[2].text = str(item.get("section") or "")
             _write_rich_service_cell(
+                document,
                 cells[3],
                 html_value=str(item.get("html") or ""),
                 plain_text=str(item.get("plain_text") or ""),
                 marker_num_ids=marker_num_ids,
-                multilevel_num_id=multilevel_num_id,
-                rich_ordered_num_id=rich_ordered_num_id,
                 bullet_style_id=bullet_style_id,
                 list_paragraph_style_id=list_paragraph_style_id,
                 builtin_list_paragraph_style_id=builtin_list_paragraph_style_id,
             )
+        _write_table_column_widths(table)
 
     output = io.BytesIO()
     document.save(output)
@@ -125,13 +121,12 @@ def parse_typical_service_compositions_docx(file_obj) -> list[dict[str, object]]
 
 
 def _write_rich_service_cell(
+    document,
     cell,
     *,
     html_value: str,
     plain_text: str,
     marker_num_ids: dict[str, str],
-    multilevel_num_id: str,
-    rich_ordered_num_id: str,
     bullet_style_id: str,
     list_paragraph_style_id: str,
     builtin_list_paragraph_style_id: str,
@@ -140,6 +135,18 @@ def _write_rich_service_cell(
     if not rich_items:
         cell.text = ""
         return
+    multilevel_num_id = ""
+    rich_ordered_num_id = ""
+    if _has_ordered_list(rich_items):
+        try:
+            rich_ordered_num_id = _ensure_quill_ordered_numbering(document)
+        except Exception:
+            rich_ordered_num_id = ""
+        if not rich_ordered_num_id:
+            try:
+                multilevel_num_id = _ensure_multilevel_numbering(document)
+            except Exception:
+                multilevel_num_id = ""
     anchor = cell.paragraphs[0]._p
     parent = anchor.getparent()
     _insert_rich_paragraphs(
@@ -155,6 +162,19 @@ def _write_rich_service_cell(
         source_rPr=None,
         language_code="ru-RU",
     )
+
+
+def _has_ordered_list(rich_items: list[dict[str, object]]) -> bool:
+    return any(str(item.get("list_type") or "").strip() == "ordered" for item in rich_items)
+
+
+def _write_table_column_widths(table) -> None:
+    for row in table.rows:
+        for index, width_pct in enumerate(DOCX_COLUMN_WIDTHS_PCT):
+            try:
+                _set_cell_width_pct(row.cells[index], width_pct)
+            except IndexError:
+                continue
 
 
 def _plain_text_rich_items(value: str) -> list[dict[str, object]]:
