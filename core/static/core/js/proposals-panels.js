@@ -42,6 +42,7 @@
   const PROPOSAL_PAYMENT_GANTT_SCALE_WEEK = 'week';
   const PROPOSAL_PAYMENT_GANTT_SCALE_MONTH = 'month';
   const PROPOSAL_PAYMENT_GANTT_SCALE_QUARTER = 'quarter';
+  const PROPOSAL_SYSTEM_DSC_CODE = 'DSC';
   // The proposals' payment-schedule section owns its OWN Gantt instance built
   // via window.GanttEngine.create(). No more shared singleton — see
   // gantt_engine_app/static/gantt_engine/gantt-engine.js.
@@ -2825,6 +2826,19 @@
     return Array.isArray(entries) ? entries : [];
   }
 
+  function isProposalSystemDscEntry(entry) {
+    return String(entry?.code || '').trim().toUpperCase() === PROPOSAL_SYSTEM_DSC_CODE
+      || entry?.is_system_dsc === true;
+  }
+
+  function isProposalSystemDscRow(row) {
+    return String(row?.code || '').trim().toUpperCase() === PROPOSAL_SYSTEM_DSC_CODE;
+  }
+
+  function getProposalSystemDscEntry(form) {
+    return getProposalTypicalSectionEntries(form).find(isProposalSystemDscEntry) || null;
+  }
+
   function getProposalServiceGoalReportEntry(form) {
     const entriesMap = getProposalServiceGoalReportsMap(form);
     const entry = entriesMap[getProposalTypeId(form)] || null;
@@ -2925,6 +2939,23 @@
 
   function getProposalTypicalSectionNames(form) {
     return getProposalTypicalSectionEntries(form)
+      .map(function (entry) { return (entry?.name || '').trim(); })
+      .filter(Boolean);
+  }
+
+  function getProposalCommercialSectionNames(form) {
+    return getProposalTypicalSectionEntries(form)
+      .filter(function (entry) { return !isProposalSystemDscEntry(entry); })
+      .map(function (entry) { return (entry?.name || '').trim(); })
+      .filter(Boolean);
+  }
+
+  function getProposalServiceSectionNames(form, selectedValue) {
+    const selected = String(selectedValue || '').trim();
+    return getProposalTypicalSectionEntries(form)
+      .filter(function (entry) {
+        return !isProposalSystemDscEntry(entry) || (entry?.name || '').trim() === selected;
+      })
       .map(function (entry) { return (entry?.name || '').trim(); })
       .filter(Boolean);
   }
@@ -3047,7 +3078,7 @@
   }
 
   function syncProposalCommercialServiceSelect(select, form, selectedValue) {
-    return syncOptionsSelect(select, getProposalTypicalSectionNames(form), selectedValue);
+    return syncOptionsSelect(select, getProposalCommercialSectionNames(form), selectedValue);
   }
 
   const PROPOSAL_TRAVEL_EXPENSES_LABEL = 'Командировочные расходы, евро';
@@ -3141,7 +3172,7 @@
   }
 
   function syncProposalServiceSectionSelect(select, form, selectedValue) {
-    return syncOptionsSelect(select, getProposalTypicalSectionNames(form), selectedValue);
+    return syncOptionsSelect(select, getProposalServiceSectionNames(form, selectedValue), selectedValue);
   }
 
   function attachProposalEntityTable(root, config) {
@@ -4058,20 +4089,47 @@
       };
     }
 
+    function systemDscServiceRow() {
+      const entry = getProposalSystemDscEntry(scope);
+      if (!entry) return null;
+      return {
+        service_name: String(entry.name || '').trim(),
+        code: String(entry.code || PROPOSAL_SYSTEM_DSC_CODE).trim() || PROPOSAL_SYSTEM_DSC_CODE,
+      };
+    }
+
+    function ensureSystemDscServiceRows(serviceRows) {
+      const dscRow = systemDscServiceRow();
+      const rowsList = Array.isArray(serviceRows) ? serviceRows : [];
+      const filtered = rowsList.filter(function (row) {
+        return !isProposalSystemDscRow(row);
+      });
+      return dscRow ? [dscRow, ...filtered] : filtered;
+    }
+
+    function commercialRowsFromStoreRows() {
+      return rows.filter(function (row) {
+        return !isProposalSystemDscRow(row);
+      });
+    }
+
     function buildMergedRows() {
       const commercialRows = parsePayload(commercialInput);
-      const serviceRows = parsePayload(serviceInput);
+      const serviceRows = ensureSystemDscServiceRows(parsePayload(serviceInput));
       const regularCommercialRows = commercialRows.filter(function (row) {
-        return !isProposalTravelExpensesRow(row);
+        return !isProposalTravelExpensesRow(row) && !isProposalSystemDscRow(row);
       });
       const travelRow = normalizeProposalTravelExpensesRow(
         commercialRows.find(isProposalTravelExpensesRow) || {}
       );
-      const count = Math.max(regularCommercialRows.length, serviceRows.length);
-      const rows = [];
+      const commercialServiceRows = serviceRows.filter(function (row) {
+        return !isProposalSystemDscRow(row);
+      });
+      const count = Math.max(regularCommercialRows.length, commercialServiceRows.length);
+      const rows = serviceRows.filter(isProposalSystemDscRow).map(normalizeRow);
       for (let index = 0; index < count; index += 1) {
         const commercialRow = regularCommercialRows[index] || {};
-        const serviceRow = serviceRows[index] || {};
+        const serviceRow = commercialServiceRows[index] || {};
         rows.push(normalizeRow({
           ...commercialRow,
           service_name: serviceRow.service_name ?? commercialRow.service_name ?? '',
@@ -4086,7 +4144,7 @@
     const listeners = [];
 
     function serializeCommercialRows() {
-      return rows.map(function (row) {
+      return commercialRowsFromStoreRows().map(function (row) {
         return {
           specialist: row.specialist,
           job_title: row.job_title,
@@ -4117,7 +4175,8 @@
 
     function emit(meta) {
       const detail = {
-        rows: api.getRows(),
+        rows: api.getCommercialRows(),
+        commercialRows: api.getCommercialRows(),
         serviceRows: api.getServiceRows(),
         meta: meta || null,
       };
@@ -4145,11 +4204,25 @@
           };
         });
       },
+      getCommercialRows: function () {
+        return commercialRowsFromStoreRows().map(function (row) {
+          return {
+            ...row,
+            asset_day_counts: row.asset_day_counts.slice(),
+          };
+        });
+      },
       getServiceRows: function () {
         return serializeServiceRows().map(function (row) { return { ...row }; });
       },
       commitCommercialRows: function (nextRows, meta) {
-        rows = (Array.isArray(nextRows) ? nextRows : []).map(normalizeRow);
+        const currentSystemRows = rows.filter(isProposalSystemDscRow);
+        rows = [
+          ...currentSystemRows,
+          ...(Array.isArray(nextRows) ? nextRows : [])
+            .filter(function (row) { return !isProposalSystemDscRow(row); })
+            .map(normalizeRow),
+        ];
         if (!rows.some(isProposalTravelExpensesRow)) {
           rows.push(normalizeProposalTravelExpensesRow({}));
         }
@@ -4159,7 +4232,7 @@
       commitServiceRows: function (nextRows, meta) {
         const currentRows = api.getRows();
         const currentTravelRow = currentRows.find(isProposalTravelExpensesRow) || normalizeProposalTravelExpensesRow({});
-        rows = (Array.isArray(nextRows) ? nextRows : []).map(function (row, index) {
+        rows = ensureSystemDscServiceRows(nextRows).map(function (row, index) {
           const currentRow = currentRows[index] || {};
           const nextServiceName = String(row?.service_name || '').trim();
           const currentServiceName = String(currentRow?.service_name || '').trim();
@@ -4292,7 +4365,7 @@
     }
 
     function parsePayload() {
-      if (servicesStore) return servicesStore.getRows();
+      if (servicesStore) return servicesStore.getCommercialRows();
       try {
         const data = JSON.parse(payloadInput.value || '[]');
         return Array.isArray(data) ? data : [];
@@ -5805,7 +5878,7 @@
 
     const api = {
       getSerializedRows: function () {
-        return servicesStore ? servicesStore.getRows() : getRows().map(serializeRow).filter(Boolean);
+        return servicesStore ? servicesStore.getCommercialRows() : getRows().map(serializeRow).filter(Boolean);
       },
       replaceRows: function (rowsData, meta) {
         renderHeader(getAssetRows());
@@ -5854,7 +5927,7 @@
 
     function getSelectedRows() {
       return getRows().filter(function (row) {
-        return !!row.querySelector('.proposal-service-section-check:checked');
+        return row.dataset.systemDsc !== '1' && !!row.querySelector('.proposal-service-section-check:checked');
       });
     }
 
@@ -5867,7 +5940,9 @@
 
     function syncMasterCheck() {
       if (!masterCheck) return;
-      const rows = getRows();
+      const rows = getRows().filter(function (row) {
+        return row.dataset.systemDsc !== '1';
+      });
       const selectedCount = getSelectedRows().length;
       masterCheck.indeterminate = selectedCount > 0 && selectedCount < rows.length;
       masterCheck.checked = rows.length > 0 && selectedCount === rows.length;
@@ -5900,6 +5975,10 @@
 
     function createRow(data) {
       const row = document.createElement('tr');
+      const isSystemDsc = isProposalSystemDscRow(data);
+      if (isSystemDsc) {
+        row.dataset.systemDsc = '1';
+      }
 
       const checkTd = createProposalTableCell('proposal-asset-check-cell');
       const checkWrap = document.createElement('div');
@@ -5909,17 +5988,32 @@
       checkbox.className = 'form-check-input proposal-service-section-check';
       checkbox.style.margin = '0';
       checkbox.style.float = 'none';
+      checkbox.disabled = isSystemDsc;
       checkbox.addEventListener('change', syncActions);
       checkWrap.appendChild(checkbox);
       checkTd.appendChild(checkWrap);
       row.appendChild(checkTd);
 
       const nameTd = createProposalTableCell();
-      const nameSelect = document.createElement('select');
-      nameSelect.className = 'form-select proposal-service-section-name';
-      syncProposalServiceSectionSelect(nameSelect, form, data.service_name || '');
-      nameSelect.value = data.service_name || '';
-      nameTd.appendChild(nameSelect);
+      let nameControl;
+      if (isSystemDsc) {
+        nameControl = document.createElement('input');
+        nameControl.type = 'text';
+        nameControl.className = 'form-control readonly-field proposal-service-section-name';
+        nameControl.readOnly = true;
+        nameControl.tabIndex = -1;
+        nameControl.value = data.service_name || '';
+      } else {
+        nameControl = document.createElement('select');
+        nameControl.className = 'form-select proposal-service-section-name';
+        syncProposalServiceSectionSelect(nameControl, form, data.service_name || '');
+        nameControl.value = data.service_name || '';
+        nameControl.addEventListener('change', function () {
+          syncCode(row);
+          updatePayload({ reason: 'row-edit', rowIndex: getRows().indexOf(row) });
+        });
+      }
+      nameTd.appendChild(nameControl);
       row.appendChild(nameTd);
 
       const codeTd = createProposalTableCell();
@@ -5931,11 +6025,6 @@
       codeInput.value = data.code || '';
       codeTd.appendChild(codeInput);
       row.appendChild(codeTd);
-
-      nameSelect.addEventListener('change', function () {
-        syncCode(row);
-        updatePayload({ reason: 'row-edit', rowIndex: getRows().indexOf(row) });
-      });
 
       syncCode(row);
       if (!codeInput.value && data.code) codeInput.value = data.code;
@@ -5955,6 +6044,7 @@
       if (direction === 'up') {
         for (let i = 1; i < rows.length; i += 1) {
           if (rows[i].querySelector('.proposal-service-section-check:checked') && !rows[i - 1].querySelector('.proposal-service-section-check:checked')) {
+            if (rows[i - 1].dataset.systemDsc === '1') continue;
             tbody.insertBefore(rows[i], rows[i - 1]);
           }
         }
@@ -5989,7 +6079,7 @@
       const checked = !!masterCheck.checked;
       getRows().forEach(function (row) {
         const checkbox = row.querySelector('.proposal-service-section-check');
-        if (checkbox) checkbox.checked = checked;
+        if (checkbox && !checkbox.disabled) checkbox.checked = checked;
       });
       syncActions();
     });
@@ -5999,7 +6089,10 @@
         if (detail?.meta?.source === 'service-view') return;
         renderRows(detail?.serviceRows || []);
       });
-      if (!servicesStore.getRows().length && getProposalTypeId(scope)) {
+      if (
+        !servicesStore.getServiceRows().some(function (row) { return !isProposalSystemDscRow(row); })
+        && getProposalTypeId(scope)
+      ) {
         servicesStore.replaceFromType({ reason: 'autofill-service-sections-by-type', source: 'type-change' });
       }
       renderRows(servicesStore.getServiceRows());
@@ -6561,15 +6654,21 @@
       button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     }
 
-    const LIST_MARKER_TYPES = ['bullet', 'dash', 'check'];
+    const LIST_MARKER_TYPES = ['bullet', 'circle', 'square', 'dash', 'ndash', 'check'];
     const LIST_MARKER_LABELS = {
       bullet: 'Точка',
+      circle: 'Круг',
+      square: 'Квадрат',
       dash: 'Дефис',
+      ndash: 'Тире',
       check: 'Галочка',
     };
     const LIST_MARKER_ICON_URLS = {
       bullet: '/static/core/icons/list-ul2.svg',
+      circle: '/static/core/icons/list-circle.svg',
+      square: '/static/core/icons/list-square.svg',
       dash: '/static/core/icons/list-dash.svg',
+      ndash: '/static/core/icons/list-ndash.svg',
       check: '/static/core/icons/list-check.svg',
     };
 
@@ -7559,6 +7658,22 @@
         });
       }
 
+      function resetStageServiceCompositionEditorState(block) {
+        if (!block) return;
+        const stateInput = block.querySelector('[name="service_sections_editor_state"]');
+        const customerStateInput = block.querySelector('[name="service_customer_tz_editor_state"]');
+        const textarea = block.querySelector('[name="service_composition"]');
+        const customerTextarea = block.querySelector('[name="service_composition_customer_tz"]');
+        const modeInput = block.querySelector('[name="service_composition_mode"]');
+        const modeToggle = block.querySelector('#proposal-service-mode-toggle');
+        if (stateInput) stateInput.value = '[]';
+        if (customerStateInput) customerStateInput.value = '{}';
+        if (textarea) textarea.value = '';
+        if (customerTextarea) customerTextarea.value = '';
+        if (modeInput) modeInput.value = 'sections';
+        if (modeToggle) modeToggle.checked = false;
+      }
+
       function resetClonedStageBlock(block) {
         block.querySelectorAll('tbody').forEach(function (tbody) {
           tbody.innerHTML = '';
@@ -8386,13 +8501,25 @@
           const serviceBlock = getServiceBlocks()[index];
           const commercialBlock = getCommercialBlocks()[index];
           const termsRow = getStageTermRows()[index];
+          if (serviceBlock) {
+            const serviceTypeInput = serviceBlock.querySelector('[data-proposal-stage-type]');
+            const previousServiceProductId = String(serviceTypeInput?.value || '').trim();
+            if (productId !== previousServiceProductId) {
+              resetStageServiceCompositionEditorState(serviceBlock);
+            }
+          }
           [serviceBlock, commercialBlock].forEach(function (block) {
             if (!block) return;
             const typeInput = block.querySelector('[data-proposal-stage-type]');
             const previousProductId = String(typeInput?.value || '').trim();
             if (typeInput) typeInput.value = productId;
             const store = attachProposalServicesStore(block);
-            if (store && productId && (productId !== previousProductId || !store.getRows().length)) {
+            const hasRegularServiceRows = !!(
+              store && store.getServiceRows().some(function (serviceRow) {
+                return !isProposalSystemDscRow(serviceRow);
+              })
+            );
+            if (store && productId && (productId !== previousProductId || !hasRegularServiceRows)) {
               store.replaceFromType({ reason: 'stage-product-change', source: 'type-change' });
             }
           });

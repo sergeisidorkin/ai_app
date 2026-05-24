@@ -436,6 +436,8 @@ def _performers_by_work_volume(registration, product_id: int | None) -> dict[int
         Performer.objects
         .select_related("work_item", "typical_section", "typical_section__product")
         .filter(registration=registration, typical_section__isnull=False)
+        .exclude(typical_section__is_system=True)
+        .exclude(typical_section__code__iexact="DSC")
         .order_by("position", "id")
     )
     if product_id:
@@ -464,6 +466,8 @@ def _source_data_sections(registration, product_id: int | None) -> list:
         ChecklistItem.objects
         .select_related("section")
         .filter(project=registration, section__isnull=False)
+        .exclude(section__is_system=True)
+        .exclude(section__code__iexact="DSC")
         .order_by("section__position", "section_id")
     )
     if product_id:

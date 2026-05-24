@@ -35,14 +35,46 @@ _FONT_NAME_MAP = {
     "georgia": "Georgia",
     "times-new-roman": "Times New Roman",
 }
-_RICH_LIST_TYPES = {"ordered", "bullet", "dash", "check"}
-_UNORDERED_RICH_LIST_TYPES = {"bullet", "dash", "check"}
+_RICH_LIST_TYPES = {"ordered", "bullet", "circle", "square", "dash", "ndash", "check"}
+_UNORDERED_RICH_LIST_TYPES = {"bullet", "circle", "square", "dash", "ndash", "check"}
 _MAX_RICH_LIST_LEVEL = 8
 _MARKER_NUMBERING_DEFS = {
-    "bullet": {"texts": ["\u2022", "\u25e6", "\u25aa"], "font": "Segoe UI Symbol"},
+    # Word default multilevel bullets use different fonts per level.
+    "bullet": {
+        "levels": [
+            {"text": "\uf0b7", "font": "Symbol"},
+            {"text": "o", "font": "Courier New"},
+            {"text": "\uf0a7", "font": "Wingdings"},
+        ],
+    },
     "dash": {"texts": ["-"], "font": "Calibri"},
-    "check": {"texts": ["\u2713"], "font": "Segoe UI Symbol"},
+    "ndash": {"texts": ["\u2013"], "font": "Calibri"},
+    "circle": {"texts": ["o"], "font": "Courier New"},
+    "square": {"texts": ["\uf0a7"], "font": "Wingdings"},
+    "check": {"texts": ["\uf0fc"], "font": "Wingdings"},
 }
+
+
+def _bullet_level_specs(
+    *,
+    marker_text: str,
+    marker_texts: list[str] | tuple[str, ...] | None,
+    font_name: str,
+    levels: list[dict[str, str]] | None,
+) -> list[tuple[str, str]]:
+    if levels:
+        specs: list[tuple[str, str]] = []
+        for level in levels:
+            text = str(level.get("text") or "")
+            font = str(level.get("font") or font_name or "")
+            if text:
+                specs.append((text, font))
+        if specs:
+            return specs
+    texts = [str(text) for text in (marker_texts or [marker_text]) if str(text)]
+    if not texts:
+        texts = [marker_text]
+    return [(text, font_name) for text in texts]
 
 
 def _parse_style_attr(value: str) -> dict[str, str]:
@@ -472,6 +504,7 @@ def _insert_rich_paragraphs(
     rich_ordered_num_id: str,
     bullet_style_id: str,
     list_paragraph_style_id: str,
+    builtin_list_paragraph_style_id: str,
     source_rPr,
     render_plain: bool = False,
     language_code: str | None = None,
@@ -508,6 +541,8 @@ def _insert_rich_paragraphs(
         paragraph_style_id = str(item.get("paragraph_style_id") or "").strip()
         if paragraph_style == "list_paragraph" and not paragraph_style_id:
             paragraph_style_id = list_paragraph_style_id
+        elif list_type and not render_plain and not paragraph_style_id:
+            paragraph_style_id = builtin_list_paragraph_style_id
         _apply_paragraph_style(p_pr, paragraph_style_id)
         _apply_paragraph_alignment(p_pr, item.get("alignment"))
         _apply_paragraph_left_indent(p_pr, item.get("left_indent_cm"))
@@ -617,6 +652,7 @@ def _replace_list_in_paragraph(
     multilevel_num_id: str,
     bullet_style_id: str,
     list_paragraph_style_id: str = "",
+    builtin_list_paragraph_style_id: str = "",
     plain_list_keys: set[str] | None = None,
     default_language_code: str | None = None,
     rich_ordered_num_id: str = "",
@@ -703,6 +739,7 @@ def _replace_list_in_paragraph(
             rich_ordered_num_id=rich_ordered_num_id,
             bullet_style_id=bullet_style_id,
             list_paragraph_style_id=list_paragraph_style_id,
+            builtin_list_paragraph_style_id=builtin_list_paragraph_style_id,
             source_rPr=source_rPr,
             render_plain=is_plain_list,
             language_code=language_code,
@@ -738,6 +775,7 @@ def _replace_list_in_paragraph(
             numPr.append(ilvl)
             numPr.append(numId)
             pPr.append(numPr)
+            _apply_paragraph_style(pPr, builtin_list_paragraph_style_id)
         new_p.append(pPr)
 
         new_r = OxmlElement("w:r")
@@ -1131,6 +1169,7 @@ def _ensure_bullet_numbering(
     marker_text: str = "\u2022",
     marker_texts: list[str] | tuple[str, ...] | None = None,
     font_name: str = "Symbol",
+    levels: list[dict[str, str]] | None = None,
 ) -> str:
     """Create a new multi-level marker numbering definition and return its ``numId``."""
     from docx.oxml import OxmlElement
@@ -1154,10 +1193,14 @@ def _ensure_bullet_numbering(
     ml_type.set(qn("w:val"), "multilevel")
     abstract_num.append(ml_type)
 
-    level_markers = [str(text) for text in (marker_texts or [marker_text]) if str(text)]
-    if not level_markers:
-        level_markers = [marker_text]
+    level_specs = _bullet_level_specs(
+        marker_text=marker_text,
+        marker_texts=marker_texts,
+        font_name=font_name,
+        levels=levels,
+    )
     for level in range(_MAX_RICH_LIST_LEVEL + 1):
+        marker_level_text, marker_level_font = level_specs[level % len(level_specs)]
         lvl = OxmlElement("w:lvl")
         lvl.set(qn("w:ilvl"), str(level))
         start = OxmlElement("w:start")
@@ -1167,7 +1210,7 @@ def _ensure_bullet_numbering(
         num_fmt.set(qn("w:val"), "bullet")
         lvl.append(num_fmt)
         lvl_text = OxmlElement("w:lvlText")
-        lvl_text.set(qn("w:val"), level_markers[level % len(level_markers)])
+        lvl_text.set(qn("w:val"), marker_level_text)
         lvl.append(lvl_text)
         lvl_jc = OxmlElement("w:lvlJc")
         lvl_jc.set(qn("w:val"), "left")
@@ -1178,11 +1221,11 @@ def _ensure_bullet_numbering(
         ind.set(qn("w:hanging"), "360")
         pPr.append(ind)
         lvl.append(pPr)
-        if font_name:
+        if marker_level_font:
             rPr = OxmlElement("w:rPr")
             rFonts = OxmlElement("w:rFonts")
-            rFonts.set(qn("w:ascii"), font_name)
-            rFonts.set(qn("w:hAnsi"), font_name)
+            rFonts.set(qn("w:ascii"), marker_level_font)
+            rFonts.set(qn("w:hAnsi"), marker_level_font)
             rFonts.set(qn("w:hint"), "default")
             rPr.append(rFonts)
             lvl.append(rPr)
@@ -1210,6 +1253,7 @@ def _ensure_marker_numberings(doc) -> dict[str, str]:
                 marker_text=str(marker_def.get("text") or ""),
                 marker_texts=marker_def.get("texts"),
                 font_name=str(marker_def.get("font") or ""),
+                levels=marker_def.get("levels"),
             )
         except Exception:
             continue
@@ -1399,6 +1443,24 @@ def _find_list_paragraph_style_id(doc) -> str:
         return "PaymentScheduleParagraph"
 
 
+def _find_builtin_list_paragraph_style_id(doc) -> str:
+    """Find the built-in 'List Paragraph' style ID in the document.
+
+    Searches by canonical name (works for both English and Russian Word).
+    """
+    for preferred_name in ("Абзац списка", "List Paragraph"):
+        for style in doc.styles:
+            if style.name == preferred_name:
+                return style.style_id
+    try:
+        from docx.enum.style import WD_STYLE_TYPE
+        style = doc.styles.add_style("List Paragraph", WD_STYLE_TYPE.PARAGRAPH)
+        style.base_style = doc.styles["Normal"]
+        return style.style_id
+    except Exception:
+        return ""
+
+
 # ---------------------------------------------------------------------------
 
 def _process_paragraphs(
@@ -1418,6 +1480,7 @@ def _process_list_paragraphs(
     multilevel_num_id: str,
     bullet_style_id: str,
     list_paragraph_style_id: str = "",
+    builtin_list_paragraph_style_id: str = "",
     plain_list_keys: set[str] | None = None,
     default_language_code: str | None = None,
     rich_ordered_num_id: str = "",
@@ -1426,7 +1489,8 @@ def _process_list_paragraphs(
         _replace_list_in_paragraph(
             para, list_replacements,
             marker_num_ids, multilevel_num_id, bullet_style_id,
-            list_paragraph_style_id, plain_list_keys, default_language_code,
+            list_paragraph_style_id, builtin_list_paragraph_style_id,
+            plain_list_keys, default_language_code,
             rich_ordered_num_id=rich_ordered_num_id,
         )
 
@@ -1440,6 +1504,7 @@ def _process_tables(
     multilevel_num_id: str = "",
     bullet_style_id: str = "",
     list_paragraph_style_id: str = "",
+    builtin_list_paragraph_style_id: str = "",
     plain_list_keys: set[str] | None = None,
     default_language_code: str | None = None,
     rich_ordered_num_id: str = "",
@@ -1458,14 +1523,15 @@ def _process_tables(
                     _process_list_paragraphs(
                         cell.paragraphs, list_replacements,
                         marker_num_ids, multilevel_num_id, bullet_style_id,
-                        list_paragraph_style_id, plain_list_keys, default_language_code,
+                        list_paragraph_style_id, builtin_list_paragraph_style_id,
+                        plain_list_keys, default_language_code,
                         rich_ordered_num_id=rich_ordered_num_id,
                     )
                 _process_paragraphs(cell.paragraphs, replacements, language_code=default_language_code)
                 _process_tables(
                     cell.tables, replacements, table_replacements, list_replacements,
                     marker_num_ids, multilevel_num_id, bullet_style_id, list_paragraph_style_id,
-                    plain_list_keys, default_language_code,
+                    builtin_list_paragraph_style_id, plain_list_keys, default_language_code,
                     rich_ordered_num_id=rich_ordered_num_id,
                 )
 
@@ -1801,6 +1867,7 @@ def process_template(
     rich_ordered_num_id = ""
     bullet_style_id = ""
     list_paragraph_style_id = ""
+    builtin_list_paragraph_style_id = ""
 
     if table_replacements:
         _process_table_placeholders(
@@ -1821,10 +1888,11 @@ def process_template(
             pass
         bullet_style_id = _find_bullet_style_id(doc)
         list_paragraph_style_id = _find_list_paragraph_style_id(doc)
+        builtin_list_paragraph_style_id = _find_builtin_list_paragraph_style_id(doc)
         _process_list_paragraphs(
             doc.paragraphs, list_replacements,
             marker_num_ids, multilevel_num_id, bullet_style_id, list_paragraph_style_id,
-            plain_list_keys, default_language_code,
+            builtin_list_paragraph_style_id, plain_list_keys, default_language_code,
             rich_ordered_num_id=rich_ordered_num_id,
         )
 
@@ -1832,7 +1900,7 @@ def process_template(
     _process_tables(
         doc.tables, replacements, table_replacements, list_replacements,
         marker_num_ids, multilevel_num_id, bullet_style_id, list_paragraph_style_id,
-        plain_list_keys, default_language_code,
+        builtin_list_paragraph_style_id, plain_list_keys, default_language_code,
         rich_ordered_num_id=rich_ordered_num_id,
     )
 
@@ -1853,7 +1921,7 @@ def process_template(
                     _process_list_paragraphs(
                         header_footer.paragraphs, list_replacements,
                         marker_num_ids, multilevel_num_id, bullet_style_id, list_paragraph_style_id,
-                        plain_list_keys, default_language_code,
+                        builtin_list_paragraph_style_id, plain_list_keys, default_language_code,
                         rich_ordered_num_id=rich_ordered_num_id,
                     )
                 _process_paragraphs(
@@ -1864,7 +1932,7 @@ def process_template(
                 _process_tables(
                     header_footer.tables, replacements, table_replacements, list_replacements,
                     marker_num_ids, multilevel_num_id, bullet_style_id, list_paragraph_style_id,
-                    plain_list_keys, default_language_code,
+                    builtin_list_paragraph_style_id, plain_list_keys, default_language_code,
                     rich_ordered_num_id=rich_ordered_num_id,
                 )
 

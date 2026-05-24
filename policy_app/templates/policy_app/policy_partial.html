@@ -427,7 +427,7 @@
     </div>
 
     <div class="table-responsive">
-        <table class="table table-sm align-top">
+        <table class="table table-sm align-top typical-sections-table">
             <thead>
             <tr>
                 <th style="width:1%">
@@ -463,10 +463,12 @@
                      data-consulting-type="{{ s.product.consulting_type_display }}"
                      data-service-category="{{ s.product.service_category_display }}"
                      data-service-subtype="{{ s.product.service_subtype_display }}"
+                     data-system-section="{% if s.is_system_dsc %}1{% else %}0{% endif %}"
                      data-edit-url="{% url 'section_form_edit' s.pk %}"
                      data-delete-url="{% url 'section_delete' s.pk %}"
                      data-move-up-url="{% url 'section_move_up' s.pk %}"
-                     data-move-down-url="{% url 'section_move_down' s.pk %}">
+                     data-move-down-url="{% url 'section_move_down' s.pk %}"
+                     {% if s.is_system_dsc %}class="typical-section-system-row"{% endif %}>
 
                     <td class="text-nowrap">
                         {% if request.user.is_authenticated and request.user.is_staff %}
@@ -476,18 +478,25 @@
                                        id="section-sel-{{ s.id }}"
                                        name="section-select"
                                        value="{{ s.id }}"
+                                       {% if s.is_system_dsc %}disabled{% endif %}
                                        aria-label="Выделить строку раздела">
                             </div>
                         {% endif %}
                     </td>
                     <td class="text-nowrap">{{ s.product.short_name }}</td>
-                    <td class="text-nowrap">{{ s.code }}</td>
+                    <td class="text-nowrap">
+                        {% if s.is_system_dsc %}
+                            <span class="typical-section-dsc-code">{{ s.code }}</span>
+                        {% else %}
+                            {{ s.code }}
+                        {% endif %}
+                    </td>
                     <td class="text-nowrap">{{ s.short_name }}</td>
                     <td class="text-nowrap">{{ s.short_name_ru }}</td>
                     <td>{{ s.name_en }}</td>
                     <td>{{ s.name_ru }}</td>
-                    <td class="text-nowrap">{{ s.accounting_type }}</td>
-                    <td>{% for rs in s.ranked_specialties.all %}{% if forloop.first %}<span>{{ rs.specialty.specialty }}</span>{% else %}<br><span>{{ rs.specialty.specialty }}</span>{% endif %}{% empty %}—{% endfor %}</td>
+                    <td class="text-nowrap">{% if s.is_system_dsc %}{% else %}{{ s.accounting_type }}{% endif %}</td>
+                    <td>{% if s.is_system_dsc %}{% else %}{% for rs in s.ranked_specialties.all %}{% if forloop.first %}<span>{{ rs.specialty.specialty }}</span>{% else %}<br><span>{{ rs.specialty.specialty }}</span>{% endif %}{% empty %}—{% endfor %}{% endif %}</td>
                     <td class="text-nowrap">{% if s.expertise_dir %}{{ s.expertise_dir.short_name }}{% endif %}</td>
                     <td class="text-nowrap">{% if s.expertise_direction %}{{ s.expertise_direction.department_name }}{% endif %}</td>
                     <td class="text-center">
@@ -754,20 +763,34 @@
               </button>
             </div>
           </div>
-          <a href="{% url 'typical_service_composition_xlsx_download' %}"
-             id="typical-service-compositions-xlsx-download-btn"
+          <a href="{% url 'typical_service_composition_csv_download' %}"
+             id="typical-service-compositions-csv-download-btn"
              class="btn btn-primary btn-sm d-flex align-items-center"
-             title="Скачать XLSX"
+             title="Скачать CSV"
              role="button">
-            <i class="bi bi-cloud-arrow-down me-2"></i>Скачать XLSX
+            <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
           </a>
           <button type="button"
-                  id="typical-service-compositions-xlsx-upload-btn"
+                  id="typical-service-compositions-csv-upload-btn"
                   class="btn btn-primary btn-sm d-flex align-items-center"
-                  title="Загрузить XLSX">
-            <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить XLSX
+                  title="Загрузить CSV">
+            <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
           </button>
-          <input type="file" id="typical-service-compositions-xlsx-file-input" accept=".xlsx" class="d-none">
+          <input type="file" id="typical-service-compositions-csv-file-input" accept=".csv" class="d-none">
+          <a href="{% url 'typical_service_composition_docx_download' %}"
+             id="typical-service-compositions-docx-download-btn"
+             class="btn btn-primary btn-sm d-flex align-items-center"
+             title="Скачать DOCX"
+             role="button">
+            <i class="bi bi-cloud-arrow-down me-2"></i>Скачать DOCX
+          </a>
+          <button type="button"
+                  id="typical-service-compositions-docx-upload-btn"
+                  class="btn btn-primary btn-sm d-flex align-items-center"
+                  title="Загрузить DOCX">
+            <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить DOCX
+          </button>
+          <input type="file" id="typical-service-compositions-docx-file-input" accept=".docx" class="d-none">
         </div>
         {% endif %}
     </div>

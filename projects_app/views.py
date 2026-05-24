@@ -84,6 +84,7 @@ from policy_app.models import (
     LAWYER_GROUP,
     Product,
     PROJECTS_HEAD_GROUP,
+    SYSTEM_DSC_SECTION_CODE,
     TypicalSection,
     TypicalServiceTerm,
     build_consulting_catalog_meta,
@@ -134,6 +135,10 @@ CONTRACT_IMAGE_PLACEHOLDER_SPECS = (
 
 def staff_required(user):
     return user.is_authenticated and user.is_staff
+
+
+def _normalize_contract_person_name(value):
+    return " ".join(str(value or "").split()).strip()
 
 
 def performer_contract_signing_required(user):
@@ -1279,6 +1284,7 @@ def _ordered_registration_sections(registration):
     sections = list(
         TypicalSection.objects
         .filter(product_id__in=product_ids)
+        .exclude(Q(is_system=True) | Q(code__iexact=SYSTEM_DSC_SECTION_CODE))
         .select_related("product", "expertise_dir")
         .prefetch_related("ranked_specialties", "ranked_specialties__specialty")
         .order_by("position", "id")
@@ -3179,6 +3185,9 @@ def info_request_approval(request):
 @user_passes_test(staff_required)
 @require_POST
 def payment_request(request):
+    if _confirmed_project_ids_for_expert(request.user) is not None:
+        return JsonResponse({"ok": False, "error": "Недостаточно прав."}, status=403)
+
     raw_ids = request.POST.getlist("performer_ids[]") or request.POST.getlist("performer_ids")
     if not raw_ids:
         return JsonResponse({"ok": False, "error": "Не выбраны строки для отправки заявки."}, status=400)
@@ -3729,6 +3738,7 @@ def _expand_contract_batch_performers(performers):
                 number_filter |= Q(contract_addendum_number__isnull=True)
             group_filter |= Q(
                 participation_batch_id=performer.participation_batch_id,
+                executor=_normalize_contract_person_name(getattr(performer, "executor", "")),
                 contract_batch_id__isnull=False,
                 contract_is_addendum=bool(getattr(performer, "contract_is_addendum", False)),
             ) & number_filter

@@ -4,7 +4,7 @@ import uuid
 from django.conf import settings
 from django.db import models, transaction
 from django.core.validators import MinValueValidator, MaxValueValidator
-from policy_app.models import Product, TypicalSection
+from policy_app.models import Product, SYSTEM_DSC_SECTION_CODE, TypicalSection
 from classifiers_app.models import OKSMCountry, OKVCurrency
 from group_app.models import GroupMember
 from datetime import date as dt_date, timedelta
@@ -572,6 +572,7 @@ def _ordered_project_sections(project):
     sections = list(
         TypicalSection.objects
         .filter(product_id__in=product_ids)
+        .exclude(models.Q(is_system=True) | models.Q(code__iexact=SYSTEM_DSC_SECTION_CODE))
         .select_related("product", "expertise_dir")
         .order_by("position", "id")
     )

@@ -43,6 +43,7 @@ from policy_app.models import (
     TypicalServiceComposition,
     TypicalServiceTerm,
     build_consulting_catalog_meta,
+    ensure_system_dsc_section,
 )
 from projects_app.models import ProjectRegistration, ProjectRegistrationProduct, _sync_project_registration_primary_product
 from smtp_app.models import ExternalSMTPAccount
@@ -1528,6 +1529,9 @@ def _render_proposal_form(request, *, form, action, proposal=None):
             )
         specialty_candidates[specialty_name] = ordered_candidates
 
+    for product in Product.objects.order_by("position", "id").only("id", "position"):
+        ensure_system_dsc_section(product)
+
     sections = list(
         TypicalSection.objects
         .select_related("product", "expertise_dir", "expertise_direction")
@@ -1664,6 +1668,8 @@ def _render_proposal_form(request, *, form, action, proposal=None):
                 {
                     "name": section.name_ru,
                     "code": section.code or "",
+                    "is_system": bool(section.is_system),
+                    "is_system_dsc": bool(section.is_system_dsc),
                     "accounting_type": str(getattr(section, "accounting_type", "") or "").strip(),
                     "executor": executor_display,
                     "exclude_from_tkp_autofill": bool(section.exclude_from_tkp_autofill),

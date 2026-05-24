@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from zipfile import BadZipFile
 
+from docx.opc.exceptions import PackageNotFoundError
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
@@ -30,6 +31,7 @@ from .models import (
     ConsultingServiceSubtype,
     ConsultingServiceType,
     Product,
+    SYSTEM_DSC_SECTION_CODE,
     TypicalSection,
     TypicalSectionSpecialty,
     SectionStructure,
@@ -42,6 +44,8 @@ from .models import (
     Tariff,
     MANAGER_GROUPS,
     build_consulting_catalog_meta,
+    ensure_system_dsc_section,
+    is_system_dsc_code,
 )
 from .forms import (
     ConsultingDirectionForm,
@@ -55,6 +59,10 @@ from .forms import (
     GradeForm,
     SpecialtyTariffForm,
     TariffForm,
+)
+from .docx_service_compositions import (
+    build_typical_service_compositions_docx,
+    parse_typical_service_compositions_docx,
 )
 
 # Вынесенные константы для единообразия шаблонов/заголовков
@@ -437,7 +445,8 @@ def product_form_create(request):
         )
     if not form.instance.position:
         form.instance.position = _next_position(Product)
-    form.save()
+    product = form.save()
+    ensure_system_dsc_section(product)
     return _render_policy_updated(request)
 
 @login_required
@@ -460,7 +469,8 @@ def product_form_edit(request, pk: int):
             PRODUCT_FORM_TEMPLATE,
             _product_form_page_context({"form": form, "action": "edit", "product": product}),
         )
-    form.save()
+    product = form.save()
+    ensure_system_dsc_section(product)
     return _render_policy_updated(request)
 
 @login_required
@@ -620,6 +630,7 @@ def product_csv_upload(request):
             )
             if owner_ids:
                 product.owners.set(owner_ids)
+            ensure_system_dsc_section(product)
             created += 1
         except Exception as exc:
             warnings.append(f"Строка {i}: ошибка сохранения — {exc}")
@@ -681,6 +692,7 @@ def _section_form_context(form, action, section=None):
         "specialty_options": spec_options,
         "specialty_options_json": json.dumps(spec_options, ensure_ascii=False),
         "ranked_specialties": ranked,
+        "is_system_section": bool(section and section.is_system_dsc),
     }
     if section:
         ctx["section"] = section
@@ -800,10 +812,12 @@ def section_form_create(request):
     if not form.is_valid():
         return render(request, SECTION_FORM_TEMPLATE, _section_form_context(form, "create"))
     obj = form.save(commit=False)
+    ensure_system_dsc_section(obj.product)
     if not getattr(obj, "position", 0):
         obj.position = _next_position(TypicalSection, {"product": obj.product})
     obj.save()
     _save_section_specialties(obj, request.POST)
+    ensure_system_dsc_section(obj.product)
     return _render_policy_updated(request)
 
 @login_required
@@ -817,8 +831,12 @@ def section_form_edit(request, pk: int):
     form = TypicalSectionForm(request.POST, instance=section)
     if not form.is_valid():
         return render(request, SECTION_FORM_TEMPLATE, _section_form_context(form, "edit", section))
-    form.save()
-    _save_section_specialties(section, request.POST)
+    if section.is_system_dsc:
+        ensure_system_dsc_section(section.product)
+    else:
+        form.save()
+        _save_section_specialties(section, request.POST)
+        ensure_system_dsc_section(section.product)
     return _render_policy_updated(request)
 
 @login_required
@@ -826,7 +844,11 @@ def section_form_edit(request, pk: int):
 @require_POST
 def section_delete(request, pk: int):
     section = get_object_or_404(TypicalSection, pk=pk)
+    if section.is_system_dsc:
+        return JsonResponse({"ok": False, "error": "Системный раздел DSC нельзя удалить."}, status=400)
+    product = section.product
     section.delete()
+    ensure_system_dsc_section(product)
     return _render_policy_updated(request)
 
 def _normalize_product_positions():
@@ -843,7 +865,7 @@ def _normalize_section_positions(product_id: int | None = None):
     Гарантирует сквозную нумерацию позиций разделов внутри каждого продукта.
     Если product_id задан, нормализует только для одного продукта.
     """
-    qs = TypicalSection.objects.select_related("product").only("id", "position", "product_id")
+    qs = TypicalSection.objects.select_related("product").only("id", "position", "product_id", "code", "is_system")
     if product_id:
         groups = {product_id: list(qs.filter(product_id=product_id).order_by("position", "id"))}
     else:
@@ -852,6 +874,7 @@ def _normalize_section_positions(product_id: int | None = None):
         for sec in qs.order_by("product_id", "position", "id"):
             groups.setdefault(sec.product_id, []).append(sec)
     for pid, items in groups.items():
+        items = sorted(items, key=lambda item: (0 if item.is_system_dsc else 1, item.position, item.id))
         for idx, it in enumerate(items, start=1):
             if it.position != idx:
                 TypicalSection.objects.filter(pk=it.pk).update(position=idx)
@@ -890,13 +913,17 @@ def product_move_down(request, pk: int):
 @login_required
 def section_move_up(request, pk: int):
     sec = get_object_or_404(TypicalSection, pk=pk)
+    if sec.is_system_dsc:
+        return _render_policy_updated(request)
     pid = sec.product_id
     _normalize_section_positions(product_id=pid)
-    items = list(TypicalSection.objects.filter(product_id=pid).order_by("position", "id").only("id", "position"))
+    items = list(TypicalSection.objects.filter(product_id=pid).order_by("position", "id").only("id", "position", "code", "is_system"))
     idx = next((i for i, it in enumerate(items) if it.id == pk), None)
     if idx is not None and idx > 0:
         cur = items[idx]
         prev = items[idx - 1]
+        if prev.is_system_dsc:
+            return _render_policy_updated(request)
         cur_pos, prev_pos = cur.position, prev.position
         TypicalSection.objects.filter(pk=cur.id).update(position=prev_pos)
         TypicalSection.objects.filter(pk=prev.id).update(position=cur_pos)
@@ -907,6 +934,8 @@ def section_move_up(request, pk: int):
 @login_required
 def section_move_down(request, pk: int):
     sec = get_object_or_404(TypicalSection, pk=pk)
+    if sec.is_system_dsc:
+        return _render_policy_updated(request)
     pid = sec.product_id
     _normalize_section_positions(product_id=pid)
     items = list(TypicalSection.objects.filter(product_id=pid).order_by("position", "id").only("id", "position"))
@@ -1011,6 +1040,13 @@ def section_csv_upload(request):
             warnings.append(f"Строка {i}: отсутствует код раздела.")
             continue
 
+        if is_system_dsc_code(code):
+            ensure_system_dsc_section(product)
+            warnings.append(
+                f"Строка {i}: раздел DSC является системным; строка CSV пропущена, системная запись создана/обновлена автоматически."
+            )
+            continue
+
         missing = []
         if not short_name:
             missing.append("Краткое имя EN")
@@ -1041,6 +1077,7 @@ def section_csv_upload(request):
         position = _next_position(TypicalSection, {"product": product})
         try:
             with transaction.atomic():
+                ensure_system_dsc_section(product)
                 section = TypicalSection.objects.create(
                     product=product,
                     code=code,
@@ -1064,6 +1101,7 @@ def section_csv_upload(request):
             if missing_specialties:
                 warnings.append(f"Строка {i}: исполнители не найдены: {', '.join(missing_specialties)}.")
             created += 1
+            ensure_system_dsc_section(product)
         except Exception as exc:
             warnings.append(f"Строка {i}: ошибка сохранения — {exc}")
 
@@ -1709,6 +1747,117 @@ def typical_service_composition_csv_download(request):
     response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
     response["Content-Disposition"] = 'attachment; filename="typical_service_compositions.csv"'
     return response
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def typical_service_composition_docx_download(request):
+    rows = []
+    compositions = TypicalServiceComposition.objects.select_related("product", "section").all()
+    for composition in compositions:
+        editor_state = _normalize_typical_service_composition_editor_state(
+            composition.service_composition_editor_state,
+            composition.service_composition,
+        )
+        rows.append(
+            {
+                "id": composition.pk,
+                "product": composition.product.short_name,
+                "section": composition.section.name_ru or composition.section.name_en,
+                "html": editor_state["html"],
+                "plain_text": editor_state["plain_text"] or composition.service_composition,
+            }
+        )
+
+    content = build_typical_service_compositions_docx(rows)
+    response = HttpResponse(
+        content,
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    response["Content-Disposition"] = 'attachment; filename="typical_service_compositions.docx"'
+    return response
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def typical_service_composition_docx_upload(request):
+    docx_file = request.FILES.get("docx_file") or request.FILES.get("csv_file")
+    if not docx_file:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+    if not docx_file.name.lower().endswith(".docx"):
+        return JsonResponse({"ok": False, "error": "Допустимы только файлы DOCX."}, status=400)
+
+    try:
+        rows = parse_typical_service_compositions_docx(docx_file)
+    except (BadZipFile, PackageNotFoundError, OSError, ValueError) as exc:
+        return JsonResponse({"ok": False, "error": f"Не удалось прочитать DOCX: {exc}"}, status=400)
+
+    products_by_name, sections_by_product = _typical_service_composition_import_lookups()
+    created = 0
+    updated = 0
+    warnings = []
+
+    for row in rows:
+        row_number = row.get("row_number")
+        row_label = f"Строка {row_number}"
+        raw_id = str(row.get("id") or "").strip()
+        product_name = str(row.get("product") or "").strip()
+        section_name = str(row.get("section") or "").strip()
+        editor_state = _normalize_typical_service_composition_editor_state(
+            row.get("editor_state"),
+            "",
+        )
+        service_composition = editor_state["plain_text"]
+
+        product = products_by_name.get(_csv_lookup_key(product_name))
+        if not product:
+            warnings.append(f"{row_label}: продукт «{product_name}» не найден. Доступные: {', '.join(products_by_name.keys())}.")
+            continue
+
+        section = sections_by_product[product.pk].get(_csv_lookup_key(section_name))
+        if not section:
+            warnings.append(f"{row_label}: раздел «{section_name}» не найден для продукта «{product.short_name}».")
+            continue
+
+        try:
+            with transaction.atomic():
+                if raw_id:
+                    if not raw_id.isdigit():
+                        warnings.append(f"{row_label}: некорректный ID «{raw_id}»; строка пропущена.")
+                        continue
+                    composition = TypicalServiceComposition.objects.filter(pk=int(raw_id)).first()
+                    if not composition:
+                        warnings.append(f"{row_label}: строка с ID «{raw_id}» не найдена; строка пропущена.")
+                        continue
+                    composition.product = product
+                    composition.section = section
+                    composition.service_composition = service_composition
+                    composition.service_composition_editor_state = editor_state
+                    composition.save(
+                        update_fields=[
+                            "product",
+                            "section",
+                            "service_composition",
+                            "service_composition_editor_state",
+                            "updated_at",
+                        ]
+                    )
+                    updated += 1
+                else:
+                    TypicalServiceComposition.objects.create(
+                        product=product,
+                        section=section,
+                        service_composition=service_composition,
+                        service_composition_editor_state=editor_state,
+                        position=_next_position(TypicalServiceComposition),
+                    )
+                    created += 1
+        except Exception as exc:
+            warnings.append(f"{row_label}: ошибка сохранения — {exc}")
+
+    return JsonResponse({"ok": True, "created": created, "updated": updated, "warnings": warnings})
 
 
 @login_required
@@ -2648,6 +2797,7 @@ def _typical_service_term_executor_options():
 def _typical_service_term_section_options(product_id):
     sections = (
         TypicalSection.objects.filter(product_id=product_id)
+        .exclude(Q(is_system=True) | Q(code__iexact=SYSTEM_DSC_SECTION_CODE))
         .prefetch_related("ranked_specialties", "ranked_specialties__specialty")
         .order_by("position", "id")
     )
