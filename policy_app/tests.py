@@ -118,6 +118,80 @@ class RemoveTypicalSectionExecutorMigrationTests(TransactionTestCase):
         self.assertEqual([(link.specialty.specialty, link.rank) for link in links], [("Юрист", 1), ("Партнер", 2)])
 
 
+class SystemDscMigrationTests(TransactionTestCase):
+    migrate_from = ("policy_app", "0044_typicalserviceterm_source_data_weeks")
+    migrate_to = ("policy_app", "0045_typicalsection_is_system_dsc")
+
+    def setUp(self):
+        super().setUp()
+        self.executor = MigrationExecutor(connection)
+        self.executor.migrate([self.migrate_from])
+        old_apps = self.executor.loader.project_state([self.migrate_from]).apps
+
+        Product = old_apps.get_model("policy_app", "Product")
+        TypicalSection = old_apps.get_model("policy_app", "TypicalSection")
+
+        product = Product.objects.create(
+            short_name="MIG-DSC",
+            name_en="Migration DSC",
+            display_name="Migration DSC",
+            name_ru="Миграция DSC",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        self.lower_dsc_id = TypicalSection.objects.create(
+            product_id=product.pk,
+            code="dsc",
+            short_name="manual-lower",
+            short_name_ru="ручной lower",
+            name_en="Manual lower",
+            name_ru="Ручной lower",
+            accounting_type="Услуги",
+            position=1,
+        ).pk
+        self.upper_dsc_id = TypicalSection.objects.create(
+            product_id=product.pk,
+            code="DSC",
+            short_name="manual-upper",
+            short_name_ru="ручной upper",
+            name_en="Manual upper",
+            name_ru="Ручной upper",
+            accounting_type="Услуги",
+            position=2,
+        ).pk
+        TypicalSection.objects.create(
+            product_id=product.pk,
+            code="REG",
+            short_name="regular",
+            short_name_ru="обычный",
+            name_en="Regular",
+            name_ru="Обычный",
+            accounting_type="Раздел",
+            position=3,
+        )
+
+    def tearDown(self):
+        executor = MigrationExecutor(connection)
+        executor.migrate(executor.loader.graph.leaf_nodes())
+        super().tearDown()
+
+    def test_migration_deduplicates_case_insensitive_dsc_before_canonical_save(self):
+        self.executor.loader.build_graph()
+        self.executor.migrate([self.migrate_to])
+        new_apps = self.executor.loader.project_state([self.migrate_to]).apps
+
+        TypicalSection = new_apps.get_model("policy_app", "TypicalSection")
+
+        sections = list(TypicalSection.objects.order_by("position", "id"))
+        self.assertEqual([section.code for section in sections], ["DSC", "REG"])
+        self.assertEqual(sections[0].pk, self.lower_dsc_id)
+        self.assertTrue(sections[0].is_system)
+        self.assertEqual(sections[0].name_ru, "Описание продукта")
+        self.assertFalse(TypicalSection.objects.filter(pk=self.upper_dsc_id).exists())
+
+
 class ConsultingCatalogBackfillMigrationTests(TransactionTestCase):
     migrate_from = ("policy_app", "0038_product_consulting_service_fields")
     migrate_to = ("policy_app", "0040_backfill_consulting_catalog_refs")

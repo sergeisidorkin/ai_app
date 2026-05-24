@@ -61,35 +61,14 @@ PROPOSAL_REPORT_LANGUAGE_ALIASES = {
 }
 
 
-def _proposal_dsc_names(product=None):
-    names = {
-        SYSTEM_DSC_SECTION_DEFAULTS["short_name"],
-        SYSTEM_DSC_SECTION_DEFAULTS["short_name_ru"],
-        SYSTEM_DSC_SECTION_DEFAULTS["name_en"],
-        SYSTEM_DSC_SECTION_DEFAULTS["name_ru"],
-    }
-    if product is not None:
-        section = (
-            TypicalSection.objects.filter(product=product, code__iexact=SYSTEM_DSC_SECTION_CODE)
-            .order_by("position", "id")
-            .first()
-        )
-        if section is not None:
-            names.update(
-                value
-                for value in (section.short_name, section.short_name_ru, section.name_en, section.name_ru)
-                if str(value or "").strip()
-            )
-    return {str(value or "").strip() for value in names if str(value or "").strip()}
-
-
 def _proposal_is_dsc_payload_item(item, product=None):
     if not isinstance(item, dict):
         return False
+    if item.get("is_system_dsc") is True:
+        return True
     if is_system_dsc_code(item.get("code")):
         return True
-    service_name = str(item.get("service_name") or "").strip()
-    return bool(service_name and service_name in _proposal_dsc_names(product))
+    return False
 
 
 def _proposal_system_dsc_payload(product):
@@ -1673,7 +1652,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             normalized.append(
                 {
                     "service_name": service_name,
-                    "code": sections_by_name.get(service_name, "") or code,
+                    "code": code or sections_by_name.get(service_name, ""),
                 }
             )
         return self._prepend_system_dsc_service_section(normalized, product)
@@ -2583,7 +2562,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 {
                     "position": len(cleaned_rows) + 1,
                     "service_name": service_name,
-                    "code": expected_code or code,
+                    "code": code or expected_code,
                 }
             )
 

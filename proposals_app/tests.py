@@ -3758,7 +3758,12 @@ class ProposalRegistrationFormTests(TestCase):
                 ),
                 "commercial_offer_payload": json.dumps(
                     [
-                        {"service_name": "Описание продукта", "rate_eur_per_day": "10", "asset_day_counts": [1]},
+                        {
+                            "service_name": "Описание продукта",
+                            "is_system_dsc": True,
+                            "rate_eur_per_day": "10",
+                            "asset_day_counts": [1],
+                        },
                         {"service_name": "Раздел 1", "rate_eur_per_day": "20", "asset_day_counts": [2]},
                     ],
                     ensure_ascii=False,
@@ -3774,6 +3779,74 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(proposal.service_sections_editor_state[0]["code"], "DSC")
         self.assertEqual(proposal.service_sections_editor_state[0]["plain_text"], "Описание")
         self.assertEqual([row.service_name for row in proposal.commercial_offers.all()], ["Раздел 1"])
+
+    def test_dsc_matching_does_not_drop_regular_section_with_same_name(self):
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        product = Product.objects.create(
+            short_name="DSC-NAME",
+            name_en="DSC name collision",
+            name_ru="Совпадение имени DSC",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        TypicalSection.objects.create(
+            product=product,
+            code="S-101",
+            short_name="service-1",
+            short_name_ru="Услуга 1",
+            name_en="Service 1",
+            name_ru="Описание продукта",
+            accounting_type="Раздел",
+            position=2,
+        )
+
+        form = ProposalRegistrationForm(
+            data={
+                "number": 3333,
+                "group_member": group_member.pk,
+                "type": product.pk,
+                "name": "Тестовое ТКП",
+                "kind": ProposalRegistration.ProposalKind.REGULAR,
+                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "year": 2026,
+                "service_sections_payload": json.dumps(
+                    [{"service_name": "Описание продукта", "code": "S-101"}],
+                    ensure_ascii=False,
+                ),
+                "commercial_offer_payload": json.dumps(
+                    [
+                        {
+                            "service_name": "Описание продукта",
+                            "code": "S-101",
+                            "rate_eur_per_day": "20",
+                            "asset_day_counts": [2],
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+            }
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        proposal = form.save()
+        form.save_commercial_offers(proposal)
+
+        self.assertEqual(
+            proposal.service_sections_json,
+            [
+                {"service_name": "Описание продукта", "code": "DSC"},
+                {"service_name": "Описание продукта", "code": "S-101"},
+            ],
+        )
+        self.assertEqual([row.service_name for row in proposal.commercial_offers.all()], ["Описание продукта"])
 
     def test_resolve_variables_for_new_registry_columns(self):
         country = OKSMCountry.objects.create(
@@ -6301,8 +6374,10 @@ class ProposalFormContextTests(TestCase):
         entries = response.context["typical_sections_json"][str(product.pk)]
         self.assertEqual(
             [item["name"] for item in entries],
-            ["Включенный раздел", "Исключенный раздел"],
+            ["Описание продукта", "Включенный раздел", "Исключенный раздел"],
         )
+        dsc_entry = next(item for item in entries if item["name"] == "Описание продукта")
+        self.assertTrue(dsc_entry["is_system_dsc"])
         excluded_entry = next(item for item in entries if item["name"] == "Исключенный раздел")
         self.assertTrue(excluded_entry["exclude_from_tkp_autofill"])
         included_entry = next(item for item in entries if item["name"] == "Включенный раздел")
@@ -6346,6 +6421,7 @@ class ProposalFormContextTests(TestCase):
         self.assertEqual(
             {item["name"]: item["accounting_type"] for item in entries},
             {
+                "Описание продукта": "Раздел",
                 "Раздел 1": "Раздел",
                 "Услуга 1": "Услуги",
             },
@@ -6485,7 +6561,11 @@ class ProposalFormContextTests(TestCase):
         response = self.client.get(reverse("proposal_form_create"))
 
         self.assertEqual(response.status_code, 200)
-        entry = response.context["typical_sections_json"][str(product.pk)][0]
+        entry = next(
+            item
+            for item in response.context["typical_sections_json"][str(product.pk)]
+            if item["name"] == section.name_ru
+        )
         self.assertEqual(entry["specialty_tariff_rate_eur"], "1000.00")
         self.assertEqual(entry["service_days_tkp"], 7)
         self.assertTrue(entry["specialty_is_director"])

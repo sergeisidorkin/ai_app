@@ -31,7 +31,8 @@ def seed_system_dsc_sections(apps, schema_editor):
             .filter(product_id=product.pk)
             .order_by("position", "id")
         )
-        section = next((item for item in sections if _is_dsc(item.code)), None)
+        dsc_sections = [item for item in sections if _is_dsc(item.code)]
+        section = dsc_sections[0] if dsc_sections else None
         if section is None:
             section = TypicalSection.objects.using(db_alias).create(
                 product_id=product.pk,
@@ -40,6 +41,10 @@ def seed_system_dsc_sections(apps, schema_editor):
             )
             sections.append(section)
         else:
+            duplicate_ids = [item.pk for item in dsc_sections if item.pk != section.pk]
+            if duplicate_ids:
+                TypicalSection.objects.using(db_alias).filter(pk__in=duplicate_ids).delete()
+                sections = [item for item in sections if item.pk not in duplicate_ids]
             for field, value in DSC_DEFAULTS.items():
                 setattr(section, field, value)
             section.save(using=db_alias)
