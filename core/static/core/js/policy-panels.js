@@ -9377,7 +9377,13 @@
       });
       var data = await resp.json();
       if (data.ok) {
-        var html = '<div class="mb-2"><strong>Загружено строк: ' + data.created + '</strong></div>';
+        var html;
+        if (typeof data.updated === 'number') {
+          html = '<div class="mb-2"><strong>Создано строк: ' + data.created +
+            '; обновлено строк: ' + data.updated + '</strong></div>';
+        } else {
+          html = '<div class="mb-2"><strong>Загружено строк: ' + data.created + '</strong></div>';
+        }
         if (data.warnings && data.warnings.length) {
           html += '<div class="text-danger mb-1"><strong>Предупреждения (' + data.warnings.length + '):</strong></div>';
           html += '<div class="text-danger">';
@@ -9405,7 +9411,8 @@
       'sections-csv-upload-btn': 'sections-csv-file-input',
       'structures-csv-upload-btn': 'structures-csv-file-input',
       'tariffs-csv-upload-btn': 'tariffs-csv-file-input',
-      'typical-service-compositions-xlsx-upload-btn': 'typical-service-compositions-xlsx-file-input',
+      'typical-service-compositions-csv-upload-btn': 'typical-service-compositions-csv-file-input',
+      'typical-service-compositions-docx-upload-btn': 'typical-service-compositions-docx-file-input',
       'typical-service-terms-csv-upload-btn': 'typical-service-terms-csv-file-input',
     };
     for (var btnId in mapping) {
@@ -9425,7 +9432,8 @@
       'sections-csv-file-input': '/policy/policy/section/csv-upload/',
       'structures-csv-file-input': '/policy/policy/structure/csv-upload/',
       'tariffs-csv-file-input': '/policy/policy/tariff/csv-upload/',
-      'typical-service-compositions-xlsx-file-input': '/policy/policy/typical-service-composition/xlsx-upload/',
+      'typical-service-compositions-csv-file-input': '/policy/policy/typical-service-composition/csv-upload/',
+      'typical-service-compositions-docx-file-input': '/policy/policy/typical-service-composition/docx-upload/',
       'typical-service-terms-csv-file-input': '/policy/policy/typical-service-term/csv-upload/',
     };
     var url = mapping[e.target.id];

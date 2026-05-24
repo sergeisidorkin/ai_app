@@ -52,6 +52,9 @@
     <div class="mb-3">
       <label class="form-label">Исполнитель</label>
       <div id="sec-specialties-container">
+        {% if is_system_section %}
+        <div class="text-muted">Системный раздел DSC не назначается исполнителям.</div>
+        {% else %}
         {% for rs in ranked_specialties %}
         <div class="d-flex align-items-center gap-2 mb-2 sec-spec-row">
           <span class="badge rounded-circle d-flex align-items-center justify-content-center"
@@ -79,11 +82,14 @@
                   style="flex-shrink:0; color:#adb5bd; border:none; font-size:1.25rem; line-height:1; padding:0 .25rem;" onmouseenter="this.style.color='#dc3545'" onmouseleave="this.style.color='#adb5bd'">&times;</button>
         </div>
         {% endfor %}
+        {% endif %}
       </div>
+      {% if not is_system_section %}
       <button type="button" id="sec-add-specialty" class="btn btn-sm mt-1"
               style="border:1px solid #ced4da; background-color:#f8f9fa; color:#495057; font-size:1rem; padding:.375rem .75rem; margin-left:26px;">
         <i class="bi bi-plus-circle me-2"></i>Добавить специальность
       </button>
+      {% endif %}
     </div>
     <div class="mb-3">
       <label class="form-label">Экспертиза</label>
@@ -103,6 +109,13 @@
     {% if form.errors %}
       <div class="alert alert-danger mb-0">
         Проверьте введённые данные.
+        <ul class="mb-0 mt-2">
+          {% for field, errors in form.errors.items %}
+            {% for error in errors %}
+              <li>{{ error }}</li>
+            {% endfor %}
+          {% endfor %}
+        </ul>
       </div>
     {% endif %}
   </div>

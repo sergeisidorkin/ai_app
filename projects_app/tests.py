@@ -2579,6 +2579,47 @@ class WorkVolumePerformerCreationTests(TestCase):
 
         self.assertEqual(codes, ["PRD", "PRJ", "CRD", "QA"])
 
+    def test_system_dsc_does_not_create_performer_rows_for_new_asset(self):
+        self.product.sections.create(
+            code="DSC",
+            short_name="Description",
+            short_name_ru="Описание",
+            name_en="Product description",
+            name_ru="Описание продукта",
+            accounting_type="Раздел",
+            is_system=True,
+            position=0,
+        )
+
+        work_item = WorkVolume.objects.create(
+            project=self.project,
+            name="Актив DSC",
+            asset_name="Актив DSC",
+            manager=self.first_manager_name,
+        )
+
+        self.assertFalse(
+            Performer.objects.filter(work_item=work_item, typical_section__code="DSC").exists()
+        )
+
+    def test_performer_modal_sections_map_excludes_system_dsc(self):
+        self.product.sections.create(
+            code="DSC",
+            short_name="Description",
+            short_name_ru="Описание",
+            name_en="Product description",
+            name_ru="Описание продукта",
+            accounting_type="Раздел",
+            is_system=True,
+            position=0,
+        )
+
+        response = self.client.get(reverse("performer_form_create"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, '"code": "DSC"')
+        self.assertNotContains(response, "Описание продукта")
+
     def test_performers_partial_shows_section_product_in_main_table(self):
         WorkVolume.objects.create(
             project=self.project,
@@ -2919,6 +2960,127 @@ class WorkVolumePerformerCreationTests(TestCase):
         contracted.refresh_from_db()
         self.assertIsNotNone(contracted.advance_payment_request_sent_at)
         self.assertIsNotNone(contracted.final_payment_request_sent_at)
+
+    def test_payment_request_forbids_expert_direct_post(self):
+        expert_user = get_user_model().objects.create_user(
+            username="payment-request-expert@example.com",
+            password="secret",
+            is_staff=True,
+        )
+        Employee.objects.create(user=expert_user, role=EXPERT_GROUP)
+        contracted = Performer.objects.create(
+            registration=self.project,
+            employee=self.project_manager_employee,
+            executor=self.project_manager_name,
+            contract_batch_id=uuid.uuid4(),
+            contract_number="AGR-EXPERT",
+            contract_signing_note="Договор заключен",
+            prepayment=Decimal("30"),
+            final_payment=Decimal("70"),
+            agreed_amount=Decimal("1000.00"),
+        )
+        sent_at_value = timezone.localtime().replace(second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M")
+        self.client.force_login(expert_user)
+
+        response = self.client.post(
+            reverse("payment_request"),
+            {
+                "performer_ids[]": [str(contracted.pk)],
+                "delivery_channels[]": ["system"],
+                "request_sent_at": sent_at_value,
+            },
+        )
+
+        self.assertEqual(response.status_code, 403)
+        contracted.refresh_from_db()
+        self.assertIsNone(contracted.advance_payment_request_sent_at)
+        self.assertIsNone(contracted.advance_payment_request_number)
+        self.assertEqual(contracted.advance_payment_request_sender, "")
+
+    def test_payment_request_participation_batch_expands_only_selected_executor(self):
+        from classifiers_app.models import OKVCurrency
+        from django.contrib.auth.models import Group
+        from policy_app.models import LAWYER_GROUP
+
+        lawyer_group, _ = Group.objects.get_or_create(name=LAWYER_GROUP)
+        lawyer_user = get_user_model().objects.create_user(
+            username="payment-request-lawyer-executor-split@example.com",
+            email="payment-request-lawyer-executor-split@example.com",
+            password="secret",
+            first_name="Анна",
+            last_name="Юрина",
+            is_staff=True,
+        )
+        Employee.objects.create(user=lawyer_user, patronymic="Юрьевна")
+        lawyer_user.groups.add(lawyer_group)
+        rub = OKVCurrency.objects.create(
+            code_numeric="643",
+            code_alpha="RUB",
+            name="Российский рубль",
+        )
+        participation_batch_id = uuid.uuid4()
+        selected = Performer.objects.create(
+            registration=self.project,
+            employee=self.project_manager_employee,
+            executor=self.project_manager_name,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+            participation_batch_id=participation_batch_id,
+            contract_batch_id=uuid.uuid4(),
+            contract_number="AGR-SEL",
+            contract_signing_note="Договор заключен",
+            prepayment=Decimal("50"),
+            final_payment=Decimal("50"),
+            agreed_amount=Decimal("1000.00"),
+            currency=rub,
+        )
+        same_executor = Performer.objects.create(
+            registration=self.project,
+            employee=self.project_manager_employee,
+            executor=self.project_manager_name,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+            participation_batch_id=participation_batch_id,
+            contract_batch_id=uuid.uuid4(),
+            contract_number="AGR-SAME",
+            contract_signing_note="Договор заключен",
+            prepayment=Decimal("50"),
+            final_payment=Decimal("50"),
+            agreed_amount=Decimal("2000.00"),
+            currency=rub,
+        )
+        other_executor = Performer.objects.create(
+            registration=self.project,
+            employee=self.first_manager_employee,
+            executor=self.first_manager_name,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+            participation_batch_id=participation_batch_id,
+            contract_batch_id=uuid.uuid4(),
+            contract_number="AGR-OTHER",
+            contract_signing_note="Договор заключен",
+            prepayment=Decimal("50"),
+            final_payment=Decimal("50"),
+            agreed_amount=Decimal("3000.00"),
+            currency=rub,
+        )
+        sent_at_value = timezone.localtime().replace(second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M")
+
+        response = self.client.post(
+            reverse("payment_request"),
+            {
+                "performer_ids[]": [str(selected.pk)],
+                "delivery_channels[]": ["system"],
+                "request_sent_at": sent_at_value,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["updated"], 2)
+        selected.refresh_from_db()
+        same_executor.refresh_from_db()
+        other_executor.refresh_from_db()
+        self.assertIsNotNone(selected.advance_payment_request_sent_at)
+        self.assertIsNotNone(same_executor.advance_payment_request_sent_at)
+        self.assertIsNone(other_executor.advance_payment_request_sent_at)
+        self.assertIsNone(other_executor.advance_payment_request_number)
 
     def test_payment_request_mixed_stages_in_one_batch(self):
         from classifiers_app.models import OKVCurrency

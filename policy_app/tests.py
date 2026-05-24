@@ -4,6 +4,7 @@ import io
 import json
 from decimal import Decimal
 
+from docx import Document
 from openpyxl import Workbook, load_workbook
 
 from django.contrib.auth import get_user_model
@@ -39,6 +40,7 @@ from policy_app.models import (
     TypicalSectionSpecialty,
     TypicalServiceComposition,
     TypicalServiceTerm,
+    ensure_system_dsc_section,
 )
 from users_app.models import Employee
 
@@ -621,6 +623,112 @@ class TypicalSectionViewsTests(TestCase):
         section = TypicalSection.objects.get(code="SEC-2")
         self.assertTrue(section.exclude_from_tkp_autofill)
 
+    def test_create_section_auto_creates_system_dsc_first(self):
+        response = self.client.post(
+            reverse("section_form_create"),
+            {
+                "product": self.product.pk,
+                "code": "SEC-AUTO",
+                "short_name": "auto-en",
+                "short_name_ru": "auto-ru",
+                "name_en": "Auto EN",
+                "name_ru": "Авто RU",
+                "accounting_type": "Раздел",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        sections = list(self.product.sections.order_by("position", "id"))
+        self.assertEqual([section.code for section in sections], ["DSC", "SEC-AUTO"])
+        dsc = sections[0]
+        self.assertTrue(dsc.is_system)
+        self.assertEqual(dsc.short_name, "Description")
+        self.assertEqual(dsc.short_name_ru, "Описание")
+        self.assertEqual(dsc.name_en, "Product description")
+        self.assertEqual(dsc.name_ru, "Описание продукта")
+        self.assertEqual(dsc.accounting_type, "Раздел")
+        self.assertFalse(dsc.exclude_from_tkp_autofill)
+        self.assertFalse(dsc.ranked_specialties.exists())
+
+    def test_ensure_system_dsc_canonicalizes_existing_row(self):
+        existing = TypicalSection.objects.create(
+            product=self.product,
+            code="dsc",
+            short_name="manual",
+            short_name_ru="ручной",
+            name_en="Manual",
+            name_ru="Ручной",
+            accounting_type="Услуги",
+            exclude_from_tkp_autofill=True,
+            position=5,
+        )
+        TypicalSection.objects.create(
+            product=self.product,
+            code="SEC-BACKFILL",
+            short_name="backfill-en",
+            short_name_ru="backfill-ru",
+            name_en="Backfill EN",
+            name_ru="Backfill RU",
+            accounting_type="Раздел",
+            position=1,
+        )
+
+        dsc = ensure_system_dsc_section(self.product)
+
+        self.assertEqual(dsc.pk, existing.pk)
+        self.assertEqual(dsc.code, "DSC")
+        self.assertTrue(dsc.is_system)
+        self.assertEqual(dsc.short_name, "Description")
+        self.assertFalse(dsc.exclude_from_tkp_autofill)
+        self.assertEqual(
+            list(self.product.sections.order_by("position", "id").values_list("code", flat=True)),
+            ["DSC", "SEC-BACKFILL"],
+        )
+
+    def test_create_section_rejects_manual_dsc_code(self):
+        response = self.client.post(
+            reverse("section_form_create"),
+            {
+                "product": self.product.pk,
+                "code": "DSC",
+                "short_name": "manual",
+                "short_name_ru": "manual",
+                "name_en": "Manual",
+                "name_ru": "Ручной",
+                "accounting_type": "Раздел",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Раздел DSC является системным")
+        self.assertFalse(TypicalSection.objects.filter(product=self.product, code="DSC").exists())
+
+    def test_system_dsc_cannot_be_deleted_or_moved(self):
+        dsc = ensure_system_dsc_section(self.product)
+        regular = TypicalSection.objects.create(
+            product=self.product,
+            code="SEC-LOCK",
+            short_name="lock-en",
+            short_name_ru="lock-ru",
+            name_en="Lock EN",
+            name_ru="Блок RU",
+            accounting_type="Раздел",
+            position=2,
+        )
+        ensure_system_dsc_section(self.product)
+
+        delete_response = self.client.post(reverse("section_delete", args=[dsc.pk]))
+        move_response = self.client.post(reverse("section_move_down", args=[dsc.pk]))
+        regular_move_response = self.client.post(reverse("section_move_up", args=[regular.pk]))
+
+        self.assertEqual(delete_response.status_code, 400)
+        self.assertEqual(move_response.status_code, 200)
+        self.assertEqual(regular_move_response.status_code, 200)
+        self.assertEqual(
+            list(self.product.sections.order_by("position", "id").values_list("code", flat=True)),
+            ["DSC", "SEC-LOCK"],
+        )
+
     def test_section_form_renders_product_options_with_display_name(self):
         response = self.client.get(reverse("section_form_create"))
 
@@ -646,6 +754,26 @@ class TypicalSectionViewsTests(TestCase):
         self.assertEqual(response.json()["created"], 1)
         self.assertEqual(response.json()["warnings"], [])
         self.assertTrue(TypicalSection.objects.filter(code="SEC-3").exists())
+
+    def test_section_csv_upload_skips_manual_dsc_and_updates_system_row(self):
+        csv_file = SimpleUploadedFile(
+            "sections.csv",
+            (
+                "Продукт;Код;Краткое имя EN;Краткое имя RU;Наименование EN;Наименование RU;Тип учета;Направление экспертизы\n"
+                "SEC;DSC;manual;ручной;Manual;Ручной;Услуги;\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("section_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 0)
+        self.assertIn("раздел DSC является системным", response.json()["warnings"][0])
+        dsc = TypicalSection.objects.get(product=self.product, code="DSC")
+        self.assertTrue(dsc.is_system)
+        self.assertEqual(dsc.short_name, "Description")
+        self.assertEqual(dsc.position, 1)
 
     def test_section_csv_download_exports_current_table_columns(self):
         owner = GroupMember.objects.create(
@@ -711,7 +839,7 @@ class TypicalSectionViewsTests(TestCase):
             ],
         )
         self.assertEqual(
-            rows[1],
+            next(row for row in rows[1:] if row[1] == "SEC-4"),
             [
                 "SEC",
                 "SEC-4",
@@ -1182,6 +1310,27 @@ class TypicalServiceCompositionViewsTests(TestCase):
             position=1,
         )
 
+    def _docx_upload_file(self, sections):
+        document = Document()
+        for section in sections:
+            document.add_heading(section["product"], level=1)
+            table = document.add_table(rows=1, cols=4)
+            for index, header in enumerate(["ID", "Продукт", "Раздел (услуга)", "Состав услуг"]):
+                table.rows[0].cells[index].text = header
+            for row in section["rows"]:
+                cells = table.add_row().cells
+                cells[0].text = str(row.get("id", ""))
+                cells[1].text = row.get("product", section["product"])
+                cells[2].text = row.get("section", "")
+                cells[3].text = row.get("service_composition", "")
+        buffer = io.BytesIO()
+        document.save(buffer)
+        return SimpleUploadedFile(
+            "typical_service_compositions.docx",
+            buffer.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+
     def test_policy_partial_renders_typical_service_compositions_table(self):
         TypicalServiceComposition.objects.create(
             product=self.product,
@@ -1200,8 +1349,12 @@ class TypicalServiceCompositionViewsTests(TestCase):
         self.assertContains(response, 'id="typical-service-compositions-table"', html=False)
         self.assertContains(response, 'class="policy-service-composition-cell"', html=False)
         self.assertContains(response, 'class="policy-service-composition-content"', html=False)
-        self.assertContains(response, 'id="typical-service-compositions-xlsx-download-btn"', html=False)
-        self.assertContains(response, 'id="typical-service-compositions-xlsx-upload-btn"', html=False)
+        self.assertContains(response, 'id="typical-service-compositions-csv-download-btn"', html=False)
+        self.assertContains(response, 'id="typical-service-compositions-csv-upload-btn"', html=False)
+        self.assertContains(response, 'id="typical-service-compositions-docx-download-btn"', html=False)
+        self.assertContains(response, 'id="typical-service-compositions-docx-upload-btn"', html=False)
+        self.assertNotContains(response, 'id="typical-service-compositions-xlsx-download-btn"', html=False)
+        self.assertNotContains(response, 'id="typical-service-compositions-xlsx-upload-btn"', html=False)
 
     def test_create_typical_service_composition_saves_row(self):
         editor_state = {
@@ -1298,6 +1451,234 @@ class TypicalServiceCompositionViewsTests(TestCase):
             {"html": "", "plain_text": "Подготовка и выпуск отчета"},
         )
         self.assertEqual(item.position, 1)
+
+    def test_typical_service_composition_docx_download_exports_editable_table(self):
+        editor_state = {
+            "html": (
+                '<p><strong>Подготовка</strong></p>'
+                '<ol><li data-list="ordered">Анализ</li>'
+                '<li class="ql-indent-1" data-list="ordered">Выпуск отчета</li></ol>'
+            ),
+            "plain_text": "Подготовка\nАнализ\nВыпуск отчета",
+        }
+        item = TypicalServiceComposition.objects.create(
+            product=self.product,
+            section=self.section,
+            service_composition=editor_state["plain_text"],
+            service_composition_editor_state=editor_state,
+            position=1,
+        )
+
+        response = self.client.get(reverse("typical_service_composition_docx_download"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("typical_service_compositions.docx", response["Content-Disposition"])
+        document = Document(io.BytesIO(response.content))
+        self.assertEqual(document.paragraphs[0].text, "TAX2")
+        self.assertIn(document.paragraphs[0].style.name.lower(), {"heading 1", "заголовок 1"})
+        self.assertEqual(len(document.tables), 1)
+        table = document.tables[0]
+        self.assertEqual([cell.text for cell in table.rows[0].cells], ["ID", "Продукт", "Раздел (услуга)", "Состав услуг"])
+        self.assertEqual(table.rows[1].cells[0].text, str(item.pk))
+        self.assertEqual(table.rows[1].cells[1].text, "TAX2")
+        self.assertEqual(table.rows[1].cells[2].text, "Раздел RU")
+        self.assertEqual(table.rows[1].cells[3].text, editor_state["plain_text"])
+        list_paragraphs = table.rows[1].cells[3].paragraphs[1:]
+        self.assertTrue(all("w:numPr" in paragraph._element.xml for paragraph in list_paragraphs))
+
+    def test_typical_service_composition_docx_download_groups_rows_by_product(self):
+        editor_state = {
+            "html": "<p>Состав TAX2</p>",
+            "plain_text": "Состав TAX2",
+        }
+        other_editor_state = {
+            "html": "<p>Состав AUD2</p>",
+            "plain_text": "Состав AUD2",
+        }
+        TypicalServiceComposition.objects.create(
+            product=self.product,
+            section=self.section,
+            service_composition=editor_state["plain_text"],
+            service_composition_editor_state=editor_state,
+            position=1,
+        )
+        TypicalServiceComposition.objects.create(
+            product=self.other_product,
+            section=self.other_section,
+            service_composition=other_editor_state["plain_text"],
+            service_composition_editor_state=other_editor_state,
+            position=1,
+        )
+
+        response = self.client.get(reverse("typical_service_composition_docx_download"))
+
+        self.assertEqual(response.status_code, 200)
+        document = Document(io.BytesIO(response.content))
+        self.assertEqual(len(document.tables), 2)
+        self.assertEqual(document.paragraphs[0].text, "TAX2")
+        self.assertEqual(document.paragraphs[1].text, "AUD2")
+        self.assertEqual(document.tables[0].rows[1].cells[1].text, "TAX2")
+        self.assertEqual(document.tables[1].rows[1].cells[1].text, "AUD2")
+
+    def test_typical_service_composition_docx_upload_reads_multiple_product_tables(self):
+        tax_item = TypicalServiceComposition.objects.create(
+            product=self.product,
+            section=self.section,
+            service_composition="TAX2 старый",
+            service_composition_editor_state={"html": "<p>TAX2 старый</p>", "plain_text": "TAX2 старый"},
+            position=1,
+        )
+        aud_item = TypicalServiceComposition.objects.create(
+            product=self.other_product,
+            section=self.other_section,
+            service_composition="AUD2 старый",
+            service_composition_editor_state={"html": "<p>AUD2 старый</p>", "plain_text": "AUD2 старый"},
+            position=1,
+        )
+        docx_file = self._docx_upload_file([
+            {
+                "product": "TAX2",
+                "rows": [{
+                    "id": tax_item.pk,
+                    "section": "Раздел RU",
+                    "service_composition": "TAX2 новый",
+                }],
+            },
+            {
+                "product": "AUD2",
+                "rows": [{
+                    "id": aud_item.pk,
+                    "section": "Другой раздел RU",
+                    "service_composition": "AUD2 новый",
+                }],
+            },
+        ])
+
+        response = self.client.post(reverse("typical_service_composition_docx_upload"), {"csv_file": docx_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 0)
+        self.assertEqual(response.json()["updated"], 2)
+        tax_item.refresh_from_db()
+        aud_item.refresh_from_db()
+        self.assertEqual(tax_item.service_composition, "TAX2 новый")
+        self.assertEqual(aud_item.service_composition, "AUD2 новый")
+
+    def test_typical_service_composition_docx_upload_updates_existing_row_by_id(self):
+        item = TypicalServiceComposition.objects.create(
+            product=self.product,
+            section=self.section,
+            service_composition="Старый текст",
+            service_composition_editor_state={"html": "<p>Старый текст</p>", "plain_text": "Старый текст"},
+            position=1,
+        )
+        docx_file = self._docx_upload_file([
+            {
+                "product": "TAX2",
+                "rows": [{
+                    "id": item.pk,
+                    "section": "Раздел RU",
+                    "service_composition": "Новый текст из Word",
+                }],
+            },
+        ])
+
+        response = self.client.post(reverse("typical_service_composition_docx_upload"), {"csv_file": docx_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 0)
+        self.assertEqual(response.json()["updated"], 1)
+        self.assertEqual(response.json()["warnings"], [])
+        item.refresh_from_db()
+        self.assertEqual(item.service_composition, "Новый текст из Word")
+        self.assertEqual(
+            item.service_composition_editor_state,
+            {"html": "<p>Новый текст из Word</p>", "plain_text": "Новый текст из Word"},
+        )
+
+    def test_typical_service_composition_docx_upload_creates_row_when_id_is_blank(self):
+        docx_file = self._docx_upload_file([
+            {
+                "product": "TAX2",
+                "rows": [{
+                    "id": "",
+                    "section": "Раздел RU",
+                    "service_composition": "Новая строка из Word",
+                }],
+            },
+        ])
+
+        response = self.client.post(reverse("typical_service_composition_docx_upload"), {"csv_file": docx_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        self.assertEqual(response.json()["updated"], 0)
+        item = TypicalServiceComposition.objects.get()
+        self.assertEqual(item.product, self.product)
+        self.assertEqual(item.section, self.section)
+        self.assertEqual(item.service_composition, "Новая строка из Word")
+        self.assertEqual(item.position, 1)
+
+    def test_typical_service_composition_docx_upload_preserves_multilevel_lists(self):
+        editor_state = {
+            "html": (
+                '<ol><li data-list="ordered">Основной пункт</li>'
+                '<li class="ql-indent-1" data-list="ordered">Подпункт</li></ol>'
+                '<ul><li data-list="dash">Пункт с дефисом</li></ul>'
+            ),
+            "plain_text": "Основной пункт\nПодпункт\nПункт с дефисом",
+        }
+        item = TypicalServiceComposition.objects.create(
+            product=self.product,
+            section=self.section,
+            service_composition=editor_state["plain_text"],
+            service_composition_editor_state=editor_state,
+            position=1,
+        )
+        download_response = self.client.get(reverse("typical_service_composition_docx_download"))
+        docx_file = SimpleUploadedFile(
+            "typical_service_compositions.docx",
+            download_response.content,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+
+        response = self.client.post(reverse("typical_service_composition_docx_upload"), {"csv_file": docx_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["updated"], 1)
+        item.refresh_from_db()
+        self.assertEqual(item.service_composition, editor_state["plain_text"])
+        self.assertIn('data-list="ordered"', item.service_composition_editor_state["html"])
+        self.assertIn('class="ql-indent-1" data-list="ordered"', item.service_composition_editor_state["html"])
+        self.assertIn('data-list="dash"', item.service_composition_editor_state["html"])
+
+    def test_typical_service_composition_docx_upload_warns_on_invalid_references(self):
+        docx_file = self._docx_upload_file([
+            {
+                "product": "TAX2",
+                "rows": [
+                    {
+                        "id": "not-id",
+                        "section": "Раздел RU",
+                        "service_composition": "Некорректный ID",
+                    },
+                    {
+                        "id": "",
+                        "product": "UNKNOWN",
+                        "section": "Раздел RU",
+                        "service_composition": "Некорректный продукт",
+                    },
+                ],
+            },
+        ])
+
+        response = self.client.post(reverse("typical_service_composition_docx_upload"), {"csv_file": docx_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 0)
+        self.assertEqual(response.json()["updated"], 0)
+        self.assertEqual(len(response.json()["warnings"]), 2)
+        self.assertFalse(TypicalServiceComposition.objects.exists())
 
     def test_typical_service_composition_xlsx_download_preserves_editor_state(self):
         editor_state = {

@@ -141,12 +141,13 @@ class TypicalSectionAdmin(TimestampedAdmin):
         "expertise_dir",
         "expertise_direction",
         "exclude_from_tkp_autofill",
+        "is_system",
         "updated_at",
     )
     list_editable = ("position",)
     list_display_links = ("code",)
     list_select_related = ("product", "expertise_dir", "expertise_direction")
-    list_filter = ("product", "accounting_type", "expertise_dir", "expertise_direction")
+    list_filter = ("product", "accounting_type", "is_system", "expertise_dir", "expertise_direction")
     search_fields = ("code", "short_name", "short_name_ru", "name_en", "name_ru", "product__short_name")
     ordering = ("product__short_name", "position", "id")
     inlines = (TypicalSectionSpecialtyInline,)
@@ -160,6 +161,7 @@ class TypicalSectionAdmin(TimestampedAdmin):
                 ("name_en", "name_ru"),
                 ("expertise_dir", "expertise_direction"),
                 "exclude_from_tkp_autofill",
+                "is_system",
             ),
         }),
         ("Служебные поля", {

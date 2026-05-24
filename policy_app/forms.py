@@ -14,6 +14,7 @@ from .models import (
     ConsultingServiceSubtype,
     ConsultingServiceType,
     Product,
+    SYSTEM_DSC_SECTION_DEFAULTS,
     TypicalSection,
     SectionStructure,
     ServiceGoalReport,
@@ -25,6 +26,7 @@ from .models import (
     Tariff,
     DEPARTMENT_HEAD_GROUP,
     DIRECTOR_GROUPS,
+    is_system_dsc_code,
 )
 
 OWNER_GROUP_VALUE = "__group__"
@@ -500,6 +502,31 @@ class TypicalSectionForm(forms.ModelForm):
         )
         self.fields["expertise_direction"].queryset = qs
         self.fields["expertise_direction"].label_from_instance = lambda obj: obj.department_name
+        if getattr(self.instance, "is_system_dsc", False):
+            for field_name, value in SYSTEM_DSC_SECTION_DEFAULTS.items():
+                if field_name in self.fields:
+                    self.fields[field_name].initial = value
+            self.fields["product"].disabled = True
+            for field_name in (
+                "code",
+                "short_name",
+                "short_name_ru",
+                "name_en",
+                "name_ru",
+                "accounting_type",
+                "expertise_dir",
+                "expertise_direction",
+                "exclude_from_tkp_autofill",
+            ):
+                self.fields[field_name].disabled = True
+
+    def clean_code(self):
+        code = str(self.cleaned_data.get("code") or "").strip()
+        if is_system_dsc_code(code) and not getattr(self.instance, "is_system_dsc", False):
+            raise forms.ValidationError(
+                "Раздел DSC является системным и создаётся автоматически."
+            )
+        return code
 
 
 class SectionStructureForm(forms.ModelForm):

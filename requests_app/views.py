@@ -5,9 +5,9 @@ from django.http import HttpResponseBadRequest, JsonResponse
 from django.shortcuts import render, get_object_or_404, redirect
 from django.views.decorators.http import require_http_methods, require_POST
 from django.contrib.auth.decorators import login_required
-from django.db.models import Max
+from django.db.models import Max, Q
 
-from policy_app.models import Product, TypicalSection
+from policy_app.models import Product, SYSTEM_DSC_SECTION_CODE, TypicalSection
 from .models import RequestTable, RequestItem
 from .forms import RequestForm
 from django.urls import reverse
@@ -27,9 +27,19 @@ def _resolve_product_section(request):
 
     section = None
     if section_id:
-        section = TypicalSection.objects.filter(id=section_id, product=product).first()
+        section = (
+            TypicalSection.objects
+            .filter(id=section_id, product=product)
+            .exclude(Q(is_system=True) | Q(code__iexact=SYSTEM_DSC_SECTION_CODE))
+            .first()
+        )
     if not section:
-        section = product.sections.order_by("position", "id").first()  # дефолт: 1-й раздел
+        section = (
+            product.sections
+            .exclude(Q(is_system=True) | Q(code__iexact=SYSTEM_DSC_SECTION_CODE))
+            .order_by("position", "id")
+            .first()
+        )  # дефолт: первый рабочий раздел
 
     return product, section
 
@@ -37,7 +47,12 @@ def _get_bindings(request):
     prod_short = (request.GET.get("product") or "").strip().upper()
     section_id = request.GET.get("section")
     product = Product.objects.filter(short_name__iexact=prod_short).first()
-    section = TypicalSection.objects.filter(id=section_id).first() if section_id else None
+    section = (
+        TypicalSection.objects
+        .filter(id=section_id)
+        .exclude(Q(is_system=True) | Q(code__iexact=SYSTEM_DSC_SECTION_CODE))
+        .first()
+    ) if section_id else None
     return product, section
 
 
@@ -62,6 +77,7 @@ def _render_response(request, table):
         all_items = (
             RequestItem.objects
             .filter(table__product=product)
+            .exclude(Q(table__section__is_system=True) | Q(table__section__code__iexact=SYSTEM_DSC_SECTION_CODE))
             .select_related("table__section")
             .order_by("table__section__position", "position", "id")
         )
@@ -89,11 +105,17 @@ def requests_partial(request):
         all_items = (
             RequestItem.objects
             .filter(table__product=product)
+            .exclude(Q(table__section__is_system=True) | Q(table__section__code__iexact=SYSTEM_DSC_SECTION_CODE))
             .select_related("table__section")
             .order_by("table__section__position", "position", "id")
         )
     elif product and section_id_raw.isdigit():
-        section = TypicalSection.objects.filter(id=section_id_raw).first()
+        section = (
+            TypicalSection.objects
+            .filter(id=section_id_raw)
+            .exclude(Q(is_system=True) | Q(code__iexact=SYSTEM_DSC_SECTION_CODE))
+            .first()
+        )
         if section:
             table = RequestTable.objects.filter(product=product, section=section).prefetch_related("items").first()
 
@@ -118,13 +140,18 @@ def request_form_create(request):
 
     section = None
     if not all_mode and section_id_raw.isdigit():
-        section = TypicalSection.objects.filter(id=section_id_raw).first()
+        section = (
+            TypicalSection.objects
+            .filter(id=section_id_raw)
+            .exclude(Q(is_system=True) | Q(code__iexact=SYSTEM_DSC_SECTION_CODE))
+            .first()
+        )
 
     sections_choices = None
     if all_mode:
         sections_choices = TypicalSection.objects.filter(
             product=product
-        ).order_by("position", "id")
+        ).exclude(Q(is_system=True) | Q(code__iexact=SYSTEM_DSC_SECTION_CODE)).order_by("position", "id")
 
     form_action = (
         f"{reverse('request_form_create')}?product={product.short_name.upper()}"
@@ -137,7 +164,12 @@ def request_form_create(request):
         if all_mode:
             sec_id = request.POST.get("section_id", "").strip()
             if sec_id.isdigit():
-                section = TypicalSection.objects.filter(id=sec_id, product=product).first()
+                section = (
+                    TypicalSection.objects
+                    .filter(id=sec_id, product=product)
+                    .exclude(Q(is_system=True) | Q(code__iexact=SYSTEM_DSC_SECTION_CODE))
+                    .first()
+                )
             if not section:
                 form.add_error(None, "Выберите раздел.")
 
@@ -155,6 +187,7 @@ def request_form_create(request):
                 all_items = (
                     RequestItem.objects
                     .filter(table__product=product)
+                    .exclude(Q(table__section__is_system=True) | Q(table__section__code__iexact=SYSTEM_DSC_SECTION_CODE))
                     .select_related("table__section")
                     .order_by("table__section__position", "position", "id")
                 )
@@ -292,7 +325,12 @@ def request_csv_upload(request):
     fixed_section = None
     if not all_mode:
         if section_id_raw.isdigit():
-            fixed_section = TypicalSection.objects.filter(id=section_id_raw).first()
+            fixed_section = (
+                TypicalSection.objects
+                .filter(id=section_id_raw)
+                .exclude(Q(is_system=True) | Q(code__iexact=SYSTEM_DSC_SECTION_CODE))
+                .first()
+            )
         if not fixed_section:
             return JsonResponse({"ok": False, "error": "Раздел не определён."})
 
@@ -322,7 +360,9 @@ def request_csv_upload(request):
         if all_mode:
             sections_by_code = {
                 s.code.strip().upper(): s
-                for s in TypicalSection.objects.filter(product=product)
+                for s in TypicalSection.objects
+                .filter(product=product)
+                .exclude(Q(is_system=True) | Q(code__iexact=SYSTEM_DSC_SECTION_CODE))
             }
 
         table_last_pos = {}

@@ -1,7 +1,7 @@
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
-from django.db import models
+from django.db import models, transaction
 
 DEPARTMENT_HEAD_GROUP = "Руководитель направления"
 PROJECTS_HEAD_GROUP = "Руководитель проектов"
@@ -32,6 +32,28 @@ SUPERUSER_GROUPS = (
     DIRECTOR_GROUP,
     DIRECTION_DIRECTOR_GROUP,
 )
+
+SYSTEM_DSC_SECTION_CODE = "DSC"
+SYSTEM_DSC_SECTION_DEFAULTS = {
+    "code": SYSTEM_DSC_SECTION_CODE,
+    "short_name": "Description",
+    "short_name_ru": "Описание",
+    "name_en": "Product description",
+    "name_ru": "Описание продукта",
+    "accounting_type": "Раздел",
+    "expertise_dir": None,
+    "expertise_direction": None,
+    "exclude_from_tkp_autofill": False,
+    "is_system": True,
+}
+
+
+def normalize_section_code(value) -> str:
+    return str(value or "").strip().upper()
+
+
+def is_system_dsc_code(value) -> bool:
+    return normalize_section_code(value) == SYSTEM_DSC_SECTION_CODE
 
 def _join_catalog_values(items) -> str:
     values = []
@@ -457,6 +479,7 @@ class TypicalSection(models.Model):
         "Исключить из автозаполнения в ТКП",
         default=False,
     )
+    is_system = models.BooleanField("Системный раздел", default=False, db_index=True)
     position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -473,6 +496,10 @@ class TypicalSection(models.Model):
 
     def __str__(self):
         return f"{self.product.short_name}:{self.code}"
+
+    @property
+    def is_system_dsc(self):
+        return self.is_system and is_system_dsc_code(self.code)
 
 
 class TypicalSectionSpecialty(models.Model):
@@ -496,6 +523,49 @@ class TypicalSectionSpecialty(models.Model):
 
     def __str__(self):
         return f"{self.section} — {self.specialty} (#{self.rank})"
+
+
+def ensure_system_dsc_section(product):
+    if not product or not getattr(product, "pk", None):
+        return None
+
+    with transaction.atomic():
+        sections = list(
+            TypicalSection.objects.select_for_update()
+            .filter(product=product)
+            .order_by("position", "id")
+        )
+        section = next((item for item in sections if is_system_dsc_code(item.code)), None)
+        if section is None:
+            section = TypicalSection.objects.create(
+                product=product,
+                position=0,
+                **SYSTEM_DSC_SECTION_DEFAULTS,
+            )
+            sections.append(section)
+
+        changed_fields = []
+        for field, value in SYSTEM_DSC_SECTION_DEFAULTS.items():
+            if getattr(section, field) != value:
+                setattr(section, field, value)
+                changed_fields.append(field)
+        if changed_fields:
+            section.save(update_fields=[*changed_fields, "updated_at"])
+
+        TypicalSectionSpecialty.objects.filter(section=section).delete()
+
+        ordered = [section] + [item for item in sections if item.pk != section.pk]
+        for index, item in enumerate(ordered, start=1):
+            if item.position != index:
+                TypicalSection.objects.filter(pk=item.pk).update(position=index)
+
+    section.refresh_from_db()
+    return section
+
+
+def ensure_system_dsc_sections_for_all_products():
+    for product in Product.objects.order_by("position", "id"):
+        ensure_system_dsc_section(product)
 
 
 class SectionStructure(models.Model):
