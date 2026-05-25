@@ -7876,6 +7876,75 @@ html.proposal-progress-cursor * {
   width: 100%;
 }
 
+#typical-service-compositions-table .policy-service-composition-content--rich {
+  white-space: pre-wrap;
+  overflow: visible;
+  padding: 0;
+  line-height: 1.25;
+  font-family: "ProposalCalibri", Calibri, "Carlito", Arial, Helvetica, sans-serif;
+  font-synthesis: weight style;
+}
+
+#typical-service-compositions-table .policy-service-composition-content--rich p {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+#typical-service-compositions-table .policy-service-composition-content--rich strong,
+#typical-service-compositions-table .policy-service-composition-content--rich b {
+  font-weight: 700 !important;
+}
+
+#typical-service-compositions-table .policy-service-composition-content--rich .ql-font-calibri,
+#typical-service-compositions-table .policy-service-composition-content--rich.ql-font-calibri {
+  font-family: "ProposalCalibri", Calibri, "Carlito", Arial, Helvetica, sans-serif;
+  font-synthesis: weight style;
+}
+
+#typical-service-compositions-table .policy-service-composition-content--rich .ql-font-cambria,
+#typical-service-compositions-table .policy-service-composition-content--rich.ql-font-cambria {
+  font-family: "ProposalCambria", Cambria, Georgia, "Times New Roman", Times, serif;
+  font-synthesis: weight style;
+}
+
+#typical-service-compositions-table .policy-service-composition-content--rich .ql-font-cambria strong,
+#typical-service-compositions-table .policy-service-composition-content--rich .ql-font-cambria b,
+#typical-service-compositions-table .policy-service-composition-content--rich strong.ql-font-cambria,
+#typical-service-compositions-table .policy-service-composition-content--rich b.ql-font-cambria {
+  font-family: "ProposalCambria", Cambria, Georgia, "Times New Roman", Times, serif;
+  font-weight: 700 !important;
+  font-synthesis: weight style;
+}
+
+#typical-service-compositions-table .policy-service-composition-content--rich .ql-font-calibri strong,
+#typical-service-compositions-table .policy-service-composition-content--rich .ql-font-calibri b,
+#typical-service-compositions-table .policy-service-composition-content--rich strong.ql-font-calibri,
+#typical-service-compositions-table .policy-service-composition-content--rich b.ql-font-calibri {
+  font-family: "ProposalCalibri", Calibri, "Carlito", Arial, Helvetica, sans-serif;
+  font-weight: 700 !important;
+  font-synthesis: weight style;
+}
+
+#typical-service-compositions-table .policy-service-composition-content--rich .ql-font-sans {
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+#typical-service-compositions-table .policy-service-composition-content--rich .ql-font-serif {
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+#typical-service-compositions-table .policy-service-composition-content--rich .ql-font-monospace {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+#typical-service-compositions-table .policy-service-composition-content--rich .ql-font-georgia {
+  font-family: Georgia, serif;
+}
+
+#typical-service-compositions-table .policy-service-composition-content--rich .ql-font-times-new-roman {
+  font-family: "Times New Roman", Times, serif;
+}
+
 #typical-service-compositions-table.clf-truncated .policy-service-composition-content {
   white-space: pre;
   overflow: hidden;
@@ -7883,6 +7952,35 @@ html.proposal-progress-cursor * {
   max-width: 100%;
   line-height: 1.35;
   max-height: 1.35em;
+}
+
+#typical-service-compositions-table.clf-truncated .policy-service-composition-content--rich,
+#typical-service-compositions-table.clf-truncated .policy-service-composition-content--rich * {
+  background: transparent !important;
+  color: inherit !important;
+  font-family: inherit !important;
+  font-size: inherit !important;
+  font-style: normal !important;
+  font-weight: inherit !important;
+  text-align: inherit !important;
+  text-decoration: none !important;
+  text-indent: 0 !important;
+}
+
+#typical-service-compositions-table.clf-truncated .policy-service-composition-content--rich p,
+#typical-service-compositions-table.clf-truncated .policy-service-composition-content--rich ol,
+#typical-service-compositions-table.clf-truncated .policy-service-composition-content--rich ul,
+#typical-service-compositions-table.clf-truncated .policy-service-composition-content--rich li {
+  display: block;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#typical-service-compositions-table.clf-truncated .policy-service-composition-content--rich .ql-ui {
+  display: none !important;
 }
 
 /* LER autocomplete dropdown */

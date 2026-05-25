@@ -1252,10 +1252,11 @@
       names.add(master.dataset.targetName);
     });
     names.forEach(function (name) {
-      updateMasterStateFor(name);
-      updateRowHighlightFor(name);
-      ensureActionsVisibility(name);
+      syncPolicySelectionToVisible(name);
     });
+    if (typeof window.__refreshPolicySelectableTables === 'function') {
+      window.__refreshPolicySelectableTables();
+    }
     syncTypicalServiceTermGanttEditButton();
   }
 
@@ -1303,6 +1304,7 @@
       P.set(POLICY_FILTER_PREF_KEY, state);
     }
     syncAllPolicySelectionStates(root);
+    updatePolicyMasterFilterDownloadLinks();
   }
 
   function initPolicyMasterFilters() {
@@ -1312,10 +1314,16 @@
       const cfg = POLICY_FILTER_CONFIG[key];
       return !document.getElementById(cfg.dropdownId) || !document.getElementById(cfg.listId);
     });
-    if (missing) return;
+    if (missing) {
+      updatePolicyMasterFilterDownloadLinks();
+      return;
+    }
 
     const rows = qa('tr[data-policy-filter-row="1"]', root);
-    if (!rows.length) return;
+    if (!rows.length) {
+      updatePolicyMasterFilterDownloadLinks();
+      return;
+    }
     const products = getPolicyProductCatalog(root);
     renderPolicyFilterOptions(buildPolicyFilterOptions(rows, products));
     const savedState = filterStateWithDefaults(readPolicyMasterFilterPrefs() || window.__policyMasterFilters);
@@ -1366,6 +1374,45 @@
     }) || null;
   }
 
+  function buildPolicyMasterFilterQueryString(state) {
+    state = filterStateWithDefaults(state || window.__policyMasterFilters);
+    const params = new URLSearchParams();
+    POLICY_FILTER_ORDER.forEach(function (key) {
+      const values = (state[key] || []).filter(function (value) {
+        return value && value !== POLICY_FILTER_ALL;
+      });
+      if (!values.length) return;
+      const paramName = key === 'category' ? 'category' : key;
+      values.forEach(function (value) {
+        params.append(paramName, value);
+      });
+    });
+    const query = params.toString();
+    return query ? ('?' + query) : '';
+  }
+
+  const POLICY_MASTER_FILTER_DOWNLOAD_BTN_IDS = [
+    'typical-service-compositions-csv-download-btn',
+    'typical-service-compositions-docx-download-btn',
+    'tariffs-csv-download-btn',
+    'typical-service-terms-csv-download-btn',
+    'structures-csv-download-btn',
+    'sections-csv-download-btn',
+    'service-goal-reports-csv-download-btn',
+    'products-csv-download-btn',
+  ];
+
+  function updatePolicyMasterFilterDownloadLinks() {
+    const query = buildPolicyMasterFilterQueryString(window.__policyMasterFilters);
+    POLICY_MASTER_FILTER_DOWNLOAD_BTN_IDS.forEach(function (btnId) {
+      const btn = document.getElementById(btnId);
+      if (!btn) return;
+      const baseUrl = btn.dataset.baseUrl || btn.getAttribute('href').split('?')[0];
+      btn.dataset.baseUrl = baseUrl;
+      btn.setAttribute('href', baseUrl + query);
+    });
+  }
+
   function getMasterForPanel(panel) {
     const id = panel?.id;
     if (!id) return null;
@@ -1375,15 +1422,24 @@
     const master = getMasterForPanel(panel);
     return master?.dataset?.targetName || null;
   }
+  function isVisiblePolicyRowCheckbox(box) {
+    const tr = box?.closest('tr');
+    return !!tr && !tr.classList.contains('d-none') && !box.disabled;
+  }
   function getRowChecksByName(name) {
     const root = pane();
-    return qa(`tbody input.form-check-input[name="${CSS.escape(name)}"]`, root).filter(function (box) {
-      const tr = box.closest('tr');
-      return !box.disabled && !tr?.classList.contains('d-none');
+    return qa(`tbody input.form-check-input[name="${CSS.escape(name)}"]`, root);
+  }
+  function getVisibleRowChecksByName(name) {
+    return getRowChecksByName(name).filter(isVisiblePolicyRowCheckbox);
+  }
+  function clearHiddenPolicySelections(name) {
+    getRowChecksByName(name).forEach(function (box) {
+      if (!isVisiblePolicyRowCheckbox(box)) box.checked = false;
     });
   }
   function getCheckedByName(name) {
-    return getRowChecksByName(name).filter(b => b.checked);
+    return getVisibleRowChecksByName(name).filter(b => b.checked);
   }
   function updateRowHighlightFor(name) {
     getRowChecksByName(name).forEach(b => {
@@ -1391,8 +1447,15 @@
       if (tr) tr.classList.toggle('table-active', !!b.checked);
     });
   }
+  function syncPolicySelectionToVisible(name) {
+    clearHiddenPolicySelections(name);
+    updateMasterStateFor(name);
+    updateRowHighlightFor(name);
+    ensureActionsVisibility(name);
+    if (name === TYPICAL_SERVICE_TERM_GANTT_SELECTION_NAME) syncTypicalServiceTermGanttEditButton();
+  }
   function updateMasterStateFor(name) {
-    const boxes = getRowChecksByName(name);
+    const boxes = getVisibleRowChecksByName(name);
     const root = pane();
     const master = root?.querySelector(`input.form-check-input[data-target-name="${CSS.escape(name)}"]`);
     if (!master) return;
@@ -1413,7 +1476,7 @@
   function ensureActionsVisibility(name) {
     const panel = findActionsByName(name);
     if (!panel) return;
-    const anyChecked = getRowChecksByName(name).some(b => b.checked);
+    const anyChecked = getCheckedByName(name).length > 0;
     panel.classList.toggle('d-none', !anyChecked);
   }
 
@@ -9317,7 +9380,10 @@
     const master = e.target.closest('input.form-check-input[data-actions-id][data-target-name]');
     if (!master || !root.contains(master)) return;
     const name = master.dataset.targetName;
-    const boxes = getRowChecksByName(name);
+    const boxes = getVisibleRowChecksByName(name);
+    getRowChecksByName(name).forEach(function (box) {
+      if (!isVisiblePolicyRowCheckbox(box)) box.checked = false;
+    });
     boxes.forEach(b => { b.checked = master.checked; });
     master.indeterminate = false;
     updateMasterStateFor(name);
@@ -9468,7 +9534,7 @@
     if (!last) return;
     const ids = (window.__tableSel && window.__tableSel[last]) || [];
     const set = new Set(ids || []);
-    getRowChecksByName(last).forEach(b => { b.checked = set.has(String(b.value)); });
+    getVisibleRowChecksByName(last).forEach(b => { b.checked = set.has(String(b.value)); });
     updateMasterStateFor(last);
     updateRowHighlightFor(last);
     ensureActionsVisibility(last); // <- панель должна остаться видимой при отмеченных чекбоксах
