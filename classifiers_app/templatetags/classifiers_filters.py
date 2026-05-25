@@ -2,6 +2,8 @@ from decimal import Decimal
 
 from django import template
 
+from policy_app.templatetags.policy_extras import policy_quill_html as _policy_quill_html
+
 register = template.Library()
 
 
@@ -28,3 +30,8 @@ def format_decimal_comma(value, decimal_places=1):
     except Exception:
         return "" if value in (None, "") else value
     return f"{d:.{places}f}".replace(".", ",")
+
+
+@register.filter(name="policy_quill_html")
+def policy_quill_html(editor_state, plain_text=""):
+    return _policy_quill_html(editor_state, plain_text)

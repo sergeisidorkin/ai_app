@@ -647,9 +647,12 @@ def product_csv_download(request):
     writer = csv.writer(output, delimiter=";", lineterminator="\n")
     writer.writerow(PRODUCT_CSV_HEADERS)
 
-    products = Product.objects.select_related(
-        "consulting_type_ref", "service_category_ref", "service_subtype_ref"
-    ).prefetch_related("owners")
+    products = _apply_policy_master_filters_to_products(
+        Product.objects.select_related(
+            "consulting_type_ref", "service_category_ref", "service_subtype_ref"
+        ).prefetch_related("owners"),
+        request,
+    )
     for product in products:
         writer.writerow(
             [
@@ -1117,10 +1120,16 @@ def section_csv_download(request):
     writer = csv.writer(output, delimiter=";", lineterminator="\n")
     writer.writerow(SECTION_CSV_HEADERS)
 
-    sections = (
-        TypicalSection.objects.select_related("product", "expertise_dir", "expertise_direction")
-        .prefetch_related("ranked_specialties", "ranked_specialties__specialty")
-        .all()
+    sections = _apply_policy_master_product_filters(
+        TypicalSection.objects.select_related(
+            "product",
+            "product__consulting_type_ref",
+            "product__service_category_ref",
+            "product__service_subtype_ref",
+            "expertise_dir",
+            "expertise_direction",
+        ).prefetch_related("ranked_specialties", "ranked_specialties__specialty"),
+        request,
     )
     for section in sections:
         executor = "\n".join(
@@ -1285,7 +1294,16 @@ def structure_csv_download(request):
     writer = csv.writer(output, delimiter=";", lineterminator="\n")
     writer.writerow(STRUCTURE_CSV_HEADERS)
 
-    structures = SectionStructure.objects.select_related("product", "section").all()
+    structures = _apply_policy_master_product_filters(
+        SectionStructure.objects.select_related(
+            "product",
+            "product__consulting_type_ref",
+            "product__service_category_ref",
+            "product__service_subtype_ref",
+            "section",
+        ),
+        request,
+    )
     for structure in structures:
         writer.writerow(
             [
@@ -1472,7 +1490,15 @@ def service_goal_report_csv_download(request):
     writer = csv.writer(output, delimiter=";", lineterminator="\n")
     writer.writerow(SERVICE_GOAL_REPORT_CSV_HEADERS)
 
-    items = ServiceGoalReport.objects.select_related("product").all()
+    items = _apply_policy_master_product_filters(
+        ServiceGoalReport.objects.select_related(
+            "product",
+            "product__consulting_type_ref",
+            "product__service_category_ref",
+            "product__service_subtype_ref",
+        ),
+        request,
+    )
     for item in items:
         writer.writerow(
             [
@@ -1725,6 +1751,65 @@ def _find_header_column(headers, header_name):
     return None
 
 
+def _product_display_field_q(char_field, ref_field, values, *, prefix="product__"):
+    if not values:
+        return Q()
+    return Q(**{f"{prefix}{ref_field}__name__in": values}) | Q(
+        **{f"{prefix}{ref_field}__isnull": True, f"{prefix}{char_field}__in": values}
+    )
+
+
+def _apply_policy_master_product_filters(qs, request):
+    product_ids = [_positive_int(value) for value in request.GET.getlist("product")]
+    product_ids = [value for value in product_ids if value]
+    if product_ids:
+        qs = qs.filter(product_id__in=product_ids)
+
+    consulting = [value.strip() for value in request.GET.getlist("consulting") if value and value.strip()]
+    category = [value.strip() for value in request.GET.getlist("category") if value and value.strip()]
+    subtype = [value.strip() for value in request.GET.getlist("subtype") if value and value.strip()]
+
+    if consulting:
+        qs = qs.filter(_product_display_field_q("consulting_type", "consulting_type_ref", consulting))
+    if category:
+        qs = qs.filter(_product_display_field_q("service_category", "service_category_ref", category))
+    if subtype:
+        qs = qs.filter(_product_display_field_q("service_subtype", "service_subtype_ref", subtype))
+
+    return qs
+
+
+def _apply_policy_master_filters_to_products(qs, request):
+    product_ids = [_positive_int(value) for value in request.GET.getlist("product")]
+    product_ids = [value for value in product_ids if value]
+    if product_ids:
+        qs = qs.filter(pk__in=product_ids)
+
+    consulting = [value.strip() for value in request.GET.getlist("consulting") if value and value.strip()]
+    category = [value.strip() for value in request.GET.getlist("category") if value and value.strip()]
+    subtype = [value.strip() for value in request.GET.getlist("subtype") if value and value.strip()]
+
+    if consulting:
+        qs = qs.filter(_product_display_field_q("consulting_type", "consulting_type_ref", consulting, prefix=""))
+    if category:
+        qs = qs.filter(_product_display_field_q("service_category", "service_category_ref", category, prefix=""))
+    if subtype:
+        qs = qs.filter(_product_display_field_q("service_subtype", "service_subtype_ref", subtype, prefix=""))
+
+    return qs
+
+
+def _filter_typical_service_compositions_queryset(request):
+    qs = TypicalServiceComposition.objects.select_related(
+        "product",
+        "product__consulting_type_ref",
+        "product__service_category_ref",
+        "product__service_subtype_ref",
+        "section",
+    )
+    return _apply_policy_master_product_filters(qs, request)
+
+
 @login_required
 @user_passes_test(staff_required)
 @require_http_methods(["GET"])
@@ -1734,7 +1819,7 @@ def typical_service_composition_csv_download(request):
     writer = csv.writer(output, delimiter=";", lineterminator="\n")
     writer.writerow(TYPICAL_SERVICE_COMPOSITION_CSV_HEADERS)
 
-    compositions = TypicalServiceComposition.objects.select_related("product", "section").all()
+    compositions = _filter_typical_service_compositions_queryset(request)
     for composition in compositions:
         writer.writerow(
             [
@@ -1754,7 +1839,7 @@ def typical_service_composition_csv_download(request):
 @require_http_methods(["GET"])
 def typical_service_composition_docx_download(request):
     rows = []
-    compositions = TypicalServiceComposition.objects.select_related("product", "section").all()
+    compositions = _filter_typical_service_compositions_queryset(request)
     for composition in compositions:
         editor_state = _normalize_typical_service_composition_editor_state(
             composition.service_composition_editor_state,
@@ -1874,7 +1959,7 @@ def typical_service_composition_xlsx_download(request):
         cell.font = Font(bold=True)
         cell.alignment = Alignment(vertical="top", wrap_text=True)
 
-    compositions = TypicalServiceComposition.objects.select_related("product", "section").all()
+    compositions = _filter_typical_service_compositions_queryset(request)
     for composition in compositions:
         editor_state = _normalize_typical_service_composition_editor_state(
             composition.service_composition_editor_state,
@@ -3078,7 +3163,15 @@ def typical_service_term_csv_download(request):
     writer = csv.writer(output, delimiter=";", lineterminator="\n")
     writer.writerow(TYPICAL_SERVICE_TERM_CSV_HEADERS)
 
-    terms = TypicalServiceTerm.objects.select_related("product").all()
+    terms = _apply_policy_master_product_filters(
+        TypicalServiceTerm.objects.select_related(
+            "product",
+            "product__consulting_type_ref",
+            "product__service_category_ref",
+            "product__service_subtype_ref",
+        ),
+        request,
+    )
     for term in terms:
         writer.writerow(
             [
@@ -3803,7 +3896,7 @@ def tariff_csv_download(request):
     writer = csv.writer(output, delimiter=";", lineterminator="\n")
     writer.writerow(TARIFF_CSV_HEADERS)
 
-    for tariff in _get_tariffs_for_user(request.user):
+    for tariff in _apply_policy_master_product_filters(_get_tariffs_for_user(request.user), request):
         writer.writerow(
             [
                 tariff.product.short_name,

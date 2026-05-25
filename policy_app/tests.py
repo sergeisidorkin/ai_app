@@ -347,6 +347,40 @@ class ProductCsvUploadTests(TestCase):
             ],
         )
 
+    def test_product_csv_download_respects_product_filter(self):
+        tax_product = Product.objects.create(
+            short_name="TAX",
+            name_en="Tax",
+            name_ru="Налоги",
+            display_name="Налоговый продукт",
+            consulting_type="Горный",
+            service_category="Инжиниринг",
+            service_code="I",
+            service_subtype="По международным стандартам",
+            position=1,
+        )
+        Product.objects.create(
+            short_name="AUD",
+            name_en="Audit",
+            name_ru="Аудит",
+            display_name="Аудит продукта",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_code="A",
+            service_subtype="Аудит проектных решений",
+            position=2,
+        )
+
+        response = self.client.get(
+            reverse("product_csv_download"),
+            {"product": [tax_product.pk]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[1][0], "TAX")
+
 
 class ProductFormTests(TestCase):
     def setUp(self):
@@ -478,6 +512,8 @@ class PolicyMasterFilterTests(TestCase):
         response = self.client.get(reverse("policy_partial"))
 
         self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-target-name="product-select"', html=False)
+        self.assertContains(response, 'name="product-select"', html=False)
         self.assertContains(response, 'data-policy-filter-row="1"', html=False)
         self.assertContains(response, f'data-product-id="{self.product.pk}"', html=False)
         self.assertContains(response, 'data-product-label="MF Master filter product"', html=False)
@@ -929,6 +965,49 @@ class TypicalSectionViewsTests(TestCase):
             ],
         )
 
+    def test_section_csv_download_respects_product_filter(self):
+        other_product = Product.objects.create(
+            short_name="SEC2",
+            name_en="Sections 2",
+            display_name="Sections 2",
+            name_ru="Разделы 2",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=2,
+        )
+        TypicalSection.objects.create(
+            product=self.product,
+            code="SEC-A",
+            short_name="section-a",
+            short_name_ru="section-a-ru",
+            name_en="Section A",
+            name_ru="Раздел A",
+            accounting_type="Раздел",
+            position=1,
+        )
+        TypicalSection.objects.create(
+            product=other_product,
+            code="SEC-B",
+            short_name="section-b",
+            short_name_ru="section-b-ru",
+            name_en="Section B",
+            name_ru="Раздел B",
+            accounting_type="Раздел",
+            position=1,
+        )
+
+        response = self.client.get(
+            reverse("section_csv_download"),
+            {"product": [self.product.pk]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[1][0], "SEC")
+        self.assertEqual(rows[1][1], "SEC-A")
+
     def test_section_csv_upload_accepts_current_table_export_columns(self):
         owner = GroupMember.objects.create(
             short_name="IMC",
@@ -1108,6 +1187,50 @@ class SectionStructureViewsTests(TestCase):
         self.assertEqual(rows[0], ["Продукт", "Раздел (услуга)", "Подразделы"])
         self.assertEqual(rows[1], ["STR", "Раздел RU", "Подраздел 1\nПодраздел 2"])
 
+    def test_structure_csv_download_respects_product_filter(self):
+        other_product = Product.objects.create(
+            short_name="STR2",
+            name_en="Structure 2",
+            display_name="Structure 2",
+            name_ru="Структура 2",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=2,
+        )
+        other_section = TypicalSection.objects.create(
+            product=other_product,
+            code="STR-2",
+            short_name="other-en",
+            short_name_ru="other-ru",
+            name_en="Other EN",
+            name_ru="Другой раздел",
+            accounting_type="Раздел",
+            position=1,
+        )
+        SectionStructure.objects.create(
+            product=self.product,
+            section=self.section,
+            subsections="Подраздел 1",
+            position=1,
+        )
+        SectionStructure.objects.create(
+            product=other_product,
+            section=other_section,
+            subsections="Подраздел A",
+            position=2,
+        )
+
+        response = self.client.get(
+            reverse("structure_csv_download"),
+            {"product": [self.product.pk]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[1][0], "STR")
+
     def test_structure_csv_upload_creates_rows(self):
         csv_file = SimpleUploadedFile(
             "section_structures.csv",
@@ -1244,6 +1367,44 @@ class ServiceGoalReportViewsTests(TestCase):
                 "Налоговый обзор",
             ],
         )
+
+    def test_service_goal_report_csv_download_respects_product_filter(self):
+        other_product = Product.objects.create(
+            short_name="AUD",
+            name_en="Audit",
+            display_name="Audit",
+            name_ru="Аудит",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=2,
+        )
+        ServiceGoalReport.objects.create(
+            product=self.product,
+            service_goal="Цель TAX",
+            service_goal_genitive="Цели TAX",
+            report_title="Отчет TAX",
+            product_name="Продукт TAX",
+            position=1,
+        )
+        ServiceGoalReport.objects.create(
+            product=other_product,
+            service_goal="Цель AUD",
+            service_goal_genitive="Цели AUD",
+            report_title="Отчет AUD",
+            product_name="Продукт AUD",
+            position=2,
+        )
+
+        response = self.client.get(
+            reverse("service_goal_report_csv_download"),
+            {"product": [self.product.pk]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[1][0], "TAX")
 
     def test_service_goal_report_csv_upload_creates_rows(self):
         csv_file = SimpleUploadedFile(
@@ -1418,17 +1579,124 @@ class TypicalServiceCompositionViewsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Типовой состав услуг")
         self.assertContains(response, "Раздел RU")
-        self.assertContains(response, "Подготовка,\nанализ,\nвыпуск отчета")
+        self.assertContains(response, "<p>Подготовка,<br>анализ,<br>выпуск отчета</p>", html=False)
         self.assertContains(response, 'id="typical-service-compositions-wrap-toggle"', html=False)
         self.assertContains(response, 'id="typical-service-compositions-table"', html=False)
         self.assertContains(response, 'class="policy-service-composition-cell"', html=False)
-        self.assertContains(response, 'class="policy-service-composition-content"', html=False)
+        self.assertContains(
+            response,
+            'class="policy-service-composition-content policy-service-composition-content--rich ql-editor"',
+            html=False,
+        )
         self.assertContains(response, 'id="typical-service-compositions-csv-download-btn"', html=False)
         self.assertContains(response, 'id="typical-service-compositions-csv-upload-btn"', html=False)
         self.assertContains(response, 'id="typical-service-compositions-docx-download-btn"', html=False)
         self.assertContains(response, 'id="typical-service-compositions-docx-upload-btn"', html=False)
         self.assertNotContains(response, 'id="typical-service-compositions-xlsx-download-btn"', html=False)
         self.assertNotContains(response, 'id="typical-service-compositions-xlsx-upload-btn"', html=False)
+
+    def test_policy_partial_renders_typical_service_composition_rich_html(self):
+        editor_state = {
+            "html": (
+                '<p class="ql-align-justify"><strong>Подготовка</strong></p>'
+                '<ol><li data-list="ordered">Этап 1</li>'
+                '<li class="ql-indent-1" data-list="ordered">Подэтап 1.1</li></ol>'
+                '<ul><li data-list="bullet">Маркер</li>'
+                '<li data-list="dash"><span class="ql-ui" contenteditable="false"></span>Дефис</li></ul>'
+            ),
+            "plain_text": "Подготовка\nЭтап 1\nПодэтап 1.1\nМаркер\nДефис",
+        }
+        TypicalServiceComposition.objects.create(
+            product=self.product,
+            section=self.section,
+            service_composition=editor_state["plain_text"],
+            service_composition_editor_state=editor_state,
+            position=1,
+        )
+
+        response = self.client.get(reverse("policy_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            '<p class="ql-align-justify"><strong>Подготовка</strong></p>',
+            html=False,
+        )
+        self.assertContains(
+            response,
+            '<li data-list="ordered"><span class="ql-ui"></span>Этап 1</li>',
+            html=False,
+        )
+        self.assertContains(
+            response,
+            '<li class="ql-indent-1" data-list="ordered"><span class="ql-ui"></span>Подэтап 1.1</li>',
+            html=False,
+        )
+        self.assertContains(
+            response,
+            '<li data-list="bullet"><span class="ql-ui"></span>Маркер</li>',
+            html=False,
+        )
+        self.assertContains(
+            response,
+            '<li data-list="dash"><span class="ql-ui"></span>Дефис</li>',
+            html=False,
+        )
+        self.assertNotContains(response, 'contenteditable="false"', html=False)
+
+    def test_policy_partial_renders_typical_service_composition_plain_text_fallback(self):
+        TypicalServiceComposition.objects.create(
+            product=self.product,
+            section=self.section,
+            service_composition="Первый блок\nстрока\n\nВторой блок",
+            service_composition_editor_state={},
+            position=1,
+        )
+
+        response = self.client.get(reverse("policy_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            "<p>Первый блок<br>строка</p><p>Второй блок</p>",
+            html=False,
+        )
+
+    def test_policy_partial_sanitizes_typical_service_composition_html(self):
+        editor_state = {
+            "html": (
+                '<p onclick="alert(1)">'
+                '<script>alert(1)</script>'
+                '<span class="ql-font-calibri bad-class" '
+                'style="color: #ff0000; background-image: url(javascript:alert(1)); background-color: rgb(1, 2, 3)">'
+                'Безопасно'
+                '</span>'
+                '</p>'
+            ),
+            "plain_text": "Безопасно",
+        }
+        TypicalServiceComposition.objects.create(
+            product=self.product,
+            section=self.section,
+            service_composition=editor_state["plain_text"],
+            service_composition_editor_state=editor_state,
+            position=1,
+        )
+
+        response = self.client.get(reverse("policy_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            '<span class="ql-font-calibri" style="color: #ff0000; background-color: rgb(1, 2, 3)">Безопасно</span>',
+            html=False,
+        )
+        self.assertNotContains(response, "<script", html=False)
+        self.assertNotContains(response, "alert(1)", html=False)
+        self.assertNotContains(response, "onclick", html=False)
+        self.assertNotContains(response, "bad-class", html=False)
+        self.assertNotContains(response, "background-image", html=False)
+        self.assertNotContains(response, "javascript:", html=False)
 
     def test_create_typical_service_composition_saves_row(self):
         editor_state = {
@@ -1622,6 +1890,79 @@ class TypicalServiceCompositionViewsTests(TestCase):
         self.assertEqual(document.paragraphs[1].text, "AUD2")
         self.assertEqual(document.tables[0].rows[1].cells[1].text, "TAX2")
         self.assertEqual(document.tables[1].rows[1].cells[1].text, "AUD2")
+
+    def test_typical_service_composition_csv_download_respects_product_filter(self):
+        TypicalServiceComposition.objects.create(
+            product=self.product,
+            section=self.section,
+            service_composition="TAX2 состав",
+            position=1,
+        )
+        TypicalServiceComposition.objects.create(
+            product=self.other_product,
+            section=self.other_section,
+            service_composition="AUD2 состав",
+            position=1,
+        )
+
+        response = self.client.get(
+            reverse("typical_service_composition_csv_download"),
+            {"product": [self.product.pk]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[1][0], "TAX2")
+
+    def test_typical_service_composition_docx_download_respects_product_filter(self):
+        TypicalServiceComposition.objects.create(
+            product=self.product,
+            section=self.section,
+            service_composition="TAX2 состав",
+            position=1,
+        )
+        TypicalServiceComposition.objects.create(
+            product=self.other_product,
+            section=self.other_section,
+            service_composition="AUD2 состав",
+            position=1,
+        )
+
+        response = self.client.get(
+            reverse("typical_service_composition_docx_download"),
+            {"product": [self.product.pk, self.other_product.pk]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        document = Document(io.BytesIO(response.content))
+        self.assertEqual(len(document.tables), 2)
+        self.assertEqual(document.paragraphs[0].text, "TAX2")
+        self.assertEqual(document.paragraphs[1].text, "AUD2")
+
+    def test_typical_service_composition_csv_download_respects_consulting_filter(self):
+        TypicalServiceComposition.objects.create(
+            product=self.product,
+            section=self.section,
+            service_composition="TAX2 состав",
+            position=1,
+        )
+        TypicalServiceComposition.objects.create(
+            product=self.other_product,
+            section=self.other_section,
+            service_composition="AUD2 состав",
+            position=1,
+        )
+
+        response = self.client.get(
+            reverse("typical_service_composition_csv_download"),
+            {"category": ["Аудит"]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[1][0], "AUD2")
 
     def test_typical_service_composition_docx_upload_reads_multiple_product_tables(self):
         tax_item = TypicalServiceComposition.objects.create(
@@ -3258,6 +3599,30 @@ class TypicalServiceTermViewsTests(TestCase):
         )
         self.assertEqual(rows[1], ["TERM", "0", "1,5", "3"])
 
+    def test_typical_service_term_csv_download_respects_product_filter(self):
+        TypicalServiceTerm.objects.create(
+            product=self.product,
+            preliminary_report_months=Decimal("1.5"),
+            final_report_weeks=3,
+            position=1,
+        )
+        TypicalServiceTerm.objects.create(
+            product=self.other_product,
+            preliminary_report_months=Decimal("2.0"),
+            final_report_weeks=5,
+            position=2,
+        )
+
+        response = self.client.get(
+            reverse("typical_service_term_csv_download"),
+            {"product": [self.product.pk]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[1][0], "TERM")
+
     def test_typical_service_term_csv_upload_creates_rows(self):
         csv_file = SimpleUploadedFile(
             "typical_service_terms.csv",
@@ -3559,6 +3924,56 @@ class TariffViewsTests(TestCase):
             ],
         )
         self.assertEqual(rows[1], ["TAR", "Тарифный раздел", "10,00", "8", "5", "policy-admin-4"])
+
+    def test_tariff_csv_download_respects_product_filter(self):
+        other_product = Product.objects.create(
+            short_name="AUD",
+            name_en="Audit product",
+            display_name="Audit product",
+            name_ru="Аудитный продукт",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=2,
+        )
+        other_section = TypicalSection.objects.create(
+            product=other_product,
+            code="AS1",
+            short_name="audit-section",
+            short_name_ru="audit-section-ru",
+            name_en="Audit section EN",
+            name_ru="Аудитный раздел",
+            accounting_type="Раздел",
+            position=1,
+        )
+        Tariff.objects.create(
+            product=self.product,
+            section=self.section,
+            base_rate_vpm=Decimal("10.00"),
+            service_hours=8,
+            service_days_tkp=5,
+            created_by=self.user,
+            position=1,
+        )
+        Tariff.objects.create(
+            product=other_product,
+            section=other_section,
+            base_rate_vpm=Decimal("20.00"),
+            service_hours=16,
+            service_days_tkp=10,
+            created_by=self.user,
+            position=2,
+        )
+
+        response = self.client.get(
+            reverse("tariff_csv_download"),
+            {"product": [self.product.pk]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[1][0], "TAR")
 
     def test_tariff_csv_upload_creates_rows_for_current_user(self):
         csv_file = SimpleUploadedFile(

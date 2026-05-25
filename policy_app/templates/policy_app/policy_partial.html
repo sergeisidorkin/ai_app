@@ -202,8 +202,8 @@
                         <div class="form-check m-0">
                             <input class="form-check-input"
                                    type="checkbox"
-                                   id="defaults-master"
-                                   data-target-name="defaults"
+                                   id="products-master"
+                                   data-target-name="product-select"
                                    data-actions-id="products-actions"
                                    aria-label="Выделить все строки продуктов">
                         </div>
@@ -242,7 +242,7 @@
                                 <input class="form-check-input"
                                        type="checkbox"
                                        id="prod-def-{{ p.id }}"
-                                       name="defaults"
+                                       name="product-select"
                                        value="{{ p.id }}"
                                        aria-label="Выделить строку">
                             </div>
@@ -729,7 +729,7 @@
                     <td class="text-nowrap">{{ item.product.short_name }}</td>
                     <td>{{ item.section.name_ru }}</td>
                     <td class="policy-service-composition-cell">
-                        <div class="policy-service-composition-content">{{ item.service_composition }}</div>
+                        <div class="policy-service-composition-content policy-service-composition-content--rich ql-editor">{{ item.service_composition_editor_state|policy_quill_html:item.service_composition }}</div>
                     </td>
                 </tr>
             {% empty %}
