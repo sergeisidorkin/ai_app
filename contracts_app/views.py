@@ -1,6 +1,8 @@
 import logging
 import os
 import json
+from datetime import date as dt_date, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from urllib.parse import quote
 
 from django.contrib.auth.decorators import login_required, user_passes_test
@@ -9,6 +11,7 @@ from django.db.models import Count, Max, Sum, Q
 from django.db.models.functions import Trim
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import render, get_object_or_404
+from django.urls import reverse
 from django.template.loader import render_to_string
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods, require_POST
@@ -29,6 +32,7 @@ from nextcloud_app.api import NextcloudApiClient, NextcloudApiError
 from nextcloud_app.models import NextcloudUserLink
 from notifications_app.models import Notification, NotificationPerformerLink
 from policy_app.models import ADMIN_GROUP, DEPARTMENT_HEAD_GROUP, EXPERT_GROUP, LAWYER_GROUP
+from proposals_app.models import ProposalRegistration, ProposalRegistrationProduct
 from projects_app.models import Performer, ProjectRegistration, ProjectRegistrationProduct
 from smtp_app.models import ExternalSMTPAccount
 from users_app.forms import FREELANCER_LABEL
@@ -40,10 +44,108 @@ from .forms import (
     ContractSubjectForm,
     ContractTemplateForm,
     ContractVariableForm,
+    build_contract_project_form_from_proposal,
 )
-from .models import ContractReturnComment, ContractSubject, ContractTemplate, ContractVariable
+from .models import (
+    ContractProjectRegistration,
+    ContractProjectRegistrationProduct,
+    ContractReturnComment,
+    ContractSubject,
+    ContractTemplate,
+    ContractVariable,
+    _sync_contract_project_registration_primary_product,
+)
 
 logger = logging.getLogger(__name__)
+
+
+CONTRACT_PAYMENT_SCHEDULE_UI_COLUMNS = [
+    {"picker_value": "number", "data_col": "number", "source_column": "number", "label": "Номер"},
+    {"picker_value": "tkp-id", "data_col": "tkp-id", "source_column": "tkp_id", "label": "ТКП ID"},
+    {
+        "picker_value": "agreement-type",
+        "data_col": "agreement-type",
+        "source_column": "agreement_type",
+        "label": "Вид соглашения",
+    },
+    {"picker_value": "sub-number", "data_col": "sub-number", "source_column": "sub_number", "label": "№"},
+    {"picker_value": "group", "data_col": "group", "source_column": "group", "label": "Группа"},
+    {"picker_value": "project-id", "data_col": "project-id", "source_column": "project_id", "label": "Договор ID"},
+    {
+        "picker_value": "contract-number",
+        "data_col": "contract-number",
+        "source_column": "contract_number",
+        "label": "Номер договора",
+    },
+    {"picker_value": "type", "data_col": "type", "source_column": "type", "label": "Тип"},
+    {"picker_value": "name", "data_col": "name", "source_column": "name", "label": "Название"},
+    {"picker_value": "stage", "data_col": "stage", "source_column": "stage", "label": "Этап"},
+    {
+        "picker_value": "evaluation-date",
+        "data_col": "evaluation-date",
+        "source_column": "evaluation_date",
+        "label": "Дата оценки",
+    },
+    {"picker_value": "start-date", "data_col": "start-date", "source_column": "start_date", "label": "Дата начала"},
+    {"picker_value": "term", "data_col": "term", "source_column": "term", "label": "Срок предв. отчёта, мес."},
+    {
+        "picker_value": "preliminary-report-date",
+        "data_col": "preliminary-report-date",
+        "source_column": "preliminary_report_date",
+        "label": "Дата предв. отчёта",
+    },
+    {
+        "picker_value": "final-report-weeks",
+        "data_col": "final-report-weeks",
+        "source_column": "final_report_term_weeks",
+        "label": "Срок итог. отчёта, нед.",
+    },
+    {
+        "picker_value": "final-report-date",
+        "data_col": "final-report-date",
+        "source_column": "final_report_date",
+        "label": "Дата итог. отчёта",
+    },
+    {
+        "picker_value": "advance-percent",
+        "data_col": "advance-percent",
+        "source_column": "advance_percent",
+        "label": "Предоплата, проц.",
+        "default_hidden": True,
+    },
+    {
+        "picker_value": "advance-term",
+        "data_col": "advance-term",
+        "source_column": "advance_term",
+        "label": "Предоплата, срок дн.",
+    },
+    {
+        "picker_value": "preliminary-report-percent",
+        "data_col": "preliminary-report-percent",
+        "source_column": "preliminary_report_percent",
+        "label": "Предв. отчёт, проц.",
+        "default_hidden": True,
+    },
+    {
+        "picker_value": "preliminary-report-term",
+        "data_col": "preliminary-report-term",
+        "source_column": "preliminary_report_term",
+        "label": "Предв. отчёт, срок дн.",
+    },
+    {
+        "picker_value": "final-report-percent",
+        "data_col": "final-report-percent",
+        "source_column": "final_report_percent",
+        "label": "Итог. отчёт, проц.",
+        "default_hidden": True,
+    },
+    {
+        "picker_value": "final-report-term",
+        "data_col": "final-report-term",
+        "source_column": "final_report_term",
+        "label": "Итог. отчёт, срок дн.",
+    },
+]
 
 
 def staff_required(user):
@@ -1034,13 +1136,303 @@ def _attach_contract_folder_urls(contracts, user=None):
                 performer.contract_project_docx_file_url = editor_url
 
 
+def _contract_schedule_decimal(value):
+    if value in (None, ""):
+        return None
+    try:
+        return Decimal(str(value).replace(",", "."))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+
+def _contract_schedule_month_end_day(year, month):
+    if month == 12:
+        next_month = dt_date(year + 1, 1, 1)
+    else:
+        next_month = dt_date(year, month + 1, 1)
+    return (next_month - timedelta(days=1)).day
+
+
+def _add_contract_schedule_months(value, months):
+    months = _contract_schedule_decimal(months)
+    if not value or months is None:
+        return value
+    whole_months = int(months)
+    fractional = months - Decimal(whole_months)
+    year = value.year + ((value.month - 1 + whole_months) // 12)
+    month = ((value.month - 1 + whole_months) % 12) + 1
+    day = min(value.day, _contract_schedule_month_end_day(year, month))
+    shifted = dt_date(year, month, day)
+    if fractional:
+        shifted += timedelta(days=int((fractional * Decimal("30")) + Decimal("0.5")))
+    return shifted
+
+
+def _subtract_contract_schedule_months(value, months):
+    months = _contract_schedule_decimal(months)
+    if not value or months is None:
+        return value
+    whole_months = int(months)
+    fractional = months - Decimal(whole_months)
+    if fractional:
+        value = value - timedelta(days=int((fractional * Decimal("30")) + Decimal("0.5")))
+    total_month = value.month - 1 - whole_months
+    year = value.year + (total_month // 12)
+    month = (total_month % 12) + 1
+    day = min(value.day, _contract_schedule_month_end_day(year, month))
+    return dt_date(year, month, day)
+
+
+def _add_contract_schedule_weeks(value, weeks):
+    weeks = _contract_schedule_decimal(weeks)
+    if not value or weeks is None:
+        return value
+    safe_weeks = max(weeks, Decimal("0"))
+    return value + timedelta(days=int((safe_weeks * Decimal("7")) + Decimal("0.5")))
+
+
+def _contract_schedule_base_start_date(today=None):
+    current = (today or timezone.localdate()) + timedelta(days=14)
+    previous_monday = current - timedelta(days=current.weekday())
+    next_monday = previous_monday + timedelta(days=7)
+    if abs((current - previous_monday).days) <= abs((next_monday - current).days):
+        return previous_monday
+    return next_monday
+
+
+def _parse_contract_schedule_date(value):
+    if value in (None, ""):
+        return None
+    if isinstance(value, dt_date):
+        return value
+    raw = str(value).strip()
+    if not raw:
+        return None
+    for fmt in ("%d.%m.%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _contract_registration_tkp_key(registration):
+    if registration.proposal_registration_id and registration.proposal_registration:
+        return registration.proposal_registration.short_uid
+    return ""
+
+
+def _annotate_contract_registration_number_groups(registrations):
+    items = list(registrations)
+    start = 0
+    while start < len(items):
+        current_number = items[start].number
+        end = start + 1
+        while end < len(items) and items[end].number == current_number:
+            end += 1
+        group_size = end - start
+        for offset, registration in enumerate(items[start:end], start=1):
+            registration.is_first_for_number = offset == 1
+            registration.is_continuation = offset > 1
+            registration.has_next_for_number = offset < group_size
+            if offset < group_size:
+                next_registration = items[start + offset]
+                registration.has_next_for_different_contract_in_number_group = (
+                    next_registration.short_uid != registration.short_uid
+                )
+                registration.has_next_for_different_tkp_in_number_group = (
+                    _contract_registration_tkp_key(next_registration)
+                    != _contract_registration_tkp_key(registration)
+                )
+            else:
+                registration.has_next_for_different_contract_in_number_group = False
+                registration.has_next_for_different_tkp_in_number_group = False
+        start = end
+    for index, registration in enumerate(items):
+        previous = items[index - 1] if index > 0 else None
+        registration.is_first_for_tkp = (
+            previous is None
+            or previous.number != registration.number
+            or _contract_registration_tkp_key(previous) != _contract_registration_tkp_key(registration)
+        )
+    return items
+
+
+def _annotate_contract_payment_schedule_number_groups(rows):
+    items = list(rows)
+    start = 0
+    while start < len(items):
+        current_number = items[start]["number"]
+        end = start + 1
+        while end < len(items) and items[end]["number"] == current_number:
+            end += 1
+        group_size = end - start
+        for offset, row in enumerate(items[start:end], start=1):
+            row["is_first_for_number"] = offset == 1
+            row["is_number_continuation"] = offset > 1
+            row["has_next_for_number"] = offset < group_size
+            if offset < group_size:
+                next_row = items[start + offset]
+                row["has_next_for_different_tkp_in_number_group"] = (
+                    (next_row.get("tkp_id") or "") != (row.get("tkp_id") or "")
+                )
+            else:
+                row["has_next_for_different_tkp_in_number_group"] = False
+        start = end
+    for index, row in enumerate(items):
+        previous = items[index - 1] if index > 0 else None
+        row["is_first_for_tkp"] = (
+            previous is None
+            or previous["number"] != row["number"]
+            or (previous.get("tkp_id") or "") != (row.get("tkp_id") or "")
+        )
+    return items
+
+
+def _build_contract_payment_schedule_rows(registrations):
+    rows = []
+    for registration in registrations:
+        products = list(registration.ordered_products()) if getattr(registration, "pk", None) else []
+        if not products:
+            products = [None]
+        stored_stages = list(getattr(registration, "stage_payloads_json", None) or [])
+        rolling_start_date = _contract_schedule_base_start_date()
+        product_count = len(products)
+        for index, product in enumerate(products, start=1):
+            stage_payload = {}
+            if stored_stages:
+                if index - 1 < len(stored_stages) and isinstance(stored_stages[index - 1], dict):
+                    stage_payload = stored_stages[index - 1]
+                else:
+                    stage_payload = next(
+                        (
+                            item for item in stored_stages
+                            if str(item.get("product_id") or "") == str(getattr(product, "pk", "") or "")
+                        ),
+                        {},
+                    )
+
+            service_term_months = _contract_schedule_decimal(
+                stage_payload.get("service_term_months")
+                if stage_payload.get("service_term_months") not in (None, "")
+                else registration.service_term_months
+            )
+            final_report_term_weeks = _contract_schedule_decimal(
+                stage_payload.get("final_report_term_weeks")
+                if stage_payload.get("final_report_term_weeks") not in (None, "")
+                else registration.final_report_term_weeks
+            )
+            preliminary_report_date = _parse_contract_schedule_date(stage_payload.get("preliminary_report_date"))
+            if preliminary_report_date is None:
+                preliminary_report_date = registration.preliminary_report_date
+            final_report_date = _parse_contract_schedule_date(stage_payload.get("final_report_date"))
+            if final_report_date is None:
+                final_report_date = registration.final_report_date
+            evaluation_date = _parse_contract_schedule_date(stage_payload.get("evaluation_date"))
+            if evaluation_date is None:
+                evaluation_date = registration.evaluation_date
+
+            if preliminary_report_date and service_term_months is not None:
+                start_date = _subtract_contract_schedule_months(preliminary_report_date, service_term_months)
+            else:
+                start_date = rolling_start_date
+            if not preliminary_report_date and service_term_months is not None:
+                preliminary_report_date = _add_contract_schedule_months(start_date, service_term_months)
+            if not final_report_date and preliminary_report_date and final_report_term_weeks is not None:
+                final_report_date = _add_contract_schedule_weeks(preliminary_report_date, final_report_term_weeks)
+            stage_end_date = final_report_date or preliminary_report_date or start_date
+            next_delay_days = stage_payload.get("next_stage_delay_days")
+            if next_delay_days not in (None, ""):
+                try:
+                    rolling_start_date = stage_end_date + timedelta(days=int(next_delay_days))
+                except (TypeError, ValueError):
+                    rolling_start_date = stage_end_date
+            else:
+                rolling_start_date = stage_end_date
+
+            rows.append(
+                {
+                    "registration_id": registration.pk,
+                    "is_first_for_registration": index == 1,
+                    "is_continuation": index > 1,
+                    "has_next_for_registration": index < product_count,
+                    "number": registration.formatted_number,
+                    "tkp_id": (
+                        registration.proposal_registration.short_uid
+                        if registration.proposal_registration_id and registration.proposal_registration
+                        else ""
+                    ),
+                    "agreement_type": registration.get_agreement_type_display(),
+                    "sub_number": registration.sub_number,
+                    "contract_number": registration.contract_number,
+                    "group": registration.group_display,
+                    "project_id": registration.short_uid,
+                    "type": (getattr(product, "short_name", "") or str(product or "")).strip(),
+                    "name": registration.name,
+                    "stage": f"Этап {index}",
+                    "evaluation_date": evaluation_date,
+                    "start_date": start_date,
+                    "service_term_months": service_term_months,
+                    "preliminary_report_date": preliminary_report_date,
+                    "final_report_term_weeks": final_report_term_weeks,
+                    "final_report_date": final_report_date,
+                    "advance_percent": _contract_schedule_decimal(
+                        stage_payload.get("advance_percent")
+                        if stage_payload.get("payment_schedule_common") is False
+                        else registration.advance_percent
+                    ),
+                    "advance_term_days": (
+                        stage_payload.get("advance_term_days")
+                        if stage_payload.get("payment_schedule_common") is False
+                        else registration.advance_term_days
+                    ),
+                    "preliminary_report_percent": _contract_schedule_decimal(
+                        stage_payload.get("preliminary_report_percent")
+                        if stage_payload.get("payment_schedule_common") is False
+                        else registration.preliminary_report_percent
+                    ),
+                    "preliminary_report_term_days": (
+                        stage_payload.get("preliminary_report_term_days")
+                        if stage_payload.get("payment_schedule_common") is False
+                        else registration.preliminary_report_term_days
+                    ),
+                    "final_report_percent": _contract_schedule_decimal(
+                        stage_payload.get("final_report_percent")
+                        if stage_payload.get("payment_schedule_common") is False
+                        else registration.final_report_percent
+                    ),
+                    "final_report_term_days": (
+                        stage_payload.get("final_report_term_days")
+                        if stage_payload.get("payment_schedule_common") is False
+                        else registration.final_report_term_days
+                    ),
+                    "edit_url": reverse("contracts_project_registration_edit", args=[registration.pk]),
+                }
+            )
+    return rows
+
+
 def _contracts_development_context():
-    registrations = (
-        ProjectRegistration.objects
-        .select_related("country", "group_member", "type")
+    product_prefetch = models.Prefetch(
+        "product_links",
+        queryset=ContractProjectRegistrationProduct.objects.select_related("product").order_by("rank", "id"),
+    )
+    registrations = _annotate_contract_registration_number_groups(
+        ContractProjectRegistration.objects
+        .select_related("country", "asset_owner_country", "group_member", "type", "proposal_registration")
+        .prefetch_related(product_prefetch)
         .all()
     )
-    return {"registrations": registrations}
+    contract_project_order_ids = [registration.pk for registration in registrations]
+    return {
+        "registrations": registrations,
+        "contract_payment_schedule_rows": _annotate_contract_payment_schedule_number_groups(
+            _build_contract_payment_schedule_rows(registrations)
+        ),
+        "contract_payment_schedule_ui_columns": CONTRACT_PAYMENT_SCHEDULE_UI_COLUMNS,
+        "contract_payment_schedule_empty_colspan": len(CONTRACT_PAYMENT_SCHEDULE_UI_COLUMNS) + 1,
+        "contract_project_order_signature": _contract_project_order_signature(contract_project_order_ids),
+    }
 
 
 def _render_contracts_development_updated(request):
@@ -1050,18 +1442,56 @@ def _render_contracts_development_updated(request):
 
 
 def _render_contracts_project_registration_form(request, form, *, action, registration=None):
+    from projects_app.views import _registration_form_context
+
+    context = _registration_form_context(form, action, registration)
+    prefill_ranked_products = getattr(form, "prefill_ranked_products", None)
+    if prefill_ranked_products is not None:
+        context["ranked_products"] = prefill_ranked_products
     return render(
         request,
         CONTRACTS_PROJECT_REG_FORM_TEMPLATE,
-        {"form": form, "action": action, "registration": registration},
+        context,
     )
 
 
 def _normalize_contract_development_positions():
-    items = ProjectRegistration.objects.order_by("position", "id").only("id", "position")
+    items = ContractProjectRegistration.objects.order_by("position", "id").only("id", "position")
     for idx, item in enumerate(items, start=1):
         if item.position != idx:
-            ProjectRegistration.objects.filter(pk=item.pk).update(position=idx)
+            ContractProjectRegistration.objects.filter(pk=item.pk).update(position=idx)
+
+
+def _contract_project_order_signature(contract_project_ids):
+    return ":".join(str(contract_project_id) for contract_project_id in contract_project_ids)
+
+
+def _save_ranked_contract_project_products(registration, product_ids):
+    normalized_ids = []
+    seen = set()
+    for raw_id in product_ids:
+        try:
+            product_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if product_id in seen:
+            continue
+        seen.add(product_id)
+        normalized_ids.append(product_id)
+
+    ContractProjectRegistrationProduct.objects.filter(registration=registration).delete()
+    if normalized_ids:
+        ContractProjectRegistrationProduct.objects.bulk_create(
+            [
+                ContractProjectRegistrationProduct(
+                    registration=registration,
+                    product_id=product_id,
+                    rank=rank,
+                )
+                for rank, product_id in enumerate(normalized_ids, start=1)
+            ]
+        )
+    _sync_contract_project_registration_primary_product(registration.pk)
 
 
 @login_required
@@ -1090,6 +1520,101 @@ def contracts_development_partial(request):
 
 @login_required
 @user_passes_test(staff_required)
+@require_POST
+def contracts_project_registration_row_order(request):
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except (TypeError, ValueError, UnicodeDecodeError):
+        return JsonResponse({"ok": False, "error": "Некорректный формат порядка проектов договоров."}, status=400)
+
+    raw_ids = payload.get("ordered_contract_project_ids") or []
+    try:
+        ordered_contract_project_ids = [int(value) for value in raw_ids]
+    except (TypeError, ValueError):
+        return JsonResponse(
+            {"ok": False, "error": "Порядок проектов договоров содержит некорректные идентификаторы."},
+            status=400,
+        )
+    if len(ordered_contract_project_ids) != len(set(ordered_contract_project_ids)):
+        return JsonResponse({"ok": False, "error": "Порядок проектов договоров содержит дубли."}, status=400)
+
+    base_signature = str(payload.get("base_order_signature") or "")
+    with transaction.atomic():
+        current_items = list(
+            ContractProjectRegistration.objects.select_for_update().order_by("position", "id").only("id", "position")
+        )
+        current_contract_project_ids = [item.pk for item in current_items]
+        current_signature = _contract_project_order_signature(current_contract_project_ids)
+        desired_signature = _contract_project_order_signature(ordered_contract_project_ids)
+
+        conflict_payload = {
+            "ok": False,
+            "error": "Порядок проектов договоров был изменен. Таблица будет обновлена.",
+            "current_contract_project_ids": current_contract_project_ids,
+            "order_signature": current_signature,
+        }
+        if base_signature and base_signature != current_signature:
+            if ordered_contract_project_ids == current_contract_project_ids:
+                return JsonResponse({"ok": True, "order_signature": current_signature})
+            return JsonResponse(conflict_payload, status=409)
+        if set(ordered_contract_project_ids) != set(current_contract_project_ids):
+            return JsonResponse(conflict_payload, status=409)
+
+        for idx, contract_project_id in enumerate(ordered_contract_project_ids, start=1):
+            ContractProjectRegistration.objects.filter(pk=contract_project_id).update(position=idx)
+    return JsonResponse({"ok": True, "order_signature": desired_signature})
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def contracts_project_registration_prefill_from_proposal(request, proposal_pk):
+    proposal = get_object_or_404(
+        ProposalRegistration.objects
+        .select_related("group_member", "type", "country", "asset_owner_country")
+        .prefetch_related(
+            models.Prefetch(
+                "product_links",
+                queryset=ProposalRegistrationProduct.objects.select_related("product").order_by("rank", "id"),
+            )
+        ),
+        pk=proposal_pk,
+    )
+    registration = None
+    raw_registration_pk = request.GET.get("registration")
+    if raw_registration_pk:
+        registration = get_object_or_404(ContractProjectRegistration, pk=raw_registration_pk)
+    form = build_contract_project_form_from_proposal(proposal, registration=registration)
+    return _render_contracts_project_registration_form(
+        request,
+        form,
+        action="edit" if registration else "create",
+        registration=registration,
+    )
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def contracts_project_registration_status_update(request, pk: int):
+    status_value = (request.POST.get("status") or "").strip()
+    valid_statuses = {value for value, _label in ContractProjectRegistration.STATUS_CHOICES}
+    if status_value not in valid_statuses:
+        return JsonResponse({"ok": False, "error": "Некорректный статус договора."}, status=400)
+
+    registration = get_object_or_404(
+        ContractProjectRegistration.objects.only("id", "status"),
+        pk=pk,
+    )
+    if registration.status != status_value:
+        registration.status = status_value
+        registration.save(update_fields=["status"])
+
+    return JsonResponse({"ok": True, "status": registration.status})
+
+
+@login_required
+@user_passes_test(staff_required)
 @require_http_methods(["GET", "POST"])
 def contracts_project_registration_create(request):
     if request.method == "GET":
@@ -1104,12 +1629,17 @@ def contracts_project_registration_create(request):
         resp["HX-Reswap"] = "innerHTML"
         return resp
 
-    from projects_app.views import _next_position, _sync_selection_kwargs, _sync_to_legal_entity_record
+    from projects_app.views import (
+        _next_position,
+        _sync_selection_kwargs,
+        _sync_to_legal_entity_record,
+    )
 
     obj = form.save(commit=False)
     if not getattr(obj, "position", 0):
-        obj.position = _next_position(ProjectRegistration)
+        obj.position = _next_position(ContractProjectRegistration)
     obj.save()
+    _save_ranked_contract_project_products(obj, getattr(form, "cleaned_type_ids", []))
     _sync_to_legal_entity_record(
         obj.customer,
         obj.country,
@@ -1117,7 +1647,7 @@ def contracts_project_registration_create(request):
         obj.registration_number,
         obj.registration_date,
         request.user,
-        business_entity_source="[Проекты / Заказчик]",
+        business_entity_source="[Договоры / Проекты договоров / Заказчик]",
         **_sync_selection_kwargs(request, "customer_autocomplete"),
     )
     return _render_contracts_development_updated(request)
@@ -1127,7 +1657,7 @@ def contracts_project_registration_create(request):
 @user_passes_test(staff_required)
 @require_http_methods(["GET", "POST"])
 def contracts_project_registration_edit(request, pk):
-    registration = get_object_or_404(ProjectRegistration, pk=pk)
+    registration = get_object_or_404(ContractProjectRegistration, pk=pk)
     if request.method == "GET":
         return _render_contracts_project_registration_form(
             request,
@@ -1145,9 +1675,13 @@ def contracts_project_registration_edit(request, pk):
         resp["HX-Reswap"] = "innerHTML"
         return resp
 
-    from projects_app.views import _sync_selection_kwargs, _sync_to_legal_entity_record
+    from projects_app.views import (
+        _sync_selection_kwargs,
+        _sync_to_legal_entity_record,
+    )
 
     obj = form.save()
+    _save_ranked_contract_project_products(obj, getattr(form, "cleaned_type_ids", []))
     _sync_to_legal_entity_record(
         obj.customer,
         obj.country,
@@ -1155,7 +1689,7 @@ def contracts_project_registration_edit(request, pk):
         obj.registration_number,
         obj.registration_date,
         request.user,
-        business_entity_source="[Проекты / Заказчик]",
+        business_entity_source="[Договоры / Проекты договоров / Заказчик]",
         **_sync_selection_kwargs(request, "customer_autocomplete"),
     )
     return _render_contracts_development_updated(request)
@@ -1165,7 +1699,7 @@ def contracts_project_registration_edit(request, pk):
 @user_passes_test(staff_required)
 @require_POST
 def contracts_project_registration_delete(request, pk):
-    registration = get_object_or_404(ProjectRegistration, pk=pk)
+    registration = get_object_or_404(ContractProjectRegistration, pk=pk)
     registration.delete()
     return _render_contracts_development_updated(request)
 
@@ -1175,12 +1709,12 @@ def contracts_project_registration_delete(request, pk):
 @require_http_methods(["POST", "GET"])
 def contracts_project_registration_move_up(request, pk):
     _normalize_contract_development_positions()
-    items = list(ProjectRegistration.objects.order_by("position", "id").only("id", "position"))
+    items = list(ContractProjectRegistration.objects.order_by("position", "id").only("id", "position"))
     idx = next((i for i, item in enumerate(items) if item.id == pk), None)
     if idx is not None and idx > 0:
         current, previous = items[idx], items[idx - 1]
-        ProjectRegistration.objects.filter(pk=current.id).update(position=previous.position)
-        ProjectRegistration.objects.filter(pk=previous.id).update(position=current.position)
+        ContractProjectRegistration.objects.filter(pk=current.id).update(position=previous.position)
+        ContractProjectRegistration.objects.filter(pk=previous.id).update(position=current.position)
         _normalize_contract_development_positions()
     return _render_contracts_development_updated(request)
 
@@ -1190,12 +1724,12 @@ def contracts_project_registration_move_up(request, pk):
 @require_http_methods(["POST", "GET"])
 def contracts_project_registration_move_down(request, pk):
     _normalize_contract_development_positions()
-    items = list(ProjectRegistration.objects.order_by("position", "id").only("id", "position"))
+    items = list(ContractProjectRegistration.objects.order_by("position", "id").only("id", "position"))
     idx = next((i for i, item in enumerate(items) if item.id == pk), None)
     if idx is not None and idx < len(items) - 1:
         current, nxt = items[idx], items[idx + 1]
-        ProjectRegistration.objects.filter(pk=current.id).update(position=nxt.position)
-        ProjectRegistration.objects.filter(pk=nxt.id).update(position=current.position)
+        ContractProjectRegistration.objects.filter(pk=current.id).update(position=nxt.position)
+        ContractProjectRegistration.objects.filter(pk=nxt.id).update(position=current.position)
         _normalize_contract_development_positions()
     return _render_contracts_development_updated(request)
 

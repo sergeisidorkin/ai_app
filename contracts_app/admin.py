@@ -2,6 +2,8 @@ from django.contrib import admin
 from django.utils.html import format_html
 
 from .models import (
+    ContractProjectRegistration,
+    ContractProjectRegistrationProduct,
     ContractTemplate, ContractVariable, ContractSubject,
     ContractProjectWork, ContractSigningWork,
 )
@@ -11,6 +13,34 @@ class ContractVariableInline(admin.TabularInline):
     model = ContractVariable
     extra = 0
     fields = ("position", "key", "description", "is_computed", "source_section", "source_table", "source_column")
+
+
+@admin.register(ContractProjectRegistration)
+class ContractProjectRegistrationAdmin(admin.ModelAdmin):
+    list_display = (
+        "position", "number", "sub_number", "contract_number", "proposal_registration", "group_display_value",
+        "agreement_type", "short_uid", "type_value", "name", "status", "year", "customer",
+    )
+    list_editable = ("position",)
+    list_display_links = ("number", "name")
+    search_fields = ("=number", "short_uid", "agreement_number", "contract_number", "name", "customer", "registration_number", "project_manager")
+    list_filter = ("group_member", "agreement_type", "status", "type", "year")
+    readonly_fields = ("short_uid",)
+
+    @admin.display(description="Группа", ordering="group")
+    def group_display_value(self, obj):
+        return obj.group_display
+
+    @admin.display(description="Тип")
+    def type_value(self, obj):
+        return obj.type_short_display
+
+
+@admin.register(ContractProjectRegistrationProduct)
+class ContractProjectRegistrationProductAdmin(admin.ModelAdmin):
+    list_display = ("registration", "product", "rank")
+    list_select_related = ("registration", "product")
+    ordering = ("registration__position", "rank", "id")
 
 
 @admin.register(ContractTemplate)

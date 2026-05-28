@@ -192,7 +192,22 @@ def _annotate_registration_number_groups(registrations):
             registration.is_first_for_number = offset == 1
             registration.is_continuation = offset > 1
             registration.has_next_for_number = offset < group_size
+            if offset < group_size:
+                next_registration = items[start + offset]
+                registration.has_next_for_different_contract_in_number_group = (
+                    next_registration.contract_project_registration_id
+                    != registration.contract_project_registration_id
+                )
+            else:
+                registration.has_next_for_different_contract_in_number_group = False
         start = end
+    for index, registration in enumerate(items):
+        previous = items[index - 1] if index > 0 else None
+        registration.is_first_for_number_contract = (
+            previous is None
+            or previous.number != registration.number
+            or previous.contract_project_registration_id != registration.contract_project_registration_id
+        )
     return items
 
 
@@ -205,7 +220,7 @@ def _projects_context(user=None):
     )
     registrations = (
         ProjectRegistration.objects
-        .select_related("country", "asset_owner_country", "group_member", "type")
+        .select_related("country", "asset_owner_country", "group_member", "type", "contract_project_registration")
         .prefetch_related(product_prefetch)
         .all()
     )
@@ -505,6 +520,7 @@ def _save_ranked_registration_products(registration, product_ids):
 
 REGISTRATION_CLONE_FIELDS = [
     "number",
+    "contract_project_registration",
     "group_member",
     "agreement_type",
     "agreement_number",

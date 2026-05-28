@@ -25,6 +25,7 @@ from core.cloud_storage import (
     is_nextcloud_primary,
 )
 from core.proposal_registry_columns import (
+    get_proposal_dispatch_ui_columns,
     get_proposal_payment_schedule_ui_columns,
     get_proposal_registry_ui_columns,
 )
@@ -1175,10 +1176,15 @@ def _build_proposal_payment_schedule_rows(proposals):
             rows.append(
                 {
                     "proposal_id": proposal.pk,
+                    "kind": proposal.kind,
+                    "kind_label": proposal.get_kind_display(),
+                    "status": proposal.status,
+                    "status_label": proposal.get_status_display(),
                     "is_first_for_proposal": index == 1,
                     "is_continuation": index > 1,
                     "has_next_for_proposal": index < product_count,
                     "number": proposal.formatted_number,
+                    "sub_number": proposal.sub_number,
                     "group": proposal.group_display,
                     "tkp_id": proposal.short_uid,
                     "type": (getattr(product, "short_name", "") or str(product or "")).strip(),
@@ -1226,6 +1232,23 @@ def _build_proposal_payment_schedule_rows(proposals):
     return rows
 
 
+def _annotate_proposal_number_groups(proposals):
+    items = list(proposals)
+    start = 0
+    while start < len(items):
+        current_number = items[start].number
+        end = start + 1
+        while end < len(items) and items[end].number == current_number:
+            end += 1
+        group_size = end - start
+        for offset, proposal in enumerate(items[start:end], start=1):
+            proposal.is_first_for_number = offset == 1
+            proposal.is_number_continuation = offset > 1
+            proposal.has_next_for_number = offset < group_size
+        start = end
+    return items
+
+
 def _proposals_context(request=None, user=None, *, debug_nextcloud_links=False):
     if request is not None and user is None:
         user = request.user
@@ -1236,6 +1259,7 @@ def _proposals_context(request=None, user=None, *, debug_nextcloud_links=False):
         "type",
         "currency",
     ).prefetch_related("product_links__product").all()
+    proposals = _annotate_proposal_number_groups(proposals)
     _attach_proposal_folder_urls(proposals, user=user, request=request, debug_nextcloud_links=debug_nextcloud_links)
     proposal_templates = list(
         ProposalTemplate.objects
@@ -1271,6 +1295,8 @@ def _proposals_context(request=None, user=None, *, debug_nextcloud_links=False):
         ).exists()
     proposal_registry_ui_columns = get_proposal_registry_ui_columns()
     proposal_payment_schedule_ui_columns = get_proposal_payment_schedule_ui_columns()
+    proposal_dispatch_ui_columns = get_proposal_dispatch_ui_columns()
+    proposal_order_ids = [proposal.pk for proposal in proposals]
     return {
         "proposals": proposals,
         "proposal_payment_schedule_rows": _build_proposal_payment_schedule_rows(proposals),
@@ -1278,8 +1304,11 @@ def _proposals_context(request=None, user=None, *, debug_nextcloud_links=False):
         "proposal_variables": proposal_variables,
         "proposal_registry_ui_columns": proposal_registry_ui_columns,
         "proposal_payment_schedule_ui_columns": proposal_payment_schedule_ui_columns,
-        "proposal_registry_empty_colspan": len(proposal_registry_ui_columns) + 2,
+        "proposal_dispatch_ui_columns": proposal_dispatch_ui_columns,
+        "proposal_order_signature": _proposal_order_signature(proposal_order_ids),
+        "proposal_registry_empty_colspan": len(proposal_registry_ui_columns) + 1,
         "proposal_payment_schedule_empty_colspan": len(proposal_payment_schedule_ui_columns) + 1,
+        "proposal_dispatch_empty_colspan": len(proposal_dispatch_ui_columns) + 1,
         "primary_cloud_storage_label": get_primary_cloud_storage_label(),
         "proposal_request_sent_initial": timezone.localtime().replace(second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M"),
         "has_active_smtp_connection": has_active_smtp_connection,
@@ -1807,6 +1836,10 @@ def _normalize_proposal_positions():
             ProposalRegistration.objects.filter(pk=item.pk).update(position=idx)
 
 
+def _proposal_order_signature(proposal_ids):
+    return ":".join(str(proposal_id) for proposal_id in proposal_ids)
+
+
 def _normalize_proposal_template_positions():
     items = ProposalTemplate.objects.order_by("position", "id").only("id", "position")
     for idx, item in enumerate(items, start=1):
@@ -2270,9 +2303,11 @@ def proposal_dispatch_transfer_to_contract(request):
             if was_created:
                 project = ProjectRegistration.objects.create(
                     number=proposal.number,
+                    sub_number=proposal.sub_number,
                     group_member=proposal.group_member,
                     agreement_type=ProjectRegistration.AgreementType.MAIN,
                     agreement_number=agreement_number,
+                    proposal_registration=proposal,
                     position=next_position,
                     group=proposal.group,
                     type=proposal.type,
@@ -2802,6 +2837,50 @@ def proposal_delete(request, pk: int):
     proposal.delete()
     _normalize_proposal_positions()
     return _render_proposals_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def proposal_row_order(request):
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except (TypeError, ValueError, UnicodeDecodeError):
+        return JsonResponse({"ok": False, "error": "Некорректный формат порядка ТКП."}, status=400)
+
+    raw_ids = payload.get("ordered_proposal_ids") or []
+    try:
+        ordered_proposal_ids = [int(value) for value in raw_ids]
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Порядок ТКП содержит некорректные идентификаторы."}, status=400)
+    if len(ordered_proposal_ids) != len(set(ordered_proposal_ids)):
+        return JsonResponse({"ok": False, "error": "Порядок ТКП содержит дубли."}, status=400)
+
+    base_signature = str(payload.get("base_order_signature") or "")
+    with transaction.atomic():
+        current_items = list(
+            ProposalRegistration.objects.select_for_update().order_by("position", "id").only("id", "position")
+        )
+        current_proposal_ids = [item.pk for item in current_items]
+        current_signature = _proposal_order_signature(current_proposal_ids)
+        desired_signature = _proposal_order_signature(ordered_proposal_ids)
+
+        conflict_payload = {
+            "ok": False,
+            "error": "Порядок ТКП был изменен. Таблица будет обновлена.",
+            "current_proposal_ids": current_proposal_ids,
+            "order_signature": current_signature,
+        }
+        if base_signature and base_signature != current_signature:
+            if ordered_proposal_ids == current_proposal_ids:
+                return JsonResponse({"ok": True, "order_signature": current_signature})
+            return JsonResponse(conflict_payload, status=409)
+        if set(ordered_proposal_ids) != set(current_proposal_ids):
+            return JsonResponse(conflict_payload, status=409)
+
+        for idx, proposal_id in enumerate(ordered_proposal_ids, start=1):
+            ProposalRegistration.objects.filter(pk=proposal_id).update(position=idx)
+    return JsonResponse({"ok": True, "order_signature": desired_signature})
 
 
 @login_required

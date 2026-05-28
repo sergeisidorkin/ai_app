@@ -77,7 +77,10 @@
 
   function pane() { return document.getElementById('performers-pane'); }
   function updatePaymentRequestScrollGaps() {
-    qa('.payment-request-section .info-request-table-wrap', document).forEach(function(wrap) {
+    qa(
+      '#participation-confirmation-section .participation-table-wrap, .payment-request-section .info-request-table-wrap, #info-request-approval-section .info-request-table-wrap',
+      document
+    ).forEach(function(wrap) {
       wrap.classList.toggle('has-horizontal-scroll', wrap.scrollWidth > wrap.clientWidth + 1);
     });
   }
@@ -3528,7 +3531,7 @@
   window.addEventListener('resize', schedulePaymentRequestScrollGapsUpdate);
   window.addEventListener('load', schedulePaymentRequestScrollGapsUpdate);
   window.addEventListener('projects:section-shown', function(e) {
-    if (e.detail && e.detail.section === 'performer-payments') {
+    if (e.detail && (e.detail.section === 'team' || e.detail.section === 'performer-payments' || e.detail.section === 'info-request')) {
       schedulePaymentRequestScrollGapsUpdate();
     }
   });

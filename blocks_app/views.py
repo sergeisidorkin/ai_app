@@ -162,9 +162,15 @@ def _latinize(s: str) -> str:
     return "".join(m.get(ch, ch) for ch in s)
 
 
-PROJECT_UID_FULL_RE = re.compile(r"\b(\d{6}[A-Z]{2})\b")
-PROJECT_UID_SPLIT_RE = re.compile(r"\b(\d{4})\s*[-_. ]?\s*(\d)\s*[-_. ]?\s*(\d)\s*[-_. ]?\s*([A-Z]{2})\b")
-PROJECT_UID_CLEAN_RE = re.compile(r"\d{6}[A-Z]{2}")
+PROJECT_UID_VALID_RE = re.compile(r"(?:\d{8}|\d{6})[A-Z]{2}")
+PROJECT_UID_FULL_RE = re.compile(r"\b(\d{8}[A-Z]{2}|\d{6}[A-Z]{2})\b")
+PROJECT_UID_SPLIT_RE = re.compile(
+    r"\b(\d{4})\s*[-_. ]?\s*(\d{2})\s*[-_. ]?\s*(\d)\s*[-_. ]?\s*(\d)\s*[-_. ]?\s*([A-Z]{2})\b"
+)
+PROJECT_UID_LEGACY_SPLIT_RE = re.compile(
+    r"\b(\d{4})\s*[-_. ]?\s*(\d)\s*[-_. ]?\s*(\d)\s*[-_. ]?\s*([A-Z]{2})\b"
+)
+PROJECT_UID_CLEAN_RE = re.compile(r"\d{8}[A-Z]{2}|\d{6}[A-Z]{2}")
 
 
 def _normalize_project_uid(raw: str) -> str:
@@ -176,6 +182,9 @@ def _normalize_project_uid(raw: str) -> str:
         return match.group(1)
     match = re.search(PROJECT_UID_SPLIT_RE, normalized)
     if match:
+        return f"{match.group(1)}{match.group(2)}{match.group(3)}{match.group(4)}{match.group(5)}"
+    match = re.search(PROJECT_UID_LEGACY_SPLIT_RE, normalized)
+    if match:
         return f"{match.group(1)}{match.group(2)}{match.group(3)}{match.group(4)}"
     cleaned = re.sub(r"[^0-9A-Z]+", "", normalized)
     match = re.search(PROJECT_UID_CLEAN_RE, cleaned)
@@ -183,8 +192,9 @@ def _normalize_project_uid(raw: str) -> str:
 
 def _extract_project_uid(raw: str) -> str:
     """
-    Извлекает project_uid вида 444410RU из произвольной строки.
-    Поддерживает варианты с разделителями (4444-1-0-RU, 4444 1 0 RU, 4444_10RU),
+    Извлекает project_uid вида 44440010RU из произвольной строки.
+    Поддерживает варианты с разделителями (4444-00-1-0-RU, 4444 00 1 0 RU),
+    а также старый формат (4444-1-0-RU, 444410RU),
     а также кириллицу в буквенной части (КЗ -> KZ).
     Возвращает нормализованный UID либо ''.
     """
@@ -278,6 +288,8 @@ def _extract_project_uid_from_request(request) -> tuple[str, dict]:
     uid = (request.POST.get("project_uid")
            or request.GET.get("project_uid")
            or "").strip().upper()
+    if uid:
+        uid = _normalize_project_uid(uid) or uid
     proj_id = (request.POST.get("project_id")
                or request.GET.get("project_id")
                or "").strip()
@@ -787,7 +799,7 @@ def _find_project_folder_in_gdrive(request, base_folder_id: str, res_key: str, p
         raise ValueError("Выбран файл или пустая папка Google Drive. Выберите папку с проектами в «Подключения».")
     uid = _extract_project_uid(project_uid)
     if not uid:
-        raise ValueError("Не удалось определить номер проекта (формат 444410RU/555510KZ).")
+        raise ValueError("Не удалось определить номер проекта (формат 44440010RU/55550010KZ).")
 
     matched = []
     for ch in children:
@@ -1048,8 +1060,9 @@ def block_run(request, pk):
     if not project_uid:
         # Фолбэк из сессии (если когда-то уже запускали)
         sess_uid = (request.session.get("last_project_uid") or "").strip().upper()
-        if re.fullmatch(r"\d{5}[A-Z]{2}", sess_uid or ""):
-            project_uid = sess_uid
+        normalized_sess_uid = _normalize_project_uid(sess_uid)
+        if normalized_sess_uid:
+            project_uid = normalized_sess_uid
             logger.warning("PROJECT UID FALLBACK from session", {
                 "project_uid": project_uid,
                 "label": request.session.get("last_project_label") or "",
@@ -1119,9 +1132,11 @@ def block_run(request, pk):
         return _redirect_after(request, default_tab="debugger")
 
     # 6) Валидация кода проекта
-    if not project_uid or not re.fullmatch(r"\d{6}[A-Z]{2}", project_uid):
+    if project_uid:
+        project_uid = _normalize_project_uid(project_uid) or project_uid
+    if not project_uid or not PROJECT_UID_VALID_RE.fullmatch(project_uid):
         logger.warning("PROJECT UID MISSING/INVALID in block_run: %s", dbg)
-        messages.error(request, "Не удалось определить project_uid (формат 444410RU/123450KZ).")
+        messages.error(request, "Не удалось определить project_uid (формат 44440010RU/12340050KZ).")
         return _redirect_after(request, default_tab="debugger")
 
     # 7) Папка проекта в GDrive

@@ -216,31 +216,65 @@
     return null;
   }
 
-  function submitWorktimeGetForm(form) {
+  function showWorktimeProgressCursor() {
+    document.documentElement.classList.add('worktime-progress-cursor');
+  }
+
+  function hideWorktimeProgressCursor() {
+    document.documentElement.classList.remove('worktime-progress-cursor');
+  }
+
+  function isWorktimeHtmxTarget(target) {
+    return !!(
+      target &&
+      target.matches &&
+      (
+        target.matches('[data-worktime-panel]') ||
+        target.closest('[data-worktime-panel]') ||
+        target.querySelector('[data-worktime-panel]')
+      )
+    );
+  }
+
+  function submitWorktimeGetForm(form, options) {
     if (!form) return;
+    var showProgressCursor = !!(options && options.showProgressCursor);
+    if (showProgressCursor) {
+      showWorktimeProgressCursor();
+    }
     flushVisibleWorktimePendingState().finally(function () {
-      if (form.matches && form.matches('[data-worktime-period-form]')) {
-        persistWorktimeGeneralPreferences(form);
+      try {
+        if (form.matches && form.matches('[data-worktime-period-form]')) {
+          persistWorktimeGeneralPreferences(form);
+        }
+        var target = form.closest('[data-worktime-panel]');
+        if (window.htmx && target) {
+          var url = form.getAttribute('hx-get') || form.getAttribute('action') || window.location.pathname;
+          var params = new URLSearchParams(new FormData(form)).toString();
+          var requestUrl = params ? (url + (url.indexOf('?') === -1 ? '?' : '&') + params) : url;
+          target.setAttribute('hx-get', requestUrl);
+          var request = window.htmx.ajax('GET', requestUrl, {
+            target: target,
+            swap: form.getAttribute('hx-swap') || 'innerHTML'
+          });
+          if (showProgressCursor && request && typeof request.finally === 'function') {
+            request.finally(hideWorktimeProgressCursor);
+          }
+          return;
+        }
+        if (typeof form.requestSubmit === 'function') {
+          form.requestSubmit();
+          return;
+        }
+        var submitEvent = new Event('submit', { bubbles: true, cancelable: true });
+        if (!form.dispatchEvent(submitEvent)) return;
+        form.submit();
+      } catch (error) {
+        if (showProgressCursor) {
+          hideWorktimeProgressCursor();
+        }
+        throw error;
       }
-      var target = form.closest('[data-worktime-panel]');
-      if (window.htmx && target) {
-        var url = form.getAttribute('hx-get') || form.getAttribute('action') || window.location.pathname;
-        var params = new URLSearchParams(new FormData(form)).toString();
-        var requestUrl = params ? (url + (url.indexOf('?') === -1 ? '?' : '&') + params) : url;
-        target.setAttribute('hx-get', requestUrl);
-        window.htmx.ajax('GET', requestUrl, {
-          target: target,
-          swap: form.getAttribute('hx-swap') || 'innerHTML'
-        });
-        return;
-      }
-      if (typeof form.requestSubmit === 'function') {
-        form.requestSubmit();
-        return;
-      }
-      var submitEvent = new Event('submit', { bubbles: true, cancelable: true });
-      if (!form.dispatchEvent(submitEvent)) return;
-      form.submit();
     });
   }
 
@@ -822,7 +856,7 @@
           }
           syncWorktimePeriodPicker(form);
           hideWorktimePeriodPanel(form);
-          submitWorktimeGetForm(form);
+          submitWorktimeGetForm(form, { showProgressCursor: true });
         });
       });
 
@@ -833,7 +867,7 @@
           breakdownInput.value = this.value === 'activities' ? 'activities' : 'employees';
           syncWorktimeBreakdownFilter(form);
           hideWorktimePeriodPanel(form);
-          submitWorktimeGetForm(form);
+          submitWorktimeGetForm(form, { showProgressCursor: true });
         });
       });
 
@@ -859,7 +893,7 @@
         periodInput.value = anchorYear + '-' + pad2(parseInt(monthBtn.dataset.worktimePeriodMonth, 10));
         syncWorktimePeriodPicker(form);
         hideWorktimePeriodPanel(form);
-        submitWorktimeGetForm(form);
+        submitWorktimeGetForm(form, { showProgressCursor: true });
       });
 
       yearGrid.addEventListener('click', function (event) {
@@ -870,7 +904,7 @@
         form.dataset.worktimePeriodAnchorYear = yearBtn.dataset.worktimePeriodYear;
         syncWorktimePeriodPicker(form);
         hideWorktimePeriodPanel(form);
-        submitWorktimeGetForm(form);
+        submitWorktimeGetForm(form, { showProgressCursor: true });
       });
     });
 
@@ -1039,7 +1073,21 @@
 
   document.body.addEventListener('htmx:afterSwap', function (e) {
     if (!e.target) return;
+    if (isWorktimeHtmxTarget(e.target)) {
+      hideWorktimeProgressCursor();
+    }
     initWeekFilters(e.target);
     initPeriodFilters(e.target);
+  });
+
+  document.body.addEventListener('htmx:sendError', function (event) {
+    if (isWorktimeHtmxTarget(event.detail && event.detail.target)) {
+      hideWorktimeProgressCursor();
+    }
+  });
+  document.body.addEventListener('htmx:responseError', function (event) {
+    if (isWorktimeHtmxTarget(event.detail && event.detail.target)) {
+      hideWorktimeProgressCursor();
+    }
   });
 })();

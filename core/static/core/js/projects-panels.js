@@ -130,7 +130,10 @@
   function updateProjectScheduleScrollGaps() {
     const root = pane();
     if (!root) return;
-    qa('.project-schedule-scroll-wrap', root).forEach((wrap) => {
+    qa(
+      '#projects-content-launch .registration-table-wrap, .project-schedule-scroll-wrap, .work-table-wrap, .legal-table-wrap',
+      root
+    ).forEach((wrap) => {
       wrap.classList.toggle('has-horizontal-scroll', wrap.scrollWidth > wrap.clientWidth + 1);
     });
   }
@@ -143,7 +146,16 @@
     if (!root || root.dataset.projectScheduleScrollGapsBound === '1') return;
     root.dataset.projectScheduleScrollGapsBound = '1';
     root.addEventListener('project-schedule-filter-changed', scheduleProjectScheduleScrollGapsUpdate);
+    root.addEventListener('work-filter-changed', scheduleProjectScheduleScrollGapsUpdate);
+    root.addEventListener('legal-filter-changed', scheduleProjectScheduleScrollGapsUpdate);
+    root.addEventListener('reg-filter-changed', scheduleProjectScheduleScrollGapsUpdate);
   }
+
+  window.addEventListener('projects:section-shown', function(e) {
+    if (e.detail && (e.detail.section === 'launch' || e.detail.section === 'scope')) {
+      scheduleProjectScheduleScrollGapsUpdate();
+    }
+  });
 
   function prepareProjectScheduleWrap(wrap, selectedIds) {
     const projectId = getProjectScheduleFilterValue();
@@ -234,6 +246,7 @@
     table.querySelectorAll('col[data-col]').forEach((col) => {
       col.style.display = hidden.includes(col.getAttribute('data-col')) ? 'none' : '';
     });
+    scheduleProjectScheduleScrollGapsUpdate();
   }
 
   function initProjectRegistryColPicker() {

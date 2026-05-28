@@ -35,7 +35,7 @@ def _product_short_label(product) -> str:
 
 def _format_project_label(reg: ProjectRegistration) -> str:
     """
-    Отображение проекта: "444410RU DD Название".
+    Отображение проекта: "44440010RU DD Название".
     Приоритет: short_uid → number+group_alpha2. Остальные поля через пробел.
     """
     def s(v):

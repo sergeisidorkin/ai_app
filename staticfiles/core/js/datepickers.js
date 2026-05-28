@@ -47,11 +47,13 @@
     initDatepickers(document);
   });
 
+  window.initDatepickers = initDatepickers;
+
   // после подгрузки формы HTMX в модалку
   document.body.addEventListener('htmx:afterSwap', function (e) {
     if (!e.target) return;
     // Если прилетело содержимое модалки или панель проектов — инициализируем в её пределах
-    if (e.target.closest && (e.target.closest('#projects-modal') || e.target.closest('#classifiers-modal') || e.target.closest('#contacts-modal') || e.target.id === 'projects-pane')) {
+    if (e.target.closest && (e.target.closest('#projects-modal') || e.target.closest('#contracts-modal') || e.target.closest('#classifiers-modal') || e.target.closest('#contacts-modal') || e.target.id === 'projects-pane')) {
       initDatepickers(e.target);
     }
   });

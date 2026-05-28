@@ -1,0 +1,53 @@
+<label class="form-label">Тип</label>
+<script type="application/json" id="registration-type-meta">{{ registration_type_meta_json|safe }}</script>
+<div class="registration-type-block">
+  <div class="registration-type-card">
+    <div class="registration-type-head">
+      <span aria-hidden="true"></span>
+      <div class="row g-2 registration-type-head-labels">
+        <div class="col-12 col-xl-3">Вид консалтинга</div>
+        <div class="col-12 col-xl-3">Тип услуги</div>
+        <div class="col-12 col-xl-3">Подтип услуги</div>
+        <div class="col-12 col-xl-3">Продукт</div>
+      </div>
+      <span aria-hidden="true"></span>
+    </div>
+    <div id="registration-products-container" class="registration-products-container">
+      {% for rp in ranked_products %}
+        <div class="registration-product-row"
+             data-selected-product-id="{{ rp.product_id|default:'' }}"
+             data-selected-consulting-type="{{ rp.consulting_type|default:'' }}"
+             data-selected-service-category="{{ rp.service_category|default:'' }}"
+             data-selected-service-subtype="{{ rp.service_subtype|default:'' }}">
+          <div class="registration-product-row-inner">
+            <span class="badge rounded-circle d-flex align-items-center justify-content-center registration-product-badge">{{ rp.rank }}</span>
+            <div class="row g-2 flex-grow-1 registration-product-fields">
+              <div class="col-12 col-xl-3">
+                <select name="type_consulting" class="form-select registration-consulting-select"></select>
+              </div>
+              <div class="col-12 col-xl-3">
+                <select name="type_service_category" class="form-select registration-service-category-select"></select>
+              </div>
+              <div class="col-12 col-xl-3">
+                <select name="type_service_subtype" class="form-select registration-service-subtype-select"></select>
+              </div>
+              <div class="col-12 col-xl-3">
+                <div class="registration-product-select-shell">
+                  <select name="type_id" class="form-select registration-product-select"></select>
+                  <div class="registration-product-display" aria-hidden="true"></div>
+                </div>
+              </div>
+            </div>
+            <button type="button" class="btn btn-sm registration-product-remove" title="Удалить" aria-label="Удалить строку типа">&times;</button>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% if allow_multiple_products %}
+    <button type="button" id="registration-add-product" class="btn"
+            style="margin-top:.75rem; border:1px solid #ced4da; background-color:#fff; color:#495057; font-size:1rem; padding:.375rem .75rem;">
+      <i class="bi bi-plus-circle me-2"></i>Добавить продукт
+    </button>
+  {% endif %}
+</div>

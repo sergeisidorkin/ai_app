@@ -6,6 +6,16 @@ urlpatterns = [
     path("execution/partial/", views.contracts_execution_partial, name="contracts_execution_partial"),
     path("development/partial/", views.contracts_development_partial, name="contracts_development_partial"),
     path(
+        "development/projects/row-order/",
+        views.contracts_project_registration_row_order,
+        name="contracts_project_registration_row_order",
+    ),
+    path(
+        "development/projects/prefill-from-proposal/<int:proposal_pk>/",
+        views.contracts_project_registration_prefill_from_proposal,
+        name="contracts_project_registration_prefill_from_proposal",
+    ),
+    path(
         "development/projects/create/",
         views.contracts_project_registration_create,
         name="contracts_project_registration_create",
@@ -14,6 +24,11 @@ urlpatterns = [
         "development/projects/<int:pk>/edit/",
         views.contracts_project_registration_edit,
         name="contracts_project_registration_edit",
+    ),
+    path(
+        "development/projects/<int:pk>/status/",
+        views.contracts_project_registration_status_update,
+        name="contracts_project_registration_status_update",
     ),
     path(
         "development/projects/<int:pk>/delete/",

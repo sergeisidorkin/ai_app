@@ -21,7 +21,7 @@ from checklists_app.models import ChecklistItem, ChecklistStatus, SourceDataItem
 from classifiers_app.models import BusinessEntityIdentifierRecord, BusinessEntityRecord, LegalEntityRecord, OKSMCountry
 from contacts_app.models import CitizenshipRecord, PersonRecord
 from core.models import CloudStorageSettings
-from contracts_app.models import ContractTemplate
+from contracts_app.models import ContractProjectRegistration, ContractTemplate
 from nextcloud_app.models import NextcloudUserLink
 from notifications_app.models import Notification, NotificationPerformerLink
 from policy_app.models import (
@@ -37,6 +37,7 @@ from policy_app.models import (
 from experts_app.models import ExpertContractDetails, ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
 from projects_app.models import (
     LegalEntity,
+    PaymentRequestPerformer,
     Performer,
     ProjectRegistration,
     ProjectRegistrationProduct,
@@ -425,7 +426,7 @@ class ProjectRegistrationFormTests(TestCase):
             status="Не начат",
         )
 
-        self.assertEqual(registration.short_uid, "000100RU")
+        self.assertEqual(registration.short_uid, "00010000RU")
         self.assertTrue(registration.display_identifier.startswith("0001 "))
 
     def test_project_short_uid_stage_digit_uses_product_row_sequence(self):
@@ -451,8 +452,8 @@ class ProjectRegistrationFormTests(TestCase):
         first.refresh_from_db()
         second.refresh_from_db()
 
-        self.assertEqual(first.short_uid, "005510RU")
-        self.assertEqual(second.short_uid, "005520RU")
+        self.assertEqual(first.short_uid, "00550010RU")
+        self.assertEqual(second.short_uid, "00550020RU")
         self.assertEqual(first.agreement_sequence, 1)
         self.assertEqual(second.agreement_sequence, 2)
 
@@ -822,6 +823,51 @@ class ProjectRegistrationFormViewTests(TestCase):
         self.assertContains(response, "registration-stage-next-delay-days", html=False)
         self.assertNotContains(response, "Дата Предварительного отчёта, оконч. расчет")
 
+    def test_registration_form_renders_contract_id_field(self):
+        contract_project = ContractProjectRegistration.objects.create(
+            number=8101,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name="Договор для выбора",
+            year=2026,
+        )
+
+        response = self.client.get(reverse("registration_form_create"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Договор ID")
+        self.assertContains(response, 'name="contract_project_registration"', html=False)
+        self.assertContains(response, contract_project.short_uid)
+
+    def test_projects_registry_shows_contract_id_column(self):
+        contract_project = ContractProjectRegistration.objects.create(
+            number=8102,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name="Договор в реестре",
+            year=2026,
+        )
+        registration = ProjectRegistration.objects.create(
+            number=8103,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Проект с договором",
+            status="Не начат",
+            year=2026,
+            contract_project_registration=contract_project,
+        )
+
+        response = self.client.get(reverse("projects_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-col="contract-id"', html=False)
+        self.assertContains(response, contract_project.short_uid)
+        self.assertContains(response, registration.short_uid)
+        self.assertEqual(registration.short_uid, "81030100RU")
+
     def test_registration_form_product_meta_includes_typical_terms(self):
         TypicalServiceTerm.objects.create(
             product=self.product,
@@ -910,9 +956,131 @@ class ProjectRegistrationFormViewTests(TestCase):
         self.assertContains(response, 'class="registration-number-continuation"', html=False)
         self.assertContains(response, 'data-reg-group-number="6211"', html=False)
         self.assertContains(response, 'data-reg-group-cell="number"', html=False)
+        self.assertContains(response, 'querySelector(\'[data-reg-group-cell="agreement-type"]\')', html=False)
         self.assertContains(response, "__refreshRegistrationVisibleGroups", html=False)
         self.assertContains(response, first.short_uid)
         self.assertContains(response, second.short_uid)
+
+    def test_projects_registry_keeps_grouped_labels_hidden_for_same_contract_id(self):
+        contract_project = ContractProjectRegistration.objects.create(
+            number=6212,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name="Общий договор",
+            year=2026,
+        )
+        ProjectRegistration.objects.create(
+            number=6212,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Первый продукт",
+            status="Не начат",
+            year=2026,
+            position=1,
+            contract_project_registration=contract_project,
+        )
+        ProjectRegistration.objects.create(
+            number=6212,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.extra_product,
+            name="Второй продукт",
+            status="Не начат",
+            year=2026,
+            position=2,
+            contract_project_registration=contract_project,
+        )
+
+        response = self.client.get(reverse("projects_partial"))
+        content = response.content.decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('class="registration-number-has-next"', content)
+        self.assertNotIn('class="registration-number-has-next registration-number-contract-has-next"', content)
+        self.assertEqual(
+            content.count(
+                f'<td class="contract-id-cell" data-col="contract-id" data-reg-group-cell="contract-id"><span class="clf-id-droid-mono">{contract_project.short_uid}</span></td>'
+            ),
+            1,
+        )
+        self.assertEqual(
+            content.count('<td data-col="agreement-type" data-reg-group-cell="agreement-type">Основной договор</td>'),
+            1,
+        )
+        self.assertEqual(
+            content.count('<td data-col="group" data-reg-group-cell="group">RU</td>'),
+            1,
+        )
+
+    def test_projects_registry_shows_grouped_labels_for_different_contract_ids(self):
+        first_contract = ContractProjectRegistration.objects.create(
+            number=6213,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name="Первый договор",
+            year=2026,
+        )
+        second_contract = ContractProjectRegistration.objects.create(
+            number=6213,
+            sub_number=2,
+            group_member=self.group_member,
+            type=self.extra_product,
+            name="Второй договор",
+            year=2026,
+        )
+        ProjectRegistration.objects.create(
+            number=6213,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Первый продукт",
+            status="Не начат",
+            year=2026,
+            position=1,
+            contract_project_registration=first_contract,
+        )
+        ProjectRegistration.objects.create(
+            number=6213,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.extra_product,
+            name="Второй продукт",
+            status="Не начат",
+            year=2026,
+            position=2,
+            contract_project_registration=second_contract,
+        )
+
+        response = self.client.get(reverse("projects_partial"))
+        content = response.content.decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('class="registration-number-has-next registration-number-contract-has-next"', content)
+        self.assertContains(response, f'data-reg-group-contract-id="{first_contract.pk}"', html=False)
+        self.assertContains(response, f'data-reg-group-contract-id="{second_contract.pk}"', html=False)
+        self.assertEqual(
+            content.count(
+                f'<td class="contract-id-cell" data-col="contract-id" data-reg-group-cell="contract-id"><span class="clf-id-droid-mono">{first_contract.short_uid}</span></td>'
+            ),
+            1,
+        )
+        self.assertEqual(
+            content.count(
+                f'<td class="contract-id-cell" data-col="contract-id" data-reg-group-cell="contract-id"><span class="clf-id-droid-mono">{second_contract.short_uid}</span></td>'
+            ),
+            1,
+        )
+        self.assertEqual(
+            content.count('<td data-col="agreement-type" data-reg-group-cell="agreement-type">Основной договор</td>'),
+            2,
+        )
+        self.assertEqual(
+            content.count('<td data-col="group" data-reg-group-cell="group">RU</td>'),
+            2,
+        )
 
     def test_projects_registry_customer_details_are_hidden_by_default_in_colpicker(self):
         response = self.client.get(reverse("projects_partial"))
@@ -2310,8 +2478,8 @@ class ProjectRegistrationRegistrySyncTests(TestCase):
         self.assertNotEqual(duplicates[0].short_uid, duplicates[1].short_uid)
         first.refresh_from_db()
         self.assertEqual(first.short_uid, duplicates[0].short_uid)
-        self.assertEqual(duplicates[0].short_uid, "444410RU")
-        self.assertEqual(duplicates[1].short_uid, "444420RU")
+        self.assertEqual(duplicates[0].short_uid, "44440010RU")
+        self.assertEqual(duplicates[1].short_uid, "44440020RU")
         self.assertEqual(
             list(duplicates[1].product_links.order_by("rank").values_list("product_id", flat=True)),
             [self.product.pk],
@@ -2356,7 +2524,7 @@ class ProjectRegistrationRegistrySyncTests(TestCase):
         projects = list(ProjectRegistration.objects.filter(number=4444).order_by("position", "id"))
         self.assertEqual(len(projects), 2)
         self.assertEqual([project.type_short_display for project in projects], ["DD", self.second_product.short_name])
-        self.assertEqual([project.short_uid for project in projects], ["444410RU", "444420RU"])
+        self.assertEqual([project.short_uid for project in projects], ["44440010RU", "44440020RU"])
         self.assertEqual(
             list(projects[0].product_links.order_by("rank").values_list("product_id", flat=True)),
             [self.product.pk],
@@ -2788,6 +2956,43 @@ class WorkVolumePerformerCreationTests(TestCase):
         self.assertIn('data-advance-paid="0"', section)
         self.assertIn('data-final-paid="0"', section)
 
+    def test_payment_request_admin_filters_to_contract_rows(self):
+        from django.contrib import admin as django_admin
+
+        contract_batch_id = uuid.uuid4()
+        contracted = Performer.objects.create(
+            registration=self.project,
+            employee=self.project_manager_employee,
+            executor=self.project_manager_name,
+            contract_batch_id=contract_batch_id,
+            contract_number="AGR-ADMIN",
+            contract_signing_note="Договор заключен",
+            agreed_amount=Decimal("1000.00"),
+        )
+        contracted_sibling = Performer.objects.create(
+            registration=self.project,
+            employee=self.project_manager_employee,
+            executor=self.project_manager_name,
+            contract_batch_id=contract_batch_id,
+            contract_number="AGR-ADMIN",
+            contract_signing_note="Договор заключен",
+            agreed_amount=Decimal("2000.00"),
+        )
+        draft_only = Performer.objects.create(
+            registration=self.project,
+            employee=self.first_manager_employee,
+            executor=self.first_manager_name,
+        )
+
+        admin_instance = django_admin.site._registry[PaymentRequestPerformer]
+        queryset = admin_instance.get_queryset(None)
+        queryset_ids = set(queryset.values_list("pk", flat=True))
+
+        self.assertIn(contracted.pk, queryset_ids)
+        self.assertIn(contracted_sibling.pk, queryset_ids)
+        self.assertNotIn(draft_only.pk, queryset_ids)
+        self.assertEqual(admin_instance.contract_total_price(contracted), Decimal("3000.00"))
+
     def test_payment_paid_toggle_updates_performer_flags(self):
         performer = Performer.objects.create(
             registration=self.project,
@@ -3081,6 +3286,13 @@ class WorkVolumePerformerCreationTests(TestCase):
         self.assertIsNotNone(same_executor.advance_payment_request_sent_at)
         self.assertIsNone(other_executor.advance_payment_request_sent_at)
         self.assertIsNone(other_executor.advance_payment_request_number)
+        notification = Notification.objects.get(
+            notification_type=Notification.NotificationType.PROJECT_PAYMENT_REQUEST,
+        )
+        payment_request_text = notification.payload["payment_request"]
+        self.assertIn("Цена договора: 3 000,00 RUB", payment_request_text)
+        self.assertIn("Оплатить: 1 500,00 RUB (50% аванс)", payment_request_text)
+        self.assertNotIn("Цена договора: 1 000,00 RUB", payment_request_text)
 
     def test_payment_request_mixed_stages_in_one_batch(self):
         from classifiers_app.models import OKVCurrency

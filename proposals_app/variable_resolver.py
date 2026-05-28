@@ -21,6 +21,10 @@ def _proposal_number(proposal) -> str:
     return str(proposal.number or "")
 
 
+def _proposal_sub_number(proposal) -> str:
+    return str(proposal.sub_number or 0)
+
+
 def _proposal_group(proposal) -> str:
     return proposal.group_display or ""
 
@@ -1575,6 +1579,7 @@ def _computed_month(_proposal) -> str:
 
 FIELD_MAP = {
     ("proposals", "registry", "number"): _proposal_number,
+    ("proposals", "registry", "sub_number"): _proposal_sub_number,
     ("proposals", "registry", "group"): _proposal_group,
     ("proposals", "registry", "tkp_id"): _proposal_tkp_id,
     ("proposals", "registry", "type"): _proposal_type,

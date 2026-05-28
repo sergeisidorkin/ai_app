@@ -89,12 +89,17 @@
     let projectUid = (opt?.dataset?.projectUid || '').toUpperCase();
     if (!projectUid) {
         const U = label.toUpperCase();
-        let m = U.match(/\b(\d{5}[A-Z]{2})\b/);
+        let m = U.match(/\b(\d{8}[A-Z]{2}|\d{6}[A-Z]{2})\b/);
         if (m) {
           projectUid = m[1];
         } else {
-          m = U.match(/\b(\d{4})\s*[-_. ]?\s*(\d)\s*[-_. ]?\s*([A-Z]{2})\b/);
-          if (m) projectUid = `${m[1]}${m[2]}${m[3]}`;
+          m = U.match(/\b(\d{4})\s*[-_. ]?\s*(\d{2})\s*[-_. ]?\s*(\d)\s*[-_. ]?\s*(\d)\s*[-_. ]?\s*([A-Z]{2})\b/);
+          if (m) {
+            projectUid = `${m[1]}${m[2]}${m[3]}${m[4]}${m[5]}`;
+          } else {
+            m = U.match(/\b(\d{4})\s*[-_. ]?\s*(\d)\s*[-_. ]?\s*(\d)\s*[-_. ]?\s*([A-Z]{2})\b/);
+            if (m) projectUid = `${m[1]}${m[2]}${m[3]}${m[4]}`;
+          }
         }
     }
 

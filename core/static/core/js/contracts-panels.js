@@ -290,8 +290,196 @@
   window.__contractsDraftsBound = true;
   window.__contractsDraftSel = window.__contractsDraftSel || [];
 
+  var CONTRACTS_DRAFTS_COLPICKER = {
+    prefKey: 'contracts:draftsHiddenCols:v6',
+    wrapId: 'contracts-drafts-colpicker-wrap',
+    btnId: 'contracts-drafts-colpicker-btn',
+    menuId: 'contracts-drafts-colpicker-menu',
+    allId: 'contracts-drafts-col-all',
+    tableId: 'contracts-drafts-table',
+    hidden: null,
+  };
+
+  var CONTRACTS_PAYMENT_COLPICKER = {
+    prefKey: 'contracts:paymentScheduleHiddenCols:v2',
+    wrapId: 'contracts-payment-colpicker-wrap',
+    btnId: 'contracts-payment-colpicker-btn',
+    menuId: 'contracts-payment-colpicker-menu',
+    allId: 'contracts-payment-col-all',
+    tableId: 'contracts-payment-schedule-table',
+    hidden: null,
+  };
+
+  var CONTRACTS_DRAFTS_COL_WEIGHTS = {
+    'contract-number': 10,
+    'type': 6,
+    'name': 20,
+    'status': 10,
+    'year': 5,
+    'customer': 20,
+    'country': 5,
+    'identifier': 4,
+    'registration-number': 7,
+    'region': 7,
+    'date': 5,
+    'asset-owner': 20,
+    'asset-owner-country': 5,
+    'asset-owner-identifier': 4,
+    'asset-owner-reg-number': 7,
+    'asset-owner-region': 7,
+    'asset-owner-date': 5,
+  };
+
+  var CONTRACTS_PAYMENT_COL_WEIGHTS = {
+    'contract-number': 10,
+    'type': 6,
+    'name': 20,
+    'stage': 7,
+    'evaluation-date': 8,
+    'start-date': 8,
+    'term': 8,
+    'preliminary-report-date': 8,
+    'final-report-weeks': 8,
+    'final-report-date': 8,
+    'advance-percent': 7,
+    'advance-term': 7,
+    'preliminary-report-percent': 7,
+    'preliminary-report-term': 7,
+    'final-report-percent': 7,
+    'final-report-term': 7,
+  };
+
+  var CONTRACTS_FIXED_COL_WIDTHS = {
+    'number': '70px',
+    'tkp-id': '90px',
+    'agreement-type': '155px',
+    'sub-number': '40px',
+    'group': '70px',
+    'project-id': '125px',
+  };
+
   function pane() { return document.getElementById('contracts-drafts-pane'); }
   var qa = function(sel, root) { return Array.from((root || document).querySelectorAll(sel)); };
+
+  function getDefaultHiddenColumns(cfg) {
+    var menu = document.getElementById(cfg.menuId);
+    var hidden = {};
+    if (!menu) return hidden;
+    menu.querySelectorAll('input.form-check-input[data-default-hidden="true"]:not([value="all"])').forEach(function(cb) {
+      hidden[cb.value] = true;
+    });
+    return hidden;
+  }
+
+  function getHiddenColumns(cfg) {
+    if (!cfg.hidden) {
+      var saved = window.UIPref ? UIPref.get(cfg.prefKey, null) : null;
+      cfg.hidden = saved && typeof saved === 'object' && !Array.isArray(saved)
+        ? saved
+        : getDefaultHiddenColumns(cfg);
+    }
+    return cfg.hidden || {};
+  }
+
+  function saveHiddenColumns(cfg) {
+    if (window.UIPref) UIPref.set(cfg.prefKey, getHiddenColumns(cfg));
+  }
+
+  function updateColPickerLabel(btn, menu) {
+    var cbs = qa('input.form-check-input:not([value="all"])', menu);
+    var checked = cbs.filter(function(cb) { return cb.checked; }).length;
+    btn.textContent = checked === cbs.length ? 'Все поля' : checked + ' из ' + cbs.length;
+  }
+
+  function applyColumnVisibility(cfg, weights) {
+    var table = document.getElementById(cfg.tableId);
+    if (!table) return;
+    var hidden = Object.keys(getHiddenColumns(cfg));
+    table.querySelectorAll('[data-col]').forEach(function(cell) {
+      cell.style.display = hidden.includes(cell.getAttribute('data-col')) ? 'none' : '';
+    });
+
+    var visibleWeightedCols = [];
+    table.querySelectorAll('col[data-col]').forEach(function(col) {
+      var dataCol = col.getAttribute('data-col');
+      var isHidden = hidden.includes(dataCol);
+      col.style.display = isHidden ? 'none' : '';
+      var fixedWidth = CONTRACTS_FIXED_COL_WIDTHS[dataCol];
+      if (fixedWidth) {
+        col.style.setProperty('width', fixedWidth, 'important');
+        col.style.setProperty('min-width', fixedWidth, 'important');
+        col.style.setProperty('max-width', fixedWidth, 'important');
+        return;
+      }
+      if (!isHidden) visibleWeightedCols.push(col);
+    });
+
+    var totalWeight = visibleWeightedCols.reduce(function(sum, col) {
+      return sum + (weights[col.getAttribute('data-col')] || 5);
+    }, 0) || 1;
+
+    visibleWeightedCols.forEach(function(col) {
+      var weight = weights[col.getAttribute('data-col')] || 5;
+      col.style.setProperty('width', (weight / totalWeight * 100).toFixed(4) + '%', 'important');
+    });
+  }
+
+  function initColPicker(cfg, weights) {
+    var wrap = document.getElementById(cfg.wrapId);
+    var btn = document.getElementById(cfg.btnId);
+    var menu = document.getElementById(cfg.menuId);
+    if (!wrap || !btn || !menu) return;
+
+    cfg.hidden = null;
+
+    btn.onclick = function(event) {
+      event.stopPropagation();
+      var shouldShow = !menu.classList.contains('show');
+      menu.classList.toggle('show', shouldShow);
+      menu.style.maxHeight = '';
+      var header = wrap.closest('.table-section-header');
+      if (header) header.classList.toggle('tkp-colpicker-open', shouldShow);
+    };
+
+    var cbs = qa('input.form-check-input:not([value="all"])', menu);
+    var hiddenState = getHiddenColumns(cfg);
+    cbs.forEach(function(cb) {
+      cb.checked = !hiddenState[cb.value];
+    });
+
+    var allCb = document.getElementById(cfg.allId);
+    if (allCb) {
+      allCb.checked = cbs.every(function(cb) { return cb.checked; });
+    }
+
+    updateColPickerLabel(btn, menu);
+    applyColumnVisibility(cfg, weights);
+
+    menu.onchange = function(event) {
+      var cb = event.target;
+      if (!cb.classList.contains('form-check-input')) return;
+      var items = qa('input.form-check-input:not([value="all"])', menu);
+      if (cb.value === 'all') {
+        items.forEach(function(item) { item.checked = cb.checked; });
+      } else {
+        var ac = document.getElementById(cfg.allId);
+        if (ac) ac.checked = items.every(function(item) { return item.checked; });
+      }
+      cfg.hidden = {};
+      items.forEach(function(item) {
+        if (!item.checked) cfg.hidden[item.value] = true;
+      });
+      saveHiddenColumns(cfg);
+      updateColPickerLabel(btn, menu);
+      applyColumnVisibility(cfg, weights);
+      scheduleDraftTableScrollGapsUpdate();
+    };
+  }
+
+  function initColumnPickers() {
+    initColPicker(CONTRACTS_DRAFTS_COLPICKER, CONTRACTS_DRAFTS_COL_WEIGHTS);
+    initColPicker(CONTRACTS_PAYMENT_COLPICKER, CONTRACTS_PAYMENT_COL_WEIGHTS);
+  }
 
   function getCookie(name) {
     var m = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
@@ -383,13 +571,174 @@
     ensureActionsVisibility();
   }
 
+  function setDroidMonoCellValue(cell, value) {
+    if (!cell) return;
+    cell.textContent = '';
+    if (!value) return;
+    var span = document.createElement('span');
+    span.className = 'clf-id-droid-mono';
+    span.textContent = value;
+    cell.appendChild(span);
+  }
+
+  function getDraftOrderIds() {
+    var root = pane();
+    return qa('#contracts-drafts-table tbody tr[data-row-order-id]', root)
+      .map(function(row) { return String(row.dataset.rowOrderId || ''); })
+      .filter(Boolean);
+  }
+
+  function syncDraftNumberGroups() {
+    var root = pane();
+    var rows = qa('#contracts-drafts-table tbody tr[data-project-id]', root);
+    rows.forEach(function(row, index) {
+      var number = String(row.dataset.number || '');
+      var tkpId = String(row.dataset.tkpId || '');
+      var contractId = String(row.dataset.contractId || '');
+      var previous = rows[index - 1] || null;
+      var next = rows[index + 1] || null;
+      var isNumberContinuation = !!previous && String(previous.dataset.number || '') === number;
+      var isTkpContinuation = isNumberContinuation
+        && String(previous.dataset.tkpId || '') === tkpId;
+      var hasNext = !!next && String(next.dataset.number || '') === number;
+      var hasNextDifferentContract = hasNext
+        && String(next.dataset.contractId || '') !== contractId;
+      var hasNextDifferentTkp = hasNext
+        && String(next.dataset.tkpId || '') !== tkpId;
+      var numberCell = row.querySelector('td[data-col="number"]');
+      var tkpCell = row.querySelector('td[data-col="tkp-id"]');
+      if (numberCell) numberCell.textContent = isNumberContinuation ? '' : number;
+      setDroidMonoCellValue(tkpCell, isTkpContinuation ? '' : tkpId);
+      row.classList.toggle('contracts-drafts-number-continuation', isNumberContinuation);
+      row.classList.toggle('contracts-drafts-number-has-next', hasNext);
+      row.classList.toggle('contracts-drafts-tkp-separator-has-next', hasNextDifferentTkp);
+      row.classList.toggle('contracts-drafts-number-contract-has-next', hasNextDifferentContract);
+    });
+  }
+
+  function applyDraftOrderToPaymentSchedule(orderIds) {
+    var root = pane();
+    var table = root && root.querySelector('#contracts-payment-schedule-table');
+    var tbody = table && table.querySelector('tbody');
+    if (!tbody) return;
+    var rowsById = {};
+    qa('tr[data-project-id]', tbody).forEach(function(row) {
+      var projectId = String(row.dataset.projectId || '');
+      if (!rowsById[projectId]) rowsById[projectId] = [];
+      rowsById[projectId].push(row);
+    });
+    orderIds.forEach(function(projectId) {
+      (rowsById[String(projectId)] || []).forEach(function(row) {
+        tbody.appendChild(row);
+      });
+    });
+  }
+
+  function syncPaymentScheduleNumberGroups() {
+    var root = pane();
+    var rows = qa('#contracts-payment-schedule-table tbody tr[data-project-id]', root);
+    rows.forEach(function(row, index) {
+      var projectId = String(row.dataset.projectId || '');
+      var number = String(row.dataset.number || '');
+      var previous = rows[index - 1] || null;
+      var next = rows[index + 1] || null;
+      var isFirstForRegistration = !previous || String(previous.dataset.projectId || '') !== projectId;
+      var hasNextForRegistration = !!next && String(next.dataset.projectId || '') === projectId;
+      var tkpId = String(row.dataset.tkpId || '');
+      var isNumberContinuation = !!previous && String(previous.dataset.number || '') === number;
+      var isTkpContinuation = isNumberContinuation
+        && String(previous.dataset.tkpId || '') === tkpId;
+      var hasNextForNumber = !!next && String(next.dataset.number || '') === number;
+      var hasNextDifferentTkp = hasNextForNumber
+        && String(next.dataset.tkpId || '') !== tkpId;
+      var numberCell = row.querySelector('td[data-col="number"]');
+      var tkpCell = row.querySelector('td[data-col="tkp-id"]');
+      if (numberCell) numberCell.textContent = isNumberContinuation ? '' : number;
+      setDroidMonoCellValue(tkpCell, isTkpContinuation ? '' : tkpId);
+      row.classList.toggle('contracts-payment-number-has-next', hasNextForNumber);
+      row.classList.toggle('contracts-payment-tkp-separator-has-next', hasNextDifferentTkp);
+      row.classList.toggle('contracts-payment-number-contract-has-next', hasNextForNumber && !hasNextForRegistration);
+      row.classList.toggle('contracts-payment-stage-has-next', hasNextForRegistration);
+      row.classList.toggle('contracts-payment-stage-continuation', !isFirstForRegistration || isNumberContinuation);
+    });
+  }
+
+  function syncDraftRelatedTablesOrder() {
+    var orderIds = getDraftOrderIds();
+    if (!orderIds.length) return;
+    applyDraftOrderToPaymentSchedule(orderIds);
+    syncDraftNumberGroups();
+    syncPaymentScheduleNumberGroups();
+    updateMasterState();
+    updateRowHighlight();
+    ensureActionsVisibility();
+    scheduleDraftTableScrollGapsUpdate();
+  }
+
+  function moveDraftSelectionImmediately(action, checked) {
+    if (
+      !(action === 'up' || action === 'down') ||
+      !window.__queuedRowOrder ||
+      typeof window.__queuedRowOrder.moveSelection !== 'function'
+    ) {
+      return false;
+    }
+    var root = pane();
+    if (!root) return false;
+    return !!window.__queuedRowOrder.moveSelection(root, action, {
+      selectionName: 'contracts-draft-select',
+      selectedIds: checked.map(function(box) { return String(box.value); }),
+      onAfterMove: syncDraftRelatedTablesOrder,
+    });
+  }
+
+  function updateDraftTableScrollGaps() {
+    qa('#contracts-drafts-pane .contracts-drafts-table-wrap, #contracts-drafts-pane .contracts-payment-schedule-table-wrap', document).forEach(function(wrap) {
+      wrap.classList.toggle('has-horizontal-scroll', wrap.scrollWidth > wrap.clientWidth + 1);
+    });
+  }
+
+  function scheduleDraftTableScrollGapsUpdate() {
+    window.requestAnimationFrame(updateDraftTableScrollGaps);
+  }
+
+  function updateContractFinalReportPercent(form) {
+    if (!form) return;
+    var advanceInput = form.querySelector('[name="advance_percent"]');
+    var preliminaryInput = form.querySelector('[name="preliminary_report_percent"]');
+    var finalInput = form.querySelector('[name="final_report_percent"]');
+    if (!advanceInput || !preliminaryInput || !finalInput) return;
+    var advance = parseFloat(String(advanceInput.value || '0').replace(',', '.')) || 0;
+    var preliminary = parseFloat(String(preliminaryInput.value || '0').replace(',', '.')) || 0;
+    var finalValue = 100 - advance - preliminary;
+    finalInput.value = Number.isFinite(finalValue) ? finalValue.toFixed(2).replace(/\.00$/, '') : '';
+  }
+
   document.addEventListener('click', function(e) {
+    [CONTRACTS_DRAFTS_COLPICKER, CONTRACTS_PAYMENT_COLPICKER].forEach(function(cfg) {
+      var colPickerWrap = document.getElementById(cfg.wrapId);
+      var colPickerMenu = document.getElementById(cfg.menuId);
+      if (colPickerWrap && colPickerMenu && !colPickerWrap.contains(e.target)) {
+        colPickerMenu.classList.remove('show');
+        colPickerMenu.style.maxHeight = '';
+        var header = colPickerWrap.closest('.table-section-header');
+        if (header) header.classList.remove('tkp-colpicker-open');
+      }
+    });
+
     var root = pane();
     if (!root) return;
 
     var createBtn = e.target.closest('#contracts-drafts-create-btn');
     if (createBtn && root.contains(createBtn)) {
       openModal(createBtn.dataset.url);
+      return;
+    }
+
+    var paymentQuickEdit = e.target.closest('.contracts-payment-quick-edit');
+    if (paymentQuickEdit && root.contains(paymentQuickEdit)) {
+      var paymentRow = paymentQuickEdit.closest('tr');
+      openModal(paymentRow && paymentRow.dataset.editUrl);
       return;
     }
 
@@ -421,6 +770,8 @@
 
     if (action === 'up' || action === 'down') {
       var selectedIds = checked.map(function(box) { return String(box.value); });
+      if (moveDraftSelectionImmediately(action, checked)) return;
+
       var urls = checked.map(function(box) {
         var tr = box.closest('tr');
         return tr && tr.dataset[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'];
@@ -431,6 +782,15 @@
         .then(function() { restoreSelection(selectedIds); })
         .catch(function(err) { alert(err.message || 'Не удалось изменить порядок строк.'); });
     }
+  });
+
+  document.body.addEventListener('queued-row-order:conflict', function(e) {
+    var root = pane();
+    var detail = e.detail || {};
+    var table = detail.table;
+    if (!root || !table || !root.contains(table)) return;
+    window.__contractsDraftSel = getChecked().map(function(box) { return String(box.value); });
+    refreshDraftsPane().catch(function() {});
   });
 
   document.addEventListener('change', function(e) {
@@ -444,6 +804,7 @@
       updateMasterState();
       updateRowHighlight();
       ensureActionsVisibility();
+      scheduleDraftTableScrollGapsUpdate();
       return;
     }
 
@@ -452,20 +813,41 @@
       updateMasterState();
       updateRowHighlight();
       ensureActionsVisibility();
+      scheduleDraftTableScrollGapsUpdate();
     }
+  });
+
+  document.addEventListener('input', function(e) {
+    if (!e.target.matches('#contracts-modal [name="advance_percent"], #contracts-modal [name="preliminary_report_percent"]')) return;
+    updateContractFinalReportPercent(e.target.closest('form'));
   });
 
   document.body.addEventListener('htmx:afterSettle', function(e) {
     if (!(e.target && e.target.id === 'contracts-drafts-pane')) return;
+    initColumnPickers();
+    syncDraftRelatedTablesOrder();
     var ids = window.__contractsDraftSel || [];
     restoreSelection(ids);
     window.__contractsDraftSel = [];
+    scheduleDraftTableScrollGapsUpdate();
+  });
+
+  document.body.addEventListener('htmx:afterSwap', function(e) {
+    if (!(e.target instanceof Element)) return;
+    if (!e.target.closest('#contracts-modal .modal-content')) return;
+    updateContractFinalReportPercent(e.target.querySelector('form'));
   });
 
   document.addEventListener('DOMContentLoaded', function() {
+    initColumnPickers();
     updateMasterState();
     updateRowHighlight();
     ensureActionsVisibility();
+    scheduleDraftTableScrollGapsUpdate();
+  });
+
+  window.addEventListener('resize', function() {
+    scheduleDraftTableScrollGapsUpdate();
   });
 })();
 

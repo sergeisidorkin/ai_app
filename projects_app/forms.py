@@ -14,6 +14,8 @@ from policy_app.models import (
 )
 from users_app.models import Employee
 
+from contracts_app.models import ContractProjectRegistration
+
 from .models import LegalEntity, Performer, ProjectRegistration, WorkVolume
 
 _common_input = {"class": "form-control form-control-sm"}
@@ -234,6 +236,11 @@ def _group_choices(current_value=""):
     )
 
 
+class ContractProjectRegistrationChoiceField(forms.ModelChoiceField):
+    def label_from_instance(self, obj):
+        return obj.short_uid or str(obj)
+
+
 class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
     number = forms.IntegerField(
         label="Номер",
@@ -259,6 +266,12 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         required=False,
         widget=_date_input_widget(),
         input_formats=DATE_INPUT_FORMATS,
+    )
+    contract_project_registration = ContractProjectRegistrationChoiceField(
+        label="Договор ID",
+        queryset=ContractProjectRegistration.objects.none(),
+        required=False,
+        widget=forms.Select(attrs={"id": "registration-contract-id-select"}),
     )
     group_member = forms.ModelChoiceField(
         label="Группа",
@@ -447,7 +460,7 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
     class Meta:
         model = ProjectRegistration
         fields = [
-            "number", "group_member", "agreement_type", "agreement_number", "name",
+            "number", "contract_project_registration", "group_member", "agreement_type", "agreement_number", "name",
             "status", "deadline", "year", "evaluation_date",
             "country", "customer", "identifier", "registration_number",
             "registration_region", "registration_date", "project_manager",
@@ -477,6 +490,12 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
                 or resolved_manager_prs_id
                 or instance_manager
             )
+        self.fields["contract_project_registration"].queryset = (
+            ContractProjectRegistration.objects
+            .exclude(short_uid="")
+            .order_by("position", "id")
+        )
+        self.fields["contract_project_registration"].empty_label = "— Не выбрано —"
         self.fields["group_member"].queryset = _group_choices(current_group_member)
         self.fields["group_member"].label_from_instance = lambda obj: obj.group_display_label
         self.fields["group_member"].empty_label = "— Не выбрано —"

@@ -28,6 +28,27 @@ class ProjectRegistration(models.Model):
         verbose_name="Номер",
         validators=[MinValueValidator(0), MaxValueValidator(9999)],
     )
+    sub_number = models.PositiveSmallIntegerField(
+        "№",
+        default=0,
+        validators=[MinValueValidator(0), MaxValueValidator(9)],
+    )
+    proposal_registration = models.ForeignKey(
+        "proposals_app.ProposalRegistration",
+        verbose_name="ТКП ID",
+        on_delete=models.SET_NULL,
+        related_name="linked_project_registrations",
+        null=True,
+        blank=True,
+    )
+    contract_project_registration = models.ForeignKey(
+        "contracts_app.ContractProjectRegistration",
+        verbose_name="Договор ID",
+        on_delete=models.SET_NULL,
+        related_name="linked_project_registrations",
+        null=True,
+        blank=True,
+    )
     group = models.CharField("Группа", max_length=2, default="RU", db_index=True)
     group_member = models.ForeignKey(
         GroupMember,
@@ -213,7 +234,7 @@ class ProjectRegistration(models.Model):
     def refresh_short_uids_for_group_members(cls, group_member_ids):
         registrations = list(
             cls.objects
-            .select_related("group_member")
+            .select_related("group_member", "contract_project_registration")
             .filter(group_member_id__in=group_member_ids)
         )
         if not registrations:
@@ -254,7 +275,7 @@ class ProjectRegistration(models.Model):
 
         registrations = list(
             cls.objects
-            .select_related("group_member")
+            .select_related("group_member", "contract_project_registration")
             .filter(number__in=set(normalized_numbers))
             .order_by("number", "position", "id")
         )
@@ -323,6 +344,9 @@ class ProjectRegistration(models.Model):
         self.completion_calc = self._calculate_completion_calc()
         if not self.short_uid or self._needs_uid_refresh():
             self.short_uid = self._build_short_uid()
+            update_fields = kwargs.get("update_fields")
+            if update_fields is not None and "short_uid" not in update_fields:
+                kwargs["update_fields"] = set(update_fields) | {"short_uid"}
         super().save(*args, **kwargs)
         update_fields = kwargs.get("update_fields")
         should_refresh_sequences = update_fields is None or bool(
@@ -381,7 +405,14 @@ class ProjectRegistration(models.Model):
         orig = (
             ProjectRegistration.objects
             .filter(pk=self.pk)
-            .values("number", "position", "group", "group_member_id", "agreement_sequence")
+            .values(
+                "number",
+                "position",
+                "group",
+                "group_member_id",
+                "agreement_sequence",
+                "contract_project_registration_id",
+            )
             .first()
         )
         return (
@@ -391,6 +422,7 @@ class ProjectRegistration(models.Model):
             or orig["group"] != self.group
             or orig["group_member_id"] != self.group_member_id
             or orig["agreement_sequence"] != self.agreement_sequence
+            or orig["contract_project_registration_id"] != self.contract_project_registration_id
         )
 
     def _needs_agreement_sequence_refresh(self):
@@ -416,7 +448,34 @@ class ProjectRegistration(models.Model):
         return earlier + 1
 
     def _build_short_uid(self):
-        return f"{self.formatted_number}{self.agreement_sequence}{self.group_order_number}{self.group_alpha2}"
+        return (
+            f"{self.formatted_number}"
+            f"{self.contract_project_sequence}"
+            f"{self.agreement_sequence}"
+            f"{self.group_order_number}"
+            f"{self.group_alpha2}"
+        )
+
+    @property
+    def contract_project_sequence(self):
+        if not self.contract_project_registration_id:
+            return "00"
+        contract = getattr(self, "contract_project_registration", None)
+        short_uid = (getattr(contract, "short_uid", "") or "").strip().upper()
+        if not short_uid:
+            from contracts_app.models import ContractProjectRegistration
+
+            short_uid = (
+                ContractProjectRegistration.objects
+                .filter(pk=self.contract_project_registration_id)
+                .values_list("short_uid", flat=True)
+                .first()
+                or ""
+            ).strip().upper()
+        digits = "".join(ch for ch in short_uid if ch.isdigit())
+        if len(digits) >= 6:
+            return digits[4:6]
+        return "00"
 
     def _ordered_product_links(self):
         prefetched = getattr(self, "_prefetched_objects_cache", {})
@@ -1316,6 +1375,13 @@ class Performer(models.Model):
         return ""
 
 
+class PaymentRequestPerformer(Performer):
+    class Meta:
+        proxy = True
+        verbose_name = "Заявка на оплату"
+        verbose_name_plural = "Заявки на оплату"
+
+
 def _sync_project_gantt_for_registration(registration_id):
     if not registration_id:
         return
@@ -1339,8 +1405,18 @@ def sync_project_gantt_after_performer_save(sender, instance, **kwargs):
     _sync_project_gantt_for_registration(instance.registration_id)
 
 
+@receiver(post_save, sender=PaymentRequestPerformer)
+def sync_project_gantt_after_payment_request_save(sender, instance, **kwargs):
+    _sync_project_gantt_for_registration(instance.registration_id)
+
+
 @receiver(post_delete, sender=Performer)
 def sync_project_gantt_after_performer_delete(sender, instance, **kwargs):
+    _sync_project_gantt_for_registration(instance.registration_id)
+
+
+@receiver(post_delete, sender=PaymentRequestPerformer)
+def sync_project_gantt_after_payment_request_delete(sender, instance, **kwargs):
     _sync_project_gantt_for_registration(instance.registration_id)
 
 

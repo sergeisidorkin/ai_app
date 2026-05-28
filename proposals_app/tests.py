@@ -168,7 +168,7 @@ class ProposalDocumentGenerationTests(TestCase):
             preliminary_report_percent="20",
             identifier="ОГРН",
             registration_number="1174910001683",
-            proposal_workspace_disk_path="/Corporate Root/ТКП/2026/33330RU DD Приморское",
+            proposal_workspace_disk_path="/Corporate Root/ТКП/2026/333300RU DD Приморское",
         )
         ServiceGoalReport.objects.create(
             product=self.product,
@@ -2770,6 +2770,20 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(form.fields["number"].widget.attrs["max"], 9999)
         self.assertEqual(form.fields["number"].widget.attrs["placeholder"], "0001")
 
+    def test_sub_number_field_uses_zero_to_nine_range_with_default(self):
+        form = ProposalRegistrationForm()
+
+        self.assertEqual(form.fields["sub_number"].min_value, 0)
+        self.assertEqual(form.fields["sub_number"].max_value, 9)
+        self.assertEqual(form.fields["sub_number"].initial, 0)
+        self.assertEqual(form.fields["sub_number"].widget.attrs["id"], "proposal-sub-number-input")
+        self.assertEqual(form.fields["sub_number"].widget.attrs["min"], 0)
+        self.assertEqual(form.fields["sub_number"].widget.attrs["max"], 9)
+
+        invalid_form = ProposalRegistrationForm(data=self._base_form_payload(sub_number=10))
+        self.assertFalse(invalid_form.is_valid())
+        self.assertIn("sub_number", invalid_form.errors)
+
     def test_bound_form_ignores_invalid_country_ids_when_building_region_choices(self):
         form = ProposalRegistrationForm(
             data=self._base_form_payload(
@@ -3344,6 +3358,7 @@ class ProposalRegistrationFormTests(TestCase):
             payment_labels,
             [
                 "Номер",
+                "№",
                 "Группа",
                 "ТКП ID",
                 "Тип",
@@ -5936,6 +5951,59 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(proposal.commercial_totals_json["travel_expenses_mode"], "calculation")
 
 
+@override_settings(ROOT_URLCONF="proposals_app.urls")
+class ProposalRowOrderTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="proposal-row-order-staff",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.first = ProposalRegistration.objects.create(number=101, position=1, name="Первое ТКП")
+        self.second = ProposalRegistration.objects.create(number=102, position=2, name="Второе ТКП")
+        self.third = ProposalRegistration.objects.create(number=103, position=3, name="Третье ТКП")
+
+    def _signature(self, proposal_ids):
+        return ":".join(str(proposal_id) for proposal_id in proposal_ids)
+
+    def test_row_order_endpoint_persists_full_order(self):
+        response = self.client.post(
+            reverse("proposal_row_order"),
+            data=json.dumps(
+                {
+                    "ordered_proposal_ids": [self.second.pk, self.first.pk, self.third.pk],
+                    "base_order_signature": self._signature([self.first.pk, self.second.pk, self.third.pk]),
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            list(ProposalRegistration.objects.order_by("position", "id").values_list("pk", flat=True)),
+            [self.second.pk, self.first.pk, self.third.pk],
+        )
+
+    def test_row_order_endpoint_returns_conflict_for_stale_signature(self):
+        ProposalRegistration.objects.filter(pk=self.first.pk).update(position=2)
+        ProposalRegistration.objects.filter(pk=self.second.pk).update(position=1)
+
+        response = self.client.post(
+            reverse("proposal_row_order"),
+            data=json.dumps(
+                {
+                    "ordered_proposal_ids": [self.first.pk, self.second.pk, self.third.pk],
+                    "base_order_signature": self._signature([self.first.pk, self.second.pk, self.third.pk]),
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["current_proposal_ids"], [self.second.pk, self.first.pk, self.third.pk])
+
+
 class ProposalFormContextTests(TestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user(
@@ -5967,6 +6035,76 @@ class ProposalFormContextTests(TestCase):
             role=role,
         )
         return user, employee
+
+    def test_proposals_partial_groups_registry_rows_by_number(self):
+        first = ProposalRegistration.objects.create(
+            number=3333,
+            sub_number=0,
+            group_member=self.group_member,
+            name="Первое ТКП",
+            year=2026,
+        )
+        second = ProposalRegistration.objects.create(
+            number=3333,
+            sub_number=1,
+            group_member=self.group_member,
+            name="Второе ТКП",
+            year=2026,
+        )
+        third = ProposalRegistration.objects.create(
+            number=3334,
+            sub_number=0,
+            group_member=self.group_member,
+            name="Третье ТКП",
+            year=2026,
+        )
+
+        response = self.client.get(reverse("proposals_partial"))
+        rows = list(response.context["proposals"])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([row.pk for row in rows], [first.pk, second.pk, third.pk])
+        self.assertTrue(rows[0].is_first_for_number)
+        self.assertTrue(rows[0].has_next_for_number)
+        self.assertFalse(rows[0].is_number_continuation)
+        self.assertFalse(rows[1].is_first_for_number)
+        self.assertTrue(rows[1].is_number_continuation)
+        self.assertFalse(rows[1].has_next_for_number)
+        self.assertTrue(rows[2].is_first_for_number)
+        self.assertFalse(rows[2].is_number_continuation)
+        self.assertContains(response, 'class="proposal-registry-number-has-next"', html=False)
+        self.assertContains(response, 'class="proposal-registry-number-continuation"', html=False)
+        self.assertContains(response, '<td data-col="number"></td>', html=False)
+        self.assertContains(response, '<td data-col="sub-number">1</td>', html=False)
+
+    def test_dispatch_table_renders_quick_edit_inside_tkp_id_column(self):
+        proposal = ProposalRegistration.objects.create(
+            number=3333,
+            sub_number=0,
+            group_member=self.group_member,
+            name="ТКП для отправки",
+            year=2026,
+        )
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context["proposal_dispatch_empty_colspan"],
+            len(response.context["proposal_dispatch_ui_columns"]) + 1,
+        )
+        self.assertNotContains(response, "proposal-quick-edit-col", html=False)
+        self.assertNotContains(response, '<col class="quick-edit"', html=False)
+        self.assertContains(
+            response,
+            (
+                '<td data-col="tkp-id" class="proposal-id-cell">'
+                '<i class="bi bi-pencil-square text-secondary proposal-dispatch-quick-edit me-1" '
+                'role="button" title="Редактировать" aria-label="Редактировать отправку ТКП"></i>'
+                f'<span class="clf-id-droid-mono">{proposal.short_uid}</span></td>'
+            ),
+            html=False,
+        )
 
     def test_proposals_partial_renders_payment_schedule_table_by_product_stage(self):
         first_product = Product.objects.create(
@@ -7047,8 +7185,8 @@ class ProposalDispatchDiskColumnTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, ">0001<", html=False)
         self.proposal.refresh_from_db()
-        self.assertEqual(self.proposal.short_uid, "00010RU")
-        self.assertContains(response, ">00010RU<", html=False)
+        self.assertEqual(self.proposal.short_uid, "000100RU")
+        self.assertContains(response, ">000100RU<", html=False)
 
     def test_proposals_partial_renders_multiple_products_with_hyphen_in_type_column(self):
         ProposalRegistrationProduct.objects.bulk_create(
