@@ -79,10 +79,14 @@ def resequence_group_members(*, refresh_project_uids: bool = True):
         GroupMember.objects.bulk_update(to_update, ["country_order_number"])
 
     if refresh_project_uids and affected_ids:
+        from contracts_app.models import ContractProjectRegistration
         from projects_app.models import ProjectRegistration
+        from proposals_app.models import ProposalRegistration
 
         with transaction.atomic():
+            ContractProjectRegistration.refresh_short_uids_for_group_members(affected_ids)
             ProjectRegistration.refresh_short_uids_for_group_members(affected_ids)
+            ProposalRegistration.refresh_short_uids_for_group_members(affected_ids)
 
     return affected_ids
 

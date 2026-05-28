@@ -1,32 +1,89 @@
-{% load projects_extras %}
+{% load projects_extras classifiers_filters %}
 
-<div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
+<div class="d-flex justify-content-between align-items-center gap-3 mb-3 table-section-header flex-wrap">
   <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
     <i class="bi bi-table"></i> Проекты договоров с клиентами
   </h5>
+  <div class="d-flex align-items-center gap-2 ms-auto">
+    <span class="small text-muted text-nowrap">Отображаемые поля:</span>
+    <div class="tkp-colpicker" id="contracts-drafts-colpicker-wrap">
+      <button type="button" class="form-select form-select-sm text-start tkp-colpicker-btn" id="contracts-drafts-colpicker-btn">
+        13 из 23
+      </button>
+      <div class="tkp-colpicker-menu" id="contracts-drafts-colpicker-menu">
+        <div class="tkp-colpicker-item">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" value="all" id="contracts-drafts-col-all">
+            <label class="form-check-label" for="contracts-drafts-col-all">Все поля</label>
+          </div>
+        </div>
+        <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="number" id="contracts-drafts-col-number" checked><label class="form-check-label" for="contracts-drafts-col-number">Номер</label></div></div>
+        <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="tkp-id" id="contracts-drafts-col-tkp-id" checked><label class="form-check-label" for="contracts-drafts-col-tkp-id">ТКП ID</label></div></div>
+        <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="agreement-type" id="contracts-drafts-col-agreement-type" checked><label class="form-check-label" for="contracts-drafts-col-agreement-type">Вид соглашения</label></div></div>
+        <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="sub-number" id="contracts-drafts-col-sub-number" checked><label class="form-check-label" for="contracts-drafts-col-sub-number">№</label></div></div>
+        <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="group" id="contracts-drafts-col-group" checked><label class="form-check-label" for="contracts-drafts-col-group">Группа</label></div></div>
+        <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="project-id" id="contracts-drafts-col-project-id" checked><label class="form-check-label" for="contracts-drafts-col-project-id">Договор ID</label></div></div>
+        <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="contract-number" id="contracts-drafts-col-contract-number" checked><label class="form-check-label" for="contracts-drafts-col-contract-number">Номер договора</label></div></div>
+        <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="type" id="contracts-drafts-col-type" checked><label class="form-check-label" for="contracts-drafts-col-type">Тип</label></div></div>
+        <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="name" id="contracts-drafts-col-name" checked><label class="form-check-label" for="contracts-drafts-col-name">Название</label></div></div>
+        <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="status" id="contracts-drafts-col-status" checked><label class="form-check-label" for="contracts-drafts-col-status">Статус</label></div></div>
+        <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="year" id="contracts-drafts-col-year" checked><label class="form-check-label" for="contracts-drafts-col-year">Год</label></div></div>
+        <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="customer" id="contracts-drafts-col-customer" checked><label class="form-check-label" for="contracts-drafts-col-customer">Заказчик: наименование</label></div></div>
+        <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="country" id="contracts-drafts-col-country" data-default-hidden="true"><label class="form-check-label" for="contracts-drafts-col-country">Заказчик: страна</label></div></div>
+        <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="identifier" id="contracts-drafts-col-identifier" data-default-hidden="true"><label class="form-check-label" for="contracts-drafts-col-identifier">Заказчик: идент.</label></div></div>
+        <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="registration-number" id="contracts-drafts-col-registration-number" data-default-hidden="true"><label class="form-check-label" for="contracts-drafts-col-registration-number">Заказчик: регистр. номер</label></div></div>
+        <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="region" id="contracts-drafts-col-region" data-default-hidden="true"><label class="form-check-label" for="contracts-drafts-col-region">Заказчик: регион</label></div></div>
+        <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="date" id="contracts-drafts-col-date" data-default-hidden="true"><label class="form-check-label" for="contracts-drafts-col-date">Заказчик: дата регистр.</label></div></div>
+        <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="asset-owner" id="contracts-drafts-col-asset-owner" checked><label class="form-check-label" for="contracts-drafts-col-asset-owner">Владелец: наименование</label></div></div>
+        <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="asset-owner-country" id="contracts-drafts-col-asset-owner-country" data-default-hidden="true"><label class="form-check-label" for="contracts-drafts-col-asset-owner-country">Владелец: страна</label></div></div>
+        <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="asset-owner-identifier" id="contracts-drafts-col-asset-owner-identifier" data-default-hidden="true"><label class="form-check-label" for="contracts-drafts-col-asset-owner-identifier">Владелец: идент.</label></div></div>
+        <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="asset-owner-reg-number" id="contracts-drafts-col-asset-owner-reg-number" data-default-hidden="true"><label class="form-check-label" for="contracts-drafts-col-asset-owner-reg-number">Владелец: регистр. номер</label></div></div>
+        <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="asset-owner-region" id="contracts-drafts-col-asset-owner-region" data-default-hidden="true"><label class="form-check-label" for="contracts-drafts-col-asset-owner-region">Владелец: регион</label></div></div>
+        <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="asset-owner-date" id="contracts-drafts-col-asset-owner-date" data-default-hidden="true"><label class="form-check-label" for="contracts-drafts-col-asset-owner-date">Владелец: дата регистр.</label></div></div>
+      </div>
+    </div>
+  </div>
 </div>
 
-<div class="registration-table-wrap">
-  <table class="table table-sm align-middle reg-table mb-0">
+<div class="registration-table-wrap contracts-drafts-table-wrap">
+  <table id="contracts-drafts-table"
+         class="table table-sm align-middle reg-table mb-0"
+         {% if request.user.is_authenticated and request.user.is_staff %}
+         data-queued-row-order
+         data-row-order-save-url="{% url 'contracts_project_registration_row_order' %}"
+         data-row-order-signature="{{ contract_project_order_signature }}"
+         data-row-order-context="contracts-project-registrations"
+         data-row-order-payload-field="ordered_contract_project_ids"
+         {% endif %}>
     <colgroup>
       <col class="checkbox">
-      <col class="project-number">
-      <col class="agreement-type">
-      <col class="group">
-      <col class="project-id">
-      <col class="reg-type">
-      <col class="reg-name">
-      <col class="reg-status">
-      <col class="reg-year">
-      <col class="reg-customer">
-      <col class="reg-country">
-      <col class="reg-identifier">
-      <col class="reg-regnumber">
-      <col class="reg-regdate">
+      <col class="project-number" data-col="number">
+      <col class="proposal-id" data-col="tkp-id">
+      <col class="agreement-type" data-col="agreement-type">
+      <col class="sub-number" data-col="sub-number">
+      <col class="group" data-col="group">
+      <col class="project-id" data-col="project-id">
+      <col class="contract-number" data-col="contract-number">
+      <col class="reg-type" data-col="type">
+      <col class="reg-name" data-col="name">
+      <col class="reg-status" data-col="status">
+      <col class="reg-year" data-col="year">
+      <col class="reg-customer" data-col="customer">
+      <col class="reg-country" data-col="country">
+      <col class="reg-identifier" data-col="identifier">
+      <col class="reg-regnumber" data-col="registration-number">
+      <col class="reg-region" data-col="region">
+      <col class="reg-regdate" data-col="date">
+      <col class="reg-asset-owner" data-col="asset-owner">
+      <col class="reg-asset-owner-country" data-col="asset-owner-country">
+      <col class="reg-asset-owner-identifier" data-col="asset-owner-identifier">
+      <col class="reg-asset-owner-regnumber" data-col="asset-owner-reg-number">
+      <col class="reg-asset-owner-region" data-col="asset-owner-region">
+      <col class="reg-asset-owner-regdate" data-col="asset-owner-date">
     </colgroup>
     <thead>
       <tr>
-        <th class="w-checkbox">
+        <th class="w-checkbox" style="width:30px; min-width:30px; max-width:30px;">
           {% if request.user.is_authenticated and request.user.is_staff %}
             <div class="form-check m-0">
               <input class="form-check-input"
@@ -38,30 +95,44 @@
             </div>
           {% endif %}
         </th>
-        <th class="col-project-number">Номер</th>
-        <th>Вид соглашения</th>
-        <th>Группа</th>
-        <th>Проект ID</th>
-        <th>Тип</th>
-        <th class="nowrap">Название</th>
-        <th>Статус</th>
-        <th>Год</th>
-        <th>Заказчик</th>
-        <th>Страна</th>
-        <th>Идент.</th>
-        <th>Регистр. номер</th>
-        <th>Дата</th>
+        <th class="col-project-number" data-col="number">Номер</th>
+        <th data-col="tkp-id">ТКП ID</th>
+        <th data-col="agreement-type">Вид соглашения</th>
+        <th data-col="sub-number">№</th>
+        <th data-col="group">Группа</th>
+        <th data-col="project-id">Договор ID</th>
+        <th data-col="contract-number">Номер договора</th>
+        <th data-col="type">Тип</th>
+        <th class="nowrap" data-col="name">Название</th>
+        <th data-col="status">Статус</th>
+        <th data-col="year">Год</th>
+        <th class="reg-customer-cell proposal-split-header proposal-split-header-inline" data-col="customer"><span class="proposal-split-header-prefix">Заказчик: </span><span class="proposal-split-header-suffix">наименование</span></th>
+        <th class="proposal-split-header" data-col="country"><span class="proposal-split-header-prefix">Заказчик: </span><span class="proposal-split-header-suffix">страна</span></th>
+        <th class="proposal-split-header" data-col="identifier"><span class="proposal-split-header-prefix">Заказчик: </span><span class="proposal-split-header-suffix">идент.</span></th>
+        <th class="proposal-split-header" data-col="registration-number"><span class="proposal-split-header-prefix">Заказчик: </span><span class="proposal-split-header-suffix">регистр. номер</span></th>
+        <th class="proposal-split-header proposal-split-header-inline" data-col="region"><span class="proposal-split-header-prefix">Заказчик: </span><span class="proposal-split-header-suffix">регион</span></th>
+        <th class="proposal-split-header" data-col="date"><span class="proposal-split-header-prefix">Заказчик: </span><span class="proposal-split-header-suffix">дата регистр.</span></th>
+        <th class="proposal-split-header proposal-split-header-inline" data-col="asset-owner"><span class="proposal-split-header-prefix">Владелец: </span><span class="proposal-split-header-suffix">наименование</span></th>
+        <th class="proposal-split-header" data-col="asset-owner-country"><span class="proposal-split-header-prefix">Владелец: </span><span class="proposal-split-header-suffix">страна</span></th>
+        <th class="proposal-split-header" data-col="asset-owner-identifier"><span class="proposal-split-header-prefix">Владелец: </span><span class="proposal-split-header-suffix">идент.</span></th>
+        <th class="proposal-split-header" data-col="asset-owner-reg-number"><span class="proposal-split-header-prefix">Владелец: </span><span class="proposal-split-header-suffix">регистр. номер</span></th>
+        <th class="proposal-split-header proposal-split-header-inline" data-col="asset-owner-region"><span class="proposal-split-header-prefix">Владелец: </span><span class="proposal-split-header-suffix">регион</span></th>
+        <th class="proposal-split-header" data-col="asset-owner-date"><span class="proposal-split-header-prefix">Владелец: </span><span class="proposal-split-header-suffix">дата регистр.</span></th>
       </tr>
     </thead>
     <tbody>
       {% for r in registrations %}
         <tr
           data-project-id="{{ r.id }}"
+          data-row-order-id="{{ r.id }}"
+          data-number="{{ r.formatted_number }}"
+          data-contract-id="{{ r.short_uid }}"
+          data-tkp-id="{% if r.proposal_registration %}{{ r.proposal_registration.short_uid }}{% endif %}"
           data-edit-url="{% url 'contracts_project_registration_edit' r.pk %}"
           data-delete-url="{% url 'contracts_project_registration_delete' r.pk %}"
           data-move-up-url="{% url 'contracts_project_registration_move_up' r.pk %}"
-          data-move-down-url="{% url 'contracts_project_registration_move_down' r.pk %}">
-          <td class="text-nowrap">
+          data-move-down-url="{% url 'contracts_project_registration_move_down' r.pk %}"{% if r.is_continuation or r.has_next_for_number %} class="{% if r.has_next_for_number %}contracts-drafts-number-has-next{% endif %}{% if r.has_next_for_different_tkp_in_number_group %}{% if r.has_next_for_number %} {% endif %}contracts-drafts-tkp-separator-has-next{% endif %}{% if r.has_next_for_different_contract_in_number_group %}{% if r.has_next_for_number %} {% endif %}contracts-drafts-number-contract-has-next{% endif %}{% if r.is_continuation %}{% if r.has_next_for_number %} {% endif %}contracts-drafts-number-continuation{% endif %}"{% endif %}>
+          <td class="text-nowrap" data-col="checkbox">
             {% if request.user.is_authenticated and request.user.is_staff %}
               <div class="form-check">
                 <input class="form-check-input"
@@ -73,50 +144,155 @@
               </div>
             {% endif %}
           </td>
-          <td class="col-project-number">{{ r.number }}</td>
-          <td>{{ r.get_agreement_type_display }}</td>
-          <td>{{ r.group_display }}</td>
-          <td class="project-id-cell">{{ r.short_uid }}</td>
-          <td>{{ r.type_short_display }}</td>
-          <td>{{ r.name }}</td>
-          <td>{{ r.status }}</td>
-          <td>{{ r.year }}</td>
-          <td>{{ r.customer }}</td>
-          <td>{{ r.country.short_name|default:"" }}</td>
-          <td>{{ r.identifier }}</td>
-          <td>{{ r.registration_number }}</td>
-          <td>{{ r.registration_date|date:"d.m.y" }}</td>
+          <td class="col-project-number" data-col="number">{% if r.is_first_for_number %}{{ r.formatted_number }}{% endif %}</td>
+          <td data-col="tkp-id" class="proposal-id-cell">{% if r.is_first_for_tkp and r.proposal_registration %}<span class="clf-id-droid-mono">{{ r.proposal_registration.short_uid }}</span>{% endif %}</td>
+          <td data-col="agreement-type">{{ r.get_agreement_type_display }}</td>
+          <td data-col="sub-number">{{ r.sub_number }}</td>
+          <td data-col="group">{{ r.group_display }}</td>
+          <td class="project-id-cell" data-col="project-id">{% if request.user.is_authenticated and request.user.is_staff %}<i class="bi bi-pencil-square text-secondary contracts-payment-quick-edit me-1" role="button" title="Редактировать" aria-label="Редактировать договор"></i>{% endif %}<span class="clf-id-droid-mono">{{ r.short_uid }}</span></td>
+          <td data-col="contract-number">{{ r.contract_number }}</td>
+          <td data-col="type">{{ r.type_short_display }}</td>
+          <td data-col="name">{{ r.name }}</td>
+          <td data-col="status">{{ r.status }}</td>
+          <td data-col="year">{{ r.year }}</td>
+          <td data-col="customer">{{ r.customer }}</td>
+          <td data-col="country">{{ r.country.short_name|default:"" }}</td>
+          <td data-col="identifier">{{ r.identifier }}</td>
+          <td data-col="registration-number">{{ r.registration_number }}</td>
+          <td data-col="region">{{ r.registration_region }}</td>
+          <td data-col="date">{{ r.registration_date|date:"d.m.y" }}</td>
+          <td data-col="asset-owner">{{ r.asset_owner }}</td>
+          <td data-col="asset-owner-country">{{ r.asset_owner_country.short_name|default:"" }}</td>
+          <td data-col="asset-owner-identifier">{{ r.asset_owner_identifier }}</td>
+          <td data-col="asset-owner-reg-number">{{ r.asset_owner_registration_number }}</td>
+          <td data-col="asset-owner-region">{{ r.asset_owner_region }}</td>
+          <td data-col="asset-owner-date">{{ r.asset_owner_registration_date|date:"d.m.y" }}</td>
         </tr>
       {% empty %}
-        <tr><td colspan="14" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="24" class="text-muted">Пока нет данных.</td></tr>
       {% endfor %}
     </tbody>
   </table>
+</div>
 
-  {% if request.user.is_authenticated and request.user.is_staff %}
-    <div class="d-flex align-items-stretch gap-2 products-actions-row mt-2">
-      <button type="button"
-              id="contracts-drafts-create-btn"
-              class="btn btn-primary btn-sm d-flex align-items-center"
-              data-url="{% url 'contracts_project_registration_create' %}">
-        <i class="bi bi-plus-circle me-2"></i>Добавить строку
-      </button>
-      <div id="contracts-drafts-actions" class="d-none">
-        <div class="btn-group">
-          <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
-            <i class="bi bi-arrow-up-square"></i>
-          </button>
-          <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
-            <i class="bi bi-arrow-down-square"></i>
-          </button>
-          <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
-            <i class="bi bi-pencil-square"></i>
-          </button>
-          <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
-            <i class="bi bi-x-square"></i>
-          </button>
-        </div>
+{% if request.user.is_authenticated and request.user.is_staff %}
+  <div class="d-flex align-items-stretch gap-2 products-actions-row">
+    <button type="button"
+            id="contracts-drafts-create-btn"
+            class="btn btn-primary btn-sm d-flex align-items-center"
+            data-url="{% url 'contracts_project_registration_create' %}">
+      <i class="bi bi-plus-circle me-2"></i>Создать договор
+    </button>
+    <div id="contracts-drafts-actions" class="d-none">
+      <div class="btn-group">
+        <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+          <i class="bi bi-arrow-up-square"></i>
+        </button>
+        <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+          <i class="bi bi-arrow-down-square"></i>
+        </button>
+        <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+          <i class="bi bi-pencil-square"></i>
+        </button>
+        <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+          <i class="bi bi-x-square"></i>
+        </button>
       </div>
     </div>
-  {% endif %}
+    <span class="row-order-status text-muted d-none align-self-center" data-row-order-status></span>
+  </div>
+{% endif %}
+
+<div class="d-flex justify-content-between align-items-center gap-3 mb-3 table-section-header flex-wrap" style="margin-top: 24px;">
+  <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
+    <i class="bi bi-calendar-week"></i> Сроки и порядок платежей
+  </h5>
+  <div class="d-flex align-items-center gap-2 ms-auto">
+    <span class="small text-muted text-nowrap">Отображаемые поля:</span>
+    <div class="tkp-colpicker" id="contracts-payment-colpicker-wrap">
+      <button type="button" class="form-select form-select-sm text-start tkp-colpicker-btn" id="contracts-payment-colpicker-btn">
+        Все поля
+      </button>
+      <div class="tkp-colpicker-menu" id="contracts-payment-colpicker-menu">
+        <div class="tkp-colpicker-item">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" value="all" id="contracts-payment-col-all" checked>
+            <label class="form-check-label" for="contracts-payment-col-all">Все поля</label>
+          </div>
+        </div>
+        {% for column in contract_payment_schedule_ui_columns %}
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="{{ column.picker_value }}" id="contracts-payment-col-{{ column.picker_value }}"{% if column.default_hidden %} data-default-hidden="true"{% else %} checked{% endif %}><label class="form-check-label" for="contracts-payment-col-{{ column.picker_value }}">{{ column.label }}</label></div></div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="registration-table-wrap contracts-payment-schedule-table-wrap">
+  <table id="contracts-payment-schedule-table" class="table table-sm align-middle reg-table mb-0">
+    <colgroup>
+      <col class="checkbox">
+      {% for column in contract_payment_schedule_ui_columns %}
+        <col data-col="{{ column.data_col }}">
+      {% endfor %}
+    </colgroup>
+    <thead>
+      <tr>
+        <th class="w-checkbox" style="width:30px; min-width:30px; max-width:30px;">
+          <div class="form-check m-0">
+            <input class="form-check-input"
+                   type="checkbox"
+                   id="contracts-payment-master"
+                   aria-label="Выделить все строки сроков и порядка платежей"
+                   disabled>
+          </div>
+        </th>
+        {% for column in contract_payment_schedule_ui_columns %}
+          <th data-col="{{ column.data_col }}">{{ column.label }}</th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in contract_payment_schedule_rows %}
+        <tr data-project-id="{{ row.registration_id }}"
+            data-number="{{ row.number }}"
+            data-tkp-id="{{ row.tkp_id }}"
+            data-edit-url="{{ row.edit_url }}"{% if row.is_continuation or row.is_number_continuation or row.has_next_for_registration or row.has_next_for_number %} class="{% if row.has_next_for_number %}contracts-payment-number-has-next{% endif %}{% if row.has_next_for_different_tkp_in_number_group %}{% if row.has_next_for_number %} {% endif %}contracts-payment-tkp-separator-has-next{% endif %}{% if row.has_next_for_number and not row.has_next_for_registration %}{% if row.has_next_for_number %} {% endif %}contracts-payment-number-contract-has-next{% endif %}{% if row.has_next_for_registration %}{% if row.has_next_for_number %} {% endif %}contracts-payment-stage-has-next{% endif %}{% if row.is_continuation or row.is_number_continuation %}{% if row.has_next_for_registration or row.has_next_for_number %} {% endif %}contracts-payment-stage-continuation{% endif %}"{% endif %}>
+          <td class="text-nowrap" data-col="checkbox">
+            <div class="form-check">
+              <input class="form-check-input"
+                     type="checkbox"
+                     value="{{ row.registration_id }}"
+                     aria-label="Строка сроков и порядка платежей"
+                     disabled>
+            </div>
+          </td>
+          <td data-col="number">{% if row.is_first_for_number %}{{ row.number }}{% endif %}</td>
+          <td data-col="tkp-id" class="proposal-id-cell">{% if row.is_first_for_tkp and row.tkp_id %}<span class="clf-id-droid-mono">{{ row.tkp_id }}</span>{% endif %}</td>
+          <td data-col="agreement-type">{% if row.is_first_for_registration %}{{ row.agreement_type }}{% endif %}</td>
+          <td data-col="sub-number">{% if row.is_first_for_registration %}{{ row.sub_number }}{% endif %}</td>
+          <td data-col="group">{% if row.is_first_for_registration %}{{ row.group }}{% endif %}</td>
+          <td class="project-id-cell" data-col="project-id">{% if row.is_first_for_registration %}{% if request.user.is_authenticated and request.user.is_staff %}<i class="bi bi-pencil-square text-secondary contracts-payment-quick-edit me-1" role="button" title="Редактировать" aria-label="Редактировать договор"></i>{% endif %}<span class="clf-id-droid-mono">{{ row.project_id }}</span>{% endif %}</td>
+          <td data-col="contract-number">{% if row.is_first_for_registration %}{{ row.contract_number }}{% endif %}</td>
+          <td data-col="type">{{ row.type }}</td>
+          <td data-col="name">{{ row.name }}</td>
+          <td data-col="stage">{{ row.stage }}</td>
+          <td data-col="evaluation-date">{{ row.evaluation_date|date:"d.m.Y" }}</td>
+          <td data-col="start-date">{{ row.start_date|date:"d.m.Y" }}</td>
+          <td data-col="term">{{ row.service_term_months|format_decimal_comma:"1" }}</td>
+          <td data-col="preliminary-report-date">{{ row.preliminary_report_date|date:"d.m.Y" }}</td>
+          <td data-col="final-report-weeks">{{ row.final_report_term_weeks|format_decimal_comma:"1" }}</td>
+          <td data-col="final-report-date">{{ row.final_report_date|date:"d.m.Y" }}</td>
+          <td data-col="advance-percent">{% if row.advance_percent != None %}{{ row.advance_percent|floatformat:"-2" }}%{% endif %}</td>
+          <td data-col="advance-term">{{ row.advance_term_days|default_if_none:"" }}</td>
+          <td data-col="preliminary-report-percent">{% if row.preliminary_report_percent != None %}{{ row.preliminary_report_percent|floatformat:"-2" }}%{% endif %}</td>
+          <td data-col="preliminary-report-term">{{ row.preliminary_report_term_days|default_if_none:"" }}</td>
+          <td data-col="final-report-percent">{% if row.final_report_percent != None %}{{ row.final_report_percent|floatformat:"-2" }}%{% endif %}</td>
+          <td data-col="final-report-term">{{ row.final_report_term_days|default_if_none:"" }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="{{ contract_payment_schedule_empty_colspan }}" class="text-muted">Пока нет данных.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </div>

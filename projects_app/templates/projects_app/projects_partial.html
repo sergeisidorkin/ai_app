@@ -52,6 +52,7 @@
             </div>
           </div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="number" id="registration-col-number" checked><label class="form-check-label" for="registration-col-number">Номер</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="contract-id" id="registration-col-contract-id" checked><label class="form-check-label" for="registration-col-contract-id">Договор ID</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="agreement-type" id="registration-col-agreement-type" checked><label class="form-check-label" for="registration-col-agreement-type">Вид соглашения</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="group" id="registration-col-group" checked><label class="form-check-label" for="registration-col-group">Группа</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="project-id" id="registration-col-project-id" checked><label class="form-check-label" for="registration-col-project-id">Проект ID</label></div></div>
@@ -86,10 +87,11 @@
         <colgroup>
           <col class="checkbox">         <!-- 1: чекбокс -->
           <col class="project-number" data-col="number">   <!-- 2: Номер -->
-          <col class="agreement-type" data-col="agreement-type">   <!-- 3: Вид соглашения -->
-          <col class="group" data-col="group">            <!-- 4: Группа -->
-          <col class="quick-edit" style="width:1%">       <!-- 5: Редактировать -->
-          <col class="project-id" data-col="project-id">       <!-- 6: Проект ID -->
+          <col class="contract-id" data-col="contract-id">   <!-- 3: Договор ID -->
+          <col class="agreement-type" data-col="agreement-type">   <!-- 4: Вид соглашения -->
+          <col class="group" data-col="group">            <!-- 5: Группа -->
+          <col class="quick-edit" style="width:1%">       <!-- 6: Редактировать -->
+          <col class="project-id" data-col="project-id">       <!-- 7: Проект ID -->
           <col class="reg-type" data-col="type">          <!-- 7: Тип -->
           <col class="reg-name" data-col="name">         <!-- 8: Название -->
           <col class="reg-year" data-col="year">         <!-- 9: Год -->
@@ -127,6 +129,7 @@
           {% endif %}
         </th>
         <th class="col-project-number" data-col="number">Номер</th>
+        <th data-col="contract-id">Договор ID</th>
         <th data-col="agreement-type">Вид соглашения</th>
         <th data-col="group">Группа</th>
         <th class="project-quick-edit-col" style="width:1%; padding:0;"></th>
@@ -159,6 +162,8 @@
           data-project-id="{{ r.id }}"
           data-reg-group-key="{{ r.number_group_key }}"
           data-reg-group-number="{{ r.number|stringformat:'04d' }}"
+          data-reg-group-contract-id="{{ r.contract_project_registration_id|default:'' }}"
+          data-reg-group-contract-label="{% if r.contract_project_registration %}{{ r.contract_project_registration.short_uid }}{% endif %}"
           data-reg-group-agreement-type="{{ r.get_agreement_type_display }}"
           data-reg-group-group="{{ r.group_display }}"
           data-edit-url="{% url 'registration_form_edit' r.pk %}"
@@ -169,7 +174,7 @@
           data-evaluation-date-url="{% url 'registration_evaluation_date_update' r.pk %}"
           data-move-up-url="{% url 'registration_move_up' r.pk %}"
           data-move-down-url="{% url 'registration_move_down' r.pk %}"
-          {% if r.is_continuation or r.has_next_for_number %}class="{% if r.has_next_for_number %}registration-number-has-next{% endif %}{% if r.is_continuation %}{% if r.has_next_for_number %} {% endif %}registration-number-continuation{% endif %}"{% endif %}>
+          {% if r.is_continuation or r.has_next_for_number %}class="{% if r.has_next_for_number %}registration-number-has-next{% endif %}{% if r.has_next_for_different_contract_in_number_group %}{% if r.has_next_for_number %} {% endif %}registration-number-contract-has-next{% endif %}{% if r.is_continuation %}{% if r.has_next_for_number or r.has_next_for_different_contract_in_number_group %} {% endif %}registration-number-continuation{% endif %}"{% endif %}>
           <td class="text-nowrap">
             {% if request.user.is_authenticated and request.user.is_staff %}
               <div class="form-check">
@@ -184,8 +189,9 @@
             {% endif %}
           </td>
           <td class="col-project-number" data-col="number" data-reg-group-cell="number">{% if r.is_first_for_number %}{{ r.number|stringformat:"04d" }}{% endif %}</td>
-          <td data-col="agreement-type" data-reg-group-cell="agreement-type">{% if r.is_first_for_number %}{{ r.get_agreement_type_display }}{% endif %}</td>
-          <td data-col="group" data-reg-group-cell="group">{% if r.is_first_for_number %}{{ r.group_display }}{% endif %}</td>
+          <td class="contract-id-cell" data-col="contract-id" data-reg-group-cell="contract-id">{% if r.is_first_for_number_contract and r.contract_project_registration %}<span class="clf-id-droid-mono">{{ r.contract_project_registration.short_uid }}</span>{% endif %}</td>
+          <td data-col="agreement-type" data-reg-group-cell="agreement-type">{% if r.is_first_for_number_contract %}{{ r.get_agreement_type_display }}{% endif %}</td>
+          <td data-col="group" data-reg-group-cell="group">{% if r.is_first_for_number_contract %}{{ r.group_display }}{% endif %}</td>
           <td class="text-center p-0 project-quick-edit-col" style="width:1%;">
             {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
               <i class="bi bi-pencil-square text-secondary project-quick-edit"
@@ -310,42 +316,7 @@
       {% endfor %}
       </tbody>
     </table>
-
-    {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
-      <select id="registration-status-editor"
-              class="form-select form-select-sm d-none"
-              aria-label="Статус проекта">
-        {% for value, label in registration_status_choices %}
-          <option value="{{ value }}">{{ label }}</option>
-        {% endfor %}
-      </select>
-      <select id="registration-manager-editor"
-              class="form-select form-select-sm d-none"
-              aria-label="Руководитель проекта">
-        {% for value, label in registration_manager_choices %}
-          <option value="{{ value }}">{{ label }}</option>
-        {% endfor %}
-      </select>
-      <div id="registration-deadline-editor-wrap"
-           class="registration-deadline-editor-wrap d-none">
-        <input id="registration-deadline-editor"
-               class="form-control form-control-sm registration-deadline-editor-input"
-               type="text"
-               inputmode="numeric"
-               autocomplete="off"
-               autocorrect="off"
-               autocapitalize="off"
-               spellcheck="false"
-               placeholder="дд.мм.гггг"
-               aria-label="Дедлайн проекта">
-        <i class="bi bi-calendar registration-deadline-editor-icon" aria-hidden="true"></i>
-        <input id="registration-deadline-picker"
-               class="registration-deadline-native-picker"
-               type="date"
-               tabindex="-1"
-               aria-label="Выбрать дедлайн проекта">
-      </div>
-    {% endif %}
+  </div>
 
     {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
       <div class="d-flex align-items-stretch gap-2 products-actions-row"
@@ -394,6 +365,40 @@
             <i class="bi bi-gear"></i>
           </button>
         </div>
+      </div>
+
+      <select id="registration-status-editor"
+              class="form-select form-select-sm d-none"
+              aria-label="Статус проекта">
+        {% for value, label in registration_status_choices %}
+          <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+      <select id="registration-manager-editor"
+              class="form-select form-select-sm d-none"
+              aria-label="Руководитель проекта">
+        {% for value, label in registration_manager_choices %}
+          <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+      <div id="registration-deadline-editor-wrap"
+           class="registration-deadline-editor-wrap d-none">
+        <input id="registration-deadline-editor"
+               class="form-control form-control-sm registration-deadline-editor-input"
+               type="text"
+               inputmode="numeric"
+               autocomplete="off"
+               autocorrect="off"
+               autocapitalize="off"
+               spellcheck="false"
+               placeholder="дд.мм.гггг"
+               aria-label="Дедлайн проекта">
+        <i class="bi bi-calendar registration-deadline-editor-icon" aria-hidden="true"></i>
+        <input id="registration-deadline-picker"
+               class="registration-deadline-native-picker"
+               type="date"
+               tabindex="-1"
+               aria-label="Выбрать дедлайн проекта">
       </div>
 
       <div class="modal fade" id="reg-create-workspace-modal" tabindex="-1" aria-hidden="true">
@@ -503,7 +508,6 @@
         </div>
       </div>
     {% endif %}
-  </div>
 
   <!-- Условия контракта -->
   <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 50px;">
@@ -545,7 +549,7 @@
             </div>
           {% endif %}
         </th>
-        <th style="width:100px; min-width:100px; max-width:100px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Проект</th>
+        <th style="width:105px; min-width:105px; max-width:105px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Проект</th>
         <th>Тип</th>
         <th class="nowrap">Название</th>
         <th>Вид соглашения</th>
@@ -576,7 +580,7 @@
               </div>
             {% endif %}
           </td>
-          <td class="project-id-cell" style="width:100px; min-width:100px; max-width:100px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"><span class="clf-id-droid-mono" style="display:block; width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ r.short_uid }}</span></td>
+          <td class="project-id-cell" style="width:125px; min-width:125px; max-width:125px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"><span class="clf-id-droid-mono" style="display:block; width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ r.short_uid }}</span></td>
           <td>{{ r.type_short_display }}</td>
           <td>{{ r.name }}</td>
           <td>{{ r.get_agreement_type_display }}</td>
@@ -989,7 +993,7 @@
             </div>
           {% endif %}
         </th>
-        <th style="width:100px; min-width:100px; max-width:100px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Проект</th>
+        <th style="width:105px; min-width:105px; max-width:105px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Проект</th>
         <th>Тип</th>
         <th>Название</th>
         <th>Наименование актива</th>
@@ -1021,7 +1025,7 @@
               </div>
             {% endif %}
           </td>
-          <td class="text-nowrap" style="width:100px; min-width:100px; max-width:100px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"><span class="clf-id-droid-mono" style="display:block; width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ w.project.short_uid }}</span></td>
+          <td class="text-nowrap" style="width:125px; min-width:125px; max-width:125px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"><span class="clf-id-droid-mono" style="display:block; width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ w.project.short_uid }}</span></td>
           <td class="text-nowrap">{{ w.project.type_short_display|default:w.type }}</td>
           <td>{{ w.name }}</td>
           <td class="text-nowrap">{{ w.asset_name }}</td>
@@ -1036,6 +1040,7 @@
       {% endfor %}
       </tbody>
     </table>
+  </div>
 
     {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
       <div class="d-flex align-items-stretch gap-2 products-actions-row">
@@ -1064,7 +1069,6 @@
         </div>
       </div>
     {% endif %}
-  </div>
 
   <!-- Юридические лица -->
   <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap" style="margin-top: 50px;">
@@ -1128,7 +1132,7 @@
             </div>
           {% endif %}
         </th>
-        <th style="width:100px; min-width:100px; max-width:100px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Проект</th>
+        <th style="width:105px; min-width:105px; max-width:105px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Проект</th>
         <th>Тип</th>
         <th>Название</th>
         <th>Наименование актива</th>
@@ -1160,7 +1164,7 @@
               </div>
             {% endif %}
           </td>
-          <td class="text-nowrap" style="width:100px; min-width:100px; max-width:100px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"><span class="clf-id-droid-mono" style="display:block; width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ entity.project.short_uid }}</span></td>
+          <td class="text-nowrap" style="width:125px; min-width:125px; max-width:125px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"><span class="clf-id-droid-mono" style="display:block; width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ entity.project.short_uid }}</span></td>
           <td class="text-nowrap">{{ entity.work_item.project.type_short_display|default:entity.work_type }}</td>
           <td>{{ entity.work_name }}</td>
           <td class="text-nowrap">{{ entity.work_item.asset_name|default:entity.work_item.name }}</td>
@@ -1175,6 +1179,7 @@
       {% endfor %}
       </tbody>
     </table>
+  </div>
 
     {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
       <div class="d-flex align-items-stretch gap-2 products-actions-row">
@@ -1203,7 +1208,6 @@
         </div>
       </div>
     {% endif %}
-  </div>
 
       </div>
     </div>
@@ -1238,11 +1242,24 @@
       const pane = root || document.getElementById("projects-pane");
       const table = pane?.querySelector("table.reg-table");
       if (!table) return;
+      const setDroidMonoCellValue = (cell, value) => {
+        if (!cell) return;
+        cell.textContent = "";
+        if (!value) return;
+        const span = document.createElement("span");
+        span.className = "clf-id-droid-mono";
+        span.textContent = value;
+        cell.appendChild(span);
+      };
 
       let activeKey = null;
       let previousVisibleRow = null;
       table.querySelectorAll("tbody tr[data-reg-group-key]").forEach(row => {
-        row.classList.remove("registration-number-has-next", "registration-number-continuation");
+        row.classList.remove(
+          "registration-number-has-next",
+          "registration-number-contract-has-next",
+          "registration-number-continuation"
+        );
         const isVisible = !row.classList.contains("d-none");
         const key = row.dataset.regGroupKey || "";
         if (!isVisible || !key) return;
@@ -1253,17 +1270,26 @@
         }
 
         const isContinuation = !!previousVisibleRow;
+        const contractId = row.dataset.regGroupContractId || "";
+        const previousContractId = previousVisibleRow?.dataset.regGroupContractId || "";
+        const isContractContinuation = isContinuation && previousContractId === contractId;
         row.classList.toggle("registration-number-continuation", isContinuation);
         if (previousVisibleRow) {
           previousVisibleRow.classList.add("registration-number-has-next");
+          previousVisibleRow.classList.toggle(
+            "registration-number-contract-has-next",
+            previousContractId !== contractId
+          );
         }
 
-        const numberCell = row.cells[1];
-        const agreementCell = row.cells[2];
-        const groupCell = row.cells[3];
+        const numberCell = row.querySelector('[data-reg-group-cell="number"]');
+        const contractCell = row.querySelector('[data-reg-group-cell="contract-id"]');
+        const agreementCell = row.querySelector('[data-reg-group-cell="agreement-type"]');
+        const groupCell = row.querySelector('[data-reg-group-cell="group"]');
         if (numberCell) numberCell.textContent = isContinuation ? "" : (row.dataset.regGroupNumber || "");
-        if (agreementCell) agreementCell.textContent = isContinuation ? "" : (row.dataset.regGroupAgreementType || "");
-        if (groupCell) groupCell.textContent = isContinuation ? "" : (row.dataset.regGroupGroup || "");
+        setDroidMonoCellValue(contractCell, isContractContinuation ? "" : (row.dataset.regGroupContractLabel || ""));
+        if (agreementCell) agreementCell.textContent = isContractContinuation ? "" : (row.dataset.regGroupAgreementType || "");
+        if (groupCell) groupCell.textContent = isContractContinuation ? "" : (row.dataset.regGroupGroup || "");
 
         previousVisibleRow = row;
       });
@@ -1310,6 +1336,7 @@
         updateLabel(values);
         if (window.__enforceMasterOnRows) window.__enforceMasterOnRows();
         else window.__refreshRegistrationVisibleGroups(pane);
+        pane.dispatchEvent(new CustomEvent("reg-filter-changed"));
       }
 
       function normalizeSelection() {
@@ -1400,6 +1427,7 @@
         });
         updateLabel(values);
         if (window.__enforceMasterOnRows) window.__enforceMasterOnRows();
+        pane.dispatchEvent(new CustomEvent("legal-filter-changed"));
       }
 
       function normalizeSelection() {
@@ -1826,6 +1854,7 @@
         });
         updateLabel(values);
         if (window.__enforceMasterOnRows) window.__enforceMasterOnRows();
+        pane.dispatchEvent(new CustomEvent("work-filter-changed"));
       }
 
       function normalizeSelection() {

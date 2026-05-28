@@ -31,6 +31,11 @@ class ProposalRegistration(models.Model):
         verbose_name="Номер",
         validators=[MinValueValidator(0), MaxValueValidator(9999)],
     )
+    sub_number = models.PositiveSmallIntegerField(
+        "№",
+        default=0,
+        validators=[MinValueValidator(0), MaxValueValidator(9)],
+    )
     group = models.CharField("Группа", max_length=2, default="RU", db_index=True)
     group_member = models.ForeignKey(
         GroupMember,
@@ -251,7 +256,7 @@ class ProposalRegistration(models.Model):
         verbose_name_plural = "Реестр ТКП"
         constraints = [
             models.UniqueConstraint(
-                fields=("number", "group_member"),
+                fields=("number", "sub_number", "group_member"),
                 name="proposal_registration_identity_unique",
             ),
         ]
@@ -336,18 +341,19 @@ class ProposalRegistration(models.Model):
             return True
         original = (
             ProposalRegistration.objects.filter(pk=self.pk)
-            .values("number", "group", "group_member_id")
+            .values("number", "sub_number", "group", "group_member_id")
             .first()
         )
         return (
             not original
             or original["number"] != self.number
+            or original["sub_number"] != self.sub_number
             or original["group"] != self.group
             or original["group_member_id"] != self.group_member_id
         )
 
     def _build_short_uid(self):
-        return f"{self.formatted_number}{self.group_order_number}{self.group_alpha2}"
+        return f"{self.formatted_number}{int(self.sub_number or 0)}{self.group_order_number}{self.group_alpha2}"
 
     def save(self, *args, **kwargs):
         member = self._resolved_group_member()

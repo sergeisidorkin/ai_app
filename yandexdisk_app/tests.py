@@ -21,7 +21,7 @@ from yandexdisk_app.workspace import (
 
 
 class WorkspaceFolderVariablesTests(SimpleTestCase):
-    def make_project(self, *, short_uid="444410RU", product_short="DD", name="Проект Альфа"):
+    def make_project(self, *, short_uid="44440010RU", product_short="DD", name="Проект Альфа"):
         product = Product(
             short_name=product_short,
             name_en="Due Diligence",
@@ -37,7 +37,7 @@ class WorkspaceFolderVariablesTests(SimpleTestCase):
 
         resolved = _resolve_workspace_folder_name("01 {project_label}", project)
 
-        self.assertEqual(resolved, "01 444410RU DD Проект Альфа")
+        self.assertEqual(resolved, "01 44440010RU DD Проект Альфа")
 
     def test_build_folder_tree_resolves_project_label_for_selected_project(self):
         project = self.make_project(name="Проект/Альфа")
@@ -52,9 +52,9 @@ class WorkspaceFolderVariablesTests(SimpleTestCase):
         self.assertEqual(
             paths,
             [
-                "444410RU DD Проект_Альфа",
-                "444410RU DD Проект_Альфа/02 Письма",
-                "444410RU DD Проект_Альфа/02 Письма/Черновики",
+                "44440010RU DD Проект_Альфа",
+                "44440010RU DD Проект_Альфа/02 Письма",
+                "44440010RU DD Проект_Альфа/02 Письма/Черновики",
             ],
         )
 

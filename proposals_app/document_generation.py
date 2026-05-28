@@ -111,12 +111,16 @@ def build_proposal_workspace_pdf_paths(proposal) -> dict[str, str]:
         raise RuntimeError("Для ТКП не задана рабочая папка в облачном хранилище.")
 
     docx_name = str(getattr(proposal, "docx_file_name", "") or "").strip()
+    raw_docx_link = str(getattr(proposal, "docx_file_link", "") or "").strip()
+    media_url = str(getattr(settings, "MEDIA_URL", "") or "").strip()
     if docx_name:
         pdf_name = f"{Path(docx_name).stem}.pdf"
     else:
         pdf_name = f"{build_proposal_document_base_name(proposal)}.pdf"
 
     workspace_root = workspace_path.rstrip("/")
+    if raw_docx_link and not (media_url and raw_docx_link.startswith(media_url)):
+        workspace_root = (posixpath.dirname(raw_docx_link) or workspace_root).rstrip("/")
     pdf_path = posixpath.join(workspace_root, pdf_name)
     return {
         "workspace_root": workspace_root,

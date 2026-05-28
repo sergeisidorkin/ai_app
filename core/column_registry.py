@@ -262,6 +262,9 @@ COLUMN_REGISTRY = {
                 "label": "Реестр проектов",
                 "columns": {
                     "number": "Номер",
+                    "sub_number": "№",
+                    "proposal_registration": "ТКП ID",
+                    "contract_id": "Договор ID",
                     "group": "Группа",
                     "agreement_type": "Вид соглашения",
                     "project_id": "Проект ID",

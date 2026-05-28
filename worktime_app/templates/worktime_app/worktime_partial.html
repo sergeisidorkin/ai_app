@@ -54,7 +54,7 @@
       <input type="hidden" name="breakdown" value="{{ breakdown_value }}" data-worktime-breakdown-value>
       <input type="hidden" name="company" value="{{ company_filter_value }}" data-worktime-company-value>
 
-      <div class="dropdown worktime-scale-filter-wrap">
+      <div class="dropdown worktime-scale-filter-wrap worktime-filter-dropdown">
         <button class="btn btn-outline-secondary btn-sm dropdown-toggle worktime-scale-filter-btn"
                 type="button"
                 data-bs-toggle="dropdown"
@@ -62,7 +62,7 @@
           Масштаб:&nbsp;<span data-worktime-scale-label>{{ scale_label }}</span>
         </button>
         <div class="dropdown-menu p-3 project-filter-menu">
-          <div class="form-check mb-2">
+          <label class="form-check proposal-payment-view-option worktime-filter-option" for="worktime-scale-month">
             <input class="form-check-input"
                    type="radio"
                    value="month"
@@ -70,9 +70,9 @@
                    name="worktime-scale-choice"
                    data-worktime-scale-option
                    {% if scale_value == 'month' %}checked{% endif %}>
-            <label class="form-check-label" for="worktime-scale-month">месяц</label>
-          </div>
-          <div class="form-check">
+            <span class="form-check-label">месяц</span>
+          </label>
+          <label class="form-check proposal-payment-view-option worktime-filter-option" for="worktime-scale-year">
             <input class="form-check-input"
                    type="radio"
                    value="year"
@@ -80,12 +80,12 @@
                    name="worktime-scale-choice"
                    data-worktime-scale-option
                    {% if scale_value == 'year' %}checked{% endif %}>
-            <label class="form-check-label" for="worktime-scale-year">год</label>
-          </div>
+            <span class="form-check-label">год</span>
+          </label>
         </div>
       </div>
 
-      <div class="dropdown worktime-scale-filter-wrap worktime-breakdown-filter-wrap">
+      <div class="dropdown worktime-scale-filter-wrap worktime-breakdown-filter-wrap worktime-filter-dropdown">
         <button class="btn btn-outline-secondary btn-sm dropdown-toggle worktime-scale-filter-btn"
                 type="button"
                 data-bs-toggle="dropdown"
@@ -93,7 +93,7 @@
           Разбивка:&nbsp;<span data-worktime-breakdown-label>{{ breakdown_label }}</span>
         </button>
         <div class="dropdown-menu p-3 project-filter-menu">
-          <div class="form-check mb-2">
+          <label class="form-check proposal-payment-view-option worktime-filter-option" for="worktime-breakdown-employees">
             <input class="form-check-input"
                    type="radio"
                    value="employees"
@@ -101,9 +101,9 @@
                    name="worktime-breakdown-choice"
                    data-worktime-breakdown-option
                    {% if breakdown_value == 'employees' %}checked{% endif %}>
-            <label class="form-check-label" for="worktime-breakdown-employees">по сотрудникам</label>
-          </div>
-          <div class="form-check">
+            <span class="form-check-label">по сотрудникам</span>
+          </label>
+          <label class="form-check proposal-payment-view-option worktime-filter-option" for="worktime-breakdown-activities">
             <input class="form-check-input"
                    type="radio"
                    value="activities"
@@ -111,8 +111,8 @@
                    name="worktime-breakdown-choice"
                    data-worktime-breakdown-option
                    {% if breakdown_value == 'activities' %}checked{% endif %}>
-            <label class="form-check-label" for="worktime-breakdown-activities">по активностям</label>
-          </div>
+            <span class="form-check-label">по активностям</span>
+          </label>
         </div>
       </div>
 
@@ -183,7 +183,7 @@
   {% endif %}
 
   <div class="worktime-calendar-wrap">
-    <table class="table table-sm align-middle worktime-calendar-table mb-0{% if is_personal_week_view %} worktime-calendar-table-personal{% else %} worktime-calendar-table-general{% endif %}{% if is_general_year_view %} worktime-calendar-table-year{% endif %}{% if is_activity_breakdown %} worktime-calendar-table-activities{% endif %}"
+    <table class="table table-sm align-middle worktime-calendar-table mb-0{% if is_personal_week_view %} worktime-calendar-table-personal{% else %} worktime-calendar-table-general{% endif %}{% if is_general_year_view %} worktime-calendar-table-year{% endif %}{% if is_activity_breakdown %} worktime-calendar-table-activities{% endif %}{% if scale_value == 'month' and breakdown_value == 'employees' %} worktime-calendar-table-month-employees{% endif %}"
            style="--worktime-flex-column-count: {{ days|length }};"
            data-worktime-flex-column-count="{{ days|length }}"
            {% if is_personal_week_view %}
@@ -748,6 +748,11 @@
     min-width: 100%;
   }
 
+  .worktime-filter-dropdown .dropdown-menu {
+    width: max-content;
+    min-width: 200px;
+  }
+
   .worktime-scale-filter-btn:hover {
     background: #adb5bd;
     border-color: #adb5bd;
@@ -1178,11 +1183,25 @@
   }
 
   .worktime-calendar-table-general {
+    --worktime-project-width: 95px;
+    --worktime-type-sticky-left: 95px;
+    --worktime-name-sticky-left: 145px;
     min-width: 0;
+  }
+
+  .worktime-calendar-table-general.worktime-calendar-table-month-employees {
+    --worktime-project-width: 105px;
+    --worktime-type-sticky-left: 105px;
+    --worktime-name-sticky-left: 155px;
   }
 
   .worktime-calendar-table-general.worktime-calendar-table-year {
     --worktime-summary-chart-column-width: 57px;
+  }
+
+  /* Activity rows use a colspan label; keep long employee names from inflating max-content width. */
+  .worktime-calendar-table-general.worktime-calendar-table-activities:not(.worktime-calendar-table-year) {
+    width: 100%;
   }
 
   .worktime-calendar-table-general .worktime-day-head,
@@ -1217,9 +1236,12 @@
 
   .worktime-calendar-table-personal {
     --worktime-select-width: 30px;
+    --worktime-project-width: 150px;
+    --worktime-type-sticky-left: 180px;
+    --worktime-name-sticky-left: 230px;
     --worktime-flex-width: 56px;
     --worktime-total-width: 80px;
-    min-width: max(100%, calc(30px + 90px + 50px + 160px + 80px + 184px + (56px * var(--worktime-flex-column-count, 1))));
+    min-width: max(100%, calc(30px + 150px + 50px + 160px + 80px + 184px + (56px * var(--worktime-flex-column-count, 1))));
   }
 
   .worktime-calendar-table .worktime-flex-cell {
@@ -3262,7 +3284,9 @@
         if (!containerWidth) return;
 
         var minSelectWidth = table.querySelector('.worktime-colgroup-select') ? 30 : 0;
-        var minProjectWidth = 90;
+        var minProjectWidth = table.classList.contains('worktime-calendar-table-month-employees')
+          ? 105
+          : (table.classList.contains('worktime-calendar-table-personal') ? 150 : (table.classList.contains('worktime-calendar-table-general') ? 95 : 90));
         var minTypeWidth = 50;
         var minNameWidth = 160;
         var minFlexWidth = table.classList.contains('worktime-calendar-table-personal') ? 56 : 36;

@@ -10,6 +10,13 @@ PROPOSAL_REGISTRY_COLUMNS = [
         "variable_available": True,
     },
     {
+        "picker_value": "sub-number",
+        "data_col": "sub-number",
+        "source_column": "sub_number",
+        "label": "№",
+        "variable_available": True,
+    },
+    {
         "picker_value": "group",
         "data_col": "group",
         "source_column": "group",
@@ -331,6 +338,12 @@ PROPOSAL_PAYMENT_SCHEDULE_UI_COLUMNS = [
         "label": "Номер",
     },
     {
+        "picker_value": "sub-number",
+        "data_col": "sub-number",
+        "source_column": "sub_number",
+        "label": "№",
+    },
+    {
         "picker_value": "group",
         "data_col": "group",
         "source_column": "group",
@@ -442,6 +455,103 @@ PROPOSAL_PAYMENT_SCHEDULE_DEFAULT_HIDDEN_SOURCE_COLUMNS = {
 }
 
 
+PROPOSAL_DISPATCH_UI_COLUMNS = [
+    {
+        "picker_value": "number",
+        "data_col": "number",
+        "source_column": "number",
+        "label": "Номер",
+    },
+    {
+        "picker_value": "sub-number",
+        "data_col": "sub-number",
+        "source_column": "sub_number",
+        "label": "№",
+    },
+    {
+        "picker_value": "group",
+        "data_col": "group",
+        "source_column": "group",
+        "label": "Группа",
+    },
+    {
+        "picker_value": "tkp-id",
+        "data_col": "tkp-id",
+        "source_column": "tkp_id",
+        "label": "ТКП ID",
+    },
+    {
+        "picker_value": "type",
+        "data_col": "type",
+        "source_column": "type",
+        "label": "Тип",
+    },
+    {
+        "picker_value": "name",
+        "data_col": "name",
+        "source_column": "name",
+        "label": "Название",
+    },
+    {
+        "picker_value": "cloud",
+        "data_col": "cloud",
+        "source_column": "cloud",
+        "label": "Облако",
+    },
+    {
+        "picker_value": "docx-name",
+        "data_col": "docx-name",
+        "source_column": "docx_file_name",
+        "label": "Наименование файла DOCX",
+    },
+    {
+        "picker_value": "pdf-name",
+        "data_col": "pdf-name",
+        "source_column": "pdf_file_name",
+        "label": "Наименование файла PDF",
+    },
+    {
+        "picker_value": "sent-date",
+        "data_col": "sent-date",
+        "source_column": "sent_date",
+        "label": "Дата отправки",
+    },
+    {
+        "picker_value": "contact-name",
+        "data_col": "contact-name",
+        "source_column": "contact_name",
+        "label": "ФИО",
+    },
+    {
+        "picker_value": "contact-email",
+        "data_col": "contact-email",
+        "source_column": "contact_email",
+        "label": "Эл. почта",
+    },
+    {
+        "picker_value": "job-title",
+        "data_col": "job-title",
+        "source_column": "job_title",
+        "label": "Должность",
+    },
+    {
+        "picker_value": "organization",
+        "data_col": "organization",
+        "source_column": "organization",
+        "label": "Организация",
+    },
+    {
+        "picker_value": "transfer-date",
+        "data_col": "transfer-date",
+        "source_column": "transfer_to_contract_date",
+        "label": "Передано",
+    },
+]
+
+
+PROPOSAL_DISPATCH_DEFAULT_HIDDEN_SOURCE_COLUMNS: set[str] = set()
+
+
 def _with_default_hidden(item, default_hidden_source_columns):
     column = dict(item)
     if column["source_column"] in default_hidden_source_columns:
@@ -461,6 +571,13 @@ def get_proposal_payment_schedule_ui_columns():
     return [
         _with_default_hidden(item, PROPOSAL_PAYMENT_SCHEDULE_DEFAULT_HIDDEN_SOURCE_COLUMNS)
         for item in PROPOSAL_PAYMENT_SCHEDULE_UI_COLUMNS
+    ]
+
+
+def get_proposal_dispatch_ui_columns():
+    return [
+        _with_default_hidden(item, PROPOSAL_DISPATCH_DEFAULT_HIDDEN_SOURCE_COLUMNS)
+        for item in PROPOSAL_DISPATCH_UI_COLUMNS
     ]
 
 

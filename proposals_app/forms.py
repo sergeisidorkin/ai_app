@@ -358,6 +358,22 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             }
         ),
     )
+    sub_number = forms.IntegerField(
+        label="№",
+        required=False,
+        min_value=0,
+        max_value=9,
+        initial=0,
+        widget=forms.NumberInput(
+            attrs={
+                "id": "proposal-sub-number-input",
+                "min": 0,
+                "max": 9,
+                "step": 1,
+                "autocomplete": "off",
+            }
+        ),
+    )
     group_member = forms.ModelChoiceField(
         label="Группа",
         queryset=GroupMember.objects.none(),
@@ -665,6 +681,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         model = ProposalRegistration
         fields = [
             "number",
+            "sub_number",
             "group_member",
             "type",
             "name",
@@ -1012,6 +1029,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 "advance_term_days",
                 "preliminary_report_percent",
                 "preliminary_report_term_days",
+                "final_report_percent",
                 "final_report_term_days",
             ):
                 self.fields[field_name].widget.attrs["disabled"] = True
@@ -1031,6 +1049,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             self.fields["year"].initial = timezone.now().year
         if not self.instance.pk and "number" not in self.data:
             self.fields["number"].initial = _next_proposal_number()
+        if not self.instance.pk and "sub_number" not in self.data:
+            self.fields["sub_number"].initial = 0
         if not self.instance.pk and "currency" not in self.data:
             rub = currency_qs.filter(code_alpha="RUB").first()
             if rub:
@@ -2249,6 +2269,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
 
     def clean(self):
         cleaned = super().clean()
+        if cleaned.get("sub_number") in (None, ""):
+            cleaned["sub_number"] = 0
         if self.errors.get("advance_percent") or self.errors.get("preliminary_report_percent"):
             final_percent = None
         else:

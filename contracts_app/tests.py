@@ -1,8 +1,10 @@
+import json
 import os
 import shutil
 import tempfile
 import uuid
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 from io import BytesIO
 from urllib.parse import quote
 from unittest.mock import patch
@@ -21,8 +23,15 @@ from classifiers_app.models import OKSMCountry
 from contacts_app.models import CitizenshipRecord, PersonRecord
 from core.models import CloudStorageSettings
 from contracts_app.docx_processor import process_template
-from contracts_app.forms import ContractTemplateForm
-from contracts_app.models import ContractReturnComment, ContractSubject, ContractTemplate, ContractVariable
+from contracts_app.forms import ContractProjectRegistrationForm, ContractTemplateForm
+from contracts_app.models import (
+    ContractProjectRegistration,
+    ContractProjectRegistrationProduct,
+    ContractReturnComment,
+    ContractSubject,
+    ContractTemplate,
+    ContractVariable,
+)
 from contracts_app.variable_resolver import resolve_variables
 from experts_app.models import ExpertContractDetails, ExpertProfile
 from group_app.models import GroupMember, OrgUnit
@@ -39,6 +48,7 @@ from policy_app.models import (
     TypicalSection,
 )
 from projects_app.models import Performer, ProjectRegistration, ProjectRegistrationProduct
+from proposals_app.models import ProposalRegistration
 from users_app.forms import FREELANCER_LABEL
 from users_app.models import Employee
 
@@ -90,6 +100,15 @@ class ContractsCloudLabelTests(TestCase):
             name="Договорный проект",
             year=2026,
         )
+        self.proposal = ProposalRegistration.objects.create(
+            number=7001,
+            group_member=self.group_member,
+            type=self.product,
+            name="ТКП проект",
+            year=2026,
+        )
+        self.project.proposal_registration = self.proposal
+        self.project.save(update_fields=["proposal_registration"])
         self.employee_user = get_user_model().objects.create_user(
             username="expert@example.com",
             email="expert@example.com",
@@ -2071,15 +2090,310 @@ class ContractsCloudLabelTests(TestCase):
         self.assertContains(response, "<td class=\"text-nowrap\">Все</td>", html=False)
 
     def test_contracts_development_partial_renders_client_contract_projects_table(self):
+        contract_project = ContractProjectRegistration.objects.create(
+            number=7101,
+            sub_number=2,
+            contract_number="IMC/7101-RU/05-26",
+            proposal_registration=self.proposal,
+            group_member=self.group_member,
+            type=self.product,
+            name="Договорная строка",
+            status="Разрабатывается проект договора",
+            year=2026,
+            evaluation_date=date(2026, 1, 1),
+            service_term_months="1.0",
+            preliminary_report_date=date(2026, 2, 15),
+            final_report_term_weeks="2.0",
+            final_report_date=date(2026, 3, 1),
+            advance_percent="30",
+            advance_term_days=5,
+            preliminary_report_percent="20",
+            preliminary_report_term_days=6,
+            final_report_percent="50",
+            final_report_term_days=14,
+            registration_region="Москва",
+            asset_owner="ООО Владелец",
+        )
+
         response = self.client.get(reverse("contracts_development_partial"))
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Проекты договоров с клиентами")
         self.assertContains(response, "Вид соглашения")
-        self.assertContains(response, "Проект ID")
-        self.assertContains(response, "Заказчик")
+        self.assertContains(response, 'data-col="tkp-id"', html=False)
+        self.assertContains(response, self.proposal.short_uid)
+        self.assertContains(response, 'data-col="sub-number"', html=False)
+        self.assertContains(response, '<td data-col="sub-number">2</td>', html=False)
+        self.assertContains(response, 'data-col="contract-number"', html=False)
+        self.assertContains(response, "Номер договора")
+        self.assertContains(response, '<td data-col="contract-number">IMC/7101-RU/05-26</td>', html=False)
+        self.assertContains(response, ">№</th>", html=False)
+        self.assertContains(response, "Договор ID")
+        self.assertContains(response, 'proposal-split-header-prefix">Заказчик: ', html=False)
+        self.assertContains(response, 'proposal-split-header-prefix">Владелец: ', html=False)
+        self.assertContains(response, 'id="contracts-drafts-colpicker-wrap"', html=False)
+        self.assertContains(response, 'id="contracts-drafts-col-number"', html=False)
+        self.assertContains(response, 'id="contracts-drafts-col-status"', html=False)
+        self.assertContains(response, 'data-col="region"', html=False)
+        self.assertContains(response, "Москва")
+        self.assertContains(response, "ООО Владелец")
         self.assertContains(response, reverse("contracts_project_registration_create"))
-        self.assertContains(response, reverse("contracts_project_registration_edit", args=[self.project.pk]))
+        self.assertContains(response, reverse("contracts_project_registration_edit", args=[contract_project.pk]))
+        self.assertContains(response, "data-queued-row-order", html=False)
+        self.assertContains(response, reverse("contracts_project_registration_row_order"), html=False)
+        self.assertContains(response, f'data-row-order-id="{contract_project.pk}"', html=False)
+        self.assertContains(response, 'data-row-order-payload-field="ordered_contract_project_ids"', html=False)
+        self.assertContains(response, 'data-row-order-status', html=False)
+        content = response.content.decode()
+        self.assertLess(content.index("contracts-drafts-table"), content.index("contracts-payment-schedule-table"))
+        drafts_table_html = content[
+            content.index("contracts-drafts-table") : content.index("contracts-payment-schedule-table")
+        ]
+        self.assertIn("contracts-payment-quick-edit me-1", drafts_table_html)
+        self.assertContains(response, "Сроки и порядок платежей")
+        self.assertContains(response, 'id="contracts-payment-colpicker-wrap"', html=False)
+        self.assertContains(response, 'id="contracts-payment-col-evaluation-date"', html=False)
+        self.assertContains(response, 'id="contracts-payment-col-advance-percent" data-default-hidden="true"', html=False)
+        self.assertContains(response, "contracts-payment-quick-edit me-1", html=False)
+        self.assertContains(response, 'data-col="project-id"', html=False)
+        self.assertContains(response, "Этап 1")
+        self.assertContains(response, "01.01.2026")
+        self.assertContains(response, "15.01.2026")
+        self.assertContains(response, "15.02.2026")
+        self.assertContains(response, "1,0")
+        self.assertContains(response, "2,0")
+        self.assertContains(response, "30%")
+        self.assertContains(response, "14")
+        self.assertEqual(response.context["contract_payment_schedule_rows"][0]["start_date"], date(2026, 1, 15))
+        self.assertContains(response, "Разрабатывается проект договора")
+        self.assertNotContains(response, 'data-contract-project-status', html=False)
+        self.assertNotContains(response, 'btn btn-link p-0 reg-status-btn', html=False)
+
+    def test_contract_project_registration_defaults_to_draft_status(self):
+        contract_project = ContractProjectRegistration.objects.create(
+            number=7102,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name="Договор со статусом по умолчанию",
+            year=2026,
+        )
+
+        self.assertEqual(contract_project.status, "Разрабатывается проект договора")
+
+    def test_contract_project_registration_status_update_changes_status(self):
+        contract_project = ContractProjectRegistration.objects.create(
+            number=7103,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name="Договор для смены статуса",
+            year=2026,
+        )
+
+        response = self.client.post(
+            reverse("contracts_project_registration_status_update", args=[contract_project.pk]),
+            {"status": "Договор подписан ЭЦП"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+        contract_project.refresh_from_db()
+        self.assertEqual(contract_project.status, "Договор подписан ЭЦП")
+
+    def test_contract_project_registration_status_update_rejects_unknown_status(self):
+        contract_project = ContractProjectRegistration.objects.create(
+            number=7104,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name="Договор с ошибочным статусом",
+            year=2026,
+        )
+
+        response = self.client.post(
+            reverse("contracts_project_registration_status_update", args=[contract_project.pk]),
+            {"status": "Неизвестно"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.json()["ok"])
+        contract_project.refresh_from_db()
+        self.assertEqual(contract_project.status, "Разрабатывается проект договора")
+
+    def test_contracts_development_partial_groups_rows_by_number(self):
+        second_proposal = ProposalRegistration.objects.create(
+            number=7401,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name="Второй ТКП в группе",
+            year=2026,
+        )
+        first = ContractProjectRegistration.objects.create(
+            number=7401,
+            sub_number=1,
+            proposal_registration=self.proposal,
+            group_member=self.group_member,
+            type=self.product,
+            name="Первый договор",
+            year=2026,
+        )
+        second = ContractProjectRegistration.objects.create(
+            number=7401,
+            sub_number=2,
+            proposal_registration=second_proposal,
+            group_member=self.group_member,
+            type=self.product,
+            name="Второй договор",
+            year=2026,
+        )
+        third = ContractProjectRegistration.objects.create(
+            number=7402,
+            sub_number=1,
+            proposal_registration=self.proposal,
+            group_member=self.group_member,
+            type=self.product,
+            name="Третий договор",
+            year=2026,
+        )
+
+        response = self.client.get(reverse("contracts_development_partial"))
+        registrations = list(response.context["registrations"])
+        payment_rows = list(response.context["contract_payment_schedule_rows"])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([row.pk for row in registrations], [first.pk, second.pk, third.pk])
+        self.assertTrue(registrations[0].is_first_for_number)
+        self.assertTrue(registrations[0].has_next_for_number)
+        self.assertTrue(registrations[0].has_next_for_different_contract_in_number_group)
+        self.assertTrue(registrations[0].has_next_for_different_tkp_in_number_group)
+        self.assertFalse(registrations[1].has_next_for_different_tkp_in_number_group)
+        self.assertFalse(registrations[1].is_first_for_number)
+        self.assertTrue(registrations[1].is_continuation)
+        self.assertTrue(registrations[1].is_first_for_tkp)
+        self.assertFalse(registrations[1].has_next_for_different_contract_in_number_group)
+        self.assertTrue(registrations[2].is_first_for_number)
+        self.assertContains(response, self.proposal.short_uid)
+        self.assertContains(response, second_proposal.short_uid)
+
+        self.assertEqual(len(payment_rows), 3)
+        self.assertTrue(payment_rows[0]["is_first_for_number"])
+        self.assertTrue(payment_rows[0]["has_next_for_number"])
+        self.assertFalse(payment_rows[1]["is_first_for_number"])
+        self.assertTrue(payment_rows[1]["is_number_continuation"])
+        self.assertTrue(payment_rows[2]["is_first_for_number"])
+
+        self.assertContains(response, "contracts-drafts-number-has-next", html=False)
+        self.assertContains(response, "contracts-drafts-number-contract-has-next", html=False)
+        self.assertContains(response, "contracts-drafts-tkp-separator-has-next", html=False)
+        self.assertContains(response, "contracts-drafts-number-continuation", html=False)
+        self.assertContains(response, "contracts-payment-number-has-next", html=False)
+        self.assertContains(response, "contracts-payment-number-contract-has-next", html=False)
+        self.assertNotContains(response, "contracts-payment-stage-has-next", html=False)
+        self.assertContains(response, "contracts-payment-stage-continuation", html=False)
+        self.assertContains(response, '<td class="col-project-number" data-col="number"></td>', html=False)
+        self.assertContains(response, '<td data-col="number"></td>', html=False)
+
+    def test_contracts_project_registration_row_order_persists_full_order(self):
+        first = ContractProjectRegistration.objects.create(
+            number=7501,
+            position=1,
+            proposal_registration=self.proposal,
+            group_member=self.group_member,
+            type=self.product,
+            name="Первый договор",
+            year=2026,
+        )
+        second = ContractProjectRegistration.objects.create(
+            number=7502,
+            position=2,
+            proposal_registration=self.proposal,
+            group_member=self.group_member,
+            type=self.product,
+            name="Второй договор",
+            year=2026,
+        )
+        third = ContractProjectRegistration.objects.create(
+            number=7503,
+            position=3,
+            proposal_registration=self.proposal,
+            group_member=self.group_member,
+            type=self.product,
+            name="Третий договор",
+            year=2026,
+        )
+
+        response = self.client.post(
+            reverse("contracts_project_registration_row_order"),
+            data=json.dumps(
+                {
+                    "ordered_contract_project_ids": [second.pk, first.pk, third.pk],
+                    "base_order_signature": f"{first.pk}:{second.pk}:{third.pk}",
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            list(ContractProjectRegistration.objects.order_by("position", "id").values_list("pk", flat=True)),
+            [second.pk, first.pk, third.pk],
+        )
+
+    def test_contracts_project_registration_row_order_returns_conflict_for_stale_signature(self):
+        first = ContractProjectRegistration.objects.create(
+            number=7601,
+            position=1,
+            proposal_registration=self.proposal,
+            group_member=self.group_member,
+            type=self.product,
+            name="Первый договор",
+            year=2026,
+        )
+        second = ContractProjectRegistration.objects.create(
+            number=7602,
+            position=2,
+            proposal_registration=self.proposal,
+            group_member=self.group_member,
+            type=self.product,
+            name="Второй договор",
+            year=2026,
+        )
+        third = ContractProjectRegistration.objects.create(
+            number=7603,
+            position=3,
+            proposal_registration=self.proposal,
+            group_member=self.group_member,
+            type=self.product,
+            name="Третий договор",
+            year=2026,
+        )
+        ContractProjectRegistration.objects.filter(pk=first.pk).update(position=2)
+        ContractProjectRegistration.objects.filter(pk=second.pk).update(position=1)
+
+        response = self.client.post(
+            reverse("contracts_project_registration_row_order"),
+            data=json.dumps(
+                {
+                    "ordered_contract_project_ids": [first.pk, second.pk, third.pk],
+                    "base_order_signature": f"{first.pk}:{second.pk}:{third.pk}",
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["current_contract_project_ids"], [second.pk, first.pk, third.pk])
+
+    def test_contracts_development_partial_does_not_render_project_registry_rows(self):
+        response = self.client.get(reverse("contracts_development_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Проекты договоров с клиентами")
+        self.assertContains(response, "Пока нет данных.")
+        self.assertNotContains(response, self.project.name)
+        self.assertNotContains(response, self.proposal.short_uid)
 
     def test_contracts_project_registration_create_form_targets_contracts_drafts_pane(self):
         response = self.client.get(reverse("contracts_project_registration_create"))
@@ -2087,7 +2401,663 @@ class ContractsCloudLabelTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'hx-post="%s"' % reverse("contracts_project_registration_create"), html=False)
         self.assertContains(response, 'hx-target="#contracts-drafts-pane"', html=False)
+        self.assertContains(response, 'id="contracts-sub-number-input"', html=False)
+        self.assertContains(response, 'id="contracts-contract-number-input"', html=False)
+        self.assertContains(response, 'name="contract_number"', html=False)
+        self.assertContains(response, "Договор ID")
+        self.assertContains(response, 'id="contracts-project-short-uid-input"', html=False)
+        self.assertContains(response, 'id="contracts-project-group-order-map"', html=False)
+        self.assertContains(response, 'id="contracts-project-group-alpha2-map"', html=False)
+        self.assertContains(response, 'id="contracts-project-proposal-sub-number-map"', html=False)
+        self.assertContains(response, "attachContractProjectShortUidPreview", html=False)
+        self.assertContains(response, 'id="contracts-proposal-registration-select"', html=False)
+        self.assertContains(response, 'id="contracts-proposal-registration-display"', html=False)
+        self.assertContains(response, 'id="contracts-proposal-prefill-btn"', html=False)
+        self.assertContains(response, "bi-arrow-clockwise", html=False)
+        self.assertContains(
+            response,
+            reverse("contracts_project_registration_prefill_from_proposal", args=[0]),
+            html=False,
+        )
+        self.assertContains(
+            response,
+            f'<option value="{self.proposal.pk}">{self.proposal.short_uid} DD {self.proposal.name}</option>',
+            html=False,
+        )
+        self.assertContains(response, 'id="registration-products-container"', html=False)
+        self.assertContains(response, 'id="registration-add-product"', html=False)
+        self.assertContains(response, "Сроки")
+        self.assertContains(response, "График оплаты")
+        self.assertContains(response, "Общий для всех этапов", html=False)
+        self.assertContains(response, 'name="payment_schedule_common"', html=False)
+        self.assertContains(response, "proposal-terms-table")
+        self.assertContains(response, "proposal-payment-schedule-editor")
+        self.assertContains(response, "proposal-payment-schedule-editor-body")
+        self.assertContains(response, 'name="evaluation_date"', html=False)
+        self.assertContains(response, 'id="contract-stage-terms-tbody"', html=False)
+        self.assertContains(response, "proposal-stage-terms-row")
+        self.assertContains(response, 'name="advance_percent"', html=False)
+        self.assertContains(response, 'name="final_report_percent"', html=False)
+        self.assertContains(response, self.proposal.short_uid)
         self.assertNotContains(response, "Дедлайн")
+
+    def test_contracts_project_registration_prefill_from_proposal_create_does_not_persist(self):
+        self.proposal.name = "ТКП для prefill"
+        self.proposal.customer = "ООО Заказчик prefill"
+        self.proposal.sub_number = 3
+        self.proposal.evaluation_date = date(2026, 1, 1)
+        self.proposal.service_term_months = Decimal("1.5")
+        self.proposal.preliminary_report_date = date(2026, 2, 15)
+        self.proposal.final_report_term_weeks = Decimal("2.0")
+        self.proposal.final_report_date = date(2026, 3, 1)
+        self.proposal.advance_percent = Decimal("30")
+        self.proposal.stage_payloads_json = [
+            {
+                "product_id": self.product.pk,
+                "evaluation_date": "01.01.2026",
+                "service_term_months": "1.5",
+                "preliminary_report_date": "15.02.2026",
+                "final_report_term_weeks": "2.0",
+                "final_report_date": "01.03.2026",
+                "next_stage_delay_days": "0",
+                "payment_schedule_common": True,
+                "advance_percent": "30",
+                "advance_term_days": "5",
+                "preliminary_report_percent": "20",
+                "preliminary_report_term_days": "6",
+                "final_report_percent": "50.00",
+                "final_report_term_days": "14",
+            }
+        ]
+        self.proposal.save()
+
+        count_before = ContractProjectRegistration.objects.count()
+        response = self.client.get(
+            reverse("contracts_project_registration_prefill_from_proposal", args=[self.proposal.pk])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(ContractProjectRegistration.objects.count(), count_before)
+        self.assertContains(response, 'value="ТКП для prefill"', html=False)
+        self.assertContains(response, 'value="ООО Заказчик prefill"', html=False)
+        self.assertContains(response, f'value="{self.proposal.number}"', html=False)
+        self.assertContains(response, f'option value="{self.proposal.pk}" selected', html=False)
+        self.assertContains(response, 'value="01.01.2026"', html=False)
+        self.assertContains(response, 'value="1.5"', html=False)
+        self.assertContains(response, 'hx-post="%s"' % reverse("contracts_project_registration_create"), html=False)
+
+    def test_contracts_project_registration_prefill_from_proposal_edit_preserves_contract_identity(self):
+        contract_project = ContractProjectRegistration.objects.create(
+            number=8101,
+            sub_number=1,
+            contract_number="CUSTOM-NUM",
+            group_member=self.group_member,
+            type=self.product,
+            name="Старое название",
+            status="Отправлен проект договора",
+            year=2026,
+            customer="Старый заказчик",
+        )
+        second_proposal = ProposalRegistration.objects.create(
+            number=8102,
+            sub_number=2,
+            group_member=self.group_member,
+            type=self.product,
+            name="Новое название из ТКП",
+            year=2026,
+            customer="Новый заказчик из ТКП",
+            evaluation_date=date(2026, 6, 1),
+            service_term_months=Decimal("3.0"),
+            stage_payloads_json=[
+                {
+                    "product_id": self.product.pk,
+                    "evaluation_date": "01.06.2026",
+                    "service_term_months": "3.0",
+                    "preliminary_report_date": "01.09.2026",
+                    "final_report_term_weeks": "4.0",
+                    "final_report_date": "01.12.2026",
+                    "next_stage_delay_days": "0",
+                    "payment_schedule_common": True,
+                }
+            ],
+        )
+
+        response = self.client.get(
+            reverse("contracts_project_registration_prefill_from_proposal", args=[second_proposal.pk]),
+            {"registration": contract_project.pk},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        contract_project.refresh_from_db()
+        self.assertEqual(contract_project.name, "Старое название")
+        self.assertEqual(contract_project.customer, "Старый заказчик")
+        self.assertContains(response, 'value="8101"', html=False)
+        self.assertContains(response, 'value="CUSTOM-NUM"', html=False)
+        self.assertContains(response, f'value="{contract_project.short_uid}"', html=False)
+        self.assertContains(response, 'value="Новое название из ТКП"', html=False)
+        self.assertContains(response, 'value="Новый заказчик из ТКП"', html=False)
+        self.assertContains(response, 'value="01.06.2026"', html=False)
+        self.assertContains(
+            response,
+            'hx-post="%s"' % reverse("contracts_project_registration_edit", args=[contract_project.pk]),
+            html=False,
+        )
+
+    def test_contracts_project_registration_prefill_from_proposal_returns_404_for_missing_proposal(self):
+        response = self.client.get(
+            reverse("contracts_project_registration_prefill_from_proposal", args=[999999])
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_contracts_project_registration_edit_form_shows_stage_row_per_product(self):
+        second_product = Product.objects.create(
+            short_name="QAQC",
+            name_en="QAQC",
+            name_ru="QAQC",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        contract_project = ContractProjectRegistration.objects.create(
+            number=7304,
+            group_member=self.group_member,
+            type=self.product,
+            name="Договор с двумя этапами",
+            status="Разрабатывается проект договора",
+            year=2026,
+        )
+        ContractProjectRegistrationProduct.objects.bulk_create(
+            [
+                ContractProjectRegistrationProduct(registration=contract_project, product=self.product, rank=1),
+                ContractProjectRegistrationProduct(registration=contract_project, product=second_product, rank=2),
+            ]
+        )
+
+        response = self.client.get(reverse("contracts_project_registration_edit", args=[contract_project.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertEqual(content.count("proposal-stage-terms-row"), 2)
+        self.assertContains(response, 'value="Этап 1"', html=False)
+        self.assertContains(response, 'value="Этап 2"', html=False)
+
+    def test_contracts_project_registration_create_persists_stage_payloads_json(self):
+        second_product = Product.objects.create(
+            short_name="QAQC",
+            name_en="QAQC",
+            name_ru="QAQC",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        response = self.client.post(
+            reverse("contracts_project_registration_create"),
+            {
+                "number": 7004,
+                "sub_number": 0,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [str(self.product.pk), str(second_product.pk)],
+                "name": "Договор с этапами",
+                "status": "Разрабатывается проект договора",
+                "year": 2026,
+                "evaluation_date": ["01.01.2026", "01.07.2026"],
+                "service_term_months": ["1.0", "2.0"],
+                "preliminary_report_date": ["01.02.2026", "01.09.2026"],
+                "final_report_term_weeks": ["2.0", "3.0"],
+                "final_report_date": ["15.02.2026", "30.09.2026"],
+                "next_stage_delay_days": ["0", "0"],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        created = ContractProjectRegistration.objects.get(number=7004, name="Договор с этапами")
+        self.assertEqual(len(created.stage_payloads_json), 2)
+        self.assertEqual(created.stage_payloads_json[0]["product_id"], str(self.product.pk))
+        self.assertEqual(created.stage_payloads_json[1]["product_id"], str(second_product.pk))
+        self.assertEqual(created.stage_payloads_json[1]["service_term_months"], "2.0")
+
+    def test_contracts_project_registration_create_persists_per_stage_payment_schedule(self):
+        second_product = Product.objects.create(
+            short_name="QAQC",
+            name_en="QAQC",
+            name_ru="QAQC",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        response = self.client.post(
+            reverse("contracts_project_registration_create"),
+            {
+                "number": 7005,
+                "sub_number": 0,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [str(self.product.pk), str(second_product.pk)],
+                "name": "Договор с разным графиком оплаты",
+                "status": "Разрабатывается проект договора",
+                "year": 2026,
+                "payment_schedule_common": "false",
+                "evaluation_date": ["01.01.2026", "01.07.2026"],
+                "service_term_months": ["1.0", "2.0"],
+                "preliminary_report_date": ["01.02.2026", "01.09.2026"],
+                "final_report_term_weeks": ["2.0", "3.0"],
+                "final_report_date": ["15.02.2026", "30.09.2026"],
+                "next_stage_delay_days": ["0", "0"],
+                "advance_percent": ["30", "50"],
+                "advance_term_days": ["5", "10"],
+                "preliminary_report_percent": ["20", "30"],
+                "preliminary_report_term_days": ["6", "7"],
+                "final_report_term_days": ["14", "21"],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        created = ContractProjectRegistration.objects.get(number=7005, name="Договор с разным графиком оплаты")
+        self.assertFalse(created.stage_payloads_json[0]["payment_schedule_common"])
+        self.assertEqual(created.stage_payloads_json[0]["advance_percent"], "30")
+        self.assertEqual(created.stage_payloads_json[0]["final_report_percent"], "50.00")
+        self.assertEqual(created.stage_payloads_json[1]["advance_percent"], "50")
+        self.assertEqual(created.stage_payloads_json[1]["final_report_percent"], "20.00")
+        self.assertEqual(created.advance_percent, Decimal("50"))
+        self.assertEqual(created.final_report_term_days, 21)
+
+    def test_contracts_project_registration_edit_form_shows_readonly_contract_id(self):
+        contract_project = ContractProjectRegistration.objects.create(
+            number=7303,
+            group_member=self.group_member,
+            type=self.product,
+            name="Договор для ID",
+            status="Разрабатывается проект договора",
+            year=2026,
+        )
+
+        response = self.client.get(reverse("contracts_project_registration_edit", args=[contract_project.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Договор ID")
+        self.assertContains(response, f'value="{contract_project.short_uid}"', html=False)
+        self.assertContains(response, 'id="contracts-project-short-uid-input"', html=False)
+        self.assertContains(response, "attachContractProjectShortUidPreview", html=False)
+
+    def test_contract_project_short_uid_uses_proposal_and_contract_sub_numbers(self):
+        proposal = ProposalRegistration.objects.create(
+            number=7400,
+            sub_number=4,
+            group_member=self.group_member,
+            type=self.product,
+            name="ТКП с номером",
+            year=2026,
+        )
+        contract_project = ContractProjectRegistration.objects.create(
+            number=7401,
+            sub_number=3,
+            proposal_registration=proposal,
+            group_member=self.group_member,
+            type=self.product,
+            name="Договор с ТКП",
+            status="Разрабатывается проект договора",
+            year=2026,
+        )
+
+        self.assertEqual(contract_project.short_uid, "7401430RU")
+
+    def test_contract_project_short_uid_uses_zero_when_proposal_is_empty(self):
+        contract_project = ContractProjectRegistration.objects.create(
+            number=7402,
+            sub_number=5,
+            group_member=self.group_member,
+            type=self.product,
+            name="Договор без ТКП",
+            status="Разрабатывается проект договора",
+            year=2026,
+        )
+
+        self.assertEqual(contract_project.short_uid, "7402050RU")
+
+    def test_contract_project_form_rejects_duplicate_sub_number_for_number_and_proposal(self):
+        ContractProjectRegistration.objects.create(
+            number=7403,
+            sub_number=2,
+            proposal_registration=self.proposal,
+            group_member=self.group_member,
+            type=self.product,
+            name="Первый договор",
+            status="Разрабатывается проект договора",
+            year=2026,
+        )
+
+        form = ContractProjectRegistrationForm(
+            data={
+                "number": 7403,
+                "sub_number": 2,
+                "proposal_registration": self.proposal.pk,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [str(self.product.pk)],
+                "name": "Дубликат",
+                "status": "Разрабатывается проект договора",
+                "year": 2026,
+            }
+        )
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("sub_number", form.errors)
+
+    def test_contract_project_form_allows_same_sub_number_for_different_proposal(self):
+        ContractProjectRegistration.objects.create(
+            number=7404,
+            sub_number=2,
+            proposal_registration=self.proposal,
+            group_member=self.group_member,
+            type=self.product,
+            name="Первый договор",
+            status="Разрабатывается проект договора",
+            year=2026,
+        )
+        second_proposal = ProposalRegistration.objects.create(
+            number=7404,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name="Другой ТКП",
+            year=2026,
+        )
+        form = ContractProjectRegistrationForm(
+            data={
+                "number": 7404,
+                "sub_number": 2,
+                "proposal_registration": second_proposal.pk,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [str(self.product.pk)],
+                "name": "Не дубликат",
+                "status": "Разрабатывается проект договора",
+                "year": 2026,
+            }
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+
+    def test_contract_project_form_rejects_duplicate_generated_uid_for_same_proposal_sequence(self):
+        ContractProjectRegistration.objects.create(
+            number=7405,
+            sub_number=2,
+            proposal_registration=self.proposal,
+            group_member=self.group_member,
+            type=self.product,
+            name="Первый договор",
+            status="Разрабатывается проект договора",
+            year=2026,
+        )
+        second_proposal = ProposalRegistration.objects.create(
+            number=7405,
+            group_member=self.group_member,
+            type=self.product,
+            name="Другой ТКП с тем же №",
+            year=2026,
+        )
+        form = ContractProjectRegistrationForm(
+            data={
+                "number": 7405,
+                "sub_number": 2,
+                "proposal_registration": second_proposal.pk,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [str(self.product.pk)],
+                "name": "Дубликат по Договор ID",
+                "status": "Разрабатывается проект договора",
+                "year": 2026,
+            }
+        )
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("sub_number", form.errors)
+
+    def test_contracts_project_registration_create_accepts_multiple_products_on_one_row(self):
+        second_product = Product.objects.create(
+            short_name="QAQC",
+            name_en="QAQC",
+            name_ru="QAQC",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        second_proposal = ProposalRegistration.objects.create(
+            number=7003,
+            group_member=self.group_member,
+            type=self.product,
+            name="Второй ТКП",
+            year=2026,
+        )
+        response = self.client.post(
+            reverse("contracts_project_registration_create"),
+            {
+                "number": 7002,
+                "sub_number": 3,
+                "contract_number": "IMC/7002-RU/05-26",
+                "proposal_registration": second_proposal.pk,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [str(self.product.pk), str(second_product.pk)],
+                "name": "Новый договорный проект",
+                "status": "Разрабатывается проект договора",
+                "year": 2026,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        created = ContractProjectRegistration.objects.get(number=7002, name="Новый договорный проект")
+        self.assertEqual(created.sub_number, 3)
+        self.assertEqual(created.contract_number, "IMC/7002-RU/05-26")
+        self.assertEqual(created.proposal_registration_id, second_proposal.pk)
+        self.assertEqual(created.type_short_display, "DD-QAQC")
+        self.assertEqual(
+            list(
+                ContractProjectRegistrationProduct.objects.filter(registration=created)
+                .order_by("rank")
+                .values_list("product_id", flat=True)
+            ),
+            [self.product.pk, second_product.pk],
+        )
+        self.assertFalse(ProjectRegistration.objects.filter(number=7002, name="Новый договорный проект").exists())
+
+    def test_contracts_project_registration_edit_updates_tkp_display_in_table(self):
+        second_proposal = ProposalRegistration.objects.create(
+            number=7601,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name="Новый ТКП после редактирования",
+            year=2026,
+        )
+        ContractProjectRegistration.objects.create(
+            number=7601,
+            sub_number=1,
+            proposal_registration=self.proposal,
+            group_member=self.group_member,
+            type=self.product,
+            name="Первый договор",
+            year=2026,
+        )
+        contract_project = ContractProjectRegistration.objects.create(
+            number=7601,
+            sub_number=2,
+            proposal_registration=self.proposal,
+            group_member=self.group_member,
+            type=self.product,
+            name="Редактируемый договор",
+            year=2026,
+        )
+
+        response = self.client.post(
+            reverse("contracts_project_registration_edit", args=[contract_project.pk]),
+            {
+                "number": 7601,
+                "sub_number": 2,
+                "proposal_registration": second_proposal.pk,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [str(self.product.pk)],
+                "name": "Редактируемый договор",
+                "status": "Разрабатывается проект договора",
+                "year": 2026,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            ContractProjectRegistration.objects.get(pk=contract_project.pk).proposal_registration_id,
+            second_proposal.pk,
+        )
+        self.assertContains(response, second_proposal.short_uid)
+        self.assertContains(response, self.proposal.short_uid)
+
+    def test_contracts_development_partial_does_not_add_contract_separator_between_stages(self):
+        contract_project = ContractProjectRegistration.objects.create(
+            number=7501,
+            group_member=self.group_member,
+            type=self.product,
+            name="Договор с этапами",
+            year=2026,
+        )
+        second_product = Product.objects.create(
+            short_name="QAQC",
+            name_en="QAQC",
+            name_ru="QAQC",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        ContractProjectRegistrationProduct.objects.bulk_create(
+            [
+                ContractProjectRegistrationProduct(registration=contract_project, product=self.product, rank=1),
+                ContractProjectRegistrationProduct(registration=contract_project, product=second_product, rank=2),
+            ]
+        )
+
+        response = self.client.get(reverse("contracts_development_partial"))
+        payment_rows = list(response.context["contract_payment_schedule_rows"])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(payment_rows), 2)
+        self.assertTrue(payment_rows[0]["has_next_for_registration"])
+        self.assertTrue(payment_rows[0]["has_next_for_number"])
+        self.assertContains(response, "contracts-payment-stage-has-next", html=False)
+        self.assertNotContains(response, "contracts-payment-number-contract-has-next", html=False)
+        self.assertNotContains(response, "contracts-payment-tkp-separator-has-next", html=False)
+        payment_table_html = response.content.decode()[
+            response.content.decode().index("contracts-payment-schedule-table") :
+        ]
+        self.assertEqual(payment_table_html.count('aria-label="Строка сроков и порядка платежей"'), 2)
+
+    def test_contracts_development_partial_renders_multiple_products_with_hyphen_in_type_column(self):
+        second_product = Product.objects.create(
+            short_name="QAQC",
+            name_en="QAQC",
+            name_ru="QAQC",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        contract_project = ContractProjectRegistration.objects.create(
+            number=7201,
+            group_member=self.group_member,
+            type=self.product,
+            name="Договорный мультипродукт",
+            year=2026,
+        )
+        ContractProjectRegistrationProduct.objects.bulk_create(
+            [
+                ContractProjectRegistrationProduct(registration=contract_project, product=self.product, rank=1),
+                ContractProjectRegistrationProduct(registration=contract_project, product=second_product, rank=2),
+            ]
+        )
+
+        response = self.client.get(reverse("contracts_development_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, ">DD-QAQC<", html=False)
+
+    def test_contracts_development_crud_does_not_mutate_project_registry(self):
+        contract_project = ContractProjectRegistration.objects.create(
+            number=7301,
+            group_member=self.group_member,
+            type=self.product,
+            name="Договорная строка до",
+            status="Разрабатывается проект договора",
+            year=2026,
+            position=1,
+        )
+        ContractProjectRegistrationProduct.objects.create(
+            registration=contract_project,
+            product=self.product,
+            rank=1,
+        )
+        second_contract_project = ContractProjectRegistration.objects.create(
+            number=7302,
+            group_member=self.group_member,
+            type=self.product,
+            name="Вторая договорная строка",
+            status="Разрабатывается проект договора",
+            year=2026,
+            position=2,
+        )
+        project_name_before = self.project.name
+        project_count_before = ProjectRegistration.objects.count()
+
+        response = self.client.post(
+            reverse("contracts_project_registration_edit", args=[contract_project.pk]),
+            {
+                "number": 7301,
+                "sub_number": 4,
+                "proposal_registration": self.proposal.pk,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [str(self.product.pk)],
+                "name": "Договорная строка после",
+                "status": "Отправлен проект договора",
+                "year": 2027,
+                "evaluation_date": "2026-01-01",
+                "service_term_months": "1.5",
+                "preliminary_report_date": "2026-02-15",
+                "final_report_term_weeks": "2.0",
+                "final_report_date": "2026-03-01",
+                "advance_percent": "30",
+                "advance_term_days": "5",
+                "preliminary_report_percent": "20",
+                "preliminary_report_term_days": "6",
+                "final_report_term_days": "14",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        contract_project.refresh_from_db()
+        self.assertEqual(contract_project.evaluation_date, date(2026, 1, 1))
+        self.assertEqual(str(contract_project.service_term_months), "1.5")
+        self.assertEqual(contract_project.preliminary_report_date, date(2026, 2, 15))
+        self.assertEqual(str(contract_project.final_report_term_weeks), "2.0")
+        self.assertEqual(contract_project.final_report_date, date(2026, 3, 1))
+        self.assertEqual(str(contract_project.advance_percent), "30.00")
+        self.assertEqual(contract_project.advance_term_days, 5)
+        self.assertEqual(str(contract_project.preliminary_report_percent), "20.00")
+        self.assertEqual(contract_project.preliminary_report_term_days, 6)
+        self.assertEqual(str(contract_project.final_report_percent), "50.00")
+        self.assertEqual(contract_project.final_report_term_days, 14)
+        self.project.refresh_from_db()
+        self.assertEqual(self.project.name, project_name_before)
+        self.assertEqual(ProjectRegistration.objects.count(), project_count_before)
+
+        response = self.client.post(reverse("contracts_project_registration_move_down", args=[contract_project.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.project.refresh_from_db()
+        self.assertEqual(self.project.name, project_name_before)
+        self.assertEqual(ProjectRegistration.objects.count(), project_count_before)
+
+        response = self.client.post(reverse("contracts_project_registration_delete", args=[second_contract_project.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(ProjectRegistration.objects.filter(pk=self.project.pk).exists())
+        self.assertFalse(ContractProjectRegistration.objects.filter(pk=second_contract_project.pk).exists())
 
     @patch("contracts_app.views._upload_scan_to_cloud_bytes", return_value="https://cloud.example.com/s/scan")
     def test_contract_scan_upload_returns_storage_label(self, _mock_upload):

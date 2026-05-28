@@ -706,7 +706,8 @@ body .second-sidebar + .flex-grow-1 {
 #master-policy-category-filter-dropdown .dropdown-menu,
 #master-policy-subtype-filter-dropdown .dropdown-menu,
 #master-policy-product-filter-dropdown .dropdown-menu,
-#proposal-payment-view-dropdown .dropdown-menu {
+#proposal-payment-view-dropdown .dropdown-menu,
+.worktime-filter-dropdown .dropdown-menu {
   z-index: 4010;
   box-shadow: 1px 0 0 #e6e6e6, -1px 0 0 #e6e6e6, 0 3px 13px rgba(0,0,0,.08);
 }
@@ -717,14 +718,16 @@ body .second-sidebar + .flex-grow-1 {
 
 #proposal-payment-view-dropdown .project-filter-menu,
 #project-schedule-filter-dropdown .project-filter-menu,
-#project-schedule-view-dropdown .project-filter-menu {
+#project-schedule-view-dropdown .project-filter-menu,
+.worktime-filter-dropdown .project-filter-menu {
   padding-right: 0 !important;
   padding-left: 0 !important;
 }
 
 #proposal-payment-view-dropdown .proposal-payment-view-option,
 #project-schedule-filter-dropdown .proposal-payment-view-option,
-#project-schedule-view-dropdown .proposal-payment-view-option {
+#project-schedule-view-dropdown .proposal-payment-view-option,
+.worktime-filter-dropdown .proposal-payment-view-option {
   display: flex;
   align-items: center;
   gap: .5rem;
@@ -739,13 +742,15 @@ body .second-sidebar + .flex-grow-1 {
 
 #proposal-payment-view-dropdown .proposal-payment-view-option:hover,
 #project-schedule-filter-dropdown .proposal-payment-view-option:hover,
-#project-schedule-view-dropdown .proposal-payment-view-option:hover {
+#project-schedule-view-dropdown .proposal-payment-view-option:hover,
+.worktime-filter-dropdown .proposal-payment-view-option:hover {
   background: #f8f9fa;
 }
 
 #proposal-payment-view-dropdown .proposal-payment-view-option .form-check-input,
 #project-schedule-filter-dropdown .proposal-payment-view-option .form-check-input,
-#project-schedule-view-dropdown .proposal-payment-view-option .form-check-input {
+#project-schedule-view-dropdown .proposal-payment-view-option .form-check-input,
+.worktime-filter-dropdown .proposal-payment-view-option .form-check-input {
   flex: 0 0 auto;
   float: none;
   margin: 0;
@@ -814,10 +819,54 @@ body .second-sidebar + .flex-grow-1 {
   margin-bottom: 2px;
 }
 
+.table-section-header .proposal-payment-section-toggle.classifiers-section-toggle {
+  align-self: center;
+  margin-bottom: 0;
+  position: relative;
+  top: 1px;
+}
+
 .table-section-header .classifiers-section-controls-hidden {
   visibility: hidden;
   pointer-events: none;
 }
+
+.tkp-colpicker { position: relative; min-width: 14rem; }
+.tkp-colpicker-btn {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 2rem !important;
+}
+.tkp-colpicker-menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 1055;
+  background: #fff;
+  border: 1px solid #ced4da;
+  border-radius: .25rem;
+  max-height: 22rem;
+  overflow-y: auto;
+  min-width: 100%;
+  padding: .25rem 0;
+  box-shadow: 0 .25rem .5rem rgba(0,0,0,.15);
+  margin-top: 2px;
+}
+.tkp-colpicker-menu.show { display: block; }
+.tkp-colpicker-item {
+  display: flex;
+  align-items: center;
+  padding: .2rem .75rem;
+  white-space: nowrap;
+  margin: 0;
+  font-size: .875em;
+  color: #212529;
+}
+.tkp-colpicker-item:hover { background: #f8f9fa; }
+.tkp-colpicker-item .form-check { margin: 0; min-height: auto; }
+.tkp-colpicker-item .form-check-label { cursor: pointer; user-select: none; }
 
 .project-filter-menu {
   width: max-content;
@@ -1320,25 +1369,13 @@ body .second-sidebar + .flex-grow-1 {
 }
 
 
-#projects-pane .registration-table-wrap .products-actions-row {
-  margin-bottom: 14px !important;
-}
 
 #projects-pane .contract-table-wrap .products-actions-row {
   margin-bottom: 14px !important;
 }
 
-#projects-pane .work-table-wrap .products-actions-row {
-  margin-bottom: 14px !important;
-}
 
-#projects-pane .legal-table-wrap .products-actions-row {
-  margin-bottom: 14px !important;
-}
 
-#participation-confirmation-section .participation-table-wrap .products-actions-row {
-  margin-bottom: 14px !important;
-}
 
 #contract-conclusion-section .contract-conclusion-table-wrap .products-actions-row {
   margin-bottom: 14px !important;
@@ -1348,9 +1385,6 @@ body .second-sidebar + .flex-grow-1 {
   padding-bottom: 40px !important;
 }
 
-#info-request-approval-section .info-request-table-wrap .products-actions-row {
-  margin-bottom: 14px !important;
-}
 /* Слойность для кнопок панели под таблицей "Продукты" */
 #policy-pane #products-actions .btn-group {
   isolation: isolate;            /* создаём новый stacking context */
@@ -1807,10 +1841,11 @@ section#templates .alert.alert-info .text-muted {
 /* 0) Первые 2 столбца фиксированы, остальные остаются адаптивными */
 #projects-pane table.reg-table col.checkbox       { width: 30px !important; }
 #projects-pane table.reg-table col.project-number { width: 70px !important; }
+#projects-pane table.reg-table col.contract-id { width: 6%  !important; }
 #projects-pane table.reg-table col.agreement-type { width: 9%  !important; }
 #projects-pane table.reg-table col.group          { width: 4%  !important; }
 #projects-pane table.reg-table col.quick-edit     { width: 1%  !important; }
-#projects-pane table.reg-table col.project-id     { width: 6%  !important; }
+#projects-pane table.reg-table col.project-id     { width: 8%  !important; }
 #projects-pane table.reg-table col.reg-type       { width: 4%  !important; }
 #projects-pane table.reg-table col.reg-name       { width: 13% !important; }
 #projects-pane table.reg-table col.reg-launch     { width: 44px !important; }
@@ -1833,6 +1868,34 @@ section#templates .alert.alert-info .text-muted {
 #projects-pane table.reg-table col.reg-asset-owner-regdate { width: 5% !important; }
 
 /* 1) Таблица: занимает всю ширину, а при нехватке места расширяется под содержимое */
+#projects-pane #projects-content-launch .registration-table-wrap {
+  overflow-x: auto;
+  overflow-y: visible;
+  width: 100%;
+  padding-bottom: var(--project-schedule-table-scroll-offset-top);
+}
+
+#projects-pane #projects-content-launch .registration-table-wrap > table.reg-table {
+  table-layout: auto !important;
+  width: max-content;
+  min-width: 100%;
+  margin-bottom: 0 !important;
+  --bs-table-cell-padding-y: .5rem;
+  --reg-first-col-pr: calc(30px - var(--bs-table-cell-padding-x, .4rem) - 1em);
+}
+
+#projects-pane #projects-content-launch .registration-table-wrap.has-horizontal-scroll > table.reg-table {
+  margin-bottom: var(--project-schedule-table-margin-to-scroll) !important;
+}
+
+#projects-pane #projects-content-launch .registration-table-wrap + .products-actions-row {
+  margin-top: var(--project-schedule-table-action-gap) !important;
+}
+
+#projects-pane #projects-content-launch .registration-table-wrap.has-horizontal-scroll + .products-actions-row {
+  margin-top: var(--project-schedule-table-scroll-action-gap) !important;
+}
+
 #projects-pane .registration-table-wrap {
   overflow-x: auto;
   overflow-y: visible;
@@ -1887,6 +1950,327 @@ section#templates .alert.alert-info .text-muted {
   white-space: nowrap !important;
 }
 
+/* Contracts development table: same reg-table layout as projects registry */
+#contracts-content-in-development table.reg-table col.checkbox {
+  width: 30px !important;
+  min-width: 30px !important;
+  max-width: 30px !important;
+}
+#contracts-content-in-development table.reg-table col.project-number {
+  width: 70px !important;
+  min-width: 70px !important;
+  max-width: 70px !important;
+}
+#contracts-content-in-development table.reg-table col.proposal-id,
+#contracts-content-in-development table.reg-table col[data-col="tkp-id"] {
+  width: 90px !important;
+  min-width: 90px !important;
+  max-width: 90px !important;
+}
+#contracts-content-in-development table.reg-table col.agreement-type,
+#contracts-content-in-development table.reg-table col[data-col="agreement-type"] {
+  width: 155px !important;
+  min-width: 155px !important;
+  max-width: 155px !important;
+}
+#contracts-content-in-development table.reg-table col.sub-number,
+#contracts-content-in-development table.reg-table col[data-col="sub-number"] {
+  width: 40px !important;
+  min-width: 40px !important;
+  max-width: 40px !important;
+}
+#contracts-content-in-development table.reg-table thead th[data-col="sub-number"],
+#contracts-content-in-development table.reg-table tbody td[data-col="sub-number"] {
+  width: 40px !important;
+  inline-size: 40px !important;
+  min-width: 40px !important;
+  min-inline-size: 40px !important;
+  max-width: 40px !important;
+  max-inline-size: 40px !important;
+  box-sizing: border-box !important;
+  text-align: center !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+}
+#contracts-content-in-development table.reg-table col.group,
+#contracts-content-in-development table.reg-table col[data-col="group"] {
+  width: 70px !important;
+  min-width: 70px !important;
+  max-width: 70px !important;
+}
+#contracts-content-in-development table.reg-table col.project-id,
+#contracts-content-in-development table.reg-table col[data-col="project-id"] {
+  width: 125px !important;
+  min-width: 125px !important;
+  max-width: 125px !important;
+}
+#contracts-content-in-development table.reg-table col.reg-type       { width: 6%  !important; }
+#contracts-content-in-development table.reg-table col.reg-name       { width: 20% !important; }
+#contracts-content-in-development table.reg-table col.reg-status     { width: 140px !important; }
+#contracts-content-in-development table.reg-table col.reg-year       { width: 5%  !important; }
+#contracts-content-in-development table.reg-table col.reg-customer   { width: 20% !important; }
+#contracts-content-in-development table.reg-table col.reg-country    { width: 5%  !important; }
+#contracts-content-in-development table.reg-table col.reg-identifier { width: 4%  !important; }
+#contracts-content-in-development table.reg-table col.reg-regnumber  { width: 7%  !important; }
+#contracts-content-in-development table.reg-table col.reg-region     { width: 7%  !important; }
+#contracts-content-in-development table.reg-table col.reg-regdate    { width: 5%  !important; }
+#contracts-content-in-development table.reg-table col.reg-asset-owner { width: 20% !important; }
+#contracts-content-in-development table.reg-table col.reg-asset-owner-country { width: 5% !important; }
+#contracts-content-in-development table.reg-table col.reg-asset-owner-identifier { width: 4% !important; }
+#contracts-content-in-development table.reg-table col.reg-asset-owner-regnumber { width: 7% !important; }
+#contracts-content-in-development table.reg-table col.reg-asset-owner-region { width: 7% !important; }
+#contracts-content-in-development table.reg-table col.reg-asset-owner-regdate { width: 5% !important; }
+
+#contracts-content-in-development {
+  --contracts-dev-table-scroll-offset-top: 0px;
+  --contracts-dev-table-margin-to-scroll: 10px;
+  --contracts-dev-table-action-gap: 30px;
+  --contracts-dev-table-scroll-action-gap: 11.75px;
+}
+
+#contracts-content-in-development .registration-table-wrap {
+  overflow-x: auto;
+  overflow-y: visible;
+  width: 100%;
+}
+
+#contracts-content-in-development .contracts-drafts-table-wrap,
+#contracts-content-in-development .contracts-payment-schedule-table-wrap {
+  padding-bottom: var(--contracts-dev-table-scroll-offset-top);
+}
+
+#contracts-content-in-development .contracts-drafts-table-wrap > #contracts-drafts-table,
+#contracts-content-in-development .contracts-payment-schedule-table-wrap > #contracts-payment-schedule-table {
+  margin-bottom: 0 !important;
+}
+
+#contracts-content-in-development .contracts-drafts-table-wrap.has-horizontal-scroll > #contracts-drafts-table,
+#contracts-content-in-development .contracts-payment-schedule-table-wrap.has-horizontal-scroll > #contracts-payment-schedule-table {
+  margin-bottom: var(--contracts-dev-table-margin-to-scroll) !important;
+}
+
+#contracts-content-in-development .contracts-drafts-table-wrap + .products-actions-row {
+  margin-top: var(--contracts-dev-table-action-gap) !important;
+}
+
+#contracts-content-in-development .contracts-drafts-table-wrap.has-horizontal-scroll + .products-actions-row {
+  margin-top: var(--contracts-dev-table-scroll-action-gap) !important;
+}
+
+#contracts-content-in-development .registration-table-wrap > table.reg-table {
+  table-layout: auto !important;
+  width: max-content;
+  min-width: 100%;
+  --bs-table-cell-padding-y: .5rem;
+  --reg-first-col-pr: calc(30px - var(--bs-table-cell-padding-x, .4rem) - 1em);
+}
+
+#contracts-content-in-development .registration-table-wrap > table.reg-table.table-sm {
+  --bs-table-cell-padding-y: .25rem;
+}
+
+#contracts-content-in-development table.reg-table thead th {
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  vertical-align: bottom !important;
+  line-height: 1.2;
+  padding-top: var(--bs-table-cell-padding-y) !important;
+  padding-bottom: calc(var(--bs-table-cell-padding-y) + 3px) !important;
+}
+
+#contracts-content-in-development table.reg-table thead th.proposal-split-header {
+  white-space: normal !important;
+}
+
+#contracts-content-in-development table.reg-table thead th.proposal-split-header .proposal-split-header-prefix {
+  display: block;
+  white-space: nowrap !important;
+}
+
+#contracts-content-in-development table.reg-table thead th.proposal-split-header .proposal-split-header-suffix {
+  display: block;
+  white-space: nowrap !important;
+}
+
+#contracts-content-in-development table.reg-table thead th.proposal-split-header-inline {
+  white-space: nowrap !important;
+}
+
+#contracts-content-in-development table.reg-table thead th.proposal-split-header-inline .proposal-split-header-prefix,
+#contracts-content-in-development table.reg-table thead th.proposal-split-header-inline .proposal-split-header-suffix {
+  display: inline;
+  white-space: nowrap !important;
+}
+
+#contracts-content-in-development table.reg-table thead th:not(:first-child) {
+  padding-bottom: calc(var(--bs-table-cell-padding-y) + 2px) !important;
+}
+
+#contracts-content-in-development table.reg-table tbody th,
+#contracts-content-in-development table.reg-table tbody td {
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+#contracts-content-in-development table.reg-table thead th:nth-child(1),
+#contracts-content-in-development table.reg-table tbody td:nth-child(1) {
+  width: 30px !important;
+  inline-size: 30px !important;
+  min-width: 30px !important;
+  min-inline-size: 30px !important;
+  max-width: 30px !important;
+  max-inline-size: 30px !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+}
+
+#contracts-content-in-development table.reg-table thead th:nth-child(2),
+#contracts-content-in-development table.reg-table tbody td:nth-child(2) {
+  width: 70px !important;
+  inline-size: 70px !important;
+  min-width: 70px !important;
+  min-inline-size: 70px !important;
+  max-width: 70px !important;
+  max-inline-size: 70px !important;
+  box-sizing: border-box !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#contracts-content-in-development table.reg-table thead th:nth-child(3),
+#contracts-content-in-development table.reg-table tbody td:nth-child(3) {
+  width: 90px !important;
+  inline-size: 90px !important;
+  min-width: 90px !important;
+  min-inline-size: 90px !important;
+  max-width: 90px !important;
+  max-inline-size: 90px !important;
+  box-sizing: border-box !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#contracts-content-in-development table.reg-table tbody td.project-id-cell {
+  color: #a1a9b1 !important;
+}
+#contracts-content-in-development table.reg-table tbody td.proposal-id-cell {
+  color: #a1a9b1 !important;
+}
+
+#contracts-content-in-development table.reg-table .project-id-cell .contracts-payment-quick-edit {
+  padding-top: 0;
+  position: relative;
+  top: -2px;
+}
+
+#contracts-content-in-development .contracts-drafts-table-wrap tr.contracts-drafts-number-has-next > td {
+  border-bottom: 0 !important;
+}
+
+#contracts-content-in-development .contracts-drafts-table-wrap tr.contracts-drafts-number-has-next > td:not([data-col="checkbox"]):not([data-col="number"]):not([data-col="tkp-id"]):not([data-col="agreement-type"]):not([data-col="sub-number"]):not([data-col="group"]):not([data-col="project-id"]):not([data-col="contract-number"]) {
+  background-image: repeating-linear-gradient(
+    to right,
+    rgba(33, 37, 41, .22) 0,
+    rgba(33, 37, 41, .22) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  background-position: left bottom;
+  background-repeat: repeat-x;
+  background-size: 3px 1px;
+}
+
+#contracts-content-in-development .contracts-drafts-table-wrap tr.contracts-drafts-number-contract-has-next > td[data-col="agreement-type"],
+#contracts-content-in-development .contracts-drafts-table-wrap tr.contracts-drafts-number-contract-has-next > td[data-col="sub-number"],
+#contracts-content-in-development .contracts-drafts-table-wrap tr.contracts-drafts-number-contract-has-next > td[data-col="group"],
+#contracts-content-in-development .contracts-drafts-table-wrap tr.contracts-drafts-number-contract-has-next > td[data-col="project-id"],
+#contracts-content-in-development .contracts-drafts-table-wrap tr.contracts-drafts-number-contract-has-next > td[data-col="contract-number"] {
+  background-image: repeating-linear-gradient(
+    to right,
+    rgba(33, 37, 41, .22) 0,
+    rgba(33, 37, 41, .22) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  background-position: left bottom;
+  background-repeat: repeat-x;
+  background-size: 3px 1px;
+}
+
+#contracts-content-in-development .contracts-drafts-table-wrap tr.contracts-drafts-tkp-separator-has-next > td[data-col="tkp-id"],
+#contracts-content-in-development .contracts-payment-schedule-table-wrap tr.contracts-payment-tkp-separator-has-next > td[data-col="tkp-id"] {
+  background-image: repeating-linear-gradient(
+    to right,
+    rgba(33, 37, 41, .22) 0,
+    rgba(33, 37, 41, .22) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  background-position: left bottom;
+  background-repeat: repeat-x;
+  background-size: 3px 1px;
+}
+
+#contracts-content-in-development .contracts-drafts-table-wrap tr.contracts-drafts-number-continuation > td {
+  border-top: 0 !important;
+}
+
+#contracts-content-in-development .contracts-payment-schedule-table-wrap tr.contracts-payment-number-has-next > td,
+#contracts-content-in-development .contracts-payment-schedule-table-wrap tr.contracts-payment-stage-has-next > td {
+  border-bottom: 0 !important;
+}
+
+#contracts-content-in-development .contracts-payment-schedule-table-wrap tr.contracts-payment-number-has-next > td:not([data-col="checkbox"]):not([data-col="number"]):not([data-col="tkp-id"]):not([data-col="agreement-type"]):not([data-col="sub-number"]):not([data-col="group"]):not([data-col="project-id"]):not([data-col="contract-number"]) {
+  background-image: repeating-linear-gradient(
+    to right,
+    rgba(33, 37, 41, .22) 0,
+    rgba(33, 37, 41, .22) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  background-position: left bottom;
+  background-repeat: repeat-x;
+  background-size: 3px 1px;
+}
+
+#contracts-content-in-development .contracts-payment-schedule-table-wrap tr.contracts-payment-number-contract-has-next > td[data-col="agreement-type"],
+#contracts-content-in-development .contracts-payment-schedule-table-wrap tr.contracts-payment-number-contract-has-next > td[data-col="sub-number"],
+#contracts-content-in-development .contracts-payment-schedule-table-wrap tr.contracts-payment-number-contract-has-next > td[data-col="group"],
+#contracts-content-in-development .contracts-payment-schedule-table-wrap tr.contracts-payment-number-contract-has-next > td[data-col="project-id"],
+#contracts-content-in-development .contracts-payment-schedule-table-wrap tr.contracts-payment-number-contract-has-next > td[data-col="contract-number"] {
+  background-image: repeating-linear-gradient(
+    to right,
+    rgba(33, 37, 41, .22) 0,
+    rgba(33, 37, 41, .22) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  background-position: left bottom;
+  background-repeat: repeat-x;
+  background-size: 3px 1px;
+}
+
+#contracts-content-in-development .contracts-payment-schedule-table-wrap tr.contracts-payment-stage-has-next > td:not([data-col="checkbox"]):not([data-col="number"]):not([data-col="tkp-id"]):not([data-col="agreement-type"]):not([data-col="sub-number"]):not([data-col="group"]):not([data-col="project-id"]):not([data-col="contract-number"]) {
+  background-image: repeating-linear-gradient(
+    to right,
+    rgba(33, 37, 41, .22) 0,
+    rgba(33, 37, 41, .22) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  background-position: left bottom;
+  background-repeat: repeat-x;
+  background-size: 3px 1px;
+}
+
+#contracts-content-in-development .contracts-payment-schedule-table-wrap tr.contracts-payment-stage-continuation > td {
+  border-top: 0 !important;
+}
+
 /* ↑ Поднять текст всех заголовков на 1px, КРОМЕ первого столбца (мастер-чекбокс) */
 #projects-pane table.reg-table thead th:not(:first-child){
   padding-bottom: calc(var(--bs-table-cell-padding-y) + 2px) !important;
@@ -1917,8 +2301,8 @@ section#templates .alert.alert-info .text-muted {
   text-overflow: ellipsis !important;
 }
 
-#projects-pane table.reg-table thead th:nth-child(6),
-#projects-pane table.reg-table tbody td:nth-child(6){
+#projects-pane table.reg-table thead th:nth-child(7),
+#projects-pane table.reg-table tbody td:nth-child(7){
   white-space: nowrap !important;
   overflow: visible !important;
   text-overflow: clip !important;
@@ -1928,7 +2312,22 @@ section#templates .alert.alert-info .text-muted {
   border-bottom: 0 !important;
 }
 
-#projects-pane .registration-table-wrap tr.registration-number-has-next > td:nth-child(n+5) {
+#projects-pane .registration-table-wrap tr.registration-number-has-next > td:nth-child(n+6) {
+  background-image: repeating-linear-gradient(
+    to right,
+    rgba(33, 37, 41, .22) 0,
+    rgba(33, 37, 41, .22) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  background-position: left bottom;
+  background-repeat: repeat-x;
+  background-size: 3px 1px;
+}
+
+#projects-pane .registration-table-wrap tr.registration-number-contract-has-next > td[data-col="contract-id"],
+#projects-pane .registration-table-wrap tr.registration-number-contract-has-next > td[data-col="agreement-type"],
+#projects-pane .registration-table-wrap tr.registration-number-contract-has-next > td[data-col="group"] {
   background-image: repeating-linear-gradient(
     to right,
     rgba(33, 37, 41, .22) 0,
@@ -1947,6 +2346,7 @@ section#templates .alert.alert-info .text-muted {
 
 /* 4) Стилизация отдельных ячеек */
 #projects-pane table.reg-table tbody td.project-id-cell,
+#projects-pane table.reg-table tbody td.contract-id-cell,
 #projects-pane .contract-table tbody td.completion-calc-cell {
   color: #a1a9b1 !important;
 }
@@ -2278,6 +2678,12 @@ section#templates .alert.alert-info .text-muted {
   padding-right: 1rem; /* чтобы скролл не перекрывал содержимое */
 }
 
+#contracts-modal .modal-body.modal-body-scroll {
+  max-height: calc(100vh - 170px);
+  overflow-y: auto;
+  padding-right: 1rem;
+}
+
 /* Модальные формы политики */
 #policy-modal .modal-body.modal-body-scroll {
   max-height: calc(100vh - 170px);
@@ -2300,8 +2706,9 @@ section#templates .alert.alert-info .text-muted {
 
 #proposals-pane table.proposals-table col.checkbox            { width: 1% !important; }
 #proposals-pane table.proposals-table col.proposal-number     { width: 1% !important; }
+#proposals-pane table.proposals-table col.proposal-sub-number { width: 1% !important; }
 #proposals-pane table.proposals-table col.group               { width: 1% !important; }
-#proposals-pane table.proposals-table col.quick-edit          { width: 1% !important; }
+#proposals-pane table.proposals-table col.quick-edit          { width: 28px !important; min-width: 28px !important; max-width: 28px !important; }
 #proposals-pane table.proposals-table col.proposal-id         { width: 1% !important; }
 #proposals-pane table.proposals-table col.proposal-type       { width: 1% !important; }
 #proposals-pane table.proposals-table col.proposal-name       { width: 8% !important; }
@@ -2330,8 +2737,8 @@ section#templates .alert.alert-info .text-muted {
 #proposals-pane table.proposals-table col.proposal-service-cost { width: 8% !important; }
 #proposals-pane table.proposal-dispatch-table col.checkbox     { width: 1% !important; }
 #proposals-pane table.proposal-dispatch-table col.proposal-number { width: 1% !important; }
+#proposals-pane table.proposal-dispatch-table col.proposal-sub-number { width: 1% !important; }
 #proposals-pane table.proposal-dispatch-table col.group           { width: 1% !important; }
-#proposals-pane table.proposal-dispatch-table col.quick-edit      { width: 1% !important; }
 #proposals-pane table.proposal-dispatch-table col.proposal-id     { width: 1% !important; }
 #proposals-pane table.proposal-dispatch-table col.proposal-type   { width: 1% !important; }
 #proposals-pane table.proposal-dispatch-table col.proposal-name { width: 8% !important; }
@@ -2352,14 +2759,56 @@ section#templates .alert.alert-info .text-muted {
   --proposal-first-col-pr: .8rem;
 }
 
+#proposals-pane {
+  --proposal-table-scroll-offset-top: 0px;
+  --proposal-table-margin-to-scroll: 10px;
+  --proposal-table-action-gap: 30px;
+  --proposal-table-scroll-action-gap: 11.75px;
+}
+
 #proposals-pane .registration-table-wrap {
   overflow-x: auto;
   overflow-y: visible;
   width: 100%;
 }
 
+#proposals-pane .proposal-registry-table-wrap,
+#proposals-pane .proposal-dispatch-table-wrap,
+#proposals-pane .proposal-template-table-wrap {
+  padding-bottom: var(--proposal-table-scroll-offset-top);
+}
+
+#proposals-pane .proposal-registry-table-wrap > #proposal-registry-table,
+#proposals-pane .proposal-dispatch-table-wrap > .proposal-dispatch-table,
+#proposals-pane .proposal-template-table-wrap > .proposal-template-table {
+  margin-bottom: 0 !important;
+}
+
+#proposals-pane .proposal-registry-table-wrap.has-horizontal-scroll > #proposal-registry-table,
+#proposals-pane .proposal-dispatch-table-wrap.has-horizontal-scroll > .proposal-dispatch-table,
+#proposals-pane .proposal-template-table-wrap.has-horizontal-scroll > .proposal-template-table {
+  margin-bottom: var(--proposal-table-margin-to-scroll) !important;
+}
+
+#proposals-pane .proposal-registry-table-wrap + .products-actions-row,
+#proposals-pane .proposal-dispatch-table-wrap + .products-actions-row,
+#proposals-pane .proposal-template-table-wrap + .products-actions-row {
+  margin-top: var(--proposal-table-action-gap) !important;
+}
+
+#proposals-pane .proposal-registry-table-wrap.has-horizontal-scroll + .products-actions-row,
+#proposals-pane .proposal-dispatch-table-wrap.has-horizontal-scroll + .products-actions-row,
+#proposals-pane .proposal-template-table-wrap.has-horizontal-scroll + .products-actions-row {
+  margin-top: var(--proposal-table-scroll-action-gap) !important;
+}
+
+#proposals-pane .registration-table-wrap > table#proposal-registry-table {
+  width: max-content;
+  min-width: 100%;
+}
+
 #proposals-pane #proposal-registry-table {
-  width: 100%;
+  width: max-content;
   min-width: 100%;
 }
 
@@ -2379,12 +2828,26 @@ section#templates .alert.alert-info .text-muted {
   max-width: 68px !important;
 }
 
-#proposals-pane #proposal-registry-table col.group,
+#proposals-pane #proposal-registry-table col.proposal-sub-number,
 #proposals-pane #proposal-registry-table > thead tr > :nth-child(3),
 #proposals-pane #proposal-registry-table > tbody tr > :nth-child(3) {
-  width: 48px !important;
-  min-width: 48px !important;
-  max-width: 48px !important;
+  width: 36px !important;
+  min-width: 36px !important;
+  max-width: 36px !important;
+}
+
+#proposals-pane #proposal-registry-table col.group,
+#proposals-pane #proposal-registry-table > thead tr > [data-col="group"],
+#proposals-pane #proposal-registry-table > tbody tr > [data-col="group"] {
+  width: 1% !important;
+  min-width: max-content !important;
+  max-width: none !important;
+  white-space: nowrap !important;
+}
+
+#proposals-pane #proposal-registry-table > thead tr > [data-col="group"] {
+  overflow: visible !important;
+  text-overflow: clip !important;
 }
 
 #proposals-pane #proposal-registry-table > thead tr > :first-child {
@@ -2403,8 +2866,29 @@ section#templates .alert.alert-info .text-muted {
 }
 
 #proposals-pane .proposal-payment-schedule-table-wrap > table.proposals-table {
-  width: 100%;
+  width: max-content;
   min-width: 100%;
+}
+
+#proposals-pane .registration-table-wrap tr.proposal-registry-number-has-next > td {
+  border-bottom: 0 !important;
+}
+
+#proposals-pane .registration-table-wrap tr.proposal-registry-number-has-next > td:nth-child(n+3) {
+  background-image: repeating-linear-gradient(
+    to right,
+    rgba(33, 37, 41, .22) 0,
+    rgba(33, 37, 41, .22) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  background-position: left bottom;
+  background-repeat: repeat-x;
+  background-size: 3px 1px;
+}
+
+#proposals-pane .registration-table-wrap tr.proposal-registry-number-continuation > td {
+  border-top: 0 !important;
 }
 
 #proposals-pane .proposal-payment-gantt-wrap {
@@ -5002,7 +5486,7 @@ body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor 
   border-bottom: 0 !important;
 }
 
-#proposals-pane .proposal-payment-schedule-table-wrap tr.proposal-payment-stage-has-next > td:nth-child(n+5) {
+#proposals-pane .proposal-payment-schedule-table-wrap tr.proposal-payment-stage-has-next > td:nth-child(n+6) {
   background-image: repeating-linear-gradient(
     to right,
     rgba(33, 37, 41, .22) 0,
@@ -5482,7 +5966,9 @@ body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor 
 }
 
 html.proposal-progress-cursor,
-html.proposal-progress-cursor * {
+html.proposal-progress-cursor *,
+html.worktime-progress-cursor,
+html.worktime-progress-cursor * {
   cursor: progress !important;
 }
 
@@ -5770,7 +6256,8 @@ html.proposal-progress-cursor * {
   padding-bottom: calc(var(--bs-table-cell-padding-y) + 2px) !important;
 }
 
-#proposals-pane table.proposals-table thead th {
+#proposals-pane table.proposals-table thead th,
+#proposals-pane table.proposal-dispatch-table thead th {
   white-space: nowrap !important;
 }
 
@@ -5826,42 +6313,45 @@ html.proposal-progress-cursor * {
   color: #a1a9b1 !important;
 }
 
-#proposals-pane table.proposals-table thead th:nth-child(4),
-#proposals-pane table.proposals-table tbody td:nth-child(4) {
+#proposals-pane table.proposals-table thead th[data-col="group"],
+#proposals-pane table.proposals-table tbody td[data-col="group"] {
   width: 1% !important;
-  min-width: 1% !important;
-  max-width: 1% !important;
+  min-width: max-content !important;
+  max-width: none !important;
   white-space: nowrap !important;
-  overflow: hidden !important;
-  text-overflow: ellipsis !important;
 }
 
-#proposals-pane table.proposals-table thead th:nth-child(2),
-#proposals-pane table.proposals-table thead th:nth-child(3),
-#proposals-pane table.proposals-table thead th:nth-child(5),
-#proposals-pane table.proposals-table thead th:nth-child(6),
-#proposals-pane table.proposals-table tbody td:nth-child(2),
-#proposals-pane table.proposals-table tbody td:nth-child(3),
-#proposals-pane table.proposals-table tbody td:nth-child(5),
-#proposals-pane table.proposals-table tbody td:nth-child(6),
-#proposals-pane table.proposal-dispatch-table thead th:nth-child(2),
-#proposals-pane table.proposal-dispatch-table thead th:nth-child(3),
-#proposals-pane table.proposal-dispatch-table thead th:nth-child(4),
-#proposals-pane table.proposal-dispatch-table thead th:nth-child(5),
-#proposals-pane table.proposal-dispatch-table thead th:nth-child(6),
-#proposals-pane table.proposal-dispatch-table tbody td:nth-child(2),
-#proposals-pane table.proposal-dispatch-table tbody td:nth-child(3),
-#proposals-pane table.proposal-dispatch-table tbody td:nth-child(4),
-#proposals-pane table.proposal-dispatch-table tbody td:nth-child(5),
-#proposals-pane table.proposal-dispatch-table tbody td:nth-child(6) {
+#proposals-pane table.proposals-table thead th[data-col="group"] {
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+#proposals-pane table.proposals-table thead th[data-col="number"],
+#proposals-pane table.proposals-table tbody td[data-col="number"],
+#proposals-pane table.proposals-table thead th[data-col="sub-number"],
+#proposals-pane table.proposals-table tbody td[data-col="sub-number"],
+#proposals-pane table.proposals-table thead th[data-col="tkp-id"],
+#proposals-pane table.proposals-table tbody td[data-col="tkp-id"],
+#proposals-pane table.proposals-table thead th[data-col="type"],
+#proposals-pane table.proposals-table tbody td[data-col="type"],
+#proposals-pane table.proposal-dispatch-table thead th[data-col="number"],
+#proposals-pane table.proposal-dispatch-table tbody td[data-col="number"],
+#proposals-pane table.proposal-dispatch-table thead th[data-col="sub-number"],
+#proposals-pane table.proposal-dispatch-table tbody td[data-col="sub-number"],
+#proposals-pane table.proposal-dispatch-table thead th[data-col="tkp-id"],
+#proposals-pane table.proposal-dispatch-table tbody td[data-col="tkp-id"],
+#proposals-pane table.proposal-dispatch-table thead th[data-col="type"],
+#proposals-pane table.proposal-dispatch-table tbody td[data-col="type"] {
   width: 1% !important;
   min-width: 1% !important;
-  max-width: 1% !important;
+  max-width: none !important;
   white-space: nowrap !important;
 }
 
 #proposals-pane table.proposals-table .proposal-quick-edit-col {
-  width: 1% !important;
+  width: 28px !important;
+  min-width: 28px !important;
+  max-width: 28px !important;
   padding-left: 0 !important;
   padding-right: 0 !important;
   white-space: nowrap !important;
@@ -5870,12 +6360,52 @@ html.proposal-progress-cursor * {
 }
 
 #proposals-pane table.proposal-dispatch-table .proposal-quick-edit-col {
-  width: 1% !important;
+  width: 28px !important;
+  min-width: 28px !important;
+  max-width: 28px !important;
   padding-left: 0 !important;
   padding-right: 0 !important;
   white-space: nowrap !important;
   vertical-align: top !important;
   text-align: center !important;
+}
+
+#proposals-pane table.proposals-table thead th:nth-child(2),
+#proposals-pane table.proposals-table thead th:nth-child(3),
+#proposals-pane table.proposals-table tbody td:nth-child(2),
+#proposals-pane table.proposals-table tbody td:nth-child(3),
+#proposals-pane table.proposal-dispatch-table thead th:nth-child(4),
+#proposals-pane table.proposal-dispatch-table tbody td:nth-child(4) {
+  width: 1% !important;
+  min-width: max-content !important;
+  max-width: none !important;
+  white-space: nowrap !important;
+}
+
+#proposals-pane table.proposal-dispatch-table thead th:nth-child(4) {
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+#proposals-pane table.proposal-dispatch-table thead th:nth-child(2),
+#proposals-pane table.proposal-dispatch-table thead th:nth-child(3),
+#proposals-pane table.proposal-dispatch-table thead th:nth-child(5),
+#proposals-pane table.proposal-dispatch-table thead th:nth-child(6),
+#proposals-pane table.proposal-dispatch-table tbody td:nth-child(2),
+#proposals-pane table.proposal-dispatch-table tbody td:nth-child(3),
+#proposals-pane table.proposal-dispatch-table tbody td:nth-child(5),
+#proposals-pane table.proposal-dispatch-table tbody td:nth-child(6) {
+  width: 1% !important;
+  min-width: 1% !important;
+  max-width: 1% !important;
+  white-space: nowrap !important;
+}
+
+#proposals-pane table.proposals-table .proposal-id-cell .proposal-quick-edit,
+#proposals-pane table.proposal-dispatch-table .proposal-id-cell .proposal-dispatch-quick-edit {
+  padding-top: 0;
+  position: relative;
+  top: -2px;
 }
 
 .cloud-link-icon {
@@ -5964,6 +6494,14 @@ html.proposal-progress-cursor * {
   white-space: nowrap !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
+}
+
+#proposals-pane table.proposal-dispatch-table > thead tr > :nth-child(3),
+#proposals-pane table.proposal-dispatch-table > tbody tr > :nth-child(3) {
+  width: 36px !important;
+  min-width: 36px !important;
+  max-width: 36px !important;
+  white-space: nowrap !important;
 }
 
 #proposals-pane table.proposals-table > thead tr > :first-child .form-check,
@@ -6167,6 +6705,9 @@ html.proposal-progress-cursor * {
 #proposals-pane .proposal-type-head-labels {
   min-width: 0;
   margin: 0;
+  color: #212529;
+  font-size: .875rem;
+  font-weight: 500;
 }
 
 #proposals-pane .proposal-type-head-field-label {
@@ -6373,8 +6914,28 @@ html.proposal-progress-cursor * {
   margin-top: 0;
 }
 
-#proposals-pane .proposal-payment-schedule-editor {
-  padding-bottom: 2rem;
+#proposals-modal .proposal-assets-editor.proposal-payment-schedule-editor,
+#proposals-pane .proposal-assets-editor.proposal-payment-schedule-editor {
+  padding-bottom: 0;
+}
+
+#contracts-modal .proposal-assets-editor.proposal-payment-schedule-editor {
+  padding-bottom: 0;
+}
+
+#contracts-modal .proposal-payment-schedule-editor-body,
+#proposals-modal .proposal-payment-schedule-editor-body,
+#proposals-pane .proposal-payment-schedule-editor-body {
+  padding-bottom: 2rem !important;
+}
+
+#proposals-modal .proposal-payment-schedule-editor .js-proposal-payment-group > .row + .row,
+#proposals-pane .proposal-payment-schedule-editor .js-proposal-payment-group > .row + .row {
+  margin-top: 0;
+}
+
+#contracts-modal .proposal-payment-schedule-editor .js-proposal-payment-group > .row + .row {
+  margin-top: 0;
 }
 
 #proposals-pane .proposal-payment-stage-block {
@@ -6387,6 +6948,20 @@ html.proposal-progress-cursor * {
 }
 
 #proposals-pane .proposal-payment-stage-title {
+  display: block;
+  margin-top: 0;
+}
+
+#contracts-modal .proposal-payment-stage-block {
+  border-top: 1px solid #dee2e6;
+  padding-top: 1.25rem;
+}
+
+#contracts-modal .proposal-payment-stage-block + .proposal-payment-stage-block {
+  margin-top: 2rem !important;
+}
+
+#contracts-modal .proposal-payment-stage-title {
   display: block;
   margin-top: 0;
 }
@@ -6542,6 +7117,8 @@ html.proposal-progress-cursor * {
 }
 
 #proposals-pane .proposal-template-table {
+  width: max-content;
+  min-width: 100%;
   margin-bottom: 0 !important;
 }
 
@@ -6554,7 +7131,7 @@ html.proposal-progress-cursor * {
 
 .contract-table { table-layout: auto; width: 100%; min-width: max-content; }
 .contract-table col.checkbox   { width: 30px !important; }
-.contract-table col.project-id { width: 100px !important; }
+.contract-table col.project-id { width: 105px !important; }
 
 .contract-table th,
 .contract-table td {
@@ -6572,9 +7149,9 @@ html.proposal-progress-cursor * {
 
 .contract-table th:nth-child(2),
 .contract-table td:nth-child(2) {
-  width: 100px !important;
-  min-width: 100px !important;
-  max-width: 100px !important;
+  width: 105px !important;
+  min-width: 105px !important;
+  max-width: 105px !important;
   white-space: nowrap !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
@@ -6589,6 +7166,21 @@ html.proposal-progress-cursor * {
   overflow: hidden !important;
   text-overflow: ellipsis !important;
   white-space: nowrap !important;
+}
+
+.contract-table td:nth-child(2) > .clf-id-droid-mono {
+  width: 105px !important;
+  max-width: 105px !important;
+}
+
+.work-table td:nth-child(2) > .clf-id-droid-mono {
+  width: 105px !important;
+  max-width: 105px !important;
+}
+
+.legal-table td:nth-child(2) > .clf-id-droid-mono {
+  width: 105px !important;
+  max-width: 105px !important;
 }
 
 .contract-table col.col-subject { width: 160px !important; }
@@ -6609,11 +7201,30 @@ html.proposal-progress-cursor * {
   overflow-x: auto;
   overflow-y: visible;
   width: 100%;
+  padding-bottom: var(--project-schedule-table-scroll-offset-top);
+}
+
+#projects-pane .work-table-wrap > .work-table {
+  width: max-content;
+  min-width: 100%;
+  margin-bottom: 0 !important;
+}
+
+#projects-pane .work-table-wrap.has-horizontal-scroll > .work-table {
+  margin-bottom: var(--project-schedule-table-margin-to-scroll) !important;
+}
+
+#projects-pane .work-table-wrap + .products-actions-row {
+  margin-top: var(--project-schedule-table-action-gap) !important;
+}
+
+#projects-pane .work-table-wrap.has-horizontal-scroll + .products-actions-row {
+  margin-top: var(--project-schedule-table-scroll-action-gap) !important;
 }
 
 .work-table { table-layout: auto; width: 100%; min-width: max-content; }
 .work-table col.col-checkbox { width: 30px !important; }
-.work-table col.col-project  { width: 100px !important; }
+.work-table col.col-project  { width: 105px !important; }
 
 .work-table th,
 .work-table td {
@@ -6631,9 +7242,9 @@ html.proposal-progress-cursor * {
 
 .work-table th:nth-child(2),
 .work-table td:nth-child(2) {
-  width: 100px !important;
-  min-width: 100px !important;
-  max-width: 100px !important;
+  width: 105px !important;
+  min-width: 105px !important;
+  max-width: 105px !important;
   white-space: nowrap !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
@@ -6654,11 +7265,30 @@ html.proposal-progress-cursor * {
   overflow-x: auto;
   overflow-y: visible;
   width: 100%;
+  padding-bottom: var(--project-schedule-table-scroll-offset-top);
+}
+
+#projects-pane .legal-table-wrap > .legal-table {
+  width: max-content;
+  min-width: 100%;
+  margin-bottom: 0 !important;
+}
+
+#projects-pane .legal-table-wrap.has-horizontal-scroll > .legal-table {
+  margin-bottom: var(--project-schedule-table-margin-to-scroll) !important;
+}
+
+#projects-pane .legal-table-wrap + .products-actions-row {
+  margin-top: var(--project-schedule-table-action-gap) !important;
+}
+
+#projects-pane .legal-table-wrap.has-horizontal-scroll + .products-actions-row {
+  margin-top: var(--project-schedule-table-scroll-action-gap) !important;
 }
 
 .legal-table { table-layout: auto; width: 100%; min-width: max-content; }
 .legal-table col.col-checkbox { width: 30px !important; }
-.legal-table col.col-project  { width: 100px !important; }
+.legal-table col.col-project  { width: 105px !important; }
 
 .legal-table th,
 .legal-table td {
@@ -6676,9 +7306,9 @@ html.proposal-progress-cursor * {
 
 .legal-table th:nth-child(2),
 .legal-table td:nth-child(2) {
-  width: 100px !important;
-  min-width: 100px !important;
-  max-width: 100px !important;
+  width: 105px !important;
+  min-width: 105px !important;
+  max-width: 105px !important;
   white-space: nowrap !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
@@ -6694,7 +7324,8 @@ html.proposal-progress-cursor * {
 .performer-quick-edit:hover { opacity: .85; }
 .proposal-quick-edit,
 .proposal-dispatch-quick-edit,
-.project-quick-edit {
+.project-quick-edit,
+.contracts-payment-quick-edit {
   display: inline-block;
   vertical-align: middle;
   line-height: 1;
@@ -6705,7 +7336,8 @@ html.proposal-progress-cursor * {
 }
 .proposal-quick-edit:hover,
 .proposal-dispatch-quick-edit:hover,
-.project-quick-edit:hover { opacity: .85; }
+.project-quick-edit:hover,
+.contracts-payment-quick-edit:hover { opacity: .85; }
 .performer-locked-icon { opacity: .35; }
 
 .perf-nav-btn {
@@ -6786,7 +7418,7 @@ html.proposal-progress-cursor * {
 }
 
 #performers-main-section .performers-table col.col-number {
-  width: 100px !important;
+  width: 105px !important;
 }
 
 #performers-main-section .performers-table col.col-active,
@@ -6820,9 +7452,9 @@ html.proposal-progress-cursor * {
 
 #performers-main-section .performers-table thead th:nth-child(3),
 #performers-main-section .performers-table tbody td:nth-child(3) {
-  width: 100px !important;
-  min-width: 100px !important;
-  max-width: 100px !important;
+  width: 105px !important;
+  min-width: 105px !important;
+  max-width: 105px !important;
   white-space: nowrap !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
@@ -6855,15 +7487,36 @@ html.proposal-progress-cursor * {
 
 /* ==== Row grouping in participation / contract / info-request tables ==== */
 
+#participation-confirmation-section {
+  --payment-request-table-scroll-offset-top: 0px;
+  --payment-request-table-margin-to-scroll: 10px;
+  --payment-request-table-action-gap: 30px;
+  --payment-request-table-scroll-action-gap: 11.75px;
+}
+
 #participation-confirmation-section .participation-table-wrap {
   overflow-x: auto;
   overflow-y: visible;
   width: 100%;
+  padding-bottom: var(--payment-request-table-scroll-offset-top);
 }
 
 #participation-confirmation-section .participation-table-wrap > .performers-table {
-  width: 100%;
-  min-width: max-content;
+  width: max-content;
+  min-width: 100%;
+  margin-bottom: 0 !important;
+}
+
+#participation-confirmation-section .participation-table-wrap.has-horizontal-scroll > .performers-table {
+  margin-bottom: var(--payment-request-table-margin-to-scroll) !important;
+}
+
+#participation-confirmation-section .participation-table-wrap + .products-actions-row {
+  margin-top: var(--payment-request-table-action-gap) !important;
+}
+
+#participation-confirmation-section .participation-table-wrap.has-horizontal-scroll + .products-actions-row {
+  margin-top: var(--payment-request-table-scroll-action-gap) !important;
 }
 
 #participation-confirmation-section .performers-table col.col-checkbox {
@@ -6875,7 +7528,7 @@ html.proposal-progress-cursor * {
 }
 
 #participation-confirmation-section .performers-table col.col-number {
-  width: 100px !important;
+  width: 105px !important;
 }
 
 #participation-confirmation-section .performers-table col:not(.col-checkbox):not(.col-short-number):not(.col-number) {
@@ -6908,9 +7561,9 @@ html.proposal-progress-cursor * {
 
 #participation-confirmation-section .performers-table thead th:nth-child(3),
 #participation-confirmation-section .performers-table tbody td:nth-child(3) {
-  width: 100px !important;
-  min-width: 100px !important;
-  max-width: 100px !important;
+  width: 105px !important;
+  min-width: 105px !important;
+  max-width: 105px !important;
   white-space: nowrap !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
@@ -7381,10 +8034,18 @@ html.proposal-progress-cursor * {
   margin-top: var(--contract-table-heading-gap) !important;
 }
 
+#info-request-approval-section {
+  --payment-request-table-scroll-offset-top: 0px;
+  --payment-request-table-margin-to-scroll: 10px;
+  --payment-request-table-action-gap: 30px;
+  --payment-request-table-scroll-action-gap: 11.75px;
+}
+
 #info-request-approval-section .info-request-table-wrap {
   overflow-x: auto;
   overflow-y: visible;
   width: 100%;
+  padding-bottom: var(--payment-request-table-scroll-offset-top);
 }
 
 #projects-content-info-request > .card,
@@ -7394,6 +8055,7 @@ html.proposal-progress-cursor * {
 #contracts-content-performer-execution > .card,
 #contracts-content-performer-execution > .card > .card-body,
 #contracts-execution-pane,
+#participation-confirmation-section,
 #info-request-approval-section,
 .payment-request-section {
   overflow: visible;
@@ -7415,7 +8077,9 @@ html.proposal-progress-cursor * {
 
 /* Открытый фильтр в шапке таблицы — выше следующих шапок на странице */
 #projects-pane .table-section-header:has(.dropdown-menu.show),
-#contracts-execution-pane .table-section-header:has(.dropdown-menu.show) {
+#contracts-execution-pane .table-section-header:has(.dropdown-menu.show),
+#contracts-content-in-development .table-section-header.tkp-colpicker-open,
+.table-section-header:has(.tkp-colpicker-menu.show) {
   z-index: 1020;
 }
 
@@ -7452,6 +8116,19 @@ html.proposal-progress-cursor * {
 #info-request-approval-section .info-request-table-wrap > .performers-table {
   width: max-content;
   min-width: 100%;
+  margin-bottom: 0 !important;
+}
+
+#info-request-approval-section .info-request-table-wrap.has-horizontal-scroll > .performers-table {
+  margin-bottom: var(--payment-request-table-margin-to-scroll) !important;
+}
+
+#info-request-approval-section .info-request-table-wrap + .products-actions-row {
+  margin-top: var(--payment-request-table-action-gap) !important;
+}
+
+#info-request-approval-section .info-request-table-wrap.has-horizontal-scroll + .products-actions-row {
+  margin-top: var(--payment-request-table-scroll-action-gap) !important;
 }
 
 #info-request-approval-section .performers-table col.col-checkbox,
@@ -7460,7 +8137,7 @@ html.proposal-progress-cursor * {
 }
 
 #info-request-approval-section .performers-table col.col-number {
-  width: 100px !important;
+  width: 105px !important;
 }
 
 .payment-request-section .performers-table col.col-number {
@@ -7484,9 +8161,9 @@ html.proposal-progress-cursor * {
 
 #info-request-approval-section .performers-table thead th:nth-child(2),
 #info-request-approval-section .performers-table tbody td:nth-child(2) {
-  width: 100px !important;
-  min-width: 100px !important;
-  max-width: 100px !important;
+  width: 105px !important;
+  min-width: 105px !important;
+  max-width: 105px !important;
   white-space: nowrap !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
@@ -7760,8 +8437,129 @@ html.proposal-progress-cursor * {
 #projects-pane table.table > tbody tr > :first-child,
 
 #performers-pane table.table > thead tr > :first-child,
-#performers-pane table.table > tbody tr > :first-child {
+#performers-pane table.table > tbody tr > :first-child,
+
+#contracts-content-in-development table.table > thead tr > :first-child,
+#contracts-content-in-development table.table > tbody tr > :first-child {
   padding-left: calc(var(--bs-table-cell-padding-x, .4rem) + 0px);
+}
+
+#contracts-content-in-development .registration-table-wrap > table.reg-table > thead tr > :first-child,
+#contracts-content-in-development .registration-table-wrap > table.reg-table > tbody tr > :first-child {
+  box-sizing: border-box !important;
+  inline-size: 30px !important;
+  max-inline-size: 30px !important;
+  max-width: 30px !important;
+  min-inline-size: 30px !important;
+  min-width: 30px !important;
+  overflow: hidden !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  position: relative !important;
+  vertical-align: middle !important;
+  width: 30px !important;
+}
+
+#contracts-content-in-development .registration-table-wrap > table.reg-table > thead tr > :nth-child(3),
+#contracts-content-in-development .registration-table-wrap > table.reg-table > tbody tr > :nth-child(3) {
+  box-sizing: border-box !important;
+  inline-size: 90px !important;
+  max-inline-size: 90px !important;
+  max-width: 90px !important;
+  min-inline-size: 90px !important;
+  min-width: 90px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  width: 90px !important;
+}
+
+#contracts-content-in-development .registration-table-wrap > table.reg-table > thead tr > :nth-child(4),
+#contracts-content-in-development .registration-table-wrap > table.reg-table > tbody tr > :nth-child(4) {
+  box-sizing: border-box !important;
+  inline-size: 155px !important;
+  max-inline-size: 155px !important;
+  max-width: 155px !important;
+  min-inline-size: 155px !important;
+  min-width: 155px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  width: 155px !important;
+}
+
+#contracts-content-in-development .registration-table-wrap > table.reg-table > thead tr > :nth-child(5),
+#contracts-content-in-development .registration-table-wrap > table.reg-table > tbody tr > :nth-child(5) {
+  box-sizing: border-box !important;
+  inline-size: 40px !important;
+  max-inline-size: 40px !important;
+  max-width: 40px !important;
+  min-inline-size: 40px !important;
+  min-width: 40px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  width: 40px !important;
+}
+
+#contracts-content-in-development .registration-table-wrap > table.reg-table > thead tr > :nth-child(6),
+#contracts-content-in-development .registration-table-wrap > table.reg-table > tbody tr > :nth-child(6) {
+  box-sizing: border-box !important;
+  inline-size: 70px !important;
+  max-inline-size: 70px !important;
+  max-width: 70px !important;
+  min-inline-size: 70px !important;
+  min-width: 70px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  width: 70px !important;
+}
+
+#contracts-content-in-development .registration-table-wrap > table.reg-table > thead tr > :nth-child(7),
+#contracts-content-in-development .registration-table-wrap > table.reg-table > tbody tr > :nth-child(7) {
+  box-sizing: border-box !important;
+  inline-size: 125px !important;
+  max-inline-size: 125px !important;
+  max-width: 125px !important;
+  min-inline-size: 125px !important;
+  min-width: 125px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  width: 125px !important;
+}
+
+#contracts-content-in-development .registration-table-wrap > table.reg-table > thead tr > :first-child .form-check,
+#contracts-content-in-development .registration-table-wrap > table.reg-table > tbody tr > :first-child .form-check {
+  align-items: center !important;
+  bottom: 0 !important;
+  display: flex !important;
+  height: 100% !important;
+  justify-content: center !important;
+  left: 0 !important;
+  margin: 0 !important;
+  max-width: 30px !important;
+  min-width: 0 !important;
+  padding: 0 !important;
+  position: absolute !important;
+  right: 0 !important;
+  top: 0 !important;
+  width: 30px !important;
+}
+
+#contracts-content-in-development .registration-table-wrap > table.reg-table > thead tr > :first-child .form-check-input,
+#contracts-content-in-development .registration-table-wrap > table.reg-table > tbody tr > :first-child .form-check-input {
+  float: none !important;
+  margin: 0 !important;
+  position: static !important;
+  transform: none !important;
+}
+
+#contracts-content-in-development .registration-table-wrap > table.reg-table > thead tr > :first-child .form-check {
+  bottom: calc(var(--bs-table-cell-padding-y) + 0px) !important;
+  height: auto !important;
+  top: auto !important;
 }
 
 /* На всякий случай убираем внешние отступы у .form-check внутри первой колонки */

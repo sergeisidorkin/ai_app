@@ -1,5 +1,13 @@
 from django.contrib import admin
-from .models import LegalEntity, Performer, ProjectRegistration, ProjectRegistrationProduct, WorkVolume
+from django.db.models import Q, Sum
+from .models import (
+    LegalEntity,
+    PaymentRequestPerformer,
+    Performer,
+    ProjectRegistration,
+    ProjectRegistrationProduct,
+    WorkVolume,
+)
 
 @admin.register(ProjectRegistration)
 class ProjectRegistrationAdmin(admin.ModelAdmin):
@@ -121,6 +129,141 @@ class PerformerAdmin(admin.ModelAdmin):
     @admin.display(description="Тип. раздел")
     def section_code(self, obj):
         return getattr(obj.typical_section, "code", "")
+
+
+@admin.register(PaymentRequestPerformer)
+class PaymentRequestPerformerAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "registration_short_uid",
+        "contract_number",
+        "executor",
+        "section_code",
+        "contract_total_price",
+        "agreed_amount",
+        "currency",
+        "prepayment",
+        "final_payment",
+        "advance_payment_request_number",
+        "advance_payment_request_sent_at",
+        "advance_payment_paid",
+        "final_payment_request_number",
+        "final_payment_request_sent_at",
+        "final_payment_paid",
+        "payment_request_sender",
+    )
+    list_editable = (
+        "agreed_amount",
+        "prepayment",
+        "final_payment",
+        "advance_payment_request_number",
+        "advance_payment_request_sent_at",
+        "advance_payment_paid",
+        "final_payment_request_number",
+        "final_payment_request_sent_at",
+        "final_payment_paid",
+    )
+    list_display_links = ("id", "registration_short_uid", "contract_number")
+    list_select_related = ("registration", "typical_section", "currency")
+    search_fields = (
+        "executor",
+        "contract_number",
+        "registration__short_uid",
+        "registration__agreement_number",
+        "registration__name",
+    )
+    list_filter = (
+        "currency",
+        "advance_payment_paid",
+        "final_payment_paid",
+        "advance_payment_request_sent_at",
+        "final_payment_request_sent_at",
+    )
+    ordering = ("registration__position", "executor", "position", "id")
+    readonly_fields = (
+        "registration_short_uid",
+        "section_code",
+        "contract_batch_id",
+        "contract_total_price",
+    )
+    fieldsets = (
+        ("Строка заявки", {
+            "fields": (
+                "registration_short_uid",
+                "registration",
+                "work_item",
+                "typical_section",
+                "section_code",
+                "executor",
+                "employee",
+            ),
+        }),
+        ("Договор и сумма", {
+            "fields": (
+                "contract_number",
+                "contract_batch_id",
+                "contract_total_price",
+                "agreed_amount",
+                "currency",
+                "prepayment",
+                "final_payment",
+            ),
+        }),
+        ("Заявка на аванс", {
+            "fields": (
+                "advance_payment_request_number",
+                "advance_payment_request_sent_at",
+                "advance_payment_request_sender",
+                "advance_payment_paid",
+                "advance_payment_paid_at",
+            ),
+        }),
+        ("Заявка на окончательный платёж", {
+            "fields": (
+                "final_payment_request_number",
+                "final_payment_request_sent_at",
+                "final_payment_request_sender",
+                "final_payment_paid",
+                "final_payment_paid_at",
+            ),
+        }),
+    )
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).filter(contract_batch_id__isnull=False)
+
+    @admin.display(description="Проект ID", ordering="registration__short_uid")
+    def registration_short_uid(self, obj):
+        return getattr(obj.registration, "short_uid", "")
+
+    @admin.display(description="Тип. раздел")
+    def section_code(self, obj):
+        return getattr(obj.typical_section, "code", "")
+
+    @admin.display(description="Цена договора")
+    def contract_total_price(self, obj):
+        if obj.participation_batch_id:
+            addendum_number = obj.contract_addendum_number or 0
+            number_filter = Q(contract_addendum_number=addendum_number)
+            if not addendum_number:
+                number_filter |= Q(contract_addendum_number__isnull=True)
+            queryset = PaymentRequestPerformer.objects.filter(
+                participation_batch_id=obj.participation_batch_id,
+                executor=obj.executor,
+                contract_batch_id__isnull=False,
+                contract_is_addendum=obj.contract_is_addendum,
+            ).filter(number_filter)
+        elif obj.contract_batch_id:
+            queryset = PaymentRequestPerformer.objects.filter(contract_batch_id=obj.contract_batch_id)
+        else:
+            queryset = PaymentRequestPerformer.objects.filter(pk=obj.pk)
+
+        return queryset.aggregate(total=Sum("agreed_amount"))["total"]
+
+    @admin.display(description="Отправитель")
+    def payment_request_sender(self, obj):
+        return obj.final_payment_request_sender or obj.advance_payment_request_sender
+
 
 @admin.register(LegalEntity)
 class LegalEntityAdmin(admin.ModelAdmin):

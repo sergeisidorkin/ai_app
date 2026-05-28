@@ -57,8 +57,19 @@
   }
 
   function getStatusEl(table) {
-    var panel = table && table.closest ? table.closest('[data-worktime-panel]') : null;
+    var panel = table && table.closest ? table.closest('[data-worktime-panel], #proposals-pane') : null;
     return (panel || document).querySelector('[data-row-order-status]');
+  }
+
+  function orderPayloadField(table) {
+    return (table && table.dataset && table.dataset.rowOrderPayloadField) || 'ordered_assignment_ids';
+  }
+
+  function payloadOrderIds(table, payload) {
+    var field = orderPayloadField(table);
+    return (payload && Array.isArray(payload[field]) && payload[field])
+      || (payload && Array.isArray(payload.ordered_assignment_ids) && payload.ordered_assignment_ids)
+      || [];
   }
 
   function setStatus(table, message, kind) {
@@ -105,9 +116,9 @@
     var table = state.table;
     var payload = {
       week: table && table.dataset ? (table.dataset.rowOrderWeek || '') : '',
-      ordered_assignment_ids: table ? collectOrderIds(table) : (state.lastPayload && state.lastPayload.ordered_assignment_ids) || [],
       base_order_signature: state.baseSignature || ''
     };
+    payload[orderPayloadField(table)] = table ? collectOrderIds(table) : payloadOrderIds(table, state.lastPayload);
     state.lastPayload = payload;
     return payload;
   }
@@ -326,7 +337,7 @@
 
   function applyStoredOrder(table, record) {
     var payload = record && record.payload;
-    var ids = payload && payload.ordered_assignment_ids;
+    var ids = payloadOrderIds(table, payload);
     if (!Array.isArray(ids) || !ids.length) return;
     var tbody = table.querySelector('tbody');
     if (!tbody) return;

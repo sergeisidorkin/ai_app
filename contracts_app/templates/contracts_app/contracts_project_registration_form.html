@@ -7,6 +7,12 @@
 
 <form
   method="post"
+  data-country-identifier-url="{% url 'identifier_for_country' %}"
+  data-country-region-url="{% url 'ler_regions_for_country' %}"
+  data-region-autofill-url="{% url 'ler_region_autofill' %}"
+  data-ler-search-url="{% url 'ler_search' %}"
+  data-prefill-url-template="{% url 'contracts_project_registration_prefill_from_proposal' 0 %}"
+  data-registration-id="{% if registration %}{{ registration.pk }}{% endif %}"
   {% if action == "create" %}
     hx-post="{% url 'contracts_project_registration_create' %}"
   {% else %}
@@ -16,49 +22,86 @@
   hx-swap="innerHTML">
   <div class="modal-body modal-body-scroll">
     {% csrf_token %}
+    {{ form.group_order_map|json_script:"contracts-project-group-order-map" }}
+    {{ form.group_alpha2_map|json_script:"contracts-project-group-alpha2-map" }}
+    {{ form.proposal_sub_number_map|json_script:"contracts-project-proposal-sub-number-map" }}
+    {{ form.type_ids }}
 
     <div class="row g-2">
-      <div class="col-3">
-        <label class="form-label">Номер</label>
-        {{ form.number }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">Вид соглашения</label>
-        {{ form.agreement_type }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">Группа</label>
-        <div class="group-select-shell">
-          {{ form.group_member }}
-          <div class="group-select-display" id="registration-group-display" aria-hidden="true"></div>
+      <div class="col-12 contracts-form-head-row">
+        <div>
+          <label class="form-label">Номер</label>
+          {{ form.number }}
+        </div>
+        <div>
+          <label class="form-label">{{ form.proposal_registration.label }}</label>
+          <div class="proposal-registration-field-wrap">
+            <div class="proposal-registration-select-shell">
+              {{ form.proposal_registration }}
+              <div class="proposal-registration-select-display clf-id-droid-mono" id="contracts-proposal-registration-display" aria-hidden="true"></div>
+            </div>
+            <button type="button"
+                    id="contracts-proposal-prefill-btn"
+                    class="btn contracts-proposal-prefill-btn"
+                    title="Загрузить данные из ТКП"
+                    aria-label="Загрузить данные из ТКП"
+                    disabled>
+              <i class="bi bi-arrow-clockwise" aria-hidden="true"></i>
+            </button>
+          </div>
+        </div>
+        <div>
+          <label class="form-label">Вид соглашения</label>
+          {{ form.agreement_type }}
+        </div>
+        <div class="contracts-form-head-field-narrow">
+          <label class="form-label">{{ form.sub_number.label }}</label>
+          {{ form.sub_number }}
+        </div>
+        <div class="contracts-form-head-field-narrow">
+          <label class="form-label">Группа</label>
+          <div class="group-select-shell">
+            {{ form.group_member }}
+            <div class="group-select-display" id="registration-group-display" aria-hidden="true"></div>
+          </div>
         </div>
       </div>
-      <div class="col-3">
-        <label class="form-label">Тип</label>
-        {{ form.type }}
+      <div class="col-12 contracts-form-section-start">
+        <div class="row g-2">
+          <div class="col-3">
+            <label class="form-label">{{ form.contract_number.label }}</label>
+            {{ form.contract_number }}
+          </div>
+          <div class="col-3">
+            <label class="form-label">Договор ID</label>
+            <input type="text"
+                   id="contracts-project-short-uid-input"
+                   class="form-control readonly-field clf-id-droid-mono"
+                   readonly
+                   tabindex="-1"
+                   value="{% if registration %}{{ registration.short_uid }}{% endif %}">
+          </div>
+          <div class="col-3">
+            <label class="form-label">Статус</label>
+            {{ form.status }}
+          </div>
+          <div class="col-3">
+            <label class="form-label">Год</label>
+            {{ form.year }}
+          </div>
+        </div>
       </div>
 
-      <div class="col-3">
+      <div class="col-12 contracts-form-section-start">
+        {% include "projects_app/includes/registration_type_block.html" %}
+      </div>
+      <div class="col-12 contracts-form-section-start">
         <label class="form-label">Название</label>
         {{ form.name }}
       </div>
-      <div class="col-3">
-        <label class="form-label">Статус</label>
-        {{ form.status }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">Год</label>
-        {{ form.year }}
-      </div>
 
-      <div class="col-6">
-        <label class="form-label">Руководитель проекта</label>
-        {{ form.project_manager }}
-      </div>
-      <div class="w-100"></div>
-
-      <div class="col-6">
-        <label class="form-label">Заказчик: краткое наименование юрлица</label>
+      <div class="col-4 contracts-form-section-start">
+        <label class="form-label">Заказчик</label>
         <div class="ler-ac-wrap">
           {{ form.customer }}
           <input type="hidden" name="customer_autocomplete_identifier_record_id" id="reg-customer-autocomplete-identifier-record-id" value="">
@@ -66,24 +109,298 @@
           <div class="ler-ac-list" id="reg-ler-ac-list"></div>
         </div>
       </div>
+      <div class="col-8 contracts-form-section-start">
+        <div class="contracts-customer-meta-grid">
+          <div>
+            <label class="form-label">Страна</label>
+            {{ form.country }}
+          </div>
+          <div>
+            <label class="form-label">Идентификатор</label>
+            {{ form.identifier }}
+          </div>
+          <div>
+            <label class="form-label">Регистрационный номер</label>
+            {{ form.registration_number }}
+          </div>
+          <div>
+            <label class="form-label">Регион</label>
+            {{ form.registration_region }}
+          </div>
+          <div>
+            <label class="form-label">Дата регистрации</label>
+            {{ form.registration_date }}
+          </div>
+        </div>
+      </div>
+
+      <div class="col-4 contracts-form-section-start">
+        <label class="form-label">{{ form.asset_owner.label }}</label>
+        <div class="ler-ac-wrap">
+          {{ form.asset_owner }}
+          <input type="hidden" name="asset_owner_autocomplete_identifier_record_id" id="reg-asset-owner-autocomplete-identifier-record-id" value="">
+          <input type="hidden" name="asset_owner_autocomplete_selected_from_autocomplete" id="reg-asset-owner-autocomplete-selected" value="0">
+          <div class="ler-ac-list" id="reg-asset-owner-ler-ac-list"></div>
+        </div>
+      </div>
+      <div class="col-8 contracts-form-section-start">
+        <div class="contracts-customer-meta-grid">
+          <div>
+            <label class="form-label">{{ form.asset_owner_country.label }}</label>
+            {{ form.asset_owner_country }}
+          </div>
+          <div>
+            <label class="form-label">{{ form.asset_owner_identifier.label }}</label>
+            {{ form.asset_owner_identifier }}
+          </div>
+          <div>
+            <label class="form-label">Регистрационный номер</label>
+            {{ form.asset_owner_registration_number }}
+          </div>
+          <div>
+            <label class="form-label">{{ form.asset_owner_region.label }}</label>
+            {{ form.asset_owner_region }}
+          </div>
+          <div>
+            <label class="form-label">{{ form.asset_owner_registration_date.label }}</label>
+            {{ form.asset_owner_registration_date }}
+          </div>
+        </div>
+      </div>
+      <div class="col-12">
+        <div class="form-check mt-1">
+          {{ form.asset_owner_matches_customer }}
+          <label class="form-check-label" for="{{ form.asset_owner_matches_customer.id_for_label }}">
+            {{ form.asset_owner_matches_customer.label }}
+          </label>
+        </div>
+      </div>
+      {{ form.project_manager }}
       <div class="w-100"></div>
 
-      <div class="col-3">
-        <label class="form-label">Заказчик: страна регистрации</label>
-        {{ form.country }}
+      <div class="col-12">
+        <label class="form-label mb-2">Сроки</label>
+        <div class="proposal-assets-editor proposal-terms-editor">
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0 proposal-assets-table proposal-terms-table">
+              <thead>
+                <tr>
+                  <th class="proposal-terms-stage-col">Этапы</th>
+                  <th>{{ form.evaluation_date.label }}</th>
+                  <th>
+                    {{ form.service_term_months.label }}
+                    <i class="bi bi-lock-fill ms-1 js-proposal-report-terms-lock" role="button" title="Разблокировать ввод сроков"></i>
+                  </th>
+                  <th>{{ form.preliminary_report_date.label }}</th>
+                  <th>
+                    {{ form.final_report_term_weeks.label }}
+                    <i class="bi bi-lock-fill ms-1 js-proposal-report-terms-lock" role="button" title="Разблокировать ввод сроков"></i>
+                  </th>
+                  <th>{{ form.final_report_date.label }}</th>
+                </tr>
+              </thead>
+              <tbody id="contract-stage-terms-tbody">
+                {% for stage in form.stage_rows %}
+                  <tr class="proposal-stage-terms-row"
+                      data-contract-stage-key="{{ stage.rank }}"
+                      data-product-id="{{ stage.product_id|default:'' }}">
+                    <td class="proposal-terms-stage-col">
+                      <input type="text" class="form-control readonly-field proposal-stage-label-input" value="Этап {{ stage.rank }}" readonly tabindex="-1">
+                    </td>
+                    <td>
+                      <input type="text" name="evaluation_date" class="form-control js-date proposal-stage-evaluation-date" value="{{ stage.evaluation_date }}">
+                    </td>
+                    <td>
+                      <input type="number" name="service_term_months" min="0" step="0.1" class="form-control readonly-field proposal-stage-service-term-months" value="{{ stage.service_term_months }}" readonly tabindex="-1">
+                    </td>
+                    <td>
+                      <input type="text" name="preliminary_report_date" class="form-control js-date proposal-stage-preliminary-report-date" value="{{ stage.preliminary_report_date }}">
+                    </td>
+                    <td>
+                      <input type="number" name="final_report_term_weeks" min="0" step="0.1" class="form-control readonly-field proposal-stage-final-report-term-weeks" value="{{ stage.final_report_term_weeks }}" readonly tabindex="-1">
+                    </td>
+                    <td class="proposal-stage-final-report-cell">
+                      <div class="proposal-stage-final-report-wrap">
+                        <input type="text" name="final_report_date" class="form-control js-date proposal-stage-final-report-date" value="{{ stage.final_report_date }}">
+                        <span class="proposal-stage-delay-action-slot">
+                          {% if form.stage_rows|length > 1 and not forloop.last %}
+                            <button type="button"
+                                    class="btn btn-sm rounded-circle proposal-stage-delay-add"
+                                    title="Добавить задержку/наложение"
+                                    aria-label="Добавить задержку или наложение после этапа {{ stage.rank }}">
+                              <i class="bi bi-plus" aria-hidden="true"></i>
+                            </button>
+                          {% endif %}
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+                  {% if not forloop.last %}
+                    <tr class="proposal-stage-delay-row{% if not stage.next_stage_delay_days %} d-none{% endif %}"
+                        data-contract-delay-for-stage-key="{{ stage.rank }}">
+                      <td class="proposal-terms-stage-col">
+                        <input type="text" class="form-control readonly-field proposal-stage-label-input" value="Лаг" readonly tabindex="-1">
+                      </td>
+                      <td>
+                        <div class="proposal-stage-delay-input-wrap">
+                          <div class="proposal-stage-delay-number-shell">
+                            <input type="number"
+                                   name="next_stage_delay_days"
+                                   step="1"
+                                   inputmode="numeric"
+                                   class="form-control proposal-stage-next-delay-days"
+                                   value="{{ stage.next_stage_delay_days }}">
+                            <span class="proposal-stage-delay-unit" aria-hidden="true">дн.</span>
+                          </div>
+                          <button type="button"
+                                  class="btn btn-sm proposal-stage-delay-remove"
+                                  title="Удалить лаг"
+                                  aria-label="Удалить лаг после этапа {{ stage.rank }}">&times;</button>
+                        </div>
+                      </td>
+                      <td colspan="4"></td>
+                    </tr>
+                  {% endif %}
+                {% endfor %}
+                <tr class="proposal-stage-terms-total-row{% if form.stage_rows|length <= 1 %} d-none{% endif %}">
+                  <td class="proposal-terms-stage-col">
+                    <input type="text" class="form-control readonly-field proposal-stage-label-input" value="Итого" readonly tabindex="-1">
+                  </td>
+                  <td>
+                    <input type="text" class="form-control readonly-field proposal-stage-total-evaluation-date" value="" readonly tabindex="-1">
+                  </td>
+                  <td>
+                    <input type="number" class="form-control readonly-field proposal-stage-total-service-term-months" value="" readonly tabindex="-1">
+                  </td>
+                  <td>
+                    <input type="text" class="form-control readonly-field proposal-stage-total-preliminary-report-date" value="" readonly tabindex="-1">
+                  </td>
+                  <td>
+                    <input type="number" class="form-control readonly-field proposal-stage-total-final-report-term-weeks" value="" readonly tabindex="-1">
+                  </td>
+                  <td>
+                    <input type="text" class="form-control readonly-field proposal-stage-total-final-report-date" value="" readonly tabindex="-1">
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
-      <div class="col-3">
-        <label class="form-label">Идентификатор</label>
-        {{ form.identifier }}
+
+      <div class="w-100"></div>
+
+      <div class="col-12 mb-3">
+        <label class="form-label mb-2">График оплаты</label>
+        <div class="proposal-assets-editor proposal-payment-schedule-editor">
+          <div class="proposal-payment-schedule-editor-body pb-4">
+          <div class="form-check mb-3">
+            <input type="hidden" name="payment_schedule_common" value="false">
+            {{ form.payment_schedule_common }}
+            <label class="form-check-label" for="{{ form.payment_schedule_common.id_for_label }}">
+              {{ form.payment_schedule_common.label }}
+            </label>
+          </div>
+
+          <div class="proposal-payment-common-fields js-proposal-payment-common-fields{% if not form.payment_schedule_common_enabled %} d-none{% endif %}">
+            <div class="js-proposal-payment-group">
+              <div class="row g-3">
+                <div class="col-12 col-lg-4">
+                  <label class="form-label">{{ form.advance_percent.label }}</label>
+                  <div class="proposal-inline-percent">
+                    {{ form.advance_percent }}
+                    <span class="proposal-inline-percent__suffix" aria-hidden="true">%</span>
+                  </div>
+                </div>
+                <div class="col-12 col-lg-4">
+                  <label class="form-label">{{ form.advance_term_days.label }}</label>
+                  {{ form.advance_term_days }}
+                </div>
+              </div>
+              <div class="row g-3">
+                <div class="col-12 col-lg-4">
+                  <label class="form-label">{{ form.preliminary_report_percent.label }}</label>
+                  <div class="proposal-inline-percent">
+                    {{ form.preliminary_report_percent }}
+                    <span class="proposal-inline-percent__suffix" aria-hidden="true">%</span>
+                  </div>
+                </div>
+                <div class="col-12 col-lg-4">
+                  <label class="form-label">{{ form.preliminary_report_term_days.label }}</label>
+                  {{ form.preliminary_report_term_days }}
+                </div>
+              </div>
+              <div class="row g-3">
+                <div class="col-12 col-lg-4">
+                  <label class="form-label">{{ form.final_report_percent.label }}</label>
+                  <div class="proposal-inline-percent">
+                    {{ form.final_report_percent }}
+                    <span class="proposal-inline-percent__suffix" aria-hidden="true">%</span>
+                  </div>
+                </div>
+                <div class="col-12 col-lg-4">
+                  <label class="form-label">{{ form.final_report_term_days.label }}</label>
+                  {{ form.final_report_term_days }}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="contract-payment-stages-container" class="proposal-payment-stages-container js-proposal-payment-stage-fields{% if form.payment_schedule_common_enabled %} d-none{% endif %}">
+            {% for stage in form.stage_rows %}
+              <div class="proposal-payment-stage-block{% if not forloop.first %} mt-4{% endif %}"
+                   data-proposal-stage-root="1"
+                   data-proposal-stage-kind="payment"
+                   data-proposal-stage-key="{{ stage.rank }}">
+                <div class="form-label mb-2 proposal-payment-stage-title">Этап {{ stage.rank }}{% if stage.product_short_label %} {{ stage.product_short_label }}{% endif %}</div>
+                <div class="js-proposal-payment-group">
+                  <div class="row g-3">
+                    <div class="col-12 col-lg-4">
+                      <label class="form-label">{{ form.advance_percent.label }}</label>
+                      <div class="proposal-inline-percent">
+                        <input type="number" name="advance_percent" min="0" max="100" step="1" class="form-control" value="{{ stage.advance_percent }}"{% if form.payment_schedule_common_enabled %} disabled{% endif %}>
+                        <span class="proposal-inline-percent__suffix" aria-hidden="true">%</span>
+                      </div>
+                    </div>
+                    <div class="col-12 col-lg-4">
+                      <label class="form-label">{{ form.advance_term_days.label }}</label>
+                      <input type="number" name="advance_term_days" min="0" step="1" class="form-control" value="{{ stage.advance_term_days }}"{% if form.payment_schedule_common_enabled %} disabled{% endif %}>
+                    </div>
+                  </div>
+                  <div class="row g-3">
+                    <div class="col-12 col-lg-4">
+                      <label class="form-label">{{ form.preliminary_report_percent.label }}</label>
+                      <div class="proposal-inline-percent">
+                        <input type="number" name="preliminary_report_percent" min="0" max="100" step="1" class="form-control" value="{{ stage.preliminary_report_percent }}"{% if form.payment_schedule_common_enabled %} disabled{% endif %}>
+                        <span class="proposal-inline-percent__suffix" aria-hidden="true">%</span>
+                      </div>
+                    </div>
+                    <div class="col-12 col-lg-4">
+                      <label class="form-label">{{ form.preliminary_report_term_days.label }}</label>
+                      <input type="number" name="preliminary_report_term_days" min="0" step="1" class="form-control" value="{{ stage.preliminary_report_term_days }}"{% if form.payment_schedule_common_enabled %} disabled{% endif %}>
+                    </div>
+                  </div>
+                  <div class="row g-3">
+                    <div class="col-12 col-lg-4">
+                      <label class="form-label">{{ form.final_report_percent.label }}</label>
+                      <div class="proposal-inline-percent">
+                        <input type="number" name="final_report_percent" min="0" max="100" step="0.01" class="form-control readonly-field" value="{{ stage.final_report_percent }}" readonly tabindex="-1" disabled>
+                        <span class="proposal-inline-percent__suffix" aria-hidden="true">%</span>
+                      </div>
+                    </div>
+                    <div class="col-12 col-lg-4">
+                      <label class="form-label">{{ form.final_report_term_days.label }}</label>
+                      <input type="number" name="final_report_term_days" min="0" step="1" class="form-control" value="{{ stage.final_report_term_days }}"{% if form.payment_schedule_common_enabled %} disabled{% endif %}>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+          </div>
+        </div>
       </div>
-      <div class="col-3">
-        <label class="form-label">Регистрационный номер</label>
-        {{ form.registration_number }}
-      </div>
-      <div class="col-3 mb-3">
-        <label class="form-label">Дата регистрации</label>
-        {{ form.registration_date }}
-      </div>
+
     </div>
 
     {% if form.errors %}
@@ -92,7 +409,7 @@
         <ul class="mb-0">
           {% for field, errors in form.errors.items %}
             {% for err in errors %}
-              <li>{{ field }}: {{ err }}</li>
+              <li>{% if field == "type_ids" %}Тип{% else %}{{ field }}{% endif %}: {{ err }}</li>
             {% endfor %}
           {% endfor %}
           {% for err in form.non_field_errors %}<li>{{ err }}</li>{% endfor %}
@@ -108,9 +425,184 @@
 </form>
 
 <style>
-  #contracts-modal .readonly-field {
+  #contracts-modal .modal-dialog,
+  #contracts-modal .modal-dialog.modal-xl {
+    --contracts-modal-edge-gap: 1rem;
+    --contracts-modal-main-sidebar-width: var(--main-sidebar-width);
+    --contracts-modal-side-offset: calc(
+      var(--contracts-modal-main-sidebar-width) + var(--contracts-modal-edge-gap)
+    );
+    max-width: calc(100vw - var(--contracts-modal-side-offset) - var(--contracts-modal-edge-gap));
+    margin-top: 1.75rem;
+    margin-bottom: 1.75rem;
+    margin-left: var(--contracts-modal-side-offset);
+    margin-right: var(--contracts-modal-edge-gap);
+  }
+
+  body:has(#sidebar.is-collapsed) #contracts-modal .modal-dialog,
+  body:has(#sidebar.is-collapsed) #contracts-modal .modal-dialog.modal-xl {
+    --contracts-modal-main-sidebar-width: var(--main-sidebar-collapsed-width);
+  }
+  #contracts-modal .modal-footer .btn {
+    position: relative;
+    left: 18px;
+  }
+  #contracts-modal .readonly-field,
+  #contracts-modal .readonly-field:disabled,
+  #contracts-modal .readonly-field[readonly] {
+    background-color: #f8f9fa !important;
+    color: #6c757d !important;
+    opacity: 1 !important;
+    -webkit-text-fill-color: #6c757d;
+  }
+  #contracts-modal .form-label {
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #contracts-modal .contracts-form-head-row {
+    display: grid;
+    grid-template-columns: repeat(3, 2fr) repeat(2, 1fr);
+    gap: 0.5rem;
+  }
+  #contracts-modal .contracts-form-head-row > div {
+    min-width: 0;
+  }
+  #contracts-modal .modal-body .row > [class*="col-"] {
+    min-width: 0;
+  }
+  #contracts-modal .contracts-form-section-start {
+    margin-top: 1rem;
+  }
+  #contracts-modal .contracts-customer-meta-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+  #contracts-modal .contracts-customer-meta-grid > div {
+    min-width: 0;
+  }
+  #contracts-modal #reg-asset-owner-country-select.readonly-field,
+  #contracts-modal #reg-asset-owner-region-select.readonly-field {
+    background-color: #f8f9fa !important;
+    color: #6c757d !important;
+    -webkit-text-fill-color: #6c757d;
+    cursor: default;
+    pointer-events: none;
+  }
+  #contracts-modal form:has([name="asset_owner_matches_customer"]:checked) input[name="asset_owner"],
+  #contracts-modal form:has([name="asset_owner_matches_customer"]:checked) #reg-asset-owner-country-select,
+  #contracts-modal form:has([name="asset_owner_matches_customer"]:checked) #reg-asset-owner-region-select,
+  #contracts-modal form:has([name="asset_owner_matches_customer"]:checked) input[name="asset_owner_registration_number"],
+  #contracts-modal form:has([name="asset_owner_matches_customer"]:checked) input[name="asset_owner_registration_date"] {
+    background-color: #f8f9fa !important;
+    color: #6c757d !important;
+    opacity: 1 !important;
+    -webkit-text-fill-color: #6c757d;
+    cursor: default;
+    pointer-events: none;
+  }
+  #contracts-modal .proposal-registration-field-wrap {
+    display: flex;
+    gap: 0.5rem;
+    align-items: stretch;
+  }
+  #contracts-modal .proposal-registration-field-wrap .proposal-registration-select-shell {
+    flex: 1;
+    min-width: 0;
+  }
+  #contracts-modal .contracts-proposal-prefill-btn {
+    flex: 0 0 auto;
+    align-self: stretch;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.375rem;
+    padding-left: 0.625rem;
+    padding-right: 0.625rem;
+    color: #212529;
+    background-color: #fff;
+    border: 1px solid #ced4da;
+    border-radius: .375rem;
+    box-shadow: none;
+  }
+  #contracts-modal .contracts-proposal-prefill-btn:hover:not(:disabled):not(.is-loading) {
+    color: #212529;
     background-color: #f8f9fa;
+    border-color: #ced4da;
+  }
+  #contracts-modal .contracts-proposal-prefill-btn:focus,
+  #contracts-modal .contracts-proposal-prefill-btn:focus-visible {
+    color: #212529;
+    background-color: #fff;
+    border-color: #ced4da;
+    box-shadow: 0 0 0 0.25rem rgba(206, 212, 218, 0.45);
+  }
+  #contracts-modal .contracts-proposal-prefill-btn:disabled {
     color: #6c757d;
+    background-color: #fff;
+    border-color: #ced4da;
+    opacity: 1;
+    cursor: not-allowed;
+  }
+  #contracts-modal .contracts-proposal-prefill-btn.is-loading .bi-arrow-clockwise {
+    display: none;
+  }
+  #contracts-modal .contracts-proposal-prefill-btn.is-loading::after {
+    content: "";
+    width: 1rem;
+    height: 1rem;
+    border: 0.15em solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: contracts-proposal-prefill-spin 0.75s linear infinite;
+  }
+  @keyframes contracts-proposal-prefill-spin {
+    to { transform: rotate(360deg); }
+  }
+  #contracts-modal .proposal-registration-select-shell {
+    position: relative;
+  }
+  #contracts-modal .proposal-registration-select-shell select {
+    position: relative;
+    z-index: 2;
+    opacity: 0.01;
+  }
+  #contracts-modal .proposal-registration-select-display {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    padding: .375rem 2.25rem .375rem .75rem;
+    font: inherit;
+    line-height: inherit;
+    color: #212529;
+    background-color: #fff;
+    border: 1px solid #ced4da;
+    border-radius: .375rem;
+    pointer-events: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #contracts-modal .proposal-registration-select-display.is-placeholder {
+    color: #6c757d;
+  }
+  #contracts-modal .proposal-registration-select-display::after {
+    content: "";
+    position: absolute;
+    right: .75rem;
+    top: 50%;
+    width: 16px;
+    height: 16px;
+    transform: translateY(-50%);
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 16px 12px;
+    opacity: .7;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M2 5l6 6 6-6'/%3e%3c/svg%3e");
   }
   #contracts-modal .group-select-shell {
     position: relative;
@@ -152,9 +644,331 @@
     opacity: .7;
     background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M2 5l6 6 6-6'/%3e%3c/svg%3e");
   }
+  #contracts-modal .registration-type-block {
+    border: 1px solid #dee2e6;
+    border-radius: .5rem;
+    background: #f8f9fa;
+    padding: .75rem;
+  }
+  #contracts-modal .proposal-assets-editor {
+    border: 1px solid #dee2e6;
+    border-radius: .5rem;
+    padding: 1rem;
+    overflow: visible;
+    position: relative;
+  }
+  #contracts-modal .proposal-assets-editor.proposal-payment-schedule-editor {
+    padding-bottom: 0;
+  }
+  #contracts-modal .proposal-payment-schedule-editor-body {
+    padding-bottom: 2rem !important;
+  }
+  #contracts-modal .proposal-payment-schedule-editor .js-proposal-payment-group > .row + .row {
+    margin-top: 0;
+  }
+  #contracts-modal .proposal-payment-stage-block {
+    border-top: 1px solid #dee2e6;
+    padding-top: 1.25rem;
+  }
+  #contracts-modal .proposal-payment-stage-block + .proposal-payment-stage-block {
+    margin-top: 2rem !important;
+  }
+  #contracts-modal .proposal-payment-stage-title {
+    display: block;
+    margin-top: 0;
+  }
+  #contracts-modal .proposal-assets-editor .table-responsive {
+    overflow-x: auto;
+    overflow-y: visible;
+  }
+  #contracts-modal .proposal-assets-table {
+    margin-bottom: 0;
+    table-layout: fixed;
+    width: 100%;
+  }
+  #contracts-modal .proposal-terms-table th {
+    white-space: nowrap;
+    font-weight: 400;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #contracts-modal .proposal-terms-table .proposal-terms-stage-col {
+    width: 5.5rem;
+    min-width: 5.5rem;
+    max-width: 5.5rem;
+  }
+  #contracts-modal .proposal-terms-table th.proposal-terms-stage-col,
+  #contracts-modal .proposal-terms-table td.proposal-terms-stage-col {
+    padding-left: 0 !important;
+    padding-right: .25rem !important;
+  }
+  #contracts-modal .proposal-terms-table > :not(caption) > * > * {
+    border-top: 0;
+    border-bottom: 0;
+  }
+  #contracts-modal .proposal-stage-label-input {
+    text-align: center;
+  }
+  #contracts-modal .js-proposal-report-terms-lock {
+    cursor: pointer;
+    color: #6c757d;
+    font-size: .875rem;
+  }
+  #contracts-modal .js-proposal-report-terms-lock:hover {
+    color: #495057;
+  }
+  #contracts-modal .proposal-stage-final-report-wrap {
+    display: flex;
+    align-items: center;
+    gap: .25rem;
+  }
+  #contracts-modal .proposal-stage-final-report-wrap .form-control {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  #contracts-modal .proposal-stage-delay-action-slot {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+  }
+  #contracts-modal .proposal-stage-delay-action-slot:empty {
+    display: none;
+  }
+  #contracts-modal .proposal-stage-delay-add {
+    width: 1.75rem;
+    height: 1.75rem;
+    padding: 0;
+    line-height: 1;
+    border: 1px solid #dee2e6;
+    color: #6c757d;
+    background: #fff;
+  }
+  #contracts-modal .proposal-stage-delay-add:hover,
+  #contracts-modal .proposal-stage-delay-add:focus {
+    color: #495057;
+    border-color: #adb5bd;
+    background: #f8f9fa;
+  }
+  #contracts-modal .proposal-stage-delay-input-wrap {
+    display: flex;
+    align-items: center;
+    gap: .3rem;
+  }
+  #contracts-modal .proposal-stage-delay-number-shell {
+    position: relative;
+    flex: 0 0 8.5rem;
+  }
+  #contracts-modal .proposal-stage-delay-number-shell .proposal-stage-next-delay-days {
+    text-align: left;
+    padding-right: 2.8rem;
+  }
+  #contracts-modal .proposal-stage-delay-unit {
+    position: absolute;
+    top: 50%;
+    right: .9rem;
+    transform: translateY(-50%);
+    color: #6c757d;
+    pointer-events: none;
+    white-space: nowrap;
+    z-index: 2;
+  }
+  #contracts-modal .proposal-stage-delay-remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 1.5rem;
+    height: 1.75rem;
+    padding: 0;
+    line-height: 1;
+    font-size: 1.25rem;
+    color: #adb5bd;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+  }
+  #contracts-modal .proposal-stage-delay-remove:hover,
+  #contracts-modal .proposal-stage-delay-remove:focus {
+    color: #dc3545;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+  }
+  #contracts-modal .proposal-inline-percent {
+    position: relative;
+  }
+  #contracts-modal .proposal-inline-percent input {
+    appearance: textfield;
+    -moz-appearance: textfield;
+    padding-right: 2rem;
+  }
+  #contracts-modal .proposal-inline-percent input::-webkit-outer-spin-button,
+  #contracts-modal .proposal-inline-percent input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  #contracts-modal .proposal-inline-percent__suffix {
+    position: absolute;
+    top: 50%;
+    right: 0.75rem;
+    transform: translateY(-50%);
+    color: #6c757d;
+    pointer-events: none;
+    z-index: 2;
+  }
+  #contracts-modal .registration-type-card {
+    border: 1px solid #dee2e6;
+    border-radius: .5rem;
+    background: #fff;
+    padding: .75rem .75rem 1.25rem .75rem;
+  }
+  #contracts-modal .registration-type-head {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    column-gap: .5rem;
+    align-items: end;
+    margin-bottom: .5rem;
+  }
+  #contracts-modal .registration-type-head-labels {
+    min-width: 0;
+    color: #212529;
+    font-size: .875rem;
+    font-weight: 500;
+  }
+  #contracts-modal .registration-products-container {
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+  }
+  #contracts-modal .registration-product-row-inner {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    column-gap: .5rem;
+    align-items: center;
+  }
+  #contracts-modal .registration-product-badge {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    font-size: .65rem;
+    border: 1px solid #6c757d;
+    color: #6c757d;
+    background: transparent;
+    font-weight: 400;
+    font-family: "SF Pro Text", system-ui, -apple-system, sans-serif;
+    font-variant-numeric: tabular-nums;
+    align-self: center;
+  }
+  #contracts-modal .registration-product-fields {
+    min-width: 0;
+  }
+  #contracts-modal .registration-product-select-shell {
+    position: relative;
+  }
+  #contracts-modal .registration-product-select-shell .registration-product-select {
+    position: relative;
+    z-index: 2;
+    opacity: 0.01;
+  }
+  #contracts-modal .registration-product-display {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    padding: .375rem 2.25rem .375rem .75rem;
+    font: inherit;
+    line-height: inherit;
+    color: #212529;
+    background-color: #fff;
+    border: 1px solid #ced4da;
+    border-radius: .375rem;
+    pointer-events: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #contracts-modal .registration-product-display.is-placeholder {
+    color: #6c757d;
+  }
+  #contracts-modal .registration-product-display::after {
+    content: "";
+    position: absolute;
+    right: .75rem;
+    top: 50%;
+    width: 16px;
+    height: 16px;
+    transform: translateY(-50%);
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 16px 12px;
+    opacity: .7;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M2 5l6 6 6-6'/%3e%3c/svg%3e");
+  }
+  #contracts-modal .registration-product-remove {
+    flex-shrink: 0;
+    color: #adb5bd;
+    border: none;
+    font-size: 1.25rem;
+    line-height: 1;
+    padding: 0 .25rem;
+    align-self: center;
+  }
+  #contracts-modal .registration-product-remove:hover {
+    color: #dc3545;
+  }
+  @media (min-width: 1200px) {
+    #contracts-modal .registration-type-head-labels,
+    #contracts-modal .registration-product-fields {
+      display: grid;
+      grid-template-columns: calc(25% - 26px) 25% 25% calc(25% + 26px);
+      align-items: center;
+    }
+    #contracts-modal .registration-type-head-labels > [class*="col-"],
+    #contracts-modal .registration-product-fields > [class*="col-"] {
+      width: auto;
+      max-width: none;
+      padding-left: calc(var(--bs-gutter-x, 1.5rem) * .5);
+      padding-right: calc(var(--bs-gutter-x, 1.5rem) * .5);
+    }
+    #contracts-modal .registration-type-head-labels > :nth-child(1) {
+      padding-left: calc(var(--bs-gutter-x, 1.5rem) * .5 + 18px);
+    }
+    #contracts-modal .registration-type-head-labels > :nth-child(2) {
+      padding-left: calc(var(--bs-gutter-x, 1.5rem) * .5 + 8px);
+    }
+    #contracts-modal .registration-type-head-labels > :nth-child(4) {
+      padding-left: calc(var(--bs-gutter-x, 1.5rem) * .5);
+      transform: translateX(-8px);
+    }
+  }
+  @media (max-width: 1199.98px) {
+    #contracts-modal .registration-type-head {
+      display: none;
+    }
+  }
 </style>
 
 <script>
+  function attachProposalRegistrationSelectDisplay(node) {
+    if (!node) return;
+    const select = node.querySelector("#contracts-proposal-registration-select");
+    const display = node.querySelector("#contracts-proposal-registration-display");
+    if (!select || !display || select.dataset.displayBound === "1") return;
+    select.dataset.displayBound = "1";
+
+    const syncDisplay = () => {
+      const selected = select.options[select.selectedIndex];
+      const label = selected && selected.value ? selected.textContent.trim() : "";
+      const summary = label ? label.split(/\s+/, 1)[0] : "";
+      display.textContent = summary;
+      display.classList.toggle("is-placeholder", !summary);
+    };
+
+    select.addEventListener("change", syncDisplay);
+    syncDisplay();
+  }
+
   function attachGroupSelectDisplay(node) {
     if (!node) return;
     const select = node.querySelector("#registration-group-select");
@@ -172,162 +986,134 @@
     syncDisplay();
   }
 
-  function attachCountryIdentifierSync(node) {
-    if (!node) return;
-    const countrySelect = node.querySelector("#reg-country-select");
-    const identifierField = node.querySelector("#reg-identifier-field");
-    if (!countrySelect || !identifierField || countrySelect.dataset.identBound === "1") return;
-    countrySelect.dataset.identBound = "1";
-
-    countrySelect.addEventListener("change", () => {
-      const countryId = countrySelect.value;
-      if (!countryId) {
-        identifierField.value = "";
-        return;
-      }
-      fetch("{% url 'identifier_for_country' %}?country_id=" + encodeURIComponent(countryId))
-        .then(r => r.json())
-        .then(data => { identifierField.value = data.identifier || ""; });
-    });
+  function readJsonScriptMap(scriptId) {
+    const node = document.getElementById(scriptId);
+    if (!node) return {};
+    try {
+      const parsed = JSON.parse(node.textContent || "{}");
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (error) {
+      return {};
+    }
   }
 
-  function replaceQuotes(el) {
-    var v = el.value;
-    if (v.indexOf('"') === -1) return;
-    var pos = el.selectionStart;
-    var out = '';
-    for (var i = 0; i < v.length; i++) {
-      if (v[i] === '"') {
-        var prev = out.length ? out[out.length - 1] : '';
-        out += (!prev || /[\s(\[{\u00AB]/.test(prev)) ? '\u00AB' : '\u00BB';
-      } else {
-        out += v[i];
-      }
-    }
-    el.value = out;
-    el.setSelectionRange(pos, pos);
+  function buildContractProjectShortUid(values, maps) {
+    const number = Math.max(0, Math.min(9999, parseInt(values.number, 10) || 0));
+    const formattedNumber = String(number).padStart(4, "0");
+    const proposalId = (values.proposalId || "").trim();
+    const proposalSequence = proposalId ? parseInt(maps.proposalSubNumbers[proposalId] ?? 0, 10) || 0 : 0;
+    const subNumber = Math.max(0, Math.min(9, parseInt(values.subNumber, 10) || 0));
+    const groupMemberId = (values.groupMemberId || "").trim();
+    const groupOrder = groupMemberId ? parseInt(maps.groupOrders[groupMemberId] ?? 0, 10) || 0 : 0;
+    const alpha2 = groupMemberId ? (maps.groupAlpha2[groupMemberId] || "") : "";
+    return `${formattedNumber}${proposalSequence}${subNumber}${groupOrder}${alpha2}`;
   }
 
-  function attachGuillemets(node) {
-    if (!node) return;
-    const input = node.querySelector('input[name="customer"]');
-    if (!input || input.dataset.guillBound === "1") return;
-    input.dataset.guillBound = "1";
-    input.addEventListener("input", function() { replaceQuotes(input); });
+  function attachContractProjectShortUidPreview(form) {
+    if (!form) return;
+    const output = form.querySelector("#contracts-project-short-uid-input");
+    const numberInput = form.querySelector("#registration-number-input");
+    const proposalSelect = form.querySelector("#contracts-proposal-registration-select");
+    const subNumberInput = form.querySelector("#contracts-sub-number-input");
+    const groupSelect = form.querySelector("#registration-group-select");
+    if (!output || !numberInput || !subNumberInput || !groupSelect || form.dataset.contractUidBound === "1") {
+      return;
+    }
+    form.dataset.contractUidBound = "1";
+
+    const maps = {
+      groupOrders: readJsonScriptMap("contracts-project-group-order-map"),
+      groupAlpha2: readJsonScriptMap("contracts-project-group-alpha2-map"),
+      proposalSubNumbers: readJsonScriptMap("contracts-project-proposal-sub-number-map"),
+    };
+
+    const readValues = () => ({
+      number: numberInput.value,
+      proposalId: proposalSelect ? proposalSelect.value : "",
+      subNumber: subNumberInput.value,
+      groupMemberId: groupSelect.value,
+    });
+
+    const syncShortUid = () => {
+      output.value = buildContractProjectShortUid(readValues(), maps);
+    };
+
+    numberInput.addEventListener("input", syncShortUid);
+    numberInput.addEventListener("change", syncShortUid);
+    if (proposalSelect) {
+      proposalSelect.addEventListener("change", syncShortUid);
+    }
+    subNumberInput.addEventListener("input", syncShortUid);
+    subNumberInput.addEventListener("change", syncShortUid);
+    groupSelect.addEventListener("change", syncShortUid);
+    syncShortUid();
   }
 
-  function attachLerAutocomplete(node) {
-    if (!node) return;
-    var input = node.querySelector('input[name="customer"]');
-    var list = node.querySelector('#reg-ler-ac-list');
-    var selectedIdInput = node.querySelector('#reg-customer-autocomplete-identifier-record-id');
-    var selectedFlagInput = node.querySelector('#reg-customer-autocomplete-selected');
-    var countrySel = node.querySelector('#reg-country-select');
-    var regNumField = node.querySelector('input[name="registration_number"]');
-    var regDateField = node.querySelector('input[name="registration_date"]');
-    if (!input || !list || input.dataset.lerBound === '1') return;
-    input.dataset.lerBound = '1';
-    var debounce = null;
-    var results = [];
-    var picking = false;
+  function attachProposalPrefillButton(form) {
+    if (!form) return;
+    const btn = form.querySelector("#contracts-proposal-prefill-btn");
+    const select = form.querySelector("#contracts-proposal-registration-select");
+    if (!btn || !select || btn.dataset.bound === "1") return;
+    btn.dataset.bound = "1";
 
-    function clearSelection() {
-      if (selectedIdInput) selectedIdInput.value = '';
-      if (selectedFlagInput) selectedFlagInput.value = '0';
-    }
+    const syncPrefillButtonState = () => {
+      btn.disabled = btn.classList.contains("is-loading") || !select.value;
+    };
 
-    function highlight(text, q) {
-      if (!q) return text;
-      var esc = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      return text.replace(new RegExp('(' + esc + ')', 'gi'), '<mark>$1</mark>');
-    }
+    select.addEventListener("change", syncPrefillButtonState);
 
-    function render(data, q, totalCount) {
-      results = data;
-      if (!data.length) { list.classList.remove('show'); return; }
-      var visible = data.slice(0, 3);
-      var html = visible.map(function(r, i) {
-        var main = highlight(r.short_name || '', q);
-        var parts = [r.full_name, r.identifier, r.registration_number].filter(Boolean);
-        var sub = parts.length ? highlight(parts.join(' · '), q) : '';
-        return '<div class="ler-ac-item" data-idx="' + i + '">'
-          + '<div class="ler-ac-main">' + main + '</div>'
-          + (sub ? '<div class="ler-ac-sub">' + sub + '</div>' : '')
-          + '</div>';
-      }).join('');
-      var remaining = totalCount - 3;
-      if (remaining > 0) {
-        html += '<div class="ler-ac-item ler-ac-more">Найдено ещё ' + remaining + ' юрлиц</div>';
+    btn.addEventListener("click", async () => {
+      const proposalId = select.value;
+      if (!proposalId) return;
+      const template = form.dataset.prefillUrlTemplate || "";
+      const registrationId = form.dataset.registrationId || "";
+      let url = template.replace("/0/", `/${proposalId}/`);
+      if (registrationId) {
+        url += `?registration=${encodeURIComponent(registrationId)}`;
       }
-      list.innerHTML = html;
-      list.classList.add('show');
-    }
 
-    function pick(r) {
-      input.value = r.short_name || '';
-      var identField = node.querySelector('#reg-identifier-field');
-      if (countrySel && r.country_id) countrySel.value = r.country_id;
-      if (identField) identField.value = r.identifier || '';
-      if (regNumField) regNumField.value = r.registration_number || '';
-      if (regDateField) regDateField.value = r.registration_date || '';
-      if (selectedIdInput) selectedIdInput.value = r.identifier_record_id || '';
-      if (selectedFlagInput) selectedFlagInput.value = '1';
-      list.classList.remove('show');
-    }
-
-    input.addEventListener('input', function() {
-      var q = input.value.trim();
-      clearSelection();
-      clearTimeout(debounce);
-      if (q.length < 1) { list.classList.remove('show'); return; }
-      debounce = setTimeout(function() {
-        fetch('{% url "ler_search" %}?q=' + encodeURIComponent(q))
-          .then(function(r) { return r.json(); })
-          .then(function(d) { render(d.results || [], q, d.total_count || 0); })
-          .catch(function() { list.classList.remove('show'); });
-      }, 200);
+      btn.disabled = true;
+      btn.classList.add("is-loading");
+      try {
+        await htmx.ajax("GET", url, {
+          target: "#contracts-modal .modal-content",
+          swap: "innerHTML",
+        });
+      } finally {
+        btn.classList.remove("is-loading");
+        syncPrefillButtonState();
+      }
     });
 
-    list.addEventListener('mousedown', function(e) {
-      e.preventDefault();
-      picking = true;
-      var item = e.target.closest('.ler-ac-item');
-      if (!item) return;
-      var idx = parseInt(item.dataset.idx, 10);
-      if (results[idx]) pick(results[idx]);
-    });
-
-    list.addEventListener('click', function(e) {
-      var item = e.target.closest('.ler-ac-item');
-      if (!item) return;
-      var idx = parseInt(item.dataset.idx, 10);
-      if (results[idx]) pick(results[idx]);
-      picking = false;
-    });
-
-    input.addEventListener('blur', function() {
-      if (picking) { picking = false; return; }
-      setTimeout(function() { list.classList.remove('show'); }, 200);
-    });
-
-    input.addEventListener('focus', function() {
-      if (results.length && input.value.trim().length >= 1) list.classList.add('show');
-    });
-    countrySel?.addEventListener('change', clearSelection);
-    regNumField?.addEventListener('input', clearSelection);
-    regNumField?.addEventListener('change', clearSelection);
-    regDateField?.addEventListener('input', clearSelection);
-    regDateField?.addEventListener('change', clearSelection);
+    syncPrefillButtonState();
   }
 
   function initCurrentModal() {
     const modal = document.querySelector("#contracts-modal");
     if (!modal) return;
     const form = modal.querySelector("form");
+    attachProposalRegistrationSelectDisplay(form);
     attachGroupSelectDisplay(form);
-    attachCountryIdentifierSync(form);
-    attachGuillemets(form);
-    attachLerAutocomplete(form);
+    attachContractProjectShortUidPreview(form);
+    attachProposalPrefillButton(form);
+    if (typeof window.initRegistrationCustomerMeta === "function") {
+      window.initRegistrationCustomerMeta(form, {
+        customerChangedEvent: "registration-customer-changed",
+        assetOwnerChangedEvent: "registration-asset-owner-changed",
+      });
+    }
+    if (typeof window.attachContractPaymentSchedule === "function") {
+      window.attachContractPaymentSchedule(form);
+    }
+    if (typeof window.attachContractStageTerms === "function") {
+      window.attachContractStageTerms(form);
+    }
+    if (typeof window.attachRegistrationProducts === "function") {
+      window.attachRegistrationProducts(form);
+    }
+    if (typeof window.initDatepickers === "function") {
+      window.initDatepickers(form);
+    }
   }
 
   document.addEventListener("DOMContentLoaded", initCurrentModal);

@@ -1511,7 +1511,7 @@ def _build_payment_request_block(performer, *, total_price):
     )
 
 
-def _build_payment_request_display(performers):
+def _build_payment_request_display(performers, *, price_performers=None):
     from contracts_app.views import (
         _attach_contract_batch_display_fields,
         _contract_representative_key,
@@ -1519,11 +1519,12 @@ def _build_payment_request_display(performers):
     )
 
     performer_list = list(performers)
+    price_performer_list = list(price_performers) if price_performers is not None else performer_list
     if not performer_list:
         return "—"
 
     price_map = {}
-    for performer in performer_list:
+    for performer in price_performer_list:
         if performer.agreed_amount is None:
             continue
         key = _contract_representative_key(performer)
@@ -1550,11 +1551,15 @@ def _build_payment_request_payload(
     performers,
     request_sent_at,
     request_number,
+    price_performers=None,
     sender=None,
 ):
     recipient_name_lawer = _user_full_name(recipient)
     payment_date = _format_payment_date(request_sent_at)
-    payment_request = _build_payment_request_display(performers)
+    payment_request = _build_payment_request_display(
+        performers,
+        price_performers=price_performers,
+    )
     payment_request_html = html_escape(payment_request).replace("\n", "<br>")
     number_of_request = str(request_number)
     sender_display = _payment_request_sender_display(sender)
@@ -1638,6 +1643,7 @@ def create_payment_request_notifications(
         recipient=lawyer_user,
         project=project,
         performers=letter_performers,
+        price_performers=performers,
         request_sent_at=request_sent_at,
         request_number=request_number,
         sender=sender,

@@ -27,13 +27,21 @@
     </div>
   </div>
 
-  <div class="registration-table-wrap">
-    <table id="proposal-registry-table" class="table table-sm align-middle reg-table proposals-table">
+  <div class="registration-table-wrap proposal-registry-table-wrap">
+    <table id="proposal-registry-table"
+           class="table table-sm align-middle reg-table proposals-table"
+           {% if request.user.is_authenticated and request.user.is_staff %}
+           data-queued-row-order
+           data-row-order-save-url="{% url 'proposal_row_order' %}"
+           data-row-order-signature="{{ proposal_order_signature }}"
+           data-row-order-context="proposals-registry"
+           data-row-order-payload-field="ordered_proposal_ids"
+           {% endif %}>
       <colgroup>
         <col class="checkbox">
         <col class="proposal-number" data-col="number">
+        <col class="proposal-sub-number" data-col="sub-number">
         <col class="group" data-col="group">
-        <col class="quick-edit" style="width:1%">
         <col class="proposal-id" data-col="tkp-id">
         <col class="proposal-type" data-col="type">
         <col class="proposal-name" data-col="name">
@@ -75,15 +83,14 @@
           </th>
           {% for column in proposal_registry_ui_columns %}
             <th data-col="{{ column.data_col }}"{% if column.split_prefix %} class="proposal-split-header{% if column.split_inline %} proposal-split-header-inline{% endif %}"{% endif %}>{% if column.split_prefix %}<span class="proposal-split-header-prefix">{{ column.split_prefix }}</span><span class="proposal-split-header-suffix">{{ column.split_suffix }}</span>{% else %}{{ column.label }}{% endif %}</th>
-            {% if column.data_col == "group" %}
-              <th class="proposal-quick-edit-col" style="width:1%; padding:0;"></th>
-            {% endif %}
           {% endfor %}
         </tr>
       </thead>
       <tbody>
         {% for proposal in proposals %}
           <tr data-proposal-id="{{ proposal.id }}"
+              data-row-order-id="{{ proposal.id }}"
+              data-number="{{ proposal.formatted_number }}"
               data-kind="{{ proposal.kind }}"
               data-kind-label="{{ proposal.get_kind_display }}"
               data-status="{{ proposal.status }}"
@@ -91,7 +98,7 @@
               data-edit-url="{% url 'proposal_form_edit' proposal.pk %}"
               data-delete-url="{% url 'proposal_delete' proposal.pk %}"
               data-move-up-url="{% url 'proposal_move_up' proposal.pk %}"
-              data-move-down-url="{% url 'proposal_move_down' proposal.pk %}">
+              data-move-down-url="{% url 'proposal_move_down' proposal.pk %}"{% if proposal.is_number_continuation or proposal.has_next_for_number %} class="{% if proposal.has_next_for_number %}proposal-registry-number-has-next{% endif %}{% if proposal.is_number_continuation %}{% if proposal.has_next_for_number %} {% endif %}proposal-registry-number-continuation{% endif %}"{% endif %}>
             <td class="text-nowrap">
               {% if request.user.is_authenticated and request.user.is_staff %}
                 <div class="form-check">
@@ -104,17 +111,10 @@
                 </div>
               {% endif %}
             </td>
-            <td data-col="number">{{ proposal.formatted_number }}</td>
+            <td data-col="number">{% if proposal.is_first_for_number %}{{ proposal.formatted_number }}{% endif %}</td>
+            <td data-col="sub-number">{{ proposal.sub_number }}</td>
             <td data-col="group">{{ proposal.group_display }}</td>
-            <td class="text-center p-0 proposal-quick-edit-col" style="width:1%;">
-              {% if request.user.is_authenticated and request.user.is_staff %}
-                <i class="bi bi-pencil-square text-secondary proposal-quick-edit"
-                   role="button"
-                   title="Редактировать"
-                   aria-label="Редактировать ТКП"></i>
-              {% endif %}
-            </td>
-            <td data-col="tkp-id" class="proposal-id-cell"><span class="clf-id-droid-mono">{{ proposal.short_uid }}</span></td>
+            <td data-col="tkp-id" class="proposal-id-cell">{% if request.user.is_authenticated and request.user.is_staff %}<i class="bi bi-pencil-square text-secondary proposal-quick-edit me-1" role="button" title="Редактировать" aria-label="Редактировать ТКП"></i>{% endif %}<span class="clf-id-droid-mono">{{ proposal.short_uid }}</span></td>
             <td data-col="type">{{ proposal.type_short_display }}</td>
             <td data-col="name">{{ proposal.name }}</td>
             <td data-col="kind">{{ proposal.get_kind_display }}</td>
@@ -144,42 +144,54 @@
         {% endfor %}
       </tbody>
     </table>
+  </div>
 
-    {% if request.user.is_authenticated and request.user.is_staff %}
-      <div class="d-flex align-items-stretch gap-2 products-actions-row proposal-template-actions-row">
-        <button id="proposal-new-btn"
-                class="btn btn-primary btn-sm d-flex align-items-center"
-                hx-get="{% url 'proposal_form_create' %}"
-                hx-target="#proposals-pane"
-                hx-swap="outerHTML">
-          <i class="bi bi-plus-circle me-2"></i>Создать новое ТКП
-        </button>
-        <div id="proposal-actions" class="d-none">
-          <div class="btn-group">
-            <button type="button" data-proposal-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
-              <i class="bi bi-arrow-up-square"></i>
-            </button>
-            <button type="button" data-proposal-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
-              <i class="bi bi-arrow-down-square"></i>
-            </button>
-            <button type="button" data-proposal-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Редактировать" aria-label="Редактировать">
-              <i class="bi bi-pencil-square"></i>
-            </button>
-            <button type="button" data-proposal-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
-              <i class="bi bi-x-square"></i>
-            </button>
-          </div>
+  {% if request.user.is_authenticated and request.user.is_staff %}
+    <div class="d-flex align-items-stretch gap-2 products-actions-row proposal-template-actions-row">
+      <button id="proposal-new-btn"
+              class="btn btn-primary btn-sm d-flex align-items-center"
+              hx-get="{% url 'proposal_form_create' %}"
+              hx-target="#proposals-pane"
+              hx-swap="outerHTML">
+        <i class="bi bi-plus-circle me-2"></i>Создать новое ТКП
+      </button>
+      <div id="proposal-actions" class="d-none">
+        <div class="btn-group">
+          <button type="button" data-proposal-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+            <i class="bi bi-arrow-up-square"></i>
+          </button>
+          <button type="button" data-proposal-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+            <i class="bi bi-arrow-down-square"></i>
+          </button>
+          <button type="button" data-proposal-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Редактировать" aria-label="Редактировать">
+            <i class="bi bi-pencil-square"></i>
+          </button>
+          <button type="button" data-proposal-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+            <i class="bi bi-x-square"></i>
+          </button>
         </div>
       </div>
-    {% endif %}
-  </div>
+      <span class="row-order-status text-muted d-none align-self-center" data-row-order-status></span>
+    </div>
+  {% endif %}
 
   <div class="d-flex justify-content-between align-items-center gap-3 mb-3 table-section-header flex-wrap" style="margin-top: 24px;">
     <div class="d-flex align-items-center gap-3 flex-wrap">
       <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
         <i class="bi bi-calendar-week"></i> Сроки и порядок платежей
       </h5>
-      <div class="dropdown" id="proposal-payment-view-dropdown">
+      <button type="button"
+              id="proposal-payment-section-toggle"
+              class="btn btn-link btn-sm text-secondary text-decoration-none p-0 d-inline-flex align-items-center classifiers-section-toggle proposal-payment-section-toggle active"
+              data-section-controls-id="proposal-payment-header-controls"
+              data-section-view-controls-id="proposal-payment-view-dropdown"
+              data-section-body-id="proposal-payment-section-body"
+              aria-expanded="false"
+              aria-label="Развернуть раздел «Сроки и порядок платежей»"
+              title="Развернуть раздел «Сроки и порядок платежей»">
+        <i class="bi bi-plus-square"></i>
+      </button>
+      <div class="dropdown classifiers-section-controls-hidden" id="proposal-payment-view-dropdown" aria-hidden="true">
         <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
                 id="proposal-payment-view-toggle" data-bs-toggle="dropdown" aria-expanded="false">
           Вид: <span class="js-proposal-payment-view-label">Таблица</span>
@@ -198,7 +210,7 @@
         </div>
       </div>
     </div>
-    <div class="d-flex align-items-center justify-content-end gap-2 flex-wrap ms-auto">
+    <div class="d-flex align-items-center justify-content-end gap-2 flex-wrap ms-auto classifiers-section-controls-hidden" id="proposal-payment-header-controls" aria-hidden="true">
       <div class="d-flex align-items-center gap-2" id="proposal-payment-colpicker-controls">
         <span class="small text-muted text-nowrap">Отображаемые поля:</span>
         <div class="tkp-colpicker" id="proposal-payment-colpicker-wrap">
@@ -230,11 +242,13 @@
     </div>
   </div>
 
+  <div id="proposal-payment-section-body" class="d-none">
   <div class="registration-table-wrap proposal-payment-schedule-table-wrap">
     <table id="proposal-payment-schedule-table" class="table table-sm align-middle reg-table proposals-table">
       <colgroup>
         <col class="checkbox">
         <col class="proposal-number" data-col="number">
+        <col class="proposal-sub-number" data-col="sub-number">
         <col class="group" data-col="group">
         <col class="proposal-id" data-col="tkp-id">
         <col class="proposal-type" data-col="type">
@@ -272,6 +286,10 @@
       <tbody>
         {% for row in proposal_payment_schedule_rows %}
           <tr data-proposal-id="{{ row.proposal_id }}"
+              data-kind="{{ row.kind }}"
+              data-kind-label="{{ row.kind_label }}"
+              data-status="{{ row.status }}"
+              data-status-label="{{ row.status_label }}"
               data-edit-url="{% url 'proposal_form_edit' row.proposal_id %}"{% if row.is_continuation or row.has_next_for_proposal %} class="{% if row.has_next_for_proposal %}proposal-payment-stage-has-next{% endif %}{% if row.is_continuation %}{% if row.has_next_for_proposal %} {% endif %}proposal-payment-stage-continuation{% endif %}"{% endif %}>
             <td class="text-nowrap">
               {% if row.is_first_for_proposal %}
@@ -285,6 +303,7 @@
               {% endif %}
             </td>
             <td data-col="number">{% if row.is_first_for_proposal %}{{ row.number }}{% endif %}</td>
+            <td data-col="sub-number">{% if row.is_first_for_proposal %}{{ row.sub_number }}{% endif %}</td>
             <td data-col="group">{% if row.is_first_for_proposal %}{{ row.group }}{% endif %}</td>
             <td data-col="tkp-id" class="proposal-id-cell">{% if row.is_first_for_proposal %}{% if request.user.is_authenticated and request.user.is_staff %}<i class="bi bi-pencil-square text-secondary proposal-quick-edit me-1" role="button" title="Редактировать" aria-label="Редактировать ТКП"></i>{% endif %}<span class="clf-id-droid-mono">{{ row.tkp_id }}</span>{% endif %}</td>
             <td data-col="type">{{ row.type }}</td>
@@ -315,32 +334,52 @@
     </div>
     <div id="proposal-payment-gantt" class="proposal-payment-gantt"></div>
   </div>
+  </div>
 
-  <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 24px;">
-    <h5 class="table-section-title">
-      <i class="bi bi-envelope-at me-2"></i> Отправка ТКП
+  <div class="d-flex justify-content-between align-items-center gap-3 mb-3 table-section-header flex-wrap" style="margin-top: 24px;">
+    <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
+      <i class="bi bi-envelope-at"></i> Отправка ТКП
     </h5>
+    <div class="d-flex align-items-center gap-2">
+      <span class="small text-muted text-nowrap">Отображаемые поля:</span>
+      <div class="tkp-colpicker" id="proposal-dispatch-colpicker-wrap">
+        <button type="button" class="form-select form-select-sm text-start tkp-colpicker-btn" id="proposal-dispatch-colpicker-btn">
+          Все поля
+        </button>
+        <div class="tkp-colpicker-menu" id="proposal-dispatch-colpicker-menu">
+          <div class="tkp-colpicker-item">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="all" id="proposal-dispatch-col-all" checked>
+              <label class="form-check-label" for="proposal-dispatch-col-all">Все поля</label>
+            </div>
+          </div>
+          {% for column in proposal_dispatch_ui_columns %}
+            <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="{{ column.picker_value }}" id="proposal-dispatch-col-{{ column.picker_value }}"{% if column.default_hidden %} data-default-hidden="true"{% else %} checked{% endif %}><label class="form-check-label" for="proposal-dispatch-col-{{ column.picker_value }}">{{ column.label }}</label></div></div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
   </div>
 
   <div class="proposal-dispatch-table-wrap">
-    <table class="table table-sm align-middle proposal-dispatch-table">
+    <table id="proposal-dispatch-table" class="table table-sm align-middle proposal-dispatch-table">
       <colgroup>
         <col class="checkbox">
-        <col class="proposal-number">
-        <col class="group">
-        <col class="quick-edit" style="width:1%">
-        <col class="proposal-id">
-        <col class="proposal-type">
-        <col class="proposal-name">
-        <col class="proposal-disk">
-        <col class="docx-name">
-        <col class="pdf-name">
-        <col class="sent-date">
-        <col class="contact-name">
-        <col class="contact-email">
-        <col class="job-title">
-        <col class="organization">
-        <col class="sent-date">
+        <col class="proposal-number" data-col="number">
+        <col class="proposal-sub-number" data-col="sub-number">
+        <col class="group" data-col="group">
+        <col class="proposal-id" data-col="tkp-id">
+        <col class="proposal-type" data-col="type">
+        <col class="proposal-name" data-col="name">
+        <col class="proposal-disk" data-col="cloud">
+        <col class="docx-name" data-col="docx-name">
+        <col class="pdf-name" data-col="pdf-name">
+        <col class="sent-date" data-col="sent-date">
+        <col class="contact-name" data-col="contact-name">
+        <col class="contact-email" data-col="contact-email">
+        <col class="job-title" data-col="job-title">
+        <col class="organization" data-col="organization">
+        <col class="sent-date" data-col="transfer-date">
       </colgroup>
       <thead>
         <tr>
@@ -356,21 +395,9 @@
               </div>
             {% endif %}
           </th>
-          <th>Номер</th>
-          <th>Группа</th>
-          <th class="proposal-quick-edit-col" style="width:1%; padding:0;"></th>
-          <th>ТКП ID</th>
-          <th>Тип</th>
-          <th>Название</th>
-          <th>Облако</th>
-          <th>Наименование файла DOCX</th>
-          <th>Наименование файла PDF</th>
-          <th>Дата отправки</th>
-          <th>ФИО</th>
-          <th>Эл. почта</th>
-          <th>Должность</th>
-          <th>Организация</th>
-          <th>Передано</th>
+          {% for column in proposal_dispatch_ui_columns %}
+            <th data-col="{{ column.data_col }}">{{ column.label }}</th>
+          {% endfor %}
         </tr>
       </thead>
       <tbody>
@@ -397,20 +424,13 @@
                 </div>
               {% endif %}
             </td>
-            <td>{{ proposal.formatted_number }}</td>
-            <td>{{ proposal.group_display }}</td>
-            <td class="text-center p-0 proposal-quick-edit-col" style="width:1%;">
-              {% if request.user.is_authenticated and request.user.is_staff %}
-                <i class="bi bi-pencil-square text-secondary proposal-dispatch-quick-edit"
-                   role="button"
-                   title="Редактировать"
-                   aria-label="Редактировать отправку ТКП"></i>
-              {% endif %}
-            </td>
-            <td class="proposal-id-cell"><span class="clf-id-droid-mono">{{ proposal.short_uid }}</span></td>
-            <td>{{ proposal.type_short_display }}</td>
-            <td>{{ proposal.name }}</td>
-            <td class="text-nowrap">
+            <td data-col="number">{{ proposal.formatted_number }}</td>
+            <td data-col="sub-number">{{ proposal.sub_number }}</td>
+            <td data-col="group">{{ proposal.group_display }}</td>
+            <td data-col="tkp-id" class="proposal-id-cell">{% if request.user.is_authenticated and request.user.is_staff %}<i class="bi bi-pencil-square text-secondary proposal-dispatch-quick-edit me-1" role="button" title="Редактировать" aria-label="Редактировать отправку ТКП"></i>{% endif %}<span class="clf-id-droid-mono">{{ proposal.short_uid }}</span></td>
+            <td data-col="type">{{ proposal.type_short_display }}</td>
+            <td data-col="name">{{ proposal.name }}</td>
+            <td class="text-nowrap" data-col="cloud">
               {% with folder_url=proposal.proposal_workspace_folder_url %}
               {% if folder_url %}
                 <a href="{{ folder_url }}" target="_blank" rel="noopener" title="Открыть папку на {{ primary_cloud_storage_label }}">
@@ -421,7 +441,7 @@
               {% endif %}
               {% endwith %}
             </td>
-            <td class="proposal-docx-cell">
+            <td class="proposal-docx-cell" data-col="docx-name">
               {% if proposal.proposal_docx_file_url or proposal.docx_file_name %}
                 {% if proposal.proposal_docx_file_url %}
                   <a href="{{ proposal.proposal_docx_file_url }}"
@@ -440,7 +460,7 @@
                 {% endif %}
               {% endif %}
             </td>
-            <td class="proposal-pdf-cell">
+            <td class="proposal-pdf-cell" data-col="pdf-name">
               {% if proposal.proposal_pdf_file_url or proposal.pdf_file_name %}
                 {% if proposal.proposal_pdf_file_url %}
                   <a href="{{ proposal.proposal_pdf_file_url }}"
@@ -459,65 +479,66 @@
                 {% endif %}
               {% endif %}
             </td>
-            <td class="proposal-sent-date-cell">{{ proposal.sent_date }}</td>
-            <td>{{ proposal.contact_short_name }}</td>
-            <td>{{ proposal.contact_email }}</td>
-            <td>{{ proposal.recipient_job_title }}</td>
-            <td>{{ proposal.recipient }}</td>
-            <td class="proposal-transfer-date-cell">{{ proposal.transfer_to_contract_date }}</td>
+            <td class="proposal-sent-date-cell" data-col="sent-date">{{ proposal.sent_date }}</td>
+            <td data-col="contact-name">{{ proposal.contact_short_name }}</td>
+            <td data-col="contact-email">{{ proposal.contact_email }}</td>
+            <td data-col="job-title">{{ proposal.recipient_job_title }}</td>
+            <td data-col="organization">{{ proposal.recipient }}</td>
+            <td class="proposal-transfer-date-cell" data-col="transfer-date">{{ proposal.transfer_to_contract_date }}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="16" class="text-muted">Пока нет данных.</td></tr>
+          <tr><td colspan="{{ proposal_dispatch_empty_colspan }}" class="text-muted">Пока нет данных.</td></tr>
         {% endfor %}
       </tbody>
     </table>
+  </div>
 
-    {% if request.user.is_authenticated and request.user.is_staff %}
-      <div class="d-flex align-items-stretch gap-2 products-actions-row"
-           id="proposal-dispatch-controls"
-           data-send-url="{% url 'proposal_dispatch_send' %}"
-           data-transfer-contract-url="{% url 'proposal_dispatch_transfer_to_contract' %}"
-           data-sign-url="{% url 'proposal_dispatch_sign_documents' %}"
-           data-create-url="{% url 'proposal_dispatch_create_documents' %}"
-           data-refresh-url="{% url 'proposals_partial' %}">
-        <button
-          type="button"
-          id="proposal-create-btn"
-          class="btn btn-primary btn-sm d-flex align-items-center"
-          disabled>
-          <i class="bi bi-file-earmark-ruled me-2"></i>Сформировать ТКП
-        </button>
-        <button
-          type="button"
-          id="proposal-sign-btn"
-          class="btn btn-primary btn-sm d-flex align-items-center"
-          disabled>
-          <i class="bi bi-vector-pen me-2"></i>Подписать ТКП
-        </button>
-        <div class="btn-group">
-          <button type="button"
-                  id="proposal-send-btn"
-                  class="btn btn-primary btn-sm d-flex align-items-center"
-                  disabled>
-            <i class="bi bi-envelope-at me-2"></i>Отправить ТКП
-          </button>
-          <button type="button"
-                  id="proposal-send-settings-btn"
-                  class="btn btn-primary btn-sm"
-                  data-bs-toggle="modal"
-                  data-bs-target="#proposal-send-modal"
-                  title="Настройки отправки ТКП">
-            <i class="bi bi-gear"></i>
-          </button>
-        </div>
+  {% if request.user.is_authenticated and request.user.is_staff %}
+    <div class="d-flex align-items-stretch gap-2 products-actions-row"
+         id="proposal-dispatch-controls"
+         data-send-url="{% url 'proposal_dispatch_send' %}"
+         data-transfer-contract-url="{% url 'proposal_dispatch_transfer_to_contract' %}"
+         data-sign-url="{% url 'proposal_dispatch_sign_documents' %}"
+         data-create-url="{% url 'proposal_dispatch_create_documents' %}"
+         data-refresh-url="{% url 'proposals_partial' %}">
+      <button
+        type="button"
+        id="proposal-create-btn"
+        class="btn btn-primary btn-sm d-flex align-items-center"
+        disabled>
+        <i class="bi bi-file-earmark-ruled me-2"></i>Сформировать ТКП
+      </button>
+      <button
+        type="button"
+        id="proposal-sign-btn"
+        class="btn btn-primary btn-sm d-flex align-items-center"
+        disabled>
+        <i class="bi bi-vector-pen me-2"></i>Подписать ТКП
+      </button>
+      <div class="btn-group">
         <button type="button"
-                id="proposal-transfer-contract-btn"
+                id="proposal-send-btn"
                 class="btn btn-primary btn-sm d-flex align-items-center"
                 disabled>
-          <i class="bi bi-arrow-right-circle me-2"></i>Передать для договора
+          <i class="bi bi-envelope-at me-2"></i>Отправить ТКП
         </button>
-        <div id="proposal-dispatch-actions" class="d-none"></div>
+        <button type="button"
+                id="proposal-send-settings-btn"
+                class="btn btn-primary btn-sm"
+                data-bs-toggle="modal"
+                data-bs-target="#proposal-send-modal"
+                title="Настройки отправки ТКП">
+          <i class="bi bi-gear"></i>
+        </button>
       </div>
+      <button type="button"
+              id="proposal-transfer-contract-btn"
+              class="btn btn-primary btn-sm d-flex align-items-center"
+              disabled>
+        <i class="bi bi-arrow-right-circle me-2"></i>Передать для договора
+      </button>
+      <div id="proposal-dispatch-actions" class="d-none"></div>
+    </div>
 
       <div class="modal fade" id="proposal-send-modal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog">
@@ -570,7 +591,7 @@
         </h5>
       </div>
 
-      <div class="table-responsive">
+      <div class="table-responsive proposal-template-table-wrap">
         <table class="table table-sm align-top proposal-template-table">
           <thead>
           <tr>
@@ -658,5 +679,4 @@
 
       {% include "proposals_app/proposal_variables_section.html" %}
     {% endif %}
-  </div>
 </div>

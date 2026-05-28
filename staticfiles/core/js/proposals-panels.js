@@ -14,6 +14,18 @@
     return Array.from((root || document).querySelectorAll(selector));
   }
 
+  function updateProposalTableScrollGaps() {
+    const root = pane();
+    if (!root) return;
+    qa('.proposal-registry-table-wrap, .proposal-dispatch-table-wrap, .proposal-template-table-wrap', root).forEach((wrap) => {
+      wrap.classList.toggle('has-horizontal-scroll', wrap.scrollWidth > wrap.clientWidth + 1);
+    });
+  }
+
+  function scheduleProposalTableScrollGapsUpdate() {
+    window.requestAnimationFrame(updateProposalTableScrollGaps);
+  }
+
   function escapeHtml(value) {
     return String(value || '')
       .replace(/&/g, '&amp;')
@@ -1480,6 +1492,7 @@
       updateLabel(kindLabel, kindChecks, kindValues, PROPOSAL_KIND_FILTER_ALL);
       updateLabel(statusLabel, statusChecks, normalizedStatusValues, PROPOSAL_STATUS_FILTER_ALL);
       syncAllSelectionStates();
+      scheduleProposalTableScrollGapsUpdate();
     }
 
     kindChecks.forEach((cb) => {
@@ -1651,6 +1664,91 @@
 
   function syncAllSelectionStates() {
     SELECT_NAMES.forEach(syncSelectionState);
+  }
+
+  function getProposalRegistryOrderIds() {
+    const root = pane();
+    return qa('#proposal-registry-table tbody tr[data-proposal-id]', root)
+      .map((row) => String(row.dataset.proposalId || ''))
+      .filter(Boolean);
+  }
+
+  function applyProposalOrderToSingleRowTable(table, proposalIds) {
+    const tbody = table?.querySelector('tbody');
+    if (!tbody) return;
+    const rowsById = new Map();
+    qa('tr[data-proposal-id]', tbody).forEach((row) => {
+      rowsById.set(String(row.dataset.proposalId || ''), row);
+    });
+    proposalIds.forEach((proposalId) => {
+      const row = rowsById.get(String(proposalId));
+      if (row) tbody.appendChild(row);
+    });
+  }
+
+  function applyProposalOrderToGroupedTable(table, proposalIds) {
+    const tbody = table?.querySelector('tbody');
+    if (!tbody) return;
+    const rowsById = new Map();
+    qa('tr[data-proposal-id]', tbody).forEach((row) => {
+      const proposalId = String(row.dataset.proposalId || '');
+      if (!rowsById.has(proposalId)) rowsById.set(proposalId, []);
+      rowsById.get(proposalId).push(row);
+    });
+    proposalIds.forEach((proposalId) => {
+      const rows = rowsById.get(String(proposalId)) || [];
+      rows.forEach((row) => tbody.appendChild(row));
+    });
+  }
+
+  function syncProposalRegistryNumberGroups() {
+    const root = pane();
+    const rows = qa('#proposal-registry-table tbody tr[data-proposal-id]', root);
+    rows.forEach((row, index) => {
+      const number = String(row.dataset.number || '');
+      const previous = rows[index - 1] || null;
+      const next = rows[index + 1] || null;
+      const isContinuation = !!previous && String(previous.dataset.number || '') === number;
+      const hasNext = !!next && String(next.dataset.number || '') === number;
+      const numberCell = row.querySelector('td[data-col="number"]');
+      if (numberCell) numberCell.textContent = isContinuation ? '' : number;
+      row.classList.toggle('proposal-registry-number-continuation', isContinuation);
+      row.classList.toggle('proposal-registry-number-has-next', hasNext);
+    });
+  }
+
+  function syncProposalRelatedTablesOrder() {
+    const root = pane();
+    if (!root) return;
+    const proposalIds = getProposalRegistryOrderIds();
+    if (!proposalIds.length) return;
+
+    applyProposalOrderToGroupedTable(root.querySelector('#proposal-payment-schedule-table'), proposalIds);
+    applyProposalOrderToSingleRowTable(root.querySelector('#proposal-dispatch-table'), proposalIds);
+    syncProposalRegistryNumberGroups();
+    syncSelectionState('proposal-select');
+    syncSelectionState('proposal-dispatch-select');
+    scheduleProposalTableScrollGapsUpdate();
+    if (root.querySelector('.js-proposal-payment-view:checked')?.value === PROPOSAL_PAYMENT_VIEW_GANTT) {
+      requestAnimationFrame(() => renderProposalPaymentGantt(root));
+    }
+  }
+
+  function moveProposalSelectionImmediately(action, checked) {
+    if (
+      !(action === 'up' || action === 'down') ||
+      !window.__queuedRowOrder ||
+      typeof window.__queuedRowOrder.moveSelection !== 'function'
+    ) {
+      return false;
+    }
+    const root = pane();
+    if (!root) return false;
+    return !!window.__queuedRowOrder.moveSelection(root, action, {
+      selectionName: 'proposal-select',
+      selectedIds: checked.map((box) => String(box.value)),
+      onAfterMove: syncProposalRelatedTablesOrder,
+    });
   }
 
   function attachGroupSelectDisplay(root) {
@@ -9153,6 +9251,8 @@
     }
 
     if (action === 'up' || action === 'down') {
+      if (moveProposalSelectionImmediately(action, checked)) return;
+
       let urls = checked
         .map((box) => box.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'])
         .filter(Boolean);
@@ -9603,8 +9703,11 @@
 
   document.addEventListener('shown.bs.tab', function () {
     const root = pane();
-    if (!root || root.querySelector('.js-proposal-payment-view:checked')?.value !== PROPOSAL_PAYMENT_VIEW_GANTT) return;
-    requestAnimationFrame(() => renderProposalPaymentGantt(root));
+    if (!root) return;
+    scheduleProposalTableScrollGapsUpdate();
+    if (root.querySelector('.js-proposal-payment-view:checked')?.value === PROPOSAL_PAYMENT_VIEW_GANTT) {
+      requestAnimationFrame(() => renderProposalPaymentGantt(root));
+    }
   });
 
   document.body.addEventListener('htmx:afterSettle', function (event) {
@@ -9616,10 +9719,12 @@
     updateHeaderPath();
     syncAllSelectionStates();
     initProposalMasterFilters();
+    syncProposalRelatedTablesOrder();
     initProposalPaymentScheduleViewSwitch();
     initProposalForm();
     restoreProposalSendSettings();
     restoreVariableCollapseState();
+    scheduleProposalTableScrollGapsUpdate();
     const pendingScroll = window.__proposalPendingScrollRestore;
     if (pendingScroll) {
       const restoreScroll = () => {
@@ -9638,6 +9743,15 @@
       });
       clearProposalPendingScrollRestore();
     }
+  });
+
+  document.body.addEventListener('queued-row-order:conflict', function (event) {
+    const root = pane();
+    const table = event.detail?.table;
+    if (!root || !table || !root.contains(table)) return;
+    const url = root.getAttribute('hx-get') || '';
+    if (!url || !window.htmx) return;
+    window.htmx.ajax('GET', url, { target: '#proposals-pane', swap: 'outerHTML' });
   });
 
   document.body.addEventListener('htmx:afterSettle', function (event) {
@@ -9667,6 +9781,17 @@
       document.documentElement.classList.remove('proposal-progress-cursor');
     }
   });
+
+  document.addEventListener('change', function (event) {
+    const root = pane();
+    if (!root) return;
+    const input = event.target.closest('#proposal-colpicker-menu input.form-check-input');
+    if (!input || !root.contains(input)) return;
+    scheduleProposalTableScrollGapsUpdate();
+  });
+
+  window.addEventListener('resize', scheduleProposalTableScrollGapsUpdate);
+  window.addEventListener('load', scheduleProposalTableScrollGapsUpdate);
 
   document.body.addEventListener('htmx:afterSwap', function (event) {
     const target = event.target;
@@ -9805,9 +9930,11 @@
     updateHeaderPath();
     syncAllSelectionStates();
     initProposalMasterFilters();
+    syncProposalRelatedTablesOrder();
     initProposalPaymentScheduleViewSwitch();
     initProposalForm();
     restoreProposalSendSettings();
+    scheduleProposalTableScrollGapsUpdate();
     if (typeof window.__proposalVarsExpanded === 'undefined') {
       window.__proposalVarsExpanded = !!varsCollapse()?.classList.contains('show');
     }

@@ -14,6 +14,18 @@
     return Array.from((root || document).querySelectorAll(selector));
   }
 
+  function updateProposalTableScrollGaps() {
+    const root = pane();
+    if (!root) return;
+    qa('.proposal-registry-table-wrap, .proposal-dispatch-table-wrap, .proposal-template-table-wrap', root).forEach((wrap) => {
+      wrap.classList.toggle('has-horizontal-scroll', wrap.scrollWidth > wrap.clientWidth + 1);
+    });
+  }
+
+  function scheduleProposalTableScrollGapsUpdate() {
+    window.requestAnimationFrame(updateProposalTableScrollGaps);
+  }
+
   function escapeHtml(value) {
     return String(value || '')
       .replace(/&/g, '&amp;')
@@ -36,6 +48,15 @@
   const PROPOSAL_PAYMENT_VIEW_PREF_KEY = 'proposals:payment-schedule-view';
   const PROPOSAL_PAYMENT_GANTT_SCALE_PREF_KEY = 'proposals:payment-schedule-gantt-scale';
   const PROPOSAL_PAYMENT_GANTT_OPEN_GROUPS_PREF_KEY = 'proposals:payment-schedule-gantt-open-groups';
+  const PROPOSAL_PAYMENT_SECTION_COLLAPSED_PREF_KEY = 'proposals:payment-section-collapsed';
+  const PROPOSAL_PAYMENT_SECTION_CFG = {
+    toggleId: 'proposal-payment-section-toggle',
+    controlsId: 'proposal-payment-header-controls',
+    viewControlsId: 'proposal-payment-view-dropdown',
+    bodyId: 'proposal-payment-section-body',
+    collapsedLabel: 'Развернуть раздел «Сроки и порядок платежей»',
+    expandedLabel: 'Свернуть раздел «Сроки и порядок платежей»',
+  };
   const PROPOSAL_PAYMENT_VIEW_TABLE = 'table';
   const PROPOSAL_PAYMENT_VIEW_GANTT = 'gantt';
   const PROPOSAL_PAYMENT_GANTT_SCALE_DAY = 'day';
@@ -603,7 +624,8 @@
   }
 
   function buildProposalPaymentGanttData(root) {
-    const rows = qa('#proposal-payment-schedule-table tbody tr[data-proposal-id]', root);
+    const rows = qa('#proposal-payment-schedule-table tbody tr[data-proposal-id]', root)
+      .filter((row) => !row.classList.contains('d-none'));
     const proposalLabelById = new Map();
     const stageLabelsByProposalId = new Map();
     const tasks = [];
@@ -1241,6 +1263,53 @@
     if (isGantt) requestAnimationFrame(() => renderProposalPaymentGantt(root));
   }
 
+  function applyProposalPaymentSectionState(root, collapsed) {
+    const cfg = PROPOSAL_PAYMENT_SECTION_CFG;
+    const toggle = root?.querySelector('#' + cfg.toggleId);
+    if (!toggle) return;
+
+    const controls = root.querySelector('#' + cfg.controlsId);
+    const viewControls = root.querySelector('#' + cfg.viewControlsId);
+    const body = root.querySelector('#' + cfg.bodyId);
+    const icon = toggle.querySelector('i');
+    const label = collapsed ? cfg.collapsedLabel : cfg.expandedLabel;
+
+    [controls, viewControls].forEach((node) => {
+      if (!node) return;
+      node.classList.toggle('classifiers-section-controls-hidden', collapsed);
+      node.setAttribute('aria-hidden', collapsed ? 'true' : 'false');
+    });
+    if (body) body.classList.toggle('d-none', collapsed);
+
+    toggle.classList.toggle('active', collapsed);
+    toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    toggle.setAttribute('aria-label', label);
+    toggle.setAttribute('title', label);
+    if (icon) icon.className = collapsed ? 'bi bi-plus-square' : 'bi bi-dash-square';
+  }
+
+  function initProposalPaymentSectionToggle() {
+    const root = pane();
+    if (!root) return;
+    const toggle = root.querySelector('#' + PROPOSAL_PAYMENT_SECTION_CFG.toggleId);
+    if (!toggle) return;
+
+    const collapsed = window.UIPref
+      ? !!UIPref.get(PROPOSAL_PAYMENT_SECTION_COLLAPSED_PREF_KEY, true)
+      : true;
+    applyProposalPaymentSectionState(root, collapsed);
+
+    if (toggle.dataset.bound === '1') return;
+    toggle.dataset.bound = '1';
+    toggle.addEventListener('click', () => {
+      const body = root.querySelector('#' + PROPOSAL_PAYMENT_SECTION_CFG.bodyId);
+      const isCollapsed = !!body && body.classList.contains('d-none');
+      const nextCollapsed = !isCollapsed;
+      applyProposalPaymentSectionState(root, nextCollapsed);
+      if (window.UIPref) UIPref.set(PROPOSAL_PAYMENT_SECTION_COLLAPSED_PREF_KEY, nextCollapsed);
+    });
+  }
+
   function initProposalPaymentScheduleViewSwitch() {
     const root = pane();
     if (!root) return;
@@ -1295,8 +1364,9 @@
     const statusDropdown = document.getElementById('master-proposal-status-filter-dropdown');
     const statusListContainer = document.getElementById('proposal-status-filter-list');
     const statusLabel = document.querySelector('.js-proposal-status-filter-label');
-    const registryRows = root.querySelectorAll('table.proposals-table tbody tr[data-kind]');
+    const registryRows = root.querySelectorAll('#proposal-registry-table tbody tr[data-kind]');
     const dispatchRows = root.querySelectorAll('table.proposal-dispatch-table tbody tr[data-kind]');
+    const paymentRows = root.querySelectorAll('#proposal-payment-schedule-table tbody tr[data-proposal-id]');
     const rows = Array.from([...registryRows, ...dispatchRows]);
 
     if (!kindDropdown || !kindListContainer || !statusDropdown || !statusListContainer) return;
@@ -1465,7 +1535,7 @@
       }
       const showAllKinds = kindValues.includes(PROPOSAL_KIND_FILTER_ALL) || !kindValues.length;
       const showAllStatuses = normalizedStatusValues.includes(PROPOSAL_STATUS_FILTER_ALL) || !normalizedStatusValues.length;
-      [registryRows, dispatchRows].forEach((rowsCollection) => {
+      [registryRows, dispatchRows, paymentRows].forEach((rowsCollection) => {
         rowsCollection.forEach((row) => {
           const kind = row.dataset.kind || '';
           const status = row.dataset.status || '';
@@ -1480,6 +1550,10 @@
       updateLabel(kindLabel, kindChecks, kindValues, PROPOSAL_KIND_FILTER_ALL);
       updateLabel(statusLabel, statusChecks, normalizedStatusValues, PROPOSAL_STATUS_FILTER_ALL);
       syncAllSelectionStates();
+      scheduleProposalTableScrollGapsUpdate();
+      if (root.querySelector('.js-proposal-payment-view:checked')?.value === PROPOSAL_PAYMENT_VIEW_GANTT) {
+        requestAnimationFrame(() => renderProposalPaymentGantt(root));
+      }
     }
 
     kindChecks.forEach((cb) => {
@@ -1651,6 +1725,91 @@
 
   function syncAllSelectionStates() {
     SELECT_NAMES.forEach(syncSelectionState);
+  }
+
+  function getProposalRegistryOrderIds() {
+    const root = pane();
+    return qa('#proposal-registry-table tbody tr[data-proposal-id]', root)
+      .map((row) => String(row.dataset.proposalId || ''))
+      .filter(Boolean);
+  }
+
+  function applyProposalOrderToSingleRowTable(table, proposalIds) {
+    const tbody = table?.querySelector('tbody');
+    if (!tbody) return;
+    const rowsById = new Map();
+    qa('tr[data-proposal-id]', tbody).forEach((row) => {
+      rowsById.set(String(row.dataset.proposalId || ''), row);
+    });
+    proposalIds.forEach((proposalId) => {
+      const row = rowsById.get(String(proposalId));
+      if (row) tbody.appendChild(row);
+    });
+  }
+
+  function applyProposalOrderToGroupedTable(table, proposalIds) {
+    const tbody = table?.querySelector('tbody');
+    if (!tbody) return;
+    const rowsById = new Map();
+    qa('tr[data-proposal-id]', tbody).forEach((row) => {
+      const proposalId = String(row.dataset.proposalId || '');
+      if (!rowsById.has(proposalId)) rowsById.set(proposalId, []);
+      rowsById.get(proposalId).push(row);
+    });
+    proposalIds.forEach((proposalId) => {
+      const rows = rowsById.get(String(proposalId)) || [];
+      rows.forEach((row) => tbody.appendChild(row));
+    });
+  }
+
+  function syncProposalRegistryNumberGroups() {
+    const root = pane();
+    const rows = qa('#proposal-registry-table tbody tr[data-proposal-id]', root);
+    rows.forEach((row, index) => {
+      const number = String(row.dataset.number || '');
+      const previous = rows[index - 1] || null;
+      const next = rows[index + 1] || null;
+      const isContinuation = !!previous && String(previous.dataset.number || '') === number;
+      const hasNext = !!next && String(next.dataset.number || '') === number;
+      const numberCell = row.querySelector('td[data-col="number"]');
+      if (numberCell) numberCell.textContent = isContinuation ? '' : number;
+      row.classList.toggle('proposal-registry-number-continuation', isContinuation);
+      row.classList.toggle('proposal-registry-number-has-next', hasNext);
+    });
+  }
+
+  function syncProposalRelatedTablesOrder() {
+    const root = pane();
+    if (!root) return;
+    const proposalIds = getProposalRegistryOrderIds();
+    if (!proposalIds.length) return;
+
+    applyProposalOrderToGroupedTable(root.querySelector('#proposal-payment-schedule-table'), proposalIds);
+    applyProposalOrderToSingleRowTable(root.querySelector('#proposal-dispatch-table'), proposalIds);
+    syncProposalRegistryNumberGroups();
+    syncSelectionState('proposal-select');
+    syncSelectionState('proposal-dispatch-select');
+    scheduleProposalTableScrollGapsUpdate();
+    if (root.querySelector('.js-proposal-payment-view:checked')?.value === PROPOSAL_PAYMENT_VIEW_GANTT) {
+      requestAnimationFrame(() => renderProposalPaymentGantt(root));
+    }
+  }
+
+  function moveProposalSelectionImmediately(action, checked) {
+    if (
+      !(action === 'up' || action === 'down') ||
+      !window.__queuedRowOrder ||
+      typeof window.__queuedRowOrder.moveSelection !== 'function'
+    ) {
+      return false;
+    }
+    const root = pane();
+    if (!root) return false;
+    return !!window.__queuedRowOrder.moveSelection(root, action, {
+      selectionName: 'proposal-select',
+      selectedIds: checked.map((box) => String(box.value)),
+      onAfterMove: syncProposalRelatedTablesOrder,
+    });
   }
 
   function attachGroupSelectDisplay(root) {
@@ -7227,7 +7386,6 @@
       stageFields?.classList.toggle('d-none', isCommon);
       if (commonFields) {
         commonFields.querySelectorAll('input, select, textarea').forEach(function (input) {
-          if (input.name === 'final_report_percent') return;
           input.disabled = !isCommon;
         });
       }
@@ -8928,6 +9086,7 @@
       syncFinalReportPercent(event.target.closest('.js-proposal-payment-group') || form);
     });
     form.querySelector('input[type="checkbox"][name="payment_schedule_common"]')?.addEventListener('change', syncPaymentScheduleMode);
+    form.addEventListener('htmx:beforeRequest', syncPaymentScheduleMode);
     syncPaymentScheduleMode();
     qa('.js-proposal-report-terms-lock', form).forEach(function (icon) {
       icon.addEventListener('click', function () {
@@ -9153,6 +9312,8 @@
     }
 
     if (action === 'up' || action === 'down') {
+      if (moveProposalSelectionImmediately(action, checked)) return;
+
       let urls = checked
         .map((box) => box.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'])
         .filter(Boolean);
@@ -9603,8 +9764,11 @@
 
   document.addEventListener('shown.bs.tab', function () {
     const root = pane();
-    if (!root || root.querySelector('.js-proposal-payment-view:checked')?.value !== PROPOSAL_PAYMENT_VIEW_GANTT) return;
-    requestAnimationFrame(() => renderProposalPaymentGantt(root));
+    if (!root) return;
+    scheduleProposalTableScrollGapsUpdate();
+    if (root.querySelector('.js-proposal-payment-view:checked')?.value === PROPOSAL_PAYMENT_VIEW_GANTT) {
+      requestAnimationFrame(() => renderProposalPaymentGantt(root));
+    }
   });
 
   document.body.addEventListener('htmx:afterSettle', function (event) {
@@ -9616,10 +9780,13 @@
     updateHeaderPath();
     syncAllSelectionStates();
     initProposalMasterFilters();
+    syncProposalRelatedTablesOrder();
     initProposalPaymentScheduleViewSwitch();
+    initProposalPaymentSectionToggle();
     initProposalForm();
     restoreProposalSendSettings();
     restoreVariableCollapseState();
+    scheduleProposalTableScrollGapsUpdate();
     const pendingScroll = window.__proposalPendingScrollRestore;
     if (pendingScroll) {
       const restoreScroll = () => {
@@ -9638,6 +9805,15 @@
       });
       clearProposalPendingScrollRestore();
     }
+  });
+
+  document.body.addEventListener('queued-row-order:conflict', function (event) {
+    const root = pane();
+    const table = event.detail?.table;
+    if (!root || !table || !root.contains(table)) return;
+    const url = root.getAttribute('hx-get') || '';
+    if (!url || !window.htmx) return;
+    window.htmx.ajax('GET', url, { target: '#proposals-pane', swap: 'outerHTML' });
   });
 
   document.body.addEventListener('htmx:afterSettle', function (event) {
@@ -9667,6 +9843,17 @@
       document.documentElement.classList.remove('proposal-progress-cursor');
     }
   });
+
+  document.addEventListener('change', function (event) {
+    const root = pane();
+    if (!root) return;
+    const input = event.target.closest('#proposal-colpicker-menu input.form-check-input, #proposal-payment-colpicker-menu input.form-check-input, #proposal-dispatch-colpicker-menu input.form-check-input');
+    if (!input || !root.contains(input)) return;
+    scheduleProposalTableScrollGapsUpdate();
+  });
+
+  window.addEventListener('resize', scheduleProposalTableScrollGapsUpdate);
+  window.addEventListener('load', scheduleProposalTableScrollGapsUpdate);
 
   document.body.addEventListener('htmx:afterSwap', function (event) {
     const target = event.target;
@@ -9805,9 +9992,12 @@
     updateHeaderPath();
     syncAllSelectionStates();
     initProposalMasterFilters();
+    syncProposalRelatedTablesOrder();
     initProposalPaymentScheduleViewSwitch();
+    initProposalPaymentSectionToggle();
     initProposalForm();
     restoreProposalSendSettings();
+    scheduleProposalTableScrollGapsUpdate();
     if (typeof window.__proposalVarsExpanded === 'undefined') {
       window.__proposalVarsExpanded = !!varsCollapse()?.classList.contains('show');
     }
