@@ -2994,6 +2994,25 @@
     return String(row?.code || '').trim().toUpperCase() === PROPOSAL_SYSTEM_DSC_CODE;
   }
 
+  function normalizeProposalMergeWithoutCode(value) {
+    if (value === true) return true;
+    const raw = String(value ?? '').trim().toLowerCase();
+    return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+  }
+
+  function getProposalSummaryGroupingCode(row) {
+    if (normalizeProposalMergeWithoutCode(row?.merge_without_code)) return '';
+    return String(row?.code || '').trim();
+  }
+
+  function getProposalSummaryGroupingKey(row) {
+    return [
+      String(row?.specialist || '').trim(),
+      String(row?.job_title || '').trim(),
+      getProposalSummaryGroupingCode(row),
+    ].join('\u0000');
+  }
+
   function getProposalSystemDscEntry(form) {
     return getProposalTypicalSectionEntries(form).find(isProposalSystemDscEntry) || null;
   }
@@ -3266,6 +3285,7 @@
       professional_status: '',
       service_name: PROPOSAL_TRAVEL_EXPENSES_LABEL,
       code: '',
+      merge_without_code: false,
       rate_eur_per_day: '',
       asset_day_counts: dayCounts,
       total_eur_without_vat: String(row?.total_eur_without_vat || '').trim(),
@@ -4240,6 +4260,7 @@
           : (statusValue || specialistStatus || autofill.professionalStatus),
         service_name: serviceName,
         code: getProposalTypicalSectionCode(scope, serviceName) || String(row?.code || '').trim(),
+        merge_without_code: normalizeProposalMergeWithoutCode(row?.merge_without_code),
         rate_eur_per_day: forceAutofill ? (autofillRate || currentRate) : (currentRate || autofillRate),
         asset_day_counts: forceAutofill
           ? autofillDayCounts
@@ -4254,6 +4275,7 @@
       return {
         service_name: String(entry.name || '').trim(),
         code: String(entry.code || PROPOSAL_SYSTEM_DSC_CODE).trim() || PROPOSAL_SYSTEM_DSC_CODE,
+        merge_without_code: false,
       };
     }
 
@@ -4293,6 +4315,7 @@
           ...commercialRow,
           service_name: serviceRow.service_name ?? commercialRow.service_name ?? '',
           code: serviceRow.code ?? commercialRow.code ?? '',
+          merge_without_code: serviceRow.merge_without_code ?? commercialRow.merge_without_code ?? false,
         }));
       }
       rows.push(travelRow);
@@ -4309,6 +4332,8 @@
           job_title: row.job_title,
           professional_status: row.professional_status,
           service_name: row.service_name,
+          code: row.code,
+          merge_without_code: normalizeProposalMergeWithoutCode(row.merge_without_code),
           rate_eur_per_day: row.rate_eur_per_day,
           asset_day_counts: row.asset_day_counts.slice(),
           total_eur_without_vat: row.total_eur_without_vat,
@@ -4323,6 +4348,7 @@
         return {
           service_name: row.service_name,
           code: row.code,
+          merge_without_code: normalizeProposalMergeWithoutCode(row.merge_without_code),
         };
       });
     }
@@ -4334,6 +4360,7 @@
       for (let index = 0; index < left.length; index += 1) {
         if (String(left[index]?.service_name || '') !== String(right[index]?.service_name || '')) return false;
         if (String(left[index]?.code || '') !== String(right[index]?.code || '')) return false;
+        if (normalizeProposalMergeWithoutCode(left[index]?.merge_without_code) !== normalizeProposalMergeWithoutCode(right[index]?.merge_without_code)) return false;
       }
       return true;
     }
@@ -4419,6 +4446,7 @@
             ...currentRow,
             service_name: nextServiceName,
             code: row?.code || '',
+            merge_without_code: normalizeProposalMergeWithoutCode(row?.merge_without_code),
           }, {
             forceAutofill: nextServiceName !== currentServiceName,
           });
@@ -4433,6 +4461,7 @@
             return {
               service_name: (entry?.name || '').trim(),
               code: (entry?.code || '').trim(),
+              merge_without_code: false,
               exclude_from_tkp_autofill: !!entry?.exclude_from_tkp_autofill,
             };
           }).filter(function (entry) {
@@ -4441,6 +4470,7 @@
             return {
               service_name: entry.service_name,
               code: entry.code,
+              merge_without_code: false,
             };
           }),
           meta
@@ -5191,6 +5221,8 @@
           job_title: '',
           professional_status: '',
           service_name: PROPOSAL_TRAVEL_EXPENSES_LABEL,
+          code: '',
+          merge_without_code: false,
           rate_eur_per_day: '',
           asset_day_counts: isSummaryCommercialBlock
             ? readSummaryJsonArray(row, 'summaryAssetDayCounts')
@@ -5206,6 +5238,12 @@
         job_title: (row.querySelector('.proposal-commercial-job-title')?.value || '').trim(),
         professional_status: (row.querySelector('.proposal-commercial-status')?.value || '').trim(),
         service_name: (row.querySelector('.proposal-commercial-service')?.value || '').trim(),
+        code: String(row.dataset.commercialCode || '').trim(),
+        merge_without_code: normalizeProposalMergeWithoutCode(row.dataset.mergeWithoutCode),
+        service_name_auto: isSummaryCommercialBlock ? String(row.dataset.summaryServiceAuto || '').trim() : undefined,
+        service_name_manually_edited: isSummaryCommercialBlock
+          ? (row.querySelector('.proposal-commercial-service')?.value || '').trim() !== String(row.dataset.summaryServiceAuto || '').trim()
+          : undefined,
         rate_eur_per_day: rawMoney(row.querySelector('.proposal-commercial-rate')?.value || ''),
         asset_day_counts: isSummaryCommercialBlock
           ? readSummaryJsonArray(row, 'summaryAssetDayCounts')
@@ -5500,6 +5538,9 @@
 
     function setRowData(row, data) {
       if (!row || !data) return;
+      row.dataset.commercialCode = String(data.code || '').trim();
+      row.dataset.mergeWithoutCode = normalizeProposalMergeWithoutCode(data.merge_without_code) ? '1' : '0';
+      row.dataset.summaryServiceAuto = String(data.service_name_auto || data.service_name || '').trim();
       const specialist = row.querySelector('.proposal-commercial-specialist');
       const jobTitle = row.querySelector('.proposal-commercial-job-title');
       const status = row.querySelector('.proposal-commercial-status');
@@ -5528,6 +5569,9 @@
     function createRow(data) {
       const row = document.createElement('tr');
       const autofill = getProposalCommercialAutofill(form, data.service_name || '');
+      row.dataset.commercialCode = String(data.code || '').trim();
+      row.dataset.mergeWithoutCode = normalizeProposalMergeWithoutCode(data.merge_without_code) ? '1' : '0';
+      row.dataset.summaryServiceAuto = String(data.service_name_auto || data.service_name || '').trim();
 
       const checkTd = createProposalTableCell('proposal-asset-check-cell');
       const checkWrap = document.createElement('div');
@@ -5595,10 +5639,14 @@
       if (isSummaryCommercialBlock) {
         const serviceInput = document.createElement('input');
         serviceInput.type = 'text';
-        serviceInput.className = 'form-control proposal-commercial-service readonly-field';
-        serviceInput.readOnly = true;
-        serviceInput.tabIndex = -1;
-        serviceInput.value = '';
+        serviceInput.className = 'form-control proposal-commercial-service';
+        serviceInput.value = data.service_name || '';
+        serviceInput.addEventListener('input', function () {
+          scheduleUpdatePayload({ reason: 'summary-service-edit', rowIndex: getRows().indexOf(row) });
+        });
+        serviceInput.addEventListener('change', function () {
+          flushScheduledUpdatePayload({ reason: 'summary-service-edit', rowIndex: getRows().indexOf(row) });
+        });
         serviceTd.appendChild(serviceInput);
       } else {
         serviceSelect = document.createElement('select');
@@ -5608,6 +5656,7 @@
         serviceTd.appendChild(serviceSelect);
         serviceSelect.addEventListener('change', function () {
           const serviceAutofill = getProposalCommercialAutofill(form, serviceSelect.value || '');
+          row.dataset.commercialCode = getProposalTypicalSectionCode(form, serviceSelect.value || '');
           titleInput.value = serviceAutofill.jobTitle || '';
           syncProposalCommercialSpecialistSelect(
             specialistSelect,
@@ -6256,6 +6305,7 @@
       return {
         service_name: (row.querySelector('.proposal-service-section-name')?.value || '').trim(),
         code: (row.querySelector('.proposal-service-section-code')?.value || '').trim(),
+        merge_without_code: normalizeProposalMergeWithoutCode(row.dataset.mergeWithoutCode),
       };
     }
 
@@ -6277,12 +6327,28 @@
       codeInput.value = getProposalTypicalSectionCode(form, serviceSelect.value || '');
     }
 
+    function syncMergeRuleButton(row) {
+      const button = row?.querySelector('.proposal-service-section-merge-rule');
+      if (!button) return;
+      const mergeWithoutCode = normalizeProposalMergeWithoutCode(row.dataset.mergeWithoutCode);
+      const icon = button.querySelector('i');
+      button.title = mergeWithoutCode
+        ? 'Объединять в сводной таблице без учета кода'
+        : 'Разделять в сводной таблице по коду';
+      button.setAttribute('aria-label', button.title);
+      button.setAttribute('aria-pressed', mergeWithoutCode ? 'true' : 'false');
+      if (icon) {
+        icon.className = 'bi ' + (mergeWithoutCode ? 'bi-union' : 'bi-subtract');
+      }
+    }
+
     function createRow(data) {
       const row = document.createElement('tr');
       const isSystemDsc = isProposalSystemDscRow(data);
       if (isSystemDsc) {
         row.dataset.systemDsc = '1';
       }
+      row.dataset.mergeWithoutCode = !isSystemDsc && normalizeProposalMergeWithoutCode(data?.merge_without_code) ? '1' : '0';
 
       const checkTd = createProposalTableCell('proposal-asset-check-cell');
       const checkWrap = document.createElement('div');
@@ -6329,6 +6395,22 @@
       codeInput.value = data.code || '';
       codeTd.appendChild(codeInput);
       row.appendChild(codeTd);
+
+      const ruleTd = createProposalTableCell('proposal-service-section-rule-cell');
+      if (!isSystemDsc) {
+        const ruleButton = document.createElement('button');
+        ruleButton.type = 'button';
+        ruleButton.className = 'proposal-service-section-merge-rule';
+        ruleButton.innerHTML = '<i class="bi bi-subtract" aria-hidden="true"></i>';
+        ruleButton.addEventListener('click', function () {
+          row.dataset.mergeWithoutCode = normalizeProposalMergeWithoutCode(row.dataset.mergeWithoutCode) ? '0' : '1';
+          syncMergeRuleButton(row);
+          updatePayload({ reason: 'merge-rule-toggle', rowIndex: getRows().indexOf(row) });
+        });
+        ruleTd.appendChild(ruleButton);
+        syncMergeRuleButton(row);
+      }
+      row.appendChild(ruleTd);
 
       syncCode(row);
       if (!codeInput.value && data.code) codeInput.value = data.code;
@@ -8410,18 +8492,23 @@
         }
       }
 
-      function getSummaryCommercialRowOrder() {
+      function getSummaryCommercialRowPreferences() {
         const summaryCommercialBlock = getSummaryCommercialBlock();
         const rows = parseCommercialOfferPayload(summaryCommercialBlock);
-        const order = new Map();
+        const preferences = new Map();
         rows.forEach(function (row, index) {
           if (isProposalTravelExpensesRow(row)) return;
-          const key = String(row?.specialist || '').trim() + '\u0000' + String(row?.job_title || '').trim();
-          if (key && !order.has(key)) {
-            order.set(key, index);
+          const key = getProposalSummaryGroupingKey(row);
+          if (key && !preferences.has(key)) {
+            preferences.set(key, {
+              order: index,
+              service_name: String(row?.service_name || '').trim(),
+              service_name_auto: String(row?.service_name_auto || '').trim(),
+              service_name_manually_edited: normalizeProposalMergeWithoutCode(row?.service_name_manually_edited),
+            });
           }
         });
-        return order;
+        return preferences;
       }
 
       function buildSummaryCommercialRows() {
@@ -8430,7 +8517,7 @@
         const stageCount = commercialBlocks.length;
         const groupedRows = [];
         const groupedByKey = new Map();
-        const preferredOrder = getSummaryCommercialRowOrder();
+        const preferredRows = getSummaryCommercialRowPreferences();
         const travelDayTotals = Array.from({ length: assetCount }, function () { return 0; });
         const travelStageDayTotals = Array.from({ length: stageCount }, function () {
           return Array.from({ length: assetCount }, function () { return 0; });
@@ -8472,14 +8559,24 @@
 
             const specialist = String(row?.specialist || '').trim();
             const jobTitle = String(row?.job_title || '').trim();
-            const key = specialist + '\u0000' + jobTitle;
+            const serviceName = String(row?.service_name || '').trim();
+            const code = String(row?.code || '').trim();
+            const mergeWithoutCode = normalizeProposalMergeWithoutCode(row?.merge_without_code);
+            const key = getProposalSummaryGroupingKey({
+              specialist: specialist,
+              job_title: jobTitle,
+              code: code,
+              merge_without_code: mergeWithoutCode,
+            });
             let bucket = groupedByKey.get(key);
             if (!bucket) {
               bucket = {
                 specialist: specialist,
                 job_title: jobTitle,
                 professional_status: String(row?.professional_status || '').trim(),
-                service_name: '',
+                service_name: serviceName,
+                code: code,
+                merge_without_code: mergeWithoutCode,
                 rate_eur_per_day: String(row?.rate_eur_per_day || '').trim(),
                 asset_day_counts: Array.from({ length: assetCount }, function () { return 0; }),
                 stage_asset_day_counts: Array.from({ length: stageCount }, function () {
@@ -8489,6 +8586,8 @@
               };
               groupedByKey.set(key, bucket);
               groupedRows.push(bucket);
+            } else if (serviceName) {
+              bucket.service_name = serviceName;
             }
             (Array.isArray(row?.asset_day_counts) ? row.asset_day_counts : []).slice(0, assetCount).forEach(function (value, index) {
               const numericValue = parseInt(String(value || '').trim(), 10);
@@ -8507,6 +8606,13 @@
         });
 
         const rows = groupedRows.map(function (bucket, index) {
+          const rowKey = getProposalSummaryGroupingKey(bucket);
+          const preferred = preferredRows.get(rowKey) || null;
+          const preferredServiceName = String(preferred?.service_name || '').trim();
+          const preferredServiceAuto = String(preferred?.service_name_auto || '').trim();
+          const hasManualServiceName = preferred?.service_name_manually_edited === true
+            || (!!preferredServiceName && (!preferredServiceAuto || preferredServiceName !== preferredServiceAuto));
+          const serviceName = hasManualServiceName ? preferredServiceName : bucket.service_name;
           const rateValue = parseFloat(rawMoney(bucket.rate_eur_per_day || ''));
           const totalDays = bucket.asset_day_counts.reduce(function (sum, value) {
             return sum + (Number.isFinite(value) ? value : 0);
@@ -8518,7 +8624,10 @@
             specialist: bucket.specialist,
             job_title: bucket.job_title,
             professional_status: bucket.professional_status,
-            service_name: '',
+            service_name: serviceName,
+            service_name_auto: bucket.service_name,
+            code: bucket.code,
+            merge_without_code: bucket.merge_without_code,
             rate_eur_per_day: bucket.rate_eur_per_day,
             asset_day_counts: bucket.asset_day_counts.map(function (value) { return value > 0 ? String(value) : ''; }),
             stage_asset_day_counts: bucket.stage_asset_day_counts.map(function (stageValues) {
@@ -8530,10 +8639,10 @@
         });
 
         rows.sort(function (left, right) {
-          const leftKey = String(left?.specialist || '').trim() + '\u0000' + String(left?.job_title || '').trim();
-          const rightKey = String(right?.specialist || '').trim() + '\u0000' + String(right?.job_title || '').trim();
-          const leftOrder = preferredOrder.has(leftKey) ? preferredOrder.get(leftKey) : Number.MAX_SAFE_INTEGER;
-          const rightOrder = preferredOrder.has(rightKey) ? preferredOrder.get(rightKey) : Number.MAX_SAFE_INTEGER;
+          const leftKey = getProposalSummaryGroupingKey(left);
+          const rightKey = getProposalSummaryGroupingKey(right);
+          const leftOrder = preferredRows.has(leftKey) ? preferredRows.get(leftKey).order : Number.MAX_SAFE_INTEGER;
+          const rightOrder = preferredRows.has(rightKey) ? preferredRows.get(rightKey).order : Number.MAX_SAFE_INTEGER;
           if (leftOrder !== rightOrder) return leftOrder - rightOrder;
           return (left.__summaryOrderIndex || 0) - (right.__summaryOrderIndex || 0);
         });
@@ -8544,6 +8653,9 @@
             job_title: row.job_title,
             professional_status: row.professional_status,
             service_name: row.service_name,
+            service_name_auto: row.service_name_auto,
+            code: row.code,
+            merge_without_code: row.merge_without_code,
             rate_eur_per_day: row.rate_eur_per_day,
             asset_day_counts: row.asset_day_counts,
             stage_asset_day_counts: row.stage_asset_day_counts,
@@ -8562,6 +8674,8 @@
             job_title: '',
             professional_status: '',
             service_name: PROPOSAL_TRAVEL_EXPENSES_LABEL,
+            code: '',
+            merge_without_code: false,
             rate_eur_per_day: '',
             asset_day_counts: travelMode === PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION
               ? travelDayTotals.map(function (value) { return value > 0 ? fmtMoney(value.toFixed(2)) : ''; })

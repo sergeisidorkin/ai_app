@@ -938,7 +938,9 @@
         if (!termRow) return;
         const productId = String(productRow.querySelector(".registration-product-select")?.value || "").trim();
         const product = productById.get(productId);
-        const previousProductId = String(termRow.dataset.productId || "");
+        const previousProductId = String(
+          termRow.dataset.productId || productRow.dataset.selectedProductId || ""
+        );
         const stageInput = termRow.querySelector(".registration-contract-stage-label-input");
         const monthsInput = termRow.querySelector("[name='stage1_weeks']");
         const weeksInput = termRow.querySelector("[name='stage2_weeks']");

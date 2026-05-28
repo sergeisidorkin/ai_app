@@ -266,7 +266,12 @@ def _rich_paragraphs_from_item(item) -> list[dict[str, object]] | None:
     if isinstance(item, dict):
         html = str(item.get("html") or "").strip()
         if html:
-            return _rich_paragraphs_from_html(html)
+            paragraphs = _rich_paragraphs_from_html(html)
+            ordered_numbering_scope = str(item.get("ordered_numbering_scope") or "").strip()
+            if ordered_numbering_scope:
+                for paragraph in paragraphs:
+                    paragraph["ordered_numbering_scope"] = ordered_numbering_scope
+            return paragraphs
         runs = item.get("runs")
         if isinstance(runs, list):
             return [item]
@@ -494,6 +499,35 @@ def _apply_contextual_spacing(p_pr, enabled) -> None:
         p_pr.append(OxmlElement("w:contextualSpacing"))
 
 
+def _ensure_scoped_ordered_numbering_ids(
+    paragraph,
+    rich_items,
+    scoped_rich_ordered_num_ids: dict[str, str] | None,
+) -> None:
+    if scoped_rich_ordered_num_ids is None:
+        return
+    document = getattr(getattr(paragraph, "part", None), "document", None)
+    if document is None:
+        return
+    scopes = []
+    for item in rich_items:
+        if str(item.get("list_type") or "").strip() != "ordered":
+            continue
+        scope = str(item.get("ordered_numbering_scope") or "").strip()
+        if scope and scope not in scoped_rich_ordered_num_ids and scope not in scopes:
+            scopes.append(scope)
+    for scope in scopes:
+        try:
+            scoped_rich_ordered_num_ids[scope] = _ensure_quill_ordered_numbering(document)
+            continue
+        except Exception:
+            pass
+        try:
+            scoped_rich_ordered_num_ids[scope] = _ensure_multilevel_numbering(document)
+        except Exception:
+            continue
+
+
 def _insert_rich_paragraphs(
     anchor,
     parent,
@@ -506,6 +540,7 @@ def _insert_rich_paragraphs(
     list_paragraph_style_id: str,
     builtin_list_paragraph_style_id: str,
     source_rPr,
+    scoped_rich_ordered_num_ids: dict[str, str] | None = None,
     render_plain: bool = False,
     language_code: str | None = None,
 ):
@@ -528,15 +563,20 @@ def _insert_rich_paragraphs(
                 num_pr.append(ilvl)
                 num_pr.append(num_id)
                 p_pr.append(num_pr)
-        elif list_type == "ordered" and (rich_ordered_num_id or multilevel_num_id):
-            num_pr = OxmlElement("w:numPr")
-            ilvl = OxmlElement("w:ilvl")
-            ilvl.set(qn("w:val"), str(list_level))
-            num_id = OxmlElement("w:numId")
-            num_id.set(qn("w:val"), rich_ordered_num_id or multilevel_num_id)
-            num_pr.append(ilvl)
-            num_pr.append(num_id)
-            p_pr.append(num_pr)
+        elif list_type == "ordered":
+            ordered_num_id = rich_ordered_num_id or multilevel_num_id
+            ordered_numbering_scope = str(item.get("ordered_numbering_scope") or "").strip()
+            if ordered_numbering_scope and scoped_rich_ordered_num_ids is not None:
+                ordered_num_id = scoped_rich_ordered_num_ids.get(ordered_numbering_scope) or ordered_num_id
+            if ordered_num_id:
+                num_pr = OxmlElement("w:numPr")
+                ilvl = OxmlElement("w:ilvl")
+                ilvl.set(qn("w:val"), str(list_level))
+                num_id = OxmlElement("w:numId")
+                num_id.set(qn("w:val"), ordered_num_id)
+                num_pr.append(ilvl)
+                num_pr.append(num_id)
+                p_pr.append(num_pr)
         paragraph_style = str(item.get("paragraph_style") or "").strip()
         paragraph_style_id = str(item.get("paragraph_style_id") or "").strip()
         if paragraph_style == "list_paragraph" and not paragraph_style_id:
@@ -656,6 +696,7 @@ def _replace_list_in_paragraph(
     plain_list_keys: set[str] | None = None,
     default_language_code: str | None = None,
     rich_ordered_num_id: str = "",
+    scoped_rich_ordered_num_ids: dict[str, str] | None = None,
 ) -> bool:
     """If the paragraph contains a ``[[list_var]]`` placeholder, replace the
     entire paragraph with a list of items.  Returns True if replaced.
@@ -730,10 +771,12 @@ def _replace_list_in_paragraph(
     anchor = paragraph._element
 
     if is_rich:
+        rich_items = _resolve_rich_item_character_styles(paragraph, rich_items)
+        _ensure_scoped_ordered_numbering_ids(paragraph, rich_items, scoped_rich_ordered_num_ids)
         _insert_rich_paragraphs(
             anchor,
             parent,
-            _resolve_rich_item_character_styles(paragraph, rich_items),
+            rich_items,
             marker_num_ids=marker_num_ids,
             multilevel_num_id=multilevel_num_id,
             rich_ordered_num_id=rich_ordered_num_id,
@@ -741,6 +784,7 @@ def _replace_list_in_paragraph(
             list_paragraph_style_id=list_paragraph_style_id,
             builtin_list_paragraph_style_id=builtin_list_paragraph_style_id,
             source_rPr=source_rPr,
+            scoped_rich_ordered_num_ids=scoped_rich_ordered_num_ids,
             render_plain=is_plain_list,
             language_code=language_code,
         )
@@ -1484,6 +1528,7 @@ def _process_list_paragraphs(
     plain_list_keys: set[str] | None = None,
     default_language_code: str | None = None,
     rich_ordered_num_id: str = "",
+    scoped_rich_ordered_num_ids: dict[str, str] | None = None,
 ) -> None:
     for para in list(paragraphs):
         _replace_list_in_paragraph(
@@ -1492,6 +1537,7 @@ def _process_list_paragraphs(
             list_paragraph_style_id, builtin_list_paragraph_style_id,
             plain_list_keys, default_language_code,
             rich_ordered_num_id=rich_ordered_num_id,
+            scoped_rich_ordered_num_ids=scoped_rich_ordered_num_ids,
         )
 
 
@@ -1508,6 +1554,7 @@ def _process_tables(
     plain_list_keys: set[str] | None = None,
     default_language_code: str | None = None,
     rich_ordered_num_id: str = "",
+    scoped_rich_ordered_num_ids: dict[str, str] | None = None,
 ) -> None:
     marker_num_ids = marker_num_ids or {}
     for table in tables:
@@ -1526,6 +1573,7 @@ def _process_tables(
                         list_paragraph_style_id, builtin_list_paragraph_style_id,
                         plain_list_keys, default_language_code,
                         rich_ordered_num_id=rich_ordered_num_id,
+                        scoped_rich_ordered_num_ids=scoped_rich_ordered_num_ids,
                     )
                 _process_paragraphs(cell.paragraphs, replacements, language_code=default_language_code)
                 _process_tables(
@@ -1533,6 +1581,7 @@ def _process_tables(
                     marker_num_ids, multilevel_num_id, bullet_style_id, list_paragraph_style_id,
                     builtin_list_paragraph_style_id, plain_list_keys, default_language_code,
                     rich_ordered_num_id=rich_ordered_num_id,
+                    scoped_rich_ordered_num_ids=scoped_rich_ordered_num_ids,
                 )
 
 
@@ -1865,6 +1914,7 @@ def process_template(
     marker_num_ids: dict[str, str] = {}
     multilevel_num_id = ""
     rich_ordered_num_id = ""
+    scoped_rich_ordered_num_ids: dict[str, str] = {}
     bullet_style_id = ""
     list_paragraph_style_id = ""
     builtin_list_paragraph_style_id = ""
@@ -1894,6 +1944,7 @@ def process_template(
             marker_num_ids, multilevel_num_id, bullet_style_id, list_paragraph_style_id,
             builtin_list_paragraph_style_id, plain_list_keys, default_language_code,
             rich_ordered_num_id=rich_ordered_num_id,
+            scoped_rich_ordered_num_ids=scoped_rich_ordered_num_ids,
         )
 
     _process_paragraphs(doc.paragraphs, replacements, language_code=default_language_code)
@@ -1902,6 +1953,7 @@ def process_template(
         marker_num_ids, multilevel_num_id, bullet_style_id, list_paragraph_style_id,
         builtin_list_paragraph_style_id, plain_list_keys, default_language_code,
         rich_ordered_num_id=rich_ordered_num_id,
+        scoped_rich_ordered_num_ids=scoped_rich_ordered_num_ids,
     )
 
     for section in doc.sections:
@@ -1923,6 +1975,7 @@ def process_template(
                         marker_num_ids, multilevel_num_id, bullet_style_id, list_paragraph_style_id,
                         builtin_list_paragraph_style_id, plain_list_keys, default_language_code,
                         rich_ordered_num_id=rich_ordered_num_id,
+                        scoped_rich_ordered_num_ids=scoped_rich_ordered_num_ids,
                     )
                 _process_paragraphs(
                     header_footer.paragraphs,
@@ -1934,6 +1987,7 @@ def process_template(
                     marker_num_ids, multilevel_num_id, bullet_style_id, list_paragraph_style_id,
                     builtin_list_paragraph_style_id, plain_list_keys, default_language_code,
                     rich_ordered_num_id=rich_ordered_num_id,
+                    scoped_rich_ordered_num_ids=scoped_rich_ordered_num_ids,
                 )
 
     out = BytesIO()

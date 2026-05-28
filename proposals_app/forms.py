@@ -93,6 +93,12 @@ def is_proposal_travel_expenses_name(value) -> bool:
     return name in {PROPOSAL_TRAVEL_EXPENSES_LABEL, PROPOSAL_TRAVEL_EXPENSES_LABEL_LEGACY}
 
 
+def _proposal_payload_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 class DisabledOptionsSelect(forms.Select):
     def __init__(self, *args, disabled_values=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -931,6 +937,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                         "job_title": item.job_title or "",
                         "professional_status": item.professional_status or "",
                         "service_name": item.service_name or "",
+                        "code": item.code or "",
+                        "merge_without_code": bool(item.merge_without_code),
                         "rate_eur_per_day": str(item.rate_eur_per_day or ""),
                         "asset_day_counts": list(item.asset_day_counts or []),
                         "total_eur_without_vat": str(item.total_eur_without_vat or ""),
@@ -995,6 +1003,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     {
                         "service_name": item.get("service_name", ""),
                         "code": item.get("code", ""),
+                        **({"merge_without_code": True} if item.get("merge_without_code") else {}),
                     }
                     for item in (self.instance.service_sections_json or [])
                 ],
@@ -1125,6 +1134,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 "job_title": item.job_title or "",
                 "professional_status": item.professional_status or "",
                 "service_name": item.service_name or "",
+                "code": item.code or "",
+                "merge_without_code": bool(item.merge_without_code),
                 "rate_eur_per_day": str(item.rate_eur_per_day or ""),
                 "asset_day_counts": list(item.asset_day_counts or []),
                 "total_eur_without_vat": str(item.total_eur_without_vat or ""),
@@ -1673,6 +1684,14 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 {
                     "service_name": service_name,
                     "code": code or sections_by_name.get(service_name, ""),
+                    **(
+                        {"merge_without_code": True}
+                        if (
+                            not _proposal_is_dsc_payload_item(item, product)
+                            and _proposal_payload_bool(item.get("merge_without_code"))
+                        )
+                        else {}
+                    ),
                 }
             )
         return self._prepend_system_dsc_service_section(normalized, product)
@@ -1726,7 +1745,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             raise forms.ValidationError(f"Сводный блок: поле «{field_label}» передано в некорректном формате.")
         return value
 
-    def _normalize_stage_commercial_rows(self, raw, *, row_index, totals_raw="", product=None):
+    def _normalize_stage_commercial_rows(self, raw, *, row_index, totals_raw="", product=None, service_sections=None):
         items = self._load_stage_json(
             raw,
             row_index=row_index,
@@ -1738,6 +1757,14 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             totals_raw,
             row_index=row_index,
         ).get("travel_expenses_mode")
+        service_rules_by_name = {
+            str(item.get("service_name") or "").strip(): {
+                "code": str(item.get("code") or "").strip(),
+                "merge_without_code": _proposal_payload_bool(item.get("merge_without_code")),
+            }
+            for item in (service_sections or [])
+            if isinstance(item, dict) and str(item.get("service_name") or "").strip()
+        }
         normalized = []
         for index, item in enumerate(items, start=1):
             if not isinstance(item, dict):
@@ -1748,6 +1775,11 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             job_title = str(item.get("job_title") or "").strip()
             professional_status = str(item.get("professional_status") or "").strip()
             service_name = str(item.get("service_name") or "").strip()
+            service_rule = service_rules_by_name.get(service_name, {})
+            code = str(item.get("code") or "").strip() or str(service_rule.get("code") or "").strip()
+            merge_without_code = _proposal_payload_bool(item.get("merge_without_code")) or bool(
+                service_rule.get("merge_without_code")
+            )
             rate_raw = str(item.get("rate_eur_per_day") or "").strip()
             total_raw = str(item.get("total_eur_without_vat") or "").strip()
             asset_day_counts = item.get("asset_day_counts") or []
@@ -1828,6 +1860,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     "job_title": job_title,
                     "professional_status": professional_status,
                     "service_name": service_name,
+                    "code": code,
+                    "merge_without_code": merge_without_code,
                     "rate_eur_per_day": rate_value,
                     "asset_day_counts": cleaned_day_counts,
                     "total_eur_without_vat": total_value,
@@ -1876,6 +1910,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             job_title = str(item.get("job_title") or "").strip()
             professional_status = str(item.get("professional_status") or "").strip()
             service_name = str(item.get("service_name") or "").strip()
+            code = str(item.get("code") or "").strip()
+            merge_without_code = _proposal_payload_bool(item.get("merge_without_code"))
             rate_raw = str(item.get("rate_eur_per_day") or "").strip()
             total_raw = str(item.get("total_eur_without_vat") or "").strip()
             asset_day_counts = item.get("asset_day_counts") or []
@@ -1956,6 +1992,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     "job_title": job_title,
                     "professional_status": professional_status,
                     "service_name": service_name,
+                    "code": code,
+                    "merge_without_code": merge_without_code,
                     "rate_eur_per_day": rate_value,
                     "asset_day_counts": cleaned_day_counts,
                     "total_eur_without_vat": total_value,
@@ -1996,12 +2034,26 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         has_travel_actual = False
 
         for stage in stage_payloads:
+            service_rules_by_name = {
+                str(section.get("service_name") or "").strip(): {
+                    "code": str(section.get("code") or "").strip(),
+                    "merge_without_code": _proposal_payload_bool(section.get("merge_without_code")),
+                }
+                for section in (stage.get("service_sections_json") or [])
+                if isinstance(section, dict) and str(section.get("service_name") or "").strip()
+            }
             travel_mode = (
                 str((stage.get("commercial_totals_json") or {}).get("travel_expenses_mode") or "").strip()
                 or PROPOSAL_TRAVEL_EXPENSES_MODE_ACTUAL
             )
             for item in stage["commercial_offer_payload"]:
-                is_travel_row = is_proposal_travel_expenses_name(item.get("service_name") or "")
+                service_name = str(item.get("service_name") or "").strip()
+                service_rule = service_rules_by_name.get(service_name, {})
+                code = str(item.get("code") or "").strip() or str(service_rule.get("code") or "").strip()
+                merge_without_code = _proposal_payload_bool(item.get("merge_without_code")) or bool(
+                    service_rule.get("merge_without_code")
+                )
+                is_travel_row = is_proposal_travel_expenses_name(service_name)
                 day_values = list(item.get("asset_day_counts") or [])[:asset_count]
                 while len(day_values) < asset_count:
                     day_values.append("")
@@ -2026,6 +2078,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 key = (
                     str(item.get("specialist") or "").strip(),
                     str(item.get("job_title") or "").strip(),
+                    "" if merge_without_code else code,
                 )
                 bucket = grouped_rows.get(key)
                 if bucket is None:
@@ -2034,12 +2087,16 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                         "specialist": key[0],
                         "job_title": key[1],
                         "professional_status": str(item.get("professional_status") or "").strip(),
-                        "service_name": "",
+                        "service_name": service_name,
+                        "code": code,
+                        "merge_without_code": merge_without_code,
                         "rate_eur_per_day": item.get("rate_eur_per_day"),
                         "asset_day_counts": [0 for _ in range(asset_count)],
                         "total_eur_without_vat": Decimal("0"),
                     }
                     grouped_rows[key] = bucket
+                elif service_name:
+                    bucket["service_name"] = service_name
                 for index, raw_value in enumerate(day_values):
                     if raw_value in (None, ""):
                         continue
@@ -2060,7 +2117,9 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     "specialist": bucket["specialist"],
                     "job_title": bucket["job_title"],
                     "professional_status": bucket["professional_status"],
-                    "service_name": "",
+                    "service_name": bucket["service_name"],
+                    "code": bucket["code"],
+                    "merge_without_code": bucket["merge_without_code"],
                     "rate_eur_per_day": bucket["rate_eur_per_day"],
                     "asset_day_counts": [value if value else "" for value in bucket["asset_day_counts"]],
                     "total_eur_without_vat": bucket["total_eur_without_vat"],
@@ -2080,6 +2139,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     "job_title": "",
                     "professional_status": "",
                     "service_name": PROPOSAL_TRAVEL_EXPENSES_LABEL,
+                    "code": "",
+                    "merge_without_code": False,
                     "rate_eur_per_day": None,
                     "asset_day_counts": (
                         [self._serialize_payload_decimal(value) if value else "" for value in travel_day_totals]
@@ -2219,6 +2280,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                         row_index=rank,
                         totals_raw=row.get("commercial_totals_payload"),
                         product=product,
+                        service_sections=service_sections_json,
                     ),
                     "commercial_totals_json": self._normalize_stage_commercial_totals(
                         row.get("commercial_totals_payload"),
@@ -2406,6 +2468,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 {
                     "service_name": item["service_name"],
                     "code": item["code"],
+                    **({"merge_without_code": True} if item.get("merge_without_code") else {}),
                 }
                 for item in getattr(self, "cleaned_service_sections", [])
             ]
@@ -2429,6 +2492,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                         "job_title": offer.get("job_title") or "",
                         "professional_status": offer.get("professional_status") or "",
                         "service_name": offer.get("service_name") or "",
+                        "code": offer.get("code") or "",
+                        "merge_without_code": bool(offer.get("merge_without_code")),
                         "rate_eur_per_day": str(offer.get("rate_eur_per_day") or ""),
                         "asset_day_counts": list(offer.get("asset_day_counts") or []),
                         "total_eur_without_vat": str(offer.get("total_eur_without_vat") or ""),
@@ -2543,6 +2608,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     {
                         "service_name": item["service_name"],
                         "code": item["code"],
+                        **({"merge_without_code": True} if item.get("merge_without_code") else {}),
                     }
                     for item in cleaned_rows
                 ],
@@ -2572,6 +2638,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
 
             service_name = str(row.get("service_name") or "").strip()
             code = str(row.get("code") or "").strip()
+            merge_without_code = _proposal_payload_bool(row.get("merge_without_code"))
             if not service_name and not code:
                 continue
             if not service_name:
@@ -2585,6 +2652,11 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     "position": len(cleaned_rows) + 1,
                     "service_name": service_name,
                     "code": code or expected_code,
+                    **(
+                        {"merge_without_code": True}
+                        if merge_without_code and not is_system_dsc_code(code or expected_code)
+                        else {}
+                    ),
                 }
             )
 
@@ -2597,6 +2669,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 {
                     "service_name": item["service_name"],
                     "code": item["code"],
+                    **({"merge_without_code": True} if item.get("merge_without_code") else {}),
                 }
                 for item in cleaned_rows
             ],
@@ -2733,6 +2806,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             job_title = str(row.get("job_title") or "").strip()
             professional_status = str(row.get("professional_status") or "").strip()
             service_name = str(row.get("service_name") or "").strip()
+            code = str(row.get("code") or "").strip()
+            merge_without_code = _proposal_payload_bool(row.get("merge_without_code"))
             rate_raw = str(row.get("rate_eur_per_day") or "").strip()
             total_raw = str(row.get("total_eur_without_vat") or "").strip()
             asset_day_counts_raw = row.get("asset_day_counts") or []
@@ -2820,6 +2895,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     "job_title": job_title,
                     "professional_status": professional_status,
                     "service_name": service_name,
+                    "code": code,
+                    "merge_without_code": merge_without_code,
                     "rate_eur_per_day": rate_value,
                     "asset_day_counts": asset_day_counts,
                     "total_eur_without_vat": total_value,
@@ -2834,6 +2911,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     "job_title": item["job_title"],
                     "professional_status": item["professional_status"],
                     "service_name": item["service_name"],
+                    "code": item["code"],
+                    "merge_without_code": item["merge_without_code"],
                     "rate_eur_per_day": str(item["rate_eur_per_day"] or ""),
                     "asset_day_counts": item["asset_day_counts"],
                     "total_eur_without_vat": str(item["total_eur_without_vat"] or ""),
@@ -3120,6 +3199,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     job_title=item["job_title"],
                     professional_status=item["professional_status"],
                     service_name=item["service_name"],
+                    code=item.get("code") or "",
+                    merge_without_code=bool(item.get("merge_without_code")),
                     rate_eur_per_day=(None if item.get("rate_eur_per_day") in ("", None) else item.get("rate_eur_per_day")),
                     asset_day_counts=item["asset_day_counts"],
                     total_eur_without_vat=(

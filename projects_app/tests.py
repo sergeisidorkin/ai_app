@@ -886,6 +886,40 @@ class ProjectRegistrationFormViewTests(TestCase):
             {"source_data_weeks": "0", "preliminary_report_months": "1.5", "final_report_weeks": "2.0"},
         )
 
+    def test_registration_edit_form_preserves_custom_stage_terms_in_html(self):
+        TypicalServiceTerm.objects.create(
+            product=self.product,
+            preliminary_report_months="1.0",
+            final_report_weeks=2,
+            position=1,
+        )
+        registration = ProjectRegistration.objects.create(
+            number=6212,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Проект с индивидуальными сроками",
+            status="Не начат",
+            year=2026,
+            deadline=date(2026, 1, 10),
+            stage1_weeks="5.0",
+            stage2_weeks="10.0",
+        )
+        ProjectRegistrationProduct.objects.create(
+            registration=registration,
+            product=self.product,
+            rank=1,
+        )
+
+        response = self.client.get(reverse("registration_form_edit", args=[registration.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        self.assertIn(f'data-selected-product-id="{self.product.pk}"', content)
+        self.assertIn('name="stage1_weeks" value="5.0"', content)
+        self.assertIn('name="stage2_weeks" value="10.0"', content)
+        self.assertIn("productRow.dataset.selectedProductId", content)
+
     def test_registration_edit_rejects_multiple_products(self):
         registration = ProjectRegistration.objects.create(
             number=6210,
