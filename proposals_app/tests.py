@@ -1877,6 +1877,42 @@ class ProposalDispatchSendTests(TestCase):
         )
         self.assertTrue(self.successful_proposal.transfer_to_contract_date)
 
+    def test_dispatch_transfer_to_contract_creates_separate_projects_for_sub_numbers(self):
+        second_proposal = ProposalRegistration.objects.create(
+            number=self.successful_proposal.number,
+            sub_number=1,
+            group_member=self.successful_proposal.group_member,
+            type=self.product,
+            name="Приморское этап 2",
+            year=2026,
+            contact_email="recipient@example.com",
+        )
+
+        response = self.client.post(
+            reverse("proposal_dispatch_transfer_to_contract"),
+            {"proposal_ids[]": [self.successful_proposal.pk, second_proposal.pk]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["created"], 2)
+        self.assertEqual(payload["existing"], 0)
+        self.assertEqual(
+            set(
+                ProjectRegistration.objects.filter(
+                    number=self.successful_proposal.number,
+                    group_member=self.successful_proposal.group_member,
+                    agreement_type=ProjectRegistration.AgreementType.MAIN,
+                    agreement_number=f"IMCM/{self.successful_proposal.number}",
+                ).values_list("proposal_registration_id", "sub_number")
+            ),
+            {
+                (self.successful_proposal.pk, 0),
+                (second_proposal.pk, 1),
+            },
+        )
+
     def test_dispatch_transfer_to_contract_copies_all_ranked_proposal_products_when_creating_project(self):
         second_product = Product.objects.create(
             short_name="QAQC_MULTI",

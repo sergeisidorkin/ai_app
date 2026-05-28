@@ -11,7 +11,7 @@ from django import forms
 from django.conf import settings
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.db import transaction
-from django.db.models import Max, Prefetch
+from django.db.models import Max, Prefetch, Q
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -2295,6 +2295,13 @@ def proposal_dispatch_transfer_to_contract(request):
                     group_member=proposal.group_member,
                     agreement_type=ProjectRegistration.AgreementType.MAIN,
                     agreement_number=agreement_number,
+                )
+                .filter(
+                    Q(proposal_registration=proposal)
+                    | Q(
+                        proposal_registration__isnull=True,
+                        sub_number=proposal.sub_number,
+                    )
                 )
                 .order_by("position", "id")
                 .first()

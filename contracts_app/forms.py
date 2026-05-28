@@ -1136,27 +1136,37 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         number = cleaned_data.get("number")
         sub_number = cleaned_data.get("sub_number")
         proposal_registration = cleaned_data.get("proposal_registration")
+        group_member = cleaned_data.get("group_member")
         if (
             number is not None
             and sub_number is not None
+            and group_member is not None
             and not self.errors.get("number")
             and not self.errors.get("sub_number")
             and not self.errors.get("proposal_registration")
+            and not self.errors.get("group_member")
         ):
+            proposal_sequence = int(getattr(proposal_registration, "sub_number", 0) or 0)
             duplicate_qs = ContractProjectRegistration.objects.filter(
                 number=number,
                 sub_number=sub_number,
+                group_member=group_member,
             )
-            if proposal_registration:
-                duplicate_qs = duplicate_qs.filter(proposal_registration=proposal_registration)
+            if proposal_sequence:
+                duplicate_qs = duplicate_qs.filter(
+                    proposal_registration__sub_number=proposal_sequence,
+                )
             else:
-                duplicate_qs = duplicate_qs.filter(proposal_registration__isnull=True)
+                duplicate_qs = duplicate_qs.filter(
+                    Q(proposal_registration__isnull=True)
+                    | Q(proposal_registration__sub_number=0)
+                )
             if self.instance.pk:
                 duplicate_qs = duplicate_qs.exclude(pk=self.instance.pk)
             if duplicate_qs.exists():
                 self.add_error(
                     "sub_number",
-                    "Для строк с одинаковыми Номер и ТКП ID значение № должно быть уникальным.",
+                    "Для строк с одинаковыми Номер, последовательностью ТКП и группой значение № должно быть уникальным.",
                 )
         if getattr(self, "cleaned_stage_payloads", None) and not self.payment_schedule_common_enabled:
             last_stage = self.cleaned_stage_payloads[-1]

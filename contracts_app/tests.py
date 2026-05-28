@@ -2780,6 +2780,41 @@ class ContractsCloudLabelTests(TestCase):
 
         self.assertTrue(form.is_valid(), form.errors)
 
+    def test_contract_project_form_rejects_duplicate_generated_uid_for_same_proposal_sequence(self):
+        ContractProjectRegistration.objects.create(
+            number=7405,
+            sub_number=2,
+            proposal_registration=self.proposal,
+            group_member=self.group_member,
+            type=self.product,
+            name="Первый договор",
+            status="Разрабатывается проект договора",
+            year=2026,
+        )
+        second_proposal = ProposalRegistration.objects.create(
+            number=7405,
+            group_member=self.group_member,
+            type=self.product,
+            name="Другой ТКП с тем же №",
+            year=2026,
+        )
+        form = ContractProjectRegistrationForm(
+            data={
+                "number": 7405,
+                "sub_number": 2,
+                "proposal_registration": second_proposal.pk,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [str(self.product.pk)],
+                "name": "Дубликат по Договор ID",
+                "status": "Разрабатывается проект договора",
+                "year": 2026,
+            }
+        )
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("sub_number", form.errors)
+
     def test_contracts_project_registration_create_accepts_multiple_products_on_one_row(self):
         second_product = Product.objects.create(
             short_name="QAQC",
