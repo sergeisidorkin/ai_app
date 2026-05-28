@@ -5947,8 +5947,8 @@ html.worktime-progress-cursor * {
 
 #proposals-pane .proposal-service-sections-table th:nth-child(2),
 #proposals-pane .proposal-service-sections-table td:nth-child(2) {
-  width: calc(100% - var(--proposal-check-width) - 10rem);
-  min-width: calc(100% - var(--proposal-check-width) - 10rem);
+  width: calc(100% - var(--proposal-check-width) - 10rem - 2.25rem);
+  min-width: calc(100% - var(--proposal-check-width) - 10rem - 2.25rem);
 }
 
 #proposals-pane .proposal-service-sections-table th.proposal-service-section-name-header {
@@ -5985,6 +5985,37 @@ html.worktime-progress-cursor * {
   width: 10rem;
   min-width: 10rem;
   max-width: 10rem;
+}
+
+#proposals-pane .proposal-service-sections-table th:nth-child(4),
+#proposals-pane .proposal-service-sections-table td:nth-child(4) {
+  width: 2.25rem;
+  min-width: 2.25rem;
+  max-width: 2.25rem;
+  text-align: center;
+}
+
+#proposals-pane .proposal-service-sections-table .proposal-service-section-rule-cell {
+  padding-left: .25rem;
+  padding-right: .25rem;
+}
+
+#proposals-pane .proposal-service-sections-table .proposal-service-section-merge-rule {
+  border: 0;
+  background: transparent;
+  color: #adb5bd;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  padding: 0;
+  line-height: 1;
+}
+
+#proposals-pane .proposal-service-sections-table .proposal-service-section-merge-rule:hover,
+#proposals-pane .proposal-service-sections-table .proposal-service-section-merge-rule:focus {
+  color: #8f99a3;
 }
 
 #proposals-pane .proposal-service-sections-table .form-control,

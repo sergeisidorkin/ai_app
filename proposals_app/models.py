@@ -541,6 +541,8 @@ class ProposalCommercialOffer(models.Model):
     job_title = models.CharField("Должность", max_length=255, blank=True, default="")
     professional_status = models.CharField("Профессиональный статус", max_length=255, blank=True, default="")
     service_name = models.CharField("Услуги", max_length=255, blank=True, default="")
+    code = models.CharField("Код", max_length=100, blank=True, default="")
+    merge_without_code = models.BooleanField("Объединять без учета кода", default=False)
     rate_eur_per_day = models.DecimalField(
         "Ставка, евро / день",
         max_digits=15,

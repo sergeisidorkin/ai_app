@@ -284,16 +284,22 @@ def _proposal_scope_of_work(proposal) -> list[dict[str, object] | str]:
             paragraphs.append("<p>" + escape(chunk).replace("\n", "<br>") + "</p>")
         return "".join(paragraphs)
 
-    def build_item(html_value, plain_text_value):
+    def build_item(html_value, plain_text_value, *, ordered_numbering_scope: str = ""):
         html = str(html_value or "").strip()
         plain_text = str(plain_text_value or "").strip()
         if html:
-            return {"html": html}
+            item = {"html": html}
+            if ordered_numbering_scope:
+                item["ordered_numbering_scope"] = ordered_numbering_scope
+            return item
         if not plain_text:
             return None
-        return {"html": plain_text_to_html(plain_text)}
+        item = {"html": plain_text_to_html(plain_text)}
+        if ordered_numbering_scope:
+            item["ordered_numbering_scope"] = ordered_numbering_scope
+        return item
 
-    def items_from_source(source) -> list[dict[str, object] | str]:
+    def items_from_source(source, *, ordered_numbering_scope: str = "") -> list[dict[str, object] | str]:
         mode = str(source_value(source, "service_composition_mode", "") or "sections").strip()
         if mode == "customer_tz":
             stored = source_value(source, "service_customer_tz_editor_state", {}) or {}
@@ -302,9 +308,14 @@ def _proposal_scope_of_work(proposal) -> list[dict[str, object] | str]:
                 stored.get("plain_text")
                 if isinstance(stored, dict)
                 else source_value(source, "service_composition_customer_tz", ""),
+                ordered_numbering_scope=ordered_numbering_scope,
             )
             if item is None:
-                fallback = build_item("", source_value(source, "service_composition_customer_tz", ""))
+                fallback = build_item(
+                    "",
+                    source_value(source, "service_composition_customer_tz", ""),
+                    ordered_numbering_scope=ordered_numbering_scope,
+                )
                 if fallback is None:
                     return []
                 return fallback if isinstance(fallback, list) else [fallback]
@@ -318,7 +329,11 @@ def _proposal_scope_of_work(proposal) -> list[dict[str, object] | str]:
             for section in stored_sections:
                 if not isinstance(section, dict):
                     continue
-                item = build_item(section.get("html"), section.get("plain_text"))
+                item = build_item(
+                    section.get("html"),
+                    section.get("plain_text"),
+                    ordered_numbering_scope=ordered_numbering_scope,
+                )
                 if item is None:
                     continue
                 if isinstance(item, list):
@@ -328,7 +343,11 @@ def _proposal_scope_of_work(proposal) -> list[dict[str, object] | str]:
         if result:
             return result
 
-        fallback = build_item("", source_value(source, "service_composition", ""))
+        fallback = build_item(
+            "",
+            source_value(source, "service_composition", ""),
+            ordered_numbering_scope=ordered_numbering_scope,
+        )
         if fallback is None:
             return []
         return fallback if isinstance(fallback, list) else [fallback]
@@ -370,7 +389,7 @@ def _proposal_scope_of_work(proposal) -> list[dict[str, object] | str]:
         product_name = _service_goal_report_value(getattr(product, "pk", None), "product_name")
         result.append({"runs": [{"text": f"ЭТАП {index} — {product_name}.", "bold": True}]})
         result.append(strong_line("Состав услуг по этапу:"))
-        result.extend(items_from_source(source))
+        result.extend(items_from_source(source, ordered_numbering_scope=f"scope_of_work_stage_{index}"))
         date_line = evaluation_date_line(source)
         if date_line is not None:
             result.append(date_line)
@@ -450,6 +469,12 @@ def _normalize_proposal_travel_expenses_mode(value) -> str:
     return ""
 
 
+def _proposal_payload_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _round_to_hundred_thousand(value: Decimal | None) -> Decimal | None:
     if value is None:
         return None
@@ -467,6 +492,16 @@ def _format_day_count(value) -> str:
     if parsed is None or parsed == Decimal("0"):
         return ""
     return _format_decimal(parsed, precision=2, strip_trailing_zeros=True)
+
+
+def _proposal_budget_direction(job_title, professional_status, service_name) -> str:
+    specialty = str(job_title or "").strip()
+    status = str(professional_status or "").strip()
+    service = str(service_name or "").strip()
+    direction = ", ".join(value for value in [specialty, status] if value)
+    if service and service != specialty:
+        return "; ".join(value for value in [direction, service] if value)
+    return direction
 
 
 def _proposal_multistage_budget_table(proposal) -> dict | None:
@@ -570,8 +605,8 @@ def _proposal_multistage_budget_table(proposal) -> dict | None:
             ]
         ]
 
-    grouped_rows: dict[tuple[str, str], dict[str, object]] = {}
-    grouped_order: list[tuple[str, str]] = []
+    grouped_rows: dict[tuple[str, str, str], dict[str, object]] = {}
+    grouped_order: list[tuple[str, str, str]] = []
     stage_day_totals = [[Decimal("0") for _ in range(asset_count)] for _ in range(stage_count)]
     travel_stage_day_totals = [[Decimal("0") for _ in range(asset_count)] for _ in range(stage_count)]
     travel_total = Decimal("0")
@@ -588,6 +623,14 @@ def _proposal_multistage_budget_table(proposal) -> dict | None:
         return values
 
     for stage_index, stage in enumerate(stage_payloads):
+        service_rules_by_name = {
+            str(section.get("service_name") or "").strip(): {
+                "code": str(section.get("code") or "").strip(),
+                "merge_without_code": _proposal_payload_bool(section.get("merge_without_code")),
+            }
+            for section in (stage.get("service_sections_json") or [])
+            if isinstance(section, dict) and str(section.get("service_name") or "").strip()
+        }
         totals_state = stage.get("commercial_totals_json") or {}
         travel_mode = (
             _normalize_proposal_travel_expenses_mode(totals_state.get("travel_expenses_mode"))
@@ -597,7 +640,8 @@ def _proposal_multistage_budget_table(proposal) -> dict | None:
             if not isinstance(item, dict):
                 continue
             day_values = normalized_day_values(item.get("asset_day_counts") or [])
-            if _is_proposal_travel_expenses_name(item.get("service_name") or ""):
+            service_name = str(item.get("service_name") or "").strip()
+            if _is_proposal_travel_expenses_name(service_name):
                 item_total = _proposal_day_decimal(item.get("total_eur_without_vat")) or Decimal("0")
                 travel_total += item_total
                 if item_total or any(value for value in day_values):
@@ -610,21 +654,30 @@ def _proposal_multistage_budget_table(proposal) -> dict | None:
                     has_travel_actual = True
                 continue
 
+            service_rule = service_rules_by_name.get(service_name, {})
+            code = str(item.get("code") or "").strip() or str(service_rule.get("code") or "").strip()
+            merge_without_code = _proposal_payload_bool(item.get("merge_without_code")) or bool(
+                service_rule.get("merge_without_code")
+            )
             key = (
                 str(item.get("specialist") or "").strip(),
                 str(item.get("job_title") or "").strip(),
+                "" if merge_without_code else code,
             )
             if key not in grouped_rows:
                 grouped_rows[key] = {
                     "specialist": key[0],
                     "job_title": key[1],
                     "professional_status": str(item.get("professional_status") or "").strip(),
+                    "service_name": service_name,
                     "rate_eur_per_day": item.get("rate_eur_per_day"),
                     "stage_asset_day_counts": [[Decimal("0") for _ in range(asset_count)] for _ in range(stage_count)],
                     "fallback_total": Decimal("0"),
                 }
                 grouped_order.append(key)
             bucket = grouped_rows[key]
+            if service_name:
+                bucket["service_name"] = service_name
             for asset_index, value in enumerate(day_values):
                 bucket["stage_asset_day_counts"][stage_index][asset_index] += value
                 stage_day_totals[stage_index][asset_index] += value
@@ -640,17 +693,29 @@ def _proposal_multistage_budget_table(proposal) -> dict | None:
     if saved_regular_offers:
         source_rows = []
         for item in saved_regular_offers:
+            code = str(getattr(item, "code", "") or "").strip()
+            merge_without_code = bool(getattr(item, "merge_without_code", False))
             key = (
                 str(getattr(item, "specialist", "") or "").strip(),
                 str(getattr(item, "job_title", "") or "").strip(),
+                "" if merge_without_code else code,
             )
             bucket = grouped_rows.get(key)
+            if bucket is None and not code and not merge_without_code:
+                matching_keys = [
+                    group_key
+                    for group_key in grouped_order
+                    if group_key[0] == key[0] and group_key[1] == key[1]
+                ]
+                if len(matching_keys) == 1:
+                    bucket = grouped_rows.get(matching_keys[0])
             raw_asset_day_counts = list(getattr(item, "asset_day_counts", []) or [])
             source_rows.append(
                 {
                     "specialist": key[0],
                     "job_title": key[1],
                     "professional_status": str(getattr(item, "professional_status", "") or "").strip(),
+                    "service_name": str(getattr(item, "service_name", "") or "").strip(),
                     "rate_eur_per_day": getattr(item, "rate_eur_per_day", None),
                     "stage_asset_day_counts": (
                         bucket["stage_asset_day_counts"]
@@ -675,6 +740,7 @@ def _proposal_multistage_budget_table(proposal) -> dict | None:
                     "specialist": str(bucket["specialist"] or "").strip(),
                     "job_title": str(bucket["job_title"] or "").strip(),
                     "professional_status": str(bucket["professional_status"] or "").strip(),
+                    "service_name": str(bucket.get("service_name") or "").strip(),
                     "rate_eur_per_day": bucket["rate_eur_per_day"],
                     "stage_asset_day_counts": stage_counts,
                     "asset_day_counts": [
@@ -708,13 +774,10 @@ def _proposal_multistage_budget_table(proposal) -> dict | None:
         rate = _proposal_day_decimal(source["rate_eur_per_day"])
         row_total = (rate * total_days) if rate is not None and total_days else source["fallback_total"]
         summary_total += row_total
-        direction = ", ".join(
-            value
-            for value in [
-                str(source["job_title"] or "").strip(),
-                str(source["professional_status"] or "").strip(),
-            ]
-            if value
+        direction = _proposal_budget_direction(
+            source["job_title"],
+            source["professional_status"],
+            source.get("service_name"),
         )
         rows.append(
             [
@@ -903,15 +966,10 @@ def _proposal_budget_table(proposal) -> dict:
 
     for item in regular_offers:
         day_values = build_day_values(getattr(item, "asset_day_counts", []) or [])
-        direction = ", ".join(
-            [
-                value
-                for value in [
-                    str(getattr(item, "job_title", "") or "").strip(),
-                    str(getattr(item, "professional_status", "") or "").strip(),
-                ]
-                if value
-            ]
+        direction = _proposal_budget_direction(
+            getattr(item, "job_title", ""),
+            getattr(item, "professional_status", ""),
+            getattr(item, "service_name", ""),
         )
         rows.append(
             [

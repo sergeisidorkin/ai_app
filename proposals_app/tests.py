@@ -667,7 +667,7 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertIn("Кол-во\nдней", budget_rows[0])
         self.assertIn("Итого,\n€ без НДС", budget_rows[0])
         self.assertIn("Иванов И.И.", budget_rows[1])
-        self.assertIn("Геолог, Партнер", budget_rows[1])
+        self.assertIn("Геолог, Партнер; Раздел 1", budget_rows[1])
         self.assertIn("6", budget_rows[1])
         self.assertIn("7\u00a0200,00", budget_rows[1])
         self.assertIn("ИТОГО, по расчёту", budget_rows[3][0])
@@ -896,6 +896,59 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertIn('w:lvlText w:val="%2)"', numbering_xml)
         self.assertIn('w:ilvl w:val="0"', paragraphs_by_text["Основной пункт"])
         self.assertIn('w:ilvl w:val="1"', paragraphs_by_text["Подпункт буквой"])
+
+    def test_scope_of_work_restarts_ordered_numbering_per_stage_scope(self):
+        template_doc = Document()
+        template_doc.add_paragraph("[[scope_of_work]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+
+        generated_bytes = process_template(
+            buffer.getvalue(),
+            {},
+            list_replacements={
+                "[[scope_of_work]]": [
+                    {
+                        "html": '<ol><li data-list="ordered">Первый пункт первого этапа</li></ol>',
+                        "ordered_numbering_scope": "scope_of_work_stage_1",
+                    },
+                    {
+                        "html": '<ol><li data-list="ordered">Второй раздел первого этапа</li></ol>',
+                        "ordered_numbering_scope": "scope_of_work_stage_1",
+                    },
+                    {
+                        "html": '<ol><li data-list="ordered">Первый пункт второго этапа</li></ol>',
+                        "ordered_numbering_scope": "scope_of_work_stage_2",
+                    },
+                ]
+            },
+            default_language_code="ru-RU",
+        )
+
+        generated_doc = Document(BytesIO(generated_bytes))
+        paragraphs_by_text = {
+            paragraph.text: paragraph
+            for paragraph in generated_doc.paragraphs
+            if paragraph.text
+            in {
+                "Первый пункт первого этапа",
+                "Второй раздел первого этапа",
+                "Первый пункт второго этапа",
+            }
+        }
+
+        first_stage_num_id = paragraphs_by_text[
+            "Первый пункт первого этапа"
+        ]._p.pPr.numPr.numId.val
+        first_stage_next_section_num_id = paragraphs_by_text[
+            "Второй раздел первого этапа"
+        ]._p.pPr.numPr.numId.val
+        second_stage_num_id = paragraphs_by_text[
+            "Первый пункт второго этапа"
+        ]._p.pPr.numPr.numId.val
+
+        self.assertEqual(first_stage_num_id, first_stage_next_section_num_id)
+        self.assertNotEqual(first_stage_num_id, second_stage_num_id)
 
     def test_scope_of_work_preserves_quill_marker_indent_levels(self):
         template_doc = Document()
@@ -1128,10 +1181,70 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertEqual(table_spec["rows"][0][3]["text"], "Месторождение Приморское")
         self.assertTrue(table_spec["rows"][0][1]["no_wrap"])
         self.assertEqual(table_spec["rows"][1][0]["text"], "Иванов И.И.")
-        self.assertEqual(table_spec["rows"][1][1]["text"], "Геолог, Партнер")
+        self.assertEqual(table_spec["rows"][1][1]["text"], "Геолог, Партнер; Раздел 1")
         self.assertTrue(table_spec["rows"][1][1]["no_wrap"])
         self.assertEqual(table_spec["rows"][1][-2]["text"], "6")
         self.assertEqual(table_spec["rows"][8][0]["text"], "ИТОГО в договор, рубли без НДС с учётом доп. скидки")
+
+    def test_resolve_budget_table_includes_service_name_in_direction_column(self):
+        proposal = ProposalRegistration.objects.create(
+            number=4443,
+            group_member=self.group_member,
+            type=self.product,
+            name="Услуга в направлении",
+            year=2026,
+            status=ProposalRegistration.ProposalStatus.PRELIMINARY,
+            customer='ООО "Приморское"',
+        )
+        ProposalAsset.objects.create(proposal=proposal, short_name="Актив", position=1)
+        ProposalCommercialOffer.objects.create(
+            proposal=proposal,
+            specialist="Иванов И.И.",
+            job_title="Геолог",
+            professional_status="Партнер",
+            service_name="Раздел 1",
+            rate_eur_per_day="1200",
+            asset_day_counts=[2],
+            total_eur_without_vat="2400",
+            position=1,
+        )
+
+        _, _, tables = resolve_variables(
+            proposal,
+            [ProposalVariable(key="[[budget_table]]", is_computed=True)],
+        )
+
+        self.assertEqual(tables["[[budget_table]]"]["rows"][1][1]["text"], "Геолог, Партнер; Раздел 1")
+
+    def test_resolve_budget_table_omits_duplicate_service_name_from_direction_column(self):
+        proposal = ProposalRegistration.objects.create(
+            number=4442,
+            group_member=self.group_member,
+            type=self.product,
+            name="Без дубля услуги",
+            year=2026,
+            status=ProposalRegistration.ProposalStatus.PRELIMINARY,
+            customer='ООО "Приморское"',
+        )
+        ProposalAsset.objects.create(proposal=proposal, short_name="Актив", position=1)
+        ProposalCommercialOffer.objects.create(
+            proposal=proposal,
+            specialist="Иванов И.И.",
+            job_title="Геолог",
+            professional_status="Партнер",
+            service_name="Геолог",
+            rate_eur_per_day="1200",
+            asset_day_counts=[2],
+            total_eur_without_vat="2400",
+            position=1,
+        )
+
+        _, _, tables = resolve_variables(
+            proposal,
+            [ProposalVariable(key="[[budget_table]]", is_computed=True)],
+        )
+
+        self.assertEqual(tables["[[budget_table]]"]["rows"][1][1]["text"], "Геолог, Партнер")
 
     def test_resolve_budget_table_omits_asset_column_for_single_asset(self):
         proposal = ProposalRegistration.objects.create(
@@ -1181,6 +1294,7 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertEqual(tables["[[budget_table]]"]["column_widths_pct"], [18, 46, 12, 12, 12])
         data_row = tables["[[budget_table]]"]["rows"][1]
         self.assertEqual(len(data_row), 5)
+        self.assertEqual(data_row[1]["text"], "Геолог, Партнер; Раздел 1")
         self.assertEqual(data_row[3]["text"], "2")
 
     def test_resolve_budget_table_uses_multistage_summary_for_single_asset(self):
@@ -1488,7 +1602,7 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertIn("Кол-во\nдней", budget_rows[0])
         self.assertIn("Итого,\n€ без НДС", budget_rows[0])
         self.assertIn("Иванов И.И.", budget_rows[1])
-        self.assertIn("Геолог, Партнер", budget_rows[1])
+        self.assertIn("Геолог, Партнер; Раздел 1", budget_rows[1])
         self.assertIn("6", budget_rows[1])
         self.assertIn("7\u00a0200,00", budget_rows[1])
         self.assertIn("ИТОГО, по расчёту", budget_rows[3][0])
@@ -5804,7 +5918,7 @@ class ProposalRegistrationFormTests(TestCase):
                     "specialist": "Summary expert",
                     "job_title": "Сводная роль",
                     "professional_status": "SUM",
-                    "service_name": "",
+                    "service_name": "Сводная услуга",
                     "rate_eur_per_day": "150",
                     "asset_day_counts": ["3"],
                     "total_eur_without_vat": "500",
@@ -5854,17 +5968,166 @@ class ProposalRegistrationFormTests(TestCase):
             [
                 {"runs": [{"text": "ЭТАП 1 — Первый продукт.", "bold": True}]},
                 {"runs": [{"text": "Состав услуг по этапу:", "character_style_id": "Сильное выделение"}]},
-                {"html": "<p>Scope 1</p>"},
+                {"html": "<p>Scope 1</p>", "ordered_numbering_scope": "scope_of_work_stage_1"},
                 {"runs": [{"text": "Дата оценки: 01.01.2026."}]},
                 {"runs": [{"text": "ЭТАП 2 — Второй продукт.", "bold": True}]},
                 {"runs": [{"text": "Состав услуг по этапу:", "character_style_id": "Сильное выделение"}]},
-                {"html": "<p><strong>Scope 2</strong></p>"},
+                {"html": "<p><strong>Scope 2</strong></p>", "ordered_numbering_scope": "scope_of_work_stage_2"},
                 {"runs": [{"text": "Дата оценки: 05.02.2026."}]},
             ],
         )
         budget_rows = tables["[[budget_table]]"]["rows"]
         self.assertEqual(budget_rows[1][0]["text"], "Summary expert")
-        self.assertEqual(budget_rows[1][1]["text"], "Сводная роль, SUM")
+        self.assertEqual(budget_rows[1][1]["text"], "Сводная роль, SUM; Сводная услуга")
+
+    def test_multistage_summary_fallback_groups_by_code_unless_disabled(self):
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        first_product = Product.objects.create(
+            short_name="C1",
+            name_en="Code One",
+            name_ru="Код 1",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        second_product = Product.objects.create(
+            short_name="C2",
+            name_en="Code Two",
+            name_ru="Код 2",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Оптимизация",
+            position=2,
+        )
+        totals_payload = json.dumps(
+            {
+                "exchange_rate": "95.1000",
+                "discount_percent": "0",
+                "contract_total": "0",
+                "contract_total_auto": "0",
+                "rub_total_service_text": "Курс ЦБ",
+                "discounted_total_service_text": "Скидка",
+                "travel_expenses_mode": "actual",
+            },
+            ensure_ascii=False,
+        )
+        payload = QueryDict("", mutable=True)
+        payload.update(
+            {
+                "number": "3333",
+                "group_member": str(group_member.pk),
+                "name": "Коды в сводном КП",
+                "kind": ProposalRegistration.ProposalKind.REGULAR,
+                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "year": "2026",
+            }
+        )
+        payload.setlist("type", [str(first_product.pk), str(second_product.pk)])
+        payload.setlist(
+            "service_sections_payload",
+            [
+                json.dumps(
+                    [
+                        {"service_name": "Общий код этап 1", "code": "A"},
+                        {"service_name": "Разный код этап 1", "code": "B"},
+                        {"service_name": "Union этап 1", "code": "C", "merge_without_code": True},
+                    ],
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    [
+                        {"service_name": "Общий код этап 2", "code": "A"},
+                        {"service_name": "Разный код этап 2", "code": "D"},
+                        {"service_name": "Union этап 2", "code": "E", "merge_without_code": True},
+                    ],
+                    ensure_ascii=False,
+                ),
+            ],
+        )
+        payload.setlist("service_sections_editor_state", ["[]", "[]"])
+        payload.setlist("service_customer_tz_editor_state", ["", ""])
+        payload.setlist("service_composition_customer_tz", ["", ""])
+        payload.setlist("service_composition_mode", ["sections", "sections"])
+        payload.setlist("service_composition", ["", ""])
+
+        def offer(service_name, code, days, total, merge_without_code=False):
+            return {
+                "specialist": "Эксперт",
+                "job_title": "Геолог",
+                "professional_status": "Senior",
+                "service_name": service_name,
+                "code": code,
+                "merge_without_code": merge_without_code,
+                "rate_eur_per_day": "100",
+                "asset_day_counts": [str(days)],
+                "total_eur_without_vat": str(total),
+            }
+
+        payload.setlist(
+            "commercial_offer_payload",
+            [
+                json.dumps(
+                    [
+                        offer("Общий код этап 1", "A", 1, 100),
+                        offer("Разный код этап 1", "B", 2, 200),
+                        offer("Union этап 1", "C", 3, 300, merge_without_code=True),
+                    ],
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    [
+                        offer("Общий код этап 2", "A", 4, 400),
+                        offer("Разный код этап 2", "D", 5, 500),
+                        offer("Union этап 2", "E", 6, 600, merge_without_code=True),
+                    ],
+                    ensure_ascii=False,
+                ),
+            ],
+        )
+        payload.setlist("commercial_totals_payload", [totals_payload, totals_payload])
+        payload.setlist("evaluation_date", ["01.01.2026", "05.02.2026"])
+        payload.setlist("service_term_months", ["1.0", "2.0"])
+        payload.setlist("preliminary_report_date", ["15.01.2026", "15.04.2026"])
+        payload.setlist("final_report_term_weeks", ["2.0", "3.0"])
+        payload.setlist("final_report_date", ["29.01.2026", "06.05.2026"])
+        payload["summary_commercial_offer_payload"] = ""
+        payload["summary_commercial_totals_payload"] = totals_payload
+
+        form = ProposalRegistrationForm(data=payload)
+
+        self.assertTrue(form.is_valid(), form.errors)
+        proposal = form.save()
+        form.save_commercial_offers(proposal)
+        proposal.refresh_from_db()
+
+        rows = list(proposal.commercial_offers.order_by("position"))
+        self.assertEqual(len(rows), 4)
+        rows_by_key = {(row.code, row.merge_without_code): row for row in rows}
+        self.assertEqual(rows_by_key[("A", False)].service_name, "Общий код этап 2")
+        self.assertEqual(rows_by_key[("A", False)].asset_day_counts, [5])
+        self.assertEqual(str(rows_by_key[("A", False)].total_eur_without_vat), "500.00")
+        self.assertEqual(rows_by_key[("B", False)].service_name, "Разный код этап 1")
+        self.assertEqual(rows_by_key[("D", False)].service_name, "Разный код этап 2")
+        self.assertEqual(rows_by_key[("C", True)].service_name, "Union этап 2")
+        self.assertEqual(rows_by_key[("C", True)].asset_day_counts, [9])
+        self.assertEqual(str(rows_by_key[("C", True)].total_eur_without_vat), "900.00")
+
+        _, _, tables = resolve_variables(
+            proposal,
+            [ProposalVariable(key="[[budget_table]]", is_computed=True)],
+        )
+        budget_rows = tables["[[budget_table]]"]["rows"]
+        self.assertEqual([row[0]["text"] for row in budget_rows[1:5]], ["Эксперт", "Эксперт", "Эксперт", "Эксперт"])
+        self.assertEqual([row[3]["text"] for row in budget_rows[1:5]], ["1", "2", "3", ""])
+        self.assertEqual([row[4]["text"] for row in budget_rows[1:5]], ["4", "", "6", "5"])
+        self.assertEqual([row[5]["text"] for row in budget_rows[1:5]], ["5", "2", "9", "5"])
 
     def test_multistage_fallback_aggregates_travel_day_counts_for_calculation_mode(self):
         group_member = GroupMember.objects.create(
