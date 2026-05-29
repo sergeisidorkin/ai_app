@@ -21,7 +21,11 @@
       {{ form.product }}
     </div>
     <div class="mb-3">
-      <label class="form-label">Раздел</label>
+      <label class="form-label">Код</label>
+      {{ form.section_code }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Раздел (услуга)</label>
       {{ form.section }}
     </div>
     <div class="mb-3">
@@ -45,8 +49,15 @@
 (function() {
   var productSelect = document.getElementById('id_product');
   var sectionSelect = document.getElementById('id_section');
+  var sectionCodeInput = document.getElementById('id_section_code');
   var sectionsByProduct = {{ sections_by_product_json|safe }};
   if (!productSelect || !sectionSelect) return;
+
+  function syncSectionCode() {
+    if (!sectionCodeInput) return;
+    var selected = sectionSelect.options[sectionSelect.selectedIndex];
+    sectionCodeInput.value = selected && selected.value ? (selected.dataset.code || '') : '';
+  }
 
   function rebuildSections() {
     var productId = productSelect.value || '';
@@ -61,14 +72,26 @@
       var option = document.createElement('option');
       option.value = String(item.id);
       option.textContent = item.label;
+      option.dataset.shortLabel = item.displayLabel || '';
+      option.dataset.code = item.code || '';
       sectionSelect.appendChild(option);
     });
     if (Array.from(sectionSelect.options).some(function(option) { return option.value === previous; })) {
       sectionSelect.value = previous;
     }
+    syncSectionCode();
+    if (window.syncPolicySectionSelectDisplay) {
+      window.syncPolicySectionSelectDisplay(sectionSelect);
+    }
   }
 
   productSelect.addEventListener('change', rebuildSections);
+  sectionSelect.addEventListener('change', function() {
+    syncSectionCode();
+    if (window.syncPolicySectionSelectDisplay) {
+      window.syncPolicySectionSelectDisplay(sectionSelect);
+    }
+  });
   rebuildSections();
 })();
 </script>

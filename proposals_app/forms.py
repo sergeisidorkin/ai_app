@@ -2089,6 +2089,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                         "professional_status": str(item.get("professional_status") or "").strip(),
                         "service_name": service_name,
                         "code": code,
+                        "codes": {code} if code else set(),
                         "merge_without_code": merge_without_code,
                         "rate_eur_per_day": item.get("rate_eur_per_day"),
                         "asset_day_counts": [0 for _ in range(asset_count)],
@@ -2097,6 +2098,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     grouped_rows[key] = bucket
                 elif service_name:
                     bucket["service_name"] = service_name
+                if code:
+                    bucket["codes"].add(code)
                 for index, raw_value in enumerate(day_values):
                     if raw_value in (None, ""):
                         continue
@@ -2118,7 +2121,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     "job_title": bucket["job_title"],
                     "professional_status": bucket["professional_status"],
                     "service_name": bucket["service_name"],
-                    "code": bucket["code"],
+                    "code": "" if bucket["merge_without_code"] and len(bucket["codes"]) > 1 else bucket["code"],
                     "merge_without_code": bucket["merge_without_code"],
                     "rate_eur_per_day": bucket["rate_eur_per_day"],
                     "asset_day_counts": [value if value else "" for value in bucket["asset_day_counts"]],

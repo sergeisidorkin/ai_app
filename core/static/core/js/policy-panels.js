@@ -312,6 +312,47 @@
     });
   }
 
+  function syncPolicySectionSelectDisplay(select) {
+    const shell = select?.closest('.policy-section-select-shell');
+    const display = shell?.querySelector('.policy-section-select-display');
+    if (!display) return;
+    const selected = select.options[select.selectedIndex];
+    const hasValue = !!String(selected?.value || '').trim();
+    const shortLabel = String(selected?.dataset?.shortLabel || '').trim();
+    const fallbackLabel = String(selected?.textContent || '').trim();
+    display.textContent = hasValue ? (shortLabel || fallbackLabel) : (fallbackLabel || '---------');
+    display.classList.toggle('is-placeholder', !hasValue);
+  }
+
+  function enhancePolicySectionSelect(select) {
+    if (!select || select.dataset.policySectionEnhanced === '1') {
+      if (select) syncPolicySectionSelectDisplay(select);
+      return;
+    }
+    const parent = select.parentElement;
+    if (!parent) return;
+    const shell = document.createElement('div');
+    shell.className = 'policy-section-select-shell';
+    parent.insertBefore(shell, select);
+    shell.appendChild(select);
+    const display = document.createElement('div');
+    display.className = 'policy-section-select-display';
+    shell.appendChild(display);
+    select.dataset.policySectionEnhanced = '1';
+    select.addEventListener('change', function () {
+      syncPolicySectionSelectDisplay(select);
+    });
+    syncPolicySectionSelectDisplay(select);
+  }
+
+  function initPolicySectionSelects(root) {
+    qa('select.policy-section-select', root).forEach(function (select) {
+      enhancePolicySectionSelect(select);
+    });
+  }
+
+  window.syncPolicySectionSelectDisplay = syncPolicySectionSelectDisplay;
+
   function bindPolicyFilterMenuWidth(dropdown) {
     if (!dropdown) return;
     if (window.bindProjectFilterMenuWidth) {
@@ -9555,6 +9596,7 @@
   document.body.addEventListener('htmx:afterSwap', function (e) {
     if (!e.target) return;
     initPolicyProductSelects(e.target);
+    initPolicySectionSelects(e.target);
   });
 
   // After an htmx swap, the policy pane (and our chart container with it) may
@@ -9579,6 +9621,7 @@
   });
 
   initPolicyProductSelects(document);
+  initPolicySectionSelects(document);
   initTypicalServiceCompositionWrapToggle();
   collapseSpecialtyTariffsSpecialties();
   initPolicyMasterFilters();

@@ -1194,6 +1194,8 @@ class SectionStructureViewsTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Типовая структура раздела (состава услуг)")
+        self.assertContains(response, ">Код<", html=False)
+        self.assertContains(response, "STR-1")
         self.assertContains(response, "Подраздел 1")
         self.assertContains(response, 'id="structures-csv-download-btn"', html=False)
         self.assertContains(response, 'id="structures-csv-upload-btn"', html=False)
@@ -1206,6 +1208,12 @@ class SectionStructureViewsTests(TestCase):
         self.assertContains(response, "policy-product-select")
         self.assertContains(response, 'data-short-label="STR"', html=False)
         self.assertContains(response, "STR Structure System")
+        self.assertContains(response, 'name="section_code"', html=False)
+        self.assertContains(response, "readonly-field", html=False)
+        self.assertContains(response, 'tabindex="-1"', html=False)
+        self.assertContains(response, "policy-section-select")
+        self.assertContains(response, '"label": "STR-1 Раздел RU"', html=False)
+        self.assertContains(response, '"displayLabel": "Раздел RU"', html=False)
 
     def test_structure_csv_download_exports_current_table_columns(self):
         SectionStructure.objects.create(
@@ -1220,8 +1228,8 @@ class SectionStructureViewsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("section_structures.csv", response["Content-Disposition"])
         rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
-        self.assertEqual(rows[0], ["Продукт", "Раздел (услуга)", "Подразделы"])
-        self.assertEqual(rows[1], ["STR", "Раздел RU", "Подраздел 1\nПодраздел 2"])
+        self.assertEqual(rows[0], ["Продукт", "Код", "Раздел (услуга)", "Подразделы"])
+        self.assertEqual(rows[1], ["STR", "STR-1", "Раздел RU", "Подраздел 1\nПодраздел 2"])
 
     def test_structure_csv_download_respects_product_filter(self):
         other_product = Product.objects.create(
@@ -1271,8 +1279,8 @@ class SectionStructureViewsTests(TestCase):
         csv_file = SimpleUploadedFile(
             "section_structures.csv",
             (
-                "Продукт;Раздел (услуга);Подразделы\n"
-                "STR;Раздел RU;Подраздел 1\n"
+                "Продукт;Код;Раздел (услуга);Подразделы\n"
+                "STR;STR-1;Раздел RU;Подраздел 1\n"
             ).encode("utf-8"),
             content_type="text/csv",
         )
@@ -1287,6 +1295,23 @@ class SectionStructureViewsTests(TestCase):
         self.assertEqual(item.section, self.section)
         self.assertEqual(item.subsections, "Подраздел 1")
         self.assertEqual(item.position, 1)
+
+    def test_structure_csv_upload_accepts_legacy_rows_without_code(self):
+        csv_file = SimpleUploadedFile(
+            "section_structures.csv",
+            (
+                "Продукт;Раздел (услуга);Подразделы\n"
+                "STR;Раздел RU;Подраздел 1\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("structure_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        self.assertEqual(response.json()["warnings"], [])
+        self.assertEqual(SectionStructure.objects.get().section, self.section)
 
 
 class ServiceGoalReportViewsTests(TestCase):
@@ -1611,19 +1636,30 @@ class TypicalServiceCompositionViewsTests(TestCase):
             position=1,
         )
 
-    def _docx_upload_file(self, sections):
+    def _docx_upload_file(self, sections, include_code=True):
         document = Document()
         for section in sections:
             document.add_heading(section["product"], level=1)
-            table = document.add_table(rows=1, cols=4)
-            for index, header in enumerate(["ID", "Продукт", "Раздел (услуга)", "Состав услуг"]):
+            headers = ["ID", "Продукт", "Код", "Раздел (услуга)", "Состав услуг"] if include_code else [
+                "ID",
+                "Продукт",
+                "Раздел (услуга)",
+                "Состав услуг",
+            ]
+            table = document.add_table(rows=1, cols=len(headers))
+            for index, header in enumerate(headers):
                 table.rows[0].cells[index].text = header
             for row in section["rows"]:
                 cells = table.add_row().cells
                 cells[0].text = str(row.get("id", ""))
                 cells[1].text = row.get("product", section["product"])
-                cells[2].text = row.get("section", "")
-                cells[3].text = row.get("service_composition", "")
+                if include_code:
+                    cells[2].text = row.get("section_code", "")
+                    cells[3].text = row.get("section", "")
+                    cells[4].text = row.get("service_composition", "")
+                else:
+                    cells[2].text = row.get("section", "")
+                    cells[3].text = row.get("service_composition", "")
         buffer = io.BytesIO()
         document.save(buffer)
         return SimpleUploadedFile(
@@ -1644,6 +1680,8 @@ class TypicalServiceCompositionViewsTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Типовой состав услуг")
+        self.assertContains(response, ">Код<", html=False)
+        self.assertContains(response, "S1")
         self.assertContains(response, "Раздел RU")
         self.assertContains(response, "<p>Подготовка,<br>анализ,<br>выпуск отчета</p>", html=False)
         self.assertContains(response, 'id="typical-service-compositions-wrap-toggle"', html=False)
@@ -1818,6 +1856,12 @@ class TypicalServiceCompositionViewsTests(TestCase):
         self.assertContains(response, "policy-product-select")
         self.assertContains(response, 'data-short-label="TAX2"', html=False)
         self.assertContains(response, "TAX2 Tax 2")
+        self.assertContains(response, 'name="section_code"', html=False)
+        self.assertContains(response, "readonly-field", html=False)
+        self.assertContains(response, 'tabindex="-1"', html=False)
+        self.assertContains(response, "policy-section-select")
+        self.assertContains(response, '"label": "S1 Раздел RU"', html=False)
+        self.assertContains(response, '"displayLabel": "Раздел RU"', html=False)
 
     def test_typical_service_composition_csv_download_exports_current_table_columns(self):
         TypicalServiceComposition.objects.create(
@@ -1832,15 +1876,15 @@ class TypicalServiceCompositionViewsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("typical_service_compositions.csv", response["Content-Disposition"])
         rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
-        self.assertEqual(rows[0], ["Продукт", "Раздел (услуга)", "Состав услуг"])
-        self.assertEqual(rows[1], ["TAX2", "Раздел RU", "Подготовка\nАнализ\nВыпуск отчета"])
+        self.assertEqual(rows[0], ["Продукт", "Код", "Раздел (услуга)", "Состав услуг"])
+        self.assertEqual(rows[1], ["TAX2", "S1", "Раздел RU", "Подготовка\nАнализ\nВыпуск отчета"])
 
     def test_typical_service_composition_csv_upload_creates_rows(self):
         csv_file = SimpleUploadedFile(
             "typical_service_compositions.csv",
             (
-                "Продукт;Раздел (услуга);Состав услуг\n"
-                "TAX2;Раздел RU;Подготовка и выпуск отчета\n"
+                "Продукт;Код;Раздел (услуга);Состав услуг\n"
+                "TAX2;S1;Раздел RU;Подготовка и выпуск отчета\n"
             ).encode("utf-8"),
             content_type="text/csv",
         )
@@ -1859,6 +1903,23 @@ class TypicalServiceCompositionViewsTests(TestCase):
             {"html": "", "plain_text": "Подготовка и выпуск отчета"},
         )
         self.assertEqual(item.position, 1)
+
+    def test_typical_service_composition_csv_upload_accepts_legacy_rows_without_code(self):
+        csv_file = SimpleUploadedFile(
+            "typical_service_compositions.csv",
+            (
+                "Продукт;Раздел (услуга);Состав услуг\n"
+                "TAX2;Раздел RU;Подготовка и выпуск отчета\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("typical_service_composition_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        self.assertEqual(response.json()["warnings"], [])
+        self.assertEqual(TypicalServiceComposition.objects.get().section, self.section)
 
     def test_typical_service_composition_docx_download_exports_editable_table(self):
         editor_state = {
@@ -1886,15 +1947,16 @@ class TypicalServiceCompositionViewsTests(TestCase):
         self.assertIn(document.paragraphs[0].style.name.lower(), {"heading 1", "заголовок 1"})
         self.assertEqual(len(document.tables), 1)
         table = document.tables[0]
-        self.assertEqual([cell.text for cell in table.rows[0].cells], ["ID", "Продукт", "Раздел (услуга)", "Состав услуг"])
+        self.assertEqual([cell.text for cell in table.rows[0].cells], ["ID", "Продукт", "Код", "Раздел (услуга)", "Состав услуг"])
         self.assertEqual(table.rows[1].cells[0].text, str(item.pk))
         self.assertEqual(table.rows[1].cells[1].text, "TAX2")
-        self.assertEqual(table.rows[1].cells[2].text, "Раздел RU")
-        self.assertEqual(table.rows[1].cells[3].text, editor_state["plain_text"])
+        self.assertEqual(table.rows[1].cells[2].text, "S1")
+        self.assertEqual(table.rows[1].cells[3].text, "Раздел RU")
+        self.assertEqual(table.rows[1].cells[4].text, editor_state["plain_text"])
         self.assertIn('w:tblW w:type="pct" w:w="5000"', table._tbl.xml)
-        for width in ("300", "650", "1150", "2900"):
+        for width in ("300", "650", "500", "1100", "2450"):
             self.assertIn(f'w:tcW w:type="pct" w:w="{width}"', table._tbl.xml)
-        list_paragraphs = table.rows[1].cells[3].paragraphs[1:]
+        list_paragraphs = table.rows[1].cells[4].paragraphs[1:]
         self.assertTrue(all("w:numPr" in paragraph._element.xml for paragraph in list_paragraphs))
 
     def test_typical_service_composition_docx_download_restarts_numbering_per_cell(self):
@@ -1919,8 +1981,8 @@ class TypicalServiceCompositionViewsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         document = Document(io.BytesIO(response.content))
         table = document.tables[0]
-        first_cell_num_id = table.rows[1].cells[3].paragraphs[0]._p.pPr.numPr.numId.val
-        second_cell_num_id = table.rows[2].cells[3].paragraphs[0]._p.pPr.numPr.numId.val
+        first_cell_num_id = table.rows[1].cells[4].paragraphs[0]._p.pPr.numPr.numId.val
+        second_cell_num_id = table.rows[2].cells[4].paragraphs[0]._p.pPr.numPr.numId.val
         self.assertNotEqual(first_cell_num_id, second_cell_num_id)
 
     def test_typical_service_composition_docx_download_groups_rows_by_product(self):
@@ -2112,6 +2174,7 @@ class TypicalServiceCompositionViewsTests(TestCase):
                 "product": "TAX2",
                 "rows": [{
                     "id": "",
+                    "section_code": "S1",
                     "section": "Раздел RU",
                     "service_composition": "Новая строка из Word",
                 }],
@@ -2128,6 +2191,28 @@ class TypicalServiceCompositionViewsTests(TestCase):
         self.assertEqual(item.section, self.section)
         self.assertEqual(item.service_composition, "Новая строка из Word")
         self.assertEqual(item.position, 1)
+
+    def test_typical_service_composition_docx_upload_accepts_legacy_table_without_code(self):
+        docx_file = self._docx_upload_file(
+            [
+                {
+                    "product": "TAX2",
+                    "rows": [{
+                        "id": "",
+                        "section": "Раздел RU",
+                        "service_composition": "Старая структура Word",
+                    }],
+                },
+            ],
+            include_code=False,
+        )
+
+        response = self.client.post(reverse("typical_service_composition_docx_upload"), {"csv_file": docx_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        self.assertEqual(response.json()["warnings"], [])
+        self.assertEqual(TypicalServiceComposition.objects.get().section, self.section)
 
     def test_typical_service_composition_docx_upload_preserves_multilevel_lists(self):
         editor_state = {
@@ -2214,14 +2299,16 @@ class TypicalServiceCompositionViewsTests(TestCase):
         workbook = load_workbook(io.BytesIO(response.content))
         sheet = workbook.active
         self.assertEqual(sheet["A1"].value, "Продукт")
-        self.assertEqual(sheet["B1"].value, "Раздел (услуга)")
-        self.assertEqual(sheet["C1"].value, "Состав услуг")
-        self.assertEqual(sheet["D1"].value, "Состояние редактора (JSON)")
-        self.assertTrue(sheet.column_dimensions["D"].hidden)
+        self.assertEqual(sheet["B1"].value, "Код")
+        self.assertEqual(sheet["C1"].value, "Раздел (услуга)")
+        self.assertEqual(sheet["D1"].value, "Состав услуг")
+        self.assertEqual(sheet["E1"].value, "Состояние редактора (JSON)")
+        self.assertTrue(sheet.column_dimensions["E"].hidden)
         self.assertEqual(sheet["A2"].value, "TAX2")
-        self.assertEqual(sheet["B2"].value, "Раздел RU")
-        self.assertEqual(sheet["C2"].value, editor_state["plain_text"])
-        self.assertEqual(json.loads(sheet["D2"].value), editor_state)
+        self.assertEqual(sheet["B2"].value, "S1")
+        self.assertEqual(sheet["C2"].value, "Раздел RU")
+        self.assertEqual(sheet["D2"].value, editor_state["plain_text"])
+        self.assertEqual(json.loads(sheet["E2"].value), editor_state)
 
     def test_typical_service_composition_xlsx_upload_preserves_editor_state(self):
         editor_state = {
@@ -2234,10 +2321,11 @@ class TypicalServiceCompositionViewsTests(TestCase):
         }
         workbook = Workbook()
         sheet = workbook.active
-        sheet.append(["Продукт", "Раздел (услуга)", "Состав услуг", "Состояние редактора (JSON)"])
-        sheet.column_dimensions["D"].hidden = True
+        sheet.append(["Продукт", "Код", "Раздел (услуга)", "Состав услуг", "Состояние редактора (JSON)"])
+        sheet.column_dimensions["E"].hidden = True
         sheet.append([
             "TAX2",
+            "S1",
             "Раздел RU",
             editor_state["plain_text"],
             json.dumps(editor_state, ensure_ascii=False),
@@ -2292,10 +2380,11 @@ class TypicalServiceCompositionViewsTests(TestCase):
         }
         workbook = Workbook()
         sheet = workbook.active
-        sheet.append(["Продукт", "Раздел (услуга)", "Состав услуг", "Состояние редактора (JSON)"])
-        sheet.column_dimensions["D"].hidden = True
+        sheet.append(["Продукт", "Код", "Раздел (услуга)", "Состав услуг", "Состояние редактора (JSON)"])
+        sheet.column_dimensions["E"].hidden = True
         sheet.append([
             "TAX2",
+            "S1",
             "Раздел RU",
             "Новый текст из Excel",
             json.dumps(editor_state, ensure_ascii=False),
@@ -3960,6 +4049,8 @@ class TariffViewsTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Объем услуг в днях для ТКП")
+        self.assertContains(response, ">Код<", html=False)
+        self.assertContains(response, "TS1")
         self.assertContains(response, ">5<", html=False)
         self.assertContains(response, 'id="tariffs-csv-download-btn"', html=False)
         self.assertContains(response, 'id="tariffs-csv-upload-btn"', html=False)
@@ -3989,6 +4080,12 @@ class TariffViewsTests(TestCase):
         self.assertContains(response, "policy-product-select")
         self.assertContains(response, 'data-short-label="TAR"', html=False)
         self.assertContains(response, "TAR Tariff product")
+        self.assertContains(response, 'name="section_code"', html=False)
+        self.assertContains(response, "readonly-field", html=False)
+        self.assertContains(response, 'tabindex="-1"', html=False)
+        self.assertContains(response, "policy-section-select")
+        self.assertContains(response, '"label": "TS1 Тарифный раздел"', html=False)
+        self.assertContains(response, '"displayLabel": "Тарифный раздел"', html=False)
 
     def test_tariff_csv_download_exports_current_table_columns(self):
         Tariff.objects.create(
@@ -4010,6 +4107,7 @@ class TariffViewsTests(TestCase):
             rows[0],
             [
                 "Продукт",
+                "Код",
                 "Раздел (услуга)",
                 "Базовая ставка в ВПМ",
                 "Объем услуг в часах",
@@ -4017,7 +4115,7 @@ class TariffViewsTests(TestCase):
                 "Руководитель направления",
             ],
         )
-        self.assertEqual(rows[1], ["TAR", "Тарифный раздел", "10,00", "8", "5", "policy-admin-4"])
+        self.assertEqual(rows[1], ["TAR", "TS1", "Тарифный раздел", "10,00", "8", "5", "policy-admin-4"])
 
     def test_tariff_csv_download_respects_product_filter(self):
         other_product = Product.objects.create(
@@ -4073,8 +4171,8 @@ class TariffViewsTests(TestCase):
         csv_file = SimpleUploadedFile(
             "section_tariffs.csv",
             (
-                "Продукт;Раздел (услуга);Базовая ставка в ВПМ;Объем услуг в часах;Объем услуг в днях для ТКП\n"
-                "TAR;Тарифный раздел;12,50;16;6\n"
+                "Продукт;Код;Раздел (услуга);Базовая ставка в ВПМ;Объем услуг в часах;Объем услуг в днях для ТКП\n"
+                "TAR;TS1;Тарифный раздел;12,50;16;6\n"
             ).encode("utf-8"),
             content_type="text/csv",
         )
@@ -4106,8 +4204,8 @@ class TariffViewsTests(TestCase):
         csv_file = SimpleUploadedFile(
             "section_tariffs.csv",
             (
-                "Продукт;Раздел (услуга);Базовая ставка в ВПМ;Объем услуг в часах;Объем услуг в днях для ТКП\n"
-                "TAR;Тарифный раздел;22,50;18;9\n"
+                "Продукт;Код;Раздел (услуга);Базовая ставка в ВПМ;Объем услуг в часах;Объем услуг в днях для ТКП\n"
+                "TAR;TS1;Тарифный раздел;22,50;18;9\n"
             ).encode("utf-8"),
             content_type="text/csv",
         )
@@ -4123,6 +4221,23 @@ class TariffViewsTests(TestCase):
         self.assertEqual(tariff.service_hours, 18)
         self.assertEqual(tariff.service_days_tkp, 9)
         self.assertEqual(tariff.position, 1)
+
+    def test_tariff_csv_upload_accepts_legacy_rows_without_code(self):
+        csv_file = SimpleUploadedFile(
+            "section_tariffs.csv",
+            (
+                "Продукт;Раздел (услуга);Базовая ставка в ВПМ;Объем услуг в часах;Объем услуг в днях для ТКП\n"
+                "TAR;Тарифный раздел;12,50;16;6\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("tariff_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        self.assertEqual(response.json()["warnings"], [])
+        self.assertEqual(Tariff.objects.get().section, self.section)
 
     def test_move_up_normalizes_positions_before_reorder(self):
         first = Tariff.objects.create(

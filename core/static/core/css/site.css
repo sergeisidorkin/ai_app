@@ -5721,19 +5721,38 @@ body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor 
   border-bottom: 1px solid var(--bs-border-color, #dee2e6);
 }
 
-#proposals-pane .proposal-commercial-table th:nth-child(2),
-#proposals-pane .proposal-commercial-table td:nth-child(2),
-#proposals-pane .proposal-commercial-table th:nth-child(3),
-#proposals-pane .proposal-commercial-table td:nth-child(3),
-#proposals-pane .proposal-commercial-table th:nth-child(4),
-#proposals-pane .proposal-commercial-table td:nth-child(4),
-#proposals-pane .proposal-commercial-table th:nth-child(5),
-#proposals-pane .proposal-commercial-table td:nth-child(5) {
+#proposals-pane .proposal-commercial-table > thead > tr:first-child > th:nth-child(2),
+#proposals-pane .proposal-commercial-table > thead > tr:first-child > th:nth-child(3),
+#proposals-pane .proposal-commercial-table > thead > tr:first-child > th:nth-child(4),
+#proposals-pane .proposal-commercial-table > thead > tr:first-child > th:nth-child(6),
+#proposals-pane .proposal-commercial-table > tbody > tr:not(.proposal-commercial-travel-row):not(.proposal-commercial-summary-row):not(.proposal-commercial-financial-row) > td:nth-child(2),
+#proposals-pane .proposal-commercial-table > tbody > tr:not(.proposal-commercial-travel-row):not(.proposal-commercial-summary-row):not(.proposal-commercial-financial-row) > td:nth-child(3),
+#proposals-pane .proposal-commercial-table > tbody > tr:not(.proposal-commercial-travel-row):not(.proposal-commercial-summary-row):not(.proposal-commercial-financial-row) > td:nth-child(4),
+#proposals-pane .proposal-commercial-table > tbody > tr:not(.proposal-commercial-travel-row):not(.proposal-commercial-summary-row):not(.proposal-commercial-financial-row) > td:nth-child(6) {
   min-width: 13rem;
 }
 
-#proposals-pane .proposal-commercial-table th:nth-child(6),
-#proposals-pane .proposal-commercial-table td:nth-child(6),
+#proposals-pane .proposal-commercial-table .proposal-commercial-code-header,
+#proposals-pane .proposal-commercial-table .proposal-commercial-code-cell {
+  width: auto;
+  min-width: 58px;
+  max-width: none;
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+#proposals-pane .proposal-commercial-table .proposal-commercial-code {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+#proposals-pane .proposal-commercial-table > thead > tr:first-child > th:nth-child(7),
+#proposals-pane .proposal-commercial-table > tbody > tr:not(.proposal-commercial-travel-row):not(.proposal-commercial-summary-row):not(.proposal-commercial-financial-row) > td:nth-child(7),
 #proposals-pane .proposal-commercial-table th:nth-last-child(1),
 #proposals-pane .proposal-commercial-table td:nth-last-child(1) {
   min-width: 5rem;
@@ -6887,17 +6906,20 @@ html.worktime-progress-cursor * {
   color: #6c757d;
 }
 
-#policy-modal .policy-product-select-shell {
+#policy-modal .policy-product-select-shell,
+#policy-modal .policy-section-select-shell {
   position: relative;
 }
 
-#policy-modal .policy-product-select-shell select.policy-product-select {
+#policy-modal .policy-product-select-shell select.policy-product-select,
+#policy-modal .policy-section-select-shell select.policy-section-select {
   position: relative;
   z-index: 2;
   opacity: .01;
 }
 
-#policy-modal .policy-product-select-display {
+#policy-modal .policy-product-select-display,
+#policy-modal .policy-section-select-display {
   position: absolute;
   inset: 0;
   z-index: 1;
@@ -6916,7 +6938,8 @@ html.worktime-progress-cursor * {
   text-overflow: ellipsis;
 }
 
-#policy-modal .policy-product-select-display::after {
+#policy-modal .policy-product-select-display::after,
+#policy-modal .policy-section-select-display::after {
   content: "";
   position: absolute;
   right: .75rem;
@@ -6931,7 +6954,8 @@ html.worktime-progress-cursor * {
   background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M2 5l6 6 6-6'/%3e%3c/svg%3e");
 }
 
-#policy-modal .policy-product-select-display.is-placeholder {
+#policy-modal .policy-product-select-display.is-placeholder,
+#policy-modal .policy-section-select-display.is-placeholder {
   color: #6c757d;
 }
 

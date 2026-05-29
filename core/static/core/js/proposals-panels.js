@@ -112,8 +112,30 @@
   let proposalQuillLoaded = false;
   let proposalQuillLoading = false;
   let proposalQuillReadyCallbacks = [];
+  let proposalProductAutofillProgressCursorCount = 0;
+  let proposalProductAutofillProgressCursorWasActive = false;
   window.__proposalKindFilter = window.__proposalKindFilter || [PROPOSAL_KIND_FILTER_ALL];
   window.__proposalStatusFilter = window.__proposalStatusFilter || [PROPOSAL_STATUS_FILTER_ALL];
+
+  function beginProposalProductAutofillProgressCursor() {
+    const root = document.documentElement;
+    if (proposalProductAutofillProgressCursorCount === 0) {
+      proposalProductAutofillProgressCursorWasActive = root.classList.contains('proposal-progress-cursor');
+    }
+    proposalProductAutofillProgressCursorCount += 1;
+    root.classList.add('proposal-progress-cursor');
+    let released = false;
+    return function releaseProposalProductAutofillProgressCursor() {
+      if (released) return;
+      released = true;
+      proposalProductAutofillProgressCursorCount = Math.max(0, proposalProductAutofillProgressCursorCount - 1);
+      if (proposalProductAutofillProgressCursorCount > 0) return;
+      if (!proposalProductAutofillProgressCursorWasActive) {
+        root.classList.remove('proposal-progress-cursor');
+      }
+      proposalProductAutofillProgressCursorWasActive = false;
+    };
+  }
 
   function ensureProposalQuillFormats() {
     if (!window.Quill || window.__proposalQuillFormatsReady) return;
@@ -4981,6 +5003,7 @@
     }
 
     let dayHeaderMeasureEl = null;
+    let codeColumnMeasureEl = null;
 
     function measureCommercialDayLabelWidth(label) {
       const text = String(label || '').trim();
@@ -4999,6 +5022,61 @@
       }
       dayHeaderMeasureEl.textContent = text;
       return Math.ceil(dayHeaderMeasureEl.getBoundingClientRect().width);
+    }
+
+    function measureCommercialCodeColumnWidth(value) {
+      const text = String(value || '').trim() || 'Код';
+      if (!document?.body) return 64;
+      if (!codeColumnMeasureEl) {
+        codeColumnMeasureEl = document.createElement('span');
+        codeColumnMeasureEl.className = 'form-control readonly-field proposal-commercial-code';
+        codeColumnMeasureEl.style.position = 'absolute';
+        codeColumnMeasureEl.style.visibility = 'hidden';
+        codeColumnMeasureEl.style.pointerEvents = 'none';
+        codeColumnMeasureEl.style.whiteSpace = 'nowrap';
+        codeColumnMeasureEl.style.display = 'inline-block';
+        codeColumnMeasureEl.style.width = 'auto';
+        codeColumnMeasureEl.style.left = '-9999px';
+        codeColumnMeasureEl.style.top = '-9999px';
+        document.body.appendChild(codeColumnMeasureEl);
+      }
+      codeColumnMeasureEl.textContent = text;
+      return Math.ceil(codeColumnMeasureEl.getBoundingClientRect().width);
+    }
+
+    function getCommercialCodeColumnWidth() {
+      const reservePx = 7;
+      const roundingPx = 2;
+      const values = ['Код'];
+      parsePayload().forEach(function (row) {
+        if (isProposalTravelExpensesRow(row)) return;
+        const code = String(row?.code || '').trim();
+        if (code) values.push(code);
+      });
+      getDataRows().forEach(function (row) {
+        const code = String(row.querySelector('.proposal-commercial-code')?.value || row.dataset.commercialCode || '').trim();
+        if (code) values.push(code);
+      });
+      const width = values.reduce(function (maxWidth, value) {
+        return Math.max(maxWidth, measureCommercialCodeColumnWidth(value));
+      }, 0);
+      return Math.max(58, width + roundingPx + reservePx);
+    }
+
+    function applyCommercialCodeColumnWidth(cell, widthPx) {
+      if (!cell || !widthPx) return;
+      cell.style.width = widthPx + 'px';
+      cell.style.minWidth = widthPx + 'px';
+      cell.style.maxWidth = widthPx + 'px';
+    }
+
+    function syncCommercialCodeColumnWidth() {
+      const width = getCommercialCodeColumnWidth();
+      const codeCol = table.querySelector('colgroup[data-proposal-commercial-cols] col.proposal-commercial-code-col');
+      applyCommercialCodeColumnWidth(codeCol, width);
+      Array.from(table.querySelectorAll('.proposal-commercial-code-header, .proposal-commercial-code-cell')).forEach(function (cell) {
+        applyCommercialCodeColumnWidth(cell, width);
+      });
     }
 
     function getCommercialDayColumnWidths(assetRows) {
@@ -5030,9 +5108,12 @@
       }
 
       const dayWidths = getCommercialDayColumnWidths(assetRows);
+      const codeWidth = getCommercialCodeColumnWidth();
       const cols = [];
 
-      for (let i = 0; i < 5; i += 1) cols.push({});
+      for (let i = 0; i < 4; i += 1) cols.push({});
+      cols.push({ widthPx: codeWidth, className: 'proposal-commercial-code-col' });
+      cols.push({});
       cols.push({ width: '10.5rem' });
 
       if (shouldRenderSummaryStageDays()) {
@@ -5052,6 +5133,9 @@
       colgroup.innerHTML = '';
       cols.forEach(function (config) {
         const col = document.createElement('col');
+        if (config.className) {
+          col.className = config.className;
+        }
         if (config.width) {
           col.style.width = config.width;
           col.style.minWidth = config.width;
@@ -5081,6 +5165,7 @@
             + '<th>Специалист</th>'
             + '<th>Специальность</th>'
             + '<th>Профессиональный статус</th>'
+            + '<th class="proposal-commercial-code-header">Код</th>'
             + '<th>Услуги</th>'
             + '<th class="proposal-commercial-rate-header">Ставка, евро / день</th>'
             + stageLabels.map(function (stageLabel) {
@@ -5095,6 +5180,7 @@
           Array.from(thead.querySelectorAll('.proposal-commercial-day-header')).forEach(function (header, index) {
             applyCommercialDayColumnWidth(header, widths[index]);
           });
+          syncCommercialCodeColumnWidth();
           return;
         }
         const assetLabels = assetRows.length
@@ -5106,6 +5192,7 @@
           + '<th rowspan="2">Специалист</th>'
           + '<th rowspan="2">Специальность</th>'
           + '<th rowspan="2">Профессиональный статус</th>'
+          + '<th class="proposal-commercial-code-header" rowspan="2">Код</th>'
           + '<th rowspan="2">Услуги</th>'
           + '<th class="proposal-commercial-rate-header" rowspan="2">Ставка, евро / день</th>'
           + stageLabels.map(function (stageLabel) {
@@ -5132,6 +5219,7 @@
           const width = measureCommercialDayLabelWidth(header.textContent || '') + 36;
           applyCommercialDayColumnWidth(header, width);
         });
+        syncCommercialCodeColumnWidth();
         return;
       }
       if (labels.length <= 1) {
@@ -5141,11 +5229,13 @@
           + '<th>Специалист</th>'
           + '<th>Специальность</th>'
           + '<th>Профессиональный статус</th>'
+          + '<th class="proposal-commercial-code-header">Код</th>'
           + '<th>Услуги</th>'
           + '<th class="proposal-commercial-rate-header">Ставка, евро / день</th>'
           + '<th class="proposal-commercial-days-group proposal-commercial-days-header proposal-commercial-days-header-single">Количество дней</th>'
           + '<th class="proposal-commercial-total-header">Итого, евро без НДС</th>'
           + '</tr>';
+        syncCommercialCodeColumnWidth();
         return;
       }
 
@@ -5155,6 +5245,7 @@
         + '<th rowspan="2">Специалист</th>'
         + '<th rowspan="2">Специальность</th>'
         + '<th rowspan="2">Профессиональный статус</th>'
+        + '<th class="proposal-commercial-code-header" rowspan="2">Код</th>'
         + '<th rowspan="2">Услуги</th>'
         + '<th class="proposal-commercial-rate-header" rowspan="2">Ставка, евро / день</th>'
         + '<th class="proposal-commercial-days-group proposal-commercial-days-group-subheaders proposal-commercial-days-header proposal-commercial-days-header-multi" colspan="' + labels.length + '">Количество дней</th>'
@@ -5170,6 +5261,7 @@
       Array.from(thead.querySelectorAll('.proposal-commercial-day-header')).forEach(function (header, index) {
         applyCommercialDayColumnWidth(header, widths[index]);
       });
+      syncCommercialCodeColumnWidth();
     }
 
     function syncActions() {
@@ -5457,19 +5549,20 @@
           total_eur_without_vat: rawMoney(row.querySelector('.proposal-commercial-total')?.value || ''),
         };
       }
+      const codeInput = row.querySelector('.proposal-commercial-code');
       const serviceControl = row.querySelector('.proposal-commercial-service');
       const selectedSection = serviceControl instanceof HTMLSelectElement
-        ? getProposalSelectedSection(serviceControl, form, row.dataset.commercialCode || '')
+        ? getProposalSelectedSection(serviceControl, form, codeInput?.value || row.dataset.commercialCode || '')
         : {
           serviceName: String(serviceControl?.value || '').trim(),
-          code: String(row.dataset.commercialCode || '').trim(),
+          code: String(codeInput?.value || row.dataset.commercialCode || '').trim(),
         };
       return {
         specialist: (row.querySelector('.proposal-commercial-specialist')?.value || '').trim(),
         job_title: (row.querySelector('.proposal-commercial-job-title')?.value || '').trim(),
         professional_status: (row.querySelector('.proposal-commercial-status')?.value || '').trim(),
         service_name: selectedSection.serviceName,
-        code: selectedSection.code || String(row.dataset.commercialCode || '').trim(),
+        code: selectedSection.code || String(codeInput?.value || row.dataset.commercialCode || '').trim(),
         merge_without_code: normalizeProposalMergeWithoutCode(row.dataset.mergeWithoutCode),
         service_name_auto: isSummaryCommercialBlock ? String(row.dataset.summaryServiceAuto || '').trim() : undefined,
         service_name_manually_edited: isSummaryCommercialBlock
@@ -5555,9 +5648,9 @@
       if (!labelCell || !serviceCell || !serviceInput) return;
 
       const spanVariants = [
-        { labelColSpan: 4, serviceColSpan: 1 },
-        { labelColSpan: 3, serviceColSpan: 2 },
-        { labelColSpan: 2, serviceColSpan: 3 },
+        { labelColSpan: 5, serviceColSpan: 1 },
+        { labelColSpan: 4, serviceColSpan: 2 },
+        { labelColSpan: 3, serviceColSpan: 3 },
       ];
 
       for (let index = 0; index < spanVariants.length; index += 1) {
@@ -5775,6 +5868,7 @@
       const specialist = row.querySelector('.proposal-commercial-specialist');
       const jobTitle = row.querySelector('.proposal-commercial-job-title');
       const status = row.querySelector('.proposal-commercial-status');
+      const code = row.querySelector('.proposal-commercial-code');
       const service = row.querySelector('.proposal-commercial-service');
       const rate = row.querySelector('.proposal-commercial-rate');
       const total = row.querySelector('.proposal-commercial-total');
@@ -5784,6 +5878,7 @@
       }
       if (jobTitle) jobTitle.value = data.job_title || getProposalTypicalSectionPrimaryExecutor(form, data.service_name || '', data.code || '');
       if (status) status.value = data.professional_status || '';
+      if (code) code.value = data.code || '';
       if (service) {
         syncProposalCommercialServiceSelect(service, form, data.service_name || '', data.code || '');
         if (service instanceof HTMLSelectElement) {
@@ -5799,6 +5894,7 @@
         stageDayCounts: data.stage_asset_day_counts || [],
       });
       recalcRowTotal(row);
+      syncCommercialCodeColumnWidth();
     }
 
     function createRow(data) {
@@ -5871,6 +5967,16 @@
       statusTd.appendChild(statusInput);
       row.appendChild(statusTd);
 
+      const codeTd = createProposalTableCell('proposal-commercial-code-cell');
+      const codeInput = document.createElement('input');
+      codeInput.type = 'text';
+      codeInput.className = 'form-control readonly-field proposal-commercial-code';
+      codeInput.readOnly = true;
+      codeInput.tabIndex = -1;
+      codeInput.value = data.code || '';
+      codeTd.appendChild(codeInput);
+      row.appendChild(codeTd);
+
       const serviceTd = createProposalTableCell();
       let serviceSelect = null;
       if (isSummaryCommercialBlock) {
@@ -5895,6 +6001,7 @@
           const selectedSection = getProposalSelectedSection(serviceSelect, form, row.dataset.commercialCode || '');
           const serviceName = selectedSection.serviceName;
           row.dataset.commercialCode = selectedSection.code || getProposalTypicalSectionCode(form, serviceName, selectedSection.code || '');
+          codeInput.value = row.dataset.commercialCode || '';
           const serviceAutofill = getProposalCommercialAutofill(form, serviceName, row.dataset.commercialCode || '');
           titleInput.value = serviceAutofill.jobTitle || '';
           syncProposalCommercialSpecialistSelect(
@@ -5929,10 +6036,14 @@
             )
           );
           recalcRowTotal(row);
+          syncCommercialCodeColumnWidth();
           updatePayload({ reason: 'row-edit', rowIndex: getRows().indexOf(row) });
         });
         serviceSelect.addEventListener('input', function () {
           if (!serviceSelect.value) {
+            row.dataset.commercialCode = '';
+            codeInput.value = '';
+            syncCommercialCodeColumnWidth();
             updatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
           }
         });
@@ -6027,7 +6138,7 @@
       row.className = 'proposal-commercial-travel-row';
 
       const labelTd = createProposalTableCell('proposal-commercial-travel-label-cell');
-      labelTd.colSpan = 5;
+      labelTd.colSpan = 6;
       labelTd.appendChild(createProposalEllipsisLabel(PROPOSAL_TRAVEL_EXPENSES_LABEL));
       row.appendChild(labelTd);
 
@@ -6093,7 +6204,7 @@
       row.className = 'proposal-commercial-summary-row';
 
       const labelTd = createProposalTableCell('proposal-commercial-summary-label-cell');
-      labelTd.colSpan = 5;
+      labelTd.colSpan = 6;
       labelTd.appendChild(createProposalEllipsisLabel(PROPOSAL_SUMMARY_TOTAL_LABEL));
       row.appendChild(labelTd);
 
@@ -6126,7 +6237,7 @@
       row.className = 'proposal-commercial-travel-row proposal-commercial-summary-with-travel-row';
 
       const labelTd = createProposalTableCell('proposal-commercial-travel-label-cell');
-      labelTd.colSpan = 5;
+      labelTd.colSpan = 6;
       labelTd.appendChild(createProposalEllipsisLabel(PROPOSAL_SUMMARY_WITH_TRAVEL_TOTAL_LABEL));
       row.appendChild(labelTd);
 
@@ -6159,7 +6270,7 @@
       row.dataset[config.rowDataset] = '1';
 
       const labelTd = createProposalTableCell('proposal-commercial-financial-label-cell');
-      labelTd.colSpan = config.serviceEditable ? 4 : 5;
+      labelTd.colSpan = config.serviceEditable ? 5 : 6;
       labelTd.appendChild(createProposalEllipsisLabel(config.label));
       row.appendChild(labelTd);
 
@@ -6373,6 +6484,7 @@
       syncSummaryWithTravelRowValues();
       syncCommercialFinancialRows();
       syncActions();
+      syncCommercialCodeColumnWidth();
     }
 
     function moveSelected(direction) {
@@ -8625,7 +8737,9 @@
           productAutofillRefreshSeq = refreshSeq;
           syncRow({ productId: selectedProductId });
           syncStageContent();
+          const releaseProgressCursor = beginProposalProductAutofillProgressCursor();
           refreshProposalProductAutofillData(form, selectedProductId).finally(function () {
+            releaseProgressCursor();
             if (refreshSeq !== productAutofillRefreshSeq) return;
             syncStageContent();
           });
@@ -8848,6 +8962,7 @@
                 professional_status: String(row?.professional_status || '').trim(),
                 service_name: serviceName,
                 code: code,
+                codes: new Set(code ? [code] : []),
                 merge_without_code: mergeWithoutCode,
                 rate_eur_per_day: String(row?.rate_eur_per_day || '').trim(),
                 asset_day_counts: Array.from({ length: assetCount }, function () { return 0; }),
@@ -8860,6 +8975,9 @@
               groupedRows.push(bucket);
             } else if (serviceName) {
               bucket.service_name = serviceName;
+            }
+            if (code) {
+              bucket.codes.add(code);
             }
             (Array.isArray(row?.asset_day_counts) ? row.asset_day_counts : []).slice(0, assetCount).forEach(function (value, index) {
               const numericValue = parseInt(String(value || '').trim(), 10);
@@ -8898,7 +9016,7 @@
             professional_status: bucket.professional_status,
             service_name: serviceName,
             service_name_auto: bucket.service_name,
-            code: bucket.code,
+            code: bucket.merge_without_code && bucket.codes.size > 1 ? '' : bucket.code,
             merge_without_code: bucket.merge_without_code,
             rate_eur_per_day: bucket.rate_eur_per_day,
             asset_day_counts: bucket.asset_day_counts.map(function (value) { return value > 0 ? String(value) : ''; }),

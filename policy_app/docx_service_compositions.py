@@ -23,8 +23,9 @@ from contracts_app.docx_processor import (
 )
 
 
-DOCX_HEADERS = ["ID", "Продукт", "Раздел (услуга)", "Состав услуг"]
-DOCX_COLUMN_WIDTHS_PCT = [6, 13, 23, 58]
+DOCX_HEADERS = ["ID", "Продукт", "Код", "Раздел (услуга)", "Состав услуг"]
+DOCX_REQUIRED_HEADERS = ["ID", "Продукт", "Раздел (услуга)", "Состав услуг"]
+DOCX_COLUMN_WIDTHS_PCT = [6, 13, 10, 22, 49]
 _LIST_TYPES = {"ordered", "bullet", "circle", "square", "dash", "ndash", "check"}
 _BULLET_MARKER_MAP = {
     "\uf0b7": "bullet",
@@ -64,10 +65,11 @@ def build_typical_service_compositions_docx(rows: list[dict[str, object]]) -> by
             cells = table.add_row().cells
             cells[0].text = str(item.get("id") or "")
             cells[1].text = product_name
-            cells[2].text = str(item.get("section") or "")
+            cells[2].text = str(item.get("section_code") or "")
+            cells[3].text = str(item.get("section") or "")
             _write_rich_service_cell(
                 document,
-                cells[3],
+                cells[4],
                 html_value=str(item.get("html") or ""),
                 plain_text=str(item.get("plain_text") or ""),
                 marker_num_ids=marker_num_ids,
@@ -100,6 +102,8 @@ def parse_typical_service_compositions_docx(file_obj) -> list[dict[str, object]]
             try:
                 id_cell = cells[header_indexes[_normalize_header("ID")]]
                 product_cell = cells[header_indexes[_normalize_header("Продукт")]]
+                code_index = header_indexes.get(_normalize_header("Код"))
+                code_cell = cells[code_index] if code_index is not None else None
                 section_cell = cells[header_indexes[_normalize_header("Раздел (услуга)")]]
                 service_cell = cells[header_indexes[_normalize_header("Состав услуг")]]
             except (IndexError, KeyError):
@@ -112,6 +116,7 @@ def parse_typical_service_compositions_docx(file_obj) -> list[dict[str, object]]
                     "row_number": f"{section_index}.{data_row_index}",
                     "id": _cell_text(id_cell),
                     "product": product_name,
+                    "section_code": _cell_text(code_cell) if code_cell is not None else "",
                     "section": _cell_text(section_cell),
                     "editor_state": editor_state,
                 }
@@ -209,7 +214,7 @@ def _is_compositions_table(table) -> bool:
     if not table.rows:
         return False
     headers = [_normalize_header(_cell_text(cell)) for cell in table.rows[0].cells]
-    expected = [_normalize_header(header) for header in DOCX_HEADERS]
+    expected = [_normalize_header(header) for header in DOCX_REQUIRED_HEADERS]
     return all(header in headers for header in expected)
 
 

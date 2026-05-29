@@ -27,6 +27,15 @@
       {% endif %}
     </div>
     <div class="mb-3">
+      <label class="form-label">Код</label>
+      {{ form.section_code }}
+      {% if form.section_code.errors %}
+        <div class="invalid-feedback d-block">
+          {{ form.section_code.errors|join:", " }}
+        </div>
+      {% endif %}
+    </div>
+    <div class="mb-3">
       <label class="form-label">Раздел (услуга)</label>
       {{ form.section }}
       {% if form.section.errors %}
@@ -199,6 +208,7 @@
   var submitBtn = modalContent.querySelector('button[type="submit"]');
   var productSelect = document.getElementById('id_product');
   var sectionSelect = document.getElementById('id_section');
+  var sectionCodeInput = document.getElementById('id_section_code');
   var sectionsByProduct = {{ sections_by_product_json|safe }};
   var textarea = document.getElementById('id_service_composition');
   var stateInput = document.getElementById('id_service_composition_editor_state');
@@ -208,6 +218,12 @@
   var lastRange = null;
 
   if (!productSelect || !sectionSelect || !textarea || !stateInput || !toolbar || !editorEl) return;
+
+  function syncSectionCode() {
+    if (!sectionCodeInput) return;
+    var selected = sectionSelect.options[sectionSelect.selectedIndex];
+    sectionCodeInput.value = selected && selected.value ? (selected.dataset.code || '') : '';
+  }
 
   function loadCss(href) {
     if (document.querySelector('link[data-policy-quill-css="' + href + '"]')) return;
@@ -653,6 +669,8 @@
       var option = document.createElement('option');
       option.value = String(item.id);
       option.textContent = item.label;
+      option.dataset.shortLabel = item.displayLabel || '';
+      option.dataset.code = item.code || '';
       if (String(selectedValue || '') === String(item.id)) {
         option.selected = true;
       }
@@ -662,11 +680,21 @@
     if (!items.some(function (item) { return String(item.id) === String(selectedValue || ''); })) {
       sectionSelect.value = '';
     }
+    syncSectionCode();
+    if (window.syncPolicySectionSelectDisplay) {
+      window.syncPolicySectionSelectDisplay(sectionSelect);
+    }
   }
 
   renderSectionOptions(productSelect.value, sectionSelect.value);
   productSelect.addEventListener('change', function () {
     renderSectionOptions(productSelect.value, sectionSelect.value);
+  });
+  sectionSelect.addEventListener('change', function () {
+    syncSectionCode();
+    if (window.syncPolicySectionSelectDisplay) {
+      window.syncPolicySectionSelectDisplay(sectionSelect);
+    }
   });
 
   toolbar.addEventListener('click', function (event) {

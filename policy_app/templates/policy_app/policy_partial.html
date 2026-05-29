@@ -580,6 +580,7 @@
                     {% endif %}
                 </th>
                 <th>Продукт</th>
+                <th>Код</th>
                 <th>Раздел (услуга)</th>
                 <th>Подразделы</th>
             </tr>
@@ -610,11 +611,12 @@
                         {% endif %}
                     </td>
                     <td class="text-nowrap">{{ st.product.short_name }}</td>
+                    <td class="text-nowrap">{{ st.section.code }}</td>
                     <td class="text-nowrap">{{ st.section.name_ru|default:st.section.name_en }}</td>
                     <td>{{ st.subsections }}</td>
                 </tr>
             {% empty %}
-                <tr><td colspan="4" class="text-muted">Пока нет данных.</td></tr>
+                <tr><td colspan="5" class="text-muted">Пока нет данных.</td></tr>
             {% endfor %}
             </tbody>
         </table>
@@ -674,8 +676,9 @@
             <colgroup>
                 <col style="width: 30px;">
                 <col style="width: 5%;">
+                <col style="width: 8%;">
                 <col style="width: 15%;">
-                <col style="width: 80%;">
+                <col style="width: 72%;">
             </colgroup>
             <thead>
             <tr>
@@ -692,8 +695,9 @@
                     {% endif %}
                 </th>
                 <th style="width:5%">Продукт</th>
+                <th style="width:8%">Код</th>
                 <th style="width:15%">Раздел (услуга)</th>
-                <th class="text-nowrap" style="width:80%">
+                <th class="text-nowrap" style="width:72%">
                     Состав услуг
                     <button type="button" class="clf-wrap-btn active" id="typical-service-compositions-wrap-toggle"
                             title="Свернуть/развернуть строки">
@@ -727,13 +731,14 @@
                         {% endif %}
                     </td>
                     <td class="text-nowrap">{{ item.product.short_name }}</td>
-                    <td>{{ item.section.name_ru }}</td>
+                    <td class="text-nowrap">{{ item.section.code }}</td>
+                    <td>{{ item.section.name_ru|default:item.section.name_en }}</td>
                     <td class="policy-service-composition-cell">
                         <div class="policy-service-composition-content policy-service-composition-content--rich ql-editor">{{ item.service_composition_editor_state|policy_quill_html:item.service_composition }}</div>
                     </td>
                 </tr>
             {% empty %}
-                <tr><td colspan="4" class="text-muted">Пока нет данных.</td></tr>
+                <tr><td colspan="5" class="text-muted">Пока нет данных.</td></tr>
             {% endfor %}
             </tbody>
         </table>
@@ -1254,6 +1259,7 @@
                     </div>
                 </th>
                 <th>Продукт</th>
+                <th>Код</th>
                 <th>Раздел (услуга)</th>
                 <th>Базовая ставка в ВПМ</th>
                 <th>Объем услуг в часах</th>
@@ -1287,6 +1293,7 @@
                         </div>
                     </td>
                     <td class="text-nowrap">{{ t.product.short_name }}</td>
+                    <td class="text-nowrap">{{ t.section.code }}</td>
                     <td class="text-nowrap">{{ t.section.name_ru|default:t.section.name_en }}</td>
                     <td class="text-nowrap">{{ t.base_rate_vpm|format_money }}</td>
                     <td class="text-nowrap">{{ t.service_hours }}</td>
@@ -1302,7 +1309,7 @@
                     {% endif %}
                 </tr>
             {% empty %}
-                <tr><td colspan="{% if is_admin %}7{% else %}6{% endif %}" class="text-muted">Пока нет данных.</td></tr>
+                <tr><td colspan="{% if is_admin %}8{% else %}7{% endif %}" class="text-muted">Пока нет данных.</td></tr>
             {% endfor %}
             </tbody>
         </table>
