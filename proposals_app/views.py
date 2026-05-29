@@ -1509,7 +1509,7 @@ def _proposal_product_autofill_data(product_ids=None):
     def _section_display_name(section_name, section_code):
         name = (section_name or "").strip()
         code = (section_code or "").strip()
-        return f"{code} - {name}" if code and name else name
+        return f"{code} {name}" if code and name else name
 
     product_filter = None
     if product_ids is not None:
