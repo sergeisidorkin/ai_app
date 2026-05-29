@@ -1004,6 +1004,7 @@ def section_csv_upload(request):
     }
     data_rows = rows[1:]
     created = 0
+    updated = 0
     warnings = []
 
     for i, row in enumerate(data_rows, start=2):
@@ -1077,23 +1078,48 @@ def section_csv_upload(request):
             if not expertise_direction:
                 warnings.append(f"Строка {i}: подразделение «{expertise_name}» не найдено. Поле оставлено пустым.")
 
-        position = _next_position(TypicalSection, {"product": product})
         try:
             with transaction.atomic():
                 ensure_system_dsc_section(product)
-                section = TypicalSection.objects.create(
-                    product=product,
-                    code=code,
-                    short_name=short_name,
-                    short_name_ru=short_name_ru,
-                    name_en=name_en,
-                    name_ru=name_ru,
-                    accounting_type=accounting_type,
-                    expertise_dir=expertise_dir,
-                    expertise_direction=expertise_direction,
-                    exclude_from_tkp_autofill=_csv_truthy(tkp_raw),
-                    position=position,
-                )
+                section = TypicalSection.objects.filter(product=product, code=code).first()
+                was_created = section is None
+                if was_created:
+                    section = TypicalSection.objects.create(
+                        product=product,
+                        code=code,
+                        short_name=short_name,
+                        short_name_ru=short_name_ru,
+                        name_en=name_en,
+                        name_ru=name_ru,
+                        accounting_type=accounting_type,
+                        expertise_dir=expertise_dir,
+                        expertise_direction=expertise_direction,
+                        exclude_from_tkp_autofill=_csv_truthy(tkp_raw),
+                        position=_next_position(TypicalSection, {"product": product}),
+                    )
+                else:
+                    section.short_name = short_name
+                    section.short_name_ru = short_name_ru
+                    section.name_en = name_en
+                    section.name_ru = name_ru
+                    section.accounting_type = accounting_type
+                    section.expertise_dir = expertise_dir
+                    section.expertise_direction = expertise_direction
+                    section.exclude_from_tkp_autofill = _csv_truthy(tkp_raw)
+                    section.save(
+                        update_fields=[
+                            "short_name",
+                            "short_name_ru",
+                            "name_en",
+                            "name_ru",
+                            "accounting_type",
+                            "expertise_dir",
+                            "expertise_direction",
+                            "exclude_from_tkp_autofill",
+                            "updated_at",
+                        ]
+                    )
+                    TypicalSectionSpecialty.objects.filter(section=section).delete()
                 missing_specialties = []
                 for rank, specialty_name in enumerate(_split_csv_list_value(executor_raw, specialties_by_name), start=1):
                     specialty = specialties_by_name.get(_csv_lookup_key(specialty_name))
@@ -1103,12 +1129,15 @@ def section_csv_upload(request):
                     TypicalSectionSpecialty.objects.create(section=section, specialty=specialty, rank=rank)
             if missing_specialties:
                 warnings.append(f"Строка {i}: исполнители не найдены: {', '.join(missing_specialties)}.")
-            created += 1
+            if was_created:
+                created += 1
+            else:
+                updated += 1
             ensure_system_dsc_section(product)
         except Exception as exc:
             warnings.append(f"Строка {i}: ошибка сохранения — {exc}")
 
-    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
+    return JsonResponse({"ok": True, "created": created, "updated": updated, "warnings": warnings})
 
 
 @login_required
@@ -1446,6 +1475,7 @@ def service_goal_report_csv_upload(request):
 
     products_by_name = {_csv_lookup_key(p.short_name): p for p in Product.objects.all()}
     created = 0
+    updated = 0
     warnings = []
 
     for i, row in enumerate(rows[1:], start=2):
@@ -1466,19 +1496,23 @@ def service_goal_report_csv_upload(request):
             continue
 
         try:
-            ServiceGoalReport.objects.create(
-                product=product,
-                service_goal=row[1].strip(),
-                service_goal_genitive=row[2].strip(),
-                report_title=row[3].strip(),
-                product_name=row[4].strip(),
-                position=_next_position(ServiceGoalReport),
-            )
-            created += 1
+            item = ServiceGoalReport.objects.filter(product=product).order_by("position", "id").first()
+            was_created = item is None
+            if was_created:
+                item = ServiceGoalReport(product=product, position=_next_position(ServiceGoalReport))
+            item.service_goal = row[1].strip()
+            item.service_goal_genitive = row[2].strip()
+            item.report_title = row[3].strip()
+            item.product_name = row[4].strip()
+            item.save()
+            if was_created:
+                created += 1
+            else:
+                updated += 1
         except Exception as exc:
             warnings.append(f"Строка {i}: ошибка сохранения — {exc}")
 
-    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
+    return JsonResponse({"ok": True, "created": created, "updated": updated, "warnings": warnings})
 
 
 @login_required
@@ -3088,6 +3122,7 @@ def typical_service_term_csv_upload(request):
 
     products_by_name = {_csv_lookup_key(p.short_name): p for p in Product.objects.all()}
     created = 0
+    updated = 0
     warnings = []
 
     for i, row in enumerate(rows[1:], start=2):
@@ -3140,18 +3175,22 @@ def typical_service_term_csv_upload(request):
             continue
 
         try:
-            TypicalServiceTerm.objects.create(
-                product=product,
-                source_data_weeks=source_data_weeks,
-                preliminary_report_months=preliminary_report_months,
-                final_report_weeks=final_report_weeks,
-                position=_next_position(TypicalServiceTerm),
-            )
-            created += 1
+            item = TypicalServiceTerm.objects.filter(product=product).order_by("position", "id").first()
+            was_created = item is None
+            if was_created:
+                item = TypicalServiceTerm(product=product, position=_next_position(TypicalServiceTerm))
+            item.source_data_weeks = source_data_weeks
+            item.preliminary_report_months = preliminary_report_months
+            item.final_report_weeks = final_report_weeks
+            item.save()
+            if was_created:
+                created += 1
+            else:
+                updated += 1
         except Exception as exc:
             warnings.append(f"Строка {i}: ошибка сохранения — {exc}")
 
-    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
+    return JsonResponse({"ok": True, "created": created, "updated": updated, "warnings": warnings})
 
 
 @login_required
@@ -3811,6 +3850,7 @@ def tariff_csv_upload(request):
                     owners_by_label.setdefault(key, user)
 
     created = 0
+    updated = 0
     warnings = []
 
     for i, row in enumerate(rows[1:], start=2):
@@ -3872,20 +3912,32 @@ def tariff_csv_upload(request):
                 continue
 
         try:
-            Tariff.objects.create(
-                product=product,
-                section=section,
-                base_rate_vpm=base_rate_vpm,
-                service_hours=service_hours,
-                service_days_tkp=service_days_tkp,
-                created_by=owner,
-                position=_next_position(Tariff, {"created_by": owner}),
+            tariff = (
+                Tariff.objects
+                .filter(product=product, section=section, created_by=owner)
+                .order_by("position", "id")
+                .first()
             )
-            created += 1
+            was_created = tariff is None
+            if was_created:
+                tariff = Tariff(
+                    product=product,
+                    section=section,
+                    created_by=owner,
+                    position=_next_position(Tariff, {"created_by": owner}),
+                )
+            tariff.base_rate_vpm = base_rate_vpm
+            tariff.service_hours = service_hours
+            tariff.service_days_tkp = service_days_tkp
+            tariff.save()
+            if was_created:
+                created += 1
+            else:
+                updated += 1
         except Exception as exc:
             warnings.append(f"Строка {i}: ошибка сохранения — {exc}")
 
-    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
+    return JsonResponse({"ok": True, "created": created, "updated": updated, "warnings": warnings})
 
 
 @login_required

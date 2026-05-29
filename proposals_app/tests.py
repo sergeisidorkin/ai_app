@@ -7190,6 +7190,281 @@ class ProposalFormContextTests(TestCase):
             ],
         )
 
+    def test_product_autofill_endpoint_returns_fresh_product_defaults(self):
+        product = Product.objects.create(
+            short_name="FRESH",
+            name_en="Fresh Product",
+            name_ru="Актуальный продукт",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=4,
+        )
+        section = TypicalSection.objects.create(
+            product=product,
+            code="OLD",
+            short_name="old",
+            short_name_ru="Старый",
+            name_en="Old section",
+            name_ru="Старый раздел",
+            accounting_type="Раздел",
+            position=1,
+        )
+        composition = TypicalServiceComposition.objects.create(
+            product=product,
+            section=section,
+            service_composition="Старый состав",
+            service_composition_editor_state={"html": "<p>Старый состав</p>", "plain_text": "Старый состав"},
+            position=1,
+        )
+        TypicalServiceTerm.objects.create(
+            product=product,
+            preliminary_report_months=Decimal("1.0"),
+            final_report_weeks=2,
+            position=1,
+        )
+
+        section.code = "NEW"
+        section.short_name = "new"
+        section.name_en = "New section"
+        section.name_ru = "Актуальный раздел"
+        section.save()
+        composition.service_composition = "Актуальный состав"
+        composition.service_composition_editor_state = {
+            "html": "<p>Актуальный состав</p>",
+            "plain_text": "Актуальный состав",
+        }
+        composition.save()
+
+        response = self.client.get(reverse("proposal_product_autofill", args=[product.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["product_id"], str(product.pk))
+        section_entry = next(item for item in payload["typical_sections"] if item["code"] == "NEW")
+        self.assertEqual(section_entry["name"], "Актуальный раздел")
+        self.assertEqual(
+            payload["typical_service_compositions"],
+            [
+                {
+                    "code": "NEW",
+                    "service_name": "Актуальный раздел",
+                    "service_composition": "Актуальный состав",
+                    "service_composition_editor_state": {
+                        "html": "<p>Актуальный состав</p>",
+                        "plain_text": "Актуальный состав",
+                    },
+                }
+            ],
+        )
+        self.assertEqual(
+            payload["typical_service_term"],
+            {"preliminary_report_months": "1.0", "final_report_weeks": "2.0"},
+        )
+        self.assertEqual(response["Cache-Control"], "no-store")
+
+    def test_product_autofill_endpoint_includes_fresh_goal_terms_rates_grades_and_tariffs(self):
+        product = Product.objects.create(
+            short_name="FULL",
+            name_en="Full Product",
+            name_ru="Полный продукт",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=4,
+        )
+        section = TypicalSection.objects.create(
+            product=product,
+            code="FULL-1",
+            short_name="full-one",
+            short_name_ru="full-one-ru",
+            name_en="Full section",
+            name_ru="Полный раздел",
+            accounting_type="Раздел",
+            position=1,
+        )
+        specialty = ExpertSpecialty.objects.create(specialty="Финансовый эксперт", position=1)
+        TypicalSectionSpecialty.objects.create(section=section, specialty=specialty, rank=1)
+        grade = Grade.objects.create(
+            grade_en="Senior",
+            grade_ru="Старший",
+            qualification=4,
+            qualification_levels=5,
+            base_rate_share=30,
+            created_by=self.user,
+            position=1,
+        )
+        _, employee = self._create_staff_employee(
+            username="full-autofill-expert",
+            first_name="Ирина",
+            last_name="Тарифова",
+        )
+        profile = ExpertProfile.objects.create(
+            employee=employee,
+            professional_status="Certified Public Accountant",
+            professional_status_short="CPA",
+            grade=grade,
+            position=1,
+        )
+        ExpertProfileSpecialty.objects.create(profile=profile, specialty=specialty, rank=1)
+        SpecialtyTariff.objects.create(
+            specialty_group="Финансы",
+            daily_rate_tkp_eur="1200.00",
+            position=1,
+        ).specialties.set([specialty])
+        Tariff.objects.create(
+            product=product,
+            section=section,
+            base_rate_vpm="1.00",
+            service_hours=8,
+            service_days_tkp=11,
+            created_by=self.user,
+            position=1,
+        )
+        ServiceGoalReport.objects.create(
+            product=product,
+            service_goal="Проверить актуальные цели",
+            service_goal_genitive="Проверки актуальных целей",
+            report_title="Актуальный титул ТКП",
+            product_name="Актуальное имя продукта",
+            position=1,
+        )
+        TypicalServiceTerm.objects.create(
+            product=product,
+            preliminary_report_months=Decimal("2.5"),
+            final_report_weeks=6,
+            position=1,
+        )
+
+        response = self.client.get(reverse("proposal_product_autofill", args=[product.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(
+            payload["service_goal_report"],
+            {
+                "report_title": "Актуальный титул ТКП",
+                "service_goal": "Проверить актуальные цели",
+                "service_goal_genitive": "Проверки актуальных целей",
+            },
+        )
+        self.assertEqual(
+            payload["typical_service_term"],
+            {"preliminary_report_months": "2.5", "final_report_weeks": "6.0"},
+        )
+        section_entry = next(item for item in payload["typical_sections"] if item["code"] == "FULL-1")
+        self.assertEqual(section_entry["specialty_tariff_rate_eur"], "1200.00")
+        self.assertEqual(section_entry["service_days_tkp"], 11)
+        self.assertEqual(section_entry["default_specialist"], "Ирина Тарифова")
+        self.assertEqual(section_entry["default_professional_status"], "CPA")
+        self.assertEqual(section_entry["default_base_rate_share"], 30)
+        self.assertEqual(section_entry["specialist_options"][0]["base_rate_share"], 30)
+
+    def test_product_autofill_endpoint_reflects_sections_created_by_csv_upload(self):
+        product = Product.objects.create(
+            short_name="CSV",
+            name_en="CSV Product",
+            name_ru="CSV продукт",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=4,
+        )
+        TypicalSection.objects.create(
+            product=product,
+            code="CSV-1",
+            short_name="old-csv",
+            short_name_ru="old-csv-ru",
+            name_en="Old CSV",
+            name_ru="Старый CSV раздел",
+            accounting_type="Раздел",
+            position=1,
+        )
+        initial_response = self.client.get(reverse("proposal_product_autofill", args=[product.pk]))
+        initial_entry = next(
+            item for item in initial_response.json()["typical_sections"] if item["code"] == "CSV-1"
+        )
+        self.assertEqual(initial_entry["name"], "Старый CSV раздел")
+        csv_file = SimpleUploadedFile(
+            "sections.csv",
+            (
+                "Продукт;Код;Краткое имя EN;Краткое имя RU;Наименование EN;Наименование RU;Тип учета;Направление экспертизы\n"
+                "CSV;CSV-1;csv-one;csv-one-ru;CSV One;CSV раздел;Раздел;\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        upload_response = self.client.post(reverse("section_csv_upload"), {"csv_file": csv_file})
+        response = self.client.get(reverse("proposal_product_autofill", args=[product.pk]))
+
+        self.assertEqual(upload_response.status_code, 200)
+        self.assertEqual(upload_response.json()["created"], 0)
+        self.assertEqual(upload_response.json()["updated"], 1)
+        payload = response.json()
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("CSV-1", [item["code"] for item in payload["typical_sections"]])
+        section_entry = next(item for item in payload["typical_sections"] if item["code"] == "CSV-1")
+        self.assertEqual(section_entry["name"], "CSV раздел")
+
+    def test_product_autofill_endpoint_keeps_edit_snapshot_but_exposes_fresh_defaults(self):
+        product = Product.objects.create(
+            short_name="EDIT",
+            name_en="Edit Product",
+            name_ru="Edit продукт",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=4,
+        )
+        section = TypicalSection.objects.create(
+            product=product,
+            code="EDIT-NEW",
+            short_name="edit-new",
+            name_en="Edit New",
+            name_ru="Актуальный edit раздел",
+            accounting_type="Раздел",
+            position=1,
+        )
+        TypicalServiceComposition.objects.create(
+            product=product,
+            section=section,
+            service_composition="Актуальный edit состав",
+            service_composition_editor_state={
+                "html": "<p>Актуальный edit состав</p>",
+                "plain_text": "Актуальный edit состав",
+            },
+            position=1,
+        )
+        proposal = ProposalRegistration.objects.create(
+            number=3333,
+            group_member=self.group_member,
+            type=product,
+            name="ТКП со старым снимком",
+            year=2026,
+            stage_payloads_json=[
+                {
+                    "rank": 1,
+                    "product_id": product.pk,
+                    "service_sections_json": [{"service_name": "Старый раздел", "code": "EDIT-OLD"}],
+                    "service_sections_editor_state": [
+                        {"code": "EDIT-OLD", "service_name": "Старый раздел", "html": "", "plain_text": "Старый состав"}
+                    ],
+                    "commercial_offer_payload": [{"service_name": "Старый раздел", "code": "EDIT-OLD"}],
+                }
+            ],
+        )
+        ProposalRegistrationProduct.objects.create(proposal=proposal, product=product, rank=1)
+
+        edit_response = self.client.get(reverse("proposal_form_edit", args=[proposal.pk]))
+        endpoint_response = self.client.get(reverse("proposal_product_autofill", args=[product.pk]))
+
+        self.assertEqual(edit_response.status_code, 200)
+        self.assertContains(edit_response, "EDIT-OLD", html=False)
+        payload = endpoint_response.json()
+        self.assertIn("EDIT-NEW", [item["code"] for item in payload["typical_sections"]])
+        self.assertEqual(payload["typical_service_compositions"][0]["service_composition"], "Актуальный edit состав")
+
     def test_typical_service_terms_json_exposes_first_product_default(self):
         product = Product.objects.create(
             short_name="TERM",

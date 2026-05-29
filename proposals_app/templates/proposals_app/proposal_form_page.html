@@ -16,6 +16,7 @@
         data-region-autofill-url="{% url 'ler_region_autofill' %}"
         data-ler-search-url="{% url 'ler_search' %}"
         data-cbr-rate-refresh-url="{% url 'proposal_cbr_eur_rate' %}"
+        data-product-autofill-url-template="{% url 'proposal_product_autofill' 0 %}"
         {% if action == "create" %}
           hx-post="{% url 'proposal_form_create' %}"
         {% else %}
