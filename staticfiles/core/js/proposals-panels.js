@@ -3123,6 +3123,89 @@
     }) || null;
   }
 
+  function getProposalSectionSelectKey(entry) {
+    return String(entry?.select_key || entry?.code || entry?.name || '').trim();
+  }
+
+  function getProposalSectionDisplayName(entry) {
+    const label = String(entry?.display_name || '').trim();
+    if (label) return label;
+    const name = String(entry?.name || '').trim();
+    const code = String(entry?.code || '').trim();
+    return code && name ? (code + ' - ' + name) : name;
+  }
+
+  function getProposalSectionSelectKeyForEntries(entries, serviceName, code) {
+    const targetCode = String(code || '').trim();
+    const targetName = String(serviceName || '').trim();
+    if (targetCode) {
+      const byCode = entries.find(function (entry) {
+        return String(entry?.code || '').trim() === targetCode;
+      });
+      if (byCode) return getProposalSectionSelectKey(byCode);
+    }
+    if (targetName) {
+      const byNameOrKey = entries.find(function (entry) {
+        return String(entry?.name || '').trim() === targetName
+          || getProposalSectionSelectKey(entry) === targetName
+          || String(entry?.code || '').trim() === targetName;
+      });
+      if (byNameOrKey) return getProposalSectionSelectKey(byNameOrKey);
+    }
+    return targetName;
+  }
+
+  function getProposalSectionSelectKeyFor(form, serviceName, code) {
+    return getProposalSectionSelectKeyForEntries(getProposalTypicalSectionEntries(form), serviceName, code);
+  }
+
+  function syncProposalSectionSelect(select, entries, selectedValue, selectedCode) {
+    if (!select) return false;
+    const previousKey = getProposalSectionSelectKeyForEntries(entries, selectedValue || select.value || '', selectedCode || '');
+    const optionKeys = [];
+    select.innerHTML = '';
+
+    const emptyOption = document.createElement('option');
+    emptyOption.value = '';
+    emptyOption.textContent = '— Не выбрано —';
+    select.appendChild(emptyOption);
+
+    entries.forEach(function (entry) {
+      const key = getProposalSectionSelectKey(entry);
+      const name = String(entry?.name || '').trim();
+      if (!key || !name) return;
+      const option = document.createElement('option');
+      option.value = key;
+      option.textContent = getProposalSectionDisplayName(entry);
+      option.dataset.sectionName = name;
+      option.dataset.sectionCode = String(entry?.code || '').trim();
+      optionKeys.push(key);
+      select.appendChild(option);
+    });
+
+    select.value = optionKeys.includes(previousKey) ? previousKey : '';
+    return select.value !== previousKey;
+  }
+
+  function getProposalSelectedSection(select, form, fallbackCode) {
+    const selectedOption = select instanceof HTMLSelectElement ? select.options[select.selectedIndex] : null;
+    if (select instanceof HTMLSelectElement && selectedOption && selectedOption.value === '') {
+      return { serviceName: '', code: '' };
+    }
+    const selectedName = String(selectedOption?.dataset?.sectionName || '').trim();
+    const selectedCode = String(selectedOption?.dataset?.sectionCode || '').trim();
+    if (selectedName || selectedCode) {
+      return { serviceName: selectedName, code: selectedCode };
+    }
+
+    const rawValue = String(select?.value || '').trim();
+    const match = getProposalTypicalSectionEntry(form, rawValue, fallbackCode || rawValue);
+    return {
+      serviceName: String(match?.name || rawValue).trim(),
+      code: String(match?.code || fallbackCode || '').trim(),
+    };
+  }
+
   function isProposalTechnicalAssignmentSection(form, section) {
     const entry = getProposalTypicalSectionEntry(form, section?.service_name || section?.name || '', section?.code || '');
     return String(entry?.accounting_type || '').trim() === 'Раздел';
@@ -3141,6 +3224,11 @@
       .filter(Boolean);
   }
 
+  function getProposalCommercialSectionEntries(form) {
+    return getProposalTypicalSectionEntries(form)
+      .filter(function (entry) { return !isProposalSystemDscEntry(entry); });
+  }
+
   function getProposalServiceSectionNames(form, selectedValue) {
     const selected = String(selectedValue || '').trim();
     return getProposalTypicalSectionEntries(form)
@@ -3149,6 +3237,18 @@
       })
       .map(function (entry) { return (entry?.name || '').trim(); })
       .filter(Boolean);
+  }
+
+  function getProposalServiceSectionEntries(form, selectedValue, selectedCode) {
+    const selectedKey = getProposalSectionSelectKeyForEntries(
+      getProposalTypicalSectionEntries(form),
+      selectedValue,
+      selectedCode
+    );
+    return getProposalTypicalSectionEntries(form)
+      .filter(function (entry) {
+        return !isProposalSystemDscEntry(entry) || getProposalSectionSelectKey(entry) === selectedKey;
+      });
   }
 
   function getProposalTypicalSectionCode(form, serviceName, code) {
@@ -3268,8 +3368,8 @@
     );
   }
 
-  function syncProposalCommercialServiceSelect(select, form, selectedValue) {
-    return syncOptionsSelect(select, getProposalCommercialSectionNames(form), selectedValue);
+  function syncProposalCommercialServiceSelect(select, form, selectedValue, selectedCode) {
+    return syncProposalSectionSelect(select, getProposalCommercialSectionEntries(form), selectedValue, selectedCode);
   }
 
   const PROPOSAL_TRAVEL_EXPENSES_LABEL = 'Командировочные расходы, евро';
@@ -3363,8 +3463,13 @@
     return String(Math.floor(value / 100000) * 100000);
   }
 
-  function syncProposalServiceSectionSelect(select, form, selectedValue) {
-    return syncOptionsSelect(select, getProposalServiceSectionNames(form, selectedValue), selectedValue);
+  function syncProposalServiceSectionSelect(select, form, selectedValue, selectedCode) {
+    return syncProposalSectionSelect(
+      select,
+      getProposalServiceSectionEntries(form, selectedValue, selectedCode),
+      selectedValue,
+      selectedCode
+    );
   }
 
   function attachProposalEntityTable(root, config) {
@@ -5249,16 +5354,18 @@
           total_eur_without_vat: rawMoney(row.querySelector('.proposal-commercial-total')?.value || ''),
         };
       }
+      const serviceControl = row.querySelector('.proposal-commercial-service');
+      const selectedSection = getProposalSelectedSection(serviceControl, form, row.dataset.commercialCode || '');
       return {
         specialist: (row.querySelector('.proposal-commercial-specialist')?.value || '').trim(),
         job_title: (row.querySelector('.proposal-commercial-job-title')?.value || '').trim(),
         professional_status: (row.querySelector('.proposal-commercial-status')?.value || '').trim(),
-        service_name: (row.querySelector('.proposal-commercial-service')?.value || '').trim(),
-        code: String(row.dataset.commercialCode || '').trim(),
+        service_name: selectedSection.serviceName,
+        code: selectedSection.code || String(row.dataset.commercialCode || '').trim(),
         merge_without_code: normalizeProposalMergeWithoutCode(row.dataset.mergeWithoutCode),
         service_name_auto: isSummaryCommercialBlock ? String(row.dataset.summaryServiceAuto || '').trim() : undefined,
         service_name_manually_edited: isSummaryCommercialBlock
-          ? (row.querySelector('.proposal-commercial-service')?.value || '').trim() !== String(row.dataset.summaryServiceAuto || '').trim()
+          ? selectedSection.serviceName !== String(row.dataset.summaryServiceAuto || '').trim()
           : undefined,
         rate_eur_per_day: rawMoney(row.querySelector('.proposal-commercial-rate')?.value || ''),
         asset_day_counts: isSummaryCommercialBlock
@@ -5570,8 +5677,12 @@
       if (jobTitle) jobTitle.value = data.job_title || getProposalTypicalSectionPrimaryExecutor(form, data.service_name || '', data.code || '');
       if (status) status.value = data.professional_status || '';
       if (service) {
-        syncProposalCommercialServiceSelect(service, form, data.service_name || '');
-        service.value = data.service_name || '';
+        syncProposalCommercialServiceSelect(service, form, data.service_name || '', data.code || '');
+        if (service instanceof HTMLSelectElement) {
+          service.value = getProposalSectionSelectKeyFor(form, data.service_name || '', data.code || '');
+        } else {
+          service.value = data.service_name || '';
+        }
       }
       if (rate) rate.value = data.rate_eur_per_day ? fmtMoney(data.rate_eur_per_day) : '';
       if (total) total.value = data.total_eur_without_vat ? fmtMoney(data.total_eur_without_vat) : '';
@@ -5669,29 +5780,32 @@
       } else {
         serviceSelect = document.createElement('select');
         serviceSelect.className = 'form-select proposal-commercial-service';
-        syncProposalCommercialServiceSelect(serviceSelect, form, data.service_name || '');
-        serviceSelect.value = data.service_name || '';
+        syncProposalCommercialServiceSelect(serviceSelect, form, data.service_name || '', data.code || '');
+        serviceSelect.value = getProposalSectionSelectKeyFor(form, data.service_name || '', data.code || '');
         serviceTd.appendChild(serviceSelect);
         serviceSelect.addEventListener('change', function () {
-          const serviceAutofill = getProposalCommercialAutofill(form, serviceSelect.value || '');
-          row.dataset.commercialCode = getProposalTypicalSectionCode(form, serviceSelect.value || '');
+          const selectedSection = getProposalSelectedSection(serviceSelect, form, row.dataset.commercialCode || '');
+          const serviceName = selectedSection.serviceName;
+          row.dataset.commercialCode = selectedSection.code || getProposalTypicalSectionCode(form, serviceName, selectedSection.code || '');
+          const serviceAutofill = getProposalCommercialAutofill(form, serviceName, row.dataset.commercialCode || '');
           titleInput.value = serviceAutofill.jobTitle || '';
           syncProposalCommercialSpecialistSelect(
             specialistSelect,
             form,
-            serviceSelect.value || '',
-            serviceAutofill.specialist || ''
+            serviceName,
+            serviceAutofill.specialist || '',
+            row.dataset.commercialCode || ''
           );
           specialistSelect.value = serviceAutofill.specialist || '';
           statusInput.value = getProposalCommercialSpecialistStatus(
             form,
-            serviceSelect.value || '',
+            serviceName,
             specialistSelect.value || '',
             row.dataset.commercialCode || ''
           ) || serviceAutofill.professionalStatus || '';
           const rateValue = getProposalCommercialRateValue(
             form,
-            serviceSelect.value || '',
+            serviceName,
             specialistSelect.value || '',
             row.dataset.commercialCode || ''
           );
@@ -5701,7 +5815,7 @@
             getAssetRows(),
             getProposalCommercialDayCounts(
               form,
-              serviceSelect.value || '',
+              serviceName,
               getDayInputs(row).map(function (input) { return input.value || ''; }),
               { replaceAll: true, code: row.dataset.commercialCode || '' }
             )
@@ -5758,17 +5872,18 @@
           scheduleUpdatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
         });
         specialistSelect.addEventListener('change', function () {
+          const selectedSection = getProposalSelectedSection(serviceSelect, form, row.dataset.commercialCode || '');
           const specialistStatus = getProposalCommercialSpecialistStatus(
             form,
-            serviceSelect.value || '',
+            selectedSection.serviceName,
             specialistSelect.value || '',
-            row.dataset.commercialCode || ''
+            selectedSection.code || row.dataset.commercialCode || ''
           );
           const rateValue = getProposalCommercialRateValue(
             form,
-            serviceSelect.value || '',
+            selectedSection.serviceName,
             specialistSelect.value || '',
-            row.dataset.commercialCode || ''
+            selectedSection.code || row.dataset.commercialCode || ''
           );
           if (specialistStatus) {
             statusInput.value = specialistStatus;
@@ -6206,15 +6321,20 @@
       const meta = event.detail?.meta || {};
       renderHeader(rows);
       getRows().forEach(function (row) {
+        const selectedSection = getProposalSelectedSection(
+          row.querySelector('.proposal-commercial-service'),
+          form,
+          row.dataset.commercialCode || ''
+        );
         if (meta.reason === 'row-add' && !isSummaryCommercialBlock) {
           syncDayCells(
             row,
             rows,
             getProposalCommercialDayCounts(
               form,
-              row.querySelector('.proposal-commercial-service')?.value || '',
+              selectedSection.serviceName,
               getDayInputs(row).map(function (input) { return input.value || ''; }),
-              { replaceAll: false, code: row.dataset.commercialCode || '' }
+              { replaceAll: false, code: selectedSection.code || row.dataset.commercialCode || '' }
             )
           );
           return;
@@ -6324,9 +6444,15 @@
     }
 
     function serializeRow(row) {
+      const codeInput = row.querySelector('.proposal-service-section-code');
+      const selectedSection = getProposalSelectedSection(
+        row.querySelector('.proposal-service-section-name'),
+        form,
+        codeInput?.value || ''
+      );
       return {
-        service_name: (row.querySelector('.proposal-service-section-name')?.value || '').trim(),
-        code: (row.querySelector('.proposal-service-section-code')?.value || '').trim(),
+        service_name: selectedSection.serviceName,
+        code: selectedSection.code || (codeInput?.value || '').trim(),
         merge_without_code: normalizeProposalMergeWithoutCode(row.dataset.mergeWithoutCode),
       };
     }
@@ -6346,7 +6472,12 @@
       const serviceSelect = row.querySelector('.proposal-service-section-name');
       const codeInput = row.querySelector('.proposal-service-section-code');
       if (!serviceSelect || !codeInput) return;
-      codeInput.value = getProposalTypicalSectionCode(form, serviceSelect.value || '', codeInput.value || '');
+      const selectedSection = getProposalSelectedSection(serviceSelect, form, codeInput.value || '');
+      codeInput.value = getProposalTypicalSectionCode(
+        form,
+        selectedSection.serviceName,
+        selectedSection.code || codeInput.value || ''
+      ) || selectedSection.code;
     }
 
     function syncMergeRuleButton(row) {
@@ -6398,8 +6529,8 @@
       } else {
         nameControl = document.createElement('select');
         nameControl.className = 'form-select proposal-service-section-name';
-        syncProposalServiceSectionSelect(nameControl, form, data.service_name || '');
-        nameControl.value = data.service_name || '';
+        syncProposalServiceSectionSelect(nameControl, form, data.service_name || '', data.code || '');
+        nameControl.value = getProposalSectionSelectKeyFor(form, data.service_name || '', data.code || '');
         nameControl.addEventListener('change', function () {
           syncCode(row);
           updatePayload({ reason: 'row-edit', rowIndex: getRows().indexOf(row) });
