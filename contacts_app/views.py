@@ -1,16 +1,19 @@
+import csv
+import io
 import json
-from datetime import date as date_type
+from datetime import date as date_type, datetime
 from urllib.parse import urlencode
 
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core.paginator import Paginator
+from django.core.validators import validate_email
 from django.db.models import Max, Q
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods, require_POST
 
-from classifiers_app.models import PhysicalEntityIdentifier
+from classifiers_app.models import OKSMCountry, PhysicalEntityIdentifier
 from classifiers_app.numcap import lookup_ru_landline
 
 from .forms import (
@@ -20,8 +23,22 @@ from .forms import (
     PhoneRecordForm,
     PositionRecordForm,
     ResidenceAddressRecordForm,
+    SpecialtyRecordForm,
+    _dial_code_for_country,
+    _physical_identifier_for_country,
 )
-from .models import CitizenshipRecord, EmailRecord, PersonRecord, PhoneRecord, PositionRecord, ResidenceAddressRecord
+from .models import (
+    PERSON_GENDER_CHOICES,
+    USER_KIND_CHOICES,
+    CitizenshipRecord,
+    EmailRecord,
+    PersonRecord,
+    PhoneRecord,
+    PositionRecord,
+    ResidenceAddressRecord,
+    SpecialtyRecord,
+)
+from experts_app.models import ExpertSpecialty
 
 PRS_TABLE_TEMPLATE = "contacts_app/prs_table_partial.html"
 PRS_FORM_TEMPLATE = "contacts_app/prs_form.html"
@@ -33,14 +50,103 @@ TEL_TABLE_TEMPLATE = "contacts_app/tel_table_partial.html"
 TEL_FORM_TEMPLATE = "contacts_app/tel_form.html"
 EML_TABLE_TEMPLATE = "contacts_app/eml_table_partial.html"
 EML_FORM_TEMPLATE = "contacts_app/eml_form.html"
+SPC_TABLE_TEMPLATE = "contacts_app/spc_table_partial.html"
+SPC_FORM_TEMPLATE = "contacts_app/spc_form.html"
 ADR_TABLE_TEMPLATE = "contacts_app/adr_table_partial.html"
 ADR_FORM_TEMPLATE = "contacts_app/adr_form.html"
 CONTACTS_PAGE_SIZE = 50
+PRS_CSV_HEADERS = [
+    "ID-PRS",
+    "Фамилия",
+    "Имя",
+    "Отчество",
+    "ФИО (полное) в родительном падеже",
+    "Пол",
+    "Дата рождения",
+    "Пользователь",
+]
+CTZ_CSV_HEADERS = [
+    "ID-CTZ",
+    "ID-PRS",
+    "Страна",
+    "Статус",
+    "Идентификатор",
+    "Номер",
+    "Действ. от",
+    "Действ. до",
+    "Запись",
+    "Автор записи",
+    "Источник",
+]
+ADR_CSV_HEADERS = [
+    "ID-ADR",
+    "ID-PRS",
+    "Страна",
+    "Регион",
+    "Индекс",
+    "Населенный пункт",
+    "Улица",
+    "Здание",
+    "Помещение",
+    "Часть помещения",
+    "Действ. от",
+    "Действ. до",
+    "Запись",
+    "Автор записи",
+    "Источник",
+]
+PSN_CSV_HEADERS = [
+    "ID-PSN",
+    "ID-PRS",
+    "Наименование организации (краткое)",
+    "Должность",
+    "Действ. от",
+    "Действ. до",
+    "Запись",
+    "Автор записи",
+    "Источник",
+]
+TEL_CSV_HEADERS = [
+    "ID-TEL",
+    "ID-PRS",
+    "Страна",
+    "Тип",
+    "Номер телефона",
+    "Основной",
+    "Действ. от",
+    "Действ. до",
+    "Запись",
+    "Автор записи",
+    "Источник",
+]
+EML_CSV_HEADERS = [
+    "ID-EML",
+    "ID-PRS",
+    "Электронная почта",
+    "Пользователь",
+    "Действ. от",
+    "Действ. до",
+    "Запись",
+    "Автор записи",
+    "Источник",
+]
+SPC_CSV_HEADERS = [
+    "ID-SPC",
+    "ID-PRS",
+    "Специальность",
+    "Пользователь",
+    "Действ. от",
+    "Действ. до",
+    "Запись",
+    "Автор записи",
+    "Источник",
+]
 PRS_TABLE_URL = "/contacts/prs/table/"
 CTZ_TABLE_URL = "/contacts/ctz/table/"
 PSN_TABLE_URL = "/contacts/psn/table/"
 TEL_TABLE_URL = "/contacts/tel/table/"
 EML_TABLE_URL = "/contacts/eml/table/"
+SPC_TABLE_URL = "/contacts/spc/table/"
 ADR_TABLE_URL = "/contacts/adr/table/"
 PRS_FILTER_OPTIONS_URL = "/contacts/prs/filter-options/"
 CONTACTS_HX_TRIGGER_HEADER = "HX-Trigger"
@@ -77,7 +183,7 @@ def _req_param(request, name):
 
 
 def _request_param_lists(request):
-    keys = ("prs_ids", "prs_page", "ctz_page", "adr_page", "psn_page", "tel_page", "eml_page")
+    keys = ("prs_ids", "prs_page", "ctz_page", "adr_page", "psn_page", "tel_page", "eml_page", "spc_page")
     data = {}
     for key in keys:
         values = request.GET.getlist(key)
@@ -350,6 +456,10 @@ def _next_eml_position():
     return (EmailRecord.objects.aggregate(mx=Max("position")).get("mx") or 0) + 1
 
 
+def _next_spc_position():
+    return (SpecialtyRecord.objects.aggregate(mx=Max("position")).get("mx") or 0) + 1
+
+
 def _next_adr_position():
     return (ResidenceAddressRecord.objects.aggregate(mx=Max("position")).get("mx") or 0) + 1
 
@@ -389,6 +499,13 @@ def _normalize_eml_positions():
             EmailRecord.objects.filter(pk=item.pk).update(position=idx)
 
 
+def _normalize_spc_positions():
+    items = SpecialtyRecord.objects.order_by("position", "id").only("id", "position")
+    for idx, item in enumerate(items, start=1):
+        if item.position != idx:
+            SpecialtyRecord.objects.filter(pk=item.pk).update(position=idx)
+
+
 def _normalize_adr_positions():
     items = ResidenceAddressRecord.objects.order_by("position", "id").only("id", "position")
     for idx, item in enumerate(items, start=1):
@@ -396,14 +513,18 @@ def _normalize_adr_positions():
             ResidenceAddressRecord.objects.filter(pk=item.pk).update(position=idx)
 
 
-def _prs_context(request):
-    queryset = PersonRecord.objects.select_related("citizenship").order_by("position", "id")
+def _prs_queryset(request):
+    queryset = PersonRecord.objects.order_by("position", "id")
     person_ids = _selected_person_ids(request)
     if person_ids:
         queryset = queryset.filter(pk__in=person_ids)
+    return queryset
+
+
+def _prs_context(request):
     return _paginate_queryset(
         request,
-        queryset,
+        _prs_queryset(request),
         item_key="prs_items",
         page_param="prs_page",
         partial_url=PRS_TABLE_URL,
@@ -411,14 +532,18 @@ def _prs_context(request):
     )
 
 
-def _psn_context(request):
+def _psn_queryset(request):
     queryset = PositionRecord.objects.select_related("person").order_by("position", "id")
     person_ids = _selected_person_ids(request)
     if person_ids:
         queryset = queryset.filter(person_id__in=person_ids)
+    return queryset
+
+
+def _psn_context(request):
     return _paginate_queryset(
         request,
-        queryset,
+        _psn_queryset(request),
         item_key="psn_items",
         page_param="psn_page",
         partial_url=PSN_TABLE_URL,
@@ -426,14 +551,18 @@ def _psn_context(request):
     )
 
 
-def _ctz_context(request):
+def _ctz_queryset(request):
     queryset = CitizenshipRecord.objects.select_related("person", "country").order_by("position", "id")
     person_ids = _selected_person_ids(request)
     if person_ids:
         queryset = queryset.filter(person_id__in=person_ids)
+    return queryset
+
+
+def _ctz_context(request):
     return _paginate_queryset(
         request,
-        queryset,
+        _ctz_queryset(request),
         item_key="ctz_items",
         page_param="ctz_page",
         partial_url=CTZ_TABLE_URL,
@@ -441,14 +570,18 @@ def _ctz_context(request):
     )
 
 
-def _tel_context(request):
+def _tel_queryset(request):
     queryset = PhoneRecord.objects.select_related("person", "country").order_by("position", "id")
     person_ids = _selected_person_ids(request)
     if person_ids:
         queryset = queryset.filter(person_id__in=person_ids)
+    return queryset
+
+
+def _tel_context(request):
     return _paginate_queryset(
         request,
-        queryset,
+        _tel_queryset(request),
         item_key="tel_items",
         page_param="tel_page",
         partial_url=TEL_TABLE_URL,
@@ -456,14 +589,18 @@ def _tel_context(request):
     )
 
 
-def _eml_context(request):
+def _eml_queryset(request):
     queryset = EmailRecord.objects.select_related("person").order_by("position", "id")
     person_ids = _selected_person_ids(request)
     if person_ids:
         queryset = queryset.filter(person_id__in=person_ids)
+    return queryset
+
+
+def _eml_context(request):
     return _paginate_queryset(
         request,
-        queryset,
+        _eml_queryset(request),
         item_key="eml_items",
         page_param="eml_page",
         partial_url=EML_TABLE_URL,
@@ -471,14 +608,37 @@ def _eml_context(request):
     )
 
 
-def _adr_context(request):
+def _spc_queryset(request):
+    queryset = SpecialtyRecord.objects.select_related("person", "specialty").order_by("position", "id")
+    person_ids = _selected_person_ids(request)
+    if person_ids:
+        queryset = queryset.filter(person_id__in=person_ids)
+    return queryset
+
+
+def _spc_context(request):
+    return _paginate_queryset(
+        request,
+        _spc_queryset(request),
+        item_key="spc_items",
+        page_param="spc_page",
+        partial_url=SPC_TABLE_URL,
+        target="#contacts-specialties-table-wrap",
+    )
+
+
+def _adr_queryset(request):
     queryset = ResidenceAddressRecord.objects.select_related("person", "country").order_by("position", "id")
     person_ids = _selected_person_ids(request)
     if person_ids:
         queryset = queryset.filter(person_id__in=person_ids)
+    return queryset
+
+
+def _adr_context(request):
     return _paginate_queryset(
         request,
-        queryset,
+        _adr_queryset(request),
         item_key="adr_items",
         page_param="adr_page",
         partial_url=ADR_TABLE_URL,
@@ -509,6 +669,11 @@ def _render_tel_updated(request, *, affected=None):
 def _render_eml_updated(request, *, affected=None):
     response = render(request, EML_TABLE_TEMPLATE, _eml_context(request))
     return _set_contacts_trigger(response, source="eml-select", affected=affected)
+
+
+def _render_spc_updated(request, *, affected=None):
+    response = render(request, SPC_TABLE_TEMPLATE, _spc_context(request))
+    return _set_contacts_trigger(response, source="spc-select", affected=affected)
 
 
 def _render_adr_updated(request, *, affected=None):
@@ -647,6 +812,356 @@ def prs_table_partial(request):
     return render(request, PRS_TABLE_TEMPLATE, _prs_context(request))
 
 
+def _prs_gender_lookup():
+    lookup = {}
+    for code, label in PERSON_GENDER_CHOICES:
+        lookup[label.strip().lower()] = code
+        lookup[code.strip().lower()] = code
+    return lookup
+
+
+def _prs_user_kind_lookup():
+    lookup = {"": ""}
+    for code, label in USER_KIND_CHOICES:
+        lookup[label.strip().lower()] = code
+        lookup[code.strip().lower()] = code
+    return lookup
+
+
+def _parse_prs_csv_gender(raw_value):
+    value = (raw_value or "").strip()
+    if not value:
+        return ""
+    parsed = _prs_gender_lookup().get(value.lower())
+    if parsed is None:
+        raise ValueError(f"неизвестное значение пола «{value}»")
+    return parsed
+
+
+def _parse_prs_csv_user_kind(raw_value):
+    value = (raw_value or "").strip()
+    if not value:
+        return ""
+    parsed = _prs_user_kind_lookup().get(value.lower())
+    if parsed is None:
+        raise ValueError(f"неизвестный тип пользователя «{value}»")
+    return parsed
+
+
+def _parse_prs_csv_birth_date(raw_value):
+    value = (raw_value or "").strip()
+    if not value:
+        return None
+    for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d.%m.%y"):
+        try:
+            return datetime.strptime(value, fmt).date()
+        except ValueError:
+            continue
+    raise ValueError(f"некорректная дата рождения «{value}»")
+
+
+def _parse_prs_csv_id(raw_value):
+    value = (raw_value or "").strip().upper()
+    if not value:
+        return None
+    if value.endswith("-PRS"):
+        value = value[:-4]
+    if value.isdigit():
+        return int(value)
+    return None
+
+
+def _format_prs_csv_birth_date(value):
+    return value.strftime("%d.%m.%Y") if value else ""
+
+
+def _parse_contact_csv_date(raw_value, *, field_label):
+    value = (raw_value or "").strip()
+    if not value:
+        return None
+    for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d.%m.%y"):
+        try:
+            return datetime.strptime(value, fmt).date()
+        except ValueError:
+            continue
+    raise ValueError(f"некорректная дата «{value}» для поля «{field_label}»")
+
+
+def _parse_ctz_csv_id(raw_value):
+    value = (raw_value or "").strip().upper()
+    if not value:
+        return None
+    if value.endswith("-CTZ"):
+        value = value[:-4]
+    if value.isdigit():
+        return int(value)
+    return None
+
+
+def _parse_adr_csv_id(raw_value):
+    value = (raw_value or "").strip().upper()
+    if not value:
+        return None
+    if value.endswith("-ADR"):
+        value = value[:-4]
+    if value.isdigit():
+        return int(value)
+    return None
+
+
+def _parse_psn_csv_id(raw_value):
+    value = (raw_value or "").strip().upper()
+    if not value:
+        return None
+    if value.endswith("-PSN"):
+        value = value[:-4]
+    if value.isdigit():
+        return int(value)
+    return None
+
+
+def _parse_tel_csv_id(raw_value):
+    value = (raw_value or "").strip().upper()
+    if not value:
+        return None
+    if value.endswith("-TEL"):
+        value = value[:-4]
+    if value.isdigit():
+        return int(value)
+    return None
+
+
+def _parse_eml_csv_id(raw_value):
+    value = (raw_value or "").strip().upper()
+    if not value:
+        return None
+    if value.endswith("-EML"):
+        value = value[:-4]
+    if value.isdigit():
+        return int(value)
+    return None
+
+
+def _parse_spc_csv_id(raw_value):
+    value = (raw_value or "").strip().upper()
+    if not value:
+        return None
+    if value.endswith("-SPC"):
+        value = value[:-4]
+    if value.isdigit():
+        return int(value)
+    return None
+
+
+def _format_tel_csv_type(item):
+    if item.phone_type == PhoneRecord.PHONE_TYPE_MOBILE:
+        return "моб."
+    if item.phone_type == PhoneRecord.PHONE_TYPE_LANDLINE:
+        return "гор."
+    return ""
+
+
+def _format_tel_csv_phone(item):
+    if not item.phone_number:
+        return ""
+    if item.code:
+        result = f"{item.code} {item.phone_number}".strip()
+    else:
+        result = item.phone_number
+    if item.extension:
+        result = f"{result} доб. {item.extension}"
+    return result
+
+
+def _format_tel_csv_is_primary(item):
+    return "Да" if item.is_primary else "Нет"
+
+
+def _parse_tel_csv_phone_type(raw_value):
+    value = (raw_value or "").strip().lower()
+    if not value:
+        return PhoneRecord.PHONE_TYPE_MOBILE
+    if value in {"моб.", "моб", "mobile", "мобильный"}:
+        return PhoneRecord.PHONE_TYPE_MOBILE
+    if value in {"гор.", "гор", "landline", "стационарный"}:
+        return PhoneRecord.PHONE_TYPE_LANDLINE
+    raise ValueError(f"неизвестный тип телефона «{raw_value}»")
+
+
+def _parse_tel_csv_is_primary(raw_value):
+    value = (raw_value or "").strip().lower()
+    if not value:
+        return False
+    if value in {"да", "true", "1", "yes", "on"}:
+        return True
+    if value in {"нет", "false", "0", "no", "off"}:
+        return False
+    raise ValueError(f"некорректное значение «{raw_value}» для поля «Основной»")
+
+
+def _parse_tel_csv_phone_display(raw_value, *, country):
+    value = (raw_value or "").strip()
+    extension = ""
+    if " доб. " in value:
+        value, _, extension_part = value.partition(" доб. ")
+        extension = extension_part.strip()
+    dial_code = _dial_code_for_country(country) if country else ""
+    phone_number = value
+    if dial_code:
+        normalized_code = dial_code.lstrip("+")
+        if phone_number.startswith(dial_code):
+            phone_number = phone_number[len(dial_code):].strip()
+        elif phone_number.startswith("+" + normalized_code):
+            phone_number = phone_number[len(normalized_code) + 1:].strip()
+        elif phone_number.startswith(normalized_code):
+            phone_number = phone_number[len(normalized_code):].strip()
+    return dial_code, phone_number, extension
+
+
+def _default_phone_country():
+    return OKSMCountry.objects.filter(code="643").order_by("position", "id").first()
+
+
+def _country_by_short_name(raw_value):
+    name = (raw_value or "").strip()
+    if not name:
+        return None
+    return OKSMCountry.objects.filter(short_name__iexact=name).order_by("position", "id").first()
+
+
+def _parse_ctz_csv_status(raw_value):
+    value = (raw_value or "").strip()
+    if not value:
+        return ""
+    valid_statuses = {label for _code, label in CitizenshipRecordForm.STATUS_CHOICES if label}
+    if value not in valid_statuses:
+        raise ValueError(f"неизвестный статус «{value}»")
+    return value
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def prs_csv_upload(request):
+    csv_file = request.FILES.get("csv_file")
+    if not csv_file:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+    if not csv_file.name.lower().endswith(".csv"):
+        return JsonResponse({"ok": False, "error": "Допустимы только файлы CSV."}, status=400)
+
+    try:
+        raw = csv_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_file.seek(0)
+            raw = csv_file.read().decode("cp1251")
+        except Exception:
+            return JsonResponse(
+                {"ok": False, "error": "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251)."},
+                status=400,
+            )
+
+    try:
+        reader = csv.reader(io.StringIO(raw), delimiter=";")
+        rows = list(reader)
+        if not rows:
+            return JsonResponse({"ok": False, "error": "Файл пуст."}, status=400)
+        if len(rows[0]) <= 1:
+            reader = csv.reader(io.StringIO(raw), delimiter=",")
+            rows = list(reader)
+    except csv.Error as exc:
+        return JsonResponse({"ok": False, "error": f"Ошибка разбора CSV: {exc}. Проверьте формат и кодировку файла."}, status=400)
+
+    if len(rows) < 2:
+        return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
+
+    created = 0
+    warnings = []
+
+    for i, row in enumerate(rows[1:], start=2):
+        if not any(cell.strip() for cell in row):
+            continue
+        if len(row) < 8:
+            warnings.append(
+                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 8: "
+                "ID-PRS, Фамилия, Имя, Отчество, ФИО (полное) в родительном падеже, Пол, Дата рождения, Пользователь."
+            )
+            continue
+
+        prs_id_raw = row[0].strip() if len(row) > 0 else ""
+        last_name = row[1].strip() if len(row) > 1 else ""
+        first_name = row[2].strip() if len(row) > 2 else ""
+        middle_name = row[3].strip() if len(row) > 3 else ""
+        full_name_genitive = row[4].strip() if len(row) > 4 else ""
+        gender_raw = row[5].strip() if len(row) > 5 else ""
+        birth_date_raw = row[6].strip() if len(row) > 6 else ""
+        user_kind_raw = row[7].strip() if len(row) > 7 else ""
+
+        parsed_id = _parse_prs_csv_id(prs_id_raw)
+        if parsed_id and PersonRecord.objects.filter(pk=parsed_id).exists():
+            existing_label = prs_id_raw or f"{parsed_id:05d}-PRS"
+            warnings.append(f"Строка {i}: запись {existing_label} уже существует, пропущена.")
+            continue
+
+        if not last_name:
+            warnings.append(f"Строка {i}: не заполнены обязательные поля: Фамилия.")
+            continue
+
+        try:
+            gender = _parse_prs_csv_gender(gender_raw)
+            user_kind = _parse_prs_csv_user_kind(user_kind_raw)
+            birth_date = _parse_prs_csv_birth_date(birth_date_raw)
+        except ValueError as exc:
+            warnings.append(f"Строка {i}: {exc}.")
+            continue
+
+        item = PersonRecord.objects.create(
+            last_name=last_name,
+            first_name=first_name,
+            middle_name=middle_name,
+            full_name_genitive=full_name_genitive,
+            gender=gender,
+            birth_date=birth_date,
+            user_kind=user_kind,
+            position=_next_prs_position(),
+        )
+        _ensure_person_citizenship_record(item, user=request.user)
+        _ensure_person_residence_address_record(item, user=request.user)
+        _ensure_person_phone_record(item, user=request.user)
+        _ensure_person_email_record(item, user=request.user)
+        created += 1
+
+    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def prs_csv_download(request):
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=";", lineterminator="\n")
+    writer.writerow(PRS_CSV_HEADERS)
+
+    for item in _prs_queryset(request):
+        writer.writerow(
+            [
+                f"{item.pk:05d}-PRS",
+                item.last_name,
+                item.first_name,
+                item.middle_name,
+                item.full_name_genitive,
+                item.get_gender_display(),
+                _format_prs_csv_birth_date(item.birth_date),
+                item.get_user_kind_display(),
+            ]
+        )
+
+    response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="person_registry.csv"'
+    return response
+
+
 @login_required
 @user_passes_test(staff_required)
 @require_http_methods(["GET", "POST"])
@@ -735,6 +1250,576 @@ def psn_table_partial(request):
 
 
 @login_required
+@user_passes_test(staff_required)
+@require_POST
+def psn_csv_upload(request):
+    csv_file = request.FILES.get("csv_file")
+    if not csv_file:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+    if not csv_file.name.lower().endswith(".csv"):
+        return JsonResponse({"ok": False, "error": "Допустимы только файлы CSV."}, status=400)
+
+    try:
+        raw = csv_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_file.seek(0)
+            raw = csv_file.read().decode("cp1251")
+        except Exception:
+            return JsonResponse(
+                {"ok": False, "error": "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251)."},
+                status=400,
+            )
+
+    try:
+        reader = csv.reader(io.StringIO(raw), delimiter=";")
+        rows = list(reader)
+        if not rows:
+            return JsonResponse({"ok": False, "error": "Файл пуст."}, status=400)
+        if len(rows[0]) <= 1:
+            reader = csv.reader(io.StringIO(raw), delimiter=",")
+            rows = list(reader)
+    except csv.Error as exc:
+        return JsonResponse({"ok": False, "error": f"Ошибка разбора CSV: {exc}. Проверьте формат и кодировку файла."}, status=400)
+
+    if len(rows) < 2:
+        return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
+
+    created = 0
+    warnings = []
+
+    for i, row in enumerate(rows[1:], start=2):
+        if not any(cell.strip() for cell in row):
+            continue
+        if len(row) < 9:
+            warnings.append(
+                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 9: "
+                "ID-PSN, ID-PRS, Наименование организации (краткое), Должность, Действ. от, Действ. до, "
+                "Запись, Автор записи, Источник."
+            )
+            continue
+
+        psn_id_raw = row[0].strip() if len(row) > 0 else ""
+        prs_id_raw = row[1].strip() if len(row) > 1 else ""
+        organization_short_name = row[2].strip() if len(row) > 2 else ""
+        job_title = row[3].strip() if len(row) > 3 else ""
+        valid_from_raw = row[4].strip() if len(row) > 4 else ""
+        valid_to_raw = row[5].strip() if len(row) > 5 else ""
+        record_date_raw = row[6].strip() if len(row) > 6 else ""
+        record_author_raw = row[7].strip() if len(row) > 7 else ""
+        source_raw = row[8].strip() if len(row) > 8 else ""
+
+        parsed_psn_id = _parse_psn_csv_id(psn_id_raw)
+        if parsed_psn_id and PositionRecord.objects.filter(pk=parsed_psn_id).exists():
+            existing_label = psn_id_raw or f"{parsed_psn_id:05d}-PSN"
+            warnings.append(f"Строка {i}: запись {existing_label} уже существует, пропущена.")
+            continue
+
+        parsed_prs_id = _parse_prs_csv_id(prs_id_raw)
+        if not parsed_prs_id:
+            warnings.append(f"Строка {i}: не заполнены обязательные поля: ID-PRS.")
+            continue
+        person = PersonRecord.objects.filter(pk=parsed_prs_id).first()
+        if person is None:
+            warnings.append(f"Строка {i}: лицо {prs_id_raw or f'{parsed_prs_id:05d}-PRS'} не найдено.")
+            continue
+
+        try:
+            valid_from = _parse_contact_csv_date(valid_from_raw, field_label="Действ. от")
+            valid_to = _parse_contact_csv_date(valid_to_raw, field_label="Действ. до")
+            record_date = _parse_contact_csv_date(record_date_raw, field_label="Запись")
+        except ValueError as exc:
+            warnings.append(f"Строка {i}: {exc}.")
+            continue
+
+        item = PositionRecord(
+            person=person,
+            organization_short_name=organization_short_name,
+            job_title=job_title,
+            valid_from=valid_from,
+            valid_to=valid_to,
+            record_date=record_date or date_type.today(),
+            record_author=record_author_raw or _contacts_record_author(request.user),
+            source=source_raw,
+            position=_next_psn_position(),
+        )
+        if not item.source:
+            item.source = item.resolve_source()
+        item.save()
+        created += 1
+
+    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def psn_csv_download(request):
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=";", lineterminator="\n")
+    writer.writerow(PSN_CSV_HEADERS)
+
+    for item in _psn_queryset(request):
+        writer.writerow(
+            [
+                f"{item.pk:05d}-PSN",
+                f"{item.person.pk:05d}-PRS",
+                item.organization_short_name,
+                item.job_title,
+                _format_prs_csv_birth_date(item.valid_from),
+                _format_prs_csv_birth_date(item.valid_to),
+                _format_prs_csv_birth_date(item.record_date),
+                item.record_author,
+                item.source,
+            ]
+        )
+
+    response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="position_registry.csv"'
+    return response
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def tel_csv_upload(request):
+    csv_file = request.FILES.get("csv_file")
+    if not csv_file:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+    if not csv_file.name.lower().endswith(".csv"):
+        return JsonResponse({"ok": False, "error": "Допустимы только файлы CSV."}, status=400)
+
+    try:
+        raw = csv_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_file.seek(0)
+            raw = csv_file.read().decode("cp1251")
+        except Exception:
+            return JsonResponse(
+                {"ok": False, "error": "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251)."},
+                status=400,
+            )
+
+    try:
+        reader = csv.reader(io.StringIO(raw), delimiter=";")
+        rows = list(reader)
+        if not rows:
+            return JsonResponse({"ok": False, "error": "Файл пуст."}, status=400)
+        if len(rows[0]) <= 1:
+            reader = csv.reader(io.StringIO(raw), delimiter=",")
+            rows = list(reader)
+    except csv.Error as exc:
+        return JsonResponse({"ok": False, "error": f"Ошибка разбора CSV: {exc}. Проверьте формат и кодировку файла."}, status=400)
+
+    if len(rows) < 2:
+        return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
+
+    created = 0
+    warnings = []
+
+    for i, row in enumerate(rows[1:], start=2):
+        if not any(cell.strip() for cell in row):
+            continue
+        if len(row) < 11:
+            warnings.append(
+                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 11: "
+                "ID-TEL, ID-PRS, Страна, Тип, Номер телефона, Основной, Действ. от, Действ. до, "
+                "Запись, Автор записи, Источник."
+            )
+            continue
+
+        tel_id_raw = row[0].strip() if len(row) > 0 else ""
+        prs_id_raw = row[1].strip() if len(row) > 1 else ""
+        country_raw = row[2].strip() if len(row) > 2 else ""
+        phone_type_raw = row[3].strip() if len(row) > 3 else ""
+        phone_display_raw = row[4].strip() if len(row) > 4 else ""
+        is_primary_raw = row[5].strip() if len(row) > 5 else ""
+        valid_from_raw = row[6].strip() if len(row) > 6 else ""
+        valid_to_raw = row[7].strip() if len(row) > 7 else ""
+        record_date_raw = row[8].strip() if len(row) > 8 else ""
+        record_author_raw = row[9].strip() if len(row) > 9 else ""
+        source_raw = row[10].strip() if len(row) > 10 else ""
+
+        parsed_tel_id = _parse_tel_csv_id(tel_id_raw)
+        if parsed_tel_id and PhoneRecord.objects.filter(pk=parsed_tel_id).exists():
+            existing_label = tel_id_raw or f"{parsed_tel_id:05d}-TEL"
+            warnings.append(f"Строка {i}: запись {existing_label} уже существует, пропущена.")
+            continue
+
+        parsed_prs_id = _parse_prs_csv_id(prs_id_raw)
+        if not parsed_prs_id:
+            warnings.append(f"Строка {i}: не заполнены обязательные поля: ID-PRS.")
+            continue
+        person = PersonRecord.objects.filter(pk=parsed_prs_id).first()
+        if person is None:
+            warnings.append(f"Строка {i}: лицо {prs_id_raw or f'{parsed_prs_id:05d}-PRS'} не найдено.")
+            continue
+
+        if country_raw:
+            country = _country_by_short_name(country_raw)
+            if country is None:
+                warnings.append(f"Строка {i}: страна «{country_raw}» не найдена.")
+                continue
+        else:
+            country = _default_phone_country()
+
+        try:
+            phone_type = _parse_tel_csv_phone_type(phone_type_raw)
+            is_primary = _parse_tel_csv_is_primary(is_primary_raw)
+            valid_from = _parse_contact_csv_date(valid_from_raw, field_label="Действ. от")
+            valid_to = _parse_contact_csv_date(valid_to_raw, field_label="Действ. до")
+            record_date = _parse_contact_csv_date(record_date_raw, field_label="Запись")
+        except ValueError as exc:
+            warnings.append(f"Строка {i}: {exc}.")
+            continue
+
+        code, phone_number, extension = _parse_tel_csv_phone_display(phone_display_raw, country=country)
+        if phone_type != PhoneRecord.PHONE_TYPE_LANDLINE:
+            extension = ""
+        region = ""
+
+        item = PhoneRecord(
+            person=person,
+            country=country,
+            code=code,
+            phone_type=phone_type,
+            region=region,
+            phone_number=phone_number,
+            is_primary=is_primary,
+            extension=extension,
+            valid_from=valid_from or date_type.today(),
+            valid_to=valid_to,
+            record_date=record_date or date_type.today(),
+            record_author=record_author_raw or _contacts_record_author(request.user),
+            source=source_raw,
+            position=_next_tel_position(),
+        )
+        item.save()
+        created += 1
+
+    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def tel_csv_download(request):
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=";", lineterminator="\n")
+    writer.writerow(TEL_CSV_HEADERS)
+
+    for item in _tel_queryset(request):
+        writer.writerow(
+            [
+                f"{item.pk:05d}-TEL",
+                f"{item.person.pk:05d}-PRS",
+                item.country.short_name if item.country else "",
+                _format_tel_csv_type(item),
+                _format_tel_csv_phone(item),
+                _format_tel_csv_is_primary(item),
+                _format_prs_csv_birth_date(item.valid_from),
+                _format_prs_csv_birth_date(item.valid_to),
+                _format_prs_csv_birth_date(item.record_date),
+                item.record_author,
+                item.source,
+            ]
+        )
+
+    response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="phone_registry.csv"'
+    return response
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def eml_csv_upload(request):
+    csv_file = request.FILES.get("csv_file")
+    if not csv_file:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+    if not csv_file.name.lower().endswith(".csv"):
+        return JsonResponse({"ok": False, "error": "Допустимы только файлы CSV."}, status=400)
+
+    try:
+        raw = csv_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_file.seek(0)
+            raw = csv_file.read().decode("cp1251")
+        except Exception:
+            return JsonResponse(
+                {"ok": False, "error": "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251)."},
+                status=400,
+            )
+
+    try:
+        reader = csv.reader(io.StringIO(raw), delimiter=";")
+        rows = list(reader)
+        if not rows:
+            return JsonResponse({"ok": False, "error": "Файл пуст."}, status=400)
+        if len(rows[0]) <= 1:
+            reader = csv.reader(io.StringIO(raw), delimiter=",")
+            rows = list(reader)
+    except csv.Error as exc:
+        return JsonResponse({"ok": False, "error": f"Ошибка разбора CSV: {exc}. Проверьте формат и кодировку файла."}, status=400)
+
+    if len(rows) < 2:
+        return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
+
+    created = 0
+    warnings = []
+
+    for i, row in enumerate(rows[1:], start=2):
+        if not any(cell.strip() for cell in row):
+            continue
+        if len(row) < 9:
+            warnings.append(
+                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 9: "
+                "ID-EML, ID-PRS, Электронная почта, Пользователь, Действ. от, Действ. до, "
+                "Запись, Автор записи, Источник."
+            )
+            continue
+
+        eml_id_raw = row[0].strip() if len(row) > 0 else ""
+        prs_id_raw = row[1].strip() if len(row) > 1 else ""
+        email_raw = row[2].strip() if len(row) > 2 else ""
+        user_kind_raw = row[3].strip() if len(row) > 3 else ""
+        valid_from_raw = row[4].strip() if len(row) > 4 else ""
+        valid_to_raw = row[5].strip() if len(row) > 5 else ""
+        record_date_raw = row[6].strip() if len(row) > 6 else ""
+        record_author_raw = row[7].strip() if len(row) > 7 else ""
+        source_raw = row[8].strip() if len(row) > 8 else ""
+
+        parsed_eml_id = _parse_eml_csv_id(eml_id_raw)
+        if parsed_eml_id and EmailRecord.objects.filter(pk=parsed_eml_id).exists():
+            existing_label = eml_id_raw or f"{parsed_eml_id:05d}-EML"
+            warnings.append(f"Строка {i}: запись {existing_label} уже существует, пропущена.")
+            continue
+
+        parsed_prs_id = _parse_prs_csv_id(prs_id_raw)
+        if not parsed_prs_id:
+            warnings.append(f"Строка {i}: не заполнены обязательные поля: ID-PRS.")
+            continue
+        person = PersonRecord.objects.filter(pk=parsed_prs_id).first()
+        if person is None:
+            warnings.append(f"Строка {i}: лицо {prs_id_raw or f'{parsed_prs_id:05d}-PRS'} не найдено.")
+            continue
+
+        if email_raw:
+            try:
+                validate_email(email_raw)
+            except Exception:
+                warnings.append(f"Строка {i}: некорректный адрес электронной почты «{email_raw}».")
+                continue
+
+        try:
+            user_kind = _parse_prs_csv_user_kind(user_kind_raw) if user_kind_raw else person.user_kind
+            valid_from = _parse_contact_csv_date(valid_from_raw, field_label="Действ. от")
+            valid_to = _parse_contact_csv_date(valid_to_raw, field_label="Действ. до")
+            record_date = _parse_contact_csv_date(record_date_raw, field_label="Запись")
+        except ValueError as exc:
+            warnings.append(f"Строка {i}: {exc}.")
+            continue
+
+        item = EmailRecord(
+            person=person,
+            email=email_raw,
+            user_kind=user_kind,
+            valid_from=valid_from or date_type.today(),
+            valid_to=valid_to,
+            record_date=record_date or date_type.today(),
+            record_author=record_author_raw or _contacts_record_author(request.user),
+            source=source_raw,
+            position=_next_eml_position(),
+        )
+        item.save()
+        created += 1
+
+    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def spc_csv_upload(request):
+    csv_file = request.FILES.get("csv_file")
+    if not csv_file:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+    if not csv_file.name.lower().endswith(".csv"):
+        return JsonResponse({"ok": False, "error": "Допустимы только файлы CSV."}, status=400)
+
+    try:
+        raw = csv_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_file.seek(0)
+            raw = csv_file.read().decode("cp1251")
+        except Exception:
+            return JsonResponse(
+                {"ok": False, "error": "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251)."},
+                status=400,
+            )
+
+    try:
+        reader = csv.reader(io.StringIO(raw), delimiter=";")
+        rows = list(reader)
+        if not rows:
+            return JsonResponse({"ok": False, "error": "Файл пуст."}, status=400)
+        if len(rows[0]) <= 1:
+            reader = csv.reader(io.StringIO(raw), delimiter=",")
+            rows = list(reader)
+    except csv.Error as exc:
+        return JsonResponse({"ok": False, "error": f"Ошибка разбора CSV: {exc}. Проверьте формат и кодировку файла."}, status=400)
+
+    if len(rows) < 2:
+        return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
+
+    specialties_by_name = {
+        " ".join((item.specialty or "").strip().lower().split()): item
+        for item in ExpertSpecialty.objects.exclude(specialty="").all()
+    }
+    created = 0
+    warnings = []
+
+    for i, row in enumerate(rows[1:], start=2):
+        if not any(cell.strip() for cell in row):
+            continue
+        if len(row) < 9:
+            warnings.append(
+                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 9: "
+                "ID-SPC, ID-PRS, Специальность, Пользователь, Действ. от, Действ. до, "
+                "Запись, Автор записи, Источник."
+            )
+            continue
+
+        spc_id_raw = row[0].strip() if len(row) > 0 else ""
+        prs_id_raw = row[1].strip() if len(row) > 1 else ""
+        specialty_raw = row[2].strip() if len(row) > 2 else ""
+        user_kind_raw = row[3].strip() if len(row) > 3 else ""
+        valid_from_raw = row[4].strip() if len(row) > 4 else ""
+        valid_to_raw = row[5].strip() if len(row) > 5 else ""
+        record_date_raw = row[6].strip() if len(row) > 6 else ""
+        record_author_raw = row[7].strip() if len(row) > 7 else ""
+        source_raw = row[8].strip() if len(row) > 8 else ""
+
+        parsed_spc_id = _parse_spc_csv_id(spc_id_raw)
+        if parsed_spc_id and SpecialtyRecord.objects.filter(pk=parsed_spc_id).exists():
+            existing_label = spc_id_raw or f"{parsed_spc_id:05d}-SPC"
+            warnings.append(f"Строка {i}: запись {existing_label} уже существует, пропущена.")
+            continue
+
+        parsed_prs_id = _parse_prs_csv_id(prs_id_raw)
+        if not parsed_prs_id:
+            warnings.append(f"Строка {i}: не заполнены обязательные поля: ID-PRS.")
+            continue
+        person = PersonRecord.objects.filter(pk=parsed_prs_id).first()
+        if person is None:
+            warnings.append(f"Строка {i}: лицо {prs_id_raw or f'{parsed_prs_id:05d}-PRS'} не найдено.")
+            continue
+
+        specialty = specialties_by_name.get(" ".join(specialty_raw.lower().split()))
+        if specialty is None:
+            warnings.append(f"Строка {i}: специальность «{specialty_raw}» не найдена.")
+            continue
+
+        try:
+            user_kind = _parse_prs_csv_user_kind(user_kind_raw) if user_kind_raw else person.user_kind
+            valid_from = _parse_contact_csv_date(valid_from_raw, field_label="Действ. от")
+            valid_to = _parse_contact_csv_date(valid_to_raw, field_label="Действ. до")
+            record_date = _parse_contact_csv_date(record_date_raw, field_label="Запись")
+        except ValueError as exc:
+            warnings.append(f"Строка {i}: {exc}.")
+            continue
+
+        if valid_from and valid_to and valid_to < valid_from:
+            warnings.append(f"Строка {i}: дата «Действ. до» не может быть раньше даты «Действ. от».")
+            continue
+        if SpecialtyRecord.objects.filter(
+            person=person,
+            specialty=specialty,
+        ).filter(Q(valid_to__isnull=True) | Q(valid_to__gt=date_type.today())).exists():
+            warnings.append(f"Строка {i}: у выбранного ID-PRS уже есть активная запись с этой специальностью.")
+            continue
+
+        item = SpecialtyRecord(
+            person=person,
+            specialty=specialty,
+            user_kind=user_kind,
+            valid_from=valid_from or date_type.today(),
+            valid_to=valid_to,
+            record_date=record_date or date_type.today(),
+            record_author=record_author_raw or _contacts_record_author(request.user),
+            source=source_raw,
+            position=_next_spc_position(),
+        )
+        item.save()
+        created += 1
+
+    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def eml_csv_download(request):
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=";", lineterminator="\n")
+    writer.writerow(EML_CSV_HEADERS)
+
+    for item in _eml_queryset(request):
+        writer.writerow(
+            [
+                f"{item.pk:05d}-EML",
+                f"{item.person.pk:05d}-PRS",
+                item.email,
+                item.get_user_kind_display(),
+                _format_prs_csv_birth_date(item.valid_from),
+                _format_prs_csv_birth_date(item.valid_to),
+                _format_prs_csv_birth_date(item.record_date),
+                item.record_author,
+                item.source,
+            ]
+        )
+
+    response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="email_registry.csv"'
+    return response
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def spc_csv_download(request):
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=";", lineterminator="\n")
+    writer.writerow(SPC_CSV_HEADERS)
+
+    for item in _spc_queryset(request):
+        writer.writerow(
+            [
+                f"{item.pk:05d}-SPC",
+                f"{item.person.pk:05d}-PRS",
+                item.specialty.specialty if item.specialty else "",
+                item.get_user_kind_display(),
+                _format_prs_csv_birth_date(item.valid_from),
+                _format_prs_csv_birth_date(item.valid_to),
+                _format_prs_csv_birth_date(item.record_date),
+                item.record_author,
+                item.source,
+            ]
+        )
+
+    response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="specialty_registry.csv"'
+    return response
+
+
+@login_required
 @require_http_methods(["GET"])
 def tel_table_partial(request):
     return render(request, TEL_TABLE_TEMPLATE, _tel_context(request))
@@ -748,14 +1833,312 @@ def eml_table_partial(request):
 
 @login_required
 @require_http_methods(["GET"])
+def spc_table_partial(request):
+    return render(request, SPC_TABLE_TEMPLATE, _spc_context(request))
+
+
+@login_required
+@require_http_methods(["GET"])
 def adr_table_partial(request):
     return render(request, ADR_TABLE_TEMPLATE, _adr_context(request))
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def adr_csv_upload(request):
+    csv_file = request.FILES.get("csv_file")
+    if not csv_file:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+    if not csv_file.name.lower().endswith(".csv"):
+        return JsonResponse({"ok": False, "error": "Допустимы только файлы CSV."}, status=400)
+
+    try:
+        raw = csv_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_file.seek(0)
+            raw = csv_file.read().decode("cp1251")
+        except Exception:
+            return JsonResponse(
+                {"ok": False, "error": "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251)."},
+                status=400,
+            )
+
+    try:
+        reader = csv.reader(io.StringIO(raw), delimiter=";")
+        rows = list(reader)
+        if not rows:
+            return JsonResponse({"ok": False, "error": "Файл пуст."}, status=400)
+        if len(rows[0]) <= 1:
+            reader = csv.reader(io.StringIO(raw), delimiter=",")
+            rows = list(reader)
+    except csv.Error as exc:
+        return JsonResponse({"ok": False, "error": f"Ошибка разбора CSV: {exc}. Проверьте формат и кодировку файла."}, status=400)
+
+    if len(rows) < 2:
+        return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
+
+    created = 0
+    warnings = []
+
+    for i, row in enumerate(rows[1:], start=2):
+        if not any(cell.strip() for cell in row):
+            continue
+        if len(row) < 15:
+            warnings.append(
+                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 15: "
+                "ID-ADR, ID-PRS, Страна, Регион, Индекс, Населенный пункт, Улица, Здание, Помещение, "
+                "Часть помещения, Действ. от, Действ. до, Запись, Автор записи, Источник."
+            )
+            continue
+
+        adr_id_raw = row[0].strip() if len(row) > 0 else ""
+        prs_id_raw = row[1].strip() if len(row) > 1 else ""
+        country_raw = row[2].strip() if len(row) > 2 else ""
+        region = row[3].strip() if len(row) > 3 else ""
+        postal_code = row[4].strip() if len(row) > 4 else ""
+        locality = row[5].strip() if len(row) > 5 else ""
+        street = row[6].strip() if len(row) > 6 else ""
+        building = row[7].strip() if len(row) > 7 else ""
+        premise = row[8].strip() if len(row) > 8 else ""
+        premise_part = row[9].strip() if len(row) > 9 else ""
+        valid_from_raw = row[10].strip() if len(row) > 10 else ""
+        valid_to_raw = row[11].strip() if len(row) > 11 else ""
+        record_date_raw = row[12].strip() if len(row) > 12 else ""
+        record_author_raw = row[13].strip() if len(row) > 13 else ""
+        source = row[14].strip() if len(row) > 14 else ""
+
+        parsed_adr_id = _parse_adr_csv_id(adr_id_raw)
+        if parsed_adr_id and ResidenceAddressRecord.objects.filter(pk=parsed_adr_id).exists():
+            existing_label = adr_id_raw or f"{parsed_adr_id:05d}-ADR"
+            warnings.append(f"Строка {i}: запись {existing_label} уже существует, пропущена.")
+            continue
+
+        parsed_prs_id = _parse_prs_csv_id(prs_id_raw)
+        if not parsed_prs_id:
+            warnings.append(f"Строка {i}: не заполнены обязательные поля: ID-PRS.")
+            continue
+        person = PersonRecord.objects.filter(pk=parsed_prs_id).first()
+        if person is None:
+            warnings.append(f"Строка {i}: лицо {prs_id_raw or f'{parsed_prs_id:05d}-PRS'} не найдено.")
+            continue
+
+        country = _country_by_short_name(country_raw)
+        if country is None:
+            warnings.append(f"Строка {i}: не заполнены обязательные поля: Страна.")
+            continue
+
+        try:
+            valid_from = _parse_contact_csv_date(valid_from_raw, field_label="Действ. от")
+            valid_to = _parse_contact_csv_date(valid_to_raw, field_label="Действ. до")
+            record_date = _parse_contact_csv_date(record_date_raw, field_label="Запись")
+        except ValueError as exc:
+            warnings.append(f"Строка {i}: {exc}.")
+            continue
+
+        ResidenceAddressRecord.objects.create(
+            person=person,
+            country=country,
+            region=region,
+            postal_code=postal_code,
+            locality=locality,
+            street=street,
+            building=building,
+            premise=premise,
+            premise_part=premise_part,
+            valid_from=valid_from,
+            valid_to=valid_to,
+            record_date=record_date or date_type.today(),
+            record_author=record_author_raw or _contacts_record_author(request.user),
+            source=source,
+            position=_next_adr_position(),
+        )
+        created += 1
+
+    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def adr_csv_download(request):
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=";", lineterminator="\n")
+    writer.writerow(ADR_CSV_HEADERS)
+
+    for item in _adr_queryset(request):
+        writer.writerow(
+            [
+                f"{item.pk:05d}-ADR",
+                f"{item.person.pk:05d}-PRS",
+                item.country.short_name if item.country_id and item.country else "",
+                item.region,
+                item.postal_code,
+                item.locality,
+                item.street,
+                item.building,
+                item.premise,
+                item.premise_part,
+                _format_prs_csv_birth_date(item.valid_from),
+                _format_prs_csv_birth_date(item.valid_to),
+                _format_prs_csv_birth_date(item.record_date),
+                item.record_author,
+                item.source,
+            ]
+        )
+
+    response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="residence_address_registry.csv"'
+    return response
 
 
 @login_required
 @require_http_methods(["GET"])
 def ctz_table_partial(request):
     return render(request, CTZ_TABLE_TEMPLATE, _ctz_context(request))
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def ctz_csv_upload(request):
+    csv_file = request.FILES.get("csv_file")
+    if not csv_file:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+    if not csv_file.name.lower().endswith(".csv"):
+        return JsonResponse({"ok": False, "error": "Допустимы только файлы CSV."}, status=400)
+
+    try:
+        raw = csv_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_file.seek(0)
+            raw = csv_file.read().decode("cp1251")
+        except Exception:
+            return JsonResponse(
+                {"ok": False, "error": "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251)."},
+                status=400,
+            )
+
+    try:
+        reader = csv.reader(io.StringIO(raw), delimiter=";")
+        rows = list(reader)
+        if not rows:
+            return JsonResponse({"ok": False, "error": "Файл пуст."}, status=400)
+        if len(rows[0]) <= 1:
+            reader = csv.reader(io.StringIO(raw), delimiter=",")
+            rows = list(reader)
+    except csv.Error as exc:
+        return JsonResponse({"ok": False, "error": f"Ошибка разбора CSV: {exc}. Проверьте формат и кодировку файла."}, status=400)
+
+    if len(rows) < 2:
+        return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
+
+    created = 0
+    warnings = []
+
+    for i, row in enumerate(rows[1:], start=2):
+        if not any(cell.strip() for cell in row):
+            continue
+        if len(row) < 11:
+            warnings.append(
+                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 11: "
+                "ID-CTZ, ID-PRS, Страна, Статус, Идентификатор, Номер, Действ. от, Действ. до, "
+                "Запись, Автор записи, Источник."
+            )
+            continue
+
+        ctz_id_raw = row[0].strip() if len(row) > 0 else ""
+        prs_id_raw = row[1].strip() if len(row) > 1 else ""
+        country_raw = row[2].strip() if len(row) > 2 else ""
+        status_raw = row[3].strip() if len(row) > 3 else ""
+        identifier_raw = row[4].strip() if len(row) > 4 else ""
+        number = row[5].strip() if len(row) > 5 else ""
+        valid_from_raw = row[6].strip() if len(row) > 6 else ""
+        valid_to_raw = row[7].strip() if len(row) > 7 else ""
+        record_date_raw = row[8].strip() if len(row) > 8 else ""
+        record_author_raw = row[9].strip() if len(row) > 9 else ""
+        source = row[10].strip() if len(row) > 10 else ""
+
+        parsed_ctz_id = _parse_ctz_csv_id(ctz_id_raw)
+        if parsed_ctz_id and CitizenshipRecord.objects.filter(pk=parsed_ctz_id).exists():
+            existing_label = ctz_id_raw or f"{parsed_ctz_id:05d}-CTZ"
+            warnings.append(f"Строка {i}: запись {existing_label} уже существует, пропущена.")
+            continue
+
+        parsed_prs_id = _parse_prs_csv_id(prs_id_raw)
+        if not parsed_prs_id:
+            warnings.append(f"Строка {i}: не заполнены обязательные поля: ID-PRS.")
+            continue
+        person = PersonRecord.objects.filter(pk=parsed_prs_id).first()
+        if person is None:
+            warnings.append(f"Строка {i}: лицо {prs_id_raw or f'{parsed_prs_id:05d}-PRS'} не найдено.")
+            continue
+
+        country = _country_by_short_name(country_raw)
+        if country is None:
+            warnings.append(f"Строка {i}: не заполнены обязательные поля: Страна.")
+            continue
+
+        try:
+            status = _parse_ctz_csv_status(status_raw)
+            valid_from = _parse_contact_csv_date(valid_from_raw, field_label="Действ. от")
+            valid_to = _parse_contact_csv_date(valid_to_raw, field_label="Действ. до")
+            record_date = _parse_contact_csv_date(record_date_raw, field_label="Запись")
+        except ValueError as exc:
+            warnings.append(f"Строка {i}: {exc}.")
+            continue
+
+        identifier = identifier_raw or _physical_identifier_for_country(country.pk)
+        CitizenshipRecord.objects.create(
+            person=person,
+            country=country,
+            status=status,
+            identifier=identifier,
+            number=number,
+            valid_from=valid_from,
+            valid_to=valid_to,
+            record_date=record_date or date_type.today(),
+            record_author=record_author_raw or _contacts_record_author(request.user),
+            source=source,
+            position=_next_ctz_position(),
+        )
+        created += 1
+
+    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def ctz_csv_download(request):
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=";", lineterminator="\n")
+    writer.writerow(CTZ_CSV_HEADERS)
+
+    for item in _ctz_queryset(request):
+        writer.writerow(
+            [
+                f"{item.pk:05d}-CTZ",
+                f"{item.person.pk:05d}-PRS",
+                item.country.short_name if item.country_id and item.country else "",
+                item.status,
+                item.identifier,
+                item.number,
+                _format_prs_csv_birth_date(item.valid_from),
+                _format_prs_csv_birth_date(item.valid_to),
+                _format_prs_csv_birth_date(item.record_date),
+                item.record_author,
+                item.source,
+            ]
+        )
+
+    response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="citizenship_registry.csv"'
+    return response
 
 
 @login_required
@@ -1457,3 +2840,140 @@ def eml_move_down(request, pk: int):
         EmailRecord.objects.filter(pk=next_item.id).update(position=current.position)
         _normalize_eml_positions()
     return _render_eml_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def spc_form_create(request):
+    if request.method == "GET":
+        initial_person_id = _single_selected_person_id(request)
+        today = date_type.today()
+        return render(
+            request,
+            SPC_FORM_TEMPLATE,
+            {
+                "form": SpecialtyRecordForm(initial={"person": initial_person_id} if initial_person_id else None),
+                "action": "create",
+                **_person_picker_context(initial_person_id),
+                "user_kind_display": _person_user_kind_display_by_id(initial_person_id),
+                "record_date_display": today.strftime("%d.%m.%Y"),
+                "record_author_display": "",
+                "source_display": "",
+            },
+        )
+    form = SpecialtyRecordForm(request.POST)
+    if not form.is_valid():
+        response = render(
+            request,
+            SPC_FORM_TEMPLATE,
+            {
+                "form": form,
+                "action": "create",
+                **_person_picker_context(request.POST.get("person")),
+                "user_kind_display": _person_user_kind_display_by_id(request.POST.get("person")),
+                "record_date_display": "",
+                "record_author_display": "",
+                "source_display": "",
+            },
+        )
+        response["HX-Retarget"] = "#contacts-modal .modal-content"
+        response["HX-Reswap"] = "innerHTML"
+        return response
+    item = form.save(commit=False)
+    today = date_type.today()
+    if not item.position:
+        item.position = _next_spc_position()
+    item.user_kind = item.person.user_kind if item.person_id else ""
+    item.record_date = today
+    if not item.valid_from:
+        item.valid_from = today
+    item.record_author = _contacts_record_author(request.user)
+    item.save()
+    return _render_spc_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def spc_form_edit(request, pk: int):
+    item = get_object_or_404(SpecialtyRecord, pk=pk)
+    if request.method == "GET":
+        return render(
+            request,
+            SPC_FORM_TEMPLATE,
+            {
+                "form": SpecialtyRecordForm(instance=item),
+                "action": "edit",
+                "item": item,
+                **_person_picker_context(item.person_id),
+                "user_kind_display": item.get_user_kind_display(),
+                "record_date_display": item.record_date.strftime("%d.%m.%Y") if item.record_date else "",
+                "record_author_display": item.record_author or "",
+                "source_display": item.source or "",
+            },
+        )
+    form = SpecialtyRecordForm(request.POST, instance=item)
+    if not form.is_valid():
+        response = render(
+            request,
+            SPC_FORM_TEMPLATE,
+            {
+                "form": form,
+                "action": "edit",
+                "item": item,
+                **_person_picker_context(request.POST.get("person") or item.person_id),
+                "user_kind_display": item.get_user_kind_display(),
+                "record_date_display": item.record_date.strftime("%d.%m.%Y") if item.record_date else "",
+                "record_author_display": item.record_author or "",
+                "source_display": item.source or "",
+            },
+        )
+        response["HX-Retarget"] = "#contacts-modal .modal-content"
+        response["HX-Reswap"] = "innerHTML"
+        return response
+    item = form.save(commit=False)
+    item.user_kind = item.person.user_kind if item.person_id else ""
+    item.record_date = date_type.today()
+    item.record_author = _contacts_record_author(request.user)
+    item.save()
+    return _render_spc_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def spc_delete(request, pk: int):
+    item = get_object_or_404(SpecialtyRecord, pk=pk)
+    item.delete()
+    return _render_spc_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["POST", "GET"])
+def spc_move_up(request, pk: int):
+    _normalize_spc_positions()
+    items = list(SpecialtyRecord.objects.order_by("position", "id").only("id", "position"))
+    idx = next((index for index, item in enumerate(items) if item.id == pk), None)
+    if idx is not None and idx > 0:
+        current, previous = items[idx], items[idx - 1]
+        SpecialtyRecord.objects.filter(pk=current.id).update(position=previous.position)
+        SpecialtyRecord.objects.filter(pk=previous.id).update(position=current.position)
+        _normalize_spc_positions()
+    return _render_spc_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["POST", "GET"])
+def spc_move_down(request, pk: int):
+    _normalize_spc_positions()
+    items = list(SpecialtyRecord.objects.order_by("position", "id").only("id", "position"))
+    idx = next((index for index, item in enumerate(items) if item.id == pk), None)
+    if idx is not None and idx < len(items) - 1:
+        current, next_item = items[idx], items[idx + 1]
+        SpecialtyRecord.objects.filter(pk=current.id).update(position=next_item.position)
+        SpecialtyRecord.objects.filter(pk=next_item.id).update(position=current.position)
+        _normalize_spc_positions()
+    return _render_spc_updated(request)

@@ -1,6 +1,14 @@
 from django.contrib import admin
 
-from .models import CitizenshipRecord, EmailRecord, PersonRecord, PhoneRecord, PositionRecord, ResidenceAddressRecord
+from .models import (
+    CitizenshipRecord,
+    EmailRecord,
+    PersonRecord,
+    PhoneRecord,
+    PositionRecord,
+    ResidenceAddressRecord,
+    SpecialtyRecord,
+)
 
 
 @admin.register(PersonRecord)
@@ -27,6 +35,13 @@ class PhoneRecordAdmin(admin.ModelAdmin):
 class EmailRecordAdmin(admin.ModelAdmin):
     list_display = ("id", "person", "email", "valid_from", "valid_to", "is_active", "record_date")
     search_fields = ("person__last_name", "person__first_name", "email", "source")
+
+
+@admin.register(SpecialtyRecord)
+class SpecialtyRecordAdmin(admin.ModelAdmin):
+    list_display = ("id", "person", "specialty", "valid_from", "valid_to", "is_active", "record_date")
+    search_fields = ("person__last_name", "person__first_name", "specialty__specialty", "source")
+    list_filter = ("specialty",)
 
 
 @admin.register(ResidenceAddressRecord)

@@ -52,31 +52,3 @@
     {% endfor %}
     </tbody>
 </table>
-
-{% if request.user.is_authenticated and request.user.is_staff %}
-<div class="d-flex align-items-stretch gap-2 products-actions-row">
-  <button
-          class="btn btn-primary btn-sm d-flex align-items-center"
-          hx-get="{% url 'esp_form_create' %}"
-          hx-target="#experts-modal .modal-content"
-          hx-swap="innerHTML">
-    <i class="bi bi-plus-circle me-2"></i>Добавить строку
-  </button>
-  <div id="esp-actions" class="d-none d-flex">
-    <div class="btn-group">
-      <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
-        <i class="bi bi-arrow-up-square"></i>
-      </button>
-      <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
-        <i class="bi bi-arrow-down-square"></i>
-      </button>
-      <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
-        <i class="bi bi-pencil-square"></i>
-      </button>
-      <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
-        <i class="bi bi-x-square"></i>
-      </button>
-    </div>
-  </div>
-</div>
-{% endif %}

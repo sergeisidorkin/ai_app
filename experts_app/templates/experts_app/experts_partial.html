@@ -6,9 +6,51 @@
         </h5>
     </div>
 
-    <div class="table-responsive">
+    <div class="registration-table-wrap experts-specialties-table-wrap">
         {% include "experts_app/specialties_table_partial.html" %}
     </div>
+
+    {% if request.user.is_authenticated and request.user.is_staff %}
+    <div class="d-flex align-items-stretch gap-2 products-actions-row">
+      <button
+              class="btn btn-primary btn-sm d-flex align-items-center"
+              hx-get="{% url 'esp_form_create' %}"
+              hx-target="#experts-modal .modal-content"
+              hx-swap="innerHTML">
+        <i class="bi bi-plus-circle me-2"></i>Добавить строку
+      </button>
+      <div id="esp-actions" class="d-none d-flex">
+        <div class="btn-group">
+          <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+            <i class="bi bi-arrow-up-square"></i>
+          </button>
+          <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+            <i class="bi bi-arrow-down-square"></i>
+          </button>
+          <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+            <i class="bi bi-pencil-square"></i>
+          </button>
+          <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+            <i class="bi bi-x-square"></i>
+          </button>
+        </div>
+      </div>
+      <a href="{% url 'esp_csv_download' %}"
+         id="esp-csv-download-btn"
+         class="btn btn-primary btn-sm d-flex align-items-center"
+         title="Скачать CSV"
+         role="button">
+        <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+      </a>
+      <button type="button"
+              id="esp-csv-upload-btn"
+              class="btn btn-primary btn-sm d-flex align-items-center"
+              title="Загрузить CSV">
+        <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+      </button>
+      <input type="file" id="esp-csv-file-input" accept=".csv" class="d-none">
+    </div>
+    {% endif %}
 
     <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 24px;">
         <h5 class="table-section-title">
@@ -117,7 +159,46 @@
         </div>
     </div>
 
-    <div class="table-responsive" id="epr-table-wrap">
+    <div class="registration-table-wrap experts-profiles-table-wrap" id="epr-table-wrap">
         {% include "experts_app/profiles_table_partial.html" %}
     </div>
+
+    {% if request.user.is_authenticated and request.user.is_staff %}
+    <div class="d-flex align-items-stretch gap-2 products-actions-row">
+      <button
+              type="button"
+              id="epr-edit-btn"
+              class="btn btn-primary btn-sm d-flex align-items-center"
+              disabled>
+        <i class="bi bi-pencil-square me-2"></i>Редактировать
+      </button>
+      <div id="epr-actions" class="d-none d-flex">
+        <div class="btn-group">
+          <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+            <i class="bi bi-arrow-up-square"></i>
+          </button>
+          <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+            <i class="bi bi-arrow-down-square"></i>
+          </button>
+          <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+            <i class="bi bi-pencil-square"></i>
+          </button>
+        </div>
+      </div>
+      <a href="{% url 'epr_csv_download' %}"
+         id="epr-csv-download-btn"
+         class="btn btn-primary btn-sm d-flex align-items-center"
+         title="Скачать CSV"
+         role="button">
+        <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+      </a>
+      <button type="button"
+              id="epr-csv-upload-btn"
+              class="btn btn-primary btn-sm d-flex align-items-center"
+              title="Загрузить CSV">
+        <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+      </button>
+      <input type="file" id="epr-csv-file-input" accept=".csv" class="d-none">
+    </div>
+    {% endif %}
 </div>

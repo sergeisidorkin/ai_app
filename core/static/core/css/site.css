@@ -1123,7 +1123,8 @@ body .second-sidebar + .flex-grow-1 {
 #contacts-addresses-pane > .products-actions-row,
 #contacts-positions-pane > .products-actions-row,
 #contacts-phones-pane > .products-actions-row,
-#contacts-emails-pane > .products-actions-row {
+#contacts-emails-pane > .products-actions-row,
+#contacts-specialties-pane > .products-actions-row {
   margin-top: 0.5rem !important;
 }
 #performers-pane > .products-actions-row {
@@ -2800,6 +2801,50 @@ section#templates .alert.alert-info .text-muted {
 #proposals-pane .proposal-dispatch-table-wrap.has-horizontal-scroll + .products-actions-row,
 #proposals-pane .proposal-template-table-wrap.has-horizontal-scroll + .products-actions-row {
   margin-top: var(--proposal-table-scroll-action-gap) !important;
+}
+
+/* =========================
+   EXPERTS TABLES (Исполнители)
+   ========================= */
+
+#experts-pane {
+  --experts-table-scroll-offset-top: 0px;
+  --experts-table-margin-to-scroll: 10px;
+  --experts-table-action-gap: 30px;
+  --experts-table-scroll-action-gap: 11.75px;
+}
+
+#experts-pane .registration-table-wrap {
+  overflow-x: auto;
+  overflow-y: visible;
+  width: 100%;
+}
+
+#experts-pane .experts-specialties-table-wrap,
+#experts-pane .experts-profiles-table-wrap {
+  padding-bottom: var(--experts-table-scroll-offset-top);
+}
+
+#experts-pane .experts-specialties-table-wrap > table,
+#experts-pane .experts-profiles-table-wrap > table {
+  width: max-content;
+  min-width: 100%;
+  margin-bottom: 0 !important;
+}
+
+#experts-pane .experts-specialties-table-wrap.has-horizontal-scroll > table,
+#experts-pane .experts-profiles-table-wrap.has-horizontal-scroll > table {
+  margin-bottom: var(--experts-table-margin-to-scroll) !important;
+}
+
+#experts-pane .experts-specialties-table-wrap + .products-actions-row,
+#experts-pane .experts-profiles-table-wrap + .products-actions-row {
+  margin-top: var(--experts-table-action-gap) !important;
+}
+
+#experts-pane .experts-specialties-table-wrap.has-horizontal-scroll + .products-actions-row,
+#experts-pane .experts-profiles-table-wrap.has-horizontal-scroll + .products-actions-row {
+  margin-top: var(--experts-table-scroll-action-gap) !important;
 }
 
 #proposals-pane .registration-table-wrap > table#proposal-registry-table {

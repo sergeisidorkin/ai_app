@@ -1159,6 +1159,14 @@
     return [POLICY_FILTER_ALL];
   }
 
+  function resetPolicyChildFilters(parentKey) {
+    const parentIndex = POLICY_FILTER_ORDER.indexOf(parentKey);
+    if (parentIndex < 0) return;
+    POLICY_FILTER_ORDER.slice(parentIndex + 1).forEach(function (childKey) {
+      selectOnlyPolicyAll(getPolicyFilterChecks(childKey));
+    });
+  }
+
   function normalizePolicySelection(key, checks, values, availableValues) {
     let nextValues = (Array.isArray(values) ? values : [])
       .map(normalizeFilterValue)
@@ -1337,6 +1345,7 @@
           const changed = event.target;
           if (changed.value === POLICY_FILTER_ALL && changed.checked) {
             selectOnlyPolicyAll(checks);
+            resetPolicyChildFilters(key);
           } else if (changed.value === POLICY_FILTER_ALL && !changed.checked) {
             const first = checks.find(function (item) { return item.value !== POLICY_FILTER_ALL && !item.disabled; });
             if (first) first.checked = true;

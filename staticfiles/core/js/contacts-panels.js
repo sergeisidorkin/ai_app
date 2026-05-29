@@ -4,11 +4,13 @@
   const TABLE_CONFIG = {
     'prs-select': { target: '#contacts-persons-table-wrap', swap: 'innerHTML', url: '/contacts/prs/table/', pageParam: 'prs_page', pageInputId: 'prs-page-input' },
     'ctz-select': { target: '#contacts-citizenships-table-wrap', swap: 'innerHTML', url: '/contacts/ctz/table/', pageParam: 'ctz_page', pageInputId: 'ctz-page-input' },
+    'adr-select': { target: '#contacts-addresses-table-wrap', swap: 'innerHTML', url: '/contacts/adr/table/', pageParam: 'adr_page', pageInputId: 'adr-page-input' },
     'psn-select': { target: '#contacts-positions-table-wrap', swap: 'innerHTML', url: '/contacts/psn/table/', pageParam: 'psn_page', pageInputId: 'psn-page-input' },
     'tel-select': { target: '#contacts-phones-table-wrap', swap: 'innerHTML', url: '/contacts/tel/table/', pageParam: 'tel_page', pageInputId: 'tel-page-input' },
     'eml-select': { target: '#contacts-emails-table-wrap', swap: 'innerHTML', url: '/contacts/eml/table/', pageParam: 'eml_page', pageInputId: 'eml-page-input' },
+    'spc-select': { target: '#contacts-specialties-table-wrap', swap: 'innerHTML', url: '/contacts/spc/table/', pageParam: 'spc_page', pageInputId: 'spc-page-input' },
   };
-  const CONTACTS_FILTER_TABLES = ['prs-select', 'ctz-select', 'psn-select', 'tel-select', 'eml-select'];
+  const CONTACTS_FILTER_TABLES = ['prs-select', 'ctz-select', 'adr-select', 'psn-select', 'tel-select', 'eml-select', 'spc-select'];
   const CONTACTS_PERSON_FILTER_ALL = '__all__';
   const CONTACTS_PERSON_FILTER_PREF_KEY = 'contacts:person-filter';
   const CONTACTS_PERSON_FILTER_OPTIONS_URL = '/contacts/prs/filter-options/';
@@ -18,31 +20,42 @@
   const SECTION_TABLE_MAP = {
     persons: 'prs-select',
     citizenships: 'ctz-select',
+    addresses: 'adr-select',
     positions: 'psn-select',
     phones: 'tel-select',
     emails: 'eml-select',
+    specialties: 'spc-select',
   };
   const SECTION_TITLES = {
     persons: 'База контактов',
     citizenships: 'База контактов',
+    addresses: 'База контактов',
     positions: 'База контактов',
     phones: 'База контактов',
     emails: 'База контактов',
+    specialties: 'База контактов',
   };
   const PANEL_NAME_MAP = {
     'prs-actions': 'prs-select',
     'ctz-actions': 'ctz-select',
+    'adr-actions': 'adr-select',
     'psn-actions': 'psn-select',
     'tel-actions': 'tel-select',
     'eml-actions': 'eml-select',
+    'spc-actions': 'spc-select',
   };
+  const TABLE_TARGET_MAP = Object.fromEntries(
+    Object.keys(TABLE_CONFIG).map(function (name) {
+      return [TABLE_CONFIG[name].target, name];
+    })
+  );
 
   function inContacts(node) {
     return !!(node && node.closest && node.closest(rootSelector));
   }
 
   function paneOf(node) {
-    return node && node.closest ? node.closest('#contacts-persons-pane, #contacts-citizenships-pane, #contacts-positions-pane, #contacts-phones-pane, #contacts-emails-pane') : null;
+    return node && node.closest ? node.closest('#contacts-persons-pane, #contacts-citizenships-pane, #contacts-addresses-pane, #contacts-positions-pane, #contacts-phones-pane, #contacts-emails-pane, #contacts-specialties-pane') : null;
   }
 
   function getMasterForName(name) {
@@ -82,6 +95,13 @@
     panel.classList.toggle('d-none', getCheckedByName(name).length === 0);
   }
 
+  function syncTableSelectionUi(name) {
+    if (!name) return;
+    updateMasterStateFor(name);
+    updateRowHighlightFor(name);
+    ensureActionsVisibility(name);
+  }
+
   function rememberSelection(name) {
     window.__contactsTableSel[name] = getCheckedByName(name).map(function (item) {
       return String(item.value);
@@ -95,9 +115,7 @@
     getRowChecksByName(name).forEach(function (checkbox) {
       checkbox.checked = idSet.has(String(checkbox.value));
     });
-    updateMasterStateFor(name);
-    updateRowHighlightFor(name);
-    ensureActionsVisibility(name);
+    syncTableSelectionUi(name);
   }
 
   function getSelectedContactsPersonFilterValues() {
@@ -131,6 +149,21 @@
     var values = getSelectedContactsPersonFilterValues();
     if (!values.length || values.includes(CONTACTS_PERSON_FILTER_ALL)) return;
     parts.push('prs_ids=' + encodeURIComponent(values.join(',')));
+  }
+
+  var CONTACTS_CSV_DOWNLOAD_BTN_IDS = ['prs-csv-download-btn', 'ctz-csv-download-btn', 'adr-csv-download-btn', 'psn-csv-download-btn', 'tel-csv-download-btn', 'eml-csv-download-btn', 'spc-csv-download-btn'];
+
+  function updateContactsMasterFilterDownloadLinks() {
+    var parts = [];
+    appendContactsPersonFilter(parts);
+    var query = parts.length ? ('?' + parts.join('&')) : '';
+    CONTACTS_CSV_DOWNLOAD_BTN_IDS.forEach(function (btnId) {
+      var btn = document.getElementById(btnId);
+      if (!btn) return;
+      var baseUrl = btn.dataset.baseUrl || btn.getAttribute('href').split('?')[0];
+      btn.dataset.baseUrl = baseUrl;
+      btn.setAttribute('href', baseUrl + query);
+    });
   }
 
   function buildContactsTableUrl(name) {
@@ -503,6 +536,7 @@
       updateLabel(nextValues);
       resetContactsRegistryPages();
       await refreshTables(CONTACTS_FILTER_TABLES);
+      updateContactsMasterFilterDownloadLinks();
       if (window.bootstrap && window.bootstrap.Dropdown) {
         window.bootstrap.Dropdown.getOrCreateInstance(toggle).hide();
       }
@@ -510,6 +544,7 @@
 
     await ensureItemDetails(getSelectedContactsPersonFilterValues(), !!forceReload);
     updateLabel(getSelectedContactsPersonFilterValues());
+    updateContactsMasterFilterDownloadLinks();
 
     if (dropdown.dataset.prsFilterLoaded === '1') return;
 
@@ -1277,6 +1312,9 @@
     if (key === 'citizenships') {
       document.body.dispatchEvent(new CustomEvent('contacts-citizenships:load'));
     }
+    if (key === 'addresses') {
+      document.body.dispatchEvent(new CustomEvent('contacts-addresses:load'));
+    }
     if (key === 'positions') {
       document.body.dispatchEvent(new CustomEvent('contacts-positions:load'));
     }
@@ -1285,6 +1323,9 @@
     }
     if (key === 'emails') {
       document.body.dispatchEvent(new CustomEvent('contacts-emails:load'));
+    }
+    if (key === 'specialties') {
+      document.body.dispatchEvent(new CustomEvent('contacts-specialties:load'));
     }
   }
 
@@ -1349,7 +1390,7 @@
   document.addEventListener('click', function (event) {
     var button = event.target.closest('button[data-panel-action]');
     if (!button || !inContacts(button)) return;
-    var panel = button.closest('#prs-actions, #ctz-actions, #psn-actions, #tel-actions, #eml-actions');
+    var panel = button.closest('#prs-actions, #ctz-actions, #adr-actions, #psn-actions, #tel-actions, #eml-actions, #spc-actions');
     if (!panel) return;
     var master = paneOf(panel) && paneOf(panel).querySelector('input.form-check-input[data-actions-id]');
     var name = (master && master.dataset ? master.dataset.targetName : '') || PANEL_NAME_MAP[panel.id] || '';
@@ -1385,9 +1426,11 @@
         }
         await refreshTable(name);
         if (name === 'prs-select') await refreshTable('ctz-select');
+        if (name === 'prs-select') await refreshTable('adr-select');
         if (name === 'prs-select') await refreshTable('psn-select');
         if (name === 'prs-select') await refreshTable('tel-select');
         if (name === 'prs-select') await refreshTable('eml-select');
+        if (name === 'prs-select') await refreshTable('spc-select');
       });
       return;
     }
@@ -1422,7 +1465,7 @@
     var detail = event && event.detail ? event.detail : null;
     var target = detail && detail.target;
     if (!target || !(target instanceof Element)) return;
-    if (!target.matches('#contacts-persons-table-wrap, #contacts-citizenships-table-wrap, #contacts-positions-table-wrap, #contacts-phones-table-wrap, #contacts-emails-table-wrap')) {
+    if (!target.matches('#contacts-persons-table-wrap, #contacts-citizenships-table-wrap, #contacts-addresses-table-wrap, #contacts-positions-table-wrap, #contacts-phones-table-wrap, #contacts-emails-table-wrap, #contacts-specialties-table-wrap')) {
       return;
     }
     var values = getSelectedContactsPersonFilterValues();
@@ -1441,7 +1484,7 @@
     var path = detail && detail.path ? String(detail.path) : '';
     if (!target || !(target instanceof Element)) return;
     if (!target.matches('#contacts-modal .modal-content')) return;
-    if (!/\/contacts\/(ctz|psn|tel|eml)\/create\/$/.test(path)) return;
+    if (!/\/contacts\/(ctz|adr|psn|tel|eml|spc)\/create\/$/.test(path)) return;
     var values = getSelectedContactsPersonFilterValues();
     if (!values.length || values.includes(CONTACTS_PERSON_FILTER_ALL)) {
       if (detail.parameters) delete detail.parameters.prs_ids;
@@ -1463,8 +1506,91 @@
 
   document.body.addEventListener('htmx:afterSwap', function (event) {
     if (!event || !event.target || !(event.target instanceof Element)) return;
+    var tableName = TABLE_TARGET_MAP['#' + event.target.id];
+    if (tableName) {
+      syncTableSelectionUi(tableName);
+    }
     syncContactsModalSize(event.target);
     initPositionForms(event.target);
     initTelPhoneForms(event.target);
+  });
+
+  function showContactsCsvResult(html) {
+    var body = document.getElementById('contacts-csv-result-body');
+    var modalEl = document.getElementById('contacts-csv-result-modal');
+    if (!body || !modalEl) {
+      alert(html.replace(/<[^>]+>/g, ''));
+      return;
+    }
+    body.innerHTML = html;
+    window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+  }
+
+  async function handleContactsTableUpload(uploadUrl, file, tableName) {
+    var formData = new FormData();
+    formData.append('csv_file', file);
+    try {
+      var resp = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': getCookie('csrftoken') },
+        body: formData,
+      });
+      var data = await resp.json();
+      if (data.ok) {
+        var html = '<div class="mb-2"><strong>Загружено строк: ' + data.created + '</strong></div>';
+        if (data.warnings && data.warnings.length) {
+          html += '<div class="text-danger mb-1"><strong>Предупреждения (' + data.warnings.length + '):</strong></div>';
+          html += '<div class="text-danger">';
+          for (var i = 0; i < data.warnings.length; i++) {
+            html += '<div class="mb-1">' + data.warnings[i].replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>';
+          }
+          html += '</div>';
+        }
+        showContactsCsvResult(html);
+        if (tableName) await refreshTable(tableName);
+      } else {
+        showContactsCsvResult('<div class="text-danger"><strong>Ошибка:</strong> ' +
+          (data.error || 'Неизвестная ошибка').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>');
+      }
+    } catch (err) {
+      showContactsCsvResult('<div class="text-danger"><strong>Ошибка загрузки:</strong> ' +
+        err.message.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>');
+    }
+  }
+
+  document.addEventListener('click', function (event) {
+    var uploadMapping = {
+      'prs-csv-upload-btn': 'prs-csv-file-input',
+      'ctz-csv-upload-btn': 'ctz-csv-file-input',
+      'adr-csv-upload-btn': 'adr-csv-file-input',
+      'psn-csv-upload-btn': 'psn-csv-file-input',
+      'tel-csv-upload-btn': 'tel-csv-file-input',
+      'eml-csv-upload-btn': 'eml-csv-file-input',
+      'spc-csv-upload-btn': 'spc-csv-file-input',
+    };
+    for (var btnId in uploadMapping) {
+      if (!event.target.closest('#' + btnId)) continue;
+      var fileInput = document.getElementById(uploadMapping[btnId]);
+      if (fileInput) fileInput.click();
+      return;
+    }
+  });
+
+  document.addEventListener('change', async function (event) {
+    var uploadMapping = {
+      'prs-csv-file-input': { url: '/contacts/prs/csv-upload/', tableName: 'prs-select' },
+      'ctz-csv-file-input': { url: '/contacts/ctz/csv-upload/', tableName: 'ctz-select' },
+      'adr-csv-file-input': { url: '/contacts/adr/csv-upload/', tableName: 'adr-select' },
+      'psn-csv-file-input': { url: '/contacts/psn/csv-upload/', tableName: 'psn-select' },
+      'tel-csv-file-input': { url: '/contacts/tel/csv-upload/', tableName: 'tel-select' },
+      'eml-csv-file-input': { url: '/contacts/eml/csv-upload/', tableName: 'eml-select' },
+      'spc-csv-file-input': { url: '/contacts/spc/csv-upload/', tableName: 'spc-select' },
+    };
+    var config = uploadMapping[event.target.id];
+    if (!config) return;
+    var file = event.target.files && event.target.files[0];
+    event.target.value = '';
+    if (!file) return;
+    await handleContactsTableUpload(config.url, file, config.tableName);
   });
 })();

@@ -53,6 +53,7 @@
         <div class="d-flex align-items-center gap-2 mb-2 ep-spec-row">
           <span class="badge rounded-circle d-flex align-items-center justify-content-center ep-spec-badge"
                 style="width:18px; height:18px; font-size:.65rem; flex-shrink:0; border:1px solid #6c757d; color:#6c757d; background:transparent; font-weight:400; font-family:'SF Pro Text',system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums;">{{ rs.rank }}</span>
+          <input type="hidden" name="contact_specialty_record_id" value="{{ rs.contact_specialty_record_id|default:'' }}">
           <select name="specialty_id" class="form-select">
             <option value="">---------</option>
             {% for opt in specialty_options %}
@@ -66,6 +67,7 @@
         <div class="d-flex align-items-center gap-2 mb-2 ep-spec-row">
           <span class="badge rounded-circle d-flex align-items-center justify-content-center ep-spec-badge"
                 style="width:18px; height:18px; font-size:.65rem; flex-shrink:0; border:1px solid #6c757d; color:#6c757d; background:transparent; font-weight:400; font-family:'SF Pro Text',system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums;">1</span>
+          <input type="hidden" name="contact_specialty_record_id" value="">
           <select name="specialty_id" class="form-select">
             <option value="">---------</option>
             {% for opt in specialty_options %}
@@ -234,6 +236,7 @@
       div.className = 'd-flex align-items-center gap-2 mb-2 ep-spec-row';
       var html = '<span class="badge rounded-circle d-flex align-items-center justify-content-center ep-spec-badge" '
                + 'style="width:18px; height:18px; font-size:.65rem; flex-shrink:0; border:1px solid #6c757d; color:#6c757d; background:transparent; font-weight:400; font-family:SF Pro Text,system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums;">' + num + '</span>'
+               + '<input type="hidden" name="contact_specialty_record_id" value="">'
                + '<select name="specialty_id" class="form-select"><option value="">---------</option>';
       specOptions.forEach(function(opt) {
         html += '<option value="' + opt.id + '">' + opt.label + '</option>';
