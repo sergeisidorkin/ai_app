@@ -7361,6 +7361,48 @@ class ProposalFormContextTests(TestCase):
         self.assertEqual(section_entry["default_base_rate_share"], 30)
         self.assertEqual(section_entry["specialist_options"][0]["base_rate_share"], 30)
 
+    def test_product_autofill_endpoint_keeps_sections_with_same_name_and_different_codes(self):
+        product = Product.objects.create(
+            short_name="BFS",
+            name_en="Bankable Feasibility Study",
+            name_ru="BFS",
+            consulting_type="Горный",
+            service_category="Инжиниринг",
+            service_subtype="По международным стандартам",
+            position=4,
+        )
+        TypicalSection.objects.create(
+            product=product,
+            code="PRW",
+            short_name="proc-water",
+            short_name_ru="ОБ водоснабжение",
+            name_en="Water supply",
+            name_ru="Водоснабжение",
+            accounting_type="Раздел",
+            position=1,
+        )
+        TypicalSection.objects.create(
+            product=product,
+            code="INW",
+            short_name="infra-water",
+            short_name_ru="Инфр водоснабжение",
+            name_en="Water supply",
+            name_ru="Водоснабжение",
+            accounting_type="Раздел",
+            position=2,
+        )
+
+        response = self.client.get(reverse("proposal_product_autofill", args=[product.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        water_sections = [
+            item
+            for item in payload["typical_sections"]
+            if item["name"] == "Водоснабжение"
+        ]
+        self.assertEqual([item["code"] for item in water_sections], ["PRW", "INW"])
+
     def test_product_autofill_endpoint_reflects_sections_created_by_csv_upload(self):
         product = Product.objects.create(
             short_name="CSV",
