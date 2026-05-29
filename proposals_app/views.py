@@ -1486,6 +1486,8 @@ def _proposal_product_autofill_data(product_ids=None):
         return {
             "name": dsc_name,
             "code": SYSTEM_DSC_SECTION_CODE,
+            "select_key": SYSTEM_DSC_SECTION_CODE,
+            "display_name": f"{SYSTEM_DSC_SECTION_CODE} - {dsc_name}",
             "is_system": True,
             "is_system_dsc": True,
             "accounting_type": SYSTEM_DSC_SECTION_DEFAULTS["accounting_type"],
@@ -1499,6 +1501,15 @@ def _proposal_product_autofill_data(product_ids=None):
             "specialty_is_director": True,
             "specialist_options": [],
         }
+
+    def _section_select_key(section_name, section_code):
+        code = (section_code or "").strip()
+        return code or (section_name or "").strip()
+
+    def _section_display_name(section_name, section_code):
+        name = (section_name or "").strip()
+        code = (section_code or "").strip()
+        return f"{code} - {name}" if code and name else name
 
     product_filter = None
     if product_ids is not None:
@@ -1745,6 +1756,8 @@ def _proposal_product_autofill_data(product_ids=None):
                 {
                     "name": section.name_ru,
                     "code": section.code or "",
+                    "select_key": _section_select_key(section.name_ru, section.code),
+                    "display_name": _section_display_name(section.name_ru, section.code),
                     "is_system": bool(section.is_system),
                     "is_system_dsc": bool(section.is_system_dsc),
                     "accounting_type": str(getattr(section, "accounting_type", "") or "").strip(),
