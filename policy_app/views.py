@@ -100,16 +100,19 @@ SERVICE_GOAL_REPORT_CSV_HEADERS = [
 ]
 STRUCTURE_CSV_HEADERS = [
     "Продукт",
+    "Код",
     "Раздел (услуга)",
     "Подразделы",
 ]
 TYPICAL_SERVICE_COMPOSITION_CSV_HEADERS = [
     "Продукт",
+    "Код",
     "Раздел (услуга)",
     "Состав услуг",
 ]
 TYPICAL_SERVICE_COMPOSITION_XLSX_HEADERS = [
     "Продукт",
+    "Код",
     "Раздел (услуга)",
     "Состав услуг",
 ]
@@ -135,6 +138,7 @@ TYPICAL_SERVICE_TERM_GANTT_SYSTEM_TASK_TEXT = {
 }
 TARIFF_CSV_HEADERS = [
     "Продукт",
+    "Код",
     "Раздел (услуга)",
     "Базовая ставка в ВПМ",
     "Объем услуг в часах",
@@ -221,6 +225,37 @@ def staff_required(user):
 
 def _csv_lookup_key(value):
     return str(value or "").strip().lower()
+
+
+def _csv_header_index(headers, header_name):
+    lookup_name = _csv_lookup_key(header_name)
+    for idx, value in enumerate(headers):
+        if _csv_lookup_key(value) == lookup_name:
+            return idx
+    return None
+
+
+def _csv_row_value(row, index):
+    if index is None or index >= len(row):
+        return ""
+    return str(row[index] or "").strip()
+
+
+def _csv_required_columns_present(row, indexes):
+    return all(index is not None and index < len(row) for index in indexes)
+
+
+def _resolve_section_from_import(sections_by_product, product_id, section_code, section_name):
+    lookup = sections_by_product[product_id]
+    section_code = str(section_code or "").strip()
+    section_name = str(section_name or "").strip()
+    if section_code:
+        section = lookup.get(_csv_lookup_key(section_code))
+        if section:
+            return section
+    if section_name:
+        return lookup.get(_csv_lookup_key(section_name))
+    return None
 
 
 def _split_csv_list_value(value, lookup=None):
@@ -723,9 +758,13 @@ def _typical_sections_by_product_json():
     data = defaultdict(list)
     sections = TypicalSection.objects.select_related("product").order_by("product_id", "position", "id")
     for section in sections:
+        section_name = section.name_ru or section.name_en
+        section_code = section.code or ""
         data[str(section.product_id)].append({
             "id": section.pk,
-            "label": section.name_ru,
+            "code": section_code,
+            "label": " ".join(part for part in (section_code, section_name) if part),
+            "displayLabel": section_name,
         })
     return json.dumps(data, ensure_ascii=False)
 
@@ -1277,34 +1316,47 @@ def structure_csv_upload(request):
 
     created = 0
     warnings = []
+    headers = rows[0]
+    product_col = _csv_header_index(headers, "Продукт")
+    code_col = _csv_header_index(headers, "Код")
+    section_col = _csv_header_index(headers, "Раздел (услуга)")
+    subsections_col = _csv_header_index(headers, "Подразделы")
+    if product_col is None:
+        product_col = 0
+    if section_col is None:
+        section_col = 2 if code_col is not None else 1
+    if subsections_col is None:
+        subsections_col = 3 if code_col is not None else 2
 
     for i, row in enumerate(rows[1:], start=2):
         if not any(cell.strip() for cell in row):
             continue
-        if len(row) < 3:
+        if not _csv_required_columns_present(row, [product_col, section_col, subsections_col]):
             warnings.append(
-                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 3: "
-                "Продукт, Раздел (услуга), Подразделы)."
+                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается "
+                "Продукт, Код, Раздел (услуга), Подразделы)."
             )
             continue
 
-        product_name = row[0].strip()
-        section_name = row[1].strip()
+        product_name = _csv_row_value(row, product_col)
+        section_code = _csv_row_value(row, code_col)
+        section_name = _csv_row_value(row, section_col)
         product = products_by_name.get(_csv_lookup_key(product_name))
         if not product:
             warnings.append(f"Строка {i}: продукт «{product_name}» не найден. Доступные: {', '.join(products_by_name.keys())}.")
             continue
 
-        section = sections_by_product[product.pk].get(_csv_lookup_key(section_name))
+        section = _resolve_section_from_import(sections_by_product, product.pk, section_code, section_name)
         if not section:
-            warnings.append(f"Строка {i}: раздел «{section_name}» не найден для продукта «{product.short_name}».")
+            section_label = section_code or section_name
+            warnings.append(f"Строка {i}: раздел «{section_label}» не найден для продукта «{product.short_name}».")
             continue
 
         try:
             SectionStructure.objects.create(
                 product=product,
                 section=section,
-                subsections=row[2].strip(),
+                subsections=_csv_row_value(row, subsections_col),
                 position=_next_position(SectionStructure),
             )
             created += 1
@@ -1337,6 +1389,7 @@ def structure_csv_download(request):
         writer.writerow(
             [
                 structure.product.short_name,
+                structure.section.code,
                 structure.section.name_ru or structure.section.name_en,
                 structure.subsections,
             ]
@@ -1697,30 +1750,43 @@ def typical_service_composition_csv_upload(request):
 
     created = 0
     warnings = []
+    headers = rows[0]
+    product_col = _csv_header_index(headers, "Продукт")
+    code_col = _csv_header_index(headers, "Код")
+    section_col = _csv_header_index(headers, "Раздел (услуга)")
+    service_col = _csv_header_index(headers, "Состав услуг")
+    if product_col is None:
+        product_col = 0
+    if section_col is None:
+        section_col = 2 if code_col is not None else 1
+    if service_col is None:
+        service_col = 3 if code_col is not None else 2
 
     for i, row in enumerate(rows[1:], start=2):
         if not any(cell.strip() for cell in row):
             continue
-        if len(row) < 3:
+        if not _csv_required_columns_present(row, [product_col, section_col, service_col]):
             warnings.append(
-                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 3: "
-                "Продукт, Раздел (услуга), Состав услуг)."
+                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается "
+                "Продукт, Код, Раздел (услуга), Состав услуг)."
             )
             continue
 
-        product_name = row[0].strip()
-        section_name = row[1].strip()
+        product_name = _csv_row_value(row, product_col)
+        section_code = _csv_row_value(row, code_col)
+        section_name = _csv_row_value(row, section_col)
         product = products_by_name.get(_csv_lookup_key(product_name))
         if not product:
             warnings.append(f"Строка {i}: продукт «{product_name}» не найден. Доступные: {', '.join(products_by_name.keys())}.")
             continue
 
-        section = sections_by_product[product.pk].get(_csv_lookup_key(section_name))
+        section = _resolve_section_from_import(sections_by_product, product.pk, section_code, section_name)
         if not section:
-            warnings.append(f"Строка {i}: раздел «{section_name}» не найден для продукта «{product.short_name}».")
+            section_label = section_code or section_name
+            warnings.append(f"Строка {i}: раздел «{section_label}» не найден для продукта «{product.short_name}».")
             continue
 
-        service_composition = row[2].strip()
+        service_composition = _csv_row_value(row, service_col)
         try:
             TypicalServiceComposition.objects.create(
                 product=product,
@@ -1858,6 +1924,7 @@ def typical_service_composition_csv_download(request):
         writer.writerow(
             [
                 composition.product.short_name,
+                composition.section.code,
                 composition.section.name_ru or composition.section.name_en,
                 composition.service_composition,
             ]
@@ -1883,6 +1950,7 @@ def typical_service_composition_docx_download(request):
             {
                 "id": composition.pk,
                 "product": composition.product.short_name,
+                "section_code": composition.section.code,
                 "section": composition.section.name_ru or composition.section.name_en,
                 "html": editor_state["html"],
                 "plain_text": editor_state["plain_text"] or composition.service_composition,
@@ -1923,6 +1991,7 @@ def typical_service_composition_docx_upload(request):
         row_label = f"Строка {row_number}"
         raw_id = str(row.get("id") or "").strip()
         product_name = str(row.get("product") or "").strip()
+        section_code = str(row.get("section_code") or "").strip()
         section_name = str(row.get("section") or "").strip()
         editor_state = _normalize_typical_service_composition_editor_state(
             row.get("editor_state"),
@@ -1935,9 +2004,10 @@ def typical_service_composition_docx_upload(request):
             warnings.append(f"{row_label}: продукт «{product_name}» не найден. Доступные: {', '.join(products_by_name.keys())}.")
             continue
 
-        section = sections_by_product[product.pk].get(_csv_lookup_key(section_name))
+        section = _resolve_section_from_import(sections_by_product, product.pk, section_code, section_name)
         if not section:
-            warnings.append(f"{row_label}: раздел «{section_name}» не найден для продукта «{product.short_name}».")
+            section_label = section_code or section_name
+            warnings.append(f"{row_label}: раздел «{section_label}» не найден для продукта «{product.short_name}».")
             continue
 
         try:
@@ -2002,6 +2072,7 @@ def typical_service_composition_xlsx_download(request):
         ws.append(
             [
                 composition.product.short_name,
+                composition.section.code,
                 composition.section.name_ru or composition.section.name_en,
                 editor_state["plain_text"] or composition.service_composition,
                 json.dumps(editor_state, ensure_ascii=False),
@@ -2010,8 +2081,9 @@ def typical_service_composition_xlsx_download(request):
 
     widths = {
         1: 18,
-        2: 28,
-        3: 80,
+        2: 16,
+        3: 28,
+        4: 80,
         hidden_state_col: 80,
     }
     for col_idx, width in widths.items():
@@ -2054,6 +2126,10 @@ def typical_service_composition_xlsx_upload(request):
         return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
 
     headers = [_xlsx_cell_value(cell) for cell in ws[1]]
+    product_col = _find_header_column(headers, "Продукт") or 1
+    code_col = _find_header_column(headers, "Код")
+    section_col = _find_header_column(headers, "Раздел (услуга)") or (3 if code_col else 2)
+    service_col = _find_header_column(headers, "Состав услуг") or (4 if code_col else 3)
     editor_state_col = _find_header_column(headers, TYPICAL_SERVICE_COMPOSITION_EDITOR_STATE_HEADER)
 
     products_by_name, sections_by_product = _typical_service_composition_import_lookups()
@@ -2061,9 +2137,10 @@ def typical_service_composition_xlsx_upload(request):
     warnings = []
 
     for row_idx in range(2, ws.max_row + 1):
-        product_name = _xlsx_cell_value(ws.cell(row=row_idx, column=1))
-        section_name = _xlsx_cell_value(ws.cell(row=row_idx, column=2))
-        service_composition = _xlsx_cell_value(ws.cell(row=row_idx, column=3))
+        product_name = _xlsx_cell_value(ws.cell(row=row_idx, column=product_col))
+        section_code = _xlsx_cell_value(ws.cell(row=row_idx, column=code_col)) if code_col else ""
+        section_name = _xlsx_cell_value(ws.cell(row=row_idx, column=section_col))
+        service_composition = _xlsx_cell_value(ws.cell(row=row_idx, column=service_col))
         editor_state_raw = (
             ws.cell(row=row_idx, column=editor_state_col).value
             if editor_state_col
@@ -2078,9 +2155,10 @@ def typical_service_composition_xlsx_upload(request):
             warnings.append(f"Строка {row_idx}: продукт «{product_name}» не найден. Доступные: {', '.join(products_by_name.keys())}.")
             continue
 
-        section = sections_by_product[product.pk].get(_csv_lookup_key(section_name))
+        section = _resolve_section_from_import(sections_by_product, product.pk, section_code, section_name)
         if not section:
-            warnings.append(f"Строка {row_idx}: раздел «{section_name}» не найден для продукта «{product.short_name}».")
+            section_label = section_code or section_name
+            warnings.append(f"Строка {row_idx}: раздел «{section_label}» не найден для продукта «{product.short_name}».")
             continue
 
         try:
@@ -3852,59 +3930,82 @@ def tariff_csv_upload(request):
     created = 0
     updated = 0
     warnings = []
+    headers = rows[0]
+    product_col = _csv_header_index(headers, "Продукт")
+    code_col = _csv_header_index(headers, "Код")
+    section_col = _csv_header_index(headers, "Раздел (услуга)")
+    base_rate_col = _csv_header_index(headers, "Базовая ставка в ВПМ")
+    hours_col = _csv_header_index(headers, "Объем услуг в часах")
+    days_col = _csv_header_index(headers, "Объем услуг в днях для ТКП")
+    owner_col = _csv_header_index(headers, "Руководитель направления")
+    if product_col is None:
+        product_col = 0
+    if section_col is None:
+        section_col = 2 if code_col is not None else 1
+    if base_rate_col is None:
+        base_rate_col = 3 if code_col is not None else 2
+    if hours_col is None:
+        hours_col = 4 if code_col is not None else 3
+    if days_col is None:
+        days_col = 5 if code_col is not None else 4
+    if owner_col is None and code_col is not None:
+        owner_col = 6
 
     for i, row in enumerate(rows[1:], start=2):
         if not any(cell.strip() for cell in row):
             continue
-        if len(row) < 5:
+        if not _csv_required_columns_present(row, [product_col, section_col, base_rate_col, hours_col, days_col]):
             warnings.append(
-                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 5-6: "
-                "Продукт, Раздел (услуга), Базовая ставка в ВПМ, Объем услуг в часах, "
+                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 6-7: "
+                "Продукт, Код, Раздел (услуга), Базовая ставка в ВПМ, Объем услуг в часах, "
                 "Объем услуг в днях для ТКП, [Руководитель направления])."
             )
             continue
 
-        product_name = row[0].strip()
-        section_name = row[1].strip()
+        product_name = _csv_row_value(row, product_col)
+        section_code = _csv_row_value(row, code_col)
+        section_name = _csv_row_value(row, section_col)
         product = products_by_name.get(_csv_lookup_key(product_name))
         if not product:
             warnings.append(f"Строка {i}: продукт «{product_name}» не найден. Доступные: {', '.join(products_by_name.keys())}.")
             continue
 
-        section = sections_by_product[product.pk].get(_csv_lookup_key(section_name))
+        section = _resolve_section_from_import(sections_by_product, product.pk, section_code, section_name)
         if not section:
-            warnings.append(f"Строка {i}: раздел «{section_name}» не найден для продукта «{product.short_name}».")
+            section_label = section_code or section_name
+            warnings.append(f"Строка {i}: раздел «{section_label}» не найден для продукта «{product.short_name}».")
             continue
 
         try:
-            base_rate_vpm = Decimal(row[2].strip().replace(",", "."))
+            base_rate_value = _csv_row_value(row, base_rate_col)
+            base_rate_vpm = Decimal(base_rate_value.replace(",", "."))
         except (InvalidOperation, ValueError):
-            warnings.append(f"Строка {i}: некорректная базовая ставка «{row[2].strip()}».")
+            warnings.append(f"Строка {i}: некорректная базовая ставка «{_csv_row_value(row, base_rate_col)}».")
             continue
         if base_rate_vpm < 0:
             warnings.append(f"Строка {i}: базовая ставка не может быть отрицательной.")
             continue
 
         try:
-            service_hours = int(row[3].strip())
+            service_hours = int(_csv_row_value(row, hours_col))
         except (TypeError, ValueError):
-            warnings.append(f"Строка {i}: некорректный объем услуг в часах «{row[3].strip()}».")
+            warnings.append(f"Строка {i}: некорректный объем услуг в часах «{_csv_row_value(row, hours_col)}».")
             continue
         if service_hours < 0:
             warnings.append(f"Строка {i}: объем услуг в часах не может быть отрицательным.")
             continue
 
         try:
-            service_days_tkp = int(row[4].strip())
+            service_days_tkp = int(_csv_row_value(row, days_col))
         except (TypeError, ValueError):
-            warnings.append(f"Строка {i}: некорректный объем услуг в днях для ТКП «{row[4].strip()}».")
+            warnings.append(f"Строка {i}: некорректный объем услуг в днях для ТКП «{_csv_row_value(row, days_col)}».")
             continue
         if service_days_tkp < 0:
             warnings.append(f"Строка {i}: объем услуг в днях для ТКП не может быть отрицательным.")
             continue
 
         owner = request.user
-        owner_name = row[5].strip() if len(row) > 5 else ""
+        owner_name = _csv_row_value(row, owner_col)
         if request.user.is_superuser and owner_name:
             owner = owners_by_label.get(_csv_lookup_key(owner_name))
             if not owner:
@@ -3952,6 +4053,7 @@ def tariff_csv_download(request):
         writer.writerow(
             [
                 tariff.product.short_name,
+                tariff.section.code,
                 tariff.section.name_ru or tariff.section.name_en,
                 str(tariff.base_rate_vpm).replace(".", ","),
                 tariff.service_hours,

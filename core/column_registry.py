@@ -107,6 +107,7 @@ COLUMN_REGISTRY = {
                 "label": "Типовая структура раздела (состава услуг)",
                 "columns": {
                     "product": "Продукт",
+                    "section_code": "Код",
                     "section": "Раздел (услуга)",
                     "subsections": "Подразделы",
                 },
@@ -115,6 +116,7 @@ COLUMN_REGISTRY = {
                 "label": "Типовой состав услуг",
                 "columns": {
                     "product": "Продукт",
+                    "section_code": "Код",
                     "section": "Раздел (услуга)",
                     "service_composition": "Состав услуг",
                 },
@@ -155,6 +157,7 @@ COLUMN_REGISTRY = {
                 "label": "Тарифы разделов (услуг)",
                 "columns": {
                     "product": "Продукт",
+                    "section_code": "Код",
                     "section": "Раздел (услуга)",
                     "base_rate_vpm": "Базовая ставка в ВПМ",
                     "service_volume_hours": "Объем услуг в часах",

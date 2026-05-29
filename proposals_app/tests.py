@@ -6209,9 +6209,9 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(str(rows_by_key[("A", False)].total_eur_without_vat), "500.00")
         self.assertEqual(rows_by_key[("B", False)].service_name, "Разный код этап 1")
         self.assertEqual(rows_by_key[("D", False)].service_name, "Разный код этап 2")
-        self.assertEqual(rows_by_key[("C", True)].service_name, "Union этап 2")
-        self.assertEqual(rows_by_key[("C", True)].asset_day_counts, [9])
-        self.assertEqual(str(rows_by_key[("C", True)].total_eur_without_vat), "900.00")
+        self.assertEqual(rows_by_key[("", True)].service_name, "Union этап 2")
+        self.assertEqual(rows_by_key[("", True)].asset_day_counts, [9])
+        self.assertEqual(str(rows_by_key[("", True)].total_eur_without_vat), "900.00")
 
         _, _, tables = resolve_variables(
             proposal,

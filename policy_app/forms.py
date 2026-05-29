@@ -56,6 +56,16 @@ def _policy_product_short_label(product):
     return short_name or display_name
 
 
+def _policy_section_display_label(section):
+    return str(getattr(section, "name_ru", "") or getattr(section, "name_en", "") or "").strip()
+
+
+def _policy_section_option_label(section):
+    code = str(getattr(section, "code", "") or "").strip()
+    display_label = _policy_section_display_label(section)
+    return " ".join(part for part in (code, display_label) if part)
+
+
 class PolicyProductSelect(forms.Select):
     def create_option(self, name, value, label, selected, index, subindex=None, attrs=None):
         option = super().create_option(name, value, label, selected, index, subindex=subindex, attrs=attrs)
@@ -63,6 +73,17 @@ class PolicyProductSelect(forms.Select):
         if instance is not None:
             option_attrs = option.setdefault("attrs", {})
             option_attrs["data-short-label"] = _policy_product_short_label(instance)
+        return option
+
+
+class PolicySectionSelect(forms.Select):
+    def create_option(self, name, value, label, selected, index, subindex=None, attrs=None):
+        option = super().create_option(name, value, label, selected, index, subindex=subindex, attrs=attrs)
+        instance = getattr(value, "instance", None)
+        if instance is not None:
+            option_attrs = option.setdefault("attrs", {})
+            option_attrs["data-short-label"] = _policy_section_display_label(instance)
+            option_attrs["data-code"] = str(getattr(instance, "code", "") or "").strip()
         return option
 
 
@@ -76,6 +97,30 @@ def _configure_policy_product_field(field):
     widget_attrs["class"] = " ".join(classes)
     field.widget = PolicyProductSelect(attrs=widget_attrs)
     field.widget.choices = field.choices
+
+
+def _configure_policy_section_field(field):
+    field.label_from_instance = _policy_section_option_label
+    widget_attrs = dict(getattr(field.widget, "attrs", {}) or {})
+    classes = [part for part in str(widget_attrs.get("class", "") or "").split() if part]
+    if "policy-section-select" not in classes:
+        classes.append("policy-section-select")
+    widget_attrs["class"] = " ".join(classes)
+    field.widget = PolicySectionSelect(attrs=widget_attrs)
+    field.widget.choices = field.choices
+
+
+def _set_section_code_initial(form, section_id):
+    code = ""
+    if section_id:
+        code = (
+            TypicalSection.objects
+            .filter(pk=section_id)
+            .values_list("code", flat=True)
+            .first()
+        ) or ""
+    if "section_code" in form.fields:
+        form.fields["section_code"].initial = code
 
 
 class CommaDecimalField(forms.DecimalField):
@@ -535,6 +580,11 @@ class SectionStructureForm(forms.ModelForm):
         queryset=Product.objects.all(),
         widget=forms.Select(attrs={"class": "form-select"}),
     )
+    section_code = forms.CharField(
+        label="Код",
+        required=False,
+        widget=forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
+    )
     section = forms.ModelChoiceField(
         label="Раздел",
         queryset=TypicalSection.objects.select_related("product").all(),
@@ -544,9 +594,7 @@ class SectionStructureForm(forms.ModelForm):
     def __init__(self, *args, request_user=None, **kwargs):
         super().__init__(*args, **kwargs)
         _configure_policy_product_field(self.fields["product"])
-        self.fields["section"].label_from_instance = (
-            lambda obj: f"{obj.code}: {obj.name_ru or obj.name_en}"
-        )
+        _configure_policy_section_field(self.fields["section"])
         product_id = None
         section_id = None
         if self.is_bound:
@@ -569,10 +617,11 @@ class SectionStructureForm(forms.ModelForm):
             self.fields["section"].queryset = section_qs.filter(pk=self.instance.section_id)
         else:
             self.fields["section"].queryset = section_qs.none()
+        _set_section_code_initial(self, section_id)
 
     class Meta:
         model = SectionStructure
-        fields = ["product", "section", "subsections"]
+        fields = ["product", "section_code", "section", "subsections"]
         widgets = {
             "subsections": forms.Textarea(attrs={
                 "class": "form-control",
@@ -633,6 +682,11 @@ class TypicalServiceCompositionForm(forms.ModelForm):
         queryset=Product.objects.all(),
         widget=forms.Select(attrs={"class": "form-select"}),
     )
+    section_code = forms.CharField(
+        label="Код",
+        required=False,
+        widget=forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
+    )
     section = forms.ModelChoiceField(
         label="Раздел (услуга)",
         queryset=TypicalSection.objects.none(),
@@ -645,7 +699,7 @@ class TypicalServiceCompositionForm(forms.ModelForm):
 
     class Meta:
         model = TypicalServiceComposition
-        fields = ["product", "section", "service_composition", "service_composition_editor_state"]
+        fields = ["product", "section_code", "section", "service_composition", "service_composition_editor_state"]
         widgets = {
             "service_composition": forms.Textarea(attrs={
                 "class": "form-control",
@@ -657,7 +711,7 @@ class TypicalServiceCompositionForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         _configure_policy_product_field(self.fields["product"])
-        self.fields["section"].label_from_instance = lambda obj: obj.name_ru
+        _configure_policy_section_field(self.fields["section"])
 
         product_id = None
         section_id = None
@@ -681,6 +735,7 @@ class TypicalServiceCompositionForm(forms.ModelForm):
             self.fields["section"].queryset = section_qs.filter(pk=self.instance.section_id)
         else:
             self.fields["section"].queryset = section_qs.none()
+        _set_section_code_initial(self, section_id)
         if self.instance and self.instance.pk and not self.is_bound:
             self.initial["service_composition_editor_state"] = json.dumps(
                 self.instance.service_composition_editor_state or {},
@@ -1079,6 +1134,11 @@ class TariffForm(forms.ModelForm):
         queryset=Product.objects.all(),
         widget=forms.Select(attrs={"class": "form-select"}),
     )
+    section_code = forms.CharField(
+        label="Код",
+        required=False,
+        widget=forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
+    )
     section = forms.ModelChoiceField(
         label="Раздел",
         queryset=TypicalSection.objects.select_related("product").all(),
@@ -1087,7 +1147,7 @@ class TariffForm(forms.ModelForm):
 
     class Meta:
         model = Tariff
-        fields = ["product", "section", "base_rate_vpm", "service_hours", "service_days_tkp"]
+        fields = ["product", "section_code", "section", "base_rate_vpm", "service_hours", "service_days_tkp"]
         widgets = {
             "base_rate_vpm": forms.NumberInput(attrs={
                 "class": "form-control", "step": "0.01", "min": "0",
@@ -1107,9 +1167,7 @@ class TariffForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         self.request_user = request_user
         _configure_policy_product_field(self.fields["product"])
-        self.fields["section"].label_from_instance = (
-            lambda obj: f"{obj.code}: {obj.name_ru or obj.name_en}"
-        )
+        _configure_policy_section_field(self.fields["section"])
         product_id = None
         section_id = None
         if self.is_bound:
@@ -1132,6 +1190,7 @@ class TariffForm(forms.ModelForm):
             self.fields["section"].queryset = section_qs.filter(pk=self.instance.section_id)
         else:
             self.fields["section"].queryset = section_qs.none()
+        _set_section_code_initial(self, section_id)
         self.fields["owner"].queryset = User.objects.filter(
             Q(groups__name__in=(DEPARTMENT_HEAD_GROUP, *DIRECTOR_GROUPS))
         ).distinct().order_by("last_name", "first_name", "username")
