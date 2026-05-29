@@ -7405,7 +7405,7 @@ class ProposalFormContextTests(TestCase):
         self.assertEqual([item["select_key"] for item in water_sections], ["PRW", "INW"])
         self.assertEqual(
             [item["display_name"] for item in water_sections],
-            ["PRW - Водоснабжение", "INW - Водоснабжение"],
+            ["PRW Водоснабжение", "INW Водоснабжение"],
         )
 
     def test_product_autofill_endpoint_reflects_sections_created_by_csv_upload(self):

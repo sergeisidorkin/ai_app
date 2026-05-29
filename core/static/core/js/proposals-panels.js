@@ -3193,7 +3193,7 @@
     if (label) return label;
     const name = String(entry?.name || '').trim();
     const code = String(entry?.code || '').trim();
-    return code && name ? (code + ' - ' + name) : name;
+    return code && name ? (code + ' ' + name) : name;
   }
 
   function getProposalSectionSelectKeyForEntries(entries, serviceName, code) {
@@ -3237,15 +3237,55 @@
       if (!key || !name) return;
       const option = document.createElement('option');
       option.value = key;
-      option.textContent = getProposalSectionDisplayName(entry);
+      const displayName = getProposalSectionDisplayName(entry);
+      option.textContent = displayName;
       option.dataset.sectionName = name;
       option.dataset.sectionCode = String(entry?.code || '').trim();
+      option.dataset.sectionDisplayName = displayName;
       optionKeys.push(key);
       select.appendChild(option);
     });
 
     select.value = optionKeys.includes(previousKey) ? previousKey : '';
+    bindProposalSectionSelectDisplay(select);
+    collapseProposalSectionSelectDisplay(select);
     return select.value !== previousKey;
+  }
+
+  function expandProposalSectionSelectDisplay(select) {
+    if (!(select instanceof HTMLSelectElement)) return;
+    Array.from(select.options).forEach(function (option) {
+      const displayName = String(option.dataset.sectionDisplayName || '').trim();
+      if (displayName) option.textContent = displayName;
+    });
+  }
+
+  function collapseProposalSectionSelectDisplay(select) {
+    if (!(select instanceof HTMLSelectElement)) return;
+    const selectedOption = select.options[select.selectedIndex];
+    const sectionName = String(selectedOption?.dataset?.sectionName || '').trim();
+    if (selectedOption && selectedOption.value && sectionName) {
+      selectedOption.textContent = sectionName;
+    }
+  }
+
+  function bindProposalSectionSelectDisplay(select) {
+    if (!(select instanceof HTMLSelectElement) || select.dataset.sectionDisplayBound === '1') return;
+    select.dataset.sectionDisplayBound = '1';
+    select.addEventListener('pointerdown', function () {
+      expandProposalSectionSelectDisplay(select);
+    });
+    select.addEventListener('keydown', function (event) {
+      if (['ArrowDown', 'ArrowUp', 'Enter', ' ', 'Home', 'End'].includes(event.key)) {
+        expandProposalSectionSelectDisplay(select);
+      }
+    });
+    select.addEventListener('change', function () {
+      window.setTimeout(function () { collapseProposalSectionSelectDisplay(select); }, 0);
+    });
+    select.addEventListener('blur', function () {
+      collapseProposalSectionSelectDisplay(select);
+    });
   }
 
   function getProposalSelectedSection(select, form, fallbackCode) {
@@ -4624,13 +4664,15 @@
           const currentRow = currentRows[index] || {};
           const nextServiceName = String(row?.service_name || '').trim();
           const currentServiceName = String(currentRow?.service_name || '').trim();
+          const nextCode = String(row?.code || '').trim();
+          const currentCode = String(currentRow?.code || '').trim();
           return normalizeRow({
             ...currentRow,
             service_name: nextServiceName,
-            code: row?.code || '',
+            code: nextCode,
             merge_without_code: normalizeProposalMergeWithoutCode(row?.merge_without_code),
           }, {
-            forceAutofill: forceAutofill || nextServiceName !== currentServiceName,
+            forceAutofill: forceAutofill || nextServiceName !== currentServiceName || nextCode !== currentCode,
           });
         });
         rows.push(normalizeProposalTravelExpensesRow(currentTravelRow));
@@ -5416,7 +5458,12 @@
         };
       }
       const serviceControl = row.querySelector('.proposal-commercial-service');
-      const selectedSection = getProposalSelectedSection(serviceControl, form, row.dataset.commercialCode || '');
+      const selectedSection = serviceControl instanceof HTMLSelectElement
+        ? getProposalSelectedSection(serviceControl, form, row.dataset.commercialCode || '')
+        : {
+          serviceName: String(serviceControl?.value || '').trim(),
+          code: String(row.dataset.commercialCode || '').trim(),
+        };
       return {
         specialist: (row.querySelector('.proposal-commercial-specialist')?.value || '').trim(),
         job_title: (row.querySelector('.proposal-commercial-job-title')?.value || '').trim(),
