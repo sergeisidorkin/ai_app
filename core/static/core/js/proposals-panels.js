@@ -2931,6 +2931,72 @@
     }
   }
 
+  function setProposalJsonMapEntry(form, scriptId, productId, value) {
+    const root = form?.closest('#proposals-pane') || pane() || document;
+    const script = root.querySelector('#' + scriptId);
+    if (!script || !productId) return;
+    let data = {};
+    try {
+      data = JSON.parse(script.textContent || '{}') || {};
+    } catch (error) {
+      data = {};
+    }
+    data[String(productId)] = value;
+    script.textContent = JSON.stringify(data);
+  }
+
+  function getProposalProductAutofillUrl(form, productId) {
+    const owningForm = getProposalOwningForm(form) || form;
+    const template = String(owningForm?.dataset?.productAutofillUrlTemplate || '');
+    if (!template || !productId) return '';
+    return template.replace('/0/', '/' + encodeURIComponent(productId) + '/');
+  }
+
+  function applyProposalProductAutofillPayload(form, productId, payload) {
+    if (!payload || payload.ok === false) return;
+    const key = String(payload.product_id || productId || '').trim();
+    if (!key) return;
+    setProposalJsonMapEntry(form, 'proposal-typical-sections-data', key, Array.isArray(payload.typical_sections) ? payload.typical_sections : []);
+    setProposalJsonMapEntry(form, 'proposal-service-goal-reports-data', key, payload.service_goal_report || {});
+    setProposalJsonMapEntry(
+      form,
+      'proposal-typical-service-compositions-data',
+      key,
+      Array.isArray(payload.typical_service_compositions) ? payload.typical_service_compositions : []
+    );
+    setProposalJsonMapEntry(form, 'proposal-typical-service-terms-data', key, payload.typical_service_term || {});
+  }
+
+  function refreshProposalProductAutofillData(form, productId) {
+    const key = String(productId || '').trim();
+    const url = getProposalProductAutofillUrl(form, key);
+    if (!url) return Promise.resolve();
+    const owningForm = getProposalOwningForm(form) || form;
+    owningForm.__proposalProductAutofillRequests = owningForm.__proposalProductAutofillRequests || {};
+    if (owningForm.__proposalProductAutofillRequests[key]) {
+      return owningForm.__proposalProductAutofillRequests[key];
+    }
+    const request = fetch(url, {
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      credentials: 'same-origin',
+    })
+      .then(function (response) {
+        if (!response.ok) throw new Error('product-autofill-failed');
+        return response.json();
+      })
+      .then(function (payload) {
+        applyProposalProductAutofillPayload(owningForm, key, payload);
+      })
+      .catch(function (error) {
+        console.warn('Не удалось обновить справочник продукта для ТКП.', error);
+      })
+      .finally(function () {
+        delete owningForm.__proposalProductAutofillRequests[key];
+      });
+    owningForm.__proposalProductAutofillRequests[key] = request;
+    return request;
+  }
+
   function getProposalOwningForm(node) {
     if (!node) return null;
     if (node.matches?.('form[data-proposal-form]')) return node;
@@ -4438,6 +4504,7 @@
       commitServiceRows: function (nextRows, meta) {
         const currentRows = api.getRows();
         const currentTravelRow = currentRows.find(isProposalTravelExpensesRow) || normalizeProposalTravelExpensesRow({});
+        const forceAutofill = meta?.forceAutofill === true;
         rows = ensureSystemDscServiceRows(nextRows).map(function (row, index) {
           const currentRow = currentRows[index] || {};
           const nextServiceName = String(row?.service_name || '').trim();
@@ -4448,7 +4515,7 @@
             code: row?.code || '',
             merge_without_code: normalizeProposalMergeWithoutCode(row?.merge_without_code),
           }, {
-            forceAutofill: nextServiceName !== currentServiceName,
+            forceAutofill: forceAutofill || nextServiceName !== currentServiceName,
           });
         });
         rows.push(normalizeProposalTravelExpensesRow(currentTravelRow));
@@ -4473,7 +4540,7 @@
               merge_without_code: false,
             };
           }),
-          meta
+          { ...(meta || {}), forceAutofill: true }
         );
       },
       subscribe: function (listener) {
@@ -8284,6 +8351,7 @@
         const categorySelect = row.querySelector('.proposal-service-category-select');
         const subtypeSelect = row.querySelector('.proposal-service-subtype-select');
         const productSelect = row.querySelector('.proposal-product-select');
+        let productAutofillRefreshSeq = 0;
 
         function syncRow(state) {
           const selectedProduct = productById.get(String(state?.productId ?? productSelect?.value ?? ''));
@@ -8343,20 +8411,29 @@
         }
 
         consultingSelect?.addEventListener('change', function () {
+          productAutofillRefreshSeq += 1;
           syncRow({ consultingType: consultingSelect.value, serviceCategory: '', serviceSubtype: '', productId: '' });
           syncStageContent();
         });
         categorySelect?.addEventListener('change', function () {
+          productAutofillRefreshSeq += 1;
           syncRow({ consultingType: consultingSelect?.value || '', serviceCategory: categorySelect.value, serviceSubtype: '', productId: '' });
           syncStageContent();
         });
         subtypeSelect?.addEventListener('change', function () {
+          productAutofillRefreshSeq += 1;
           syncRow({ consultingType: consultingSelect?.value || '', serviceCategory: categorySelect?.value || '', serviceSubtype: subtypeSelect.value, productId: '' });
           syncStageContent();
         });
         productSelect?.addEventListener('change', function () {
-          syncRow({ productId: productSelect.value });
-          syncStageContent();
+          const selectedProductId = String(productSelect.value || '').trim();
+          const refreshSeq = productAutofillRefreshSeq + 1;
+          productAutofillRefreshSeq = refreshSeq;
+          syncRow({ productId: selectedProductId });
+          refreshProposalProductAutofillData(form, selectedProductId).finally(function () {
+            if (refreshSeq !== productAutofillRefreshSeq) return;
+            syncStageContent();
+          });
         });
 
         syncRow({

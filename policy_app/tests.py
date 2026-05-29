@@ -1067,6 +1067,42 @@ class TypicalSectionViewsTests(TestCase):
             [first_specialty.pk, second_specialty.pk],
         )
 
+    def test_section_csv_upload_updates_existing_section_by_product_and_code(self):
+        section = TypicalSection.objects.create(
+            product=self.product,
+            code="SEC-UPD",
+            short_name="old-en",
+            short_name_ru="old-ru",
+            name_en="Old EN",
+            name_ru="Старый раздел",
+            accounting_type="Раздел",
+            exclude_from_tkp_autofill=False,
+            position=1,
+        )
+        csv_file = SimpleUploadedFile(
+            "sections.csv",
+            (
+                "Продукт;Код;Краткое имя EN;Краткое имя RU;"
+                "Наименование раздела (услуги) EN;Наименование раздела (услуги) RU;"
+                "Тип учета;Исполнитель;Экспертиза;Подразделение;ТКП\n"
+                "SEC;SEC-UPD;new-en;new-ru;New EN;Новый раздел;Услуги;;;;Да\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("section_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 0)
+        self.assertEqual(response.json()["updated"], 1)
+        section.refresh_from_db()
+        self.assertEqual(section.short_name, "new-en")
+        self.assertEqual(section.short_name_ru, "new-ru")
+        self.assertEqual(section.name_en, "New EN")
+        self.assertEqual(section.name_ru, "Новый раздел")
+        self.assertEqual(section.accounting_type, "Услуги")
+        self.assertTrue(section.exclude_from_tkp_autofill)
+
     def test_section_csv_upload_rolls_back_row_when_specialty_insert_fails(self):
         owner = GroupMember.objects.create(
             short_name="IMC",
@@ -1428,6 +1464,36 @@ class ServiceGoalReportViewsTests(TestCase):
         self.assertEqual(item.report_title, "Отчет по документам")
         self.assertEqual(item.product_name, "Документарная проверка")
         self.assertEqual(item.position, 1)
+
+    def test_service_goal_report_csv_upload_updates_existing_product_row(self):
+        item = ServiceGoalReport.objects.create(
+            product=self.product,
+            service_goal="Старая цель",
+            service_goal_genitive="Старой цели",
+            report_title="Старый титул",
+            product_name="Старый продукт",
+            position=1,
+        )
+        csv_file = SimpleUploadedFile(
+            "service_goal_reports.csv",
+            (
+                "Продукт;Цели оказания услуг;Цели оказания услуг в родительном падеже;Титул отчета/ТКП;Название продукта\n"
+                "TAX;Новая цель;Новой цели;Новый титул;Новый продукт\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("service_goal_report_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 0)
+        self.assertEqual(response.json()["updated"], 1)
+        self.assertEqual(ServiceGoalReport.objects.count(), 1)
+        item.refresh_from_db()
+        self.assertEqual(item.service_goal, "Новая цель")
+        self.assertEqual(item.service_goal_genitive, "Новой цели")
+        self.assertEqual(item.report_title, "Новый титул")
+        self.assertEqual(item.product_name, "Новый продукт")
 
     def test_move_up_reorders_globally_across_table(self):
         other_product = Product.objects.create(
@@ -3664,6 +3730,34 @@ class TypicalServiceTermViewsTests(TestCase):
         self.assertEqual(item.preliminary_report_months, Decimal("2.5"))
         self.assertEqual(item.final_report_weeks, 4)
 
+    def test_typical_service_term_csv_upload_updates_existing_product_row(self):
+        item = TypicalServiceTerm.objects.create(
+            product=self.product,
+            source_data_weeks=1,
+            preliminary_report_months=Decimal("1.0"),
+            final_report_weeks=2,
+            position=1,
+        )
+        csv_file = SimpleUploadedFile(
+            "typical_service_terms.csv",
+            (
+                "Продукт;Сроки предоставления исходных данных, нед.;Срок подготовки Предварительного отчёта, мес.;Срок подготовки Итогового отчёта, нед.\n"
+                "TERM;4;3,5;7\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("typical_service_term_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 0)
+        self.assertEqual(response.json()["updated"], 1)
+        self.assertEqual(TypicalServiceTerm.objects.count(), 1)
+        item.refresh_from_db()
+        self.assertEqual(item.source_data_weeks, 4)
+        self.assertEqual(item.preliminary_report_months, Decimal("3.5"))
+        self.assertEqual(item.final_report_weeks, 7)
+
     def test_non_staff_user_cannot_reorder_typical_service_terms(self):
         first = TypicalServiceTerm.objects.create(
             product=self.product,
@@ -3997,6 +4091,37 @@ class TariffViewsTests(TestCase):
         self.assertEqual(tariff.service_hours, 16)
         self.assertEqual(tariff.service_days_tkp, 6)
         self.assertEqual(tariff.created_by, self.user)
+        self.assertEqual(tariff.position, 1)
+
+    def test_tariff_csv_upload_updates_existing_product_section_owner_row(self):
+        tariff = Tariff.objects.create(
+            product=self.product,
+            section=self.section,
+            base_rate_vpm=Decimal("10.00"),
+            service_hours=8,
+            service_days_tkp=5,
+            created_by=self.user,
+            position=1,
+        )
+        csv_file = SimpleUploadedFile(
+            "section_tariffs.csv",
+            (
+                "Продукт;Раздел (услуга);Базовая ставка в ВПМ;Объем услуг в часах;Объем услуг в днях для ТКП\n"
+                "TAR;Тарифный раздел;22,50;18;9\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("tariff_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 0)
+        self.assertEqual(response.json()["updated"], 1)
+        self.assertEqual(Tariff.objects.count(), 1)
+        tariff.refresh_from_db()
+        self.assertEqual(tariff.base_rate_vpm, Decimal("22.50"))
+        self.assertEqual(tariff.service_hours, 18)
+        self.assertEqual(tariff.service_days_tkp, 9)
         self.assertEqual(tariff.position, 1)
 
     def test_move_up_normalizes_positions_before_reorder(self):

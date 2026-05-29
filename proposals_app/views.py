@@ -1448,7 +1448,7 @@ def _proposal_product_catalog():
     }
 
 
-def _render_proposal_form(request, *, form, action, proposal=None):
+def _proposal_product_autofill_data(product_ids=None):
     def _section_specialty_names(section):
         names = []
         seen = set()
@@ -1498,6 +1498,14 @@ def _render_proposal_form(request, *, form, action, proposal=None):
             "service_days_tkp": section_tariff_days,
             "specialty_is_director": True,
             "specialist_options": [],
+        }
+
+    product_filter = None
+    if product_ids is not None:
+        product_filter = {
+            int(product_id)
+            for product_id in product_ids
+            if str(product_id or "").strip().isdigit() and int(product_id) > 0
         }
 
     specialty_candidates = {}
@@ -1583,11 +1591,12 @@ def _render_proposal_form(request, *, form, action, proposal=None):
             )
         specialty_candidates[specialty_name] = ordered_candidates
 
-    product_ids = [
-        str(product_id)
-        for product_id in Product.objects.order_by("position", "id").values_list("id", flat=True)
-    ]
-    sections = list(
+    products_qs = Product.objects.order_by("position", "id")
+    if product_filter is not None:
+        products_qs = products_qs.filter(pk__in=product_filter)
+    product_ids = [str(product_id) for product_id in products_qs.values_list("id", flat=True)]
+
+    sections_qs = (
         TypicalSection.objects
         .select_related("product", "expertise_dir", "expertise_direction")
         .prefetch_related(
@@ -1602,31 +1611,33 @@ def _render_proposal_form(request, *, form, action, proposal=None):
         )
         .order_by("product_id", "position", "id")
     )
-    service_goal_reports = list(
-        ServiceGoalReport.objects
-        .select_related("product")
-        .order_by("product_id", "position", "id")
+    service_goal_reports_qs = ServiceGoalReport.objects.select_related("product").order_by("product_id", "position", "id")
+    typical_service_compositions_qs = (
+        TypicalServiceComposition.objects.select_related("product", "section").order_by("product_id", "position", "id")
     )
-    typical_service_compositions = list(
-        TypicalServiceComposition.objects
-        .select_related("product", "section")
-        .order_by("product_id", "position", "id")
-    )
-    typical_service_terms = list(
-        TypicalServiceTerm.objects
-        .select_related("product")
-        .order_by("product_id", "position", "id")
-    )
+    typical_service_terms_qs = TypicalServiceTerm.objects.select_related("product").order_by("product_id", "position", "id")
+    if product_filter is not None:
+        sections_qs = sections_qs.filter(product_id__in=product_filter)
+        service_goal_reports_qs = service_goal_reports_qs.filter(product_id__in=product_filter)
+        typical_service_compositions_qs = typical_service_compositions_qs.filter(product_id__in=product_filter)
+        typical_service_terms_qs = typical_service_terms_qs.filter(product_id__in=product_filter)
+    sections = list(sections_qs)
+    service_goal_reports = list(service_goal_reports_qs)
+    typical_service_compositions = list(typical_service_compositions_qs)
+    typical_service_terms = list(typical_service_terms_qs)
     specialty_tariffs = list(
         SpecialtyTariff.objects
         .prefetch_related("specialties")
         .order_by("position", "id")
     )
-    section_tariffs = list(
+    section_tariffs_qs = (
         Tariff.objects
         .select_related("product", "section")
         .order_by("product_id", "position", "id")
     )
+    if product_filter is not None:
+        section_tariffs_qs = section_tariffs_qs.filter(product_id__in=product_filter)
+    section_tariffs = list(section_tariffs_qs)
     direction_ids = {
         section.expertise_direction_id
         for section in sections
@@ -1774,6 +1785,15 @@ def _render_proposal_form(request, *, form, action, proposal=None):
             "preliminary_report_months": format(item.preliminary_report_months, ".1f"),
             "final_report_weeks": format(item.final_report_weeks, ".1f"),
         }
+    return {
+        "typical_sections_json": sections_map,
+        "service_goal_reports_json": service_goal_reports_map,
+        "typical_service_compositions_json": typical_service_compositions_map,
+        "typical_service_terms_json": typical_service_terms_map,
+    }
+
+
+def _render_proposal_form(request, *, form, action, proposal=None):
     return render(
         request,
         PROPOSAL_FORM_TEMPLATE,
@@ -1782,10 +1802,7 @@ def _render_proposal_form(request, *, form, action, proposal=None):
             "action": action,
             "proposal": proposal,
             "proposal_type_meta_json": json.dumps(_proposal_product_catalog(), ensure_ascii=False),
-            "typical_sections_json": sections_map,
-            "service_goal_reports_json": service_goal_reports_map,
-            "typical_service_compositions_json": typical_service_compositions_map,
-            "typical_service_terms_json": typical_service_terms_map,
+            **_proposal_product_autofill_data(),
         },
     )
 
@@ -2027,6 +2044,27 @@ def proposal_cbr_eur_rate(request):
             "rub_total_service_text": get_cbr_eur_rate_text(),
         }
     )
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_GET
+def proposal_product_autofill(request, product_id: int):
+    product = get_object_or_404(Product, pk=product_id)
+    product_key = str(product.pk)
+    data = _proposal_product_autofill_data(product_ids=[product.pk])
+    response = JsonResponse(
+        {
+            "ok": True,
+            "product_id": product_key,
+            "typical_sections": data["typical_sections_json"].get(product_key, []),
+            "service_goal_report": data["service_goal_reports_json"].get(product_key, {}),
+            "typical_service_compositions": data["typical_service_compositions_json"].get(product_key, []),
+            "typical_service_term": data["typical_service_terms_json"].get(product_key, {}),
+        }
+    )
+    response["Cache-Control"] = "no-store"
+    return response
 
 
 @login_required
