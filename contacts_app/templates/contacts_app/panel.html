@@ -21,6 +21,9 @@
       <a href="#cnt-emails" class="list-group-item list-group-item-action" data-contacts-section="emails">
         База контактов: почта
       </a>
+      <a href="#cnt-specialties" class="list-group-item list-group-item-action" data-contacts-section="specialties">
+        База контактов: специальность
+      </a>
     </div>
   </aside>
 
@@ -112,6 +115,20 @@
                     </button>
                   </div>
                 </div>
+                <a href="{% url 'prs_csv_download' %}"
+                   id="prs-csv-download-btn"
+                   class="btn btn-primary btn-sm d-flex align-items-center"
+                   title="Скачать CSV"
+                   role="button">
+                  <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+                </a>
+                <button type="button"
+                        id="prs-csv-upload-btn"
+                        class="btn btn-primary btn-sm d-flex align-items-center"
+                        title="Загрузить CSV">
+                  <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+                </button>
+                <input type="file" id="prs-csv-file-input" accept=".csv" class="d-none">
               </div>
               {% endif %}
             </div>
@@ -161,6 +178,20 @@
                     </button>
                   </div>
                 </div>
+                <a href="{% url 'ctz_csv_download' %}"
+                   id="ctz-csv-download-btn"
+                   class="btn btn-primary btn-sm d-flex align-items-center"
+                   title="Скачать CSV"
+                   role="button">
+                  <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+                </a>
+                <button type="button"
+                        id="ctz-csv-upload-btn"
+                        class="btn btn-primary btn-sm d-flex align-items-center"
+                        title="Загрузить CSV">
+                  <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+                </button>
+                <input type="file" id="ctz-csv-file-input" accept=".csv" class="d-none">
               </div>
               {% endif %}
             </div>
@@ -210,6 +241,20 @@
                     </button>
                   </div>
                 </div>
+                <a href="{% url 'adr_csv_download' %}"
+                   id="adr-csv-download-btn"
+                   class="btn btn-primary btn-sm d-flex align-items-center"
+                   title="Скачать CSV"
+                   role="button">
+                  <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+                </a>
+                <button type="button"
+                        id="adr-csv-upload-btn"
+                        class="btn btn-primary btn-sm d-flex align-items-center"
+                        title="Загрузить CSV">
+                  <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+                </button>
+                <input type="file" id="adr-csv-file-input" accept=".csv" class="d-none">
               </div>
               {% endif %}
             </div>
@@ -259,6 +304,20 @@
                     </button>
                   </div>
                 </div>
+                <a href="{% url 'psn_csv_download' %}"
+                   id="psn-csv-download-btn"
+                   class="btn btn-primary btn-sm d-flex align-items-center"
+                   title="Скачать CSV"
+                   role="button">
+                  <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+                </a>
+                <button type="button"
+                        id="psn-csv-upload-btn"
+                        class="btn btn-primary btn-sm d-flex align-items-center"
+                        title="Загрузить CSV">
+                  <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+                </button>
+                <input type="file" id="psn-csv-file-input" accept=".csv" class="d-none">
               </div>
               {% endif %}
             </div>
@@ -308,6 +367,20 @@
                     </button>
                   </div>
                 </div>
+                <a href="{% url 'tel_csv_download' %}"
+                   id="tel-csv-download-btn"
+                   class="btn btn-primary btn-sm d-flex align-items-center"
+                   title="Скачать CSV"
+                   role="button">
+                  <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+                </a>
+                <button type="button"
+                        id="tel-csv-upload-btn"
+                        class="btn btn-primary btn-sm d-flex align-items-center"
+                        title="Загрузить CSV">
+                  <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+                </button>
+                <input type="file" id="tel-csv-file-input" accept=".csv" class="d-none">
               </div>
               {% endif %}
             </div>
@@ -357,6 +430,83 @@
                     </button>
                   </div>
                 </div>
+                <a href="{% url 'eml_csv_download' %}"
+                   id="eml-csv-download-btn"
+                   class="btn btn-primary btn-sm d-flex align-items-center"
+                   title="Скачать CSV"
+                   role="button">
+                  <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+                </a>
+                <button type="button"
+                        id="eml-csv-upload-btn"
+                        class="btn btn-primary btn-sm d-flex align-items-center"
+                        title="Загрузить CSV">
+                  <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+                </button>
+                <input type="file" id="eml-csv-file-input" accept=".csv" class="d-none">
+              </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="cnt-content-specialties" class="contacts-section-content d-none">
+        <div class="card shadow-sm mt-3">
+          <div class="card-body">
+            <div id="contacts-specialties-pane">
+              <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 0px;">
+                <h5 class="table-section-title">
+                  <i class="bi bi-table me-2"></i>
+                  Реестр специальностей
+                </h5>
+              </div>
+              <div class="table-responsive">
+                <div id="contacts-specialties-table-wrap"
+                     hx-get="{% url 'spc_table_partial' %}"
+                     hx-trigger="contacts-specialties:load from:body once"
+                     hx-swap="innerHTML">
+                  <div class="text-muted p-3">Загрузка данных…</div>
+                </div>
+              </div>
+              {% if request.user.is_authenticated and request.user.is_staff %}
+              <div class="d-flex align-items-stretch gap-2 products-actions-row">
+                <button class="btn btn-primary btn-sm d-flex align-items-center"
+                        hx-get="{% url 'spc_form_create' %}"
+                        hx-target="#contacts-modal .modal-content"
+                        hx-swap="innerHTML">
+                  <i class="bi bi-plus-circle me-2"></i>Добавить строку
+                </button>
+                <div id="spc-actions" class="d-none d-flex">
+                  <div class="btn-group">
+                    <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+                      <i class="bi bi-arrow-up-square"></i>
+                    </button>
+                    <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+                      <i class="bi bi-arrow-down-square"></i>
+                    </button>
+                    <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+                      <i class="bi bi-pencil-square"></i>
+                    </button>
+                    <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+                      <i class="bi bi-x-square"></i>
+                    </button>
+                  </div>
+                </div>
+                <a href="{% url 'spc_csv_download' %}"
+                   id="spc-csv-download-btn"
+                   class="btn btn-primary btn-sm d-flex align-items-center"
+                   title="Скачать CSV"
+                   role="button">
+                  <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+                </a>
+                <button type="button"
+                        id="spc-csv-upload-btn"
+                        class="btn btn-primary btn-sm d-flex align-items-center"
+                        title="Загрузить CSV">
+                  <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+                </button>
+                <input type="file" id="spc-csv-file-input" accept=".csv" class="d-none">
               </div>
               {% endif %}
             </div>
@@ -368,6 +518,21 @@
     <div class="modal fade" id="contacts-modal" tabindex="-1" aria-hidden="true">
       <div class="modal-dialog modal-dialog-scrollable modal-lg">
         <div class="modal-content">
+        </div>
+      </div>
+    </div>
+
+    <div class="modal fade" id="contacts-csv-result-modal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content" style="font-size:.85rem;">
+          <div class="modal-header">
+            <h5 class="modal-title">Результат загрузки CSV</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body" id="contacts-csv-result-body" style="white-space:pre-wrap;"></div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Закрыть</button>
+          </div>
         </div>
       </div>
     </div>
@@ -417,6 +582,12 @@
       name: 'eml-select',
       target: '#contacts-emails-table-wrap',
       url: '/contacts/eml/table/',
+      modalTarget: '#contacts-modal .modal-content',
+    },
+    'spc-actions': {
+      name: 'spc-select',
+      target: '#contacts-specialties-table-wrap',
+      url: '/contacts/spc/table/',
       modalTarget: '#contacts-modal .modal-content',
     },
   };
@@ -510,7 +681,7 @@
   root.addEventListener('click', function (event) {
     var button = event.target.closest('button[data-panel-action]');
     if (!button) return;
-    var panel = button.closest('#prs-actions, #ctz-actions, #adr-actions, #psn-actions, #tel-actions, #eml-actions');
+    var panel = button.closest('#prs-actions, #ctz-actions, #adr-actions, #psn-actions, #tel-actions, #eml-actions, #spc-actions');
     if (!panel) return;
 
     var config = panelConfig[panel.id];
@@ -560,6 +731,7 @@
           await refreshTable(panelConfig['psn-actions'], []);
           await refreshTable(panelConfig['tel-actions'], []);
           await refreshTable(panelConfig['eml-actions'], []);
+          await refreshTable(panelConfig['spc-actions'], []);
         }
       });
       return;

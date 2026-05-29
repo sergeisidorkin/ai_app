@@ -19,6 +19,7 @@ from phonenumbers import (
 from classifiers_app.models import LegalEntityRecord, OKSMCountry, PhysicalEntityIdentifier, TerritorialDivision
 from classifiers_app.numcap import lookup_ru_landline
 from group_app.models import GroupMember
+from experts_app.models import ExpertSpecialty
 
 from .models import (
     CitizenshipRecord,
@@ -27,6 +28,7 @@ from .models import (
     PhoneRecord,
     PositionRecord,
     ResidenceAddressRecord,
+    SpecialtyRecord,
     USER_KIND_EMPLOYEE,
     USER_KIND_EXTERNAL,
 )
@@ -650,6 +652,69 @@ class EmailRecordForm(forms.ModelForm):
         fields = [
             "person",
             "email",
+            "valid_from",
+            "valid_to",
+        ]
+        widgets = {
+            "valid_from": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
+            "valid_to": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
+        }
+
+
+class SpecialtyRecordForm(forms.ModelForm):
+    person = forms.ModelChoiceField(
+        label="ID-PRS",
+        queryset=PersonRecord.objects.none(),
+        widget=forms.HiddenInput(),
+    )
+    specialty = forms.ModelChoiceField(
+        label="Специальность",
+        queryset=ExpertSpecialty.objects.none(),
+        required=True,
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        people_qs = PersonRecord.objects.order_by("position", "id")
+        self.fields["person"].queryset = people_qs
+        self.fields["person"].label_from_instance = _person_label
+        specialties_qs = ExpertSpecialty.objects.exclude(specialty="").order_by("position", "id")
+        if self.instance and self.instance.pk and self.instance.specialty_id:
+            specialties_qs = (specialties_qs | ExpertSpecialty.objects.filter(pk=self.instance.specialty_id)).distinct().order_by(
+                "position", "id"
+            )
+        self.fields["specialty"].queryset = specialties_qs
+        self.fields["specialty"].label_from_instance = lambda obj: obj.specialty
+        if not self.is_bound and not (self.instance and self.instance.pk and self.instance.valid_from):
+            self.fields["valid_from"].initial = date_type.today()
+
+    def clean(self):
+        cleaned_data = super().clean()
+        valid_from = cleaned_data.get("valid_from")
+        valid_to = cleaned_data.get("valid_to")
+        person = cleaned_data.get("person")
+        specialty = cleaned_data.get("specialty")
+        if valid_from and valid_to and valid_to < valid_from:
+            self.add_error("valid_to", 'Дата "Действ. до" не может быть раньше даты "Действ. от".')
+        if person and specialty:
+            duplicate_qs = SpecialtyRecord.objects.filter(
+                person=person,
+                specialty=specialty,
+            ).filter(
+                Q(valid_to__isnull=True) | Q(valid_to__gt=date_type.today()),
+            )
+            if self.instance and self.instance.pk:
+                duplicate_qs = duplicate_qs.exclude(pk=self.instance.pk)
+            if duplicate_qs.exists():
+                self.add_error("specialty", "У выбранного ID-PRS уже есть активная запись с этой специальностью.")
+        return cleaned_data
+
+    class Meta:
+        model = SpecialtyRecord
+        fields = [
+            "person",
+            "specialty",
             "valid_from",
             "valid_to",
         ]

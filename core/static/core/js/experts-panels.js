@@ -8,6 +8,18 @@
   function pane() { return document.getElementById('experts-pane'); }
   const qa = (sel, root) => Array.from((root || document).querySelectorAll(sel));
 
+  function updateExpertsTableScrollGaps() {
+    const root = pane();
+    if (!root) return;
+    qa('.experts-specialties-table-wrap, .experts-profiles-table-wrap', root).forEach((wrap) => {
+      wrap.classList.toggle('has-horizontal-scroll', wrap.scrollWidth > wrap.clientWidth + 1);
+    });
+  }
+
+  function scheduleExpertsTableScrollGapsUpdate() {
+    window.requestAnimationFrame(updateExpertsTableScrollGaps);
+  }
+
   function getCookie(name) {
     const m = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
     return m ? m.pop() : '';
@@ -240,6 +252,11 @@
   document.addEventListener('change', (e) => {
     const root = pane();
     if (!root) return;
+    const colpickerInput = e.target.closest('#epr-colpicker-menu input.form-check-input');
+    if (colpickerInput && root.contains(colpickerInput)) {
+      scheduleExpertsTableScrollGapsUpdate();
+      return;
+    }
     const rowCb = e.target.closest('tbody input.form-check-input[name]');
     if (!rowCb || !root.contains(rowCb)) return;
     const name = rowCb.name;
@@ -265,6 +282,7 @@
     updateContractDetailsEditBtn();
     window.__espTableSel = {};
     initWrapToggle();
+    scheduleExpertsTableScrollGapsUpdate();
   });
 
   document.body.addEventListener('contacts-updated', function () {
@@ -304,5 +322,83 @@
     toggle.classList.toggle('active', active);
     window.__eprWrapActive = active;
     if (P) P.set('experts:wrapActive', active);
+    scheduleExpertsTableScrollGapsUpdate();
+  });
+
+  window.addEventListener('resize', scheduleExpertsTableScrollGapsUpdate);
+  window.addEventListener('load', scheduleExpertsTableScrollGapsUpdate);
+
+  function showExpertsCsvResult(html) {
+    var body = document.getElementById('experts-csv-result-body');
+    var modalEl = document.getElementById('experts-csv-result-modal');
+    if (!body || !modalEl) {
+      alert(html.replace(/<[^>]+>/g, ''));
+      return;
+    }
+    body.innerHTML = html;
+    window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+  }
+
+  async function handleExpertsTableUpload(uploadUrl, file) {
+    var formData = new FormData();
+    formData.append('csv_file', file);
+    try {
+      var resp = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrftoken },
+        body: formData,
+      });
+      var data = await resp.json();
+      if (data.ok) {
+        var html;
+        if (typeof data.updated === 'number') {
+          html = '<div class="mb-2"><strong>Обновлено строк: ' + data.updated + '</strong></div>';
+        } else {
+          html = '<div class="mb-2"><strong>Загружено строк: ' + data.created + '</strong></div>';
+        }
+        if (data.warnings && data.warnings.length) {
+          html += '<div class="text-danger mb-1"><strong>Предупреждения (' + data.warnings.length + '):</strong></div>';
+          html += '<div class="text-danger">';
+          for (var i = 0; i < data.warnings.length; i++) {
+            html += '<div class="mb-1">' + data.warnings[i].replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>';
+          }
+          html += '</div>';
+        }
+        showExpertsCsvResult(html);
+        await refreshExpertsPane();
+      } else {
+        showExpertsCsvResult('<div class="text-danger"><strong>Ошибка:</strong> ' +
+          (data.error || 'Неизвестная ошибка').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>');
+      }
+    } catch (err) {
+      showExpertsCsvResult('<div class="text-danger"><strong>Ошибка загрузки:</strong> ' +
+        err.message.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>');
+    }
+  }
+
+  document.addEventListener('click', function (event) {
+    var uploadMapping = {
+      'esp-csv-upload-btn': 'esp-csv-file-input',
+      'epr-csv-upload-btn': 'epr-csv-file-input',
+    };
+    for (var btnId in uploadMapping) {
+      if (!event.target.closest('#' + btnId)) continue;
+      var fileInput = document.getElementById(uploadMapping[btnId]);
+      if (fileInput) fileInput.click();
+      return;
+    }
+  });
+
+  document.addEventListener('change', async function (event) {
+    var uploadMapping = {
+      'esp-csv-file-input': '/experts/specialty/csv-upload/',
+      'epr-csv-file-input': '/experts/profile/csv-upload/',
+    };
+    var uploadUrl = uploadMapping[event.target.id];
+    if (!uploadUrl) return;
+    var file = event.target.files && event.target.files[0];
+    event.target.value = '';
+    if (!file) return;
+    await handleExpertsTableUpload(uploadUrl, file);
   });
 })();

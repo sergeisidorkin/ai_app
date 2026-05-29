@@ -253,6 +253,20 @@ COLUMN_REGISTRY = {
                     "user_kind": "Пользователь",
                 },
             },
+            "specialties": {
+                "label": "Реестр специальностей",
+                "columns": {
+                    "id": "ID-SPC",
+                    "person": "ID-PRS",
+                    "specialty": "Специальность",
+                    "user_kind": "Пользователь",
+                    "valid_from": "Действ. от",
+                    "valid_to": "Действ. до",
+                    "record_date": "Запись",
+                    "record_author": "Автор записи",
+                    "source": "Источник",
+                },
+            },
         },
     },
     "projects": {

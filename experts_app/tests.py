@@ -1,3 +1,5 @@
+import csv
+import io
 import os
 import shutil
 import tempfile
@@ -11,8 +13,10 @@ from django.urls import reverse
 
 from classifiers_app.models import OKSMCountry, TerritorialDivision
 from experts_app.forms import ExpertContractDetailsForm
-from contacts_app.models import CitizenshipRecord, EmailRecord, PersonRecord, PhoneRecord
-from experts_app.models import ExpertContractDetails, ExpertProfile
+from contacts_app.models import CitizenshipRecord, EmailRecord, PersonRecord, PhoneRecord, SpecialtyRecord
+from experts_app.models import ExpertContractDetails, ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
+from group_app.models import GroupMember, OrgUnit
+from policy_app.models import DEPARTMENT_HEAD_GROUP, ExpertiseDirection, Grade
 from users_app.models import Employee
 
 
@@ -57,6 +61,73 @@ class ExpertProfileUiTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, "Реквизиты физлиц-исполнителей")
+
+    def test_profile_edit_creates_contact_specialty_record(self):
+        person = PersonRecord.objects.create(last_name="Иванов", first_name="Иван", position=1)
+        self.employee.person_record = person
+        self.employee.save(update_fields=["person_record"])
+        specialty = ExpertSpecialty.objects.create(specialty="Геолог", position=1)
+
+        response = self.client.post(
+            reverse("epr_form_edit", args=[self.profile.pk]),
+            {
+                "expertise_direction": "",
+                "professional_status": "",
+                "professional_status_short": "",
+                "grade": "",
+                "status": "",
+                "specialty_id": [str(specialty.pk)],
+                "contact_specialty_record_id": [""],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        record = SpecialtyRecord.objects.get()
+        self.assertEqual(record.person, person)
+        self.assertEqual(record.specialty, specialty)
+        self.assertEqual(record.valid_from, date.today())
+        self.assertEqual(record.valid_to, None)
+        self.assertEqual(record.source, "[Исполнители / База физлиц-исполнителей]")
+        link = ExpertProfileSpecialty.objects.get(profile=self.profile)
+        self.assertEqual(link.specialty, specialty)
+        self.assertEqual(link.contact_specialty_record, record)
+
+    def test_profile_edit_removes_specialty_by_closing_contact_record(self):
+        person = PersonRecord.objects.create(last_name="Иванов", first_name="Иван", position=1)
+        self.employee.person_record = person
+        self.employee.save(update_fields=["person_record"])
+        specialty = ExpertSpecialty.objects.create(specialty="Геолог", position=1)
+        record = SpecialtyRecord.objects.create(
+            person=person,
+            specialty=specialty,
+            valid_from=date(2026, 1, 1),
+            position=1,
+        )
+        ExpertProfileSpecialty.objects.create(
+            profile=self.profile,
+            specialty=specialty,
+            contact_specialty_record=record,
+            rank=1,
+        )
+
+        response = self.client.post(
+            reverse("epr_form_edit", args=[self.profile.pk]),
+            {
+                "expertise_direction": "",
+                "professional_status": "",
+                "professional_status_short": "",
+                "grade": "",
+                "status": "",
+                "specialty_id": [""],
+                "contact_specialty_record_id": [str(record.pk)],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        record.refresh_from_db()
+        self.assertEqual(record.valid_to, date.today())
+        self.assertFalse(record.is_active)
+        self.assertFalse(ExpertProfileSpecialty.objects.filter(profile=self.profile).exists())
 
     def test_experts_partial_auto_fills_extra_email_and_phones_from_contacts(self):
         person = PersonRecord.objects.create(
@@ -710,3 +781,310 @@ class ExpertContractDetailsTests(TestCase):
         self.assertContains(response, "123456")
         self.assertNotContains(response, "654321")
         self.assertNotContains(response, ">ИНН<", html=False)
+
+
+class ExpertSpecialtyCsvTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="experts-csv-admin",
+            password="secret123",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.owner = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        self.expertise_dir = ExpertiseDirection.objects.create(
+            name="Горная экспертиза",
+            short_name="ГЭ",
+            position=1,
+        )
+        self.org_unit = OrgUnit.objects.create(
+            company=self.owner,
+            department_name="Отдел горной экспертизы",
+            short_name="OGE",
+            expertise=self.expertise_dir,
+            unit_type="expertise",
+            position=1,
+        )
+        head_user = get_user_model().objects.create_user(
+            username="experts-csv-head",
+            password="secret123",
+            is_staff=True,
+        )
+        self.head = Employee.objects.create(
+            user=head_user,
+            job_title="Руководитель горной экспертизы",
+            role=DEPARTMENT_HEAD_GROUP,
+        )
+
+    def test_experts_partial_renders_esp_csv_buttons(self):
+        response = self.client.get(reverse("experts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Специальности исполнителей")
+        self.assertContains(response, 'id="esp-csv-download-btn"', html=False)
+        self.assertContains(response, 'id="esp-csv-upload-btn"', html=False)
+
+    def test_esp_csv_download_exports_table_columns(self):
+        specialty = ExpertSpecialty.objects.create(
+            specialty="Геолог",
+            specialty_en="Geologist",
+            expertise_dir=self.expertise_dir,
+            expertise_direction=self.org_unit,
+            head_of_direction=self.head,
+            position=1,
+        )
+        specialty.owners.set([self.owner])
+
+        response = self.client.get(reverse("esp_csv_download"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("expert_specialties.csv", response["Content-Disposition"])
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(
+            rows[0],
+            [
+                "Специальность",
+                "Специальность на англ. языке",
+                "Владелец",
+                "Направление экспертизы",
+                "Подразделение",
+                "Руководитель направления",
+            ],
+        )
+        self.assertEqual(
+            rows[1],
+            [
+                "Геолог",
+                "Geologist",
+                "IMC Montan",
+                "ГЭ",
+                "Отдел горной экспертизы",
+                "Руководитель горной экспертизы",
+            ],
+        )
+
+    def test_esp_csv_upload_creates_specialty_with_owner(self):
+        csv_file = SimpleUploadedFile(
+            "specialties.csv",
+            (
+                "Специальность;Специальность на англ. языке;Владелец;"
+                "Направление экспертизы;Подразделение;Руководитель направления\n"
+                "Геолог;Geologist;IMC Montan;ГЭ;Отдел горной экспертизы;"
+                "Руководитель горной экспертизы\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("esp_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        specialty = ExpertSpecialty.objects.get(specialty="Геолог")
+        self.assertEqual(specialty.specialty_en, "Geologist")
+        self.assertEqual(specialty.expertise_dir_id, self.expertise_dir.pk)
+        self.assertEqual(specialty.expertise_direction_id, self.org_unit.pk)
+        self.assertEqual(specialty.head_of_direction_id, self.head.pk)
+        self.assertFalse(specialty.is_group_owner)
+        self.assertEqual(list(specialty.owners.values_list("short_name", flat=True)), ["IMC Montan"])
+
+    def test_esp_csv_upload_skips_duplicate_specialty(self):
+        ExpertSpecialty.objects.create(specialty="Геолог", position=1)
+        csv_file = SimpleUploadedFile(
+            "specialties.csv",
+            (
+                "Специальность;Специальность на англ. языке;Владелец;"
+                "Направление экспертизы;Подразделение;Руководитель направления\n"
+                "Геолог;Geologist;;;;\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("esp_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 0)
+        self.assertEqual(ExpertSpecialty.objects.filter(specialty="Геолог").count(), 1)
+        self.assertTrue(any("уже существует" in item for item in response.json()["warnings"]))
+
+
+class ExpertProfileCsvTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="experts-epr-csv-admin",
+            password="secret123",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+
+        self.owner = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        self.expertise_dir = ExpertiseDirection.objects.create(
+            name="Горная экспертиза",
+            short_name="ГЭ",
+            position=1,
+        )
+        self.org_unit = OrgUnit.objects.create(
+            company=self.owner,
+            department_name="Отдел горной экспертизы",
+            short_name="OGE",
+            expertise=self.expertise_dir,
+            unit_type="expertise",
+            position=1,
+        )
+        self.grade = Grade.objects.create(
+            grade_en="Senior",
+            grade_ru="Старший",
+            qualification=3,
+            qualification_levels=5,
+            created_by=self.user,
+            position=1,
+        )
+        self.specialty = ExpertSpecialty.objects.create(
+            specialty="Геолог",
+            specialty_en="Geologist",
+            position=1,
+        )
+
+        employee_user = get_user_model().objects.create_user(
+            username="experts-epr-csv-user",
+            password="secret123",
+            first_name="Иван",
+            last_name="Иванов",
+            email="expert@example.com",
+            is_staff=True,
+        )
+        self.person = PersonRecord.objects.create(
+            last_name="Иванов",
+            first_name="Иван",
+            middle_name="Иванович",
+            position=1,
+        )
+        self.employee = Employee.objects.create(
+            user=employee_user,
+            patronymic="Иванович",
+            person_record=self.person,
+        )
+        self.profile = ExpertProfile.objects.create(
+            employee=self.employee,
+            expertise_direction=self.org_unit,
+            professional_status="Статус 1",
+            professional_status_short="С1",
+            grade=self.grade,
+            status="Активен",
+            position=1,
+        )
+        ExpertProfileSpecialty.objects.create(
+            profile=self.profile,
+            specialty=self.specialty,
+            rank=1,
+        )
+
+    def test_experts_partial_renders_epr_csv_buttons(self):
+        response = self.client.get(reverse("experts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "База физлиц-исполнителей")
+        self.assertContains(response, 'id="epr-csv-download-btn"', html=False)
+        self.assertContains(response, 'id="epr-csv-upload-btn"', html=False)
+
+    def test_epr_csv_download_exports_table_columns(self):
+        response = self.client.get(reverse("epr_csv_download"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("expert_profiles.csv", response["Content-Disposition"])
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(
+            rows[0],
+            [
+                "ФИО",
+                "Эл. почта (логин)",
+                "Дополнительная эл. почта",
+                "Телефон",
+                "Дополнительный телефон",
+                "Направление экспертизы",
+                "Специальность",
+                "Профессиональный статус",
+                "Профессиональный статус (кратко)",
+                "Грейд",
+                "Страна",
+                "Регион проживания",
+                "Статус",
+                "Дата",
+            ],
+        )
+        self.assertEqual(rows[1][0], "Иванов Иван Иванович")
+        self.assertEqual(rows[1][1], "expert@example.com")
+        self.assertEqual(rows[1][5], "Отдел горной экспертизы")
+        self.assertEqual(rows[1][6], "Геолог")
+        self.assertEqual(rows[1][7], "Статус 1")
+        self.assertEqual(rows[1][8], "С1")
+        self.assertEqual(rows[1][9], "Старший")
+        self.assertEqual(rows[1][12], "Активен")
+
+    def test_epr_csv_upload_updates_profile_by_email(self):
+        other_specialty = ExpertSpecialty.objects.create(
+            specialty="Геофизик",
+            specialty_en="Geophysicist",
+            position=2,
+        )
+        csv_file = SimpleUploadedFile(
+            "profiles.csv",
+            (
+                "ФИО;Эл. почта (логин);Дополнительная эл. почта;Телефон;Дополнительный телефон;"
+                "Направление экспертизы;Специальность;Профессиональный статус;"
+                "Профессиональный статус (кратко);Грейд;Страна;Регион проживания;Статус;Дата\n"
+                "Иванов Иван Иванович;expert@example.com;;;;Отдел горной экспертизы;"
+                "Геофизик;Новый статус;НС;Старший;;;Обновлён;01.01.2026\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("epr_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["updated"], 1)
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.professional_status, "Новый статус")
+        self.assertEqual(self.profile.professional_status_short, "НС")
+        self.assertEqual(self.profile.status, "Обновлён")
+        self.assertEqual(self.profile.expertise_direction_id, self.org_unit.pk)
+        self.assertEqual(self.profile.grade_id, self.grade.pk)
+        specialty_names = list(
+            self.profile.ranked_specialties.order_by("rank").values_list("specialty__specialty", flat=True)
+        )
+        self.assertEqual(specialty_names, ["Геофизик"])
+        self.assertEqual(other_specialty.pk, ExpertSpecialty.objects.get(specialty="Геофизик").pk)
+        contact_record = SpecialtyRecord.objects.get(person=self.person, specialty=other_specialty)
+        link = self.profile.ranked_specialties.get()
+        self.assertEqual(link.contact_specialty_record, contact_record)
+
+    def test_epr_csv_upload_skips_unknown_email(self):
+        csv_file = SimpleUploadedFile(
+            "profiles.csv",
+            (
+                "ФИО;Эл. почта (логин);Дополнительная эл. почта;Телефон;Дополнительный телефон;"
+                "Направление экспертизы;Специальность;Профессиональный статус;"
+                "Профессиональный статус (кратко);Грейд;Страна;Регион проживания;Статус;Дата\n"
+                "Неизвестный;missing@example.com;;;;;;;;;;;;\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("epr_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["updated"], 0)
+        self.assertTrue(any("не найден" in item for item in response.json()["warnings"]))
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.professional_status, "Статус 1")

@@ -1,6 +1,9 @@
 from datetime import date
+import csv
+import io
 
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.forms import HiddenInput
 from django.test import TestCase
 from django.urls import reverse
@@ -14,20 +17,31 @@ from classifiers_app.models import (
     PhysicalEntityIdentifier,
     TerritorialDivision,
 )
-from experts_app.models import ExpertContractDetails, ExpertProfile
+from experts_app.models import ExpertContractDetails, ExpertProfile, ExpertSpecialty
 from group_app.models import GroupMember
 from proposals_app.models import ProposalRegistration
 from users_app.models import Employee
 
-from .forms import CitizenshipRecordForm, EmailRecordForm, PersonRecordForm, PhoneRecordForm, PositionRecordForm, ResidenceAddressRecordForm
+from .forms import (
+    CitizenshipRecordForm,
+    EmailRecordForm,
+    PersonRecordForm,
+    PhoneRecordForm,
+    PositionRecordForm,
+    ResidenceAddressRecordForm,
+    SpecialtyRecordForm,
+)
 from .models import (
     CONTACT_POSITION_SOURCE,
+    PERSON_GENDER_MALE,
+    USER_KIND_EXTERNAL,
     CitizenshipRecord,
     EmailRecord,
     PersonRecord,
     PhoneRecord,
     PositionRecord,
     ResidenceAddressRecord,
+    SpecialtyRecord,
 )
 
 
@@ -1238,6 +1252,53 @@ class ContactsAppTests(TestCase):
         self.assertEqual(item.record_date, date.today())
         self.assertEqual(item.valid_from, date.today())
 
+    def test_spc_create_sets_record_metadata(self):
+        specialty = ExpertSpecialty.objects.create(specialty="Геолог", position=1)
+        self.person.user_kind = "external"
+        self.person.save(update_fields=["user_kind"])
+
+        response = self.client.post(
+            reverse("spc_form_create"),
+            {
+                "person": self.person.pk,
+                "specialty": specialty.pk,
+                "valid_from": "2026-01-01",
+                "valid_to": "",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        item = SpecialtyRecord.objects.get()
+        self.assertEqual(item.person, self.person)
+        self.assertEqual(item.specialty, specialty)
+        self.assertEqual(item.user_kind, "external")
+        self.assertEqual(item.record_author, "Иван Админов")
+        self.assertEqual(item.record_date, date.today())
+        self.assertEqual(item.valid_from, date(2026, 1, 1))
+        self.assertEqual(item.formatted_id, f"{item.pk:05d}-SPC")
+        self.assertTrue(item.is_active)
+
+    def test_spc_form_rejects_duplicate_active_specialty(self):
+        specialty = ExpertSpecialty.objects.create(specialty="Геолог", position=1)
+        SpecialtyRecord.objects.create(
+            person=self.person,
+            specialty=specialty,
+            valid_from=date.today(),
+            position=1,
+        )
+
+        form = SpecialtyRecordForm(
+            data={
+                "person": self.person.pk,
+                "specialty": specialty.pk,
+                "valid_from": "",
+                "valid_to": "",
+            },
+        )
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("specialty", form.errors)
+
     def test_eml_table_partial_supports_pagination(self):
         for idx in range(1, 53):
             EmailRecord.objects.create(
@@ -1253,6 +1314,23 @@ class ContactsAppTests(TestCase):
         self.assertContains(response, "user51@example.com")
         self.assertContains(response, "user52@example.com")
         self.assertNotContains(response, "user50@example.com")
+
+    def test_spc_table_partial_supports_pagination(self):
+        for idx in range(1, 53):
+            specialty = ExpertSpecialty.objects.create(specialty=f"Специальность {idx}", position=idx)
+            SpecialtyRecord.objects.create(
+                person=self.person,
+                specialty=specialty,
+                position=idx,
+            )
+
+        response = self.client.get(reverse("spc_table_partial"), {"spc_page": 2})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="spc-page-input"')
+        self.assertContains(response, "Специальность 51")
+        self.assertContains(response, "Специальность 52")
+        self.assertNotContains(response, "Специальность 50")
 
     def test_adr_table_partial_supports_pagination(self):
         for idx in range(1, 53):
@@ -1743,3 +1821,1006 @@ class ContactsAppTests(TestCase):
         self.assertContains(psn_response, expected_label)
         self.assertContains(tel_response, expected_label)
         self.assertContains(eml_response, expected_label)
+
+
+class PersonCsvTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="contacts-csv-admin",
+            password="secret123",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+
+    def test_prs_csv_download_exports_table_columns(self):
+        person = PersonRecord.objects.create(
+            last_name="Иванов",
+            first_name="Иван",
+            middle_name="Иванович",
+            full_name_genitive="Иванова Ивана Ивановича",
+            gender=PERSON_GENDER_MALE,
+            birth_date=date(1980, 5, 15),
+            user_kind=USER_KIND_EXTERNAL,
+            position=1,
+        )
+
+        response = self.client.get(reverse("prs_csv_download"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("person_registry.csv", response["Content-Disposition"])
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(
+            rows[0],
+            [
+                "ID-PRS",
+                "Фамилия",
+                "Имя",
+                "Отчество",
+                "ФИО (полное) в родительном падеже",
+                "Пол",
+                "Дата рождения",
+                "Пользователь",
+            ],
+        )
+        self.assertEqual(
+            rows[1],
+            [
+                f"{person.pk:05d}-PRS",
+                "Иванов",
+                "Иван",
+                "Иванович",
+                "Иванова Ивана Ивановича",
+                "мужской",
+                "15.05.1980",
+                "Внешний пользователь",
+            ],
+        )
+
+    def test_prs_csv_download_respects_prs_ids_filter(self):
+        first = PersonRecord.objects.create(last_name="Первый", position=1)
+        PersonRecord.objects.create(last_name="Второй", position=2)
+
+        response = self.client.get(reverse("prs_csv_download"), {"prs_ids": str(first.pk)})
+
+        self.assertEqual(response.status_code, 200)
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[1][1], "Первый")
+
+    def test_prs_csv_upload_creates_persons(self):
+        csv_file = SimpleUploadedFile(
+            "persons.csv",
+            (
+                "ID-PRS;Фамилия;Имя;Отчество;ФИО (полное) в родительном падеже;Пол;Дата рождения;Пользователь\n"
+                ";Петров;Пётр;Петрович;Петрова Петра Петровича;мужской;01.02.1990;Внешний пользователь\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("prs_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        person = PersonRecord.objects.get(last_name="Петров")
+        self.assertEqual(person.first_name, "Пётр")
+        self.assertEqual(person.middle_name, "Петрович")
+        self.assertEqual(person.full_name_genitive, "Петрова Петра Петровича")
+        self.assertEqual(person.gender, PERSON_GENDER_MALE)
+        self.assertEqual(person.birth_date, date(1990, 2, 1))
+        self.assertEqual(person.user_kind, USER_KIND_EXTERNAL)
+        self.assertTrue(person.citizenships.exists())
+        self.assertTrue(person.residence_addresses.exists())
+        self.assertTrue(person.phones.exists())
+        self.assertTrue(person.emails.exists())
+
+    def test_prs_csv_upload_reports_validation_warnings(self):
+        csv_file = SimpleUploadedFile(
+            "persons.csv",
+            (
+                "ID-PRS;Фамилия;Имя;Отчество;ФИО (полное) в родительном падеже;Пол;Дата рождения;Пользователь\n"
+                ";;Имя;;;;;\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("prs_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["created"], 0)
+        self.assertTrue(any("Фамилия" in warning for warning in payload["warnings"]))
+        self.assertEqual(PersonRecord.objects.count(), 0)
+
+    def test_contacts_panel_renders_prs_csv_buttons(self):
+        response = self.client.get(reverse("home"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Реестр лиц")
+        self.assertContains(response, 'id="prs-csv-download-btn"', html=False)
+        self.assertContains(response, 'id="prs-csv-upload-btn"', html=False)
+
+
+class CitizenshipCsvTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="contacts-ctz-csv-admin",
+            password="secret123",
+            is_staff=True,
+            first_name="Иван",
+            last_name="Админов",
+        )
+        self.client.force_login(self.user)
+        self.country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+        self.us_country = OKSMCountry.objects.create(
+            number=840,
+            code="840",
+            short_name="США",
+            full_name="Соединенные Штаты Америки",
+            alpha2="US",
+            alpha3="USA",
+            position=2,
+        )
+        self.person = PersonRecord.objects.create(
+            last_name="Иванов",
+            first_name="Иван",
+            middle_name="Иванович",
+            position=1,
+        )
+        self.second_person = PersonRecord.objects.create(
+            last_name="Петров",
+            first_name="Пётр",
+            position=2,
+        )
+        PhysicalEntityIdentifier.objects.create(
+            identifier="Паспорт",
+            full_name="Паспорт гражданина Российской Федерации",
+            country=self.country,
+            code=self.country.code,
+            position=1,
+        )
+
+    def test_ctz_csv_download_exports_table_columns(self):
+        item = CitizenshipRecord.objects.create(
+            person=self.person,
+            country=self.country,
+            status=CitizenshipRecordForm.STATUS_CITIZENSHIP,
+            identifier="Паспорт",
+            number="123456789",
+            valid_from=date(2020, 1, 1),
+            valid_to=date(2030, 1, 1),
+            record_date=date(2026, 3, 10),
+            record_author="Иван Админов",
+            source="Тестовый источник",
+            position=1,
+        )
+
+        response = self.client.get(reverse("ctz_csv_download"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("citizenship_registry.csv", response["Content-Disposition"])
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(
+            rows[0],
+            [
+                "ID-CTZ",
+                "ID-PRS",
+                "Страна",
+                "Статус",
+                "Идентификатор",
+                "Номер",
+                "Действ. от",
+                "Действ. до",
+                "Запись",
+                "Автор записи",
+                "Источник",
+            ],
+        )
+        self.assertEqual(
+            rows[1],
+            [
+                f"{item.pk:05d}-CTZ",
+                f"{self.person.pk:05d}-PRS",
+                "Россия",
+                "Гражданство",
+                "Паспорт",
+                "123456789",
+                "01.01.2020",
+                "01.01.2030",
+                "10.03.2026",
+                "Иван Админов",
+                "Тестовый источник",
+            ],
+        )
+
+    def test_ctz_csv_download_respects_prs_ids_filter(self):
+        CitizenshipRecord.objects.create(
+            person=self.person,
+            country=self.country,
+            status=CitizenshipRecordForm.STATUS_CITIZENSHIP,
+            identifier="Паспорт",
+            number="111",
+            position=1,
+        )
+        CitizenshipRecord.objects.create(
+            person=self.second_person,
+            country=self.us_country,
+            status=CitizenshipRecordForm.STATUS_RESIDENCE_PERMIT,
+            identifier="ID",
+            number="222",
+            position=2,
+        )
+
+        response = self.client.get(reverse("ctz_csv_download"), {"prs_ids": str(self.person.pk)})
+
+        self.assertEqual(response.status_code, 200)
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[1][1], f"{self.person.pk:05d}-PRS")
+        self.assertEqual(rows[1][5], "111")
+
+    def test_ctz_csv_upload_creates_citizenship_records(self):
+        csv_file = SimpleUploadedFile(
+            "citizenships.csv",
+            (
+                "ID-CTZ;ID-PRS;Страна;Статус;Идентификатор;Номер;Действ. от;Действ. до;Запись;Автор записи;Источник\n"
+                f";{self.person.pk:05d}-PRS;Россия;Гражданство;;987654321;01.02.2020;01.02.2030;;;Тест\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("ctz_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        item = CitizenshipRecord.objects.get(number="987654321")
+        self.assertEqual(item.person, self.person)
+        self.assertEqual(item.country, self.country)
+        self.assertEqual(item.status, CitizenshipRecordForm.STATUS_CITIZENSHIP)
+        self.assertEqual(item.identifier, "Паспорт")
+        self.assertEqual(item.valid_from, date(2020, 2, 1))
+        self.assertEqual(item.valid_to, date(2030, 2, 1))
+        self.assertEqual(item.record_date, date.today())
+        self.assertEqual(item.record_author, "Иван Админов")
+        self.assertEqual(item.source, "Тест")
+
+    def test_ctz_csv_upload_reports_validation_warnings(self):
+        csv_file = SimpleUploadedFile(
+            "citizenships.csv",
+            (
+                "ID-CTZ;ID-PRS;Страна;Статус;Идентификатор;Номер;Действ. от;Действ. до;Запись;Автор записи;Источник\n"
+                ";;Россия;;;;;;;;\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("ctz_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["created"], 0)
+        self.assertTrue(any("ID-PRS" in warning for warning in payload["warnings"]))
+        self.assertEqual(CitizenshipRecord.objects.count(), 0)
+
+    def test_contacts_panel_renders_ctz_csv_buttons(self):
+        response = self.client.get(reverse("home"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Реестр гражданств и идентификаторов")
+        self.assertContains(response, 'id="ctz-csv-download-btn"', html=False)
+        self.assertContains(response, 'id="ctz-csv-upload-btn"', html=False)
+
+
+class ResidenceAddressCsvTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="contacts-adr-csv-admin",
+            password="secret123",
+            is_staff=True,
+            first_name="Иван",
+            last_name="Админов",
+        )
+        self.client.force_login(self.user)
+        self.country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+        self.us_country = OKSMCountry.objects.create(
+            number=840,
+            code="840",
+            short_name="США",
+            full_name="Соединенные Штаты Америки",
+            alpha2="US",
+            alpha3="USA",
+            position=2,
+        )
+        self.person = PersonRecord.objects.create(
+            last_name="Иванов",
+            first_name="Иван",
+            middle_name="Иванович",
+            position=1,
+        )
+        self.second_person = PersonRecord.objects.create(
+            last_name="Петров",
+            first_name="Пётр",
+            position=2,
+        )
+
+    def test_adr_csv_download_exports_table_columns(self):
+        item = ResidenceAddressRecord.objects.create(
+            person=self.person,
+            country=self.country,
+            region="Москва",
+            postal_code="101000",
+            locality="Москва",
+            street="Тверская",
+            building="1",
+            premise="10",
+            premise_part="A",
+            valid_from=date(2020, 1, 1),
+            valid_to=date(2030, 1, 1),
+            record_date=date(2026, 3, 10),
+            record_author="Иван Админов",
+            source="Тестовый источник",
+            position=1,
+        )
+
+        response = self.client.get(reverse("adr_csv_download"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("residence_address_registry.csv", response["Content-Disposition"])
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(
+            rows[0],
+            [
+                "ID-ADR",
+                "ID-PRS",
+                "Страна",
+                "Регион",
+                "Индекс",
+                "Населенный пункт",
+                "Улица",
+                "Здание",
+                "Помещение",
+                "Часть помещения",
+                "Действ. от",
+                "Действ. до",
+                "Запись",
+                "Автор записи",
+                "Источник",
+            ],
+        )
+        self.assertEqual(
+            rows[1],
+            [
+                f"{item.pk:05d}-ADR",
+                f"{self.person.pk:05d}-PRS",
+                "Россия",
+                "Москва",
+                "101000",
+                "Москва",
+                "Тверская",
+                "1",
+                "10",
+                "A",
+                "01.01.2020",
+                "01.01.2030",
+                "10.03.2026",
+                "Иван Админов",
+                "Тестовый источник",
+            ],
+        )
+
+    def test_adr_csv_download_respects_prs_ids_filter(self):
+        ResidenceAddressRecord.objects.create(
+            person=self.person,
+            country=self.country,
+            region="Москва",
+            postal_code="101000",
+            position=1,
+        )
+        ResidenceAddressRecord.objects.create(
+            person=self.second_person,
+            country=self.us_country,
+            region="California",
+            postal_code="90001",
+            position=2,
+        )
+
+        response = self.client.get(reverse("adr_csv_download"), {"prs_ids": str(self.person.pk)})
+
+        self.assertEqual(response.status_code, 200)
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[1][1], f"{self.person.pk:05d}-PRS")
+        self.assertEqual(rows[1][4], "101000")
+
+    def test_adr_csv_upload_creates_address_records(self):
+        csv_file = SimpleUploadedFile(
+            "addresses.csv",
+            (
+                "ID-ADR;ID-PRS;Страна;Регион;Индекс;Населенный пункт;Улица;Здание;Помещение;Часть помещения;"
+                "Действ. от;Действ. до;Запись;Автор записи;Источник\n"
+                f";{self.person.pk:05d}-PRS;Россия;Москва;101000;Москва;Арбат;2;15;B;"
+                "01.02.2020;01.02.2030;;;Тест\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("adr_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        item = ResidenceAddressRecord.objects.get(street="Арбат")
+        self.assertEqual(item.person, self.person)
+        self.assertEqual(item.country, self.country)
+        self.assertEqual(item.region, "Москва")
+        self.assertEqual(item.postal_code, "101000")
+        self.assertEqual(item.locality, "Москва")
+        self.assertEqual(item.building, "2")
+        self.assertEqual(item.premise, "15")
+        self.assertEqual(item.premise_part, "B")
+        self.assertEqual(item.valid_from, date(2020, 2, 1))
+        self.assertEqual(item.valid_to, date(2030, 2, 1))
+        self.assertEqual(item.record_date, date.today())
+        self.assertEqual(item.record_author, "Иван Админов")
+        self.assertEqual(item.source, "Тест")
+
+    def test_adr_csv_upload_reports_validation_warnings(self):
+        csv_file = SimpleUploadedFile(
+            "addresses.csv",
+            (
+                "ID-ADR;ID-PRS;Страна;Регион;Индекс;Населенный пункт;Улица;Здание;Помещение;Часть помещения;"
+                "Действ. от;Действ. до;Запись;Автор записи;Источник\n"
+                ";;Россия;;;;;;;;;;;;;;;;\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("adr_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["created"], 0)
+        self.assertTrue(any("ID-PRS" in warning for warning in payload["warnings"]))
+        self.assertEqual(ResidenceAddressRecord.objects.count(), 0)
+
+    def test_contacts_panel_renders_adr_csv_buttons(self):
+        response = self.client.get(reverse("home"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Реестр адресов проживания")
+        self.assertContains(response, 'id="adr-csv-download-btn"', html=False)
+        self.assertContains(response, 'id="adr-csv-upload-btn"', html=False)
+
+
+class PositionCsvTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="contacts-psn-csv-admin",
+            password="secret123",
+            is_staff=True,
+            first_name="Иван",
+            last_name="Админов",
+        )
+        self.client.force_login(self.user)
+        self.person = PersonRecord.objects.create(
+            last_name="Иванов",
+            first_name="Иван",
+            middle_name="Иванович",
+            position=1,
+        )
+        self.second_person = PersonRecord.objects.create(
+            last_name="Петров",
+            first_name="Пётр",
+            position=2,
+        )
+
+    def test_psn_csv_download_exports_table_columns(self):
+        item = PositionRecord.objects.create(
+            person=self.person,
+            organization_short_name="ООО Тест",
+            job_title="Инженер",
+            valid_from=date(2020, 1, 1),
+            valid_to=date(2030, 1, 1),
+            record_date=date(2026, 3, 10),
+            record_author="Иван Админов",
+            source="Тестовый источник",
+            position=1,
+        )
+
+        response = self.client.get(reverse("psn_csv_download"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("position_registry.csv", response["Content-Disposition"])
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(
+            rows[0],
+            [
+                "ID-PSN",
+                "ID-PRS",
+                "Наименование организации (краткое)",
+                "Должность",
+                "Действ. от",
+                "Действ. до",
+                "Запись",
+                "Автор записи",
+                "Источник",
+            ],
+        )
+        self.assertEqual(
+            rows[1],
+            [
+                f"{item.pk:05d}-PSN",
+                f"{self.person.pk:05d}-PRS",
+                "ООО Тест",
+                "Инженер",
+                "01.01.2020",
+                "01.01.2030",
+                "10.03.2026",
+                "Иван Админов",
+                "Тестовый источник",
+            ],
+        )
+
+    def test_psn_csv_download_respects_prs_ids_filter(self):
+        PositionRecord.objects.create(
+            person=self.person,
+            organization_short_name="ООО Тест",
+            job_title="Инженер",
+            position=1,
+        )
+        PositionRecord.objects.create(
+            person=self.second_person,
+            organization_short_name="ООО Другая",
+            job_title="Менеджер",
+            position=2,
+        )
+
+        response = self.client.get(reverse("psn_csv_download"), {"prs_ids": str(self.person.pk)})
+
+        self.assertEqual(response.status_code, 200)
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[1][1], f"{self.person.pk:05d}-PRS")
+        self.assertEqual(rows[1][3], "Инженер")
+
+    def test_psn_csv_upload_creates_position_records(self):
+        csv_file = SimpleUploadedFile(
+            "positions.csv",
+            (
+                "ID-PSN;ID-PRS;Наименование организации (краткое);Должность;Действ. от;Действ. до;Запись;Автор записи;Источник\n"
+                f";{self.person.pk:05d}-PRS;ООО Импорт;Аналитик;01.02.2020;01.02.2030;;;Тест\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("psn_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        item = PositionRecord.objects.get(job_title="Аналитик")
+        self.assertEqual(item.person, self.person)
+        self.assertEqual(item.organization_short_name, "ООО Импорт")
+        self.assertEqual(item.valid_from, date(2020, 2, 1))
+        self.assertEqual(item.valid_to, date(2030, 2, 1))
+        self.assertEqual(item.record_date, date.today())
+        self.assertEqual(item.record_author, "Иван Админов")
+        self.assertEqual(item.source, "Тест")
+
+    def test_psn_csv_upload_reports_validation_warnings(self):
+        csv_file = SimpleUploadedFile(
+            "positions.csv",
+            (
+                "ID-PSN;ID-PRS;Наименование организации (краткое);Должность;Действ. от;Действ. до;Запись;Автор записи;Источник\n"
+                ";;ООО Импорт;Аналитик;;;;;;\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("psn_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["created"], 0)
+        self.assertTrue(any("ID-PRS" in warning for warning in payload["warnings"]))
+        self.assertEqual(PositionRecord.objects.count(), 0)
+
+    def test_contacts_panel_renders_psn_csv_buttons(self):
+        response = self.client.get(reverse("home"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Реестр должностей")
+        self.assertContains(response, 'id="psn-csv-download-btn"', html=False)
+        self.assertContains(response, 'id="psn-csv-upload-btn"', html=False)
+
+
+class PhoneCsvTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="contacts-tel-csv-admin",
+            password="secret123",
+            is_staff=True,
+            first_name="Иван",
+            last_name="Админов",
+        )
+        self.client.force_login(self.user)
+        self.country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+        self.person = PersonRecord.objects.create(
+            last_name="Иванов",
+            first_name="Иван",
+            middle_name="Иванович",
+            position=1,
+        )
+        self.second_person = PersonRecord.objects.create(
+            last_name="Петров",
+            first_name="Пётр",
+            position=2,
+        )
+
+    def test_tel_csv_download_exports_table_columns(self):
+        item = PhoneRecord.objects.create(
+            person=self.person,
+            country=self.country,
+            code="+7",
+            phone_type=PhoneRecord.PHONE_TYPE_MOBILE,
+            phone_number="(999) 123-45-67",
+            is_primary=True,
+            valid_from=date(2020, 1, 1),
+            valid_to=date(2030, 1, 1),
+            record_date=date(2026, 3, 10),
+            record_author="Иван Админов",
+            source="Тестовый источник",
+            position=1,
+        )
+
+        response = self.client.get(reverse("tel_csv_download"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("phone_registry.csv", response["Content-Disposition"])
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(
+            rows[0],
+            [
+                "ID-TEL",
+                "ID-PRS",
+                "Страна",
+                "Тип",
+                "Номер телефона",
+                "Основной",
+                "Действ. от",
+                "Действ. до",
+                "Запись",
+                "Автор записи",
+                "Источник",
+            ],
+        )
+        self.assertEqual(
+            rows[1],
+            [
+                f"{item.pk:05d}-TEL",
+                f"{self.person.pk:05d}-PRS",
+                "Россия",
+                "моб.",
+                "+7 (999) 123-45-67",
+                "Да",
+                "01.01.2020",
+                "01.01.2030",
+                "10.03.2026",
+                "Иван Админов",
+                "Тестовый источник",
+            ],
+        )
+
+    def test_tel_csv_download_respects_prs_ids_filter(self):
+        PhoneRecord.objects.create(
+            person=self.person,
+            country=self.country,
+            code="+7",
+            phone_number="(999) 111-11-11",
+            position=1,
+        )
+        PhoneRecord.objects.create(
+            person=self.second_person,
+            country=self.country,
+            code="+7",
+            phone_number="(999) 222-22-22",
+            position=2,
+        )
+
+        response = self.client.get(reverse("tel_csv_download"), {"prs_ids": str(self.person.pk)})
+
+        self.assertEqual(response.status_code, 200)
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[1][1], f"{self.person.pk:05d}-PRS")
+        self.assertIn("111-11-11", rows[1][4])
+
+    def test_tel_csv_upload_creates_phone_records(self):
+        csv_file = SimpleUploadedFile(
+            "phones.csv",
+            (
+                "ID-TEL;ID-PRS;Страна;Тип;Номер телефона;Основной;Действ. от;Действ. до;Запись;Автор записи;Источник\n"
+                f";{self.person.pk:05d}-PRS;Россия;моб.;+7 (999) 111-22-33;Да;01.02.2020;01.02.2030;;;Тест\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("tel_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        item = PhoneRecord.objects.get(phone_number="(999) 111-22-33")
+        self.assertEqual(item.person, self.person)
+        self.assertEqual(item.country, self.country)
+        self.assertEqual(item.code, "+7")
+        self.assertEqual(item.phone_type, PhoneRecord.PHONE_TYPE_MOBILE)
+        self.assertTrue(item.is_primary)
+        self.assertEqual(item.valid_from, date(2020, 2, 1))
+        self.assertEqual(item.valid_to, date(2030, 2, 1))
+        self.assertEqual(item.record_date, date.today())
+        self.assertEqual(item.record_author, "Иван Админов")
+        self.assertEqual(item.source, "Тест")
+
+    def test_tel_csv_upload_reports_validation_warnings(self):
+        csv_file = SimpleUploadedFile(
+            "phones.csv",
+            (
+                "ID-TEL;ID-PRS;Страна;Тип;Номер телефона;Основной;Действ. от;Действ. до;Запись;Автор записи;Источник\n"
+                "; ;Россия;моб.;+7 (999) 111-22-33;Да;;;;;;\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("tel_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["created"], 0)
+        self.assertTrue(any("ID-PRS" in warning for warning in payload["warnings"]))
+        self.assertEqual(PhoneRecord.objects.count(), 0)
+
+    def test_contacts_panel_renders_tel_csv_buttons(self):
+        response = self.client.get(reverse("home"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Реестр телефонных номеров")
+        self.assertContains(response, 'id="tel-csv-download-btn"', html=False)
+        self.assertContains(response, 'id="tel-csv-upload-btn"', html=False)
+
+
+class EmailCsvTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="contacts-eml-csv-admin",
+            password="secret123",
+            is_staff=True,
+            first_name="Иван",
+            last_name="Админов",
+        )
+        self.client.force_login(self.user)
+        self.person = PersonRecord.objects.create(
+            last_name="Иванов",
+            first_name="Иван",
+            middle_name="Иванович",
+            user_kind="employee",
+            position=1,
+        )
+        self.second_person = PersonRecord.objects.create(
+            last_name="Петров",
+            first_name="Пётр",
+            position=2,
+        )
+
+    def test_eml_csv_download_exports_table_columns(self):
+        item = EmailRecord.objects.create(
+            person=self.person,
+            email="ivanov@example.com",
+            user_kind="employee",
+            valid_from=date(2020, 1, 1),
+            valid_to=date(2030, 1, 1),
+            record_date=date(2026, 3, 10),
+            record_author="Иван Админов",
+            source="Тестовый источник",
+            position=1,
+        )
+
+        response = self.client.get(reverse("eml_csv_download"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("email_registry.csv", response["Content-Disposition"])
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(
+            rows[0],
+            [
+                "ID-EML",
+                "ID-PRS",
+                "Электронная почта",
+                "Пользователь",
+                "Действ. от",
+                "Действ. до",
+                "Запись",
+                "Автор записи",
+                "Источник",
+            ],
+        )
+        self.assertEqual(
+            rows[1],
+            [
+                f"{item.pk:05d}-EML",
+                f"{self.person.pk:05d}-PRS",
+                "ivanov@example.com",
+                "Сотрудник",
+                "01.01.2020",
+                "01.01.2030",
+                "10.03.2026",
+                "Иван Админов",
+                "Тестовый источник",
+            ],
+        )
+
+    def test_eml_csv_download_respects_prs_ids_filter(self):
+        EmailRecord.objects.create(
+            person=self.person,
+            email="first@example.com",
+            position=1,
+        )
+        EmailRecord.objects.create(
+            person=self.second_person,
+            email="second@example.com",
+            position=2,
+        )
+
+        response = self.client.get(reverse("eml_csv_download"), {"prs_ids": str(self.person.pk)})
+
+        self.assertEqual(response.status_code, 200)
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[1][1], f"{self.person.pk:05d}-PRS")
+        self.assertEqual(rows[1][2], "first@example.com")
+
+    def test_eml_csv_upload_creates_email_records(self):
+        csv_file = SimpleUploadedFile(
+            "emails.csv",
+            (
+                "ID-EML;ID-PRS;Электронная почта;Пользователь;Действ. от;Действ. до;Запись;Автор записи;Источник\n"
+                f";{self.person.pk:05d}-PRS;import@example.com;Сотрудник;01.02.2020;01.02.2030;;;Тест\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("eml_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        item = EmailRecord.objects.get(email="import@example.com")
+        self.assertEqual(item.person, self.person)
+        self.assertEqual(item.user_kind, "employee")
+        self.assertEqual(item.valid_from, date(2020, 2, 1))
+        self.assertEqual(item.valid_to, date(2030, 2, 1))
+        self.assertEqual(item.record_date, date.today())
+        self.assertEqual(item.record_author, "Иван Админов")
+        self.assertEqual(item.source, "Тест")
+
+    def test_eml_csv_upload_reports_validation_warnings(self):
+        csv_file = SimpleUploadedFile(
+            "emails.csv",
+            (
+                "ID-EML;ID-PRS;Электронная почта;Пользователь;Действ. от;Действ. до;Запись;Автор записи;Источник\n"
+                "; ;import@example.com;Сотрудник;;;;;;\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("eml_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["created"], 0)
+        self.assertTrue(any("ID-PRS" in warning for warning in payload["warnings"]))
+        self.assertEqual(EmailRecord.objects.count(), 0)
+
+    def test_spc_csv_download_exports_table_columns(self):
+        specialty = ExpertSpecialty.objects.create(specialty="Геолог", position=1)
+        item = SpecialtyRecord.objects.create(
+            person=self.person,
+            specialty=specialty,
+            user_kind="employee",
+            valid_from=date(2020, 1, 1),
+            valid_to=date(2030, 1, 1),
+            record_date=date(2026, 3, 10),
+            record_author="Иван Админов",
+            source="Тестовый источник",
+            position=1,
+        )
+
+        response = self.client.get(reverse("spc_csv_download"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("specialty_registry.csv", response["Content-Disposition"])
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(
+            rows[0],
+            [
+                "ID-SPC",
+                "ID-PRS",
+                "Специальность",
+                "Пользователь",
+                "Действ. от",
+                "Действ. до",
+                "Запись",
+                "Автор записи",
+                "Источник",
+            ],
+        )
+        self.assertEqual(
+            rows[1],
+            [
+                f"{item.pk:05d}-SPC",
+                f"{self.person.pk:05d}-PRS",
+                "Геолог",
+                "Сотрудник",
+                "01.01.2020",
+                "01.01.2030",
+                "10.03.2026",
+                "Иван Админов",
+                "Тестовый источник",
+            ],
+        )
+
+    def test_spc_csv_upload_creates_specialty_records(self):
+        ExpertSpecialty.objects.create(specialty="Геолог", position=1)
+        csv_file = SimpleUploadedFile(
+            "specialties.csv",
+            (
+                "ID-SPC;ID-PRS;Специальность;Пользователь;Действ. от;Действ. до;Запись;Автор записи;Источник\n"
+                f";{self.person.pk:05d}-PRS;Геолог;Сотрудник;01.02.2020;01.02.2030;;;Тест\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("spc_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        item = SpecialtyRecord.objects.get()
+        self.assertEqual(item.person, self.person)
+        self.assertEqual(item.specialty.specialty, "Геолог")
+        self.assertEqual(item.user_kind, "employee")
+        self.assertEqual(item.valid_from, date(2020, 2, 1))
+        self.assertEqual(item.valid_to, date(2030, 2, 1))
+        self.assertEqual(item.record_date, date.today())
+        self.assertEqual(item.record_author, "Иван Админов")
+        self.assertEqual(item.source, "Тест")
+
+    def test_contacts_panel_renders_eml_csv_buttons(self):
+        response = self.client.get(reverse("home"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Реестр адресов электронной почты")
+        self.assertContains(response, 'id="eml-csv-download-btn"', html=False)
+        self.assertContains(response, 'id="eml-csv-upload-btn"', html=False)
+        self.assertContains(response, "База контактов: специальность")
+        self.assertContains(response, "Реестр специальностей")
+        self.assertContains(response, 'id="spc-csv-download-btn"', html=False)
+        self.assertContains(response, 'id="spc-csv-upload-btn"', html=False)

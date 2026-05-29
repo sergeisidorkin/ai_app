@@ -496,6 +496,13 @@ class ExpertProfileSpecialty(models.Model):
         on_delete=models.CASCADE,
         related_name="profile_links",
     )
+    contact_specialty_record = models.ForeignKey(
+        "contacts_app.SpecialtyRecord",
+        on_delete=models.SET_NULL,
+        related_name="expert_profile_links",
+        null=True,
+        blank=True,
+    )
     rank = models.PositiveIntegerField("Ранг", default=1)
 
     class Meta:

@@ -622,6 +622,18 @@ def _proposal_multistage_budget_table(proposal) -> dict | None:
             values.append(Decimal("0"))
         return values
 
+    def empty_stage_asset_day_counts() -> list[list[Decimal]]:
+        return [[Decimal("0") for _ in range(asset_count)] for _ in range(stage_count)]
+
+    def aggregate_stage_asset_day_counts(keys: list[tuple[str, str, str]]) -> list[list[Decimal]]:
+        totals = empty_stage_asset_day_counts()
+        for group_key in keys:
+            bucket_counts = grouped_rows[group_key]["stage_asset_day_counts"]
+            for stage_index in range(stage_count):
+                for asset_index in range(asset_count):
+                    totals[stage_index][asset_index] += bucket_counts[stage_index][asset_index]
+        return totals
+
     for stage_index, stage in enumerate(stage_payloads):
         service_rules_by_name = {
             str(section.get("service_name") or "").strip(): {
@@ -701,6 +713,9 @@ def _proposal_multistage_budget_table(proposal) -> dict | None:
                 "" if merge_without_code else code,
             )
             bucket = grouped_rows.get(key)
+            stage_asset_day_counts = None
+            if bucket is not None:
+                stage_asset_day_counts = bucket["stage_asset_day_counts"]
             if bucket is None and not code and not merge_without_code:
                 matching_keys = [
                     group_key
@@ -708,7 +723,9 @@ def _proposal_multistage_budget_table(proposal) -> dict | None:
                     if group_key[0] == key[0] and group_key[1] == key[1]
                 ]
                 if len(matching_keys) == 1:
-                    bucket = grouped_rows.get(matching_keys[0])
+                    stage_asset_day_counts = grouped_rows[matching_keys[0]]["stage_asset_day_counts"]
+                elif matching_keys:
+                    stage_asset_day_counts = aggregate_stage_asset_day_counts(matching_keys)
             raw_asset_day_counts = list(getattr(item, "asset_day_counts", []) or [])
             source_rows.append(
                 {
@@ -718,9 +735,9 @@ def _proposal_multistage_budget_table(proposal) -> dict | None:
                     "service_name": str(getattr(item, "service_name", "") or "").strip(),
                     "rate_eur_per_day": getattr(item, "rate_eur_per_day", None),
                     "stage_asset_day_counts": (
-                        bucket["stage_asset_day_counts"]
-                        if bucket is not None
-                        else [[Decimal("0") for _ in range(asset_count)] for _ in range(stage_count)]
+                        stage_asset_day_counts
+                        if stage_asset_day_counts is not None
+                        else empty_stage_asset_day_counts()
                     ),
                     "asset_day_counts": normalized_day_values(raw_asset_day_counts),
                     "has_saved_day_count_values": any(

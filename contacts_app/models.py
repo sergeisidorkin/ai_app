@@ -1,4 +1,5 @@
 import sys
+from datetime import date as date_type
 
 from django.db import models, transaction
 from django.db.models import Q
@@ -282,6 +283,57 @@ class EmailRecord(models.Model):
         if not self.pk:
             return ""
         return f"{self.pk:05d}-EML"
+
+
+class SpecialtyRecord(models.Model):
+    person = models.ForeignKey(
+        PersonRecord,
+        verbose_name="ID-PRS",
+        on_delete=models.CASCADE,
+        related_name="specialty_records",
+    )
+    specialty = models.ForeignKey(
+        "experts_app.ExpertSpecialty",
+        verbose_name="Специальность",
+        on_delete=models.PROTECT,
+        related_name="contact_records",
+        null=True,
+        blank=True,
+    )
+    valid_from = models.DateField("Действ. от", blank=True, null=True)
+    valid_to = models.DateField("Действ. до", blank=True, null=True)
+    is_active = models.BooleanField("Актуален", default=True)
+    is_user_managed = models.BooleanField("Управляется пользователем", default=False)
+    user_kind = models.CharField("Пользователь", max_length=16, blank=True, default="", choices=USER_KIND_CHOICES)
+    record_date = models.DateField("Дата записи", blank=True, null=True)
+    record_author = models.CharField("Автор записи", max_length=255, blank=True, default="")
+    source = models.TextField("Источник", blank=True, default="")
+    position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "contacts_app"
+        ordering = ["position", "id"]
+        verbose_name = "Специальность"
+        verbose_name_plural = "Реестр специальностей"
+
+    def __str__(self):
+        specialty_name = self.specialty.specialty if self.specialty_id and self.specialty else ""
+        return f"{self.formatted_id} {specialty_name}".strip()
+
+    def save(self, *args, **kwargs):
+        update_fields = kwargs.get("update_fields")
+        self.is_active = self.valid_to is None or self.valid_to > date_type.today()
+        if update_fields is not None:
+            kwargs["update_fields"] = set(update_fields) | {"is_active"}
+        super().save(*args, **kwargs)
+
+    @property
+    def formatted_id(self):
+        if not self.pk:
+            return ""
+        return f"{self.pk:05d}-SPC"
 
 
 class ResidenceAddressRecord(models.Model):

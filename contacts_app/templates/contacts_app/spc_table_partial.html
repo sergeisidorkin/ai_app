@@ -1,0 +1,60 @@
+<table class="table table-sm">
+  <thead class="align-bottom">
+    <tr>
+      <th style="width:1%">
+        {% if request.user.is_authenticated and request.user.is_staff %}
+        <div class="form-check m-0">
+          <input class="form-check-input"
+                 type="checkbox"
+                 id="spc-master"
+                 data-target-name="spc-select"
+                 data-actions-id="spc-actions"
+                 aria-label="Выделить все строки">
+        </div>
+        {% endif %}
+      </th>
+      <th>ID-SPC</th>
+      <th>ID-PRS</th>
+      <th>Специальность</th>
+      <th>Пользователь</th>
+      <th class="text-nowrap">Действ. от</th>
+      <th class="text-nowrap">Действ. до</th>
+      <th>Запись</th>
+      <th>Автор записи</th>
+      <th>Источник</th>
+    </tr>
+  </thead>
+  <tbody class="align-top">
+    {% for item in spc_items %}
+    <tr data-edit-url="{% url 'spc_form_edit' item.pk %}"
+        data-delete-url="{% url 'spc_delete' item.pk %}"
+        data-move-up-url="{% url 'spc_move_up' item.pk %}"
+        data-move-down-url="{% url 'spc_move_down' item.pk %}">
+      <td class="text-nowrap">
+        {% if request.user.is_authenticated and request.user.is_staff %}
+        <div class="form-check">
+          <input class="form-check-input"
+                 type="checkbox"
+                 id="spc-sel-{{ item.id }}"
+                 name="spc-select"
+                 value="{{ item.id }}"
+                 aria-label="Выделить строку">
+        </div>
+        {% endif %}
+      </td>
+      <td class="text-nowrap"><span class="clf-id-droid-mono">{{ item.pk|stringformat:"05d" }}-SPC</span></td>
+      <td class="text-nowrap"><span class="clf-id-droid-mono">{{ item.person.pk|stringformat:"05d" }}-PRS</span></td>
+      <td>{% if item.specialty %}{{ item.specialty.specialty }}{% else %}—{% endif %}</td>
+      <td>{{ item.get_user_kind_display|default:"—" }}</td>
+      <td class="text-nowrap">{% if item.valid_from %}{{ item.valid_from|date:"d.m.Y" }}{% else %}—{% endif %}</td>
+      <td class="text-nowrap">{% if item.valid_to %}{{ item.valid_to|date:"d.m.Y" }}{% else %}—{% endif %}</td>
+      <td class="text-nowrap">{% if item.record_date %}{{ item.record_date|date:"d.m.Y" }}{% else %}—{% endif %}</td>
+      <td>{{ item.record_author|default:"—" }}</td>
+      <td>{{ item.source|default:"—" }}</td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="10" class="text-muted">Пока нет данных.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% include "classifiers_app/_registry_pagination.html" %}
