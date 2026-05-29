@@ -1692,7 +1692,14 @@ def _proposal_product_autofill_data(product_ids=None):
         if section.is_system_dsc or (section.code or "").strip().upper() == SYSTEM_DSC_SECTION_CODE:
             continue
         bucket = sections_map.setdefault(product_id, [])
-        if not any(item.get("name") == section.name_ru for item in bucket):
+        section_code = (section.code or "").strip()
+        section_seen = any(
+            ((item.get("code") or "").strip() == section_code)
+            if section_code
+            else item.get("name") == section.name_ru
+            for item in bucket
+        )
+        if not section_seen:
             section_specialty_names = _section_specialty_names(section)
             specialty_name = section_specialty_names[0] if section_specialty_names else ""
             executor_display = "\n".join(section_specialty_names)

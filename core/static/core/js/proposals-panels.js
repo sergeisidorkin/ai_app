@@ -3168,16 +3168,24 @@
     return { firstPart: full, secondPart: '' };
   }
 
-  function getProposalTypicalSectionEntry(form, serviceName) {
+  function getProposalTypicalSectionEntry(form, serviceName, code) {
+    const entries = getProposalTypicalSectionEntries(form);
+    const codeTarget = String(code || '').trim();
+    if (codeTarget) {
+      const byCode = entries.find(function (entry) {
+        return String(entry?.code || '').trim() === codeTarget;
+      });
+      if (byCode) return byCode;
+    }
     const target = (serviceName || '').trim();
     if (!target) return null;
-    return getProposalTypicalSectionEntries(form).find(function (entry) {
+    return entries.find(function (entry) {
       return (entry?.name || '').trim() === target;
     }) || null;
   }
 
   function isProposalTechnicalAssignmentSection(form, section) {
-    const entry = getProposalTypicalSectionEntry(form, section?.service_name || section?.name || '');
+    const entry = getProposalTypicalSectionEntry(form, section?.service_name || section?.name || '', section?.code || '');
     return String(entry?.accounting_type || '').trim() === 'Раздел';
   }
 
@@ -3204,13 +3212,13 @@
       .filter(Boolean);
   }
 
-  function getProposalTypicalSectionCode(form, serviceName) {
-    const match = getProposalTypicalSectionEntry(form, serviceName);
+  function getProposalTypicalSectionCode(form, serviceName, code) {
+    const match = getProposalTypicalSectionEntry(form, serviceName, code);
     return (match?.code || '').trim();
   }
 
-  function getProposalTypicalSectionPrimaryExecutor(form, serviceName) {
-    const match = getProposalTypicalSectionEntry(form, serviceName);
+  function getProposalTypicalSectionPrimaryExecutor(form, serviceName, code) {
+    const match = getProposalTypicalSectionEntry(form, serviceName, code);
     const raw = String(match?.executor || '').trim();
     if (!raw) return '';
     return raw
@@ -3219,10 +3227,10 @@
       .filter(Boolean)[0] || '';
   }
 
-  function getProposalCommercialAutofill(form, serviceName) {
-    const entry = getProposalTypicalSectionEntry(form, serviceName);
+  function getProposalCommercialAutofill(form, serviceName, code) {
+    const entry = getProposalTypicalSectionEntry(form, serviceName, code);
     return {
-      jobTitle: getProposalTypicalSectionPrimaryExecutor(form, serviceName),
+      jobTitle: getProposalTypicalSectionPrimaryExecutor(form, serviceName, code),
       specialist: String(entry?.default_specialist || '').trim(),
       professionalStatus: String(entry?.default_professional_status || '').trim(),
       baseRateShare: Number.parseInt(entry?.default_base_rate_share || 0, 10) || 0,
@@ -3243,45 +3251,45 @@
     };
   }
 
-  function getProposalCommercialSpecialistOptions(form, serviceName, selectedValue) {
-    const autofill = getProposalCommercialAutofill(form, serviceName);
+  function getProposalCommercialSpecialistOptions(form, serviceName, selectedValue, code) {
+    const autofill = getProposalCommercialAutofill(form, serviceName, code);
     const options = autofill.specialistOptions.map(function (item) { return item.name; });
     const current = String(selectedValue || '').trim();
     if (current && !options.includes(current)) options.unshift(current);
     return options;
   }
 
-  function getProposalCommercialSpecialistStatus(form, serviceName, specialistName) {
+  function getProposalCommercialSpecialistStatus(form, serviceName, specialistName, code) {
     const target = String(specialistName || '').trim();
     if (!target) return '';
-    const match = getProposalCommercialAutofill(form, serviceName).specialistOptions.find(function (item) {
+    const match = getProposalCommercialAutofill(form, serviceName, code).specialistOptions.find(function (item) {
       return item.name === target;
     });
     return String(match?.professional_status || '').trim();
   }
 
-  function getProposalCommercialSpecialistBaseRateShare(form, serviceName, specialistName) {
+  function getProposalCommercialSpecialistBaseRateShare(form, serviceName, specialistName, code) {
     const target = String(specialistName || '').trim();
     if (!target) return 0;
-    const match = getProposalCommercialAutofill(form, serviceName).specialistOptions.find(function (item) {
+    const match = getProposalCommercialAutofill(form, serviceName, code).specialistOptions.find(function (item) {
       return item.name === target;
     });
     return Number.parseInt(match?.base_rate_share || 0, 10) || 0;
   }
 
-  function getProposalCommercialRateValue(form, serviceName, specialistName) {
-    const autofill = getProposalCommercialAutofill(form, serviceName);
+  function getProposalCommercialRateValue(form, serviceName, specialistName, code) {
+    const autofill = getProposalCommercialAutofill(form, serviceName, code);
     const baseRate = Number.parseFloat(String(autofill.specialtyTariffRateEur || '').replace(',', '.'));
     if (!Number.isFinite(baseRate) || baseRate <= 0) return '';
     const baseRateShare = autofill.specialtyIsDirector
-      ? getProposalCommercialSpecialistBaseRateShare(form, serviceName, specialistName || autofill.specialist)
+      ? getProposalCommercialSpecialistBaseRateShare(form, serviceName, specialistName || autofill.specialist, code)
       : 0;
     const result = baseRate + (baseRate * (baseRateShare || 0) / 100);
     return result.toFixed(2);
   }
 
   function getProposalCommercialDayCounts(form, serviceName, currentValues, options) {
-    const autofill = getProposalCommercialAutofill(form, serviceName);
+    const autofill = getProposalCommercialAutofill(form, serviceName, options?.code || '');
     const defaultDays = Number.parseInt(autofill.serviceDaysTkp || 0, 10) || 0;
     const assetsPayloadInput = form?.querySelector('#proposal-assets-payload')
       || getProposalOwningForm(form)?.querySelector('#proposal-assets-payload');
@@ -3313,10 +3321,10 @@
     return result;
   }
 
-  function syncProposalCommercialSpecialistSelect(select, form, serviceName, selectedValue) {
+  function syncProposalCommercialSpecialistSelect(select, form, serviceName, selectedValue, code) {
     return syncOptionsSelect(
       select,
-      getProposalCommercialSpecialistOptions(form, serviceName, selectedValue),
+      getProposalCommercialSpecialistOptions(form, serviceName, selectedValue, code),
       selectedValue
     );
   }
@@ -4303,20 +4311,22 @@
         return normalizeProposalTravelExpensesRow(row);
       }
       const serviceName = String(row?.service_name || '').trim();
-      const autofill = getProposalCommercialAutofill(scope, serviceName);
+      const code = String(row?.code || '').trim();
+      const autofill = getProposalCommercialAutofill(scope, serviceName, code);
       const specialty = autofill.jobTitle || String(row?.job_title || '').trim();
       const forceAutofill = options?.forceAutofill === true;
       const specialistValue = String(row?.specialist || '').trim();
       const statusValue = String(row?.professional_status || '').trim();
       const specialist = forceAutofill ? autofill.specialist : (specialistValue || autofill.specialist);
-      const specialistStatus = getProposalCommercialSpecialistStatus(scope, serviceName, specialist);
+      const specialistStatus = getProposalCommercialSpecialistStatus(scope, serviceName, specialist, code);
       const currentRate = String(row?.rate_eur_per_day || '').trim();
-      const autofillRate = getProposalCommercialRateValue(scope, serviceName, specialist);
+      const autofillRate = getProposalCommercialRateValue(scope, serviceName, specialist, code);
       const currentDayCounts = Array.isArray(row?.asset_day_counts)
         ? row.asset_day_counts.map(function (value) { return String(value ?? '').trim(); })
         : [];
       const autofillDayCounts = getProposalCommercialDayCounts(scope, serviceName, currentDayCounts, {
         replaceAll: forceAutofill,
+        code: code,
       });
       return {
         specialist: specialist,
@@ -4325,7 +4335,7 @@
           ? (specialistStatus || autofill.professionalStatus)
           : (statusValue || specialistStatus || autofill.professionalStatus),
         service_name: serviceName,
-        code: getProposalTypicalSectionCode(scope, serviceName) || String(row?.code || '').trim(),
+        code: getProposalTypicalSectionCode(scope, serviceName, code) || code,
         merge_without_code: normalizeProposalMergeWithoutCode(row?.merge_without_code),
         rate_eur_per_day: forceAutofill ? (autofillRate || currentRate) : (currentRate || autofillRate),
         asset_day_counts: forceAutofill
@@ -5615,10 +5625,10 @@
       const rate = row.querySelector('.proposal-commercial-rate');
       const total = row.querySelector('.proposal-commercial-total');
       if (specialist) {
-        syncProposalCommercialSpecialistSelect(specialist, form, data.service_name || '', data.specialist || '');
+        syncProposalCommercialSpecialistSelect(specialist, form, data.service_name || '', data.specialist || '', data.code || '');
         specialist.value = data.specialist || '';
       }
-      if (jobTitle) jobTitle.value = data.job_title || getProposalTypicalSectionPrimaryExecutor(form, data.service_name || '');
+      if (jobTitle) jobTitle.value = data.job_title || getProposalTypicalSectionPrimaryExecutor(form, data.service_name || '', data.code || '');
       if (status) status.value = data.professional_status || '';
       if (service) {
         syncProposalCommercialServiceSelect(service, form, data.service_name || '');
@@ -5635,7 +5645,7 @@
 
     function createRow(data) {
       const row = document.createElement('tr');
-      const autofill = getProposalCommercialAutofill(form, data.service_name || '');
+      const autofill = getProposalCommercialAutofill(form, data.service_name || '', data.code || '');
       row.dataset.commercialCode = String(data.code || '').trim();
       row.dataset.mergeWithoutCode = normalizeProposalMergeWithoutCode(data.merge_without_code) ? '1' : '0';
       row.dataset.summaryServiceAuto = String(data.service_name_auto || data.service_name || '').trim();
@@ -5660,7 +5670,8 @@
         specialistSelect,
         form,
         data.service_name || '',
-        data.specialist || autofill.specialist || ''
+        data.specialist || autofill.specialist || '',
+        data.code || ''
       );
       specialistSelect.value = data.specialist || autofill.specialist || '';
       if (isSummaryCommercialBlock) {
@@ -5689,7 +5700,8 @@
         || getProposalCommercialSpecialistStatus(
           form,
           data.service_name || '',
-          data.specialist || autofill.specialist || ''
+          data.specialist || autofill.specialist || '',
+          data.code || ''
         )
         || autofill.professionalStatus
         || '';
@@ -5735,12 +5747,14 @@
           statusInput.value = getProposalCommercialSpecialistStatus(
             form,
             serviceSelect.value || '',
-            specialistSelect.value || ''
+            specialistSelect.value || '',
+            row.dataset.commercialCode || ''
           ) || serviceAutofill.professionalStatus || '';
           const rateValue = getProposalCommercialRateValue(
             form,
             serviceSelect.value || '',
-            specialistSelect.value || ''
+            specialistSelect.value || '',
+            row.dataset.commercialCode || ''
           );
           rateInput.value = rateValue ? fmtMoney(rateValue) : '';
           syncDayCells(
@@ -5750,7 +5764,7 @@
               form,
               serviceSelect.value || '',
               getDayInputs(row).map(function (input) { return input.value || ''; }),
-              { replaceAll: true }
+              { replaceAll: true, code: row.dataset.commercialCode || '' }
             )
           );
           recalcRowTotal(row);
@@ -5808,12 +5822,14 @@
           const specialistStatus = getProposalCommercialSpecialistStatus(
             form,
             serviceSelect.value || '',
-            specialistSelect.value || ''
+            specialistSelect.value || '',
+            row.dataset.commercialCode || ''
           );
           const rateValue = getProposalCommercialRateValue(
             form,
             serviceSelect.value || '',
-            specialistSelect.value || ''
+            specialistSelect.value || '',
+            row.dataset.commercialCode || ''
           );
           if (specialistStatus) {
             statusInput.value = specialistStatus;
@@ -6259,7 +6275,7 @@
               form,
               row.querySelector('.proposal-commercial-service')?.value || '',
               getDayInputs(row).map(function (input) { return input.value || ''; }),
-              { replaceAll: false }
+              { replaceAll: false, code: row.dataset.commercialCode || '' }
             )
           );
           return;
@@ -6391,7 +6407,7 @@
       const serviceSelect = row.querySelector('.proposal-service-section-name');
       const codeInput = row.querySelector('.proposal-service-section-code');
       if (!serviceSelect || !codeInput) return;
-      codeInput.value = getProposalTypicalSectionCode(form, serviceSelect.value || '');
+      codeInput.value = getProposalTypicalSectionCode(form, serviceSelect.value || '', codeInput.value || '');
     }
 
     function syncMergeRuleButton(row) {
@@ -8430,6 +8446,7 @@
           const refreshSeq = productAutofillRefreshSeq + 1;
           productAutofillRefreshSeq = refreshSeq;
           syncRow({ productId: selectedProductId });
+          syncStageContent();
           refreshProposalProductAutofillData(form, selectedProductId).finally(function () {
             if (refreshSeq !== productAutofillRefreshSeq) return;
             syncStageContent();
