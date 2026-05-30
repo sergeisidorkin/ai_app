@@ -709,6 +709,17 @@ def _project_product_display(project) -> str:
     return f"{short_name} {display_name}".strip()
 
 
+def _performer_product(performer):
+    section = getattr(performer, "typical_section", None)
+    product = getattr(section, "product", None) if section else None
+    if product:
+        return product
+    project = getattr(performer, "registration", None)
+    if not project:
+        return None
+    return getattr(project, "primary_product", None) or getattr(project, "type", None)
+
+
 def _ordered_batch_projects(all_performers):
     projects = []
     seen = set()
@@ -720,6 +731,21 @@ def _ordered_batch_projects(all_performers):
         projects.append(project)
     projects.sort(key=lambda project: (_project_stage(project), project.pk or 0))
     return projects
+
+
+def _selected_product_performer(performer, all_performers):
+    projects = _ordered_batch_projects(all_performers)
+    if len(projects) > 1:
+        last_project = projects[-1]
+        return next(
+            (
+                p for p in all_performers
+                if getattr(p, "registration_id", None) == last_project.pk
+                or getattr(getattr(p, "registration", None), "pk", None) == last_project.pk
+            ),
+            performer,
+        )
+    return performer
 
 
 def _chapters_name_items_for_performers(all_performers, *, force_asset_level=False):
@@ -801,29 +827,164 @@ def _computed_chapters_name(_ep, _p, all_performers):
     return items if project_ids else _chapters_name_items_for_performers(all_performers)
 
 
+def _service_composition_lines(composition) -> list[str]:
+    editor_state = getattr(composition, "service_composition_editor_state", None)
+    text = ""
+    if isinstance(editor_state, dict):
+        text = str(editor_state.get("plain_text") or "").strip()
+    if not text:
+        text = str(getattr(composition, "service_composition", "") or "").strip()
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
+def _services_items_for_performers(all_performers, *, level=0):
+    from policy_app.models import TypicalServiceComposition
+
+    section_product_pairs: list[tuple[int, int]] = []
+    seen_pairs = set()
+    for performer in all_performers or []:
+        section = getattr(performer, "typical_section", None)
+        if not section or not getattr(section, "pk", None):
+            continue
+        product_id = getattr(section, "product_id", None) or getattr(getattr(section, "product", None), "pk", None)
+        if not product_id:
+            product = _performer_product(performer)
+            product_id = getattr(product, "pk", None)
+        if not product_id:
+            continue
+        pair = (product_id, section.pk)
+        if pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
+        section_product_pairs.append(pair)
+
+    if not section_product_pairs:
+        return []
+
+    compositions_by_pair: dict[tuple[int, int], list] = {}
+    product_ids = {product_id for product_id, _section_id in section_product_pairs}
+    section_ids = {section_id for _product_id, section_id in section_product_pairs}
+    qs = (
+        TypicalServiceComposition.objects
+        .filter(product_id__in=product_ids, section_id__in=section_ids)
+        .order_by("position", "id")
+    )
+    for composition in qs:
+        compositions_by_pair.setdefault(
+            (composition.product_id, composition.section_id),
+            [],
+        ).append(composition)
+
+    items = []
+    for pair in section_product_pairs:
+        for composition in compositions_by_pair.get(pair, []):
+            for line in _service_composition_lines(composition):
+                items.append((level, line))
+    return items
+
+
+def _computed_services(_ep, _p, all_performers):
+    projects = _ordered_batch_projects(all_performers)
+    if len(projects) <= 1:
+        return _services_items_for_performers(all_performers)
+
+    items = []
+    for project in projects:
+        stage = _project_stage(project)
+        product_display = _project_product_display(project)
+        items.append((0, f"Этап {stage}: {product_display}".strip()))
+        stage_items = _services_items_for_performers(
+            [
+                performer
+                for performer in all_performers
+                if getattr(performer, "registration_id", None) == project.pk
+                or getattr(getattr(performer, "registration", None), "pk", None) == project.pk
+            ],
+            level=1,
+        )
+        items.extend(stage_items)
+
+    return items
+
+
 def _computed_number_of_contract(_ep, performer, _all_performers) -> str:
     return performer.contract_number or ""
+
+
+def _computed_owner(_ep, performer, _all_performers) -> str:
+    project = getattr(performer, "registration", None)
+    return str(getattr(project, "asset_owner", "") or "") if project else ""
+
+
+def _service_goal_report_value(product_id, field_name: str) -> str:
+    if not product_id:
+        return ""
+    from policy_app.models import ServiceGoalReport
+
+    item = (
+        ServiceGoalReport.objects.filter(product_id=product_id)
+        .order_by("position", "id")
+        .only(field_name)
+        .first()
+    )
+    if not item:
+        return ""
+    return str(getattr(item, field_name, "") or "")
+
+
+def _computed_service_goal_genitive(_ep, performer, all_performers) -> str:
+    selected_performer = _selected_product_performer(performer, all_performers)
+    product = _performer_product(selected_performer)
+    return _service_goal_report_value(getattr(product, "pk", None), "service_goal_genitive")
+
+
+def _clean_specialization_area(value: str) -> str:
+    import re
+
+    return re.sub(
+        r"^\s*Специалист\s+по\s*",
+        "",
+        str(value or ""),
+        count=1,
+        flags=re.IGNORECASE,
+    ).strip()
+
+
+def _computed_specialization(ep, _performer, all_performers) -> str:
+    if not ep:
+        return ""
+
+    expert_specialty_ids = {
+        link.specialty_id
+        for link in ep.ranked_specialties.select_related("specialty").all()
+        if link.specialty_id
+    }
+    if not expert_specialty_ids:
+        return ""
+
+    seen_section_ids = set()
+    for performer in all_performers or []:
+        section = getattr(performer, "typical_section", None)
+        section_id = getattr(section, "pk", None)
+        if not section or section_id in seen_section_ids:
+            continue
+        seen_section_ids.add(section_id)
+
+        for link in section.ranked_specialties.select_related("specialty").order_by("rank", "id"):
+            if link.specialty_id not in expert_specialty_ids:
+                continue
+            specialization = _clean_specialization_area(getattr(link.specialty, "specialization_area", ""))
+            if specialization:
+                return specialization
+    return ""
 
 
 def _computed_contract_name(_ep, performer, all_performers) -> str:
     from contracts_app.models import ContractSubject
 
-    selected_performer = performer
-    projects = _ordered_batch_projects(all_performers)
-    if len(projects) > 1:
-        last_project = projects[-1]
-        selected_performer = next(
-            (
-                p for p in all_performers
-                if getattr(p, "registration_id", None) == last_project.pk
-                or getattr(getattr(p, "registration", None), "pk", None) == last_project.pk
-            ),
-            performer,
-        )
-
-    product_id = getattr(getattr(selected_performer, "typical_section", None), "product_id", None)
-    if not product_id:
-        product_id = getattr(getattr(selected_performer, "registration", None), "type_id", None)
+    selected_performer = _selected_product_performer(performer, all_performers)
+    product = _performer_product(selected_performer)
+    product_id = getattr(product, "pk", None)
     if not product_id:
         return ""
     cs = ContractSubject.objects.filter(product_id=product_id).first()
@@ -833,6 +994,7 @@ def _computed_contract_name(_ep, performer, all_performers) -> str:
 COMPUTED_LIST_MAP: dict[str, callable] = {
     "[[actives_name]]": _computed_actives_name,
     "[[chapters_name]]": _computed_chapters_name,
+    "[[services]]": _computed_services,
 }
 
 COMPUTED_MAP: dict[str, callable] = {
@@ -853,6 +1015,9 @@ COMPUTED_MAP: dict[str, callable] = {
     "{{named}}": _computed_named,
     "{{number_of_contract}}": _computed_number_of_contract,
     "{{contract_name}}": _computed_contract_name,
+    "{{owner}}": _computed_owner,
+    "{{service_goal_genitive}}": _computed_service_goal_genitive,
+    "{{specialization}}": _computed_specialization,
 }
 
 

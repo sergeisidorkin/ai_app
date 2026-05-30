@@ -577,6 +577,7 @@ ESP_CSV_HEADERS = [
     "Направление экспертизы",
     "Подразделение",
     "Руководитель направления",
+    "Область специализации",
 ]
 
 
@@ -651,6 +652,7 @@ def esp_csv_download(request):
                 item.expertise_dir.short_name if item.expertise_dir else "",
                 item.expertise_direction.department_name if item.expertise_direction else "",
                 item.head_of_direction.job_title if item.head_of_direction else "",
+                item.specialization_area,
             ]
         )
 
@@ -704,7 +706,8 @@ def esp_csv_upload(request):
             warnings.append(
                 f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 6: "
                 "Специальность, Специальность на англ. языке, Владелец, "
-                "Направление экспертизы, Подразделение, Руководитель направления."
+                "Направление экспертизы, Подразделение, Руководитель направления; "
+                "опционально 7-й столбец: Область специализации."
             )
             continue
 
@@ -714,6 +717,7 @@ def esp_csv_upload(request):
         expertise_dir_name = row[3].strip()
         department_name = row[4].strip()
         head_of_direction_name = row[5].strip()
+        specialization_area = row[6].strip() if len(row) > 6 else ""
 
         if not specialty:
             warnings.append(f"Строка {i}: не заполнены обязательные поля: Специальность.")
@@ -765,6 +769,7 @@ def esp_csv_upload(request):
                 expertise_dir=expertise_dir,
                 expertise_direction=expertise_direction,
                 head_of_direction=head_of_direction,
+                specialization_area=specialization_area,
                 is_group_owner=is_group_owner,
                 position=_next_position(),
             )

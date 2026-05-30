@@ -34,7 +34,7 @@
     </div>
 
     <div class="modal fade" id="experts-modal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog modal-dialog-scrollable">
+      <div class="modal-dialog modal-xl">
         <div class="modal-content">
         </div>
       </div>
@@ -70,6 +70,33 @@
     </div>
 
     <script>
+      function restoreExpertsBackdropIfMissing(modalEl) {
+        if (!modalEl || !modalEl.classList.contains('show')) return;
+        if (document.querySelector('.modal-backdrop')) return;
+        var backdrop = document.createElement('div');
+        backdrop.className = 'modal-backdrop fade show';
+        document.body.appendChild(backdrop);
+        document.body.classList.add('modal-open');
+      }
+
+      function scheduleExpertsBackdropCheck(modalEl) {
+        if (!modalEl) return;
+        window.requestAnimationFrame(function () {
+          restoreExpertsBackdropIfMissing(modalEl);
+        });
+        window.setTimeout(function () {
+          restoreExpertsBackdropIfMissing(modalEl);
+        }, 50);
+      }
+
+      ['experts-modal', 'experts-profile-modal', 'experts-contract-details-modal'].forEach(function (id) {
+        var modalEl = document.getElementById(id);
+        if (!modalEl) return;
+        modalEl.addEventListener('shown.bs.modal', function () {
+          scheduleExpertsBackdropCheck(modalEl);
+        });
+      });
+
       document.body.addEventListener('experts-updated', function () {
         ['experts-modal', 'experts-profile-modal', 'experts-contract-details-modal'].forEach(function (id) {
           var el = document.getElementById(id);
@@ -82,8 +109,12 @@
       document.addEventListener('htmx:afterSwap', function (e) {
         ['experts-modal', 'experts-profile-modal', 'experts-contract-details-modal'].forEach(function (id) {
           if (e.target && e.target.matches('#' + id + ' .modal-content')) {
-            var m = bootstrap.Modal.getOrCreateInstance(document.getElementById(id));
-            m.show();
+            var modalEl = document.getElementById(id);
+            var m = bootstrap.Modal.getOrCreateInstance(modalEl);
+            if (!modalEl.classList.contains('show')) {
+              m.show();
+            }
+            scheduleExpertsBackdropCheck(modalEl);
           }
         });
       });
@@ -94,6 +125,7 @@
       var P = window.UIPref;
 
       var pickers = [
+        { prefKey: 'experts:espHiddenCols', wrapId: 'esp-colpicker-wrap', btnId: 'esp-colpicker-btn', menuId: 'esp-colpicker-menu', allId: 'esp-col-all', tableId: 'esp-table' },
         { prefKey: 'experts:hiddenCols',    wrapId: 'epr-colpicker-wrap', btnId: 'epr-colpicker-btn', menuId: 'epr-colpicker-menu', allId: 'epr-col-all', tableId: 'epr-table' },
         { prefKey: 'experts:ecdHiddenCols', wrapId: 'ecd-colpicker-wrap', btnId: 'ecd-colpicker-btn', menuId: 'ecd-colpicker-menu', allId: 'ecd-col-all', tableId: 'ecd-table' },
       ];

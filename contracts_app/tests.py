@@ -33,7 +33,7 @@ from contracts_app.models import (
     ContractVariable,
 )
 from contracts_app.variable_resolver import resolve_variables
-from experts_app.models import ExpertContractDetails, ExpertProfile
+from experts_app.models import ExpertContractDetails, ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
 from group_app.models import GroupMember, OrgUnit
 from nextcloud_app.api import NextcloudApiError, NextcloudShare
 from nextcloud_app.models import NextcloudUserLink
@@ -45,7 +45,10 @@ from policy_app.models import (
     LAWYER_GROUP,
     Product,
     SectionStructure,
+    ServiceGoalReport,
     TypicalSection,
+    TypicalSectionSpecialty,
+    TypicalServiceComposition,
 )
 from projects_app.models import Performer, ProjectRegistration, ProjectRegistrationProduct
 from proposals_app.models import ProposalRegistration
@@ -3236,6 +3239,25 @@ class ContractVariableBindingDisplayTests(TestCase):
             "Многоуровневый список: этапы, активы, разделы, подразделы",
         )
 
+    def test_additional_contract_variables_are_seeded_as_computed_fields(self):
+        expected = {
+            "{{owner}}": "Владелец активов",
+            "{{service_goal_genitive}}": "Цель оказания услуг в родительном падеже",
+            "{{specialization}}": "Область специализации",
+            "[[services]]": "Многоуровневый список: этапы, состав услуг",
+        }
+
+        variables = {
+            variable.key: variable
+            for variable in ContractVariable.objects.filter(key__in=expected)
+        }
+
+        self.assertEqual(set(variables), set(expected))
+        for key, description in expected.items():
+            self.assertEqual(variables[key].description, description)
+            self.assertTrue(variables[key].is_computed)
+            self.assertEqual(variables[key].binding_display, "Расчётное поле")
+
 
 class ContractVariableResolverTests(TestCase):
     def test_contract_details_variables_resolve_from_expert_contract_details(self):
@@ -3444,6 +3466,277 @@ class ContractVariableResolverTests(TestCase):
 
         self.assertEqual(lists, {})
         self.assertEqual(replacements["{{deadline_ru}}"], "20 мая 2026 г.")
+
+    def test_additional_scalar_variables_resolve_from_project_product_and_specialty(self):
+        product = Product.objects.create(
+            short_name="DD",
+            display_name="Due Diligence",
+            name_en="Due Diligence",
+            name_ru="ДД",
+        )
+        ServiceGoalReport.objects.create(
+            product=product,
+            service_goal_genitive="Проведения due diligence",
+            position=1,
+        )
+        project = ProjectRegistration.objects.create(
+            number=7006,
+            type=product,
+            name="Проект с владельцем",
+            asset_owner='АО "Владелец"',
+            year=2026,
+        )
+        user = get_user_model().objects.create_user(
+            username="specialist@example.com",
+            password="secret",
+            first_name="Иван",
+            last_name="Иванов",
+        )
+        employee = Employee.objects.create(user=user, patronymic="Иванович")
+        profile = ExpertProfile.objects.create(employee=employee, position=1)
+        geology = ExpertSpecialty.objects.create(
+            specialty="Геолог",
+            specialization_area="Специалист по геологическому анализу",
+            position=1,
+        )
+        mining = ExpertSpecialty.objects.create(
+            specialty="Горный инженер",
+            specialization_area="Специалист по горнотехнической экспертизе",
+            position=2,
+        )
+        ExpertProfileSpecialty.objects.create(profile=profile, specialty=geology, rank=1)
+        ExpertProfileSpecialty.objects.create(profile=profile, specialty=mining, rank=2)
+        geology_section = TypicalSection.objects.create(
+            product=product,
+            code="GEO",
+            short_name="Geology",
+            name_en="Geology",
+            name_ru="Геология",
+            position=1,
+        )
+        mining_section = TypicalSection.objects.create(
+            product=product,
+            code="MIN",
+            short_name="Mining",
+            name_en="Mining",
+            name_ru="Горные работы",
+            position=2,
+        )
+        TypicalSectionSpecialty.objects.create(section=geology_section, specialty=geology, rank=1)
+        TypicalSectionSpecialty.objects.create(section=mining_section, specialty=mining, rank=1)
+        geology_performer = Performer.objects.create(
+            registration=project,
+            employee=employee,
+            executor="Иванов Иван Иванович",
+            typical_section=geology_section,
+            position=2,
+        )
+        mining_performer = Performer.objects.create(
+            registration=project,
+            employee=employee,
+            executor="Иванов Иван Иванович",
+            typical_section=mining_section,
+            position=1,
+        )
+        variables = [
+            ContractVariable(key="{{owner}}", is_computed=True),
+            ContractVariable(key="{{service_goal_genitive}}", is_computed=True),
+            ContractVariable(key="{{specialization}}", is_computed=True),
+        ]
+
+        replacements, lists = resolve_variables(
+            geology_performer,
+            variables,
+            all_performers=[mining_performer, geology_performer],
+        )
+
+        self.assertEqual(lists, {})
+        self.assertEqual(replacements["{{owner}}"], 'АО "Владелец"')
+        self.assertEqual(replacements["{{service_goal_genitive}}"], "Проведения due diligence")
+        self.assertEqual(replacements["{{specialization}}"], "горнотехнической экспертизе")
+
+    def test_services_list_uses_typical_service_compositions_without_assets_or_sections(self):
+        product = Product.objects.create(
+            short_name="DD",
+            display_name="Due Diligence",
+            name_en="Due Diligence",
+            name_ru="ДД",
+        )
+        project = ProjectRegistration.objects.create(
+            number=7007,
+            type=product,
+            name="Проект с составом услуг",
+            year=2026,
+        )
+        section_a = TypicalSection.objects.create(
+            product=product,
+            code="GEO",
+            short_name="Geology",
+            name_en="Geology",
+            name_ru="Геология",
+            position=1,
+        )
+        section_b = TypicalSection.objects.create(
+            product=product,
+            code="MIN",
+            short_name="Mining",
+            name_en="Mining",
+            name_ru="Горные работы",
+            position=2,
+        )
+        TypicalServiceComposition.objects.create(
+            product=product,
+            section=section_a,
+            service_composition="Сбор данных\nАнализ геологии",
+            position=1,
+        )
+        TypicalServiceComposition.objects.create(
+            product=product,
+            section=section_b,
+            service_composition="",
+            service_composition_editor_state={
+                "html": "<p>Моделирование карьера</p>",
+                "plain_text": "Моделирование карьера",
+            },
+            position=2,
+        )
+        performer_a = Performer.objects.create(
+            registration=project,
+            executor="Иванов Иван Иванович",
+            asset_name="Карьер",
+            typical_section=section_a,
+            position=1,
+        )
+        performer_b = Performer.objects.create(
+            registration=project,
+            executor="Иванов Иван Иванович",
+            asset_name="Фабрика",
+            typical_section=section_b,
+            position=2,
+        )
+        duplicate_section_performer = Performer.objects.create(
+            registration=project,
+            executor="Иванов Иван Иванович",
+            asset_name="Другой актив",
+            typical_section=section_a,
+            position=3,
+        )
+        variables = [ContractVariable(key="[[services]]", is_computed=True)]
+
+        replacements, lists = resolve_variables(
+            performer_a,
+            variables,
+            all_performers=[performer_a, performer_b, duplicate_section_performer],
+        )
+
+        self.assertEqual(replacements, {})
+        self.assertEqual(
+            lists["[[services]]"],
+            [
+                (0, "Сбор данных"),
+                (0, "Анализ геологии"),
+                (0, "Моделирование карьера"),
+            ],
+        )
+
+    def test_multistage_services_and_service_goal_use_stage_order(self):
+        product_a = Product.objects.create(
+            short_name="RFR",
+            display_name="Red Flag Review",
+            name_en="Red Flag Review",
+            name_ru="РФР",
+        )
+        product_b = Product.objects.create(
+            short_name="TDD",
+            display_name="Technical Due Diligence",
+            name_en="Technical Due Diligence",
+            name_ru="ТДД",
+        )
+        ServiceGoalReport.objects.create(
+            product=product_a,
+            service_goal_genitive="Подготовки первого этапа",
+            position=1,
+        )
+        ServiceGoalReport.objects.create(
+            product=product_b,
+            service_goal_genitive="Подготовки второго этапа",
+            position=1,
+        )
+        project_a = ProjectRegistration.objects.create(
+            number=7008,
+            type=product_a,
+            name="Многоэтапный проект",
+            year=2026,
+        )
+        project_b = ProjectRegistration.objects.create(
+            number=7008,
+            type=product_b,
+            name="Многоэтапный проект",
+            year=2026,
+        )
+        project_a.refresh_from_db()
+        project_b.refresh_from_db()
+        section_a = TypicalSection.objects.create(
+            product=product_a,
+            code="RFR-01",
+            short_name="Market",
+            name_en="Market",
+            name_ru="Рынок",
+            position=1,
+        )
+        section_b = TypicalSection.objects.create(
+            product=product_b,
+            code="TDD-01",
+            short_name="Tech",
+            name_en="Technology",
+            name_ru="Технология",
+            position=1,
+        )
+        TypicalServiceComposition.objects.create(
+            product=product_a,
+            section=section_a,
+            service_composition="Обзор рынка",
+            position=1,
+        )
+        TypicalServiceComposition.objects.create(
+            product=product_b,
+            section=section_b,
+            service_composition="Технический анализ",
+            position=1,
+        )
+        performer_a = Performer.objects.create(
+            registration=project_a,
+            executor="Иванов Иван Иванович",
+            asset_name="Карьер",
+            typical_section=section_a,
+        )
+        performer_b = Performer.objects.create(
+            registration=project_b,
+            executor="Иванов Иван Иванович",
+            asset_name="Фабрика",
+            typical_section=section_b,
+        )
+        variables = [
+            ContractVariable(key="{{service_goal_genitive}}", is_computed=True),
+            ContractVariable(key="[[services]]", is_computed=True),
+        ]
+
+        replacements, lists = resolve_variables(
+            performer_a,
+            variables,
+            all_performers=[performer_a, performer_b],
+        )
+
+        self.assertEqual(replacements["{{service_goal_genitive}}"], "Подготовки второго этапа")
+        self.assertEqual(
+            lists["[[services]]"],
+            [
+                (0, "Этап 1: RFR Red Flag Review"),
+                (1, "Обзор рынка"),
+                (0, "Этап 2: TDD Technical Due Diligence"),
+                (1, "Технический анализ"),
+            ],
+        )
 
     def test_multi_stage_batch_chapters_name_groups_by_stage_and_contract_name_uses_last_stage(self):
         product_a = Product.objects.create(

@@ -252,7 +252,7 @@
   document.addEventListener('change', (e) => {
     const root = pane();
     if (!root) return;
-    const colpickerInput = e.target.closest('#epr-colpicker-menu input.form-check-input');
+    const colpickerInput = e.target.closest('#esp-colpicker-menu input.form-check-input, #epr-colpicker-menu input.form-check-input');
     if (colpickerInput && root.contains(colpickerInput)) {
       scheduleExpertsTableScrollGapsUpdate();
       return;
