@@ -8,6 +8,7 @@ from datetime import date
 from django.contrib.auth import get_user_model
 from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.template.loader import render_to_string
 from django.test import TestCase
 from django.urls import reverse
 
@@ -827,8 +828,70 @@ class ExpertSpecialtyCsvTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Специальности исполнителей")
+        self.assertContains(response, 'id="esp-colpicker-wrap"', html=False)
+        self.assertContains(response, 'id="esp-colpicker-btn"', html=False)
+        self.assertContains(response, 'id="esp-col-all"', html=False)
+        self.assertContains(response, 'id="esp-table"', html=False)
+        self.assertContains(response, 'data-col="specialty"', html=False)
+        self.assertContains(response, 'data-col="head-of-direction"', html=False)
+        self.assertContains(response, 'data-col="specialization-area"', html=False)
+        self.assertContains(response, "Область специализации")
         self.assertContains(response, 'id="esp-csv-download-btn"', html=False)
         self.assertContains(response, 'id="esp-csv-upload-btn"', html=False)
+
+    def test_experts_panel_uses_wide_specialty_modal(self):
+        html = render_to_string("experts_app/panel.html")
+        specialty_modal_html = html[
+            html.index('id="experts-modal"'):html.index('id="experts-csv-result-modal"')
+        ]
+
+        self.assertIn("modal-dialog modal-xl", specialty_modal_html)
+        self.assertNotIn("modal-dialog modal-xl modal-dialog-scrollable", specialty_modal_html)
+        self.assertIn("restoreExpertsBackdropIfMissing", html)
+        self.assertIn("scheduleExpertsBackdropCheck", html)
+
+    def test_specialty_form_uses_two_column_layout(self):
+        response = self.client.get(reverse("esp_form_create"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'class="row g-3"', html=False)
+        self.assertContains(response, 'class="col-md-6"', count=6, html=False)
+        self.assertContains(response, 'class="col-12"', html=False)
+        self.assertContains(response, "Область специализации")
+        self.assertContains(response, "Специалист по")
+        self.assertContains(response, 'name="specialization_area_suffix"', html=False)
+
+    def test_specialty_form_saves_specialization_area_with_locked_prefix(self):
+        response = self.client.post(
+            reverse("esp_form_create"),
+            {
+                "specialty": "Геолог",
+                "specialty_en": "Geologist",
+                "owner_ids": "__group__",
+                "expertise_dir": "",
+                "expertise_direction": "",
+                "head_of_direction": "",
+                "specialization_area_suffix": "подземным водам",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        specialty = ExpertSpecialty.objects.get(specialty="Геолог")
+        self.assertEqual(specialty.specialization_area, "Специалист по подземным водам")
+        self.assertContains(response, "Специалист по подземным водам")
+
+    def test_specialty_edit_form_prefills_specialization_area_suffix(self):
+        specialty = ExpertSpecialty.objects.create(
+            specialty="Геолог",
+            specialization_area="Специалист по подземным водам",
+            position=1,
+        )
+
+        response = self.client.get(reverse("esp_form_edit", args=[specialty.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Специалист по")
+        self.assertContains(response, 'value="подземным водам"', html=False)
 
     def test_esp_csv_download_exports_table_columns(self):
         specialty = ExpertSpecialty.objects.create(
@@ -837,6 +900,7 @@ class ExpertSpecialtyCsvTests(TestCase):
             expertise_dir=self.expertise_dir,
             expertise_direction=self.org_unit,
             head_of_direction=self.head,
+            specialization_area="Специалист по подземным водам",
             position=1,
         )
         specialty.owners.set([self.owner])
@@ -855,6 +919,7 @@ class ExpertSpecialtyCsvTests(TestCase):
                 "Направление экспертизы",
                 "Подразделение",
                 "Руководитель направления",
+                "Область специализации",
             ],
         )
         self.assertEqual(
@@ -866,6 +931,7 @@ class ExpertSpecialtyCsvTests(TestCase):
                 "ГЭ",
                 "Отдел горной экспертизы",
                 "Руководитель горной экспертизы",
+                "Специалист по подземным водам",
             ],
         )
 
@@ -892,6 +958,25 @@ class ExpertSpecialtyCsvTests(TestCase):
         self.assertEqual(specialty.head_of_direction_id, self.head.pk)
         self.assertFalse(specialty.is_group_owner)
         self.assertEqual(list(specialty.owners.values_list("short_name", flat=True)), ["IMC Montan"])
+
+    def test_esp_csv_upload_creates_specialty_with_specialization_area(self):
+        csv_file = SimpleUploadedFile(
+            "specialties.csv",
+            (
+                "Специальность;Специальность на англ. языке;Владелец;"
+                "Направление экспертизы;Подразделение;Руководитель направления;"
+                "Область специализации\n"
+                "Геолог;Geologist;Группа;;;;Специалист по подземным водам\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("esp_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        specialty = ExpertSpecialty.objects.get(specialty="Геолог")
+        self.assertEqual(specialty.specialization_area, "Специалист по подземным водам")
 
     def test_esp_csv_upload_skips_duplicate_specialty(self):
         ExpertSpecialty.objects.create(specialty="Геолог", position=1)

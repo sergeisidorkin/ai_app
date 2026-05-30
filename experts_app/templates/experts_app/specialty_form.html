@@ -16,64 +16,76 @@
     hx-swap="outerHTML">
   <div class="modal-body">
     {% csrf_token %}
-    <div class="mb-3">
-      <label class="form-label">Специальность</label>
-      {{ form.specialty }}
-      {% if form.specialty.errors %}
-        <div class="text-danger small mt-1">{{ form.specialty.errors.0 }}</div>
-      {% endif %}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Специальность на англ. языке</label>
-      {{ form.specialty_en }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Владелец</label>
-      <div class="dropdown" id="esp-owner-dropdown">
-        <button class="form-select text-start" type="button"
-                id="esp-owner-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
-                style="cursor:pointer; background-color:#fff;">
-          <span class="js-esp-owner-label">Группа</span>
-        </button>
-        <div class="dropdown-menu p-3" aria-labelledby="esp-owner-toggle"
-             style="min-width: 100%; max-height: 240px; overflow-y: auto;">
-          <div class="form-check mb-2">
-            <input class="form-check-input js-esp-owner" type="checkbox"
-                   name="owner_ids" value="__group__" id="esp-owner-group"
-                   {% if form.is_group_selected or not form.selected_owner_ids and not form.instance.pk %}checked{% endif %}>
-            <label class="form-check-label" for="esp-owner-group">Группа</label>
-          </div>
-          <hr class="dropdown-divider">
-          {% for opt in form.owner_options %}
-            <div class="form-check">
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label">Специальность</label>
+        {{ form.specialty }}
+        {% if form.specialty.errors %}
+          <div class="text-danger small mt-1">{{ form.specialty.errors.0 }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Специальность на англ. языке</label>
+        {{ form.specialty_en }}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Владелец</label>
+        <div class="dropdown" id="esp-owner-dropdown">
+          <button class="form-select text-start" type="button"
+                  id="esp-owner-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
+                  style="cursor:pointer; background-color:#fff;">
+            <span class="js-esp-owner-label">Группа</span>
+          </button>
+          <div class="dropdown-menu p-3" aria-labelledby="esp-owner-toggle"
+               style="min-width: 100%; max-height: 240px; overflow-y: auto;">
+            <div class="form-check mb-2">
               <input class="form-check-input js-esp-owner" type="checkbox"
-                     name="owner_ids" value="{{ opt.pk }}" id="esp-owner-{{ opt.pk }}"
-                     {% if opt.pk in form.selected_owner_ids %}checked{% endif %}>
-              <label class="form-check-label" for="esp-owner-{{ opt.pk }}">
-                {{ opt.short_name }}
-              </label>
+                     name="owner_ids" value="__group__" id="esp-owner-group"
+                     {% if form.is_group_selected or not form.selected_owner_ids and not form.instance.pk %}checked{% endif %}>
+              <label class="form-check-label" for="esp-owner-group">Группа</label>
             </div>
-          {% empty %}
-            <div class="text-muted small">Нет компаний</div>
-          {% endfor %}
+            <hr class="dropdown-divider">
+            {% for opt in form.owner_options %}
+              <div class="form-check">
+                <input class="form-check-input js-esp-owner" type="checkbox"
+                       name="owner_ids" value="{{ opt.pk }}" id="esp-owner-{{ opt.pk }}"
+                       {% if opt.pk in form.selected_owner_ids %}checked{% endif %}>
+                <label class="form-check-label" for="esp-owner-{{ opt.pk }}">
+                  {{ opt.short_name }}
+                </label>
+              </div>
+            {% empty %}
+              <div class="text-muted small">Нет компаний</div>
+            {% endfor %}
+          </div>
         </div>
       </div>
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Направление экспертизы</label>
-      {{ form.expertise_dir }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Подразделение</label>
-      {{ form.expertise_direction }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Руководитель направления</label>
-      {{ form.head_of_direction }}
+      <div class="col-md-6">
+        <label class="form-label">Направление экспертизы</label>
+        {{ form.expertise_dir }}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Подразделение</label>
+        {{ form.expertise_direction }}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Руководитель направления</label>
+        {{ form.head_of_direction }}
+      </div>
+      <div class="col-12">
+        <label class="form-label">Область специализации</label>
+        <div class="input-group">
+          <span class="input-group-text">{{ form.specialization_area_prefix }}</span>
+          {{ form.specialization_area_suffix }}
+        </div>
+        {% if form.specialization_area_suffix.errors %}
+          <div class="text-danger small mt-1">{{ form.specialization_area_suffix.errors.0 }}</div>
+        {% endif %}
+      </div>
     </div>
 
     {% if form.errors %}
-      <div class="alert alert-danger mb-0">
+      <div class="alert alert-danger mt-3 mb-0">
         Проверьте введенные данные.
       </div>
     {% endif %}

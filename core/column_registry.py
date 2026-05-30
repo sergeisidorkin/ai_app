@@ -179,6 +179,7 @@ COLUMN_REGISTRY = {
                     "expertise_direction": "Направление экспертизы",
                     "department": "Подразделение",
                     "direction_head": "Руководитель направления",
+                    "specialization_area": "Область специализации",
                 },
             },
             "experts_base": {

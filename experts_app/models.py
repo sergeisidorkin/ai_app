@@ -33,6 +33,9 @@ class ExpertSpecialty(models.Model):
     specialty_en = models.CharField(
         "Специальность на англ. языке", max_length=512, blank=True, default=""
     )
+    specialization_area = models.CharField(
+        "Область специализации", max_length=512, blank=True, default=""
+    )
     head_of_direction = models.ForeignKey(
         Employee,
         on_delete=models.SET_NULL,

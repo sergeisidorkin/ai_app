@@ -4,6 +4,64 @@
             <i class="bi bi-table me-2"></i>
             Специальности исполнителей
         </h5>
+        <div class="d-flex align-items-center gap-2">
+            <span class="small text-muted text-nowrap">Отображаемые поля:</span>
+            <div class="epr-colpicker" id="esp-colpicker-wrap">
+                <button type="button" class="form-select form-select-sm text-start epr-colpicker-btn" id="esp-colpicker-btn">
+                    Все поля
+                </button>
+                <div class="epr-colpicker-menu" id="esp-colpicker-menu">
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="all" id="esp-col-all" checked>
+                            <label class="form-check-label" for="esp-col-all">Все поля</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="specialty" id="esp-col-specialty" checked>
+                            <label class="form-check-label" for="esp-col-specialty">Специальность</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="specialty-en" id="esp-col-specialty-en" checked>
+                            <label class="form-check-label" for="esp-col-specialty-en">Специальность на англ. языке</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="owner" id="esp-col-owner" checked>
+                            <label class="form-check-label" for="esp-col-owner">Владелец</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="expertise-dir" id="esp-col-expertise-dir" checked>
+                            <label class="form-check-label" for="esp-col-expertise-dir">Направление экспертизы</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="expertise-direction" id="esp-col-expertise-direction" checked>
+                            <label class="form-check-label" for="esp-col-expertise-direction">Подразделение</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="head-of-direction" id="esp-col-head-of-direction" checked>
+                            <label class="form-check-label" for="esp-col-head-of-direction">Руководитель направления</label>
+                        </div>
+                    </div>
+                    <div class="epr-colpicker-item">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="specialization-area" id="esp-col-specialization-area" checked>
+                            <label class="form-check-label" for="esp-col-specialization-area">Область специализации</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div class="registration-table-wrap experts-specialties-table-wrap">
