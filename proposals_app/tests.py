@@ -6662,6 +6662,9 @@ class ProposalFormContextTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(rows), 2)
+        self.assertEqual(proposal.type_short_display, "TDD-TDD")
+        self.assertContains(response, ">TDD-TDD<", html=False)
+        self.assertEqual([row["type"] for row in rows], ["TDD", "TDD"])
         self.assertEqual(rows[0]["evaluation_date"], date(2026, 1, 1))
         self.assertEqual(rows[1]["evaluation_date"], date(2026, 2, 5))
 

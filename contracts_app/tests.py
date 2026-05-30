@@ -2621,6 +2621,49 @@ class ContractsCloudLabelTests(TestCase):
         self.assertEqual(created.stage_payloads_json[1]["product_id"], str(second_product.pk))
         self.assertEqual(created.stage_payloads_json[1]["service_term_months"], "2.0")
 
+    def test_contracts_project_registration_create_preserves_duplicate_product_stages(self):
+        response = self.client.post(
+            reverse("contracts_project_registration_create"),
+            {
+                "number": 7006,
+                "sub_number": 0,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [str(self.product.pk), str(self.product.pk)],
+                "name": "Договор с повтором продукта",
+                "status": "Разрабатывается проект договора",
+                "year": 2026,
+                "evaluation_date": ["01.01.2026", "01.07.2026"],
+                "service_term_months": ["1.0", "2.0"],
+                "preliminary_report_date": ["01.02.2026", "01.09.2026"],
+                "final_report_term_weeks": ["2.0", "3.0"],
+                "final_report_date": ["15.02.2026", "30.09.2026"],
+                "next_stage_delay_days": ["0", "0"],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        created = ContractProjectRegistration.objects.get(number=7006, name="Договор с повтором продукта")
+        self.assertEqual(created.type_short_display, "DD-DD")
+        self.assertEqual(len(created.stage_payloads_json), 2)
+        self.assertEqual(
+            [stage["product_id"] for stage in created.stage_payloads_json],
+            [str(self.product.pk), str(self.product.pk)],
+        )
+        self.assertEqual(
+            list(created.product_links.order_by("rank").values_list("product_id", flat=True)),
+            [self.product.pk, self.product.pk],
+        )
+
+        partial_response = self.client.get(reverse("contracts_development_partial"))
+        payment_rows = [
+            row for row in partial_response.context["contract_payment_schedule_rows"]
+            if row["registration_id"] == created.pk
+        ]
+        self.assertContains(partial_response, ">DD-DD<", html=False)
+        self.assertEqual([row["type"] for row in payment_rows], ["DD", "DD"])
+        self.assertEqual([row["stage"] for row in payment_rows], ["Этап 1", "Этап 2"])
+
     def test_contracts_project_registration_create_persists_per_stage_payment_schedule(self):
         second_product = Product.objects.create(
             short_name="QAQC",

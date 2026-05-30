@@ -75,8 +75,20 @@
         if (document.querySelector('.modal-backdrop')) return;
         var backdrop = document.createElement('div');
         backdrop.className = 'modal-backdrop fade show';
+        backdrop.setAttribute('data-experts-fallback-backdrop', modalEl.id);
         document.body.appendChild(backdrop);
         document.body.classList.add('modal-open');
+      }
+
+      function cleanupExpertsFallbackBackdrop(modalEl) {
+        document.querySelectorAll('.modal-backdrop[data-experts-fallback-backdrop]').forEach(function (backdrop) {
+          if (!modalEl || backdrop.getAttribute('data-experts-fallback-backdrop') === modalEl.id) {
+            backdrop.remove();
+          }
+        });
+        if (!document.querySelector('.modal.show')) {
+          document.body.classList.remove('modal-open');
+        }
       }
 
       function scheduleExpertsBackdropCheck(modalEl) {
@@ -94,6 +106,9 @@
         if (!modalEl) return;
         modalEl.addEventListener('shown.bs.modal', function () {
           scheduleExpertsBackdropCheck(modalEl);
+        });
+        modalEl.addEventListener('hidden.bs.modal', function () {
+          cleanupExpertsFallbackBackdrop(modalEl);
         });
       });
 

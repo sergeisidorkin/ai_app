@@ -456,14 +456,12 @@ class ContractProjectRegistration(models.Model):
     @property
     def type_short_names(self):
         labels = []
-        seen = set()
         for product in self.ordered_products():
             label = (
                 getattr(product, "short_name", "")
                 or str(product or "")
             ).strip()
-            if label and label not in seen:
-                seen.add(label)
+            if label:
                 labels.append(label)
         return labels
 
@@ -496,7 +494,6 @@ class ContractProjectRegistrationProduct(models.Model):
         ordering = ["rank", "id"]
         verbose_name = "Продукт проекта договора"
         verbose_name_plural = "Продукты проектов договоров"
-        unique_together = [("registration", "product")]
 
     def __str__(self):
         return f"{self.registration.short_uid} — {self.product.short_name} (#{self.rank})"

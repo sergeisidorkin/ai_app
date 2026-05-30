@@ -849,6 +849,9 @@ class ExpertSpecialtyCsvTests(TestCase):
         self.assertNotIn("modal-dialog modal-xl modal-dialog-scrollable", specialty_modal_html)
         self.assertIn("restoreExpertsBackdropIfMissing", html)
         self.assertIn("scheduleExpertsBackdropCheck", html)
+        self.assertIn("cleanupExpertsFallbackBackdrop", html)
+        self.assertIn("data-experts-fallback-backdrop", html)
+        self.assertIn("hidden.bs.modal", html)
 
     def test_specialty_form_uses_two_column_layout(self):
         response = self.client.get(reverse("esp_form_create"))
@@ -879,6 +882,24 @@ class ExpertSpecialtyCsvTests(TestCase):
         specialty = ExpertSpecialty.objects.get(specialty="Геолог")
         self.assertEqual(specialty.specialization_area, "Специалист по подземным водам")
         self.assertContains(response, "Специалист по подземным водам")
+
+    def test_specialty_form_leaves_blank_specialization_area_empty(self):
+        response = self.client.post(
+            reverse("esp_form_create"),
+            {
+                "specialty": "Геолог",
+                "specialty_en": "Geologist",
+                "owner_ids": "__group__",
+                "expertise_dir": "",
+                "expertise_direction": "",
+                "head_of_direction": "",
+                "specialization_area_suffix": "",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        specialty = ExpertSpecialty.objects.get(specialty="Геолог")
+        self.assertEqual(specialty.specialization_area, "")
 
     def test_specialty_edit_form_prefills_specialization_area_suffix(self):
         specialty = ExpertSpecialty.objects.create(

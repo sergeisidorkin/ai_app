@@ -1468,15 +1468,11 @@ def _contract_project_order_signature(contract_project_ids):
 
 def _save_ranked_contract_project_products(registration, product_ids):
     normalized_ids = []
-    seen = set()
     for raw_id in product_ids:
         try:
             product_id = int(raw_id)
         except (TypeError, ValueError):
             continue
-        if product_id in seen:
-            continue
-        seen.add(product_id)
         normalized_ids.append(product_id)
 
     ContractProjectRegistrationProduct.objects.filter(registration=registration).delete()
