@@ -1101,22 +1101,14 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
             except (TypeError, ValueError):
                 continue
 
-        seen = set()
-        normalized_ids = []
-        for product_id in product_ids:
-            if product_id in seen:
-                continue
-            seen.add(product_id)
-            normalized_ids.append(product_id)
-
         valid_ids = list(
             Product.objects
-            .filter(pk__in=normalized_ids)
+            .filter(pk__in=set(product_ids))
             .order_by("position", "id")
             .values_list("pk", flat=True)
         )
         valid_set = set(valid_ids)
-        ordered_valid_ids = [product_id for product_id in normalized_ids if product_id in valid_set]
+        ordered_valid_ids = [product_id for product_id in product_ids if product_id in valid_set]
         if not ordered_valid_ids:
             self.add_error("type_ids", "Укажите хотя бы один продукт.")
         elif not self.allow_multiple_products and len(ordered_valid_ids) > 1:

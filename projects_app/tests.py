@@ -491,7 +491,7 @@ class ProjectRegistrationFormTests(TestCase):
         self.assertNotEqual(first.pk, duplicate.pk)
         self.assertNotEqual(first.short_uid, duplicate.short_uid)
 
-    def test_cleaned_type_ids_keep_ranked_order_without_duplicates(self):
+    def test_cleaned_type_ids_keep_ranked_order_with_duplicates(self):
         form = ProjectRegistrationForm()
         bound_form = ProjectRegistrationForm(
             data={
@@ -508,7 +508,10 @@ class ProjectRegistrationFormTests(TestCase):
 
         self.assertNotIn("type", form.fields)
         self.assertTrue(bound_form.is_valid())
-        self.assertEqual(bound_form.cleaned_type_ids, [self.second_product.pk, self.product.pk])
+        self.assertEqual(
+            bound_form.cleaned_type_ids,
+            [self.second_product.pk, self.product.pk, self.second_product.pk],
+        )
 
     def test_edit_form_rejects_multiple_products(self):
         bound_form = ProjectRegistrationForm(
@@ -2573,6 +2576,28 @@ class ProjectRegistrationRegistrySyncTests(TestCase):
 
         self.assertEqual(deps_response.status_code, 200)
         self.assertEqual(deps_response.json()["type_short"], self.second_product.short_name)
+
+    def test_registration_create_preserves_duplicate_product_stages_as_rows(self):
+        response = self._post_registration(
+            type_id=[self.product.pk, self.product.pk],
+            stage1_weeks=["1.0", "2.0"],
+            stage2_weeks=["3.0", "4.0"],
+        )
+
+        self.assertEqual(response.status_code, 200)
+        projects = list(ProjectRegistration.objects.filter(number=4444).order_by("position", "id"))
+        self.assertEqual(len(projects), 2)
+        self.assertEqual([project.type_short_display for project in projects], ["DD", "DD"])
+        self.assertEqual([project.short_uid for project in projects], ["44440010RU", "44440020RU"])
+        self.assertEqual([str(project.stage1_weeks) for project in projects], ["1.0", "2.0"])
+        self.assertEqual([str(project.stage2_weeks) for project in projects], ["3.0", "4.0"])
+        self.assertEqual(
+            [
+                list(project.product_links.order_by("rank").values_list("product_id", flat=True))
+                for project in projects
+            ],
+            [[self.product.pk], [self.product.pk]],
+        )
 
     def test_registration_create_applies_schedule_terms_by_product_row(self):
         response = self._post_registration(

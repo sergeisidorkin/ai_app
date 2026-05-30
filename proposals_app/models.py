@@ -400,14 +400,12 @@ class ProposalRegistration(models.Model):
     @property
     def type_short_names(self):
         labels = []
-        seen = set()
         for product in self.ordered_products():
             label = (
                 getattr(product, "short_name", "")
                 or str(product or "")
             ).strip()
-            if label and label not in seen:
-                seen.add(label)
+            if label:
                 labels.append(label)
         return labels
 

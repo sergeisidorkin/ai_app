@@ -149,7 +149,7 @@ class ExpertSpecialtyForm(forms.ModelForm):
         suffix = (self.cleaned_data.get("specialization_area_suffix") or "").strip()
         if suffix.startswith(SPECIALIZATION_AREA_PREFIX):
             suffix = suffix[len(SPECIALIZATION_AREA_PREFIX):].strip()
-        obj.specialization_area = f"{SPECIALIZATION_AREA_PREFIX} {suffix}".strip()
+        obj.specialization_area = f"{SPECIALIZATION_AREA_PREFIX} {suffix}" if suffix else ""
         owner_values = self.data.getlist("owner_ids")
         if OWNER_GROUP_VALUE in owner_values:
             obj.is_group_owner = True
