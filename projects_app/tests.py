@@ -2008,6 +2008,73 @@ class ProjectRegistrationFormViewTests(TestCase):
         )
         self.assertEqual(saved_task["executor"], "Иванов И.И.")
 
+    def test_project_gantt_save_accepts_managed_executor_profile_value(self):
+        registration, _asset_a, _asset_b, performer_a, _performer_b = self._create_project_gantt_asset_sync_fixture()
+        employee_user = get_user_model().objects.create_user(
+            username="managed-executor-profile",
+            first_name="Иван",
+            last_name="Иванов",
+        )
+        employee = Employee.objects.create(user=employee_user, patronymic="Иванович")
+        profile = ExpertProfile.objects.create(employee=employee)
+        specialty = ExpertSpecialty.objects.get(specialty="Специальность A")
+        ExpertProfileSpecialty.objects.create(profile=profile, specialty=specialty, rank=1)
+        submitted_payload = copy.deepcopy(registration.gantt_data)
+        managed_task = next(
+            task for task in submitted_payload["data"]
+            if task.get("performer_id") == performer_a.pk
+        )
+        managed_task["executor"] = f"expert-profile:{profile.pk}"
+
+        response = self.client.post(
+            reverse("project_schedule_gantt", args=[registration.pk]),
+            data=json.dumps(submitted_payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.content.decode("utf-8"))
+        registration.refresh_from_db()
+        saved_task = next(
+            task for task in registration.gantt_data["data"]
+            if task.get("performer_id") == performer_a.pk
+        )
+        self.assertEqual(saved_task["executor"], "Иванов И.И.")
+
+    def test_project_gantt_save_accepts_browser_flattened_managed_asset_type(self):
+        registration, asset_a, _asset_b, _performer_a, _performer_b = self._create_project_gantt_asset_sync_fixture()
+        submitted_payload = copy.deepcopy(registration.gantt_data)
+        source_asset = next(
+            task for task in submitted_payload["data"]
+            if task.get("managed_source") == "work_volume"
+            and task.get("managed_scope") == "source_data"
+            and task.get("work_volume_id") == asset_a.pk
+        )
+        source_asset["type"] = "task"
+        managed_task = next(
+            task for task in submitted_payload["data"]
+            if task.get("managed_source") == "performer"
+        )
+        managed_task["deadline"] = "2026-09-02"
+
+        response = self.client.post(
+            reverse("project_schedule_gantt", args=[registration.pk]),
+            data=json.dumps(submitted_payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.content.decode("utf-8"))
+        registration.refresh_from_db()
+        saved_source_asset = next(
+            task for task in registration.gantt_data["data"]
+            if task.get("id") == source_asset["id"]
+        )
+        self.assertEqual(saved_source_asset["type"], "project")
+        saved_managed_task = next(
+            task for task in registration.gantt_data["data"]
+            if task.get("id") == managed_task["id"]
+        )
+        self.assertEqual(saved_managed_task["deadline"], "2026-09-02")
+
     def test_project_gantt_save_allows_existing_template_executor_assignments(self):
         registration, _asset_a, _asset_b, _performer_a, _performer_b = self._create_project_gantt_asset_sync_fixture()
         submitted_payload = copy.deepcopy(registration.gantt_data)

@@ -4520,6 +4520,7 @@ def create_contract_project(request):
                                     file_data, scalars,
                                     list_replacements=lists or None,
                                     default_language_code="ru-RU",
+                                    fresh_multilevel_list_keys={"[[chapters_name]]"},
                                 )
 
                         original_name = tmpl.file.name.split("/")[-1]

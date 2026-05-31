@@ -41,13 +41,48 @@ def _format_executor_display_name(value: Any) -> str:
     return f"{parts[0]} {initials}".strip()
 
 
-def _same_executor_value(left: Any, right: Any) -> bool:
-    left_norm = _norm(left)
-    right_norm = _norm(right)
-    return bool(left_norm or right_norm) and (
-        left_norm == right_norm
-        or _format_executor_display_name(left_norm) == _format_executor_display_name(right_norm)
+def _executor_value_aliases() -> dict[str, str]:
+    from policy_app.views import _typical_service_term_executor_options
+
+    aliases = {}
+    for option in _typical_service_term_executor_options():
+        if not isinstance(option, dict):
+            continue
+        label = _norm(option.get("label"))
+        for key in ("value", "id", "label"):
+            value = _norm(option.get(key))
+            if value and label:
+                aliases[value] = label
+    return aliases
+
+
+def _executor_value_variants(value: Any, aliases: dict[str, str] | None = None) -> set[str]:
+    normalized = _norm(value)
+    if not normalized:
+        return set()
+    variants = {normalized, _format_executor_display_name(normalized)}
+    alias = _norm((aliases or {}).get(normalized))
+    if alias:
+        variants.add(alias)
+        variants.add(_format_executor_display_name(alias))
+    return {item for item in variants if item}
+
+
+def _same_executor_value(left: Any, right: Any, aliases: dict[str, str] | None = None) -> bool:
+    return bool(
+        _executor_value_variants(left, aliases)
+        & _executor_value_variants(right, aliases)
     )
+
+
+def _same_managed_task_type(existing: dict, submitted: dict) -> bool:
+    if str(existing.get("managed_source") or "") != MANAGED_SOURCE_WORK_VOLUME:
+        return False
+    existing_type = _norm(existing.get("type"))
+    submitted_type = _norm(submitted.get("type"))
+    # DHTMLX can serialize an empty project task back as a plain task. The
+    # next source sync restores managed asset rows to project tasks.
+    return {existing_type, submitted_type} <= {"project", "task"}
 
 
 def _task_id(prefix: str, pk: int | str | None) -> str:
@@ -917,12 +952,18 @@ def validate_managed_task_changes(existing_payload: dict | None, submitted_paylo
             "Управляемые задачи активов и разделов нельзя удалять в Gantt. "
             "Измените строки в таблицах «Объем услуг: активы», «Исполнители» или «Статусы запросов»."
         )
+    executor_aliases = None
     for task_id, existing in existing_tasks.items():
         submitted = submitted_tasks.get(task_id) or {}
         for field in managed_task_locked_fields(existing):
             if field not in submitted:
                 continue
-            if field == "executor" and _same_executor_value(submitted.get(field), existing.get(field)):
+            if field == "executor":
+                if executor_aliases is None:
+                    executor_aliases = _executor_value_aliases()
+                if _same_executor_value(submitted.get(field), existing.get(field), executor_aliases):
+                    continue
+            if field == "type" and _same_managed_task_type(existing, submitted):
                 continue
             if submitted.get(field) != existing.get(field):
                 raise ValueError(

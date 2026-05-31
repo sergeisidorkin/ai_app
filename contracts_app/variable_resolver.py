@@ -610,34 +610,47 @@ def _parse_gantt_date(value):
 
 
 def _latest_gantt_deadline_for_performers(performer, all_performers):
-    registration = getattr(performer, "registration", None)
-    if not registration:
-        return None
-
-    performer_ids = {
-        str(item.pk)
-        for item in (all_performers or [performer])
-        if getattr(item, "pk", None) and getattr(item, "registration_id", None) == performer.registration_id
-    }
-    if not performer_ids and getattr(performer, "pk", None):
-        performer_ids = {str(performer.pk)}
-
-    payload = getattr(registration, "gantt_data", None)
-    if not performer_ids or not isinstance(payload, dict):
-        return None
+    performer_list = [
+        item for item in (all_performers or [performer])
+        if getattr(item, "pk", None)
+    ]
+    if not performer_list and getattr(performer, "pk", None):
+        performer_list = [performer]
 
     dates = []
-    for task in payload.get("data") or []:
-        if (
-            not isinstance(task, dict)
-            or not task.get("performer_id")
-            or str(task.get("performer_id")) not in performer_ids
-        ):
+    fallback_dates = []
+    by_registration = {}
+    for item in performer_list:
+        registration = getattr(item, "registration", None)
+        registration_id = getattr(item, "registration_id", None)
+        if not registration or not registration_id:
             continue
-        deadline = _parse_gantt_date(task.get("deadline"))
-        if deadline:
-            dates.append(deadline)
-    return max(dates) if dates else None
+        by_registration.setdefault(registration_id, {"registration": registration, "performer_ids": set()})
+        by_registration[registration_id]["performer_ids"].add(str(item.pk))
+        fallback_deadline = _parse_gantt_date(getattr(registration, "deadline", None))
+        if fallback_deadline:
+            fallback_dates.append(fallback_deadline)
+
+    for group in by_registration.values():
+        registration = group["registration"]
+        payload = getattr(registration, "gantt_data", None)
+        if not isinstance(payload, dict):
+            continue
+        performer_ids = group["performer_ids"]
+        for task in payload.get("data") or []:
+            if (
+                not isinstance(task, dict)
+                or not task.get("performer_id")
+                or str(task.get("performer_id")) not in performer_ids
+            ):
+                continue
+            deadline = _parse_gantt_date(task.get("deadline"))
+            if deadline:
+                dates.append(deadline)
+
+    if dates:
+        return max(dates)
+    return max(fallback_dates) if fallback_dates else None
 
 
 def _computed_deadline_ru(_ep, p, all_performers) -> str:
@@ -827,21 +840,40 @@ def _computed_chapters_name(_ep, _p, all_performers):
     return items if project_ids else _chapters_name_items_for_performers(all_performers)
 
 
-def _service_composition_lines(composition) -> list[str]:
+def _plain_text_to_html(value: str) -> str:
+    from html import escape
+
+    lines = [line.strip() for line in str(value or "").splitlines() if line.strip()]
+    return "".join(f"<p>{escape(line)}</p>" for line in lines)
+
+
+def _service_composition_item(composition, *, ordered_numbering_scope: str = "") -> dict[str, object] | None:
     editor_state = getattr(composition, "service_composition_editor_state", None)
-    text = ""
+    html = ""
+    plain_text = ""
     if isinstance(editor_state, dict):
-        text = str(editor_state.get("plain_text") or "").strip()
-    if not text:
-        text = str(getattr(composition, "service_composition", "") or "").strip()
-    return [line.strip() for line in text.splitlines() if line.strip()]
+        html = str(editor_state.get("html") or "").strip()
+        plain_text = str(editor_state.get("plain_text") or "").strip()
+    if not plain_text:
+        plain_text = str(getattr(composition, "service_composition", "") or "").strip()
+    if not html:
+        html = _plain_text_to_html(plain_text)
+    if not html:
+        return None
+    item: dict[str, object] = {
+        "html": html,
+        "ignore_rich_font": True,
+        "reset_plain_paragraph_indent": True,
+    }
+    if ordered_numbering_scope:
+        item["ordered_numbering_scope"] = ordered_numbering_scope
+    return item
 
 
-def _services_items_for_performers(all_performers, *, level=0):
+def _services_items_for_performers(all_performers, *, ordered_numbering_scope: str = ""):
     from policy_app.models import TypicalServiceComposition
 
     section_product_pairs: list[tuple[int, int]] = []
-    seen_pairs = set()
     for performer in all_performers or []:
         section = getattr(performer, "typical_section", None)
         if not section or not getattr(section, "pk", None):
@@ -853,9 +885,6 @@ def _services_items_for_performers(all_performers, *, level=0):
         if not product_id:
             continue
         pair = (product_id, section.pk)
-        if pair in seen_pairs:
-            continue
-        seen_pairs.add(pair)
         section_product_pairs.append(pair)
 
     if not section_product_pairs:
@@ -878,8 +907,12 @@ def _services_items_for_performers(all_performers, *, level=0):
     items = []
     for pair in section_product_pairs:
         for composition in compositions_by_pair.get(pair, []):
-            for line in _service_composition_lines(composition):
-                items.append((level, line))
+            item = _service_composition_item(
+                composition,
+                ordered_numbering_scope=ordered_numbering_scope,
+            )
+            if item is not None:
+                items.append(item)
     return items
 
 
@@ -889,10 +922,13 @@ def _computed_services(_ep, _p, all_performers):
         return _services_items_for_performers(all_performers)
 
     items = []
-    for project in projects:
+    for index, project in enumerate(projects, start=1):
         stage = _project_stage(project)
         product_display = _project_product_display(project)
-        items.append((0, f"Этап {stage}: {product_display}".strip()))
+        items.append({
+            "runs": [{"text": f"Этап {stage}: {product_display}".strip(), "bold": True}],
+            "reset_paragraph_indent": True,
+        })
         stage_items = _services_items_for_performers(
             [
                 performer
@@ -900,7 +936,7 @@ def _computed_services(_ep, _p, all_performers):
                 if getattr(performer, "registration_id", None) == project.pk
                 or getattr(getattr(performer, "registration", None), "pk", None) == project.pk
             ],
-            level=1,
+            ordered_numbering_scope=f"contract_services_stage_{index}",
         )
         items.extend(stage_items)
 
@@ -914,6 +950,23 @@ def _computed_number_of_contract(_ep, performer, _all_performers) -> str:
 def _computed_owner(_ep, performer, _all_performers) -> str:
     project = getattr(performer, "registration", None)
     return str(getattr(project, "asset_owner", "") or "") if project else ""
+
+
+def _normalize_party_name(value: str) -> str:
+    return " ".join(str(value or "").split()).casefold()
+
+
+def _computed_by_name(ep, performer, _all_performers) -> str:
+    project = getattr(performer, "registration", None)
+    if not project:
+        return ""
+    customer = FIELD_MAP[("projects", "registration", "customer")](ep, performer)
+    asset_owner = str(getattr(project, "asset_owner", "") or "").strip()
+    if not customer or not asset_owner:
+        return ""
+    if _normalize_party_name(customer) == _normalize_party_name(asset_owner):
+        return ""
+    return f" по заказу {customer}"
 
 
 def _service_goal_report_value(product_id, field_name: str) -> str:
@@ -1016,6 +1069,7 @@ COMPUTED_MAP: dict[str, callable] = {
     "{{number_of_contract}}": _computed_number_of_contract,
     "{{contract_name}}": _computed_contract_name,
     "{{owner}}": _computed_owner,
+    "{{by_name}}": _computed_by_name,
     "{{service_goal_genitive}}": _computed_service_goal_genitive,
     "{{specialization}}": _computed_specialization,
 }

@@ -8393,7 +8393,8 @@
         return getTypicalServiceTermGanttTaskDuration(instance || gantt, task);
       },
       isAssignableTask: function (task, instance) {
-        return task?.type !== instance?.config?.types?.placeholder;
+        return task?.type !== instance?.config?.types?.placeholder
+          && !isTypicalServiceTermGanttManagedTask(task);
       },
       isTaskDisabled: function (task, instance, context) {
         const activeGantt = instance || gantt;
@@ -8705,6 +8706,9 @@
       });
       if (task.start_date) item.start_date = formatDate(task.start_date);
       if (task.end_date) item.end_date = formatDate(task.end_date);
+      if (isTypicalServiceTermGanttManagedAssetTask(item)) {
+        item.type = gantt.config.types.project;
+      }
       tasks.push(item);
     });
     const links = typeof gantt.getLinks === 'function' ? gantt.getLinks().map(function (link) {
