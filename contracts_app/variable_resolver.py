@@ -618,7 +618,6 @@ def _latest_gantt_deadline_for_performers(performer, all_performers):
         performer_list = [performer]
 
     dates = []
-    fallback_dates = []
     by_registration = {}
     for item in performer_list:
         registration = getattr(item, "registration", None)
@@ -627,30 +626,33 @@ def _latest_gantt_deadline_for_performers(performer, all_performers):
             continue
         by_registration.setdefault(registration_id, {"registration": registration, "performer_ids": set()})
         by_registration[registration_id]["performer_ids"].add(str(item.pk))
-        fallback_deadline = _parse_gantt_date(getattr(registration, "deadline", None))
-        if fallback_deadline:
-            fallback_dates.append(fallback_deadline)
 
     for group in by_registration.values():
         registration = group["registration"]
         payload = getattr(registration, "gantt_data", None)
-        if not isinstance(payload, dict):
-            continue
-        performer_ids = group["performer_ids"]
-        for task in payload.get("data") or []:
-            if (
-                not isinstance(task, dict)
-                or not task.get("performer_id")
-                or str(task.get("performer_id")) not in performer_ids
-            ):
-                continue
-            deadline = _parse_gantt_date(task.get("deadline"))
-            if deadline:
-                dates.append(deadline)
+        task_dates = []
+        if isinstance(payload, dict):
+            performer_ids = group["performer_ids"]
+            for task in payload.get("data") or []:
+                if (
+                    not isinstance(task, dict)
+                    or not task.get("performer_id")
+                    or str(task.get("performer_id")) not in performer_ids
+                ):
+                    continue
+                deadline = _parse_gantt_date(task.get("deadline"))
+                if deadline:
+                    task_dates.append(deadline)
 
-    if dates:
-        return max(dates)
-    return max(fallback_dates) if fallback_dates else None
+        if task_dates:
+            dates.append(max(task_dates))
+            continue
+
+        fallback_deadline = _parse_gantt_date(getattr(registration, "deadline", None))
+        if fallback_deadline:
+            dates.append(fallback_deadline)
+
+    return max(dates) if dates else None
 
 
 def _computed_deadline_ru(_ep, p, all_performers) -> str:

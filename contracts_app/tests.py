@@ -3556,6 +3556,64 @@ class ContractVariableResolverTests(TestCase):
         self.assertEqual(lists, {})
         self.assertEqual(replacements["{{deadline_ru}}"], "30 июля 2026 г.")
 
+    def test_deadline_ru_includes_project_deadline_for_stage_without_gantt_tasks(self):
+        product = Product.objects.create(
+            short_name="TDD",
+            name_en="Technical Due Diligence",
+            name_ru="ТДД",
+        )
+        project_with_gantt = ProjectRegistration.objects.create(
+            number=7007,
+            type=product,
+            name="Первый этап",
+            deadline=date(2026, 6, 30),
+            year=2026,
+        )
+        project_without_gantt = ProjectRegistration.objects.create(
+            number=7007,
+            type=product,
+            name="Второй этап",
+            deadline=date(2026, 8, 15),
+            year=2026,
+            gantt_data={"data": []},
+        )
+        performer_a = Performer.objects.create(
+            registration=project_with_gantt,
+            executor="Петров Петр Петрович",
+            asset_name="Карьер",
+        )
+        performer_b = Performer.objects.create(
+            registration=project_without_gantt,
+            executor="Петров Петр Петрович",
+            asset_name="Фабрика",
+        )
+        project_with_gantt.gantt_data = {
+            "data": [
+                {
+                    "id": f"managed-performer-{performer_a.pk}",
+                    "managed_source": "performer",
+                    "performer_id": performer_a.pk,
+                    "asset_name": "Карьер",
+                    "deadline": "2026-07-20",
+                },
+            ],
+            "links": [],
+            "meta": {},
+        }
+        project_with_gantt.save(update_fields=["gantt_data"])
+        project_with_gantt.refresh_from_db()
+        performer_a.registration = project_with_gantt
+        variables = [ContractVariable(key="{{deadline_ru}}", is_computed=True)]
+
+        replacements, lists = resolve_variables(
+            performer_a,
+            variables,
+            all_performers=[performer_a, performer_b],
+        )
+
+        self.assertEqual(lists, {})
+        self.assertEqual(replacements["{{deadline_ru}}"], "15 августа 2026 г.")
+
     def test_additional_scalar_variables_resolve_from_project_product_and_specialty(self):
         product = Product.objects.create(
             short_name="DD",
@@ -3783,14 +3841,17 @@ class ContractVariableResolverTests(TestCase):
                 {
                     "html": "<p>Сбор данных</p><p>Анализ геологии</p>",
                     "ignore_rich_font": True,
+                    "reset_plain_paragraph_indent": True,
                 },
                 {
                     "html": "<p>Моделирование карьера</p>",
                     "ignore_rich_font": True,
+                    "reset_plain_paragraph_indent": True,
                 },
                 {
                     "html": "<p>Сбор данных</p><p>Анализ геологии</p>",
                     "ignore_rich_font": True,
+                    "reset_plain_paragraph_indent": True,
                 },
             ],
         )
